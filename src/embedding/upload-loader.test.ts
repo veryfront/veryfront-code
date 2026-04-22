@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { loadUpload } from "./upload-loader.ts";
 
@@ -102,37 +102,27 @@ describe("upload-loader", () => {
     });
   });
 
-  describe("worker extraction (kreuzberg)", () => {
-    // Worker tests need sanitizer exceptions because Worker threads hold
-    // resources that Deno's sanitizer cannot track across thread boundaries.
+  describe("worker extraction (requires NodeCompat extension)", () => {
+    // End-to-end kreuzberg extraction tests live in
+    // extensions/ext-node-compat/tests/integration.test.ts where the
+    // extension is registered and @kreuzberg/wasm is available. Core-side,
+    // we only assert that `loadUpload` surfaces a clear error when the
+    // extension isn't installed — this is the documented fallback behavior.
 
-    it("extracts text from HTML via kreuzberg worker", {
+    it("throws an actionable error when NodeCompat extension is not registered", {
       sanitizeResources: false,
       sanitizeOps: false,
     }, async () => {
-      const html = "<html><body><h1>Hello</h1><p>World paragraph.</p></body></html>";
-      const result = await loadUpload(toBuffer(html), "text/html");
-      assertStringIncludes(result, "Hello", "should extract heading text");
-      assertStringIncludes(result, "World paragraph", "should extract paragraph text");
-    });
-
-    it("extracts text from XML via kreuzberg worker", {
-      sanitizeResources: false,
-      sanitizeOps: false,
-    }, async () => {
-      const xml = '<?xml version="1.0"?><root><item>Test content</item></root>';
-      const result = await loadUpload(toBuffer(xml), "text/xml");
-      assertStringIncludes(result, "Test content");
-    });
-
-    it("extracts text from JSON via kreuzberg worker", {
-      sanitizeResources: false,
-      sanitizeOps: false,
-    }, async () => {
-      const json = JSON.stringify({ title: "Report", summary: "Quarterly results" });
-      const result = await loadUpload(toBuffer(json), "application/json");
-      assertStringIncludes(result, "Report");
-      assertStringIncludes(result, "Quarterly results");
+      const html = "<html><body>Hello</body></html>";
+      const err = await assertRejects(
+        () => loadUpload(toBuffer(html), "text/html"),
+        Error,
+      ) as Error;
+      assertEquals(
+        err.message.includes("NodeCompat") || err.message.includes("ext-node-compat"),
+        true,
+        `expected actionable NodeCompat error, got: ${err.message}`,
+      );
     });
   });
 });

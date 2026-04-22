@@ -4,7 +4,8 @@
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
-    "./extensions/ext-redis"
+    "./extensions/ext-redis",
+    "./extensions/ext-node-compat"
   ],
   "exclude": [
     "npm/",
@@ -279,9 +280,7 @@
     "@babel/generator": "npm:@babel/generator@7.29.1",
     "@babel/types": "npm:@babel/types@7.29.0",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
-    "tailwind-merge": "npm:tailwind-merge@3.5.0",
-    "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.5.2",
-    "#kreuzberg-wasm-glue": "npm:@kreuzberg/wasm@4.5.2/dist/pkg/kreuzberg_wasm.js"
+    "tailwind-merge": "npm:tailwind-merge@3.5.0"
   },
   "compilerOptions": {
     "jsx": "react-jsx",

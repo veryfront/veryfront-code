@@ -85,4 +85,9 @@ export type {
 } from "./schema-validator.ts";
 
 // Node compatibility
-export type { NodeCompat } from "./node-compat.ts";
+export type {
+  KreuzbergExtractor,
+  NodeCompat,
+  NodeCompatSqliteDatabase,
+  SqliteStatement,
+} from "./node-compat.ts";

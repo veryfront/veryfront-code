@@ -1,17 +1,13 @@
-import { importKreuzberg } from "#veryfront/platform/compat/opaque-deps.ts";
-import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { serverLogger } from "#veryfront/utils";
-
-/** Maximum time to wait for document text extraction before aborting. */
-const EXTRACTION_TIMEOUT_MS = 30_000;
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { NodeCompat } from "#veryfront/extensions/interfaces/node-compat.ts";
 
 /**
  * Extracts plain text from various upload formats.
  *
  * Text and CSV are handled inline (CSV uses a RAG-optimized format that
  * denormalizes headers into every row). All other formats (PDF, DOCX, XLSX,
- * PPTX, HTML, RTF, EPUB, etc.) are delegated to kreuzberg for extraction
- * inside a Worker thread so that hung WASM calls cannot block the server.
+ * PPTX, HTML, RTF, EPUB, etc.) are delegated to the `NodeCompat` extension
+ * contract, which owns kreuzberg and the Worker isolation on Deno.
  *
  * @example
  * ```ts
@@ -33,61 +29,17 @@ export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise
     return new TextDecoder().decode(buffer);
   }
 
-  // Everything else (PDF, DOCX, XLSX, PPTX, HTML, XML, etc.) → kreuzberg
-  // Deno: run in a Worker thread to prevent hung WASM from blocking the server.
-  // Node/Bun: call kreuzberg directly (no global Worker; @kreuzberg/node uses
-  // native bindings that don't have the WASM hang issue).
-  if (isDeno) {
-    return extractInWorker(buffer, mimeType);
+  // Everything else (PDF, DOCX, XLSX, PPTX, HTML, XML, etc.) → NodeCompat.
+  // Synchronous registry check so the missing-extension error surfaces
+  // directly from `loadUpload()` rather than through a spawned Worker.
+  const nodeCompat = tryResolve<NodeCompat>("NodeCompat");
+  if (!nodeCompat?.extractInWorker) {
+    throw new Error(
+      "Document extraction requires the NodeCompat extension. " +
+        "Install @veryfront/ext-node-compat and add it to your extensions configuration.",
+    );
   }
-  return extractDirect(buffer, mimeType);
-}
-
-async function extractDirect(
-  buffer: ArrayBuffer,
-  mimeType: string,
-): Promise<string> {
-  const { extractBytes } = await importKreuzberg();
-  const result = await extractBytes(new Uint8Array(buffer), mimeType);
-  return result.content;
-}
-
-function extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
-    const workerUrl = new URL("./upload-extraction-worker.ts", import.meta.url);
-    const worker = new Worker(workerUrl, { type: "module" });
-
-    const timer = setTimeout(() => {
-      worker.terminate();
-      reject(
-        new Error(
-          `Text extraction timed out after ${
-            EXTRACTION_TIMEOUT_MS / 1000
-          }s — the file may be corrupted or unsupported`,
-        ),
-      );
-    }, EXTRACTION_TIMEOUT_MS);
-
-    worker.onmessage = (event: MessageEvent) => {
-      clearTimeout(timer);
-      worker.terminate();
-      const { content, error } = event.data;
-      if (error) {
-        reject(new Error(error));
-      } else {
-        resolve(content);
-      }
-    };
-
-    worker.onerror = (event) => {
-      clearTimeout(timer);
-      worker.terminate();
-      serverLogger.error("[upload-loader] Worker error:", event);
-      reject(new Error("Text extraction worker failed"));
-    };
-
-    worker.postMessage({ buffer, mimeType }, [buffer]);
-  });
+  return nodeCompat.extractInWorker(buffer, mimeType);
 }
 
 function extractCSV(buffer: ArrayBuffer): string {
