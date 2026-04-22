@@ -7,6 +7,7 @@ import {
   ConversationRunTerminalStateError,
   createConversationAgentRun,
   finalizeConversationAgentRun,
+  flushConversationRunEventBatches,
   getConversationRun,
   isActiveConversationRunStatus,
   isAppendableConversationRunProjection,
@@ -399,6 +400,107 @@ describe("agent/durable", () => {
         latestEventId: 7,
         latestExternalEventSequence: 9,
       },
+    });
+  });
+
+  it("flushes conversation run event batches and returns the final cursors", async () => {
+    stubFetchSequence(
+      jsonResponse(
+        {
+          latest_event_id: 2,
+          latest_external_event_sequence: 3,
+          appended_count: 2,
+          run: {
+            run_id: "run_batch_1",
+            conversation_id: CONVERSATION_ID,
+            latest_event_id: 2,
+            latest_external_event_sequence: 3,
+          },
+        },
+        200,
+      ),
+      jsonResponse(
+        {
+          latest_event_id: 4,
+          latest_external_event_sequence: 5,
+          appended_count: 1,
+          run: {
+            run_id: "run_batch_1",
+            conversation_id: CONVERSATION_ID,
+            latest_event_id: 4,
+            latest_external_event_sequence: 5,
+          },
+        },
+        200,
+      ),
+    );
+
+    const result = await flushConversationRunEventBatches({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_batch_1",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      events: [{ type: "STATE_DELTA", id: 1 }, { type: "STATE_DELTA", id: 2 }, {
+        type: "STATE_DELTA",
+        id: 3,
+      }],
+      maxEventsPerBatch: 2,
+      maxCursorResyncsPerFlush: 3,
+    });
+
+    assertEquals(result, {
+      outcome: "flushed",
+      latestEventId: 4,
+      latestExternalEventSequence: 5,
+    });
+  });
+
+  it("returns append-execution recovery outcomes when a batch append fails", async () => {
+    stubFetchSequence(
+      jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_batch_recover_1",
+          latestExternalEventSequence: 4,
+        }),
+        200,
+      ),
+    );
+
+    globalThis.fetch = (async (input: RequestInfo | URL, _init?: RequestInit) => {
+      if (String(input).endsWith("/events")) {
+        return jsonResponse({ detail: "External run event cursor mismatch" }, 400);
+      }
+
+      return jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_batch_recover_1",
+          latestExternalEventSequence: 4,
+        }),
+        200,
+      );
+    }) as typeof fetch;
+
+    const result = await flushConversationRunEventBatches({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_batch_recover_1",
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      events: [{ type: "STATE_DELTA", id: 1 }],
+      pendingEvents: [{ type: "CUSTOM", id: 2 }],
+      maxEventsPerBatch: 2,
+      maxCursorResyncsPerFlush: 3,
+    });
+
+    assertEquals(result, {
+      outcome: "resumed",
+      latestEventId: 0,
+      latestExternalEventSequence: 4,
+      pendingEvents: [{ type: "STATE_DELTA", id: 1 }, { type: "CUSTOM", id: 2 }],
+      consecutiveFailures: 0,
     });
   });
 

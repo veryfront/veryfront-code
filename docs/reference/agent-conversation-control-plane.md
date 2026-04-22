@@ -157,6 +157,11 @@ If the host also keeps its own pending-event queue, use
 with the canonical append-failure classification instead of rebuilding that
 state transition locally.
 
+If the host wants the framework to own the batch loop too, use
+`flushConversationRunEventBatches()` to send one queued event list through the
+canonical batching and append-execution recovery path while keeping timer
+creation and logging policy local.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
