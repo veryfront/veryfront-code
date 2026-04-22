@@ -360,16 +360,16 @@ export async function resyncConversationRunAppendCursor(input: {
     abortSignal: input.abortSignal,
   });
 
-  if (run.latestExternalEventSequence > input.previousLatestExternalEventSequence) {
+  if (!isAppendableConversationRunProjection(run)) {
     return {
-      result: "advanced",
+      result: "non_appendable",
       run,
     };
   }
 
-  if (!isAppendableConversationRunProjection(run)) {
+  if (run.latestExternalEventSequence > input.previousLatestExternalEventSequence) {
     return {
-      result: "non_appendable",
+      result: "advanced",
       run,
     };
   }
