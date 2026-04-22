@@ -251,6 +251,15 @@ export {
   createConversationRunStreamMirror,
 } from "./conversation-run-stream-mirror.ts";
 export {
+  finalizeHostedDetached,
+  type FinalizeHostedDetachedOptions,
+  finalizeHostedResponse,
+  type FinalizeHostedResponseOptions,
+  type HostedDetachedFinalizationState,
+  type HostedResponseFinalizationState,
+  type HostedTerminalError,
+} from "./hosted-stream-finalization.ts";
+export {
   type ActiveConversationRunStatus,
   appendConversationRunEvents,
   AppendConversationRunEventsError,

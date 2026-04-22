@@ -207,6 +207,11 @@ If the host still keeps terminal tracing or product metrics local, use
 dispatch the durable finalize/cancel call while leaving host-owned terminal
 observers outside the framework.
 
+If the host also wants the framework to own the generic finish-time sequence
+around fallback chunk append, mirror flush, terminal dispatch, and cleanup, use
+`finalizeHostedResponse()` / `finalizeHostedDetached()` and keep only the
+message-part fallback semantics plus empty-response interpretation local.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
