@@ -13,21 +13,21 @@ import {
   PRIORITY_MEDIUM_DEV_FILES,
 } from "#veryfront/utils/constants/index.ts";
 import { isExtendedFSAdapter } from "#veryfront/platform/adapters/fs/wrapper.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 export class DevFileHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "DevFileHandler",
     priority: PRIORITY_MEDIUM_DEV_FILES as HandlerPriority,
     patterns: [{ pattern: "/_veryfront/fs/", prefix: true, method: "GET" }],
-    enabled: (ctx) => !!ctx.isLocalProject || ctx.requestContext?.mode === "preview",
+    // Strictly local-only: exposes project source tree (VULN-SRV-1 / VULN-SRV-2).
+    // Preview mode (even host-derived) must not unlock this surface.
+    enabled: (ctx) => !!ctx.isLocalProject,
   };
 
   async handle(req: Request, ctx: HandlerContext): Promise<HandlerResult> {
     const { pathname } = new URL(req.url);
 
-    const isPreviewMode = ctx.requestContext?.mode === "preview";
-    if (!ctx.isLocalProject && !isPreviewMode) return this.continue();
+    if (!ctx.isLocalProject) return this.continue();
 
     if (req.method !== "GET" || !pathname.startsWith("/_veryfront/fs/")) {
       return this.continue();
@@ -35,24 +35,6 @@ export class DevFileHandler extends BaseHandler {
 
     const fsAdapter = ctx.adapter.fs;
     const isExtended = isExtendedFSAdapter(fsAdapter);
-
-    if (!ctx.isLocalProject && ctx.projectSlug && isExtended && fsAdapter.isMultiProjectMode()) {
-      const effectiveToken = ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || "";
-      const branch = ctx.parsedDomain?.branch ?? null;
-
-      return await fsAdapter.runWithContext(
-        ctx.projectSlug,
-        effectiveToken,
-        () => this.handleWithContext(req, pathname, ctx),
-        ctx.projectId,
-        {
-          productionMode: false,
-          releaseId: ctx.releaseId,
-          branch,
-          environmentName: ctx.environmentName,
-        },
-      );
-    }
 
     if (isExtended && fsAdapter.isContextualMode()) {
       try {

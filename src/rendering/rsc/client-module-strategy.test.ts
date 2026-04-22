@@ -8,13 +8,25 @@ import {
 } from "./client-module-strategy.ts";
 
 describe("rendering/rsc/client-module-strategy", () => {
-  it("uses the fs strategy for local or preview environments", () => {
+  it("uses the fs strategy only for local projects", () => {
+    // Only the server-trusted `isLocalProject` signal unlocks the dev-only
+    // `/_veryfront/fs/` handler. Preview mode (which can be reached via
+    // trusted proxy headers) no longer implies dev-file availability — the
+    // fs handler was narrowed to local projects under VULN-SRV-1/2.
     assertEquals(determineClientModuleStrategy({ isLocalProject: true }), "fs");
-    assertEquals(determineClientModuleStrategy({ environment: "preview" }), "fs");
+    assertEquals(
+      determineClientModuleStrategy({ isLocalProject: true, environment: "production" }),
+      "fs",
+    );
   });
 
-  it("uses the rsc module strategy for remote production environments", () => {
+  it("uses the rsc module strategy for remote environments", () => {
     assertEquals(determineClientModuleStrategy({ environment: "production" }), "rsc-module");
+    assertEquals(determineClientModuleStrategy({ environment: "preview" }), "rsc-module");
+    assertEquals(
+      determineClientModuleStrategy({ isLocalProject: false, environment: "preview" }),
+      "rsc-module",
+    );
   });
 
   it("resolves strategy from hydration data without probing endpoints", () => {

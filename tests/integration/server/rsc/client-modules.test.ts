@@ -124,8 +124,25 @@ describe("RSC Client Modules Tests", { sanitizeOps: false, sanitizeResources: fa
           ].join("\n"),
         );
 
-        const server = await context.createProductionServer({ hostname: "127.0.0.1" });
-        const baseUrl = `http://127.0.0.1:${server.port}`;
+        // Start the server with the project registered as local so the RSC
+        // `fs` client-module strategy and the `/_veryfront/fs/` module loader
+        // are active. Post-VULN-SRV-1/2 these gate strictly on `isLocalProject`.
+        const { startProductionServer } = await import(
+          "../../../../src/server/production-server.ts"
+        );
+        const port = await context.allocatePort();
+        const server = await startProductionServer({
+          projectDir: context.projectDir,
+          port,
+          bindAddress: "127.0.0.1",
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
+          localProjects: { [context.projectId]: context.projectDir },
+        });
+        context.trackResource(server);
+        await server.ready;
+
+        const baseUrl = `http://127.0.0.1:${port}`;
 
         const pageRes = await fetch(`${baseUrl}/`);
         assertEquals(pageRes.status, 200);

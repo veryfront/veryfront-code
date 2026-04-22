@@ -128,15 +128,32 @@ describe("hydration-data-generator", () => {
       assertEquals(parsed.pageType, "tsx");
     });
 
-    it("should choose fs client modules for preview pages", () => {
+    it("should choose fs client modules for local projects", () => {
       const options: HTMLGenerationOptions = {
         ...baseOptions,
-        environment: "preview",
+        isLocalProject: true,
       };
       const parsed = parseHydrationData("page", {}, {}, options) as {
         clientModuleStrategy?: unknown;
       };
       assertEquals(parsed.clientModuleStrategy, "fs");
+    });
+
+    it("should choose rsc module client loading for remote preview pages", () => {
+      // Preview pods (accessed via trusted proxy with environment=preview) do
+      // not expose the dev-only `/_veryfront/fs/` handler — that surface is
+      // gated on `isLocalProject` under VULN-SRV-1/2. Preview clients load
+      // compiled modules via the RSC module endpoint, the same as production.
+      const options: HTMLGenerationOptions = {
+        ...baseOptions,
+        mode: "production",
+        environment: "preview",
+        isLocalProject: false,
+      };
+      const parsed = parseHydrationData("page", {}, {}, options) as {
+        clientModuleStrategy?: unknown;
+      };
+      assertEquals(parsed.clientModuleStrategy, "rsc-module");
     });
 
     it("should choose rsc module client loading for remote production pages", () => {
