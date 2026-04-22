@@ -184,6 +184,11 @@ If the host wants to reuse the canonical event contract itself, use
 `normalizeEncodedConversationRunEvents()` helpers) to turn public
 `ChatStreamEvent` values into conversation-run events before they hit the queue.
 
+If the host prefers one entry point per source, use
+`prepareConversationRunStreamEvents()` for public chat stream events and
+`prepareConversationRunExternalEvents()` for already-encoded conversation-run
+events.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
