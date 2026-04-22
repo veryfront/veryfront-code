@@ -47,7 +47,7 @@ export type {
 } from "./auth-provider.ts";
 
 // Tracing exporter
-export type { SpanData, TracingExporter } from "./tracing-exporter.ts";
+export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
 
 // AI model provider
 export type {

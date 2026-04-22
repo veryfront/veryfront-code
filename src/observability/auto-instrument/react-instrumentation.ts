@@ -1,4 +1,4 @@
-import { type Span, SpanStatusCode } from "@opentelemetry/api";
+import { type Span, SpanStatusCode } from "#veryfront/observability/tracing/api-shim.ts";
 import { endSpan, setSpanAttributes, SpanNames, startSpan, withSpan } from "../tracing/index.ts";
 import { recordRenderError } from "../metrics/index.ts";
 

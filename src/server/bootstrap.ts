@@ -2,7 +2,13 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import type { InvalidationProjectContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { clearConfigCache, getConfig } from "#veryfront/config";
-import { type ExtensionLoader, orchestrateExtensions } from "veryfront/extensions";
+import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
+import type { TracingExporter } from "#veryfront/extensions/interfaces/tracing-exporter.ts";
+import {
+  setGlobalActiveSpanAccessor,
+  setGlobalMetricsAPI,
+  setGlobalTracerProvider,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import {
   getEnvironmentConfig,
   refreshEnvironmentConfig,
@@ -54,6 +60,34 @@ export interface BootstrapResult {
    * then releases any FSAdapter resources (WebSocket connections, caches).
    */
   dispose?: () => void | Promise<void>;
+}
+
+/**
+ * Wire the `TracingExporter` contract (if registered) into the core shim.
+ * Must be called after `orchestrateExtensions()` completes.
+ */
+function wireTracingShim(): void {
+  const tracing = tryResolve<TracingExporter>("TracingExporter");
+  if (tracing) {
+    setGlobalTracerProvider(
+      tracing.getProvider() as Parameters<typeof setGlobalTracerProvider>[0],
+    );
+    const metricsApi = tracing.getMetricsAPI();
+    if (metricsApi) {
+      setGlobalMetricsAPI(
+        metricsApi as Parameters<typeof setGlobalMetricsAPI>[0],
+      );
+    }
+    const traceApi = tracing.getTraceAPI?.();
+    if (traceApi) {
+      setGlobalActiveSpanAccessor(
+        traceApi as Parameters<typeof setGlobalActiveSpanAccessor>[0],
+      );
+    }
+    bootstrapLog.debug("[bootstrap] TracingExporter wired into shim");
+  } else {
+    bootstrapLog.debug("[bootstrap] no TracingExporter extension — using no-op tracer");
+  }
 }
 
 function combineDispose(
@@ -165,6 +199,7 @@ export async function bootstrap(
       config,
       logger: bootstrapLog,
     });
+    wireTracingShim();
     return {
       adapter,
       config,
@@ -205,6 +240,7 @@ export async function bootstrap(
       config,
       logger: bootstrapLog,
     });
+    wireTracingShim();
     return {
       adapter,
       config,
@@ -269,6 +305,7 @@ export async function bootstrap(
       }),
     fsDispose,
   );
+  wireTracingShim();
 
   return {
     adapter: enhancedAdapter,

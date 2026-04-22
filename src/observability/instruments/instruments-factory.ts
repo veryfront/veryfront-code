@@ -1,4 +1,4 @@
-import type { Meter } from "@opentelemetry/api";
+import type { Meter } from "#veryfront/observability/tracing/api-shim.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { MetricsConfig, MetricsInstruments, RuntimeState } from "../metrics/types.ts";
 import { createBuildInstruments } from "./build-instruments.ts";

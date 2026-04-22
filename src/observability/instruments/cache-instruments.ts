@@ -1,4 +1,9 @@
-import type { Counter, Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
+import type {
+  Counter,
+  Meter,
+  ObservableGauge,
+  ObservableResult,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import type { MetricsConfig, RuntimeState } from "../metrics/types.ts";
 
 export interface CacheInstruments {

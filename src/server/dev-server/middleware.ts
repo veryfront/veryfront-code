@@ -230,7 +230,7 @@ async function enrichSpanWithRequestInfo(
   requestId: string,
 ): Promise<void> {
   try {
-    const { trace } = await import("@opentelemetry/api");
+    const { trace } = await import("#veryfront/observability/tracing/api-shim.ts");
     const span = trace.getActiveSpan();
     if (!span) return;
 
