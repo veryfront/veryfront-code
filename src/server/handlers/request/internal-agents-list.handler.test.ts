@@ -66,6 +66,38 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
   });
 
+  it("accepts the public control-plane agents list route", async () => {
+    const handler = new InternalAgentsListHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgentWithConfig("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+    });
+
+    const body = JSON.stringify({
+      requestId: "agents-1",
+      projectId: "proj-1",
+      surface: "studio",
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "agents-1",
+    });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/agents/list", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+  });
+
   it("returns 401 when the control-plane signature is missing", async () => {
     const handler = new InternalAgentsListHandler({
       ensureProjectDiscovery: async () => {},

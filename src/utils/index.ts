@@ -22,15 +22,18 @@ export {
 } from "./runtime-guards.ts";
 
 export {
+  __registerTraceContextGetter,
+  __registerTraceContextGetter as registerTraceContextGetter,
   agentLogger,
   bundlerLogger,
   createJobUserLogger,
   logger,
   refreshLoggerConfig,
   rendererLogger,
+  runWithRequestContextAsync,
   serverLogger,
 } from "./logger/index.ts";
-export type { Logger } from "./logger/index.ts";
+export type { Logger, RequestContext } from "./logger/index.ts";
 
 export {
   BREAKPOINT_LG,

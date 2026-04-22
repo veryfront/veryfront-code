@@ -1,5 +1,26 @@
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
 
+/**
+ * Serialize a value as a JSON string literal that is safe to embed inside an
+ * inline HTML <script>. JSON already escapes quotes, backslashes, and control
+ * characters; we additionally escape:
+ *   - `<` / `>` so `</script>`, `<!--`, and `<script` cannot appear literally,
+ *   - `&` as defense-in-depth against reparsing contexts (e.g. HTML entity
+ *     re-decoding in some legacy paths),
+ *   - U+2028 / U+2029 which are valid JSON but terminate JS string literals
+ *     in older browsers.
+ *
+ * See VULN-INJ-1 in the security audit.
+ */
+function jsonForScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
 export class PageHandler {
   handle(pathname: string, searchParams: URLSearchParams, nonce?: string): Response {
     const html = this.buildHtml(pathname, searchParams, nonce);
@@ -13,6 +34,7 @@ export class PageHandler {
     const queryString = searchParams.toString();
     const renderUrl = `/_veryfront/rsc/render${pathname}${queryString ? `?${queryString}` : ""}`;
     const nonceAttr = buildNonceAttribute(nonce);
+    const renderUrlJs = jsonForScript(renderUrl);
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -61,7 +83,7 @@ export class PageHandler {
     }
 
     (async () => {
-      const renderUrl = '${renderUrl}';
+      const renderUrl = ${renderUrlJs};
       const payload =
         (await fetchPayload(renderUrl)) ??
         (await fetchPayload('/_veryfront/rsc/payload')) ??

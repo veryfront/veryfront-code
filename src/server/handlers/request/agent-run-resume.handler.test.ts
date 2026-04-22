@@ -37,6 +37,36 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     assertEquals(await pending, { result: { ok: true }, isError: false });
   });
 
+  it("accepts the public control-plane resume route", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    const pending = sessionManager.waitForToolResult("run_1", "tool_1");
+
+    const handler = new AgentRunResumeHandler(sessionManager);
+    const body = JSON.stringify({
+      type: "tool_result",
+      toolCallId: "tool_1",
+      result: { ok: true },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await pending, { result: { ok: true }, isError: false });
+  });
+
   it("returns duplicate=true for a repeated identical tool result", async () => {
     const sessionManager = new AgentRunSessionManager();
     sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });

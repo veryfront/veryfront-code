@@ -2,7 +2,12 @@ import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
 import { NETWORK_ERROR } from "#veryfront/errors";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { getDirectory, joinPath } from "#veryfront/utils/path-utils.ts";
+import {
+  getDirectory,
+  isWithinDirectory,
+  joinPath,
+  normalizePath,
+} from "#veryfront/utils/path-utils.ts";
 
 import {
   computeIntegrity,
@@ -34,16 +39,43 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
       const exts = [".tsx", ".ts", ".jsx", ".js", ".mjs"];
 
       build.onResolve({ filter: /^(\.?\.?\/|\/)\/*/ }, async (args: OnResolveArgs) => {
-        const basedir = args.importer ? getDirectory(args.importer) : projectDir;
-        const candidate = args.path.startsWith("/")
-          ? joinPath(projectDir, args.path)
-          : joinPath(basedir, args.path);
+        // VULN-FS-6: NUL bytes are never legitimate in module paths.
+        if (args.path.includes("\0")) {
+          return {
+            errors: [{ text: `Import path contains NUL byte: ${args.path}`, location: null }],
+          };
+        }
+
+        const basedir = args.resolveDir ||
+          (args.importer ? getDirectory(args.importer) : projectDir);
+        // normalizePath collapses `./` and `foo/../` segments produced by
+        // `joinPath` so downstream `adapter.fs.stat` lookups match the file
+        // system's canonical key. Still inside the containment check below.
+        const candidate = normalizePath(
+          args.path.startsWith("/")
+            ? joinPath(projectDir, args.path)
+            : joinPath(basedir, args.path),
+        );
+
+        // VULN-FS-6: refuse anything that, after joining, escapes the project
+        // root. esbuild plugins fire per-import; an entry file with
+        // `import "../../../../etc/hostname"` would otherwise embed the file.
+        if (!isWithinDirectory(projectDir, candidate)) {
+          return {
+            errors: [{
+              text: `Import escapes project directory: ${args.path}`,
+              location: null,
+            }],
+          };
+        }
 
         const candidates: string[] = [candidate];
         for (const ext of exts) candidates.push(candidate + ext);
         for (const ext of exts) candidates.push(joinPath(candidate, `index${ext}`));
 
         for (const f of candidates) {
+          // Defence in depth: each extension probe must also stay inside.
+          if (!isWithinDirectory(projectDir, f)) continue;
           try {
             const st = await adapter.fs.stat(f);
             if (st.isFile) return { path: f };
@@ -56,6 +88,23 @@ export function createRelativeFsPlugin(projectDir: string, adapter: RuntimeAdapt
       });
 
       build.onLoad({ filter: /\.(tsx?|jsx?|mjs)$/ }, async (args: OnLoadArgs) => {
+        // VULN-FS-6: belt-and-braces — reject any onLoad call whose path
+        // escapes the project root or carries a NUL byte. onResolve already
+        // gates this, but esbuild can call onLoad with paths produced by
+        // other plugins or namespaces.
+        if (args.path.includes("\0")) {
+          return {
+            errors: [{ text: `Load path contains NUL byte: ${args.path}`, location: null }],
+          };
+        }
+        if (!isWithinDirectory(projectDir, args.path)) {
+          return {
+            errors: [{
+              text: `Load path escapes project directory: ${args.path}`,
+              location: null,
+            }],
+          };
+        }
         try {
           const contents = await adapter.fs.readFile(args.path);
           return { contents, loader: getLoaderForPath(args.path) };

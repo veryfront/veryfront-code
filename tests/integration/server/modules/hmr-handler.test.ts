@@ -13,6 +13,67 @@ import {
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
 } from "#veryfront/utils";
+import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
+
+const encoder = new TextEncoder();
+
+let trustedSigningKeyPair: CryptoKeyPair;
+let trustedPublicKeyPem: string;
+
+function encodePem(label: string, der: ArrayBuffer): string {
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
+  const lines = base64.match(/.{1,64}/g) ?? [base64];
+  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
+}
+
+async function ensureKeyMaterial(): Promise<void> {
+  if (trustedPublicKeyPem) return;
+  trustedSigningKeyPair = (await crypto.subtle.generateKey(
+    "Ed25519",
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const der = await crypto.subtle.exportKey("spki", trustedSigningKeyPair.publicKey);
+  trustedPublicKeyPem = encodePem("PUBLIC KEY", der);
+}
+
+async function mintTrustedDispatchJws(): Promise<string> {
+  await ensureKeyMaterial();
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "EdDSA", typ: "JWT" };
+  const claims = {
+    iss: "veryfront-api",
+    aud: "demo-project",
+    sub: "dispatch-hmr-test",
+    project_id: "proj-1",
+    platform: "slack",
+    body_sha256: "n/a",
+    iat: now,
+    exp: now + 60,
+  };
+  const encodedHeader = base64urlEncode(JSON.stringify(header));
+  const encodedPayload = base64urlEncode(JSON.stringify(claims));
+  const signingInput = encoder.encode(`${encodedHeader}.${encodedPayload}`);
+  const signature = await crypto.subtle.sign(
+    "Ed25519",
+    trustedSigningKeyPair.privateKey,
+    signingInput,
+  );
+  return `${encodedHeader}.${encodedPayload}.${base64urlEncodeBytes(new Uint8Array(signature))}`;
+}
+
+function adapterEnv() {
+  return {
+    fs: {},
+    server: null,
+    env: {
+      get(key: string) {
+        if (key === "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") return trustedPublicKeyPem;
+        return undefined;
+      },
+    },
+  };
+}
 
 function createMockSocket() {
   const listeners = new Map<string, Set<(event?: unknown) => void>>();
@@ -200,10 +261,14 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
       assertEquals(result.response.status, 200);
     });
 
-    it("prefers x-forwarded-host over host when allowing local preview traffic", async () => {
+    it("IGNORES x-forwarded-host when the request is NOT proxy-trusted (VULN-SRV-4)", async () => {
+      // Without a trusted-proxy signal the handler MUST NOT honour x-forwarded-host
+      // — otherwise any remote client could claim `x-forwarded-host: preview.veryfront.me`
+      // and unlock HMR on a production deployment. The raw Host header ("internal.proxy")
+      // is non-local, so the handler should decline.
       const handler = new HMRHandler();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = new Request("http://internal.proxy:3000/_ws", {
         headers: {
           host: "internal.proxy:3000",
           "x-forwarded-host": "preview.veryfront.me:3000",
@@ -219,17 +284,79 @@ describe("HMR Handler Tests", { sanitizeOps: false, sanitizeResources: false }, 
 
       const result = await handler.handle(req, ctx);
 
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("HONOURS x-forwarded-host when the request IS proxy-trusted (valid dispatch JWS)", async () => {
+      // With a cryptographically-verified dispatch-JWS signal, the request
+      // demonstrably came through the Veryfront fronting proxy, so the forwarded
+      // host is safe to consult. The preview.veryfront.me host is a recognised
+      // local preview surface and the handler must enter the HMR path.
+      const handler = new HMRHandler();
+      const jws = await mintTrustedDispatchJws();
+
+      const req = new Request("http://internal.proxy:3000/_ws", {
+        headers: {
+          host: "internal.proxy:3000",
+          "x-forwarded-host": "preview.veryfront.me:3000",
+          "x-veryfront-dispatch-jws": jws,
+        },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: adapterEnv(),
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
       assertExists(result.response);
       assertEquals(result.response.status, 200);
     });
 
-    it("rejects localhost host-header bypass when x-forwarded-host is external", async () => {
+    it("IGNORES x-forwarded-host when dispatch JWS is present but unverifiable (Codex P1 regression)", async () => {
+      // Regression for Codex P1 on PR #1116: mere presence of `x-veryfront-dispatch-jws`
+      // must NOT be treated as proof of proxy trust. Since the proxy does not strip
+      // this header on ingress, an attacker reaching the runtime directly could
+      // attach any value and unlock x-forwarded-host handling. Only a crypto-verified
+      // JWS counts as a trust signal.
+      await ensureKeyMaterial();
       const handler = new HMRHandler();
 
-      const req = new Request("http://localhost:3000/_ws", {
+      const req = new Request("http://internal.proxy:3000/_ws", {
         headers: {
-          host: "localhost:3000",
-          "x-forwarded-host": "evil.example.com",
+          host: "internal.proxy:3000",
+          "x-forwarded-host": "preview.veryfront.me:3000",
+          "x-veryfront-dispatch-jws": "attacker-supplied.bogus.value",
+        },
+      });
+      const ctx = {
+        requestContext: { mode: "production" },
+        projectDir: "/tmp/test",
+        securityConfig: null,
+        cspUserHeader: null,
+        adapter: adapterEnv(),
+      } as unknown as Parameters<typeof handler.handle>[1];
+
+      const result = await handler.handle(req, ctx);
+
+      assertEquals(result.continue, true);
+      assertEquals(result.response, undefined);
+    });
+
+    it("rejects x-forwarded-host spoof that tries to unlock localhost without proxy trust", async () => {
+      // Regression for VULN-SRV-4: a remote client setting x-forwarded-host: localhost
+      // against a public runtime must NOT enable HMR. The handler falls back to the raw
+      // Host ("evil.example.com"), which is non-local, so the request is declined.
+      const handler = new HMRHandler();
+
+      const req = new Request("http://evil.example.com/_ws", {
+        headers: {
+          host: "evil.example.com",
+          "x-forwarded-host": "localhost",
         },
       });
       const ctx = {

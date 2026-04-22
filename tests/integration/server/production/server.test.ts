@@ -368,7 +368,19 @@ describe(
 
         const port = await context.allocatePort();
         const controller = new AbortController();
-        const server = await startServer(context, port, controller.signal);
+        // Start the server with the project registered as local so the SSR
+        // error overlay path is active (post-VULN-SRV-1/2, the overlay gates
+        // strictly on `isLocalProject`).
+        const server = await startProductionServer({
+          projectDir: context.projectDir,
+          port,
+          bindAddress: "127.0.0.1",
+          signal: controller.signal,
+          defaultProjectSlug: context.projectId,
+          defaultProjectId: context.projectId,
+          localProjects: { [context.projectId]: context.projectDir },
+        });
+        await server.ready;
 
         const res = await fetch(`http://127.0.0.1:${port}/a/b`);
         assertEquals(res.status, 500);

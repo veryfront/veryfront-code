@@ -133,17 +133,6 @@ function buildMergedTools(
   return { ...agent.config.tools, ...injectedTools };
 }
 
-async function resolveContextValue(
-  value: AgUiContextValue | undefined,
-  request: Request,
-): Promise<Record<string, unknown>> {
-  if (typeof value === "function") {
-    return await value(request);
-  }
-
-  return value ?? {};
-}
-
 function scheduleDetachedTask(requestOrCtx: unknown, task: Promise<void>): void {
   if (
     typeof requestOrCtx === "object" &&
@@ -180,6 +169,13 @@ export const AgUiDetachedStartAcceptedSchema = z.object({
 
 export type AgUiDetachedStartRequest = z.infer<typeof AgUiDetachedStartRequestSchema>;
 export type AgUiDetachedStartAccepted = z.infer<typeof AgUiDetachedStartAcceptedSchema>;
+
+export interface ExecuteAgUiDetachedStartInput {
+  request: AgUiDetachedStartRequest;
+  rawRequest?: Request;
+  requestOrCtx?: unknown;
+  context?: Record<string, unknown>;
+}
 
 interface AgUiDetachedStartExecutionInput {
   request: AgUiDetachedStartRequest;
@@ -242,6 +238,142 @@ async function startDefaultDetachedExecution(input: {
   await drainRuntimeStream(runtimeStream);
 }
 
+async function resolveDetachedStartContext(
+  options: AgUiDetachedStartHandlerOptions,
+  input: ExecuteAgUiDetachedStartInput,
+): Promise<Record<string, unknown>> {
+  if (input.context) {
+    return input.context;
+  }
+
+  if (!options.context) {
+    return {};
+  }
+
+  if (typeof options.context === "function") {
+    if (!input.rawRequest) {
+      throw INVALID_ARGUMENT.create({
+        detail: "executeAgUiDetachedStart requires rawRequest when options.context is a function.",
+      });
+    }
+
+    return await options.context(input.rawRequest);
+  }
+
+  return options.context;
+}
+
+function assertDetachedStartRawRequest(
+  options: AgUiDetachedStartHandlerOptions,
+  input: ExecuteAgUiDetachedStartInput,
+): Request | undefined {
+  if (!options.startDetachedExecution) {
+    return input.rawRequest;
+  }
+
+  if (input.rawRequest) {
+    return input.rawRequest;
+  }
+
+  throw INVALID_ARGUMENT.create({
+    detail:
+      "executeAgUiDetachedStart requires rawRequest when options.startDetachedExecution is used.",
+  });
+}
+
+export async function executeAgUiDetachedStart(
+  options: AgUiDetachedStartHandlerOptions,
+  input: ExecuteAgUiDetachedStartInput,
+): Promise<Response> {
+  const rawRequest = assertDetachedStartRawRequest(options, input);
+  const context = await resolveDetachedStartContext(options, input);
+
+  try {
+    const abortSignal = options.sessionManager.startRun({
+      runId: input.request.runId,
+      threadId: input.request.threadId,
+    });
+
+    await options.onAccepted?.({
+      request: input.request,
+      runId: input.request.runId,
+      threadId: input.request.threadId,
+    });
+
+    const detachedTask = (async () => {
+      try {
+        if (options.startDetachedExecution) {
+          await options.startDetachedExecution({
+            request: input.request,
+            requestOrCtx: input.requestOrCtx,
+            rawRequest: rawRequest!,
+            context,
+            abortSignal,
+          });
+        } else if (options.agent) {
+          await startDefaultDetachedExecution({
+            agent: options.agent,
+            request: input.request,
+            context,
+            abortSignal,
+            sessionManager: options.sessionManager,
+          });
+        } else {
+          throw new Error(
+            "Detached AG-UI start configuration became invalid during execution.",
+          );
+        }
+
+        options.sessionManager.completeRun(input.request.runId);
+        await options.onFinish?.({
+          runId: input.request.runId,
+          threadId: input.request.threadId,
+        });
+      } catch (error) {
+        options.sessionManager.failRun(input.request.runId);
+        await options.onError?.({
+          runId: input.request.runId,
+          threadId: input.request.threadId,
+          error,
+        });
+      }
+    })().catch(() => undefined);
+
+    scheduleDetachedTask(input.requestOrCtx, detachedTask);
+
+    return Response.json(
+      {
+        accepted: true,
+        duplicate: false,
+        runId: input.request.runId,
+        threadId: input.request.threadId,
+      } satisfies AgUiDetachedStartAccepted,
+      { status: 202 },
+    );
+  } catch (error) {
+    if (error instanceof RunAlreadyExistsError) {
+      await options.onDuplicate?.({
+        request: input.request,
+        runId: input.request.runId,
+        threadId: input.request.threadId,
+      });
+
+      return Response.json(
+        {
+          accepted: true,
+          duplicate: true,
+          runId: input.request.runId,
+          threadId: input.request.threadId,
+        } satisfies AgUiDetachedStartAccepted,
+        { status: 202 },
+      );
+    }
+
+    options.sessionManager.failRun(input.request.runId);
+    throw error;
+  }
+}
+
 export function createAgUiDetachedStartHandler(
   options: AgUiDetachedStartHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response> {
@@ -256,92 +388,11 @@ export function createAgUiDetachedStartHandler(
 
     try {
       const parsed = AgUiDetachedStartRequestSchema.parse(await request.json());
-      const context = await resolveContextValue(options.context, request);
-
-      try {
-        const abortSignal = options.sessionManager.startRun({
-          runId: parsed.runId,
-          threadId: parsed.threadId,
-        });
-
-        await options.onAccepted?.({
-          request: parsed,
-          runId: parsed.runId,
-          threadId: parsed.threadId,
-        });
-
-        const detachedTask = (async () => {
-          try {
-            if (options.startDetachedExecution) {
-              await options.startDetachedExecution({
-                request: parsed,
-                requestOrCtx,
-                rawRequest: request,
-                context,
-                abortSignal,
-              });
-            } else if (options.agent) {
-              await startDefaultDetachedExecution({
-                agent: options.agent,
-                request: parsed,
-                context,
-                abortSignal,
-                sessionManager: options.sessionManager,
-              });
-            } else {
-              throw new Error(
-                "Detached AG-UI start configuration became invalid during execution.",
-              );
-            }
-
-            options.sessionManager.completeRun(parsed.runId);
-            await options.onFinish?.({
-              runId: parsed.runId,
-              threadId: parsed.threadId,
-            });
-          } catch (error) {
-            options.sessionManager.failRun(parsed.runId);
-            await options.onError?.({
-              runId: parsed.runId,
-              threadId: parsed.threadId,
-              error,
-            });
-          }
-        })().catch(() => undefined);
-
-        scheduleDetachedTask(requestOrCtx, detachedTask);
-
-        return Response.json(
-          {
-            accepted: true,
-            duplicate: false,
-            runId: parsed.runId,
-            threadId: parsed.threadId,
-          } satisfies AgUiDetachedStartAccepted,
-          { status: 202 },
-        );
-      } catch (error) {
-        if (error instanceof RunAlreadyExistsError) {
-          await options.onDuplicate?.({
-            request: parsed,
-            runId: parsed.runId,
-            threadId: parsed.threadId,
-          });
-
-          return Response.json(
-            {
-              accepted: true,
-              duplicate: true,
-              runId: parsed.runId,
-              threadId: parsed.threadId,
-            } satisfies AgUiDetachedStartAccepted,
-            { status: 202 },
-          );
-        }
-
-        options.sessionManager.failRun(parsed.runId);
-        throw error;
-      }
+      return await executeAgUiDetachedStart(options, {
+        request: parsed,
+        rawRequest: request,
+        requestOrCtx,
+      });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return Response.json(
