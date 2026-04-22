@@ -215,6 +215,14 @@ export {
   normalizeConversationRunEvents,
 } from "./conversation-run-event-normalization.ts";
 export {
+  type ConversationRunEvent,
+  ConversationRunEventEncoder,
+  ConversationRunEventSchema,
+  conversationRunEventTypes,
+  encodeConversationRunEvents,
+  normalizeEncodedConversationRunEvents,
+} from "./conversation-run-events.ts";
+export {
   type ConversationRunMirror,
   type ConversationRunMirrorRetryScheduledState,
   type ConversationRunMirrorSnapshot,

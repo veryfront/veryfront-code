@@ -179,6 +179,11 @@ If the host still owns event shaping, use `normalizeConversationRunEvent()` or
 `normalizeConversationRunEvents()` before enqueueing/appending so payload-limit
 splitting and summarization stay consistent across hosts.
 
+If the host wants to reuse the canonical event contract itself, use
+`ConversationRunEventEncoder` (or the `encodeConversationRunEvents()` /
+`normalizeEncodedConversationRunEvents()` helpers) to turn public
+`ChatStreamEvent` values into conversation-run events before they hit the queue.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
