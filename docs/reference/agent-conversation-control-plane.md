@@ -16,8 +16,9 @@ Today the reusable pieces are already public:
 
 - `runHostedLifecycle()` / `runHostedChildLifecycle()` for lifecycle sequencing
 - `createConversationAgentRun()`, `appendConversationRunEvents()`,
-  `getConversationRun()`, `monitorConversationRunStatus()`, and `finalizeConversationAgentRun()` for canonical
-  conversation-run transport
+  `getConversationRun()`, `isAppendableConversationRunProjection()`,
+  `monitorConversationRunStatus()`, and `finalizeConversationAgentRun()` for
+  canonical conversation-run transport
 - `bootstrapConversationAgentRun()` for child conversation + handoff + run
   creation in one flow
 - `resolveConversationRunTargets()` for project / preview-branch target metadata
@@ -130,6 +131,11 @@ Keep these pieces host-local:
 - append retry / cursor recovery policy
 - transcript persistence policy
 - host logging / tracing
+
+When a host keeps local append retry or cursor recovery logic, use
+`isAppendableConversationRunProjection()` after a fresh `getConversationRun()`
+read to decide whether it should keep retrying appends or stop because the run
+is already waiting for a tool result or has reached a terminal state.
 
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became

@@ -3,11 +3,13 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   appendConversationRunEvents,
   AppendConversationRunEventsError,
+  ConversationRunProjectionSchema,
   ConversationRunTerminalStateError,
   createConversationAgentRun,
   finalizeConversationAgentRun,
   getConversationRun,
   isActiveConversationRunStatus,
+  isAppendableConversationRunProjection,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
   monitorConversationRunStatus,
@@ -212,6 +214,8 @@ describe("agent/durable", () => {
       messageId: MESSAGE_ID,
       latestEventId: 0,
       latestExternalEventSequence: 0,
+      waitingToolCallId: null,
+      waitingToolName: null,
       status: "running",
     });
   });
@@ -309,7 +313,31 @@ describe("agent/durable", () => {
       messageId: MESSAGE_ID,
       latestEventId: 0,
       latestExternalEventSequence: 0,
+      waitingToolCallId: null,
+      waitingToolName: null,
       status: "running",
+    });
+  });
+
+  it("preserves waiting-tool fields on conversation run projections", () => {
+    const result = ConversationRunProjectionSchema.parse(
+      durableRunProjection({
+        run_id: "run_waiting_1",
+        status: "waiting_for_tool",
+        waiting_tool_call_id: "tool-call-1",
+        waiting_tool_name: "form_input",
+      }),
+    );
+
+    assertEquals(result, {
+      runId: "run_waiting_1",
+      conversationId: CONVERSATION_ID,
+      messageId: MESSAGE_ID,
+      latestEventId: 1,
+      latestExternalEventSequence: 1,
+      waitingToolCallId: "tool-call-1",
+      waitingToolName: "form_input",
+      status: "waiting_for_tool",
     });
   });
 
@@ -393,6 +421,24 @@ describe("agent/durable", () => {
     assertEquals(isCursorMismatchConversationRunAppendError(cursorMismatch), true);
     assertEquals(isActiveConversationRunStatus("running"), true);
     assertEquals(isActiveConversationRunStatus("completed"), false);
+    assertEquals(
+      isAppendableConversationRunProjection(
+        ConversationRunProjectionSchema.parse(camelCaseDurableRunProjection()),
+      ),
+      true,
+    );
+    assertEquals(
+      isAppendableConversationRunProjection(
+        ConversationRunProjectionSchema.parse(
+          camelCaseDurableRunProjection({
+            status: "waiting_for_tool",
+            waitingToolCallId: "tool-call-1",
+            waitingToolName: "form_input",
+          }),
+        ),
+      ),
+      false,
+    );
   });
 
   it("does not issue requests when the caller abort signal is already aborted", async () => {

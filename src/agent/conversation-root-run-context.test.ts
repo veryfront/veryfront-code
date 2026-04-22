@@ -85,6 +85,8 @@ describe("agent/conversation-root-run-context", () => {
       messageId: MESSAGE_ID,
       latestEventId: 4,
       latestExternalEventSequence: 9,
+      waitingToolCallId: null,
+      waitingToolName: null,
       status: "running",
     });
   });

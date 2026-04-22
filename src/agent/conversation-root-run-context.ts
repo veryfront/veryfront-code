@@ -24,6 +24,8 @@ function normalizeProvidedRun(input: {
     messageId: input.providedRun.messageId,
     latestEventId: input.providedRun.latestEventId ?? 0,
     latestExternalEventSequence: input.providedRun.latestExternalEventSequence ?? 0,
+    waitingToolCallId: null,
+    waitingToolName: null,
     status: "running",
   };
 }
