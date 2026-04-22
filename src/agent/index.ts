@@ -191,6 +191,11 @@ export {
   startConversationRootRun,
 } from "./conversation-root-run-context.ts";
 export {
+  type ConversationRootRunLifecycle,
+  prepareConversationRootRunLifecycle,
+  type PrepareConversationRootRunLifecycleOptions,
+} from "./conversation-root-run-lifecycle.ts";
+export {
   bootstrapConversationAgentRun,
   type BootstrapConversationAgentRunResult,
   type ConversationMessageRecord,

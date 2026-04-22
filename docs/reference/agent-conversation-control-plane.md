@@ -31,7 +31,11 @@ without reaching into app-private internals.
 ## Recommended root-run composition
 
 For a conversation-backed root run, keep one host-owned run context with the
-canonical projection fields returned by `createConversationAgentRun()`:
+canonical projection fields returned by `createConversationAgentRun()`. If the
+host also wants the framework to package root-run startup, effective parent
+lineage, and optional mirror attachment in one step, use
+`prepareConversationRootRunLifecycle()` with a host-supplied `createMirror()`
+callback and keep only user-message persistence policy outside the framework.
 
 ```ts
 type HostConversationRun = {
