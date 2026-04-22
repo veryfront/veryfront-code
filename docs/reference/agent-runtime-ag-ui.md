@@ -9,7 +9,7 @@ order: 10
 The `veryfront/agent` package supports a generic AG-UI transport for hosted
 agent runtimes.
 
-This is the package-level AG-UI contract. Veryfront Studio's internal `/internal/agents/*` routes are compatibility/control-plane wrappers, not the canonical public package surface.
+This is the package-level AG-UI contract. The public control-plane wrapper convention is `/api/control-plane/agents/*`; Veryfront Studio's legacy `/internal/agents/*` routes remain compatibility aliases, not the canonical public package surface.
 
 ## Contract
 
@@ -106,6 +106,33 @@ This helper layer is intentionally narrower than `createAgUiHandler()`:
 
 - the package owns AG-UI request validation/normalization
 - the host still owns auth, project access, and runtime preparation
+
+Hosts that keep a custom execute path can also use
+`createAgUiBrowserResponseStream()` to emit the same bootstrap AG-UI SSE
+framing (`RunStarted`, `StateSnapshot`, `MessagesSnapshot`) while supplying a
+host-local encoder for their own chunk type.
+
+When a host accumulates browser-finished metadata separately,
+`buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
+final `AgentResponse` consumed by the browser encoder finalization path.
+
+For durable control-plane integration, `runHostedLifecycle()` provides a
+framework-owned orchestration loop while the host keeps ownership of auth, run
+creation, append/mirror policy, finalize/cancel calls, and transcript policy.
+
+For child-run or delegated durable progress flows,
+`runHostedChildLifecycle()` provides the same kind of framework-owned
+orchestration around pending/running/completed/failed/cancelled transitions
+while the host keeps the actual control-plane transport and progress payload
+policy.
+
+For canonical runtime AG-UI hosts using `createAgUiRuntimeHandler()`, the
+package can also invoke optional lifecycle callbacks when the default hosted
+stream path sees tool calls, finishes, or fails:
+
+- `onToolCallSeen`
+- `onFinish`
+- `onError`
 
 ## Convenience Request Shape
 

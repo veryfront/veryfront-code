@@ -314,8 +314,15 @@ export class OAuthService extends OAuthProvider {
     });
   }
 
-  async getAccessToken(): Promise<string | null> {
-    const tokens = await this.tokenStore?.getTokens(this.serviceId);
+  /**
+   * Get a valid access token for the given user, refreshing if needed.
+   *
+   * `userId` is required — this store is keyed by `(serviceId, userId)` to
+   * prevent one user's OAuth completion from overwriting another user's
+   * tokens. See VULN-AUTH-2.
+   */
+  async getAccessToken(userId: string): Promise<string | null> {
+    const tokens = await this.tokenStore?.getTokens(this.serviceId, userId);
     if (!tokens) return null;
 
     const isExpired = tokens.expiresAt && Date.now() > tokens.expiresAt - TOKEN_REFRESH_BUFFER_MS;
@@ -329,12 +336,12 @@ export class OAuthService extends OAuthProvider {
     if (!this.tokenStore) {
       throw new Error("TokenStore not configured");
     }
-    await this.tokenStore.setTokens(this.serviceId, result.tokens);
+    await this.tokenStore.setTokens(this.serviceId, userId, result.tokens);
     return result.tokens.accessToken;
   }
 
-  async fetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const token = await this.getAccessToken();
+  async fetch<T>(userId: string, endpoint: string, options: RequestInit = {}): Promise<T> {
+    const token = await this.getAccessToken(userId);
     if (!token) {
       throw TOKEN_STORAGE_ERROR.create({
         detail: `Not authenticated with ${this.serviceConfig.displayName}`,

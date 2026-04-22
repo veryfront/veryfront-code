@@ -153,7 +153,7 @@ export async function listChannelAssistants(
 
   return ChannelAssistantsResponseSchema.parse({ assistants });
 }
-export { verifyDispatchJws } from "./control-plane.ts";
+export { verifyDispatchJws, verifyDispatchJwsSignature } from "./control-plane.ts";
 
 function normalizeConversationPart(
   part: z.infer<typeof rawHistoryPartSchema>,

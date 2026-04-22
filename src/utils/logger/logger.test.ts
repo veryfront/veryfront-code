@@ -637,6 +637,57 @@ describe("logger", () => {
       }
     });
 
+    it("should emit user_id alias for userId", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("With user", { userId: "usr-123" });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.userId, "usr-123");
+          assertEquals(entry.user_id, "usr-123");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should emit conversation_id alias for conversationId", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("With conversation", { conversationId: "conv-456" });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.conversationId, "conv-456");
+          assertEquals(entry.conversation_id, "conv-456");
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("should promote snake_case user_id and conversation_id directly", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const base = getBaseLogger("SERVER");
+          base.info("Snake case", { user_id: "usr-789", conversation_id: "conv-012" });
+
+          const entry = JSON.parse(getOutput()) as LogEntry;
+          assertEquals(entry.user_id, "usr-789");
+          assertEquals(entry.conversation_id, "conv-012");
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("should not overwrite explicit snake_case with alias", () => {
       const { getOutput, restore } = captureConsoleLog();
 

@@ -6,6 +6,13 @@ import { z } from "zod";
 
 const SIGNATURE_SKEW_SECONDS = 5;
 
+export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
+export const CONTROL_PLANE_AGENT_STREAM_PATH = "/api/control-plane/agents/stream";
+export const CONTROL_PLANE_AGENT_RUNS_PATH_PREFIX = "/api/control-plane/agents/runs/";
+export const LEGACY_INTERNAL_AGENTS_LIST_PATH = "/internal/agents/list";
+export const LEGACY_INTERNAL_AGENT_STREAM_PATH = "/internal/agents/stream";
+export const LEGACY_INTERNAL_AGENT_RUNS_PATH_PREFIX = "/internal/agents/runs/";
+
 const compactJwsHeaderSchema = z.object({
   alg: z.literal("EdDSA"),
   typ: z.string().optional(),
@@ -291,6 +298,58 @@ export async function listRuntimeAgents(
     .sort((left, right) => left.name.localeCompare(right.name));
 
   return RuntimeAgentListResponseSchema.parse({ agents });
+}
+
+/**
+ * Verify the Ed25519 signature of a dispatch JWS and the recency of its
+ * timestamps, without binding to a particular request body or audience.
+ *
+ * This is intentionally weaker than {@link verifyDispatchJws}: it answers
+ * "was this JWS minted by a holder of the control-plane private key and is it
+ * still fresh?" and is used as a trust signal in code paths (proxy-trust,
+ * adapter selection) that don't yet have access to the authoritative request
+ * body or project audience. Callers that consume request payloads MUST still
+ * call {@link verifyDispatchJws} / {@link verifyControlPlaneJws} to bind the
+ * signature to the body and project.
+ *
+ * Returns true iff the signature verifies and `iat`/`exp` are within the
+ * allowed skew and max-age window. All other failures (including parsing
+ * errors) resolve to false so callers can treat the signal as present-but-not-
+ * proven without raising.
+ */
+export async function verifyDispatchJwsSignature(
+  jws: string,
+  options: {
+    publicKeyPem: string;
+    maxAgeSeconds: number;
+  },
+): Promise<boolean> {
+  try {
+    const parts = jws.split(".");
+    if (parts.length !== 3) return false;
+    const [encodedHeader, encodedPayload, encodedSignature] = parts;
+    if (!encodedHeader || !encodedPayload || !encodedSignature) return false;
+
+    compactJwsHeaderSchema.parse(parseCompactJwsPart(encodedHeader));
+    const claims = dispatchClaimsSchema.parse(parseCompactJwsPart(encodedPayload));
+
+    const signingInput = new TextEncoder().encode(`${encodedHeader}.${encodedPayload}`);
+    const signature = base64urlDecodeToBytes(encodedSignature);
+    const publicKey = await importEd25519PublicKey(options.publicKeyPem);
+    const verified = await crypto.subtle.verify("Ed25519", publicKey, signature, signingInput);
+    if (!verified) return false;
+
+    if (claims.iss !== "veryfront-api") return false;
+
+    const now = Math.floor(Date.now() / 1000);
+    if (claims.exp <= now) return false;
+    if (claims.iat > now + SIGNATURE_SKEW_SECONDS) return false;
+    if (now - claims.iat > options.maxAgeSeconds) return false;
+
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function verifyDispatchJws(

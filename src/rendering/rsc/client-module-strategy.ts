@@ -33,7 +33,15 @@ export interface ClientModuleUrlOptions {
 export function determineClientModuleStrategy(
   options: ClientModuleStrategyOptions,
 ): ClientModuleStrategy {
-  return options.isLocalProject || options.environment === "preview" ? "fs" : "rsc-module";
+  // Only emit the `fs` strategy when the server is backed by a real on-disk
+  // project (server-trusted `isLocalProject` signal). The `/_veryfront/fs/`
+  // handler that serves those modules was narrowed to local projects only
+  // under VULN-SRV-1/2: honoring a client-reachable `environment === "preview"`
+  // here would advertise a dev-only endpoint that returns 404 in preview pods
+  // and — more importantly — mixes the preview-mode signal (environment) with
+  // the local-filesystem signal (isLocalProject). Preview pods serve the same
+  // compiled client modules as production, via the RSC module endpoint.
+  return options.isLocalProject ? "fs" : "rsc-module";
 }
 
 export function readHydrationData(

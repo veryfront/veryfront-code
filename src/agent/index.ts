@@ -140,6 +140,15 @@ export {
 
 export { agent } from "./factory.ts";
 export {
+  type AgUiRuntimeHandlerConfig,
+  type AgUiRuntimeHandlerConfigWithAgent,
+  type AgUiRuntimeHandlerExecute,
+  type AgUiRuntimeHandlerExecuteInput,
+  type AgUiRuntimeHandlerOptions,
+  type AgUiRuntimeLifecycleContext,
+  createAgUiRuntimeHandler,
+} from "./ag-ui-runtime-handler.ts";
+export {
   type AgUiRuntimeContextItem,
   AgUiRuntimeContextItemSchema,
   type AgUiRuntimeInjectedTool,
@@ -148,16 +157,121 @@ export {
   AgUiRuntimeMessageSchema,
   type AgUiRuntimeRequest,
   AgUiRuntimeRequestSchema,
+  parseAgUiRuntimeRequest,
+  parseAgUiRuntimeRequestOrError,
 } from "./runtime-ag-ui-contract.ts";
+export { normalizeAgUiRuntimeMessages } from "./ag-ui-runtime-support.ts";
 export {
   type AgUiBrowserEncodedEvent,
   type AgUiBrowserEncoderState,
   type AgUiBrowserRunFinishedMetadata,
   type AgUiRuntimeStreamEvent,
+  buildAgUiBrowserFinalizeResponse,
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
 } from "./ag-ui-browser-encoder.ts";
+export {
+  type AgUiBrowserResponseEncoder,
+  type AgUiBrowserResponseExecution,
+  type AgUiBrowserResponseRequestState,
+  createAgUiBrowserResponseStream,
+  type CreateAgUiBrowserResponseStreamInput,
+} from "./ag-ui-browser-response-stream.ts";
+export {
+  type ConversationRunContext,
+  createConversationRunContext,
+} from "./conversation-run-context.ts";
+export {
+  type ConversationRootRunContext,
+  type ConversationRootRunDescriptor,
+  createConversationRootRunContext,
+  createConversationRootRunStartAdapter,
+  prepareConversationRootRunContext,
+  startConversationRootRun,
+} from "./conversation-root-run-context.ts";
+export {
+  bootstrapConversationAgentRun,
+  type BootstrapConversationAgentRunResult,
+  type ConversationMessageRecord,
+  ConversationMessageRecordSchema,
+  type ConversationRecord,
+  ConversationRecordSchema,
+  createConversationMessage,
+  createConversationRecord,
+  ensureConversationProjectLink,
+  fetchConversationRecord,
+} from "./conversation-bootstrap.ts";
+export {
+  type ConversationChildLifecycleContext,
+  type ConversationHostedLifecycleFinalizeInput,
+  createConversationChildLifecycleAdapter,
+  createConversationHostedLifecycleAdapter,
+  type CreateConversationHostedLifecycleAdapterOptions,
+} from "./conversation-hosted-lifecycle.ts";
+export {
+  type ActiveConversationRunStatus,
+  appendConversationRunEvents,
+  AppendConversationRunEventsError,
+  type AppendConversationRunEventsResponse,
+  AppendConversationRunEventsResponseSchema,
+  CompleteConversationRunResponseSchema,
+  type ConversationAgentRunUsage,
+  type ConversationRunAppendCursorResyncResult,
+  type ConversationRunAppendExecutionOutcome,
+  type ConversationRunAppendFailureOutcome,
+  type ConversationRunAppendRecoveryOutcome,
+  type ConversationRunProjection,
+  ConversationRunProjectionSchema,
+  ConversationRunStatusSchema,
+  type ConversationRunTargets,
+  ConversationRunTargetsSchema,
+  ConversationRunTerminalStateError,
+  createConversationAgentRun,
+  finalizeConversationAgentRun,
+  getConversationRun,
+  isActiveConversationRunStatus,
+  isAppendableConversationRunProjection,
+  isCursorMismatchConversationRunAppendError,
+  isIgnorableConversationRunAppendError,
+  monitorConversationRunStatus,
+  parseAppendConversationRunEventsErrorBody,
+  recoverConversationRunAppendExecution,
+  recoverConversationRunAppendFailure,
+  recoverConversationRunCursorMismatch,
+  resolveConversationRunTargets,
+  resyncConversationRunAppendCursor,
+  type TerminalConversationRunStatus,
+} from "./durable.ts";
+export {
+  buildInvokeAgentChildRunLifecycleCustomEvent,
+  buildInvokeAgentChildRunProgressEvents,
+  buildInvokeAgentChildRunStateDelta,
+  type InvokeAgentChildRunLifecycleCustomEvent,
+  InvokeAgentChildRunLifecycleCustomEventSchema,
+  type InvokeAgentChildRunLifecycleValue,
+  InvokeAgentChildRunLifecycleValueSchema,
+  type InvokeAgentChildRunProgressEvent,
+  type InvokeAgentChildRunProgressInput,
+  type InvokeAgentChildRunStateDelta,
+  InvokeAgentChildRunStateDeltaSchema,
+  publishInvokeAgentChildRunProgress,
+} from "./invoke-agent-child-runs.ts";
+export {
+  type HostedChildLifecycleAdapter,
+  type HostedChildLifecycleRunnerOptions,
+  type HostedChildLifecycleRunResult,
+  type HostedChildLifecycleTerminalState,
+  runHostedChildLifecycle,
+} from "./hosted-child-lifecycle.ts";
+export {
+  type HostedLifecycleAdapter,
+  type HostedLifecycleExecution,
+  type HostedLifecycleRunnerOptions,
+  type HostedLifecycleRunResult,
+  type HostedLifecycleTerminalState,
+  runHostedLifecycle,
+} from "./hosted-lifecycle.ts";
 export {
   mergeToolCallInput,
   mergeToolInputDelta,
@@ -178,6 +292,8 @@ export {
   type AgUiDetachedStartRequest,
   AgUiDetachedStartRequestSchema,
   createAgUiDetachedStartHandler,
+  executeAgUiDetachedStart,
+  type ExecuteAgUiDetachedStartInput,
 } from "./ag-ui-detached-start.ts";
 export {
   type AgUiCancelHandlerOptions,

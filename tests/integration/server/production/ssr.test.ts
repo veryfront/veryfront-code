@@ -148,6 +148,9 @@ describe(
           bindAddress: "127.0.0.1",
           defaultProjectSlug: context.projectId,
           defaultProjectId: context.projectId,
+          // Mark this project as local so the SSR error overlay path is active
+          // (post-VULN-SRV-1/2, the overlay gates strictly on `isLocalProject`).
+          localProjects: { [context.projectId]: context.projectDir },
         });
         context.trackResource(server);
         await server.ready;

@@ -36,6 +36,37 @@ describe("sse-utils", () => {
       assertEquals(parsed.type, "complex");
       assertEquals(parsed.data.nested, true);
     });
+
+    it("ignores closed stream controller enqueue errors", () => {
+      const controller = {
+        enqueue() {
+          throw new TypeError("The stream controller cannot close or enqueue");
+        },
+      } as unknown as ReadableStreamDefaultController;
+      const encoder = new TextEncoder();
+
+      sendSSE(controller, encoder, { type: "test" });
+    });
+
+    it("rethrows unrelated enqueue errors", () => {
+      const expected = new TypeError("boom");
+      const controller = {
+        enqueue() {
+          throw expected;
+        },
+      } as unknown as ReadableStreamDefaultController;
+      const encoder = new TextEncoder();
+
+      let actual: unknown;
+
+      try {
+        sendSSE(controller, encoder, { type: "test" });
+      } catch (error) {
+        actual = error;
+      }
+
+      assertEquals(actual, expected);
+    });
   });
 
   describe("closeSSEStream", () => {

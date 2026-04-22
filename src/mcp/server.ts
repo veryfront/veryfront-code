@@ -113,11 +113,67 @@ export class MCPServer {
   onNotification?: (notification: { jsonrpc: "2.0"; method: string; params?: unknown }) => void;
 
   constructor(config: MCPServerConfig) {
+    MCPServer.validateAuthConfig(config);
     this.config = config;
 
-    if (!config.auth || config.auth.type === "none") {
-      logger.warn("MCP server has no authentication configured — all requests will be accepted");
+    if (config.auth.type === "none") {
+      logger.warn(
+        "MCP server started with auth.type='none' (allowUnauthenticated) — all requests will be accepted",
+      );
     }
+  }
+
+  /**
+   * Fail-closed validation of the auth configuration (VULN-SRV-5).
+   *
+   * Historically, an unset `auth` field — or `{ type: "none" }` — silently
+   * accepted every request with only a warning log. That meant an operator who
+   * forgot to configure auth shipped an unauthenticated JSON-RPC surface.
+   *
+   * The new contract: `auth` is required, and the only way to accept
+   * unauthenticated traffic is to explicitly set
+   * `{ type: "none", allowUnauthenticated: true }`. Any other shape is
+   * rejected at construction time.
+   */
+  private static validateAuthConfig(config: MCPServerConfig): void {
+    const auth = (config as { auth?: unknown }).auth;
+
+    if (auth === undefined || auth === null) {
+      throw new Error(
+        "MCP auth must be configured. For local dev, pass " +
+          "{ auth: { type: 'none', allowUnauthenticated: true } } explicitly.",
+      );
+    }
+
+    if (typeof auth !== "object") {
+      throw new Error(
+        "MCP auth must be an object. For local dev, pass " +
+          "{ auth: { type: 'none', allowUnauthenticated: true } } explicitly.",
+      );
+    }
+
+    const type = (auth as { type?: unknown }).type;
+
+    if (type === "none") {
+      const allow = (auth as { allowUnauthenticated?: unknown }).allowUnauthenticated;
+      if (allow !== true) {
+        throw new Error(
+          "MCP auth type 'none' requires allowUnauthenticated: true to acknowledge " +
+            "the server will accept all requests.",
+        );
+      }
+      return;
+    }
+
+    if (type === "bearer") {
+      return;
+    }
+
+    throw new Error(
+      `MCP auth type '${String(type)}' is not supported. Use 'bearer' ` +
+        "or { type: 'none', allowUnauthenticated: true } for explicit opt-in to " +
+        "unauthenticated traffic.",
+    );
   }
 
   notifyToolsChanged(): void {
@@ -607,7 +663,7 @@ export class MCPServer {
 
   createHTTPHandler(): (request: Request) => Promise<Response> {
     return createMCPHTTPHandler({
-      authEnabled: Boolean(this.config.auth?.type && this.config.auth.type !== "none"),
+      authEnabled: this.config.auth.type !== "none",
       getCORSHeaders: (requestOrigin) => this.getCORSHeaders(requestOrigin),
       validateAuth: (request) => this.validateAuth(request),
       handleRequest: (request, context) => this.handleRequest(request, context),
@@ -640,12 +696,10 @@ export class MCPServer {
 
   private async validateAuth(request: Request): Promise<boolean> {
     const auth = this.config.auth;
-    if (!auth || auth.type === "none") return true;
+    if (auth.type === "none") return true;
 
     const authHeader = request.headers.get("Authorization");
     if (!authHeader) return false;
-
-    if (auth.type !== "bearer") return false;
 
     const token = authHeader.replace("Bearer ", "");
 
