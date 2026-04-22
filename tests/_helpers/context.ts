@@ -28,8 +28,10 @@ import {
   makeTempDir,
   mkdir,
   remove,
+  symlink,
   writeTextFile,
 } from "../../src/platform/compat/fs.ts";
+import { resolve as resolvePath } from "#veryfront/compat/path";
 import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
 import { startDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
@@ -60,6 +62,39 @@ try {
 } catch {
   // Ignore if already initialized or module missing
 }
+
+// Register the ext-babel CodeParser contract. In production this happens
+// via extension discovery; integration tests scaffold ephemeral project
+// directories with no extensions/ folder, so we register directly against
+// the shared contract registry. Must run again after each test because
+// production-server shutdown calls ExtensionLoader.teardownAll() which
+// clears the registry.
+export async function registerExtBabelForTests(): Promise<void> {
+  try {
+    const { register } = await import("../../src/extensions/contracts.ts");
+    const extBabelFactory = (await import("../../extensions/ext-babel/src/index.ts")).default;
+    const ext = extBabelFactory();
+    const noopLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    };
+    await ext.setup?.({
+      config: {},
+      logger: noopLogger,
+      provide: (name: string, impl: unknown) => register(name, impl),
+      get: () => undefined,
+      resolve: () => {
+        throw new Error("resolve not used in setup");
+      },
+    } as never);
+  } catch {
+    // Ignore if ext-babel cannot be loaded — injectJsxNodePositions is optional
+  }
+}
+
+await registerExtBabelForTests();
 
 export { esbuildInitialized };
 
@@ -457,6 +492,22 @@ export class TestContext {
       await mkdir(join(this.projectDir, dir), { recursive: true });
     }
 
+    // Symlink ext-babel into the project's extensions/ dir so that
+    // `orchestrateExtensions` (run from bootstrapProd) discovers it and
+    // registers the CodeParser contract. Without this, bootstrap's
+    // internal teardownAll() would wipe the registry we seeded earlier.
+    try {
+      const extBabelDir = join(this.projectDir, "extensions", "ext-babel");
+      await mkdir(extBabelDir, { recursive: true });
+      const extBabelReal = resolvePath("extensions/ext-babel/src/index.ts");
+      await writeTextFile(
+        join(extBabelDir, "index.ts"),
+        `export { default } from "${"file://" + extBabelReal}";\n`,
+      );
+    } catch {
+      // Ignore — graceful fallback via tryResolve in the shim covers it.
+    }
+
     await writeTextFile(
       join(this.projectDir, "veryfront.config.js"),
       `export default {
@@ -521,6 +572,10 @@ export async function withTestContext<T>(
     return await runWithCacheDir(context.testCacheDir, async () => {
       // Reset ALL state before test to ensure clean isolation
       await resetAllTestState();
+
+      // Re-register ext-babel for unit tests that import via #veryfront
+      // rather than going through `startProductionServer`'s bootstrap.
+      await registerExtBabelForTests();
 
       // Clear MDX renderer cache at the START of each test to ensure
       // the singleton picks up this test's cache dir (via AsyncLocalStorage),

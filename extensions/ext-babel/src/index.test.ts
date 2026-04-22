@@ -3,22 +3,6 @@ import { describe, it } from "@std/testing/bdd";
 import extBabel, { BabelCodeParser } from "./index.ts";
 import type { CodeParser } from "veryfront/extensions/interfaces";
 
-function makeCtx(): Parameters<NonNullable<ReturnType<typeof extBabel>["setup"]>>[0] {
-  const provided: Record<string, unknown> = {};
-  const noopLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} };
-  return {
-    config: {},
-    logger: noopLogger,
-    provide: (name: string, impl: unknown) => {
-      provided[name] = impl;
-    },
-    get: () => undefined,
-    resolve: () => {
-      throw new Error("resolve not used in setup");
-    },
-  } as never;
-}
-
 describe("ext-babel", () => {
   it("factory returns a descriptor with the CodeParser capability", () => {
     const ext = extBabel();
