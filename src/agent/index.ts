@@ -183,6 +183,14 @@ export {
   createConversationRunContext,
 } from "./conversation-run-context.ts";
 export {
+  type ConversationRootRunContext,
+  type ConversationRootRunDescriptor,
+  createConversationRootRunContext,
+  createConversationRootRunStartAdapter,
+  prepareConversationRootRunContext,
+  startConversationRootRun,
+} from "./conversation-root-run-context.ts";
+export {
   bootstrapConversationAgentRun,
   type BootstrapConversationAgentRunResult,
   type ConversationMessageRecord,
