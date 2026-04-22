@@ -154,6 +154,45 @@ export type ConversationRunQueueFlushOutcome =
   | "stopped"
   | "retry_scheduled";
 
+export interface ConversationRunEventQueueController {
+  enqueue(events: unknown[]): void;
+  flush(): Promise<
+    | {
+      outcome: "idle" | "flushed";
+      latestEventId: number;
+      latestExternalEventSequence: number;
+      pendingEventCount: number;
+      consecutiveFailures: number;
+      disabled: boolean;
+    }
+    | {
+      outcome: "stopped";
+      latestEventId: number;
+      latestExternalEventSequence: number;
+      pendingEventCount: 0;
+      consecutiveFailures: number;
+      disabled: true;
+      disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+    }
+    | {
+      outcome: "retry_scheduled";
+      latestEventId: number;
+      latestExternalEventSequence: number;
+      pendingEventCount: number;
+      consecutiveFailures: number;
+      disabled: false;
+      errorMessage: string;
+    }
+  >;
+  getSnapshot(): {
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    pendingEventCount: number;
+    consecutiveFailures: number;
+    disabled: boolean;
+  };
+}
+
 export const CreateConversationRunAcceptedSchema = z
   .object({
     run: z
@@ -869,6 +908,124 @@ export async function flushConversationRunEventQueue(input: {
     outcome: "flushed",
     latestEventId,
     latestExternalEventSequence,
+  };
+}
+
+export function createConversationRunEventQueueController(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  maxEventsPerBatch: number;
+  maxBatchPayloadBytes?: number;
+  maxCursorResyncsPerFlush?: number;
+}): ConversationRunEventQueueController {
+  let latestEventId = input.latestEventId;
+  let latestExternalEventSequence = input.latestExternalEventSequence;
+  let pendingEvents: unknown[] = [];
+  let consecutiveFailures = 0;
+  let disabled = false;
+
+  return {
+    enqueue(events) {
+      if (disabled || events.length === 0) {
+        return;
+      }
+
+      pendingEvents.push(...events);
+    },
+    async flush() {
+      if (disabled) {
+        return {
+          outcome: "idle" as const,
+          latestEventId,
+          latestExternalEventSequence,
+          pendingEventCount: 0,
+          consecutiveFailures,
+          disabled,
+        };
+      }
+
+      if (pendingEvents.length === 0) {
+        return {
+          outcome: "idle" as const,
+          latestEventId,
+          latestExternalEventSequence,
+          pendingEventCount: 0,
+          consecutiveFailures,
+          disabled,
+        };
+      }
+
+      const queuedEvents = pendingEvents;
+      pendingEvents = [];
+
+      const flushed = await flushConversationRunEventQueue({
+        authToken: input.authToken,
+        apiUrl: input.apiUrl,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        latestEventId,
+        latestExternalEventSequence,
+        events: queuedEvents,
+        maxEventsPerBatch: input.maxEventsPerBatch,
+        maxBatchPayloadBytes: input.maxBatchPayloadBytes,
+        maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush ?? 3,
+        consecutiveFailures,
+      });
+
+      latestEventId = flushed.latestEventId;
+      latestExternalEventSequence = flushed.latestExternalEventSequence;
+
+      if (flushed.outcome === "flushed") {
+        consecutiveFailures = 0;
+        return {
+          outcome: "flushed" as const,
+          latestEventId,
+          latestExternalEventSequence,
+          pendingEventCount: pendingEvents.length,
+          consecutiveFailures,
+          disabled,
+        };
+      }
+
+      if (flushed.outcome === "stopped") {
+        pendingEvents = [];
+        disabled = true;
+        return {
+          outcome: "stopped" as const,
+          latestEventId,
+          latestExternalEventSequence,
+          pendingEventCount: 0 as const,
+          consecutiveFailures,
+          disabled: true as const,
+          ...(flushed.disableReason ? { disableReason: flushed.disableReason } : {}),
+        };
+      }
+
+      pendingEvents = flushed.pendingEvents;
+      consecutiveFailures = flushed.consecutiveFailures;
+      return {
+        outcome: "retry_scheduled" as const,
+        latestEventId,
+        latestExternalEventSequence,
+        pendingEventCount: pendingEvents.length,
+        consecutiveFailures,
+        disabled: false as const,
+        errorMessage: flushed.errorMessage,
+      };
+    },
+    getSnapshot() {
+      return {
+        latestEventId,
+        latestExternalEventSequence,
+        pendingEventCount: pendingEvents.length,
+        consecutiveFailures,
+        disabled,
+      };
+    },
   };
 }
 

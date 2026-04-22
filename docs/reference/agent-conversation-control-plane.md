@@ -167,6 +167,10 @@ fully flushes, stops, or produces a canonical retry payload, use
 `flushConversationRunEventQueue()` instead of rebuilding that inner flush loop
 locally.
 
+If the host also wants the framework to own the mutable pending-event queue
+state, use `createConversationRunEventQueueController()` and keep only timer
+creation plus host logging policy outside the framework.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
