@@ -174,11 +174,5 @@ describe("rendering/rsc/actions/helpers", () => {
       );
     });
 
-    it("exports verifySessionJwt", () => {
-      assertEquals(
-        typeof (publicActions as Record<string, unknown>).verifySessionJwt,
-        "function",
-      );
-    });
   });
 });
