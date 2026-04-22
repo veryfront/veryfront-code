@@ -117,9 +117,7 @@ describe("upload-loader", () => {
       const err = await assertRejects(
         () => loadUpload(toBuffer(html), "text/html"),
         Error,
-      );
-      // Worker wraps the original error message into a plain Error, so check
-      // the instructive substring rather than the full sentinel text.
+      ) as Error;
       assertEquals(
         err.message.includes("NodeCompat") || err.message.includes("ext-node-compat"),
         true,

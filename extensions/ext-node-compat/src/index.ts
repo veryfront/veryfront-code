@@ -4,6 +4,8 @@
  * Provides the `NodeCompat` contract:
  * - `importKreuzberg()` — document extraction via `@kreuzberg/wasm` (Deno)
  *   or `@kreuzberg/node` (Node/Bun).
+ * - `extractInWorker(buffer, mimeType)` — runs kreuzberg extraction in an
+ *   isolated Deno Worker so a hung WASM call cannot block the server.
  * - `openSqliteDatabase(path?)` — SQLite-backed persistent storage via
  *   `better-sqlite3`.
  *
@@ -19,72 +21,7 @@ import type {
   NodeCompat,
   NodeCompatSqliteDatabase,
 } from "veryfront/extensions/interfaces";
-
-// ---------------------------------------------------------------------------
-// Internal types
-// ---------------------------------------------------------------------------
-
-type KreuzbergModule = {
-  initWasm?: () => Promise<void>;
-  extractBytes: (
-    data: Uint8Array,
-    mimeType: string,
-  ) => Promise<{ content: string }>;
-};
-
-// ---------------------------------------------------------------------------
-// Kreuzberg helper (moved from src/platform/compat/opaque-deps.ts)
-// ---------------------------------------------------------------------------
-
-// deno-lint-ignore no-explicit-any
-async function loadKreuzbergNode(): Promise<any> {
-  // Node / Bun: resolve @kreuzberg/node from node_modules.
-  // Regular dynamic import so bundlers can optionally trace it.
-  return await import("@kreuzberg/node");
-}
-
-async function loadKreuzberg(): Promise<KreuzbergExtractor> {
-  // Detect Deno runtime.
-  const isDeno = typeof Deno !== "undefined";
-
-  if (!isDeno) {
-    // Node / Bun path — @kreuzberg/node installed in node_modules.
-    return loadKreuzbergNode();
-  }
-
-  // Deno path: use the import map entry in the root deno.json.
-  // This regular import() is visible to `deno compile` so the WASM bundle
-  // gets embedded in the compiled binary.
-  const mod = await import("@kreuzberg/wasm") as unknown as KreuzbergModule;
-
-  // Detect compiled binary: Deno.mainModule ends with ".ts" in dev, not in a binary.
-  const mainModule = typeof (Deno as { mainModule?: string }).mainModule === "string"
-    ? (Deno as { mainModule?: string }).mainModule!
-    : "";
-  const isDenoCompiled = mainModule !== "" && !mainModule.endsWith(".ts");
-
-  if (isDenoCompiled) {
-    // Pre-import the WASM glue and pdfium shim so kreuzberg's internal
-    // computed import() calls resolve from Deno's in-process module cache
-    // rather than failing on a missing file in the compiled binary.
-    await import("#kreuzberg-wasm-glue");
-    try {
-      const kreuzbergUrl = import.meta.resolve("@kreuzberg/wasm");
-      // Resolve pdfium.js relative to the kreuzberg package root.
-      // We use a computed URL so this stays invisible to static analysis;
-      // the important cache-warming step is the import itself.
-      const pdfiumUrl = new URL("./pdfium.js", kreuzbergUrl).href;
-      // deno compile cannot trace this computed URL, which is intentional:
-      // failure is non-fatal and only degrades PDF extraction.
-      await import(pdfiumUrl);
-    } catch {
-      // Non-fatal: PDF extraction may be degraded but other formats work.
-    }
-  }
-
-  await mod.initWasm?.();
-  return mod;
-}
+import { loadKreuzberg } from "./kreuzberg.ts";
 
 // ---------------------------------------------------------------------------
 // SQLite helper
@@ -101,12 +38,73 @@ async function loadSqliteDatabase(path?: string): Promise<NodeCompatSqliteDataba
 }
 
 // ---------------------------------------------------------------------------
+// Worker-based extraction (Deno only)
+// ---------------------------------------------------------------------------
+
+/** Maximum time to wait for document text extraction before aborting. */
+const EXTRACTION_TIMEOUT_MS = 30_000;
+
+function extractInWorkerDeno(
+  buffer: ArrayBuffer,
+  mimeType: string,
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    // Static URL literal so `deno compile` traces the worker script into
+    // the binary's embedded module graph.
+    const workerUrl = new URL("./upload-extraction-worker.ts", import.meta.url);
+    const worker = new Worker(workerUrl, { type: "module" });
+
+    const timer = setTimeout(() => {
+      worker.terminate();
+      reject(
+        new Error(
+          `Text extraction timed out after ${
+            EXTRACTION_TIMEOUT_MS / 1000
+          }s — the file may be corrupted or unsupported`,
+        ),
+      );
+    }, EXTRACTION_TIMEOUT_MS);
+
+    worker.onmessage = (event: MessageEvent) => {
+      clearTimeout(timer);
+      worker.terminate();
+      const { content, error } = event.data as { content?: string; error?: string };
+      if (error) {
+        reject(new Error(error));
+      } else {
+        resolve(content ?? "");
+      }
+    };
+
+    worker.onerror = (event) => {
+      clearTimeout(timer);
+      worker.terminate();
+      reject(new Error(`Text extraction worker failed: ${event.message ?? "unknown"}`));
+    };
+
+    worker.postMessage({ buffer, mimeType }, [buffer]);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // NodeCompat implementation
 // ---------------------------------------------------------------------------
 
 class NodeCompatImpl implements NodeCompat {
   importKreuzberg(): Promise<KreuzbergExtractor> {
     return loadKreuzberg();
+  }
+
+  async extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string> {
+    const isDeno = typeof Deno !== "undefined";
+    if (!isDeno) {
+      // Node/Bun: @kreuzberg/node uses native bindings — no WASM hang risk,
+      // no global Worker needed. Call kreuzberg directly.
+      const { extractBytes } = await loadKreuzberg();
+      const result = await extractBytes(new Uint8Array(buffer), mimeType);
+      return result.content;
+    }
+    return extractInWorkerDeno(buffer, mimeType);
   }
 
   openSqliteDatabase(path?: string): Promise<NodeCompatSqliteDatabase> {

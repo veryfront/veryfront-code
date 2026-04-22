@@ -64,6 +64,19 @@ export interface NodeCompat {
   importKreuzberg?(): Promise<KreuzbergExtractor>;
 
   /**
+   * Run kreuzberg extraction inside an isolated Worker thread.
+   *
+   * Owned by the extension so that the worker script lives in a module
+   * graph where `@kreuzberg/wasm` resolves and the NodeCompat contract
+   * is reachable (Deno worker isolates do not share the main-thread
+   * contract registry).
+   *
+   * Callers on Node/Bun can skip workers and use `importKreuzberg()`
+   * directly — native bindings don't need WASM-hang isolation.
+   */
+  extractInWorker?(buffer: ArrayBuffer, mimeType: string): Promise<string>;
+
+  /**
    * Open (or create) a SQLite database at `path`.
    *
    * Returns a database compatible with `SqliteKv`.

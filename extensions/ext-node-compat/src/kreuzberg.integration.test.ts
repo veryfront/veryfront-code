@@ -46,4 +46,12 @@ describe("ext-node-compat kreuzberg integration", () => {
     assertStringIncludes(result.content, "Report");
     assertStringIncludes(result.content, "Quarterly results");
   });
+
+  it("extractInWorker extracts HTML via Deno Worker", opts, async () => {
+    const impl = new NodeCompatImpl();
+    const html = "<html><body><h1>Worker Hello</h1></body></html>";
+    const buffer = toBytes(html).buffer.slice(0) as ArrayBuffer;
+    const content = await impl.extractInWorker(buffer, "text/html");
+    assertStringIncludes(content, "Worker Hello");
+  });
 });

@@ -12,7 +12,6 @@ const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
-  "src/embedding/upload-extraction-worker.ts",
   "src/rendering/rsc",
   "dist/framework-src",
 ];
