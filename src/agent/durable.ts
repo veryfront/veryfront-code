@@ -84,6 +84,10 @@ export const ConversationRunProjectionSchema = z
     latest_event_id: z.number().int().nonnegative().optional(),
     latestExternalEventSequence: z.number().int().nonnegative().optional(),
     latest_external_event_sequence: z.number().int().nonnegative().optional(),
+    waitingToolCallId: z.string().min(1).nullable().optional(),
+    waiting_tool_call_id: z.string().min(1).nullable().optional(),
+    waitingToolName: z.string().nullable().optional(),
+    waiting_tool_name: z.string().nullable().optional(),
     status: ConversationRunStatusSchema,
   })
   .passthrough()
@@ -109,6 +113,8 @@ export const ConversationRunProjectionSchema = z
       messageId,
       latestEventId,
       latestExternalEventSequence,
+      waitingToolCallId: data.waitingToolCallId ?? data.waiting_tool_call_id ?? null,
+      waitingToolName: data.waitingToolName ?? data.waiting_tool_name ?? null,
       status: data.status,
     };
   });
@@ -318,6 +324,17 @@ export function isActiveConversationRunStatus(
   status: ConversationRunProjection["status"],
 ): status is ActiveConversationRunStatus {
   return status === "pending" || status === "running" || status === "waiting_for_tool";
+}
+
+export function isAppendableConversationRunProjection(run: ConversationRunProjection): boolean {
+  return (
+    run.status !== "completed" &&
+    run.status !== "failed" &&
+    run.status !== "cancelled" &&
+    run.status !== "waiting_for_tool" &&
+    run.waitingToolCallId === null &&
+    run.waitingToolName === null
+  );
 }
 
 async function waitForConversationRunPoll(

@@ -227,6 +227,7 @@ export {
   finalizeConversationAgentRun,
   getConversationRun,
   isActiveConversationRunStatus,
+  isAppendableConversationRunProjection,
   isCursorMismatchConversationRunAppendError,
   isIgnorableConversationRunAppendError,
   monitorConversationRunStatus,
