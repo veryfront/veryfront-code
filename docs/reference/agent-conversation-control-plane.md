@@ -198,6 +198,11 @@ events, use `createConversationHostedStreamLifecycleAdapter()` so the append
 path can reuse the same conversation-run event encoding and normalization
 without a separate host-local mapper.
 
+If the host still keeps terminal tracing or product metrics local, use
+`createConversationHostedTerminalAdapter()` to normalize terminal metadata and
+dispatch the durable finalize/cancel call while leaving host-owned terminal
+observers outside the framework.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.

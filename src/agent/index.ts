@@ -211,6 +211,13 @@ export {
   createConversationHostedStreamLifecycleAdapter,
 } from "./conversation-hosted-lifecycle.ts";
 export {
+  type ConversationHostedTerminalAdapter,
+  type ConversationHostedTerminalStateInput,
+  createConversationHostedTerminalAdapter,
+  type CreateConversationHostedTerminalAdapterOptions,
+  toConversationHostedTerminalState,
+} from "./conversation-hosted-terminal.ts";
+export {
   getConversationRunEventJsonByteLength,
   normalizeConversationRunEvent,
   normalizeConversationRunEvents,
