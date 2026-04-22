@@ -234,6 +234,10 @@ export {
   createConversationRunMirror,
 } from "./conversation-run-mirror.ts";
 export {
+  type ConversationRunStreamMirror,
+  createConversationRunStreamMirror,
+} from "./conversation-run-stream-mirror.ts";
+export {
   type ActiveConversationRunStatus,
   appendConversationRunEvents,
   AppendConversationRunEventsError,
