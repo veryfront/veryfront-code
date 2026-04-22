@@ -189,6 +189,10 @@ If the host prefers one entry point per source, use
 `prepareConversationRunExternalEvents()` for already-encoded conversation-run
 events.
 
+If the host wants the framework to own both event preparation and mirror
+orchestration, use `createConversationRunStreamMirror()` and keep only
+host-specific logging callbacks outside the framework.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
