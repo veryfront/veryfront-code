@@ -140,6 +140,10 @@ export type ConversationRunAppendFailureOutcome =
   | "resumed"
   | "stopped"
   | "retry_scheduled";
+export type ConversationRunAppendExecutionOutcome =
+  | "resumed"
+  | "stopped"
+  | "retry_scheduled";
 
 export const CreateConversationRunAcceptedSchema = z
   .object({
@@ -526,6 +530,85 @@ export async function recoverConversationRunAppendFailure(input: {
     latestExternalEventSequence: cursorRecovery.latestExternalEventSequence,
     errorMessage: input.error instanceof Error ? input.error.message : String(input.error),
     ...(cursorRecovery.run ? { run: cursorRecovery.run } : {}),
+  };
+}
+
+export async function recoverConversationRunAppendExecution(input: {
+  error: unknown;
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  remainingEvents: unknown[];
+  pendingEvents: unknown[];
+  cursorResyncsThisFlush: number;
+  consecutiveFailures: number;
+  maxCursorResyncsPerFlush: number;
+  abortSignal?: AbortSignal;
+}): Promise<
+  | {
+    outcome: "resumed";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    pendingEvents: unknown[];
+    consecutiveFailures: number;
+  }
+  | {
+    outcome: "stopped";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
+  }
+  | {
+    outcome: "retry_scheduled";
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    pendingEvents: unknown[];
+    consecutiveFailures: number;
+    errorMessage: string;
+  }
+> {
+  const recovered = await recoverConversationRunAppendFailure({
+    error: input.error,
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    latestEventId: input.latestEventId,
+    latestExternalEventSequence: input.latestExternalEventSequence,
+    cursorResyncsThisFlush: input.cursorResyncsThisFlush,
+    maxCursorResyncsPerFlush: input.maxCursorResyncsPerFlush,
+    abortSignal: input.abortSignal,
+  });
+
+  if (recovered.outcome === "resumed") {
+    return {
+      outcome: "resumed",
+      latestEventId: recovered.latestEventId,
+      latestExternalEventSequence: recovered.latestExternalEventSequence,
+      pendingEvents: [...input.remainingEvents, ...input.pendingEvents],
+      consecutiveFailures: 0,
+    };
+  }
+
+  if (recovered.outcome === "stopped") {
+    return {
+      outcome: "stopped",
+      latestEventId: recovered.latestEventId,
+      latestExternalEventSequence: recovered.latestExternalEventSequence,
+      ...(recovered.disableReason ? { disableReason: recovered.disableReason } : {}),
+    };
+  }
+
+  return {
+    outcome: "retry_scheduled",
+    latestEventId: recovered.latestEventId,
+    latestExternalEventSequence: recovered.latestExternalEventSequence,
+    pendingEvents: [...input.remainingEvents, ...input.pendingEvents],
+    consecutiveFailures: input.consecutiveFailures + 1,
+    errorMessage: recovered.errorMessage ?? "Conversation run append failed",
   };
 }
 

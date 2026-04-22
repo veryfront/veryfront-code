@@ -14,6 +14,7 @@ import {
   isIgnorableConversationRunAppendError,
   monitorConversationRunStatus,
   parseAppendConversationRunEventsErrorBody,
+  recoverConversationRunAppendExecution,
   recoverConversationRunAppendFailure,
   recoverConversationRunCursorMismatch,
   resolveConversationRunTargets,
@@ -835,6 +836,99 @@ describe("agent/durable", () => {
         outcome: "retry_scheduled",
         latestEventId: 2,
         latestExternalEventSequence: 4,
+        errorMessage: "Append conversation run events failed (500): internal failure",
+      },
+    );
+  });
+
+  it("recovers append execution queues with canonical resume/stop/retry outcomes", async () => {
+    stubFetchSequence(
+      jsonResponse(
+        camelCaseDurableRunProjection({
+          runId: "run_append_execution_1",
+          latestExternalEventSequence: 6,
+        }),
+        200,
+      ),
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendExecution({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "External run event cursor mismatch",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_execution_1",
+        latestEventId: 0,
+        latestExternalEventSequence: 4,
+        remainingEvents: [{ type: "STATE_DELTA" }],
+        pendingEvents: [{ type: "CUSTOM" }],
+        cursorResyncsThisFlush: 0,
+        consecutiveFailures: 1,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "resumed",
+        latestEventId: 0,
+        latestExternalEventSequence: 6,
+        pendingEvents: [{ type: "STATE_DELTA" }, { type: "CUSTOM" }],
+        consecutiveFailures: 0,
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendExecution({
+        error: new AppendConversationRunEventsError({
+          status: 400,
+          detail: "Cannot append external events to a terminal run",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_execution_2",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        remainingEvents: [{ type: "STATE_DELTA" }],
+        pendingEvents: [{ type: "CUSTOM" }],
+        cursorResyncsThisFlush: 0,
+        consecutiveFailures: 1,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "stopped",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        disableReason: "ignorable_append_rejection",
+      },
+    );
+
+    assertEquals(
+      await recoverConversationRunAppendExecution({
+        error: new AppendConversationRunEventsError({
+          status: 500,
+          detail: "internal failure",
+        }),
+        authToken: AUTH_TOKEN,
+        apiUrl: API_URL,
+        conversationId: CONVERSATION_ID,
+        runId: "run_append_execution_3",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        remainingEvents: [{ type: "STATE_DELTA" }],
+        pendingEvents: [{ type: "CUSTOM" }],
+        cursorResyncsThisFlush: 0,
+        consecutiveFailures: 1,
+        maxCursorResyncsPerFlush: 3,
+      }),
+      {
+        outcome: "retry_scheduled",
+        latestEventId: 2,
+        latestExternalEventSequence: 4,
+        pendingEvents: [{ type: "STATE_DELTA" }, { type: "CUSTOM" }],
+        consecutiveFailures: 2,
         errorMessage: "Append conversation run events failed (500): internal failure",
       },
     );
