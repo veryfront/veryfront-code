@@ -120,6 +120,11 @@ For durable control-plane integration, `runHostedLifecycle()` provides a
 framework-owned orchestration loop while the host keeps ownership of auth, run
 creation, append/mirror policy, finalize/cancel calls, and transcript policy.
 
+Hosts that keep a browser response-stream execute path can also use
+`runHostedResponseStreamWithHeartbeat()` to reuse the generic
+consume/wait/heartbeat loop while keeping heartbeat chunk shape and logging
+policy local.
+
 For child-run or delegated durable progress flows,
 `runHostedChildLifecycle()` provides the same kind of framework-owned
 orchestration around pending/running/completed/failed/cancelled transitions

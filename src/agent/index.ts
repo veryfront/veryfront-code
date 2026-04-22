@@ -329,6 +329,12 @@ export {
   runHostedLifecycle,
 } from "./hosted-lifecycle.ts";
 export {
+  type HostedResponseStreamHeartbeat,
+  type HostedResponseStreamHeartbeatState,
+  type HostedResponseStreamWriter,
+  runHostedResponseStreamWithHeartbeat,
+} from "./hosted-response-stream.ts";
+export {
   mergeToolCallInput,
   mergeToolInputDelta,
   parseDataStreamSseEvents,
