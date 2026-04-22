@@ -210,6 +210,13 @@ export {
   type CreateConversationHostedLifecycleAdapterOptions,
 } from "./conversation-hosted-lifecycle.ts";
 export {
+  type ConversationRunMirror,
+  type ConversationRunMirrorRetryScheduledState,
+  type ConversationRunMirrorSnapshot,
+  type ConversationRunMirrorStoppedState,
+  createConversationRunMirror,
+} from "./conversation-run-mirror.ts";
+export {
   type ActiveConversationRunStatus,
   appendConversationRunEvents,
   AppendConversationRunEventsError,

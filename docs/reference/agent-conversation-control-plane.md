@@ -171,6 +171,10 @@ If the host also wants the framework to own the mutable pending-event queue
 state, use `createConversationRunEventQueueController()` and keep only timer
 creation plus host logging policy outside the framework.
 
+If the host also wants the framework to own the timer-driven flush orchestration
+around that queue, use `createConversationRunMirror()` and keep only event
+shaping plus host-specific retry/log callbacks outside the framework.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
