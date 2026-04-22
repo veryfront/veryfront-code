@@ -121,6 +121,10 @@ When that custom execute path only needs the canonical SSE headers around an
 already-built stream, `createAgUiSseResponse()` returns the standard AG-UI
 streaming `Response`.
 
+When a host wants one helper that applies browser request defaults and wraps the
+resulting browser stream in the canonical SSE `Response`, use
+`createAgUiRuntimeBrowserResponse()`.
+
 When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
 final `AgentResponse` consumed by the browser encoder finalization path.
