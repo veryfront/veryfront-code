@@ -129,6 +129,10 @@ When a host already has a local chunk encoder but wants to avoid rebuilding the
 same finish-reason / token-usage / RunError suppression bookkeeping, use
 `createAgUiBrowserFinalizeTracker()`.
 
+When a host has its own chunk type but can express each chunk as one or more
+runtime stream events, `createAgUiChunkEncoderBridge()` reuses the canonical
+browser AG-UI event mapper without rebuilding the encoder state machine.
+
 When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
 final `AgentResponse` consumed by the browser encoder finalization path.

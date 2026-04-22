@@ -178,6 +178,11 @@ export {
   type CreateAgUiBrowserFinalizeTrackerOptions,
 } from "./ag-ui-browser-finalize-tracker.ts";
 export {
+  type AgUiChunkEncoderBridge,
+  createAgUiChunkEncoderBridge,
+  type CreateAgUiChunkEncoderBridgeOptions,
+} from "./ag-ui-chunk-encoder-bridge.ts";
+export {
   type AgUiBrowserResponseEncoder,
   type AgUiBrowserResponseExecution,
   type AgUiBrowserResponseRequestState,
