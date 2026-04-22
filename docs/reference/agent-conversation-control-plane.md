@@ -152,6 +152,11 @@ adds the canonical ignorable-append rejection handling as well, so hosts can
 share one resume/stop/retry classification while keeping only scheduling and
 logging policy local.
 
+If the host also keeps its own pending-event queue, use
+`recoverConversationRunAppendExecution()` to merge the queue-management outcome
+with the canonical append-failure classification instead of rebuilding that
+state transition locally.
+
 For long-running delegated or background work, use
 `monitorConversationRunStatus()` to detect when a conversation-owned run became
 terminal before local execution finished.
