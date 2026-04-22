@@ -224,6 +224,8 @@ For a conversations/control-plane host composition that combines
 `runHostedLifecycle()` with the public durable-run helpers, see
 [`Conversation-backed agent hosts`](./agent-conversation-control-plane.md).
 For higher-level root-run and child-run adapter factories over those same public exports, see [`Conversation-backed lifecycle adapters`](./agent-conversation-lifecycle.md).
+For a small helper that carries durable run lineage and effective parent lineage together, see [`Conversation run context helpers`](./agent-conversation-run-context.md).
+For helpers that start or normalize a conversation-backed root run before host execution begins, see [`Conversation root-run helpers`](./agent-conversation-root-run-context.md).
 
 ### Browser AG-UI encoder
 
