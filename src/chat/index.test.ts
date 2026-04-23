@@ -64,6 +64,7 @@ const expectedRuntimeExports = [
   "downloadMarkdown",
   "exportAsMarkdown",
   "extractChatMessageMetadata",
+  "mapHostedStreamPartToChatUiChunks",
   "extractSourcesFromParts",
   "getTextContent",
   "groupPartsInOrder",
