@@ -810,71 +810,77 @@ Clear all stored messages from memory.
 
 ### Types
 
-| Name                              | Description                                                                  |
-| --------------------------------- | ---------------------------------------------------------------------------- |
-| `AgUiDetachedStartAccepted`       | Accepted response shape for detached hosted AG-UI kickoff                    |
-| `AgUiDetachedStartHandlerOptions` | Options for `createAgUiDetachedStartHandler`                                 |
-| `AgUiDetachedStartRequest`        | Validated detached hosted AG-UI kickoff request                              |
-| `ExecuteAgUiDetachedStartInput`   | Input shape for `executeAgUiDetachedStart`                                   |
-| `Agent`                           | `agent()` return type                                                        |
-| `AgentConfig`                     | Agent configuration                                                          |
-| `AgentContext`                    | Agent handler context                                                        |
-| `AgentMiddleware`                 | Agent execution middleware                                                   |
-| `AgentResponse`                   | Agent execution response                                                     |
-| `AgentStatus`                     | Agent status (idle, running, etc.)                                           |
-| `AgentStreamResult`               | Streaming result (`.toDataStreamResponse()`)                                 |
-| `AgUiContextItem`                 | AG-UI runtime context item                                                   |
-| `AgUiHandlerConfigWithAgent`      | Direct-agent form for `createAgUiHandler`                                    |
-| `AgUiHandlerOptions`              | Options for `createAgUiHandler`                                              |
-| `AgUiCancelHandlerOptions`        | Options for `createAgUiCancelHandler`                                        |
-| `AgUiInjectedTool`                | AG-UI client-injected tool descriptor                                        |
-| `AgUiRequest`                     | Validated AG-UI runtime request body                                         |
-| `AgUiSseEvent`                    | AG-UI SSE event object used by host-facing AG-UI helpers                     |
-| `AgUiResumeHandlerOptions`        | Options for `createAgUiResumeHandler`                                        |
-| `AgUiResumeSignal`                | Validated hosted-run resume payload                                          |
-| `HumanInputField`                 | Canonical form/input field definition                                        |
-| `HumanInputFieldInput`            | Input shape accepted by `waitForHumanInput()` before defaults normalize      |
-| `HumanInputOption`                | Canonical select/radio option definition                                     |
-| `HumanInputPendingRequest`        | Pending human-input envelope passed to `onRequest`                           |
-| `HumanInputRequest`               | Normalized human-input request payload                                       |
-| `HumanInputRequestInput`          | Input shape accepted by `HumanInputRequestSchema`                            |
-| `HumanInputResult`                | Validated human-input resumed result                                         |
-| `RunResumeSessionManagerOptions`  | Options for `RunResumeSessionManager`                                        |
-| `RunSessionStatus`                | Status of a resumable run session                                            |
-| `SubmitResumeValueOutcome`        | Result of submitting an accepted or duplicate resume value                   |
-| `WaitForHumanInputOptions`        | Options for `waitForHumanInput()`                                            |
-| `ChatHandlerBeforeStream`         | Hook signature for `createChatHandler` customization before streaming.       |
-| `ChatHandlerBeforeStreamContext`  | Input passed to `beforeStream` hook.                                         |
-| `ChatHandlerBeforeStreamResult`   | Message/context mutations returned from `beforeStream`.                      |
-| `ChatHandlerMessageInput`         | Message shape for `prepend`/`append`/`replaceMessages` in `beforeStream`.    |
-| `ChatHandlerOptions`              | Options for `createChatHandler` — customize context and pre-stream behavior. |
-| `EdgeConfig`                      | Agent-to-agent edge config                                                   |
-| `Memory`                          | Memory interface                                                             |
-| `MemoryConfig`                    | Memory creation config                                                       |
-| `MemoryPersistence`               | Memory storage backend                                                       |
-| `MemoryStats`                     | Memory usage stats                                                           |
-| `Message`                         | Chat message (user, assistant, system, tool)                                 |
-| `MessagePart`                     | Multi-part message segment                                                   |
-| `ModelTransportRequest`           | Request-aware model transport hook input                                     |
-| `ModelTransportResolver`          | Hook that resolves request-aware model runtime/transport behavior            |
-| `ModelProvider`                   | Model provider interface                                                     |
-| `ModelString`                     | Model configuration string format: "provider/model-name"                     |
-| `RemoteToolSource`                | Runtime-discovered remote tool source                                        |
-| `RedisClient`                     | Redis client interface (compatible with ioredis and node-redis)              |
-| `RedisMemoryConfig`               | Redis memory configuration                                                   |
-| `ResolvedModelTransport`          | Request-aware model runtime / headers / providerOptions resolution           |
-| `ResolvedRuntimeState`            | Step-boundary system/context refresh result                                  |
-| `RuntimeStateRequest`             | Step-boundary runtime refresh hook input                                     |
-| `RuntimeStateResolver`            | Hook that refreshes system/context state during long-lived runs              |
-| `StreamToolCall`                  | Streaming tool call                                                          |
-| `ToolCall`                        | Completed tool call                                                          |
-| `ToolCallPart`                    | Tool call message segment                                                    |
-| `ToolCallPartWithArgs`            | Tool call with parsed args                                                   |
-| `ToolCallPartWithInput`           | Tool call with raw input                                                     |
-| `ToolResultPart`                  | Tool execution result segment                                                |
-| `WorkflowConfig`                  | `createWorkflow` config                                                      |
-| `WorkflowResult`                  | Completed workflow result                                                    |
-| `WorkflowStep`                    | Workflow step definition                                                     |
+| Name                              | Description                                                                                                                   |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `AgUiDetachedStartAccepted`       | Accepted response shape for detached hosted AG-UI kickoff                                                                     |
+| `AgUiDetachedStartHandlerOptions` | Options for `createAgUiDetachedStartHandler`                                                                                  |
+| `AgUiDetachedStartRequest`        | Validated detached hosted AG-UI kickoff request                                                                               |
+| `ExecuteAgUiDetachedStartInput`   | Input shape for `executeAgUiDetachedStart`                                                                                    |
+| `Agent`                           | `agent()` return type                                                                                                         |
+| `AgentConfig`                     | Agent configuration                                                                                                           |
+| `AgentContext`                    | Agent handler context                                                                                                         |
+| `AgentMiddleware`                 | Agent execution middleware                                                                                                    |
+| `AgentResponse`                   | Agent execution response                                                                                                      |
+| `AgentStatus`                     | Agent status (idle, running, etc.)                                                                                            |
+| `AgentStreamResult`               | Streaming result (`.toDataStreamResponse()`)                                                                                  |
+| `AgUiContextItem`                 | AG-UI runtime context item                                                                                                    |
+| `AgUiHandlerConfigWithAgent`      | Direct-agent form for `createAgUiHandler`                                                                                     |
+| `AgUiHandlerOptions`              | Options for `createAgUiHandler`                                                                                               |
+| `AgUiCancelHandlerOptions`        | Options for `createAgUiCancelHandler`                                                                                         |
+| `AgUiInjectedTool`                | AG-UI client-injected tool descriptor                                                                                         |
+| `AgUiRequest`                     | Validated AG-UI runtime request body                                                                                          |
+| `AgUiSseEvent`                    | AG-UI SSE event object used by host-facing AG-UI helpers                                                                      |
+| `AgUiResumeHandlerOptions`        | Options for `createAgUiResumeHandler`                                                                                         |
+| `AgUiResumeSignal`                | Validated hosted-run resume payload                                                                                           |
+| `HumanInputField`                 | Canonical form/input field definition                                                                                         |
+| `HumanInputFieldInput`            | Input shape accepted by `waitForHumanInput()` before defaults normalize                                                       |
+| `HumanInputOption`                | Canonical select/radio option definition                                                                                      |
+| `HumanInputPendingRequest`        | Pending human-input envelope passed to `onRequest`                                                                            |
+| `HumanInputRequest`               | Normalized human-input request payload                                                                                        |
+| `HumanInputRequestInput`          | Input shape accepted by `HumanInputRequestSchema`                                                                             |
+| `HumanInputResult`                | Validated human-input resumed result                                                                                          |
+| `RunResumeSessionManagerOptions`  | Options for `RunResumeSessionManager`                                                                                         |
+| `RunSessionStatus`                | Status of a resumable run session                                                                                             |
+| `SubmitResumeValueOutcome`        | Result of submitting an accepted or duplicate resume value                                                                    |
+| `WaitForHumanInputOptions`        | Options for `waitForHumanInput()`                                                                                             |
+| `ChatHandlerBeforeStream`         | Hook signature for `createChatHandler` customization before streaming.                                                        |
+| `ChatHandlerBeforeStreamContext`  | Input passed to `beforeStream` hook.                                                                                          |
+| `ChatHandlerBeforeStreamResult`   | Message/context mutations returned from `beforeStream`.                                                                       |
+| `ChatHandlerMessageInput`         | Message shape for `prepend`/`append`/`replaceMessages` in `beforeStream`.                                                     |
+| `ChatHandlerOptions`              | Options for `createChatHandler` — customize context and pre-stream behavior.                                                  |
+| `ChatMessageMetadata`             | Canonical hosted message metadata shape for streamed assistant messages.                                                      |
+| `ChatMessageMetadataUsage`        | Usage counters nested under `ChatMessageMetadata.usage`.                                                                      |
+| `EdgeConfig`                      | Agent-to-agent edge config                                                                                                    |
+| `Memory`                          | Memory interface                                                                                                              |
+| `MemoryConfig`                    | Memory creation config                                                                                                        |
+| `MemoryPersistence`               | Memory storage backend                                                                                                        |
+| `MemoryStats`                     | Memory usage stats                                                                                                            |
+| `Message`                         | Chat message (user, assistant, system, tool)                                                                                  |
+| `MessagePart`                     | Multi-part message segment                                                                                                    |
+| `ModelTransportRequest`           | Request-aware model transport hook input                                                                                      |
+| `ModelTransportResolver`          | Hook that resolves request-aware model runtime/transport behavior                                                             |
+| `ModelProvider`                   | Model provider interface                                                                                                      |
+| `ModelString`                     | Model configuration string format: "provider/model-name"                                                                      |
+| `RemoteToolSource`                | Runtime-discovered remote tool source                                                                                         |
+| `RedisClient`                     | Redis client interface (compatible with ioredis and node-redis)                                                               |
+| `RedisMemoryConfig`               | Redis memory configuration                                                                                                    |
+| `ResolvedModelTransport`          | Request-aware model runtime / headers / providerOptions resolution                                                            |
+| `ResolvedRuntimeState`            | Step-boundary system/context refresh result                                                                                   |
+| `RuntimeStateRequest`             | Step-boundary runtime refresh hook input                                                                                      |
+| `RuntimeStateResolver`            | Hook that refreshes system/context state during long-lived runs                                                               |
+| `StreamToolCall`                  | Streaming tool call                                                                                                           |
+| `ToolCall`                        | Completed tool call                                                                                                           |
+| `ToolCallPart`                    | Tool call message segment                                                                                                     |
+| `ToolCallPartWithArgs`            | Tool call with parsed args                                                                                                    |
+| `ToolCallPartWithInput`           | Tool call with raw input                                                                                                      |
+| `ToolResultPart`                  | Tool execution result segment                                                                                                 |
+| `ChatUiMessageChunk`              | Canonical hosted UI-stream chunk union for message lifecycle, text, reasoning, tool, file, source, approval, and data events. |
+| `ChildRunAudit`                   | Child-run audit summary nested inside hosted message metadata.                                                                |
+| `ChildRunAuditToolCall`           | Child-run audit tool-call entry.                                                                                              |
+| `ChildRunAuditToolResult`         | Child-run audit tool-result entry.                                                                                            |
+| `WorkflowConfig`                  | `createWorkflow` config                                                                                                       |
+| `WorkflowResult`                  | Completed workflow result                                                                                                     |
+| `WorkflowStep`                    | Workflow step definition                                                                                                      |
 
 ## Related
 
