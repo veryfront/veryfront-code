@@ -10,27 +10,36 @@
  * Tailwind compile path via `getCompiler` / `generateTailwindCSS` /
  * `getProjectCSS`.
  *
+ * E2E tests that boot the production server via `startProductionServer`
+ * must call `registerTailwindExtension()` AFTER server start, because
+ * bootstrap's `orchestrateExtensions` runs `teardownAll()` → `reset()`
+ * which wipes the top-level registration done at import time.
+ *
  * @module html/styles-builder/__tests__/css-processor-setup
  */
 
 import { register as registerContract } from "#veryfront/extensions/contracts.ts";
 import extTailwindFactory from "../../../../extensions/ext-tailwind/src/index.ts";
 
-const ext = extTailwindFactory();
 const noopLogger = {
   debug: () => {},
   info: () => {},
   warn: () => {},
   error: () => {},
 };
-const ctx = {
-  config: {},
-  logger: noopLogger,
-  provide: (name: string, impl: unknown) => registerContract(name, impl),
-  get: () => undefined,
-  resolve: () => {
-    throw new Error("resolve not used in setup");
-  },
-};
 
-await ext.setup?.(ctx as never);
+export async function registerTailwindExtension(): Promise<void> {
+  const ext = extTailwindFactory();
+  const ctx = {
+    config: {},
+    logger: noopLogger,
+    provide: (name: string, impl: unknown) => registerContract(name, impl),
+    get: () => undefined,
+    resolve: () => {
+      throw new Error("resolve not used in setup");
+    },
+  };
+  await ext.setup?.(ctx as never);
+}
+
+await registerTailwindExtension();
