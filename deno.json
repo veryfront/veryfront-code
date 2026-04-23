@@ -5,6 +5,7 @@
   "nodeModulesDir": "auto",
   "workspace": [
     "./extensions/ext-babel",
+    "./extensions/ext-openai",
     "./extensions/ext-redis"
   ],
   "exclude": [
