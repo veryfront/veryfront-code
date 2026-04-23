@@ -228,6 +228,31 @@ async function collectLocalFiles(
   return commandHelpers.collectLocalFiles(root, recursive);
 }
 
+function classifyListedUploadsForKnowledge(uploads: UploadItem[]): {
+  skipped: KnowledgeIngestSkippedFileResult[];
+  uploadTargets: string[];
+} {
+  const skipped: KnowledgeIngestSkippedFileResult[] = [];
+  const uploadTargets: string[] = [];
+
+  for (const item of uploads) {
+    if (item.type === "folder") {
+      continue;
+    }
+
+    const source = formatKnowledgeUploadSource(item.path);
+    const skippedUpload = classifySourceOrSkip({ source });
+    if (skippedUpload == null) {
+      uploadTargets.push(item.path);
+      continue;
+    }
+
+    skipped.push(skippedUpload);
+  }
+
+  return { skipped, uploadTargets };
+}
+
 function buildSourceReference(source: KnowledgeSource): string {
   return commandHelpers.buildSourceReference(source);
 }
@@ -488,41 +513,11 @@ export async function collectKnowledgeSources(
     });
 
   let uploads = await listUploadsForPrefix(uploadPrefix || undefined);
-  let skipped = uploads.flatMap((item: UploadItem) => {
-    if (item.type === "folder") {
-      return [];
-    }
-
-    const skippedUpload = classifySourceOrSkip({
-      source: formatKnowledgeUploadSource(item.path),
-    });
-    return skippedUpload == null ? [] : [skippedUpload];
-  });
-  let uploadTargets = uploads
-    .filter((item: UploadItem) => item.type !== "folder")
-    .map((item: UploadItem) => item.path)
-    .filter((uploadPath) =>
-      classifySourceOrSkip({ source: formatKnowledgeUploadSource(uploadPath) }) == null
-    );
+  let { skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads);
 
   if (!uploadTargets.length && uploadPrefix && !uploadPrefix.endsWith("/")) {
     uploads = await listUploadsForPrefix(`${uploadPrefix}/`);
-    skipped = uploads.flatMap((item: UploadItem) => {
-      if (item.type === "folder") {
-        return [];
-      }
-
-      const skippedUpload = classifySourceOrSkip({
-        source: formatKnowledgeUploadSource(item.path),
-      });
-      return skippedUpload == null ? [] : [skippedUpload];
-    });
-    uploadTargets = uploads
-      .filter((item: UploadItem) => item.type !== "folder")
-      .map((item: UploadItem) => item.path)
-      .filter((uploadPath) =>
-        classifySourceOrSkip({ source: formatKnowledgeUploadSource(uploadPath) }) == null
-      );
+    ({ skipped, uploadTargets } = classifyListedUploadsForKnowledge(uploads));
   }
 
   if (!uploadTargets.length && skipped.length === 0) {
