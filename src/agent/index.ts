@@ -397,6 +397,11 @@ export {
   normalizeChatUiMessageStream,
 } from "../chat/chat-ui-message-helpers.ts";
 export {
+  type HostedStreamPartForUiChunkMapping,
+  type HostedUiChunkMappingOptions,
+  mapHostedStreamPartToChatUiChunks,
+} from "../chat/hosted-ui-chunk-mapping.ts";
+export {
   expandAllowedRemoteToolNames,
   getProviderNativeToolNames,
   type ProviderNativeToolInventoryOptions,

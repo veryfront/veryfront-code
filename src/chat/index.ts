@@ -234,6 +234,11 @@ export {
   normalizeChatUiMessageChunk,
   normalizeChatUiMessageStream,
 } from "./chat-ui-message-helpers.ts";
+export {
+  type HostedStreamPartForUiChunkMapping,
+  type HostedUiChunkMappingOptions,
+  mapHostedStreamPartToChatUiChunks,
+} from "./hosted-ui-chunk-mapping.ts";
 
 export {
   useCompletion,
