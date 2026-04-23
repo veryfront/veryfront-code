@@ -183,6 +183,12 @@ export {
   type CreateAgUiRuntimeEventEncoderOptions,
 } from "./ag-ui-runtime-event-encoder.ts";
 export {
+  type AgUiRuntimeChatStreamEncoder,
+  type AgUiRuntimeChatStreamEncoderState,
+  createAgUiRuntimeChatStreamEncoder,
+  type CreateAgUiRuntimeChatStreamEncoderOptions,
+} from "./ag-ui-runtime-chat-stream-encoder.ts";
+export {
   type AgUiBrowserFinalizeTracker,
   createAgUiBrowserFinalizeTracker,
   type CreateAgUiBrowserFinalizeTrackerOptions,
