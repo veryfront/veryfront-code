@@ -20,6 +20,14 @@ import {
   createOpenAIRequestInit,
 } from "./runtime-loader/provider-request-init.ts";
 import { parseSseChunk } from "./runtime-loader/provider-sse.ts";
+import {
+  extractAnthropicUsage,
+  extractGoogleUsage,
+  extractOpenAIResponsesUsage,
+  extractOpenAIUsage,
+  mergeUsage,
+  type RuntimeUsage,
+} from "./runtime-loader/provider-usage.ts";
 import type { ProviderKind } from "./runtime-loader/provider-http.ts";
 import { requestJson, requestStream } from "./runtime-loader/provider-http.ts";
 import { readRecord } from "./runtime-loader/provider-records.ts";
@@ -589,65 +597,6 @@ function normalizeAnthropicFinishReason(
     default:
       return raw;
   }
-}
-
-type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-};
-
-function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
-  const cacheCreationInputTokens = usage.cache_creation_input_tokens;
-  const cacheReadInputTokens = usage.cache_read_input_tokens;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
-      ? (typeof inputTokens === "number" ? inputTokens : 0) +
-        (typeof outputTokens === "number" ? outputTokens : 0)
-      : undefined,
-    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
-    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
-  };
-}
-
-function mergeUsage(
-  current: RuntimeUsage | undefined,
-  next: RuntimeUsage | undefined,
-): RuntimeUsage | undefined {
-  if (!current) {
-    return next;
-  }
-
-  if (!next) {
-    return current;
-  }
-
-  const inputTokens = next.inputTokens ?? current.inputTokens;
-  const outputTokens = next.outputTokens ?? current.outputTokens;
-  const cacheCreationInputTokens = next.cacheCreationInputTokens ??
-    current.cacheCreationInputTokens;
-  const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
-    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
-  };
 }
 
 function normalizeAnthropicToolChoice(toolChoice: unknown): unknown {
@@ -1548,27 +1497,6 @@ function normalizeOpenAIFinishReason(
   return raw;
 }
 
-function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.prompt_tokens;
-  const outputTokens = usage.completion_tokens;
-  const totalTokens = usage.total_tokens;
-  const promptTokensDetails = readRecord(usage.prompt_tokens_details);
-  const cachedTokens = promptTokensDetails?.cached_tokens;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-  };
-}
-
 function extractOpenAIContentText(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -1809,28 +1737,6 @@ function normalizeGoogleFinishReason(
     default:
       return raw.toLowerCase();
   }
-}
-
-function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usageMetadata);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.promptTokenCount;
-  const outputTokens = usage.candidatesTokenCount;
-  const totalTokens = usage.totalTokenCount;
-  const cachedContentTokenCount = usage.cachedContentTokenCount;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedContentTokenCount === "number"
-      ? { cacheReadInputTokens: cachedContentTokenCount }
-      : {}),
-  };
 }
 
 function toGoogleContents(
@@ -2856,38 +2762,6 @@ function buildOpenAIResponsesRequest(
 
   Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
   return body;
-}
-
-/**
- * The Responses API uses `input_tokens` / `output_tokens` field names
- * instead of Chat Completions' `prompt_tokens` / `completion_tokens`.
- * It also nests cached input tokens under `input_tokens_details` and
- * exposes reasoning tokens via `output_tokens_details.reasoning_tokens`.
- */
-function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  // Streaming usage lives on response.completed inside `response.usage`;
-  // non-streaming has it at the top level.
-  const responseRecord = readRecord(record?.response);
-  const usage = readRecord(responseRecord?.usage) ?? readRecord(record?.usage);
-  if (!usage) return undefined;
-
-  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
-  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
-  const totalTokens = typeof usage.total_tokens === "number"
-    ? usage.total_tokens
-    : (inputTokens !== undefined || outputTokens !== undefined
-      ? (inputTokens ?? 0) + (outputTokens ?? 0)
-      : undefined);
-  const inputDetails = readRecord(usage.input_tokens_details);
-  const cachedTokens = inputDetails?.cached_tokens;
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-  };
 }
 
 function normalizeOpenAIResponsesFinishReason(
