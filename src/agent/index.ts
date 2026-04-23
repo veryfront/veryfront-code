@@ -358,6 +358,16 @@ export {
   runHostedChildLifecycle,
 } from "./hosted-child-lifecycle.ts";
 export {
+  appendHostedChildMirrorChunk,
+  closeHostedChildReasoningSegment,
+  closeHostedChildTextSegment,
+  type HostedChildChunkMirror,
+  type HostedChildMirrorPart,
+  type HostedChildMirrorState,
+  isAlreadyMirroredHostedChunk,
+  toMirroredHostedStreamPart,
+} from "./hosted-child-mirror.ts";
+export {
   type HostedLifecycleAdapter,
   type HostedLifecycleExecution,
   type HostedLifecycleRunnerOptions,
