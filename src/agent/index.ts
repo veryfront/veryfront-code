@@ -243,6 +243,13 @@ export {
   fetchConversationRecord,
 } from "./conversation-bootstrap.ts";
 export {
+  bootstrapHostedChildRun,
+  type BootstrapHostedChildRunInput,
+  type BootstrapHostedChildRunResult,
+  buildHostedChildConversationBody,
+  type HostedChildConversationBodyInput,
+} from "./hosted-child-bootstrap.ts";
+export {
   type ConversationChildLifecycleContext,
   type ConversationHostedLifecycleFinalizeInput,
   createConversationChildLifecycleAdapter,
