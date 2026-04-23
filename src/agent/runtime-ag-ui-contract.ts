@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
@@ -172,32 +173,8 @@ export async function parseAgUiRuntimeRequest(request: Request): Promise<AgUiRun
 export async function parseAgUiRuntimeRequestOrError(
   request: Request,
 ): Promise<AgUiRuntimeRequest | Response> {
-  try {
-    return await parseAgUiRuntimeRequest(request);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return Response.json(
-        {
-          error: "Invalid AG-UI runtime request",
-          details: error.issues.map((issue) => ({
-            path: issue.path,
-            message: issue.message,
-          })),
-        },
-        { status: 400 },
-      );
-    }
-
-    if (error instanceof SyntaxError || error instanceof TypeError) {
-      return Response.json(
-        {
-          error: "Invalid AG-UI runtime request",
-          details: [{ path: [], message: "Malformed JSON request body" }],
-        },
-        { status: 400 },
-      );
-    }
-
-    throw error;
-  }
+  return await parseAgUiJsonRequestOrError(
+    () => parseAgUiRuntimeRequest(request),
+    "Invalid AG-UI runtime request",
+  );
 }
