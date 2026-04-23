@@ -42,7 +42,7 @@ export interface GoogleRuntimeConfig {
   fetch?: typeof globalThis.fetch;
 }
 
-type RuntimePromptMessage =
+export type RuntimePromptMessage =
   | { role: "system"; content: string }
   | { role: "user"; content: Array<{ type: "text"; text: string }> }
   | {
@@ -397,11 +397,11 @@ type GoogleCompatibleRequest = {
   [key: string]: unknown;
 };
 
-function isNumberArray(value: unknown): value is number[] {
+export function isNumberArray(value: unknown): value is number[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "number");
 }
 
-function readRecord(value: unknown): Record<string, unknown> | undefined {
+export function readRecord(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
@@ -491,7 +491,7 @@ type WarningCollector = {
   drain(): ProviderWarning[];
 };
 
-function createWarningCollector(): WarningCollector {
+export function createWarningCollector(): WarningCollector {
   const list: ProviderWarning[] = [];
   return {
     push(warning) {
@@ -545,7 +545,7 @@ export class ProviderQuotaError extends ProviderError {}
 /** Non-retryable 4xx/5xx that doesn't fit another bucket. */
 export class ProviderRequestError extends ProviderError {}
 
-function parseRetryAfterMs(header: string | null): number | undefined {
+export function parseRetryAfterMs(header: string | null): number | undefined {
   if (!header) return undefined;
   const asNumber = Number(header);
   if (Number.isFinite(asNumber) && asNumber >= 0) {
@@ -566,7 +566,7 @@ function parseRetryAfterMs(header: string | null): number | undefined {
  * where HTTP status alone is ambiguous — notably OpenAI
  * `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429.
  */
-async function buildProviderError(
+export async function buildProviderError(
   provider: ProviderKind,
   response: Response,
 ): Promise<ProviderError> {
@@ -664,7 +664,7 @@ async function buildProviderError(
   });
 }
 
-async function requestJson(options: {
+export async function requestJson(options: {
   url: string;
   fetchImpl: typeof globalThis.fetch;
   init: RequestInit;
@@ -681,7 +681,7 @@ async function requestJson(options: {
   return response.json();
 }
 
-async function requestStream(options: {
+export async function requestStream(options: {
   url: string;
   fetchImpl: typeof globalThis.fetch;
   init: RequestInit;
@@ -707,7 +707,7 @@ async function requestStream(options: {
   return response.body;
 }
 
-function stringifyJsonValue(value: unknown): string {
+export function stringifyJsonValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
   }
@@ -715,7 +715,7 @@ function stringifyJsonValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function readTextParts(parts: Array<{ type: string; text?: string }>): string {
+export function readTextParts(parts: Array<{ type: string; text?: string }>): string {
   let text = "";
   for (const part of parts) {
     if (part.type === "text" && typeof part.text === "string") {
@@ -725,7 +725,7 @@ function readTextParts(parts: Array<{ type: string; text?: string }>): string {
   return text;
 }
 
-function toOpenAICompatibleMessages(prompt: RuntimePromptMessage[]): OpenAICompatibleChatMessage[] {
+export function toOpenAICompatibleMessages(prompt: RuntimePromptMessage[]): OpenAICompatibleChatMessage[] {
   const messages: OpenAICompatibleChatMessage[] = [];
 
   for (const message of prompt) {
@@ -785,7 +785,7 @@ function toOpenAICompatibleMessages(prompt: RuntimePromptMessage[]): OpenAICompa
   return messages;
 }
 
-function toOpenAICompatibleTools(
+export function toOpenAICompatibleTools(
   tools: RuntimeToolDefinition[] | undefined,
 ): OpenAICompatibleChatRequest["tools"] | undefined {
   if (!tools) {
@@ -808,7 +808,7 @@ function toOpenAICompatibleTools(
   return functions.length > 0 ? functions : undefined;
 }
 
-function readProviderOptions(
+export function readProviderOptions(
   providerOptions: Record<string, unknown> | undefined,
   ...providerNames: string[]
 ): Record<string, unknown> {
@@ -880,7 +880,7 @@ function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
   };
 }
 
-function mergeUsage(
+export function mergeUsage(
   current: RuntimeUsage | undefined,
   next: RuntimeUsage | undefined,
 ): RuntimeUsage | undefined {
