@@ -271,8 +271,10 @@ export {
   normalizeEncodedConversationRunEvents,
 } from "./conversation-run-events.ts";
 export {
+  prepareConversationRunChunkEvents,
   prepareConversationRunExternalEvents,
   prepareConversationRunStreamEvents,
+  toConversationRunStreamEvent,
 } from "./conversation-run-event-preparation.ts";
 export {
   type ConversationRunMirror,
