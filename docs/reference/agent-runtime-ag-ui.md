@@ -137,6 +137,10 @@ When a host wants one helper that combines browser-request defaults, chunk
 encoding, and finalize tracking into a canonical SSE response, use
 `createAgUiTrackedBrowserResponse()`.
 
+When a host already has runtime stream events and only needs browser encoder
+state plus `ToolCallResult` input enrichment, use
+`createAgUiRuntimeEventEncoder()`.
+
 When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
 final `AgentResponse` consumed by the browser encoder finalization path.

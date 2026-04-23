@@ -173,6 +173,11 @@ export {
   mapRuntimeStreamEventToAgUiBrowserEvents,
 } from "./ag-ui-browser-encoder.ts";
 export {
+  type AgUiRuntimeEventEncoder,
+  createAgUiRuntimeEventEncoder,
+  type CreateAgUiRuntimeEventEncoderOptions,
+} from "./ag-ui-runtime-event-encoder.ts";
+export {
   type AgUiBrowserFinalizeTracker,
   createAgUiBrowserFinalizeTracker,
   type CreateAgUiBrowserFinalizeTrackerOptions,
