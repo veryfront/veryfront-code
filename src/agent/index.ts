@@ -386,6 +386,13 @@ export type {
   ChildRunAuditToolResult,
 } from "../chat/protocol.ts";
 export {
+  buildChatStreamChunkMessageMetadata,
+  type BuildChatStreamChunkMessageMetadataInput,
+  extractChatMessageMetadata,
+  normalizeChatMessageMetadata,
+  normalizeChatUiMessageChunk,
+} from "../chat/chat-ui-message-helpers.ts";
+export {
   expandAllowedRemoteToolNames,
   getProviderNativeToolNames,
   type ProviderNativeToolInventoryOptions,
