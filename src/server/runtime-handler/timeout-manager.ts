@@ -62,17 +62,18 @@ export async function withRequestTimeout(
     }
 
     const error = e instanceof Error ? e : new Error(String(e));
+    // DIAGNOSTIC(#1205): write BEFORE logger.error (log-guard throws on console.error)
+    try {
+      const diagMsg = `[DIAG1205] Unhandled handler error path=${pathname} method=${method}\n` +
+        `  name=${error.name}\n  message=${error.message}\n  stack=${error.stack}\n`;
+      Deno.stderr.writeSync(new TextEncoder().encode(diagMsg));
+    } catch (_) { /* ignore */ }
     logger.error("Unhandled error in request handler", {
       path: pathname,
       method,
       error: error.message,
       stack: error.stack,
     });
-    // DIAGNOSTIC(#1205): surface full path + stack bypassing logger truncation
-    console.error(
-      `[DIAG] Unhandled handler error path=${pathname} method=${method}\n` +
-        `  name=${error.name}\n  message=${error.message}\n  stack=${error.stack}`,
-    );
     return {
       response: new Response(ErrorPages.serverError(), {
         status: 500,
