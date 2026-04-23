@@ -228,9 +228,11 @@ export {
 export {
   buildChatStreamChunkMessageMetadata,
   type BuildChatStreamChunkMessageMetadataInput,
+  dedupeChatUiMessageChunks,
   extractChatMessageMetadata,
   normalizeChatMessageMetadata,
   normalizeChatUiMessageChunk,
+  normalizeChatUiMessageStream,
 } from "./chat-ui-message-helpers.ts";
 
 export {
