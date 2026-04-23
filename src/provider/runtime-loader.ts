@@ -9,6 +9,12 @@ import {
   getOpenAIResponsesUrl,
 } from "./runtime-loader/provider-endpoints.ts";
 import {
+  extractGoogleEmbedding,
+  extractGoogleUsageTokens,
+  extractOpenAIEmbeddings,
+  extractOpenAIUsageTokens,
+} from "./runtime-loader/provider-embedding-responses.ts";
+import {
   createAnthropicRequestInit,
   createGoogleRequestInit,
   createOpenAIRequestInit,
@@ -406,66 +412,6 @@ type GoogleCompatibleRequest = {
   generationConfig?: Record<string, unknown>;
   [key: string]: unknown;
 };
-
-function isNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "number");
-}
-
-function extractOpenAIEmbeddings(payload: unknown): number[][] {
-  const record = readRecord(payload);
-  const data = record?.data;
-  if (!Array.isArray(data)) {
-    throw new Error("Invalid OpenAI embedding response: data array missing");
-  }
-
-  const embeddings: number[][] = [];
-
-  for (const item of data) {
-    const itemRecord = readRecord(item);
-    const embedding = itemRecord?.embedding;
-    if (!isNumberArray(embedding)) {
-      throw new Error("Invalid OpenAI embedding response: embedding vector missing");
-    }
-    embeddings.push(embedding);
-  }
-
-  return embeddings;
-}
-
-function extractOpenAIUsageTokens(payload: unknown): number | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  const totalTokens = usage?.total_tokens;
-  return typeof totalTokens === "number" ? totalTokens : undefined;
-}
-
-function extractGoogleEmbedding(payload: unknown): number[] {
-  const record = readRecord(payload);
-  const embeddings = record?.embeddings;
-
-  if (Array.isArray(embeddings) && embeddings.length > 0) {
-    const firstEmbedding = readRecord(embeddings[0]);
-    const values = firstEmbedding?.values;
-    if (isNumberArray(values)) {
-      return values;
-    }
-  }
-
-  const embedding = readRecord(record?.embedding);
-  const values = embedding?.values;
-  if (isNumberArray(values)) {
-    return values;
-  }
-
-  throw new Error("Invalid Google embedding response: embedding vector missing");
-}
-
-function extractGoogleUsageTokens(payload: unknown): number | undefined {
-  const record = readRecord(payload);
-  const usageMetadata = readRecord(record?.usageMetadata);
-  const promptTokenCount = usageMetadata?.promptTokenCount;
-  return typeof promptTokenCount === "number" ? promptTokenCount : undefined;
-}
 
 /**
  * Structured warning emitted when a provider runtime drops or rewrites a
