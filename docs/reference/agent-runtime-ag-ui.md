@@ -141,6 +141,10 @@ When a host already has runtime stream events and only needs browser encoder
 state plus `ToolCallResult` input enrichment, use
 `createAgUiRuntimeEventEncoder()`.
 
+When a host still has its own chunk type but no longer wants to keep separate
+chunk-bridge and finalize-metadata wiring, `createAgUiBrowserChunkEncoder()`
+combines chunk metadata tracking with runtime-event mapping in one helper.
+
 When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
 final `AgentResponse` consumed by the browser encoder finalization path.
