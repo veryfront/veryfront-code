@@ -137,6 +137,10 @@ When a host wants one helper that combines browser-request defaults, chunk
 encoding, and finalize tracking into a canonical SSE response, use
 `createAgUiTrackedBrowserResponse()`.
 
+When a host still receives runtime stream events but wants the framework to own
+the canonical `ChatStreamEvent` bridging logic for step/text/reasoning/tool/data
+events, use `createAgUiRuntimeChatStreamEncoder()`.
+
 When a host already has runtime stream events and only needs browser encoder
 state plus `ToolCallResult` input enrichment, use
 `createAgUiRuntimeEventEncoder()`.
