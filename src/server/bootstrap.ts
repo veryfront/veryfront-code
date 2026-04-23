@@ -3,6 +3,8 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { InvalidationProjectContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions } from "veryfront/extensions";
+import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import { createAIProviderRegistry } from "#veryfront/extensions/registries/ai-provider-registry.ts";
 import {
   getEnvironmentConfig,
   refreshEnvironmentConfig,
@@ -164,6 +166,7 @@ export async function bootstrap(
       projectDir,
       config,
       logger: bootstrapLog,
+      primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
     });
     return {
       adapter,
@@ -204,6 +207,7 @@ export async function bootstrap(
       projectDir,
       config,
       logger: bootstrapLog,
+      primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
     });
     return {
       adapter,
@@ -266,6 +270,7 @@ export async function bootstrap(
         projectDir,
         config,
         logger: bootstrapLog,
+        primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
       }),
     fsDispose,
   );
