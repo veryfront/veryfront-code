@@ -13,6 +13,13 @@ export interface BuildChatStreamChunkMessageMetadataInput {
   part: StreamChunkMetadataPart;
 }
 
+type ReplayState = {
+  content: string;
+  replayOffset: number | null;
+  started: boolean;
+  ended: boolean;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -34,6 +41,48 @@ function normalizeUsageMetadata(value: unknown): ChatMessageMetadata["usage"] | 
   };
 
   return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+function splitReplayDelta(
+  existing: string,
+  replayOffset: number,
+  delta: string,
+): { emit: string; nextReplayOffset: number | null } {
+  const remaining = existing.slice(replayOffset);
+
+  if (!remaining) {
+    return { emit: delta, nextReplayOffset: null };
+  }
+
+  if (delta === remaining.slice(0, delta.length)) {
+    return { emit: "", nextReplayOffset: replayOffset + delta.length };
+  }
+
+  if (delta.startsWith(remaining)) {
+    return { emit: delta.slice(remaining.length), nextReplayOffset: null };
+  }
+
+  if (remaining.startsWith(delta)) {
+    return { emit: "", nextReplayOffset: replayOffset + delta.length };
+  }
+
+  return { emit: delta, nextReplayOffset: null };
+}
+
+function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayState {
+  const existing = stateMap.get(id);
+  if (existing) {
+    return existing;
+  }
+
+  const created: ReplayState = {
+    content: "",
+    replayOffset: null,
+    started: false,
+    ended: false,
+  };
+  stateMap.set(id, created);
+  return created;
 }
 
 export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadata {
@@ -110,5 +159,74 @@ export function normalizeChatUiMessageChunk(
       };
     default:
       return chunk;
+  }
+}
+
+export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
+  stream: AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>,
+): AsyncIterable<ChatUiMessageChunk<TMessageMetadata>> {
+  const textStates = new Map<string, ReplayState>();
+  const reasoningStates = new Map<string, ReplayState>();
+
+  for await (const chunk of stream) {
+    if (chunk.type === "text-start" || chunk.type === "reasoning-start") {
+      const stateMap = chunk.type === "text-start" ? textStates : reasoningStates;
+      const state = getReplayState(stateMap, chunk.id);
+
+      if (state.started) {
+        state.replayOffset = 0;
+        state.ended = false;
+        continue;
+      }
+
+      state.started = true;
+      state.ended = false;
+      yield chunk;
+      continue;
+    }
+
+    if (chunk.type === "text-delta" || chunk.type === "reasoning-delta") {
+      const stateMap = chunk.type === "text-delta" ? textStates : reasoningStates;
+      const state = getReplayState(stateMap, chunk.id);
+      const { emit, nextReplayOffset } = state.replayOffset === null
+        ? { emit: chunk.delta, nextReplayOffset: null as number | null }
+        : splitReplayDelta(state.content, state.replayOffset, chunk.delta);
+
+      state.replayOffset = nextReplayOffset;
+      if (!emit) {
+        continue;
+      }
+
+      state.content += emit;
+      yield {
+        ...chunk,
+        delta: emit,
+      };
+      continue;
+    }
+
+    if (chunk.type === "text-end" || chunk.type === "reasoning-end") {
+      const stateMap = chunk.type === "text-end" ? textStates : reasoningStates;
+      const state = stateMap.get(chunk.id);
+
+      if (!state || state.ended) {
+        continue;
+      }
+
+      state.replayOffset = null;
+      state.ended = true;
+      yield chunk;
+      continue;
+    }
+
+    yield chunk;
+  }
+}
+
+export async function* normalizeChatUiMessageStream(
+  stream: AsyncIterable<ChatUiMessageChunk<unknown>>,
+): AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>> {
+  for await (const chunk of dedupeChatUiMessageChunks(stream)) {
+    yield normalizeChatUiMessageChunk(chunk);
   }
 }
