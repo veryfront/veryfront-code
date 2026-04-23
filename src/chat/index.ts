@@ -210,6 +210,15 @@ export {
   type UseChatResult,
 } from "#veryfront/agent/react/use-chat/index.ts";
 
+export type {
+  ChatMessageMetadata,
+  ChatMessageMetadataUsage,
+  ChatUiMessageChunk,
+  ChildRunAudit,
+  ChildRunAuditToolCall,
+  ChildRunAuditToolResult,
+} from "./protocol.ts";
+
 export {
   useAgent,
   type UseAgentOptions,

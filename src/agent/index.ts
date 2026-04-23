@@ -377,6 +377,14 @@ export {
   streamDataStreamEvents,
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
+export type {
+  ChatMessageMetadata,
+  ChatMessageMetadataUsage,
+  ChatUiMessageChunk,
+  ChildRunAudit,
+  ChildRunAuditToolCall,
+  ChildRunAuditToolResult,
+} from "../chat/protocol.ts";
 export {
   expandAllowedRemoteToolNames,
   getProviderNativeToolNames,
