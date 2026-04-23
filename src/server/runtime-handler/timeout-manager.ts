@@ -68,6 +68,11 @@ export async function withRequestTimeout(
       error: error.message,
       stack: error.stack,
     });
+    // DIAGNOSTIC(#1205): surface full path + stack bypassing logger truncation
+    console.error(
+      `[DIAG] Unhandled handler error path=${pathname} method=${method}\n` +
+        `  name=${error.name}\n  message=${error.message}\n  stack=${error.stack}`,
+    );
     return {
       response: new Response(ErrorPages.serverError(), {
         status: 500,

@@ -215,6 +215,14 @@ body::before {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
       });
+      // DIAGNOSTIC(#1205): full error bypassing logger truncation
+      console.error(
+        `[DIAG] CSS handler error\n  name=${
+          error instanceof Error ? error.name : "NonError"
+        }\n  message=${error instanceof Error ? error.message : String(error)}\n  stack=${
+          error instanceof Error ? error.stack : "(no stack)"
+        }`,
+      );
       const responseBuilder = this.createResponseBuilder(ctx).withCache("no-cache");
       const errorCSS = `/* StylesCSSHandler error: ${
         (error instanceof Error ? error.message : String(error)).replace(/\*\//g, "")
