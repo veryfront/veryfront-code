@@ -17,6 +17,16 @@ import type { Extension, ExtensionContext, ExtensionLogger, ResolvedExtension } 
 export class ExtensionLoader {
   private logger: ExtensionLogger;
   private setupOrder: ResolvedExtension[] = [];
+  private primed: Record<string, unknown> = {};
+
+  /**
+   * Register contracts that will be re-applied after each `setupAll()`
+   * teardown pass. Used by `orchestrateExtensions()` to seed infrastructure
+   * (e.g. `AIProviderRegistry`) before per-extension `setup()` runs.
+   */
+  primeContracts(contracts: Record<string, unknown>): void {
+    this.primed = { ...this.primed, ...contracts };
+  }
 
   constructor(logger: ExtensionLogger) {
     this.logger = logger;
@@ -153,6 +163,10 @@ export class ExtensionLoader {
     // Idempotent: teardownAll clears setupOrder and resets the contract
     // registry even when nothing is loaded yet.
     await this.teardownAll();
+
+    for (const [name, impl] of Object.entries(this.primed)) {
+      register(name, impl);
+    }
 
     // Check for contract conflicts before loading
     const conflicts = detectConflicts(extensions);
