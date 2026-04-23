@@ -226,6 +226,14 @@ export {
 } from "#veryfront/agent/react/use-agent.ts";
 
 export {
+  buildChatStreamChunkMessageMetadata,
+  type BuildChatStreamChunkMessageMetadataInput,
+  extractChatMessageMetadata,
+  normalizeChatMessageMetadata,
+  normalizeChatUiMessageChunk,
+} from "./chat-ui-message-helpers.ts";
+
+export {
   useCompletion,
   type UseCompletionOptions,
   type UseCompletionResult,
