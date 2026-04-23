@@ -15,6 +15,12 @@ import {
   extractOpenAIUsageTokens,
 } from "./runtime-loader/provider-embedding-responses.ts";
 import {
+  normalizeAnthropicFinishReason,
+  normalizeGoogleFinishReason,
+  normalizeOpenAIFinishReason,
+  normalizeOpenAIResponsesFinishReason,
+} from "./runtime-loader/provider-finish-reasons.ts";
+import {
   createAnthropicRequestInit,
   createGoogleRequestInit,
   createOpenAIRequestInit,
@@ -577,26 +583,6 @@ function readProviderOptions(
   }
 
   return merged;
-}
-
-function normalizeAnthropicFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  switch (raw) {
-    case "tool_use":
-      return { unified: "tool-calls", raw };
-    case "end_turn":
-    case "stop_sequence":
-      return { unified: "stop", raw };
-    case "max_tokens":
-      return { unified: "length", raw };
-    default:
-      return raw;
-  }
 }
 
 function normalizeAnthropicToolChoice(toolChoice: unknown): unknown {
@@ -1479,24 +1465,6 @@ async function* streamAnthropicCompatibleParts(
   };
 }
 
-function normalizeOpenAIFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  if (raw === "tool_calls") {
-    return { unified: "tool-calls", raw };
-  }
-
-  if (raw === "content_filter") {
-    return { unified: "content-filter", raw };
-  }
-
-  return raw;
-}
-
 function extractOpenAIContentText(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -1717,26 +1685,6 @@ function buildOpenAIChatRequest(
 
   Object.assign(body, providerOpts);
   return body;
-}
-
-function normalizeGoogleFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  switch (raw) {
-    case "STOP":
-      return { unified: "stop", raw };
-    case "MAX_TOKENS":
-      return { unified: "length", raw };
-    case "SAFETY":
-    case "RECITATION":
-      return { unified: "content-filter", raw };
-    default:
-      return raw.toLowerCase();
-  }
 }
 
 function toGoogleContents(
@@ -2762,24 +2710,6 @@ function buildOpenAIResponsesRequest(
 
   Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
   return body;
-}
-
-function normalizeOpenAIResponsesFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") return null;
-  switch (raw) {
-    case "completed":
-      return { unified: "stop", raw };
-    case "incomplete":
-      return { unified: "length", raw };
-    case "failed":
-      return { unified: "error", raw };
-    case "in_progress":
-      return null;
-    default:
-      return raw;
-  }
 }
 
 type OpenAIResponsesContentPart =
