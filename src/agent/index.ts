@@ -368,6 +368,13 @@ export {
   toMirroredHostedStreamPart,
 } from "./hosted-child-mirror.ts";
 export {
+  type HostedChildRunIdentifiers,
+  HostedChildTerminalStateError,
+  type HostedChildTerminalStatus,
+  monitorHostedChildRunStatus,
+  resolveHostedChildTerminalErrorCode,
+} from "./hosted-child-status.ts";
+export {
   type HostedLifecycleAdapter,
   type HostedLifecycleExecution,
   type HostedLifecycleRunnerOptions,
