@@ -6,11 +6,15 @@
  * @module extensions/integration.test
  */
 
-import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { detectConflicts, ExtensionLoader, resolve } from "./index.ts";
 import type { Extension, ResolvedExtension } from "./index.ts";
 import { register, reset } from "./contracts.ts";
+import { AIProviderRegistryName } from "./interfaces/index.ts";
+import type { AIProviderRegistry } from "./interfaces/index.ts";
+import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
+import extOpenAI from "../../extensions/ext-openai/src/index.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -157,5 +161,25 @@ describe("extensions/integration", () => {
     await loader.teardownAll();
 
     assertEquals(order, ["c", "b", "a"]);
+  });
+
+  it("ext-openai registers into the primed AIProviderRegistry", async () => {
+    const registry = createAIProviderRegistry();
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ [AIProviderRegistryName]: registry });
+    await loader.setupAll(
+      [
+        {
+          source: "local-file",
+          origin: "virtual://ext-openai",
+          extension: extOpenAI(),
+        } satisfies ResolvedExtension,
+      ],
+      {},
+    );
+    const resolved = resolve<AIProviderRegistry>(AIProviderRegistryName);
+    assertEquals(resolved, registry);
+    assert(registry.has("openai"));
+    await loader.teardownAll();
   });
 });
