@@ -211,15 +211,6 @@ body::before {
     } catch (error) {
       // Ensure the handler never throws — an uncaught error causes the route registry
       // to skip this handler silently and fall through to the 404 handler.
-      // DIAGNOSTIC(#1205): write BEFORE logger.error (log-guard throws on console.error)
-      try {
-        const diagMsg = `[DIAG1205] CSS handler error\n  name=${
-          error instanceof Error ? error.name : "NonError"
-        }\n  message=${error instanceof Error ? error.message : String(error)}\n  stack=${
-          error instanceof Error ? error.stack : "(no stack)"
-        }\n`;
-        Deno.stderr.writeSync(new TextEncoder().encode(diagMsg));
-      } catch (_) { /* ignore */ }
       logger.error("Unhandled error in CSS handler", {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined,
