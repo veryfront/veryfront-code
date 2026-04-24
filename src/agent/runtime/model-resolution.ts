@@ -10,6 +10,22 @@ import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 export const AUTO_AGENT_MODEL = "auto";
 
 const HOSTED_PROVIDER_NAMES = new Set(["anthropic", "google", "openai"]);
+const LEGACY_MODEL_ALIASES: Record<string, string> = {
+  opus: "anthropic/claude-opus-4-6",
+  sonnet: "anthropic/claude-sonnet-4-6",
+  haiku: "anthropic/claude-haiku-4-5-20251001",
+  "claude-opus-4-6": "anthropic/claude-opus-4-6",
+  "claude-sonnet-4-6": "anthropic/claude-sonnet-4-6",
+  "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4-5-20251001",
+  "gpt-5.2": "openai/gpt-5.2",
+  "gpt-5.4": "openai/gpt-5.2",
+  "gpt-5.4-mini": "openai/gpt-5.2",
+  "o3-pro": "openai/gpt-5.2",
+  "o4-mini": "openai/gpt-5.2",
+  "gemini-3.1-pro": "google-ai-studio/gemini-2.5-pro",
+  "gemini-2.5-pro": "google-ai-studio/gemini-2.5-pro",
+  "gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
+};
 
 export function normalizeAgentModelConfig(model?: string): string {
   const normalized = model?.trim();
@@ -18,7 +34,15 @@ export function normalizeAgentModelConfig(model?: string): string {
 
 export function resolveConfiguredAgentModel(model?: string): string {
   const normalized = normalizeAgentModelConfig(model);
-  return normalized === AUTO_AGENT_MODEL ? `local/${DEFAULT_LOCAL_MODEL}` : normalized;
+  if (normalized === AUTO_AGENT_MODEL) {
+    return `local/${DEFAULT_LOCAL_MODEL}`;
+  }
+
+  if (normalized.includes("/")) {
+    return normalized;
+  }
+
+  return LEGACY_MODEL_ALIASES[normalized] ?? normalized;
 }
 
 function hasDirectProviderCredentials(provider: string): boolean {
