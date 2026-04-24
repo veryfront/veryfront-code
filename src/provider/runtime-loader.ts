@@ -4,14 +4,10 @@ import {
   getGoogleEmbeddingUrl,
   getGoogleGenerateContentUrl,
   getGoogleStreamGenerateContentUrl,
-  getOpenAIChatCompletionsUrl,
-  getOpenAIEmbeddingUrl,
-  getOpenAIResponsesUrl,
 } from "./runtime-loader/provider-endpoints.ts";
 import {
   createAnthropicRequestInit,
   createGoogleRequestInit,
-  createOpenAIRequestInit,
 } from "./runtime-loader/provider-request-init.ts";
 import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,

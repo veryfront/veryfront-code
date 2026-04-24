@@ -5,8 +5,6 @@ import {
   createAnthropicModelRuntime,
   ProviderOverloadedError,
   ProviderQuotaError,
-  ProviderRateLimitError,
-  ProviderRequestError,
   withToolInputStatusTransitions,
 } from "./runtime-loader.ts";
 import { createRuntimeJsonSchema } from "../agent/runtime/runtime-tool-builder.ts";
