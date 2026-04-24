@@ -13,8 +13,11 @@ import { createRuntimeJsonSchema } from "../agent/runtime/runtime-tool-builder.t
 import {
   createGoogleEmbeddingRuntime,
   createGoogleModelRuntime,
-  createOpenAIModelRuntime,
 } from "./runtime-loader.ts";
+// createOpenAIModelRuntime has moved to ext-openai (PR 11, Task 14). Import
+// from the extension path so the shared "omits provider metadata" test still
+// exercises all three providers together.
+import { createOpenAIModelRuntime } from "../../extensions/ext-openai/src/openai-provider.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];

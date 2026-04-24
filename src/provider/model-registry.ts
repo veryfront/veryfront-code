@@ -35,7 +35,6 @@ import {
 import {
   createAnthropicModelRuntime,
   createGoogleModelRuntime,
-  createOpenAIModelRuntime,
 } from "./runtime-loader.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
@@ -103,12 +102,10 @@ function autoInitializeFromEnv(): void {
           baseURL: config.baseURL,
         });
       }
-      // Fallback: legacy direct-factory path. Reachable during the
-      // PR 11 → 14 migration window when ext-openai isn't installed.
-      return createOpenAIModelRuntime(
-        { apiKey: config.apiKey, baseURL: config.baseURL },
-        id,
-      );
+      throw toError(createError({
+        type: "config",
+        message: "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/* models.",
+      }));
     });
   }
 

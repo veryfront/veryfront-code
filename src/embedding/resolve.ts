@@ -3,7 +3,6 @@ import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/e
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
 import {
   createGoogleEmbeddingRuntime,
-  createOpenAIEmbeddingRuntime,
 } from "#veryfront/provider/runtime-loader.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
@@ -33,7 +32,7 @@ function autoInitializeFromEnv(): void {
   autoInitialized = true;
 
   if (!providers.has("openai")) {
-    providers.set("openai", (id) => {
+    providers.set("openai", (_id) => {
       const config = getOpenAIEnvConfig();
       if (!config.apiKey) {
         throw toError(
@@ -44,9 +43,11 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createOpenAIEmbeddingRuntime(
-        { apiKey: config.apiKey, baseURL: config.baseURL },
-        id,
+      throw toError(
+        createError({
+          type: "config",
+          message: "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/* embedding models.",
+        }),
       );
     });
   }

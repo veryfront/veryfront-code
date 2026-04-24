@@ -2,7 +2,6 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import {
   createAnthropicModelRuntime,
   createGoogleModelRuntime,
-  createOpenAIModelRuntime,
 } from "../runtime-loader.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
@@ -50,12 +49,9 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           fetch,
         });
       }
-      return createOpenAIModelRuntime({
-        apiKey: apiToken,
-        baseURL,
-        name: "veryfront-cloud",
-        fetch,
-      }, upstreamModelId);
+      throw new Error(
+        "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/moonshotai models via veryfront-cloud.",
+      );
     }
 
     default: {

@@ -1,11 +1,13 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
+// Error classes are shared plumbing — import from the shared barrel so this
+// test stays decoupled from core's runtime-loader internals.
 import {
   ProviderOverloadedError,
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
-} from "../../../src/provider/runtime-loader.ts";
+} from "veryfront/provider/shared";
 import {
   createOpenAIEmbeddingRuntime,
   createOpenAIModelRuntime,
