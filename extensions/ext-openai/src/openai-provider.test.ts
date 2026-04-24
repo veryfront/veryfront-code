@@ -33,7 +33,7 @@ function readRequestBody(init: RequestInit | undefined): string | null {
   return init.body;
 }
 
-function readRequestHeader(init: RequestInit | undefined, name: string): string | null {
+function _readRequestHeader(init: RequestInit | undefined, name: string): string | null {
   if (!init || !("headers" in init)) {
     return null;
   }
@@ -922,11 +922,6 @@ describe("openai-provider", () => {
   // ---------------------------------------------------------------------------
 
   describe("OpenAI request options (service_tier, parallelToolCalls, responseFormat)", () => {
-    const userPrompt = {
-      role: "user",
-      content: [{ type: "text", text: "Hi" }],
-    } as const;
-
     function okOpenAIResponse() {
       return new Response(
         JSON.stringify({
