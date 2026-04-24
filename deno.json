@@ -10,6 +10,7 @@
     "./extensions/ext-node-compat",
     "./extensions/ext-openai",
     "./extensions/ext-opentelemetry",
+    "./extensions/ext-esbuild",
     "./extensions/ext-redis",
     "./extensions/ext-tailwind"
   ],
