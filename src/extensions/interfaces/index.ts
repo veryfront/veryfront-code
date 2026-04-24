@@ -18,6 +18,9 @@ export type {
   TransformResult,
 } from "./bundler.ts";
 
+// Module lexer
+export type { ImportSpecifier, ModuleLexer } from "./module-lexer.ts";
+
 // Cache store
 export type { CacheStore } from "./cache-store.ts";
 
