@@ -58,6 +58,21 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
+  it("upgrades legacy bare model ids to provider/model strings", () => {
+    assertEquals(
+      resolveConfiguredAgentModel("claude-opus-4-6"),
+      "anthropic/claude-opus-4-6",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("opus"),
+      "anthropic/claude-opus-4-6",
+    );
+    assertEquals(
+      resolveConfiguredAgentModel("gpt-5.2"),
+      "openai/gpt-5.2",
+    );
+  });
+
   it("upgrades auto/local models to the default Veryfront cloud model when bootstrap is present", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
