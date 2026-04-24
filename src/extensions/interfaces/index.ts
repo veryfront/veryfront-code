@@ -50,11 +50,7 @@ export type {
 export type { SpanData, TracingExporter } from "./tracing-exporter.ts";
 
 // AI provider (registry + per-provider contract)
-export type {
-  AIProvider,
-  AIProviderConfig,
-  AIProviderRegistry,
-} from "./ai-provider.ts";
+export type { AIProvider, AIProviderConfig, AIProviderRegistry } from "./ai-provider.ts";
 export { AIProviderRegistryName } from "./ai-provider.ts";
 
 // Embedding provider

@@ -8,10 +8,7 @@ import {
   withToolInputStatusTransitions,
 } from "./runtime-loader.ts";
 import { createRuntimeJsonSchema } from "../agent/runtime/runtime-tool-builder.ts";
-import {
-  createGoogleEmbeddingRuntime,
-  createGoogleModelRuntime,
-} from "./runtime-loader.ts";
+import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "./runtime-loader.ts";
 // createOpenAIModelRuntime has moved to ext-openai (PR 11, Task 14). Import
 // from the extension path so the shared "omits provider metadata" test still
 // exercises all three providers together.
@@ -183,7 +180,6 @@ describe("provider/runtime-loader", () => {
       delta: ', "content":"# AI Ontologies"',
     });
   });
-
 
   it("creates an Anthropic-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
@@ -1417,7 +1413,6 @@ describe("provider/runtime-loader", () => {
     ]);
   });
 
-
   it("creates a Google embedding runtime without SDK helpers", async () => {
     const requests: Array<{ url: string; body: string | null; apiKey: string | null }> = [];
 
@@ -1781,7 +1776,6 @@ describe("provider/runtime-loader", () => {
       return { runtime, getBody: () => capturedBody };
     }
 
-
     function createGoogleCaptureRuntime(modelId = "gemini-2.5-pro") {
       let capturedBody: Record<string, unknown> | null = null;
       const runtime = createGoogleModelRuntime({
@@ -1900,7 +1894,6 @@ describe("provider/runtime-loader", () => {
       const body = getBody() as Record<string, unknown>;
       assertEquals("thinking" in body, false);
     });
-
 
     it("emits Google thinkingConfig when reasoning is enabled", async () => {
       const { runtime, getBody } = createGoogleCaptureRuntime();
@@ -2120,7 +2113,6 @@ describe("provider/runtime-loader", () => {
       });
     });
 
-
     it("surfaces Google cachedContentTokenCount as cacheReadInputTokens", async () => {
       const runtime = createGoogleModelRuntime({
         apiKey: "test-google-key",
@@ -2236,7 +2228,6 @@ describe("provider/runtime-loader", () => {
       assertEquals(err.retryable, true);
     });
 
-
     it("classifies Google 503 as ProviderOverloadedError (retryable)", async () => {
       const runtime = createGoogleModelRuntime({
         apiKey: "k",
@@ -2269,7 +2260,6 @@ describe("provider/runtime-loader", () => {
       );
       assertEquals(err.retryable, false);
     });
-
 
     it("classifies stream-mode 529 the same as JSON-mode", async () => {
       const runtime = createAnthropicModelRuntime({
@@ -2526,7 +2516,6 @@ describe("provider/runtime-loader", () => {
       assertEquals("user" in (openaiBody ?? {}), false);
       assertEquals("labels" in (googleBody ?? {}), false);
     });
-
   });
 
   describe("Anthropic provider tool version aliasing", () => {
@@ -3316,7 +3305,6 @@ describe("provider/runtime-loader", () => {
       assertEquals("cachedContent" in (captured ?? {}), false);
     });
 
-
     it("warns and omits response_format on Anthropic when responseFormat is structured", async () => {
       let captured: Record<string, unknown> | null = null;
       const runtime = createAnthropicModelRuntime({
@@ -3411,5 +3399,4 @@ describe("provider/runtime-loader", () => {
       });
     });
   });
-
 });

@@ -629,7 +629,9 @@ export function readTextParts(parts: Array<{ type: string; text?: string }>): st
   return text;
 }
 
-export function toOpenAICompatibleMessages(prompt: RuntimePromptMessage[]): OpenAICompatibleChatMessage[] {
+export function toOpenAICompatibleMessages(
+  prompt: RuntimePromptMessage[],
+): OpenAICompatibleChatMessage[] {
   const messages: OpenAICompatibleChatMessage[] = [];
 
   for (const message of prompt) {

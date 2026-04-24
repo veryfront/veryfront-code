@@ -32,10 +32,7 @@ import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
-import {
-  createAnthropicModelRuntime,
-  createGoogleModelRuntime,
-} from "./runtime-loader.ts";
+import { createAnthropicModelRuntime, createGoogleModelRuntime } from "./runtime-loader.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
 import type { ModelRuntime } from "./types.ts";
