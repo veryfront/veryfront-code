@@ -15,8 +15,8 @@
  * A single import specifier position record, matching the shape produced by
  * `es-module-lexer`.
  */
-export type ImportSpecifier = {
-  /** The module specifier (e.g., "react"); `undefined` for dynamic import with expression. */
+export interface ImportSpecifier {
+  /** Module specifier (e.g. "react"). Undefined when the specifier cannot be statically resolved (dynamic import with non-literal expression, or import.meta). */
   n: string | undefined;
   /** Start of module specifier. */
   s: number;
@@ -26,11 +26,11 @@ export type ImportSpecifier = {
   ss: number;
   /** End of import statement. */
   se: number;
-  /** `> -1` if dynamic import. */
+  /** Index of the dynamic import token in the source; -1 for static imports, -2 for import.meta. */
   d: number;
-  /** Import attribute index. */
+  /** Start position of the import attributes (with/assert) block in the source; -1 if none. */
   a: number;
-};
+}
 
 /**
  * Module lexer contract interface.

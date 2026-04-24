@@ -20,6 +20,14 @@ describe("extensions/interfaces/module-lexer", () => {
     assertEquals(result.length, 0);
   });
 
+  it("init is optional on the interface", () => {
+    const lexerWithoutInit: ModuleLexer = {
+      parse: () => [],
+    };
+    // If init were required, this const declaration would fail typecheck.
+    assertEquals(lexerWithoutInit.init, undefined);
+  });
+
   it("allows an implementation with optional init()", async () => {
     let initialized = false;
     const stub: ModuleLexer = {
