@@ -55,4 +55,8 @@ export {
   toOpenAICompatibleTools,
 } from "../runtime-loader.ts";
 
-export type { RuntimePromptMessage } from "../runtime-loader.ts";
+export type {
+  OpenAICompatibleChatMessage,
+  OpenAICompatibleChatRequest,
+  RuntimePromptMessage,
+} from "../runtime-loader.ts";

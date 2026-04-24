@@ -36,7 +36,7 @@ import {
   toOpenAICompatibleTools,
   withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
-import type { RuntimePromptMessage } from "veryfront/provider/shared";
+import type { OpenAICompatibleChatRequest, RuntimePromptMessage } from "veryfront/provider/shared";
 
 // Re-export error classes so extension tests can import from this module.
 export {
@@ -70,54 +70,6 @@ type ProviderReasoningOption = {
   enabled?: boolean;
   effort?: ProviderReasoningEffort;
   budgetTokens?: number;
-};
-
-type OpenAICompatibleChatMessage =
-  | { role: "system"; content: string }
-  | { role: "user"; content: string }
-  | {
-    role: "assistant";
-    content: string | null;
-    tool_calls?: Array<{
-      id: string;
-      type: "function";
-      function: {
-        name: string;
-        arguments: string;
-      };
-    }>;
-  }
-  | {
-    role: "tool";
-    tool_call_id: string;
-    content: string;
-  };
-
-type OpenAICompatibleChatRequest = {
-  model: string;
-  messages: OpenAICompatibleChatMessage[];
-  stream?: boolean;
-  stream_options?: {
-    include_usage?: boolean;
-  };
-  max_tokens?: number;
-  max_completion_tokens?: number;
-  temperature?: number;
-  top_p?: number;
-  stop?: string[];
-  tools?: Array<{
-    type: "function";
-    function: {
-      name: string;
-      parameters: unknown;
-      description?: string;
-    };
-  }>;
-  tool_choice?: unknown;
-  seed?: number;
-  presence_penalty?: number;
-  frequency_penalty?: number;
-  [key: string]: unknown;
 };
 
 type OpenAICompatibleChoice = {
