@@ -210,8 +210,27 @@ function extractUserToken(cookieHeader: string): string | undefined {
 }
 
 function parseStatusFromError(error: unknown): number | null {
+  if (error && typeof error === "object") {
+    const detail = (error as { detail?: unknown }).detail;
+    if (typeof detail === "string") {
+      const detailMatch = detail.match(/failed: (\d+)/i);
+      if (detailMatch) return Number(detailMatch[1]);
+    }
+
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause && cause !== error) {
+      const causeStatus = parseStatusFromError(cause);
+      if (causeStatus !== null) return causeStatus;
+    }
+
+    const directStatus = (error as { status?: unknown }).status;
+    if (typeof directStatus === "number" && Number.isFinite(directStatus) && directStatus >= 400) {
+      return directStatus;
+    }
+  }
+
   const message = error instanceof Error ? error.message : String(error);
-  const match = message.match(/failed: (\d+)/);
+  const match = message.match(/failed: (\d+)/i);
   return match ? Number(match[1]) : null;
 }
 
@@ -445,10 +464,22 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           token = await tokenManager.getToken(scope, projectSlug, customDomain);
         } catch (error) {
           tokenFetchError = error;
-          logger?.error(options.tokenFetchErrorMessage, error as Error, {
-            projectSlug,
-            customDomain,
-          });
+          const status = parseStatusFromError(error);
+          const isExpectedMissingCustomDomain = !!customDomain &&
+            (status === 400 || status === 404);
+
+          if (isExpectedMissingCustomDomain) {
+            logger?.info("Custom domain token lookup returned no project", {
+              projectSlug,
+              customDomain,
+              status,
+            });
+          } else {
+            logger?.error(options.tokenFetchErrorMessage, error as Error, {
+              projectSlug,
+              customDomain,
+            });
+          }
         }
       }
     }
@@ -647,7 +678,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);
         if (!lookupResult) {
-          logger?.error("Custom domain not found", undefined, { domain: host });
+          logger?.info("Custom domain lookup returned no project", { domain: host });
           return makeErrorContext(base, 404, `No project configured for domain: ${host}`, token);
         }
 

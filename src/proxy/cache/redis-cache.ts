@@ -36,6 +36,11 @@ export class RedisCache implements TokenCache {
     return `${this.prefix}${k}`;
   }
 
+  private isTransientClientError(error: unknown): boolean {
+    if (!(error instanceof Error)) return false;
+    return error.message === "Socket closed unexpectedly";
+  }
+
   async get(key: string): Promise<TokenCacheEntry | null> {
     return withSpan(
       "cache.redis.get",
@@ -220,36 +225,47 @@ export class RedisCache implements TokenCache {
     return withSpan("cache.redis.connect", async () => {
       if (this.connected && this.client) return;
 
-      // deno-lint-ignore no-explicit-any
-      const clientOpts: Record<string, any> = {
-        url: this.url,
-        socket: {
-          connectTimeout: this.connectTimeout,
-          tls: this.tls || undefined,
-          reconnectStrategy: (retries: number) => {
-            if (retries > MAX_RECONNECT_RETRIES) {
-              return new Error("Max reconnection attempts reached");
-            }
-            return Math.min(retries * RECONNECT_BACKOFF_BASE_MS, RECONNECT_BACKOFF_MAX_MS);
-          },
-        },
-      };
-      if (this.password) clientOpts.password = this.password;
-      if (this.username) clientOpts.username = this.username;
-
-      const client = createClient(clientOpts);
+      const client = this.createRedisClient();
 
       client.on("error", (err) => {
-        logger.error("[RedisCache] Client error", {
+        const context = {
           error: err instanceof Error ? err.message : String(err),
-        });
+        };
+
+        if (this.isTransientClientError(err)) {
+          logger.warn("[RedisCache] Client connection dropped; reconnecting", context);
+        } else {
+          logger.error("[RedisCache] Client error", context);
+        }
+
         this.connected = false;
       });
 
-      this.client = client as RedisClientType;
+      this.client = client;
       await client.connect();
       this.connected = true;
       logger.info("[RedisCache] Connected");
     });
+  }
+
+  protected createRedisClient(): RedisClientType {
+    // deno-lint-ignore no-explicit-any
+    const clientOpts: Record<string, any> = {
+      url: this.url,
+      socket: {
+        connectTimeout: this.connectTimeout,
+        tls: this.tls || undefined,
+        reconnectStrategy: (retries: number) => {
+          if (retries > MAX_RECONNECT_RETRIES) {
+            return new Error("Max reconnection attempts reached");
+          }
+          return Math.min(retries * RECONNECT_BACKOFF_BASE_MS, RECONNECT_BACKOFF_MAX_MS);
+        },
+      },
+    };
+    if (this.password) clientOpts.password = this.password;
+    if (this.username) clientOpts.username = this.username;
+
+    return createClient(clientOpts) as RedisClientType;
   }
 }

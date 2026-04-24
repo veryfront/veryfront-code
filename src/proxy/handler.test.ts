@@ -69,7 +69,11 @@ async function createRs256Jwt(userId: string): Promise<{
   };
 }
 
-function createHandler(port: number, apiBasePath = "") {
+function createHandler(
+  port: number,
+  apiBasePath = "",
+  logger?: Parameters<typeof createProxyHandler>[0]["logger"],
+) {
   return createProxyHandler({
     config: {
       apiBaseUrl: `http://127.0.0.1:${port}${apiBasePath}`,
@@ -78,6 +82,7 @@ function createHandler(port: number, apiBasePath = "") {
       previewApiClientId: "test-client",
       previewApiClientSecret: "test-secret",
     },
+    logger,
   });
 }
 
@@ -168,8 +173,16 @@ describe("Proxy Handler", () => {
         return createNotFoundResponse();
       });
 
+      const infoLogs: Array<{ msg: string; extra?: Record<string, unknown> }> = [];
+      const errorLogs: Array<{ msg: string; error?: Error; extra?: Record<string, unknown> }> = [];
+
       try {
-        const handler = createHandler(port);
+        const handler = createHandler(port, "", {
+          debug: () => {},
+          info: (msg, extra) => infoLogs.push({ msg, extra }),
+          warn: () => {},
+          error: (msg, error, extra) => errorLogs.push({ msg, error, extra }),
+        });
 
         const req = new Request("http://studio.veryfront.com/page", {
           headers: { host: "studio.veryfront.com" },
@@ -183,6 +196,111 @@ describe("Proxy Handler", () => {
           ctx.error?.message,
           "No project configured for domain: studio.veryfront.com",
         );
+        assertEquals(
+          infoLogs.some((entry) => entry.msg === "Custom domain token lookup returned no project"),
+          true,
+        );
+        assertEquals(errorLogs.some((entry) => entry.msg === "Token fetch failed"), false);
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("keeps missing custom-domain token lookups at info level after negative caching", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response('{"error":"Project not found for domain"}', { status: 400 });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      const infoLogs: Array<{ msg: string; extra?: Record<string, unknown> }> = [];
+      const errorLogs: Array<{ msg: string; error?: Error; extra?: Record<string, unknown> }> = [];
+
+      try {
+        const handler = createHandler(port, "", {
+          debug: () => {},
+          info: (msg, extra) => infoLogs.push({ msg, extra }),
+          warn: () => {},
+          error: (msg, error, extra) => errorLogs.push({ msg, error, extra }),
+        });
+
+        const req = new Request("http://builder.veryfront.com/page", {
+          headers: { host: "builder.veryfront.com" },
+        });
+
+        const first = await handler.processRequest(req);
+        const second = await handler.processRequest(req);
+
+        assertEquals(first.error?.status, 404);
+        assertEquals(second.error?.status, 404);
+        assertEquals(
+          errorLogs.some((entry) =>
+            entry.msg === "Token fetch failed" ||
+            entry.msg === "Cannot process custom domain without token"
+          ),
+          false,
+        );
+        assertEquals(
+          infoLogs.filter((entry) => entry.msg === "Custom domain token lookup returned no project")
+            .length,
+          2,
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("keeps missing custom-domain API lookups at info level", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return createTokenResponse();
+        }
+
+        if (pathname.startsWith("/projects/")) {
+          return createNotFoundResponse();
+        }
+
+        return createNotFoundResponse();
+      });
+
+      const infoLogs: Array<{ msg: string; extra?: Record<string, unknown> }> = [];
+      const errorLogs: Array<{ msg: string; error?: Error; extra?: Record<string, unknown> }> = [];
+
+      try {
+        const handler = createHandler(port, "", {
+          debug: () => {},
+          info: (msg, extra) => infoLogs.push({ msg, extra }),
+          warn: () => {},
+          error: (msg, error, extra) => errorLogs.push({ msg, error, extra }),
+        });
+
+        const req = new Request("http://studio.veryfront.com/page", {
+          headers: { host: "studio.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.projectSlug, undefined);
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(
+          ctx.error?.message,
+          "No project configured for domain: studio.veryfront.com",
+        );
+        assertEquals(
+          infoLogs.some((entry) => entry.msg === "Custom domain lookup returned no project"),
+          true,
+        );
+        assertEquals(errorLogs.some((entry) => entry.msg === "Custom domain not found"), false);
 
         await handler.close();
       } finally {
