@@ -19,6 +19,9 @@ import {
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
+import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
@@ -92,6 +95,16 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const provider = registry?.get("openai");
+      if (provider) {
+        return provider.createModel(id, {
+          credential: config.apiKey,
+          baseURL: config.baseURL,
+        });
+      }
+      // Fallback: legacy direct-factory path. Reachable during the
+      // PR 11 → 14 migration window when ext-openai isn't installed.
       return createOpenAIModelRuntime(
         { apiKey: config.apiKey, baseURL: config.baseURL },
         id,
