@@ -210,11 +210,35 @@ export {
   type UseChatResult,
 } from "#veryfront/agent/react/use-chat/index.ts";
 
+export type {
+  ChatMessageMetadata,
+  ChatMessageMetadataUsage,
+  ChatUiMessageChunk,
+  ChildRunAudit,
+  ChildRunAuditToolCall,
+  ChildRunAuditToolResult,
+} from "./protocol.ts";
+
 export {
   useAgent,
   type UseAgentOptions,
   type UseAgentResult,
 } from "#veryfront/agent/react/use-agent.ts";
+
+export {
+  buildChatStreamChunkMessageMetadata,
+  type BuildChatStreamChunkMessageMetadataInput,
+  dedupeChatUiMessageChunks,
+  extractChatMessageMetadata,
+  normalizeChatMessageMetadata,
+  normalizeChatUiMessageChunk,
+  normalizeChatUiMessageStream,
+} from "./chat-ui-message-helpers.ts";
+export {
+  type HostedStreamPartForUiChunkMapping,
+  type HostedUiChunkMappingOptions,
+  mapHostedStreamPartToChatUiChunks,
+} from "./hosted-ui-chunk-mapping.ts";
 
 export {
   useCompletion,

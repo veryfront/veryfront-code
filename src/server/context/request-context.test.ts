@@ -51,13 +51,13 @@ describe("createRequestContext", () => {
       assertEquals(ctx.mode, "preview");
     });
 
-    it("returns preview mode when x-environment header is preview", () => {
+    it("does NOT honor x-environment: preview header on a production host (VULN-SRV-1/2)", () => {
       const req = makeRequest("https://127.0.0.1/page", {
         host: "example.com",
         "x-environment": "preview",
       });
       const ctx = createRequestContext(req);
-      assertEquals(ctx.mode, "preview");
+      assertEquals(ctx.mode, "production");
     });
 
     it("returns preview mode via .preview. in veryfront.org domain", () => {
@@ -75,6 +75,87 @@ describe("createRequestContext", () => {
       });
       const ctx = createRequestContext(req);
       assertEquals(ctx.mode, "production");
+    });
+
+    it("ignores unknown x-environment header values on a production host", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "example.com",
+        "x-environment": "staging",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "production");
+    });
+
+    it("ignores empty x-environment header values on a production host", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "example.com",
+        "x-environment": "",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "production");
+    });
+
+    it("does NOT flip mode on upper-case x-environment: PREVIEW", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "example.com",
+        "x-environment": "PREVIEW",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "production");
+    });
+
+    it("does NOT flip mode on mixed-case x-environment: Preview", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "example.com",
+        "x-environment": "Preview",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "production");
+    });
+
+    it("does NOT flip mode on URL-encoded x-environment header (documents Request behavior)", () => {
+      // Deno's Request does not auto-decode header values; we never decode either.
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "example.com",
+        "x-environment": "%70review",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "production");
+    });
+
+    it("hostname wins: .preview. host + x-environment: production still yields preview", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "my-app.preview.veryfront.com",
+        "x-environment": "production",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "preview");
+    });
+
+    it("hostname wins: .preview. host + x-environment: preview stays preview", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "my-app.preview.veryfront.com",
+        "x-environment": "preview",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "preview");
+    });
+
+    it("IPv4 host without .preview. stays production even with x-environment: preview", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: "127.0.0.1",
+        "x-environment": "preview",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "production");
+    });
+
+    it("custom domain containing '.preview.' substring is treated as preview (host-derived)", () => {
+      const req = makeRequest("https://127.0.0.1/page", {
+        host: ".preview.example.local",
+      });
+      const ctx = createRequestContext(req);
+      assertEquals(ctx.mode, "preview");
     });
   });
 

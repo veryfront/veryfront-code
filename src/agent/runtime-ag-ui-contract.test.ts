@@ -2,6 +2,7 @@ import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AgUiRuntimeRequestSchema,
+  normalizeAgUiBrowserRuntimeRequest,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "./index.ts";
@@ -73,6 +74,33 @@ describe("agent/runtime-ag-ui-contract", () => {
 
     assertEquals(parsed.runId, "run_1");
     assertEquals(parsed.messages.length, 1);
+  });
+
+  it("normalizes runtime browser request defaults without leaking non-object state", () => {
+    const normalized = normalizeAgUiBrowserRuntimeRequest(
+      AgUiRuntimeRequestSchema.parse({
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        state: "not-an-object",
+        messages: [
+          {
+            id: "user_1",
+            role: "user",
+            content: "Hello",
+          },
+        ],
+        context: [],
+        tools: [],
+      }),
+      {
+        threadId: crypto.randomUUID(),
+        runId: "run_override",
+      },
+    );
+
+    assertEquals(normalized.runId, "run_override");
+    assertEquals(Array.isArray(normalized.messages), true);
+    assertEquals("state" in normalized, false);
   });
 
   it("returns a 400 response for malformed runtime AG-UI JSON bodies", async () => {

@@ -141,6 +141,11 @@ describe("request-utils", () => {
       assertEquals(shouldSkipEnrichedContext("/internal/agents/list"), true);
     });
 
+    it("returns true for public control-plane agent routes", () => {
+      assertEquals(shouldSkipEnrichedContext("/api/control-plane/agents/list"), true);
+      assertEquals(shouldSkipEnrichedContext("/api/control-plane/agents/runs/run_1"), true);
+    });
+
     it("returns false for render routes", () => {
       assertEquals(shouldSkipEnrichedContext("/"), false);
       assertEquals(shouldSkipEnrichedContext("/bench/interactive"), false);

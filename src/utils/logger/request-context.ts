@@ -16,6 +16,8 @@ export interface RequestContext {
   projectSlug?: string;
   projectId?: string;
   domain?: string;
+  userId?: string;
+  conversationId?: string;
 }
 
 export const requestContextStore = new AsyncLocalStorage<RequestContext>();

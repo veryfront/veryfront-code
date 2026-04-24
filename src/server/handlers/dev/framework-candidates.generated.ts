@@ -5310,6 +5310,7 @@ export const FRAMEWORK_CANDIDATES: readonly string[] = [
   "veryfront/testing/assert.ts",
   "veryfront/testing/bdd",
   "veryfront/testing/bdd.ts",
+  "veryfront/utils/clsx.ts",
   "veryfront/utils/html-escape.ts",
   "vf-color-mode",
   "vf-head-style{color:red}",

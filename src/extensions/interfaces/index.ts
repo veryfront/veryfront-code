@@ -50,7 +50,7 @@ export type {
 } from "./auth-provider.ts";
 
 // Tracing exporter
-export type { SpanData, TracingExporter } from "./tracing-exporter.ts";
+export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
 
 // AI model provider
 export type {
@@ -88,4 +88,9 @@ export type {
 } from "./schema-validator.ts";
 
 // Node compatibility
-export type { NodeCompat } from "./node-compat.ts";
+export type {
+  KreuzbergExtractor,
+  NodeCompat,
+  NodeCompatSqliteDatabase,
+  SqliteStatement,
+} from "./node-compat.ts";

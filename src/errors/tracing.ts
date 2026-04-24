@@ -4,8 +4,8 @@
  * Attaches error metadata to spans for distributed tracing and error correlation.
  */
 
-import type { Span } from "@opentelemetry/api";
-import { SpanStatusCode } from "@opentelemetry/api";
+import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
+import { SpanStatusCode } from "#veryfront/observability/tracing/api-shim.ts";
 import type { VeryfrontError } from "./types.ts";
 
 /**
@@ -27,7 +27,7 @@ import type { VeryfrontError } from "./types.ts";
  *
  * @example
  * ```typescript
- * import { trace } from "@opentelemetry/api";
+ * import { trace } from "#veryfront/observability/tracing/api-shim.ts";
  *
  * const span = trace.getActiveSpan();
  * if (span) {
@@ -68,7 +68,7 @@ export function attachErrorToSpan(error: VeryfrontError, span: Span): void {
  *
  * @example
  * ```typescript
- * import { trace } from "@opentelemetry/api";
+ * import { trace } from "#veryfront/observability/tracing/api-shim.ts";
  *
  * try {
  *   // ... operation that may throw

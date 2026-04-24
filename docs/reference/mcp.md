@@ -14,12 +14,12 @@ This is the application-facing MCP surface. It is separate from the internal AG-
 
 ```ts
 import {
+  clearMCPRegistry,
   createMCPServer,
-  registerTool,
+  getMCPRegistry,
   registerPrompt,
   registerResource,
-  clearMCPRegistry,
-  getMCPRegistry,
+  registerTool,
 } from "veryfront/mcp";
 ```
 
@@ -38,8 +38,13 @@ tool({
   execute: async ({ query }) => ({ results: [] }),
 });
 
-// Create the app-facing MCP server and mount its HTTP handler
-const server = createMCPServer({ enabled: true });
+// Create the app-facing MCP server and mount its HTTP handler.
+// `auth` is required — pick a real auth strategy for production, or use the
+// explicit `{ type: "none", allowUnauthenticated: true }` opt-in for local dev.
+const server = createMCPServer({
+  enabled: true,
+  auth: { type: "none", allowUnauthenticated: true },
+});
 const handler = server.createHTTPHandler();
 ```
 
@@ -64,41 +69,41 @@ after `initialize`, and handles `POST`, `DELETE`, and `OPTIONS` requests.
 
 Current config shape:
 
-| Property | Type | Description |
-|------|-------------|-------------|
-| `enabled` | `boolean` | Enable the MCP server surface |
-| `port?` | `number` | Optional port for hosted/runtime wiring |
-| `auth?` | `{ type: "bearer" \| "api-key" \| "none"; validate?: Function }` | Optional request authentication |
-| `cors?` | `{ enabled: boolean; origins?: string[] }` | Optional CORS configuration |
+| Property  | Type                                                                                      | Description                                                                                                                                               |
+| --------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled` | `boolean`                                                                                 | Enable the MCP server surface                                                                                                                             |
+| `port?`   | `number`                                                                                  | Optional port for hosted/runtime wiring                                                                                                                   |
+| `auth`    | `{ type: "bearer"; validate?: Function } \| { type: "none"; allowUnauthenticated: true }` | **Required.** Request authentication. Use `{ type: "none", allowUnauthenticated: true }` only for local dev — the server fails closed when auth is unset. |
+| `cors?`   | `{ enabled: boolean; origins?: string[] }`                                                | Optional CORS configuration                                                                                                                               |
 
 ## Exports
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `clearMCPRegistry` | Clear all registries |
-| `createMCPServer` | Create MCP server |
-| `getMCPRegistry` | Get tool/prompt/resource registry |
-| `getMCPStats` | Get registered capability stats |
-| `registerPrompt` | Register prompt with MCP |
-| `registerResource` | Register resource with MCP |
-| `registerTool` | Register tool with MCP |
+| Name               | Description                       |
+| ------------------ | --------------------------------- |
+| `clearMCPRegistry` | Clear all registries              |
+| `createMCPServer`  | Create MCP server                 |
+| `getMCPRegistry`   | Get tool/prompt/resource registry |
+| `getMCPStats`      | Get registered capability stats   |
+| `registerPrompt`   | Register prompt with MCP          |
+| `registerResource` | Register resource with MCP        |
+| `registerTool`     | Register tool with MCP            |
 
 ### Classes
 
-| Name | Description |
-|------|-------------|
+| Name        | Description         |
+| ----------- | ------------------- |
 | `MCPServer` | MCP server instance |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
+| Name                      | Description                                          |
+| ------------------------- | ---------------------------------------------------- |
 | `IntegrationLoaderConfig` | Configuration for loading integration tools into MCP |
-| `MCPServerConfig` | `createMCPServer()` config |
-| `MCPStats` | Registry statistics |
-| `MCPTool` | Generic MCP tool definition |
+| `MCPServerConfig`         | `createMCPServer()` config                           |
+| `MCPStats`                | Registry statistics                                  |
+| `MCPTool`                 | Generic MCP tool definition                          |
 
 ## Related
 

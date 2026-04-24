@@ -17,7 +17,7 @@
 import { rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "@opentelemetry/api";
+import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 
 /**
  * Generic cache tier interface.

@@ -9,15 +9,46 @@ import {
   getOpenAIResponsesUrl,
 } from "./runtime-loader/provider-endpoints.ts";
 import {
+  extractGoogleEmbedding,
+  extractGoogleUsageTokens,
+  extractOpenAIEmbeddings,
+  extractOpenAIUsageTokens,
+} from "./runtime-loader/provider-embedding-responses.ts";
+import {
+  normalizeAnthropicFinishReason,
+  normalizeGoogleFinishReason,
+  normalizeOpenAIFinishReason,
+  normalizeOpenAIResponsesFinishReason,
+} from "./runtime-loader/provider-finish-reasons.ts";
+import {
   createAnthropicRequestInit,
   createGoogleRequestInit,
   createOpenAIRequestInit,
 } from "./runtime-loader/provider-request-init.ts";
+import { parseSseChunk } from "./runtime-loader/provider-sse.ts";
+import {
+  extractAnthropicUsage,
+  extractGoogleUsage,
+  extractOpenAIResponsesUsage,
+  extractOpenAIUsage,
+  mergeUsage,
+  type RuntimeUsage,
+} from "./runtime-loader/provider-usage.ts";
+import type { ProviderKind } from "./runtime-loader/provider-http.ts";
+import { requestJson, requestStream } from "./runtime-loader/provider-http.ts";
+import { readRecord } from "./runtime-loader/provider-records.ts";
 import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
 
+export {
+  ProviderError,
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderRequestError,
+} from "./runtime-loader/provider-http.ts";
 export { TOOL_INPUT_PENDING_THRESHOLD_MS, withToolInputStatusTransitions };
 
 export interface OpenAIRuntimeConfig {
@@ -397,76 +428,6 @@ type GoogleCompatibleRequest = {
   [key: string]: unknown;
 };
 
-function isNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "number");
-}
-
-function readRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return Object.fromEntries(Object.entries(value));
-}
-
-function extractOpenAIEmbeddings(payload: unknown): number[][] {
-  const record = readRecord(payload);
-  const data = record?.data;
-  if (!Array.isArray(data)) {
-    throw new Error("Invalid OpenAI embedding response: data array missing");
-  }
-
-  const embeddings: number[][] = [];
-
-  for (const item of data) {
-    const itemRecord = readRecord(item);
-    const embedding = itemRecord?.embedding;
-    if (!isNumberArray(embedding)) {
-      throw new Error("Invalid OpenAI embedding response: embedding vector missing");
-    }
-    embeddings.push(embedding);
-  }
-
-  return embeddings;
-}
-
-function extractOpenAIUsageTokens(payload: unknown): number | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  const totalTokens = usage?.total_tokens;
-  return typeof totalTokens === "number" ? totalTokens : undefined;
-}
-
-function extractGoogleEmbedding(payload: unknown): number[] {
-  const record = readRecord(payload);
-  const embeddings = record?.embeddings;
-
-  if (Array.isArray(embeddings) && embeddings.length > 0) {
-    const firstEmbedding = readRecord(embeddings[0]);
-    const values = firstEmbedding?.values;
-    if (isNumberArray(values)) {
-      return values;
-    }
-  }
-
-  const embedding = readRecord(record?.embedding);
-  const values = embedding?.values;
-  if (isNumberArray(values)) {
-    return values;
-  }
-
-  throw new Error("Invalid Google embedding response: embedding vector missing");
-}
-
-function extractGoogleUsageTokens(payload: unknown): number | undefined {
-  const record = readRecord(payload);
-  const usageMetadata = readRecord(record?.usageMetadata);
-  const promptTokenCount = usageMetadata?.promptTokenCount;
-  return typeof promptTokenCount === "number" ? promptTokenCount : undefined;
-}
-
-type ProviderKind = "anthropic" | "openai" | "google";
-
 /**
  * Structured warning emitted when a provider runtime drops or rewrites a
  * caller-provided option. Mirrors the AI ecosystem convention (Vercel AI
@@ -501,210 +462,6 @@ function createWarningCollector(): WarningCollector {
       return list.slice();
     },
   };
-}
-
-/**
- * Base class for typed provider errors. The `retryable` flag is the
- * primary signal for callers (or a retry wrapper) to decide whether to
- * re-issue the request. `retryAfterMs` is set when the provider gave an
- * explicit delay hint (Retry-After header, Retry-Info trailer).
- */
-export class ProviderError extends Error {
-  readonly provider: ProviderKind;
-  readonly status: number;
-  readonly retryable: boolean;
-  readonly retryAfterMs?: number;
-
-  constructor(options: {
-    provider: ProviderKind;
-    status: number;
-    message: string;
-    retryable: boolean;
-    retryAfterMs?: number;
-  }) {
-    super(options.message);
-    this.name = new.target.name;
-    this.provider = options.provider;
-    this.status = options.status;
-    this.retryable = options.retryable;
-    if (options.retryAfterMs !== undefined) {
-      this.retryAfterMs = options.retryAfterMs;
-    }
-  }
-}
-
-/** Provider reports it is overloaded (Anthropic 529, OpenAI/Google 503). */
-export class ProviderOverloadedError extends ProviderError {}
-
-/** Provider is rate limiting this API key (OpenAI/Google 429 with Retry-After). */
-export class ProviderRateLimitError extends ProviderError {}
-
-/** Provider account quota is exhausted — non-retryable. */
-export class ProviderQuotaError extends ProviderError {}
-
-/** Non-retryable 4xx/5xx that doesn't fit another bucket. */
-export class ProviderRequestError extends ProviderError {}
-
-function parseRetryAfterMs(header: string | null): number | undefined {
-  if (!header) return undefined;
-  const asNumber = Number(header);
-  if (Number.isFinite(asNumber) && asNumber >= 0) {
-    return Math.round(asNumber * 1000);
-  }
-  // HTTP-date form (rare in practice for LLM providers).
-  const parsed = Date.parse(header);
-  if (!Number.isNaN(parsed)) {
-    return Math.max(0, parsed - Date.now());
-  }
-  return undefined;
-}
-
-/**
- * Inspect a non-2xx response and build the most specific ProviderError
- * subclass we can. Reads the response body as text (it's already dead
- * on the wire by this point). Body classification handles the cases
- * where HTTP status alone is ambiguous — notably OpenAI
- * `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429.
- */
-async function buildProviderError(
-  provider: ProviderKind,
-  response: Response,
-): Promise<ProviderError> {
-  const rawBody = await response.text();
-  const message = rawBody.trim() || `${response.status} ${response.statusText}`.trim();
-  const status = response.status;
-  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
-
-  const parsedBody = (() => {
-    try {
-      return JSON.parse(rawBody) as Record<string, unknown>;
-    } catch {
-      return undefined;
-    }
-  })();
-  const errorRecord = readRecord(parsedBody?.error);
-  const errorCode = typeof errorRecord?.code === "string"
-    ? errorRecord.code
-    : typeof errorRecord?.type === "string"
-    ? errorRecord.type
-    : typeof errorRecord?.status === "string"
-    ? errorRecord.status
-    : undefined;
-
-  // Anthropic 529 = overloaded. Anthropic surfaces this with
-  // { error: { type: "overloaded_error" } } in the body.
-  if (provider === "anthropic" && status === 529) {
-    return new ProviderOverloadedError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
-
-  // OpenAI / Google 503 = overloaded.
-  if ((provider === "openai" || provider === "google") && status === 503) {
-    return new ProviderOverloadedError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
-
-  // OpenAI 429 splits based on the error code in the body:
-  //  - insufficient_quota → hard quota, non-retryable
-  //  - rate_limit_exceeded / tokens_per_min_exceeded → retry with Retry-After
-  if (provider === "openai" && status === 429) {
-    if (errorCode === "insufficient_quota") {
-      return new ProviderQuotaError({
-        provider,
-        status,
-        message,
-        retryable: false,
-      });
-    }
-    return new ProviderRateLimitError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
-
-  // Google 429 RESOURCE_EXHAUSTED is almost always the daily free-tier
-  // quota — surface as a hard quota error so callers don't hot-loop on
-  // retries that can't possibly succeed until midnight UTC.
-  if (provider === "google" && status === 429) {
-    if (errorCode === "RESOURCE_EXHAUSTED") {
-      return new ProviderQuotaError({
-        provider,
-        status,
-        message,
-        retryable: false,
-      });
-    }
-    return new ProviderRateLimitError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
-
-  return new ProviderRequestError({
-    provider,
-    status,
-    message,
-    retryable: false,
-  });
-}
-
-async function requestJson(options: {
-  url: string;
-  fetchImpl: typeof globalThis.fetch;
-  init: RequestInit;
-  providerLabel: string;
-  providerKind: ProviderKind;
-}): Promise<unknown> {
-  const response = await options.fetchImpl(options.url, options.init);
-  if (!response.ok) {
-    const err = await buildProviderError(options.providerKind, response);
-    err.message = `${options.providerLabel} request failed: ${err.message}`;
-    throw err;
-  }
-
-  return response.json();
-}
-
-async function requestStream(options: {
-  url: string;
-  fetchImpl: typeof globalThis.fetch;
-  init: RequestInit;
-  providerLabel: string;
-  providerKind: ProviderKind;
-}): Promise<ReadableStream<Uint8Array>> {
-  const response = await options.fetchImpl(options.url, options.init);
-  if (!response.ok) {
-    const err = await buildProviderError(options.providerKind, response);
-    err.message = `${options.providerLabel} request failed: ${err.message}`;
-    throw err;
-  }
-
-  if (!response.body) {
-    throw new ProviderRequestError({
-      provider: options.providerKind,
-      status: response.status,
-      message: `${options.providerLabel} request failed: stream body missing`,
-      retryable: false,
-    });
-  }
-
-  return response.body;
 }
 
 function stringifyJsonValue(value: unknown): string {
@@ -826,85 +583,6 @@ function readProviderOptions(
   }
 
   return merged;
-}
-
-function normalizeAnthropicFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  switch (raw) {
-    case "tool_use":
-      return { unified: "tool-calls", raw };
-    case "end_turn":
-    case "stop_sequence":
-      return { unified: "stop", raw };
-    case "max_tokens":
-      return { unified: "length", raw };
-    default:
-      return raw;
-  }
-}
-
-type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-};
-
-function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
-  const cacheCreationInputTokens = usage.cache_creation_input_tokens;
-  const cacheReadInputTokens = usage.cache_read_input_tokens;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
-      ? (typeof inputTokens === "number" ? inputTokens : 0) +
-        (typeof outputTokens === "number" ? outputTokens : 0)
-      : undefined,
-    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
-    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
-  };
-}
-
-function mergeUsage(
-  current: RuntimeUsage | undefined,
-  next: RuntimeUsage | undefined,
-): RuntimeUsage | undefined {
-  if (!current) {
-    return next;
-  }
-
-  if (!next) {
-    return current;
-  }
-
-  const inputTokens = next.inputTokens ?? current.inputTokens;
-  const outputTokens = next.outputTokens ?? current.outputTokens;
-  const cacheCreationInputTokens = next.cacheCreationInputTokens ??
-    current.cacheCreationInputTokens;
-  const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
-    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
-  };
 }
 
 function normalizeAnthropicToolChoice(toolChoice: unknown): unknown {
@@ -1546,36 +1224,6 @@ function buildAnthropicGenerateResult(payload: unknown): {
   };
 }
 
-function parseSseChunk(chunk: string): {
-  events: Array<unknown | "[DONE]">;
-  remainder: string;
-} {
-  const blocks = chunk.split(/\r?\n\r?\n/);
-  const remainder = blocks.pop() ?? "";
-  const events = blocks.flatMap((block) => {
-    const dataLines = block.split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart());
-
-    if (!dataLines.length) {
-      return [];
-    }
-
-    const payload = dataLines.join("\n").trim();
-    if (payload === "[DONE]") {
-      return ["[DONE]" as const];
-    }
-
-    try {
-      return [JSON.parse(payload) as unknown];
-    } catch {
-      return [];
-    }
-  });
-
-  return { events, remainder };
-}
-
 async function* streamAnthropicCompatibleParts(
   stream: ReadableStream<Uint8Array>,
 ): AsyncIterable<unknown> {
@@ -1817,45 +1465,6 @@ async function* streamAnthropicCompatibleParts(
   };
 }
 
-function normalizeOpenAIFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  if (raw === "tool_calls") {
-    return { unified: "tool-calls", raw };
-  }
-
-  if (raw === "content_filter") {
-    return { unified: "content-filter", raw };
-  }
-
-  return raw;
-}
-
-function extractOpenAIUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.prompt_tokens;
-  const outputTokens = usage.completion_tokens;
-  const totalTokens = usage.total_tokens;
-  const promptTokensDetails = readRecord(usage.prompt_tokens_details);
-  const cachedTokens = promptTokensDetails?.cached_tokens;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-  };
-}
-
 function extractOpenAIContentText(content: unknown): string {
   if (typeof content === "string") {
     return content;
@@ -2076,48 +1685,6 @@ function buildOpenAIChatRequest(
 
   Object.assign(body, providerOpts);
   return body;
-}
-
-function normalizeGoogleFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  switch (raw) {
-    case "STOP":
-      return { unified: "stop", raw };
-    case "MAX_TOKENS":
-      return { unified: "length", raw };
-    case "SAFETY":
-    case "RECITATION":
-      return { unified: "content-filter", raw };
-    default:
-      return raw.toLowerCase();
-  }
-}
-
-function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usageMetadata);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.promptTokenCount;
-  const outputTokens = usage.candidatesTokenCount;
-  const totalTokens = usage.totalTokenCount;
-  const cachedContentTokenCount = usage.cachedContentTokenCount;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedContentTokenCount === "number"
-      ? { cacheReadInputTokens: cachedContentTokenCount }
-      : {}),
-  };
 }
 
 function toGoogleContents(
@@ -3143,56 +2710,6 @@ function buildOpenAIResponsesRequest(
 
   Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
   return body;
-}
-
-/**
- * The Responses API uses `input_tokens` / `output_tokens` field names
- * instead of Chat Completions' `prompt_tokens` / `completion_tokens`.
- * It also nests cached input tokens under `input_tokens_details` and
- * exposes reasoning tokens via `output_tokens_details.reasoning_tokens`.
- */
-function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  // Streaming usage lives on response.completed inside `response.usage`;
-  // non-streaming has it at the top level.
-  const responseRecord = readRecord(record?.response);
-  const usage = readRecord(responseRecord?.usage) ?? readRecord(record?.usage);
-  if (!usage) return undefined;
-
-  const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : undefined;
-  const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : undefined;
-  const totalTokens = typeof usage.total_tokens === "number"
-    ? usage.total_tokens
-    : (inputTokens !== undefined || outputTokens !== undefined
-      ? (inputTokens ?? 0) + (outputTokens ?? 0)
-      : undefined);
-  const inputDetails = readRecord(usage.input_tokens_details);
-  const cachedTokens = inputDetails?.cached_tokens;
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens,
-    ...(typeof cachedTokens === "number" ? { cacheReadInputTokens: cachedTokens } : {}),
-  };
-}
-
-function normalizeOpenAIResponsesFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") return null;
-  switch (raw) {
-    case "completed":
-      return { unified: "stop", raw };
-    case "incomplete":
-      return { unified: "length", raw };
-    case "failed":
-      return { unified: "error", raw };
-    case "in_progress":
-      return null;
-    default:
-      return raw;
-  }
 }
 
 type OpenAIResponsesContentPart =

@@ -3,7 +3,13 @@
  * Type definitions for OpenTelemetry metrics system
  */
 
-import type { Counter, Histogram, Meter, ObservableGauge, UpDownCounter } from "@opentelemetry/api";
+import type {
+  Counter,
+  Histogram,
+  Meter,
+  ObservableGauge,
+  UpDownCounter,
+} from "#veryfront/observability/tracing/api-shim.ts";
 
 export interface OpenTelemetryAPI {
   metrics: {

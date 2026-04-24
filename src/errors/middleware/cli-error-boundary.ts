@@ -7,7 +7,7 @@
  * @module errors/middleware/cli-error-boundary
  */
 
-import { trace } from "@opentelemetry/api";
+import { trace } from "#veryfront/observability/tracing/api-shim.ts";
 import { VeryfrontError } from "../types.ts";
 import { UNKNOWN_ERROR } from "../error-registry.ts";
 import { getErrorMessage } from "../veryfront-error.ts";

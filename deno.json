@@ -1,11 +1,13 @@
 {
   "name": "veryfront",
-  "version": "0.1.229",
+  "version": "0.1.268",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
     "./extensions/ext-mdx",
-    "./extensions/ext-redis"
+    "./extensions/ext-redis",
+    "./extensions/ext-opentelemetry",
+    "./extensions/ext-node-compat"
   ],
   "exclude": [
     "npm/",
@@ -31,6 +33,11 @@
     "./markdown": "./src/markdown/index.ts",
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
+    "./agent/conversation-bootstrap": "./src/agent/conversation-bootstrap.ts",
+    "./agent/durable": "./src/agent/durable.ts",
+    "./agent/invoke-agent-child-runs": "./src/agent/invoke-agent-child-runs.ts",
+    "./channels/control-plane": "./src/channels/control-plane.ts",
+    "./channels/invoke": "./src/channels/invoke.ts",
     "./tool": "./src/tool/index.ts",
     "./workflow": "./src/workflow/index.ts",
     "./workflow/worker": "./src/workflow/worker/index.ts",
@@ -263,21 +270,12 @@
     "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.2.2/plugin",
     "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.2.2/defaultTheme",
     "tailwindcss/colors": "https://esm.sh/tailwindcss@4.2.2/colors",
-    "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
-    "@opentelemetry/core": "npm:@opentelemetry/core@2.6.0",
-    "@opentelemetry/context-async-hooks": "npm:@opentelemetry/context-async-hooks@2.6.0",
-    "@opentelemetry/sdk-trace-base": "npm:@opentelemetry/sdk-trace-base@2.6.0",
-    "@opentelemetry/exporter-trace-otlp-http": "npm:@opentelemetry/exporter-trace-otlp-http@0.213.0",
-    "@opentelemetry/resources": "npm:@opentelemetry/resources@2.6.0",
-    "@opentelemetry/semantic-conventions": "npm:@opentelemetry/semantic-conventions@1.40.0",
     "@babel/parser": "npm:@babel/parser@7.29.2",
     "@babel/traverse": "npm:@babel/traverse@7.29.0",
     "@babel/generator": "npm:@babel/generator@7.29.1",
     "@babel/types": "npm:@babel/types@7.29.0",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
-    "tailwind-merge": "npm:tailwind-merge@3.5.0",
-    "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.5.2",
-    "#kreuzberg-wasm-glue": "npm:@kreuzberg/wasm@4.5.2/dist/pkg/kreuzberg_wasm.js"
+    "tailwind-merge": "npm:tailwind-merge@3.5.0"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
