@@ -16,6 +16,7 @@ Route examples below use the default app router. The hosted AG-UI path is owned 
 import {
   agent,
   agentAsTool,
+  AgentContract,
   AgentRuntime,
   AgUiDetachedStartRequestSchema,
   AgUiRequestSchema,
@@ -31,6 +32,8 @@ import {
   createAgUiRuntimeHandler,
   createAgUiSseErrorResponse,
   createMemory,
+  defineAgentService,
+  DurableRunSink,
   executeAgUiDetachedStart,
   expandAllowedRemoteToolNames,
   getAgentsAsTools,
@@ -217,6 +220,30 @@ await runHostedLifecycle({
   },
   adapter,
   resolveTerminalState: () => ({ status: "completed" }),
+});
+```
+
+### Phase-0 hosted service contract stub
+
+```ts
+import { agent, defineAgentService, type DurableRunSink } from "veryfront/agent";
+
+const assistant = agent({
+  system: "You are a hosted assistant.",
+});
+
+const durableRunSink: DurableRunSink = {
+  startRun: () => ({ runId: "run_123" }),
+  appendEvents: async () => {},
+  finalizeRun: async () => {},
+  cancelRun: async () => {},
+};
+
+// Phase 0 reserves the public signature only. This currently throws until the
+// hosted runtime implementation lands in a later migration phase.
+defineAgentService({
+  agent: assistant,
+  durableRunSink,
 });
 ```
 
