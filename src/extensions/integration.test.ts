@@ -15,6 +15,7 @@ import { AIProviderRegistryName } from "./interfaces/index.ts";
 import type { AIProviderRegistry } from "./interfaces/index.ts";
 import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
 import extOpenAI from "../../extensions/ext-openai/src/index.ts";
+import extAnthropic from "../../extensions/ext-anthropic/src/index.ts";
 import {
   _resetShimForTests,
   getTracer,
@@ -256,5 +257,25 @@ describe("extensions/integration", () => {
 
     await loader.teardownAll();
     _resetShimForTests();
+  });
+
+  it("ext-anthropic registers into the primed AIProviderRegistry", async () => {
+    const registry = createAIProviderRegistry();
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ [AIProviderRegistryName]: registry });
+    await loader.setupAll(
+      [
+        {
+          source: "local-file",
+          origin: "virtual://ext-anthropic",
+          extension: extAnthropic(),
+        } satisfies ResolvedExtension,
+      ],
+      {},
+    );
+    const resolved = resolve<AIProviderRegistry>(AIProviderRegistryName);
+    assertEquals(resolved, registry);
+    assert(registry.has("anthropic"));
+    await loader.teardownAll();
   });
 });
