@@ -2,12 +2,14 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { assertGreaterOrEqual } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  createAnthropicModelRuntime,
   ProviderOverloadedError,
   ProviderQuotaError,
   withToolInputStatusTransitions,
 } from "./runtime-loader.ts";
 import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "./runtime-loader.ts";
+// createAnthropicModelRuntime has moved to ext-anthropic (PR 12, Task 7). Import
+// from the extension path so cross-provider tests still exercise it.
+import { createAnthropicModelRuntime } from "../../extensions/ext-anthropic/src/anthropic-provider.ts";
 // createOpenAIModelRuntime has moved to ext-openai (PR 11, Task 14). Import
 // from the extension path so the shared "omits provider metadata" test still
 // exercises all three providers together.
