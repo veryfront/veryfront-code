@@ -242,6 +242,7 @@ const durableRunSink: DurableRunSink = {
 // Phase 0 reserves the public signature only. This currently throws until the
 // hosted runtime implementation lands in a later migration phase.
 defineAgentService({
+  serviceName: "veryfront-agent",
   agent: assistant,
   durableRunSink,
 });

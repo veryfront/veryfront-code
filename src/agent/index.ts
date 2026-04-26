@@ -142,6 +142,7 @@ export { agent } from "./factory.ts";
 export {
   type AgentContract,
   type AgentServiceDefinition,
+  type AgentServiceServerConfig,
   defineAgentService,
   type DurableRunSink,
 } from "./agent-service.ts";

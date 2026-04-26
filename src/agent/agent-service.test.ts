@@ -30,11 +30,15 @@ describe("agent/agent-service", () => {
       { type: string },
       { status: string }
     > = {
+      serviceName: "veryfront-agent",
       agent: assistant,
+      server: { port: 3001, basePath: "/api/ag-ui" },
       durableRunSink,
     };
 
+    assertEquals(contract.serviceName, "veryfront-agent");
     assertEquals(contract.agent.id, "phase-0-service-stub");
+    assertEquals(contract.server?.port, 3001);
     assertEquals(contract.durableRunSink?.startRun({ requestId: "run-123" }), {
       runId: "run-123",
     });
@@ -43,7 +47,7 @@ describe("agent/agent-service", () => {
   it("throws until the hosted runtime service implementation lands", async () => {
     await assertRejects(
       async () => {
-        defineAgentService({ agent: assistant });
+        defineAgentService({ serviceName: "veryfront-agent", agent: assistant });
       },
       Error,
       "Phase 0 stub",
