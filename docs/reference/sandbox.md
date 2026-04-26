@@ -45,13 +45,13 @@ Create a lazily-provisioned sandbox client that only claims a session on first u
 
 **Returns:** <code>LazySandbox</code>
 
-### `sandbox.executeCommand(command)`
+### `sandbox.executeCommand(command, options?)`
 
 Execute a bash command in the sandbox and return buffered result.
 
 **Returns:** <code>Promise&lt;ExecResult&gt;</code>
 
-### `sandbox.executeStream(command)`
+### `sandbox.executeStream(command, options?)`
 
 Execute a bash command with streaming output (NDJSON).
 

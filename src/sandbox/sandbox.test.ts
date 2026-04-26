@@ -413,6 +413,7 @@ describe("Sandbox", () => {
         cwd: "/workspace/app",
         timeout_seconds: 30,
         env: { NODE_ENV: "test" },
+        projectReference: "project-123",
       });
 
       assertEquals(result.stdout, "ok\n");
@@ -422,6 +423,7 @@ describe("Sandbox", () => {
         cwd: "/workspace/app",
         timeout_seconds: 30,
         env: { NODE_ENV: "test" },
+        projectReference: "project-123",
       });
     });
 
@@ -452,12 +454,21 @@ describe("Sandbox", () => {
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       const events: ExecStreamEvent[] = [];
-      for await (const event of sandbox.executeStream("cmd", { cwd: "/tmp" })) {
+      for await (
+        const event of sandbox.executeStream("cmd", {
+          cwd: "/tmp",
+          projectReference: "project-456",
+        })
+      ) {
         events.push(event);
       }
 
       assertEquals(events.length, 2);
-      assertEquals(jsonBody(fetchCalls, 1), { command: "cmd", cwd: "/tmp" });
+      assertEquals(jsonBody(fetchCalls, 1), {
+        command: "cmd",
+        cwd: "/tmp",
+        projectReference: "project-456",
+      });
     });
   });
 
@@ -484,6 +495,7 @@ describe("Sandbox", () => {
         cwd: "/workspace",
         timeout_seconds: 120,
         env: { CI: "true" },
+        projectReference: "project-789",
       });
 
       assertEquals(job.id, "job-opts");
@@ -492,6 +504,7 @@ describe("Sandbox", () => {
         cwd: "/workspace",
         timeout_seconds: 120,
         env: { CI: "true" },
+        projectReference: "project-789",
       });
     });
   });
