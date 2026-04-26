@@ -16,6 +16,7 @@ import {
 } from "#veryfront/errors";
 import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 
 /** Options for command execution: working directory, timeout, and environment variables. */
 export interface ExecOptions {
@@ -35,6 +36,25 @@ export interface SandboxOptions {
   authToken?: string;
   /** Optional project context for project-billed / project-scoped sandbox sessions. */
   projectId?: string;
+}
+
+export function resolveSandboxApiUrl(options: SandboxOptions = {}): string {
+  return options.apiUrl ||
+    getHostEnv("VERYFRONT_API_URL") ||
+    "https://api.veryfront.com";
+}
+
+export function resolveSandboxAuthToken(options: SandboxOptions = {}): string {
+  const authToken = options.authToken?.trim() || getVeryfrontCloudAuthToken();
+  if (authToken) return authToken;
+
+  throw toError(
+    createError({
+      type: "config",
+      message:
+        "Sandbox auth not configured. Set VERYFRONT_API_TOKEN, provide request-scoped Veryfront credentials, or pass authToken explicitly.",
+    }),
+  );
 }
 
 /** Result of a command execution: stdout, stderr, and exit code. */
@@ -115,22 +135,11 @@ export class Sandbox {
   ) {}
 
   private static resolveApiUrl(options: SandboxOptions = {}): string {
-    return options.apiUrl ||
-      getHostEnv("VERYFRONT_API_URL") ||
-      "https://api.veryfront.com";
+    return resolveSandboxApiUrl(options);
   }
 
   private static resolveAuthToken(options: SandboxOptions = {}): string {
-    const authToken = options.authToken?.trim() || getVeryfrontCloudAuthToken();
-    if (authToken) return authToken;
-
-    throw toError(
-      createError({
-        type: "config",
-        message:
-          "Sandbox auth not configured. Set VERYFRONT_API_TOKEN, provide request-scoped Veryfront credentials, or pass authToken explicitly.",
-      }),
-    );
+    return resolveSandboxAuthToken(options);
   }
 
   /** Create a new sandbox session. Claims a warm pod or creates a new one. */
@@ -230,26 +239,12 @@ export class Sandbox {
     maxWaitMs = 60_000,
     pollIntervalMs = 2_000,
   ): Promise<void> {
-    const start = Date.now();
-    while (Date.now() - start < maxWaitMs) {
-      // no cleanup needed: one-shot
-      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    await waitForSandboxReady({ apiUrl, id, authToken, maxWaitMs, pollIntervalMs });
+  }
 
-      const res = await fetch(`${apiUrl}/sandbox-sessions/${id}`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      });
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data.status === "running") return;
-        if (data.status === "error" || data.status === "deleting") {
-          throw INITIALIZATION_ERROR.create({
-            detail: `Sandbox failed to start: status=${data.status}`,
-          });
-        }
-      }
-    }
-    throw TIMEOUT_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
+  /** Create a lazily-provisioned sandbox session with automatic heartbeats. */
+  static createLazy(options: LazySandboxOptions = {}): LazySandbox {
+    return new LazySandbox(options);
   }
 
   /** Execute a bash command in the sandbox and return buffered result. */
@@ -483,4 +478,38 @@ export class Sandbox {
   get url(): string {
     return this.endpoint;
   }
+}
+
+export async function waitForSandboxReady(input: {
+  apiUrl: string;
+  id: string;
+  authToken: string;
+  maxWaitMs?: number;
+  pollIntervalMs?: number;
+}): Promise<void> {
+  const maxWaitMs = input.maxWaitMs ?? 60_000;
+  const pollIntervalMs = input.pollIntervalMs ?? 2_000;
+  const start = Date.now();
+
+  while (Date.now() - start < maxWaitMs) {
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+
+    const res = await fetch(`${input.apiUrl}/sandbox-sessions/${input.id}`, {
+      headers: { Authorization: `Bearer ${input.authToken}` },
+    });
+
+    if (!res.ok) {
+      continue;
+    }
+
+    const data = await res.json();
+    if (data.status === "running") return;
+    if (data.status === "error" || data.status === "deleting") {
+      throw INITIALIZATION_ERROR.create({
+        detail: `Sandbox failed to start: status=${data.status}`,
+      });
+    }
+  }
+
+  throw TIMEOUT_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
 }
