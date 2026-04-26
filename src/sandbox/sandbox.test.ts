@@ -566,6 +566,21 @@ describe("Sandbox", () => {
       assertEquals(fetchCalls[1]!.init?.method, "POST");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
+
+    it("should throw on heartbeat failure", async () => {
+      mockFetch([
+        jsonResponse({ id: "s6", endpoint: "https://sb.test", status: "running" }),
+        textResponse("upstream timeout", 503),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+
+      await assertRejects(
+        () => sandbox.heartbeat(),
+        Error,
+        "Sandbox heartbeat failed: 503 upstream timeout",
+      );
+    });
   });
 
   describe("close()", () => {
@@ -581,6 +596,21 @@ describe("Sandbox", () => {
       assertStringIncludes(fetchCalls[1]!.url, "/sandbox-sessions/s7");
       assertEquals(fetchCalls[1]!.init?.method, "DELETE");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
+    });
+
+    it("should throw on close failure", async () => {
+      mockFetch([
+        jsonResponse({ id: "s7", endpoint: "https://sb.test", status: "running" }),
+        textResponse("delete failed", 503),
+      ]);
+
+      const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
+
+      await assertRejects(
+        () => sandbox.close(),
+        Error,
+        "Close sandbox failed: 503 delete failed",
+      );
     });
   });
 
