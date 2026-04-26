@@ -455,18 +455,30 @@ export class Sandbox {
 
   /** Send a heartbeat to prevent idle timeout. */
   async heartbeat(): Promise<void> {
-    await fetch(`${this.apiUrl}/sandbox-sessions/${this.sessionId}/heartbeat`, {
+    const res = await fetch(`${this.apiUrl}/sandbox-sessions/${this.sessionId}/heartbeat`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `Sandbox heartbeat failed: ${res.status} ${await res.text()}`,
+      });
+    }
   }
 
   /** Close the sandbox session and mark for deletion. */
   async close(): Promise<void> {
-    await fetch(`${this.apiUrl}/sandbox-sessions/${this.sessionId}`, {
+    const res = await fetch(`${this.apiUrl}/sandbox-sessions/${this.sessionId}`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `Close sandbox failed: ${res.status} ${await res.text()}`,
+      });
+    }
   }
 
   /** Get the session ID. */
