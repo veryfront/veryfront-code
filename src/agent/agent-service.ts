@@ -17,6 +17,16 @@ export interface DurableRunSink<
 }
 
 /**
+ * Placeholder host-facing server config reserved for the future hosted service
+ * implementation.
+ */
+export interface AgentServiceServerConfig {
+  port?: number;
+  basePath?: string;
+  cors?: boolean;
+}
+
+/**
  * Phase-0 contract draft for the future framework-owned hosted agent service.
  */
 export interface AgentContract<
@@ -25,7 +35,9 @@ export interface AgentContract<
   TEvent = unknown,
   TTerminalState = unknown,
 > {
+  serviceName: string;
   agent: Agent;
+  server?: AgentServiceServerConfig;
   durableRunSink?: DurableRunSink<TStartInput, TRun, TEvent, TTerminalState>;
 }
 
