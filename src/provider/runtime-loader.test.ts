@@ -182,7 +182,6 @@ describe("provider/runtime-loader", () => {
     });
   });
 
-
   it("creates a Google-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;
@@ -537,7 +536,6 @@ describe("provider/runtime-loader", () => {
     assertEquals(result.embeddings, [[10, 20], [30, 40]]);
     assertEquals(result.usage, { tokens: 8 });
   });
-
 
   describe("reasoning / thinking request options", () => {
     const userPrompt = {
@@ -1309,7 +1307,6 @@ describe("provider/runtime-loader", () => {
       assertEquals("labels" in (googleBody ?? {}), false);
     });
   });
-
 
   describe("Anthropic thinking signature multi-turn replay", () => {
     const userPrompt = {

@@ -8,10 +8,7 @@
  * @module extensions/ext-anthropic/anthropic-provider
  */
 
-import type {
-  AIProvider,
-  AIProviderConfig,
-} from "veryfront/extensions/interfaces";
+import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
 import type { ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,

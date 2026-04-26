@@ -4,9 +4,7 @@ import {
   getGoogleGenerateContentUrl,
   getGoogleStreamGenerateContentUrl,
 } from "./runtime-loader/provider-endpoints.ts";
-import {
-  createGoogleRequestInit,
-} from "./runtime-loader/provider-request-init.ts";
+import { createGoogleRequestInit } from "./runtime-loader/provider-request-init.ts";
 import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
@@ -1343,7 +1341,6 @@ async function* streamGoogleCompatibleParts(
     ...(usage ? { usage } : {}),
   };
 }
-
 
 export function createGoogleModelRuntime(
   config: GoogleRuntimeConfig,
