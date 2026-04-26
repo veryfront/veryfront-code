@@ -42,19 +42,19 @@
   ],
   "tools": [
     {
-      "id": "search-tweets",
+      "id": "search_tweets",
       "name": "Search Tweets",
       "description": "Search recent tweets on Twitter/X",
       "requiresWrite": false
     },
     {
-      "id": "post-tweet",
+      "id": "post_tweet",
       "name": "Post Tweet",
       "description": "Create a new tweet on Twitter/X",
       "requiresWrite": true
     },
     {
-      "id": "get-timeline",
+      "id": "get_timeline",
       "name": "Get Timeline",
       "description": "Get the authenticated user's home timeline",
       "requiresWrite": false
@@ -62,21 +62,21 @@
   ],
   "prompts": [
     {
-      "id": "catch-up-twitter",
+      "id": "catch_up_twitter",
       "title": "Catch up on Twitter",
       "prompt": "Summarize the important tweets from my Twitter timeline today. Highlight trending topics and mentions.",
       "category": "productivity",
       "icon": "twitter"
     },
     {
-      "id": "compose-tweet",
+      "id": "compose_tweet",
       "title": "Compose a tweet",
       "prompt": "Help me compose and post an engaging tweet about my current work or thoughts.",
       "category": "productivity",
       "icon": "message"
     },
     {
-      "id": "search-topic",
+      "id": "search_topic",
       "title": "Search Twitter topic",
       "prompt": "Search Twitter for recent tweets about a specific topic and summarize the key discussions.",
       "category": "research",

@@ -42,31 +42,31 @@
   ],
   "tools": [
     {
-      "id": "list-spreadsheets",
+      "id": "list_spreadsheets",
       "name": "List Spreadsheets",
       "description": "List recent Google Sheets spreadsheets from Drive",
       "requiresWrite": false
     },
     {
-      "id": "get-spreadsheet",
+      "id": "get_spreadsheet",
       "name": "Get Spreadsheet",
       "description": "Get spreadsheet metadata including sheet names and properties",
       "requiresWrite": false
     },
     {
-      "id": "read-range",
+      "id": "read_range",
       "name": "Read Range",
       "description": "Read cell data from a spreadsheet range",
       "requiresWrite": false
     },
     {
-      "id": "write-range",
+      "id": "write_range",
       "name": "Write Range",
       "description": "Write data to a spreadsheet range",
       "requiresWrite": true
     },
     {
-      "id": "create-spreadsheet",
+      "id": "create_spreadsheet",
       "name": "Create Spreadsheet",
       "description": "Create a new spreadsheet with optional initial data",
       "requiresWrite": true
@@ -74,21 +74,21 @@
   ],
   "prompts": [
     {
-      "id": "analyze-data",
+      "id": "analyze_data",
       "title": "Analyze spreadsheet data",
       "prompt": "Read and analyze data from a Google Sheets spreadsheet. Provide insights, trends, and statistics.",
       "category": "productivity",
       "icon": "chart"
     },
     {
-      "id": "create-report",
+      "id": "create_report",
       "title": "Create a report spreadsheet",
       "prompt": "Create a new Google Sheets spreadsheet with formatted data, headers, and calculations.",
       "category": "productivity",
       "icon": "plus"
     },
     {
-      "id": "update-tracker",
+      "id": "update_tracker",
       "title": "Update a tracker",
       "prompt": "Update a tracking spreadsheet with new data. Add rows, update values, or calculate totals.",
       "category": "productivity",

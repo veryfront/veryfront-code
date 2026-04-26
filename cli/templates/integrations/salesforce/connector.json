@@ -40,31 +40,31 @@
   ],
   "tools": [
     {
-      "id": "list-accounts",
+      "id": "list_accounts",
       "name": "List Accounts",
       "description": "List accounts from your Salesforce CRM",
       "requiresWrite": false
     },
     {
-      "id": "get-account",
+      "id": "get_account",
       "name": "Get Account",
       "description": "Get detailed information about a specific account",
       "requiresWrite": false
     },
     {
-      "id": "list-contacts",
+      "id": "list_contacts",
       "name": "List Contacts",
       "description": "List contacts from your Salesforce CRM",
       "requiresWrite": false
     },
     {
-      "id": "list-opportunities",
+      "id": "list_opportunities",
       "name": "List Opportunities",
       "description": "List sales opportunities from your Salesforce CRM",
       "requiresWrite": false
     },
     {
-      "id": "create-lead",
+      "id": "create_lead",
       "name": "Create Lead",
       "description": "Create a new lead in Salesforce CRM",
       "requiresWrite": true
@@ -72,28 +72,28 @@
   ],
   "prompts": [
     {
-      "id": "find-accounts",
+      "id": "find_accounts",
       "title": "Find accounts",
       "prompt": "Search for accounts in my Salesforce CRM and show me their key information.",
       "category": "crm",
       "icon": "search"
     },
     {
-      "id": "create-lead",
+      "id": "create_lead",
       "title": "Create a lead",
       "prompt": "Create a new lead in Salesforce CRM with the information I provide.",
       "category": "crm",
       "icon": "plus"
     },
     {
-      "id": "pipeline-summary",
+      "id": "pipeline_summary",
       "title": "Pipeline summary",
       "prompt": "Show me a summary of my current sales opportunities and pipeline status.",
       "category": "crm",
       "icon": "chart"
     },
     {
-      "id": "contact-lookup",
+      "id": "contact_lookup",
       "title": "Contact lookup",
       "prompt": "Find and display information about specific contacts in my Salesforce CRM.",
       "category": "crm",

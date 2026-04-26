@@ -33,31 +33,31 @@
   ],
   "tools": [
     {
-      "id": "list-customers",
+      "id": "list_customers",
       "name": "List Customers",
       "description": "List Stripe customers with optional filtering",
       "requiresWrite": false
     },
     {
-      "id": "get-customer",
+      "id": "get_customer",
       "name": "Get Customer",
       "description": "Retrieve detailed information about a specific customer",
       "requiresWrite": false
     },
     {
-      "id": "list-payments",
+      "id": "list_payments",
       "name": "List Payments",
       "description": "List payment intents with optional status filtering",
       "requiresWrite": false
     },
     {
-      "id": "get-balance",
+      "id": "get_balance",
       "name": "Get Balance",
       "description": "Retrieve the current account balance",
       "requiresWrite": false
     },
     {
-      "id": "list-subscriptions",
+      "id": "list_subscriptions",
       "name": "List Subscriptions",
       "description": "List subscriptions with optional status filtering",
       "requiresWrite": false
@@ -65,28 +65,28 @@
   ],
   "prompts": [
     {
-      "id": "check-balance",
+      "id": "check_balance",
       "title": "Check account balance",
       "prompt": "Check my Stripe account balance and provide a summary of available and pending funds.",
       "category": "finance",
       "icon": "currency"
     },
     {
-      "id": "recent-payments",
+      "id": "recent_payments",
       "title": "Recent payments",
       "prompt": "Show me the most recent successful payments in my Stripe account.",
       "category": "finance",
       "icon": "payment"
     },
     {
-      "id": "customer-overview",
+      "id": "customer_overview",
       "title": "Customer overview",
       "prompt": "Give me an overview of my Stripe customers including total count and recent additions.",
       "category": "analytics",
       "icon": "users"
     },
     {
-      "id": "subscription-status",
+      "id": "subscription_status",
       "title": "Subscription status",
       "prompt": "Show me the status of all active subscriptions and any that are expiring soon.",
       "category": "analytics",

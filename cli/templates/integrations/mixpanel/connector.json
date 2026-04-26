@@ -38,31 +38,31 @@
   ],
   "tools": [
     {
-      "id": "track-event",
+      "id": "track_event",
       "name": "Track Event",
       "description": "Track a custom event in Mixpanel with properties",
       "requiresWrite": true
     },
     {
-      "id": "query-events",
+      "id": "query_events",
       "name": "Query Events",
       "description": "Query and export event data from Mixpanel",
       "requiresWrite": false
     },
     {
-      "id": "get-funnel",
+      "id": "get_funnel",
       "name": "Get Funnel",
       "description": "Retrieve funnel analysis data to understand conversion rates",
       "requiresWrite": false
     },
     {
-      "id": "get-retention",
+      "id": "get_retention",
       "name": "Get Retention",
       "description": "Analyze user retention cohorts over time",
       "requiresWrite": false
     },
     {
-      "id": "list-cohorts",
+      "id": "list_cohorts",
       "name": "List Cohorts",
       "description": "List all user cohorts defined in your Mixpanel project",
       "requiresWrite": false
@@ -70,21 +70,21 @@
   ],
   "prompts": [
     {
-      "id": "event-analysis",
+      "id": "event_analysis",
       "title": "Event analysis",
       "prompt": "Show me the most important events tracked in my Mixpanel project over the last 7 days and their trends.",
       "category": "analytics",
       "icon": "chart"
     },
     {
-      "id": "funnel-performance",
+      "id": "funnel_performance",
       "title": "Funnel performance",
       "prompt": "Analyze my key conversion funnels and identify where users are dropping off.",
       "category": "analytics",
       "icon": "funnel"
     },
     {
-      "id": "retention-insights",
+      "id": "retention_insights",
       "title": "Retention insights",
       "prompt": "Give me insights about user retention and cohort behavior over the past month.",
       "category": "analytics",

@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-contacts",
+      "id": "list_contacts",
       "name": "List Contacts",
       "description": "List contacts from Intercom workspace",
       "requiresWrite": false
     },
     {
-      "id": "get-contact",
+      "id": "get_contact",
       "name": "Get Contact",
       "description": "Get details of a specific contact",
       "requiresWrite": false
     },
     {
-      "id": "list-conversations",
+      "id": "list_conversations",
       "name": "List Conversations",
       "description": "List conversations from Intercom",
       "requiresWrite": false
     },
     {
-      "id": "get-conversation",
+      "id": "get_conversation",
       "name": "Get Conversation",
       "description": "Get details of a specific conversation",
       "requiresWrite": false
     },
     {
-      "id": "send-message",
+      "id": "send_message",
       "name": "Send Message",
       "description": "Send a message in a conversation",
       "requiresWrite": true
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "recent-conversations",
+      "id": "recent_conversations",
       "title": "Show recent conversations",
       "prompt": "List the most recent customer conversations from Intercom with their status and priority.",
       "category": "support",
       "icon": "message-circle"
     },
     {
-      "id": "find-contact",
+      "id": "find_contact",
       "title": "Find a contact",
       "prompt": "Search for a contact in Intercom and show their details and conversation history.",
       "category": "support",

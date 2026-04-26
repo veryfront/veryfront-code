@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "list-channels",
+      "id": "list_channels",
       "name": "List Channels",
       "description": "Get list of Slack channels",
       "requiresWrite": false,
@@ -52,7 +52,7 @@
       }
     },
     {
-      "id": "send-message",
+      "id": "send_message",
       "name": "Send Message",
       "description": "Send a message to a Slack channel",
       "requiresWrite": true,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "get-messages",
+      "id": "get_messages",
       "name": "Get Messages",
       "description": "Get recent messages from a channel",
       "requiresWrite": false,
@@ -86,14 +86,14 @@
   ],
   "prompts": [
     {
-      "id": "catch-up-slack",
+      "id": "catch_up_slack",
       "title": "Catch up on Slack",
       "prompt": "Summarize the important messages from my Slack channels from today. Highlight any mentions or urgent items.",
       "category": "productivity",
       "icon": "slack"
     },
     {
-      "id": "post-update",
+      "id": "post_update",
       "title": "Post team update",
       "prompt": "Help me write and post a team update to Slack about my current work progress.",
       "category": "productivity",

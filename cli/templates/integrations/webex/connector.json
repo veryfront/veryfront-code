@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-meetings",
+      "id": "list_meetings",
       "name": "List Meetings",
       "description": "List scheduled Webex meetings",
       "requiresWrite": false
     },
     {
-      "id": "get-meeting",
+      "id": "get_meeting",
       "name": "Get Meeting",
       "description": "Get details of a specific meeting",
       "requiresWrite": false
     },
     {
-      "id": "create-meeting",
+      "id": "create_meeting",
       "name": "Create Meeting",
       "description": "Schedule a new Webex meeting",
       "requiresWrite": true
     },
     {
-      "id": "list-rooms",
+      "id": "list_rooms",
       "name": "List Rooms",
       "description": "List Webex spaces/rooms",
       "requiresWrite": false
     },
     {
-      "id": "send-message",
+      "id": "send_message",
       "name": "Send Message",
       "description": "Send a message to a Webex room",
       "requiresWrite": true
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "my-meetings",
+      "id": "my_meetings",
       "title": "Show my meetings",
       "prompt": "List all my upcoming Webex meetings with their times and join links.",
       "category": "productivity",
       "icon": "video"
     },
     {
-      "id": "create-meeting",
+      "id": "create_meeting",
       "title": "Schedule a meeting",
       "prompt": "Create a new Webex meeting with a title, start time, duration, and agenda.",
       "category": "productivity",

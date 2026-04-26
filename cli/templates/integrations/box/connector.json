@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-files",
+      "id": "list_files",
       "name": "List Files",
       "description": "List files and folders in a Box folder",
       "requiresWrite": false
     },
     {
-      "id": "get-file",
+      "id": "get_file",
       "name": "Get File",
       "description": "Get details of a specific file or folder",
       "requiresWrite": false
     },
     {
-      "id": "search-files",
+      "id": "search_files",
       "name": "Search Files",
       "description": "Search for files and folders in Box",
       "requiresWrite": false
     },
     {
-      "id": "create-folder",
+      "id": "create_folder",
       "name": "Create Folder",
       "description": "Create a new folder in Box",
       "requiresWrite": true
     },
     {
-      "id": "upload-file",
+      "id": "upload_file",
       "name": "Upload File",
       "description": "Upload a file to Box",
       "requiresWrite": true
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "my-files",
+      "id": "my_files",
       "title": "Show my files",
       "prompt": "List all files in my Box root folder with their details.",
       "category": "productivity",
       "icon": "folder"
     },
     {
-      "id": "search-content",
+      "id": "search_content",
       "title": "Search for files",
       "prompt": "Search for files in Box by name or content.",
       "category": "productivity",
