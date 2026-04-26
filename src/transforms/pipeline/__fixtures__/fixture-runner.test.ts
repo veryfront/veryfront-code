@@ -12,7 +12,7 @@ import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { readTextFile } from "#veryfront/testing/deno-compat.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import * as esbuild from "esbuild";
+import * as esbuild from "veryfront/extensions/bundler";
 import { runPipeline } from "../index.ts";
 
 const FIXTURES_DIR = new URL(".", import.meta.url).pathname;

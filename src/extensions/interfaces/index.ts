@@ -8,6 +8,8 @@
 
 // Bundler
 export type {
+  BuildContext,
+  BuildFailure,
   BundleOptions,
   BundleOutput,
   Bundler,
@@ -16,6 +18,7 @@ export type {
   BundlerMessageLocation,
   BundlerPlugin,
   BundlerPluginBuild,
+  Loader,
   Metafile,
   MetafileInput,
   MetafileOutput,
@@ -23,6 +26,7 @@ export type {
   OnLoadResult,
   OnResolveArgs,
   OnResolveResult,
+  StdinOptions,
   TransformOptions,
   TransformResult,
 } from "./bundler.ts";

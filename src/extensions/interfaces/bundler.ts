@@ -47,10 +47,18 @@ export interface Metafile {
   outputs: Record<string, MetafileOutput>;
 }
 
+/** In-memory source input for {@link BundleOptions.stdin}. */
+export interface StdinOptions {
+  contents: string;
+  resolveDir?: string;
+  sourcefile?: string;
+  loader?: Loader | string;
+}
+
 /** Options passed to {@link Bundler.bundle}. */
 export interface BundleOptions {
-  /** Entry point file paths. */
-  entryPoints?: string[];
+  /** Entry point file paths, or a `{ outputName: inputPath }` map. */
+  entryPoints?: string[] | Record<string, string>;
   /** Output directory. */
   outdir?: string;
   /** Bundle format (`esm`, `cjs`, `iife`). */
@@ -75,12 +83,7 @@ export interface BundleOptions {
   /** Packages/paths to exclude from the bundle. */
   external?: string[];
   /** Bundle an in-memory source string instead of reading from disk. */
-  stdin?: {
-    contents: string;
-    resolveDir?: string;
-    sourcefile?: string;
-    loader?: string;
-  };
+  stdin?: StdinOptions;
   /** Compile-time constant replacements, e.g. `{ "process.env.NODE_ENV": '"production"' }`. */
   define?: Record<string, string>;
   /** JSX transform mode. */
@@ -124,12 +127,29 @@ export interface BundleResult {
   metafile?: Metafile;
 }
 
+/** Loader hint for source files. Mirrors esbuild's `Loader` type. */
+export type Loader =
+  | "js"
+  | "jsx"
+  | "ts"
+  | "tsx"
+  | "css"
+  | "json"
+  | "text"
+  | "base64"
+  | "file"
+  | "dataurl"
+  | "binary"
+  | "default"
+  | "empty"
+  | "copy";
+
 /** Options passed to {@link Bundler.transform}. */
 export interface TransformOptions {
   /** Source code to transform. */
   code: string;
   /** Loader hint (`ts`, `tsx`, `jsx`, `css`, etc.). */
-  loader?: string;
+  loader?: Loader;
   /** Output format. */
   format?: "esm" | "cjs" | "iife";
   /** Target environment(s). */
@@ -237,6 +257,20 @@ export interface BundlerPlugin {
   setup(build: BundlerPluginBuild): void;
 }
 
+/** Incremental/rebuild context produced by {@link Bundler.context}. */
+export interface BuildContext {
+  /** Re-run the build with cached state. */
+  rebuild(): Promise<BundleResult>;
+  /** Release context resources. */
+  dispose(): Promise<void>;
+}
+
+/** Failure thrown by {@link Bundler.bundle} or {@link Bundler.transform}. */
+export interface BuildFailure extends Error {
+  errors: BundlerMessage[];
+  warnings: BundlerMessage[];
+}
+
 /**
  * Bundler contract interface.
  *
@@ -248,6 +282,8 @@ export interface Bundler {
   bundle(options: BundleOptions): Promise<BundleResult>;
   /** Transform a single source string without writing to disk. */
   transform(options: TransformOptions): Promise<TransformResult>;
+  /** Create an incremental build context (watch/rebuild mode). */
+  context?(options: BundleOptions): Promise<BuildContext>;
   /** Release bundler resources (child processes, watchers, etc.). */
   stop?(): Promise<void>;
 }

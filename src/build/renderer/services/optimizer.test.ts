@@ -1,6 +1,6 @@
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import * as esbuild from "esbuild";
+import * as esbuild from "veryfront/extensions/bundler";
 import { optimizeBundle } from "./optimizer.ts";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 

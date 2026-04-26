@@ -3,7 +3,7 @@
  * @module code-splitter/build-context
  */
 
-import { type BuildContext, context } from "esbuild";
+import { type BuildContext, context } from "veryfront/extensions/bundler";
 import { join } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { getReactImportMap, REACT_DEFAULT_VERSION } from "#veryfront/utils";

@@ -1,6 +1,6 @@
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
-import * as esbuild from "esbuild";
+import * as esbuild from "veryfront/extensions/bundler";
 import { compileMDXFile } from "./compiler.ts";
 
 describe(

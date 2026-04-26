@@ -11,6 +11,7 @@
  */
 
 import type {
+  BuildContext,
   BundleOptions,
   BundleOutput,
   Bundler,
@@ -92,6 +93,23 @@ export class EsbuildBundler implements Bundler {
       code: result.code,
       map: result.map,
       warnings: toMessages(result.warnings).map((m) => m.text),
+    };
+  }
+
+  async context(options: BundleOptions): Promise<BuildContext> {
+    const esbuild = await getEsbuild();
+    const ctx = await esbuild.context(mapOptions(options));
+    return {
+      rebuild: async () => {
+        const result = await ctx.rebuild();
+        return {
+          outputFiles: (result.outputFiles ?? []).map(toOutput),
+          warnings: toMessages(result.warnings),
+          errors: toMessages(result.errors),
+          metafile: result.metafile as Metafile | undefined,
+        };
+      },
+      dispose: () => ctx.dispose(),
     };
   }
 

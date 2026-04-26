@@ -57,7 +57,7 @@ async function bundleBridge(): Promise<{ js: string; etag: string }> {
   const entryPoint = `${BRIDGE_DIR}bridge-coordinator.ts`;
   const source = await Deno.readTextFile(entryPoint);
 
-  const { build } = await import("esbuild");
+  const { build } = await import("veryfront/extensions/bundler");
   const { outputFiles } = await build({
     bundle: true,
     write: false,
