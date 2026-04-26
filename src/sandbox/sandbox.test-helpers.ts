@@ -7,6 +7,7 @@ export const SANDBOX_ENV_KEYS = [
 ] as const;
 
 const originalSetTimeout = globalThis.setTimeout;
+const originalDateNow = Date.now;
 
 export function installMockFetch(
   state: { calls: FetchCall[]; responses: MockResponseEntry[] },
@@ -24,14 +25,21 @@ export function installMockFetch(
   }) as typeof fetch;
 }
 
-export function mockTimers(): void {
-  (globalThis as Record<string, unknown>).setTimeout = (fn: () => void, _ms?: number) => {
+export function mockTimers(options: { advanceTimeByMs?: boolean } = {}): void {
+  let fakeNow = 0;
+
+  Date.now = () => fakeNow;
+  (globalThis as Record<string, unknown>).setTimeout = (fn: () => void, ms?: number) => {
+    if (options.advanceTimeByMs) {
+      fakeNow += ms ?? 0;
+    }
     return originalSetTimeout(fn, 0);
   };
 }
 
 export function restoreTimers(): void {
   (globalThis as Record<string, unknown>).setTimeout = originalSetTimeout;
+  Date.now = originalDateNow;
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {

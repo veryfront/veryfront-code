@@ -584,6 +584,252 @@ describe("Sandbox", () => {
     });
   });
 
+  describe("createLazy()", () => {
+    it("waits long enough for pending sandbox sessions to survive operator reconcile lag", async () => {
+      mockTimers({ advanceTimeByMs: true });
+
+      let statusChecks = 0;
+      globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+          ? input.toString()
+          : input.url;
+        fetchCalls.push({ url, init });
+
+        if (url === "https://api.test.com/sandbox-sessions" && init?.method === "POST") {
+          return Promise.resolve(jsonResponse({
+            id: "sandbox-1",
+            endpoint: "https://sandbox.example.com",
+            status: "pending",
+          }));
+        }
+
+        if (url === "https://api.test.com/sandbox-sessions/sandbox-1" && !init?.method) {
+          statusChecks += 1;
+          return Promise.resolve(jsonResponse({
+            endpoint: "https://sandbox.example.com",
+            status: statusChecks >= 85 ? "running" : "pending",
+          }));
+        }
+
+        if (
+          url === "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat" &&
+          init?.method === "POST"
+        ) {
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+
+        if (url === "https://sandbox.example.com/file?path=notes.txt" && !init?.method) {
+          return Promise.resolve(textResponse("file-body"));
+        }
+
+        if (
+          url === "https://api.test.com/sandbox-sessions/sandbox-1" && init?.method === "DELETE"
+        ) {
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+
+        throw new Error(`Unexpected fetch call: ${url} ${init?.method ?? "GET"}`);
+      }) as typeof fetch;
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        heartbeatIntervalMs: 1_000_000,
+      });
+
+      const readPromise = sandbox.readFile("notes.txt");
+      await Promise.resolve();
+
+      assertEquals(await readPromise, "file-body");
+      assertEquals(statusChecks >= 85, true);
+      assertEquals(
+        fetchCalls.some((call) => call.url.endsWith("/sandbox-sessions/sandbox-1/heartbeat")),
+        true,
+      );
+      assertEquals(
+        fetchCalls.some((call) => call.url.endsWith("/file?path=notes.txt")),
+        true,
+      );
+      await sandbox.close();
+    });
+
+    it("cleans up failed startup heartbeats and reprovisions on the next attempt", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        textResponse("heartbeat failed", 503),
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "sandbox-2",
+          endpoint: "https://sandbox-2.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        textResponse("file-body"),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      await assertRejects(
+        () => sandbox.readFile("notes.txt"),
+        Error,
+        "Sandbox heartbeat failed: 503 heartbeat failed",
+      );
+
+      assertEquals(sandbox.isActive, false);
+      assertEquals(await sandbox.readFile("notes.txt"), "file-body");
+      assertEquals(sandbox.isActive, true);
+      assertEquals(
+        fetchCalls.some((call) =>
+          call.url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+          call.init?.method === "DELETE"
+        ),
+        true,
+      );
+      assertEquals(
+        fetchCalls.some((call) => call.url === "https://sandbox-2.example.com/file?path=notes.txt"),
+        true,
+      );
+      await sandbox.close();
+    });
+
+    it("waits for an in-flight ensure before closing the sandbox session", async () => {
+      let resolveCreate!: (response: Response) => void;
+      let hasResolveCreate = false;
+
+      globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+        const url = typeof input === "string"
+          ? input
+          : input instanceof URL
+          ? input.toString()
+          : input.url;
+        fetchCalls.push({ url, init });
+
+        if (fetchCalls.length === 1) {
+          return new Promise<Response>((resolve) => {
+            resolveCreate = resolve;
+            hasResolveCreate = true;
+          });
+        }
+
+        if (fetchCalls.length === 2) {
+          return Promise.resolve(
+            jsonResponse({
+              ok: true,
+            }),
+          );
+        }
+
+        if (fetchCalls.length === 3) {
+          return Promise.resolve(jsonResponse({ ok: true }));
+        }
+
+        throw new Error(`Unexpected fetch call: ${url}`);
+      }) as typeof fetch;
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        heartbeatGraceMs: 0,
+      });
+
+      const ensurePromise = sandbox.ensure();
+      await Promise.resolve();
+
+      const closePromise = sandbox.close();
+
+      if (!hasResolveCreate) {
+        throw new Error("Expected create promise resolver to be captured");
+      }
+
+      resolveCreate(
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+      );
+
+      await ensurePromise;
+      await closePromise;
+
+      assertStringIncludes(fetchCalls[2]!.url, "/sandbox-sessions/sandbox-1");
+      assertEquals(fetchCalls[2]!.init?.method, "DELETE");
+      assertEquals(sandbox.isActive, false);
+    });
+
+    it("keeps an active sandbox session heartbeating until close", async () => {
+      const originalSetInterval = globalThis.setInterval;
+      const originalClearInterval = globalThis.clearInterval;
+      const intervalCallbacks = new Map<number, () => void>();
+      let nextIntervalId = 1;
+
+      globalThis.setInterval = ((handler: TimerHandler) => {
+        const id = nextIntervalId;
+        nextIntervalId += 1;
+        if (typeof handler !== "function") {
+          throw new Error("Expected heartbeat interval handler to be a function");
+        }
+        intervalCallbacks.set(id, () => {
+          handler();
+        });
+        return id as ReturnType<typeof setInterval>;
+      }) as typeof setInterval;
+
+      globalThis.clearInterval = ((id: number) => {
+        intervalCallbacks.delete(id);
+      }) as typeof clearInterval;
+
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({ ok: true }),
+        textResponse("file-body"),
+        jsonResponse({ ok: true }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        heartbeatGraceMs: 0,
+      });
+
+      try {
+        assertEquals(await sandbox.readFile("notes.txt"), "file-body");
+        assertEquals(intervalCallbacks.size, 1);
+
+        await sandbox.heartbeat();
+        await sandbox.close();
+        const callsAfterClose = fetchCalls.length;
+
+        const heartbeatCalls = fetchCalls.filter((call) =>
+          call.url === "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat"
+        );
+
+        assertEquals(heartbeatCalls.length, 3);
+        assertEquals(fetchCalls.length, callsAfterClose);
+        assertEquals(intervalCallbacks.size, 0);
+      } finally {
+        globalThis.setInterval = originalSetInterval;
+        globalThis.clearInterval = originalClearInterval;
+      }
+    });
+  });
+
   describe("list()", () => {
     it("should list sandbox sessions", async () => {
       mockFetch([
