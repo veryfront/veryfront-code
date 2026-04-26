@@ -1,9 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { resolve as resolveContract } from "../../extensions/contracts.ts";
-import type {
-  ImportSpecifier,
-  ModuleLexer,
-} from "../../extensions/interfaces/module-lexer.ts";
+import type { ImportSpecifier, ModuleLexer } from "../../extensions/interfaces/module-lexer.ts";
 
 export type { ImportSpecifier };
 

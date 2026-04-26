@@ -13,8 +13,8 @@
 import type {
   BundleOptions,
   BundleOutput,
-  BundleResult,
   Bundler,
+  BundleResult,
   BundlerMessage,
   Metafile,
   TransformOptions,

@@ -3,7 +3,6 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { applyRewrites, initLexer, parseAllImports, replaceSpecifiers } from "./parse-cache.ts";
 
 describe("transforms/import-rewriter/parse-cache", () => {
-
   describe("initLexer", () => {
     it("initializes without error", async () => {
       await initLexer();
