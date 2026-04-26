@@ -1,3 +1,3 @@
 // Keep in sync with deno.json version.
 // scripts/release.ts updates this constant during releases.
-export const VERSION = "0.1.278";
+export const VERSION = "0.1.279";

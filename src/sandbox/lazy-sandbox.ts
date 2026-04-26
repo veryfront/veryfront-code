@@ -49,6 +49,7 @@ export class LazySandbox {
   private heartbeatPromise: Promise<void> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeartbeatAt = 0;
+  private readonly activeCommandJobEndpoints = new Map<string, string>();
 
   constructor(options: LazySandboxOptions = {}) {
     this.apiUrl = resolveSandboxApiUrl(options);
@@ -107,7 +108,7 @@ export class LazySandbox {
     const res = await fetch(`${this.requireEndpoint()}/exec`, {
       method: "POST",
       headers: this.jsonHeaders(),
-      body: JSON.stringify({ command, ...options }),
+      body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
     });
 
     if (!res.ok) {
@@ -173,11 +174,12 @@ export class LazySandbox {
 
   async startCommandJob(command: string, options?: ExecOptions): Promise<CommandJob> {
     await this.touchSession();
+    const endpoint = this.requireEndpoint();
 
-    const res = await fetch(`${this.requireEndpoint()}/exec/jobs`, {
+    const res = await fetch(`${endpoint}/exec/jobs`, {
       method: "POST",
       headers: this.jsonHeaders(),
-      body: JSON.stringify({ command, ...options }),
+      body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
     });
 
     if (!res.ok) {
@@ -186,13 +188,15 @@ export class LazySandbox {
       });
     }
 
-    return mapCommandJob(await res.json());
+    const job = mapCommandJob(await res.json());
+    this.updateTrackedCommandJob(job, endpoint);
+    return job;
   }
 
   async getCommandJob(jobId: string): Promise<CommandJob> {
-    await this.ensure();
+    const endpoint = await this.resolveCommandJobEndpoint(jobId);
 
-    const res = await fetch(`${this.requireEndpoint()}/exec/jobs/${jobId}`, {
+    const res = await fetch(`${endpoint}/exec/jobs/${jobId}`, {
       headers: this.authHeaders(),
     });
 
@@ -202,13 +206,15 @@ export class LazySandbox {
       });
     }
 
-    return mapCommandJob(await res.json());
+    const job = mapCommandJob(await res.json());
+    this.updateTrackedCommandJob(job, endpoint);
+    return job;
   }
 
   async getCommandJobOutput(jobId: string): Promise<CommandJobOutput> {
-    await this.ensure();
+    const endpoint = await this.resolveCommandJobEndpoint(jobId);
 
-    const res = await fetch(`${this.requireEndpoint()}/exec/jobs/${jobId}/output`, {
+    const res = await fetch(`${endpoint}/exec/jobs/${jobId}/output`, {
       headers: this.authHeaders(),
     });
 
@@ -219,13 +225,15 @@ export class LazySandbox {
     }
 
     const json = await res.json();
-    return {
+    const output = {
       ...mapCommandJob(json),
       stdout: json.stdout,
       stderr: json.stderr,
       stdoutTruncated: json.stdout_truncated,
       stderrTruncated: json.stderr_truncated,
     };
+    this.updateTrackedCommandJob(output, endpoint);
+    return output;
   }
 
   async listCommandJobs(): Promise<CommandJob[]> {
@@ -247,9 +255,9 @@ export class LazySandbox {
   }
 
   async cancelCommandJob(jobId: string): Promise<CommandJob> {
-    await this.ensure();
+    const endpoint = await this.resolveCommandJobEndpoint(jobId);
 
-    const res = await fetch(`${this.requireEndpoint()}/exec/jobs/${jobId}/cancel`, {
+    const res = await fetch(`${endpoint}/exec/jobs/${jobId}/cancel`, {
       method: "POST",
       headers: this.authHeaders(),
     });
@@ -260,7 +268,9 @@ export class LazySandbox {
       });
     }
 
-    return mapCommandJob(await res.json());
+    const job = mapCommandJob(await res.json());
+    this.updateTrackedCommandJob(job, endpoint);
+    return job;
   }
 
   async heartbeat(force = false): Promise<void> {
@@ -287,8 +297,10 @@ export class LazySandbox {
 
       if (!res.ok) {
         if (this.sessionId === currentSessionId) {
-          await this.deleteSession(currentSessionId);
-          this.resetSessionState(currentSessionId);
+          if (this.activeCommandJobEndpoints.size === 0) {
+            await this.deleteSession(currentSessionId);
+            this.resetSessionState(currentSessionId);
+          }
         }
 
         throw new Error(`Sandbox heartbeat failed: ${res.status} ${await res.text()}`);
@@ -431,7 +443,7 @@ export class LazySandbox {
   }
 
   private startHeartbeatLoop(): void {
-    if (!this.sessionId || this.heartbeatTimer) return;
+    if (!this.sessionId || this.heartbeatTimer || this.activeCommandJobEndpoints.size > 0) return;
 
     this.heartbeatTimer = setInterval(() => {
       void this.heartbeat().catch(() => {
@@ -467,11 +479,43 @@ export class LazySandbox {
   private resetSessionState(sessionId?: string): void {
     if (!sessionId || this.sessionId === sessionId) {
       this.stopHeartbeatLoop();
+      this.activeCommandJobEndpoints.clear();
       this.endpoint = null;
       this.sessionId = null;
       this.sessionProjectId = null;
       this.heartbeatPromise = null;
       this.lastHeartbeatAt = 0;
+    }
+  }
+
+  private resolveExecOptions(options?: ExecOptions): ExecOptions | undefined {
+    const projectReference = options?.projectReference ?? this.resolveProjectId() ?? undefined;
+    return projectReference ? { ...options, projectReference } : options;
+  }
+
+  private async resolveCommandJobEndpoint(jobId: string): Promise<string> {
+    const trackedEndpoint = this.activeCommandJobEndpoints.get(jobId);
+    if (trackedEndpoint) {
+      return trackedEndpoint;
+    }
+
+    await this.ensure();
+    return this.requireEndpoint();
+  }
+
+  private updateTrackedCommandJob(job: Pick<CommandJob, "id" | "status">, endpoint: string): void {
+    if (job.status === "running") {
+      this.activeCommandJobEndpoints.set(job.id, endpoint);
+      this.stopHeartbeatLoop();
+      return;
+    }
+
+    if (!this.activeCommandJobEndpoints.delete(job.id)) {
+      return;
+    }
+
+    if (this.activeCommandJobEndpoints.size === 0 && this.endpoint) {
+      this.startHeartbeatLoop();
     }
   }
 
