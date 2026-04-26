@@ -18,7 +18,7 @@ import { getVeryfrontCloudAuthToken } from "#veryfront/platform/cloud/resolver.t
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 
-/** Options for command execution: working directory, timeout, and environment variables. */
+/** Options for command execution: working directory, timeout, environment variables, and optional project reference. */
 export interface ExecOptions {
   /** Working directory for the command. */
   cwd?: string;
@@ -26,6 +26,8 @@ export interface ExecOptions {
   timeout_seconds?: number;
   /** Additional environment variables for the command. */
   env?: Record<string, string>;
+  /** Optional project reference forwarded to sandbox command surfaces that support project-scoped execution. */
+  projectReference?: string;
 }
 
 /** Options for creating a sandbox session. */
