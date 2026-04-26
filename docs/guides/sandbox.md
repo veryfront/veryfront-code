@@ -38,6 +38,14 @@ const sandbox = Sandbox.createLazy({
 });
 ```
 
+If your project context can change over time, prefer `getProjectId()` so lazy exec and async job calls inherit the latest project reference automatically:
+
+```ts
+const sandbox = Sandbox.createLazy({
+  getProjectId: () => currentProjectId,
+});
+```
+
 If you need to override the resolved credentials, pass `authToken`
 explicitly. This can be a JWT or a Studio-generated API key.
 

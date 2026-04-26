@@ -41,7 +41,7 @@ Reconnect to an existing sandbox session.
 
 ### `Sandbox.createLazy(options?)`
 
-Create a lazily-provisioned sandbox client that only claims a session on first use, sends an initial heartbeat before marking the session ready, and keeps the session alive until `close()`.
+Create a lazily-provisioned sandbox client that only claims a session on first use, sends an initial heartbeat before marking the session ready, pauses background heartbeats while async command jobs are active, and keeps the session alive until `close()`.
 
 **Returns:** <code>LazySandbox</code>
 
@@ -144,7 +144,7 @@ Options for a lazily-provisioned sandbox session.
 | `apiUrl?`              | `string`                            | Base URL of the Veryfront API.                                                           |
 | `authToken?`           | `string`                            | Explicit Veryfront auth token or API key override.                                       |
 | `projectId?`           | `string`                            | Initial project-scoped billing or isolation context.                                     |
-| `getProjectId?`        | `() => string \| null \| undefined` | Deferred resolver used at first provision time and on later project-context sync checks. |
+| `getProjectId?`        | `() => string \| null \| undefined` | Deferred resolver used at first provision time, on later project-context sync checks, and as the default `projectReference` for lazy exec/job calls when callers do not override it. |
 | `startupTimeoutMs?`    | `number`                            | Maximum time to wait for pending sessions to become ready. Defaults to 180000.           |
 | `pollIntervalMs?`      | `number`                            | Poll interval while waiting for readiness. Defaults to 2000.                             |
 | `heartbeatIntervalMs?` | `number`                            | Background heartbeat interval for active sessions. Defaults to 30000.                    |

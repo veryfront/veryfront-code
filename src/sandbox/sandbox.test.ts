@@ -871,6 +871,211 @@ describe("Sandbox", () => {
         globalThis.clearInterval = originalClearInterval;
       }
     });
+
+    it("forwards projectReference from lazy project context for exec and async jobs", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        jsonResponse({
+          id: "job-1",
+          status: "completed",
+          exit_code: 0,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:00:01Z",
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        getProjectId: () => "project-123",
+      });
+
+      try {
+        await sandbox.executeCommand("echo ok");
+        await sandbox.startCommandJob("npm test");
+
+        assertEquals(jsonBody(fetchCalls, 2), {
+          command: "echo ok",
+          projectReference: "project-123",
+        });
+        assertEquals(jsonBody(fetchCalls, 3), {
+          command: "npm test",
+          projectReference: "project-123",
+        });
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("pauses heartbeats while async jobs are active and resumes them after the job completes", async () => {
+      const originalSetInterval = globalThis.setInterval;
+      const originalClearInterval = globalThis.clearInterval;
+      const intervalCallbacks = new Map<number, () => void>();
+      let nextIntervalId = 1;
+
+      globalThis.setInterval = ((handler: TimerHandler) => {
+        const id = nextIntervalId;
+        nextIntervalId += 1;
+        if (typeof handler !== "function") {
+          throw new Error("Expected heartbeat interval handler to be a function");
+        }
+        intervalCallbacks.set(id, () => {
+          handler();
+        });
+        return id as ReturnType<typeof setInterval>;
+      }) as typeof setInterval;
+
+      globalThis.clearInterval = ((id: number) => {
+        intervalCallbacks.delete(id);
+      }) as typeof clearInterval;
+
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "job-1",
+          status: "running",
+          exit_code: null,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: null,
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+        jsonResponse({
+          id: "job-1",
+          status: "completed",
+          exit_code: 0,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:01:00Z",
+          heartbeat_status: "healthy",
+          last_heartbeat_at: "2026-01-01T00:00:30Z",
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+          stdout: "done\n",
+          stderr: "",
+          stdout_truncated: false,
+          stderr_truncated: false,
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      try {
+        const job = await sandbox.startCommandJob("npm test");
+        assertEquals(job.status, "running");
+        assertEquals(intervalCallbacks.size, 0);
+
+        const output = await sandbox.getCommandJobOutput("job-1");
+        assertEquals(output.status, "completed");
+        assertEquals(output.stdout, "done\n");
+        assertEquals(intervalCallbacks.size, 1);
+        assertEquals(
+          fetchCalls.some((call) =>
+            call.url === "https://sandbox-1.example.com/exec/jobs/job-1/output"
+          ),
+          true,
+        );
+      } finally {
+        await sandbox.close();
+        globalThis.setInterval = originalSetInterval;
+        globalThis.clearInterval = originalClearInterval;
+      }
+    });
+
+    it("preserves the current session when a heartbeat fails while async jobs are active", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "job-1",
+          status: "running",
+          exit_code: null,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: null,
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+        textResponse("upstream timeout", 503),
+        jsonResponse({
+          id: "job-1",
+          status: "completed",
+          exit_code: 0,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:01:00Z",
+          heartbeat_status: "healthy",
+          last_heartbeat_at: "2026-01-01T00:00:30Z",
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+          stdout: "done\n",
+          stderr: "",
+          stdout_truncated: false,
+          stderr_truncated: false,
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      try {
+        await sandbox.startCommandJob("npm test");
+
+        await assertRejects(
+          () => sandbox.heartbeat(true),
+          Error,
+          "Sandbox heartbeat failed: 503 upstream timeout",
+        );
+
+        assertEquals(sandbox.isActive, true);
+        const output = await sandbox.getCommandJobOutput("job-1");
+        assertEquals(output.status, "completed");
+        assertEquals(
+          fetchCalls.some((call) =>
+            call.url === "https://sandbox-1.example.com/exec/jobs/job-1/output"
+          ),
+          true,
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
   });
 
   describe("list()", () => {
