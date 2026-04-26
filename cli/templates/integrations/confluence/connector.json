@@ -40,31 +40,31 @@
   ],
   "tools": [
     {
-      "id": "search-content",
+      "id": "search_content",
       "name": "Search Confluence",
       "description": "Search for pages and blog posts in Confluence",
       "requiresWrite": false
     },
     {
-      "id": "get-page",
+      "id": "get_page",
       "name": "Get Page",
       "description": "Get the content of a specific Confluence page",
       "requiresWrite": false
     },
     {
-      "id": "create-page",
+      "id": "create_page",
       "name": "Create Page",
       "description": "Create a new page in a Confluence space",
       "requiresWrite": true
     },
     {
-      "id": "update-page",
+      "id": "update_page",
       "name": "Update Page",
       "description": "Update the content of an existing Confluence page",
       "requiresWrite": true
     },
     {
-      "id": "list-spaces",
+      "id": "list_spaces",
       "name": "List Spaces",
       "description": "List all accessible Confluence spaces",
       "requiresWrite": false
@@ -72,28 +72,28 @@
   ],
   "prompts": [
     {
-      "id": "search-docs",
+      "id": "search_docs",
       "title": "Search documentation",
       "prompt": "Search Confluence for documentation about a specific topic or feature.",
       "category": "productivity",
       "icon": "search"
     },
     {
-      "id": "summarize-page",
+      "id": "summarize_page",
       "title": "Summarize a page",
       "prompt": "Read and summarize a Confluence page. Extract key information and action items.",
       "category": "productivity",
       "icon": "document"
     },
     {
-      "id": "create-doc",
+      "id": "create_doc",
       "title": "Create documentation",
       "prompt": "Create a new documentation page in Confluence with structured content.",
       "category": "productivity",
       "icon": "plus"
     },
     {
-      "id": "update-doc",
+      "id": "update_doc",
       "title": "Update documentation",
       "prompt": "Update an existing Confluence page with new information while preserving existing content.",
       "category": "productivity",

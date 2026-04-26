@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-deals",
+      "id": "list_deals",
       "name": "List Deals",
       "description": "List deals in the sales pipeline",
       "requiresWrite": false
     },
     {
-      "id": "get-deal",
+      "id": "get_deal",
       "name": "Get Deal",
       "description": "Get details of a specific deal",
       "requiresWrite": false
     },
     {
-      "id": "create-deal",
+      "id": "create_deal",
       "name": "Create Deal",
       "description": "Create a new deal in the pipeline",
       "requiresWrite": true
     },
     {
-      "id": "update-deal",
+      "id": "update_deal",
       "name": "Update Deal",
       "description": "Update an existing deal",
       "requiresWrite": true
     },
     {
-      "id": "list-persons",
+      "id": "list_persons",
       "name": "List Persons",
       "description": "List contacts/persons in Pipedrive",
       "requiresWrite": false
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "my-deals",
+      "id": "my_deals",
       "title": "Show my deals",
       "prompt": "List all deals in my Pipedrive pipeline with their values and stages.",
       "category": "sales",
       "icon": "currency"
     },
     {
-      "id": "create-deal",
+      "id": "create_deal",
       "title": "Create a deal",
       "prompt": "Create a new deal with a title, value, and contact person.",
       "category": "sales",

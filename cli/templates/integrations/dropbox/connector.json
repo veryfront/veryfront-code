@@ -43,31 +43,31 @@
   ],
   "tools": [
     {
-      "id": "list-files",
+      "id": "list_files",
       "name": "List Files",
       "description": "List files and folders in a Dropbox folder",
       "requiresWrite": false
     },
     {
-      "id": "get-file",
+      "id": "get_file",
       "name": "Get File",
       "description": "Get file metadata and optionally download file content",
       "requiresWrite": false
     },
     {
-      "id": "upload-file",
+      "id": "upload_file",
       "name": "Upload File",
       "description": "Upload or update a file in Dropbox",
       "requiresWrite": true
     },
     {
-      "id": "search-files",
+      "id": "search_files",
       "name": "Search Files",
       "description": "Search for files and folders by name or content",
       "requiresWrite": false
     },
     {
-      "id": "get-account",
+      "id": "get_account",
       "name": "Get Account Info",
       "description": "Get current user account information and storage usage",
       "requiresWrite": false
@@ -75,28 +75,28 @@
   ],
   "prompts": [
     {
-      "id": "find-documents",
+      "id": "find_documents",
       "title": "Find my documents",
       "prompt": "Search my Dropbox for specific documents or files by name or content.",
       "category": "productivity",
       "icon": "search"
     },
     {
-      "id": "organize-files",
+      "id": "organize_files",
       "title": "Organize files",
       "prompt": "Help me organize and manage files in my Dropbox, including moving, copying, or cleaning up duplicates.",
       "category": "productivity",
       "icon": "folder"
     },
     {
-      "id": "backup-file",
+      "id": "backup_file",
       "title": "Backup a file",
       "prompt": "Upload and backup a file to my Dropbox storage.",
       "category": "productivity",
       "icon": "upload"
     },
     {
-      "id": "check-storage",
+      "id": "check_storage",
       "title": "Check storage",
       "prompt": "Check my Dropbox storage usage and available space.",
       "category": "productivity",

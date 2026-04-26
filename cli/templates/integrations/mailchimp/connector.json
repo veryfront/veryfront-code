@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-campaigns",
+      "id": "list_campaigns",
       "name": "List Campaigns",
       "description": "List all email campaigns in Mailchimp",
       "requiresWrite": false
     },
     {
-      "id": "get-campaign",
+      "id": "get_campaign",
       "name": "Get Campaign",
       "description": "Get details of a specific campaign",
       "requiresWrite": false
     },
     {
-      "id": "list-lists",
+      "id": "list_lists",
       "name": "List Audience Lists",
       "description": "List all audience lists (mailing lists) in Mailchimp",
       "requiresWrite": false
     },
     {
-      "id": "get-list",
+      "id": "get_list",
       "name": "Get Audience List",
       "description": "Get details of a specific audience list",
       "requiresWrite": false
     },
     {
-      "id": "list-members",
+      "id": "list_members",
       "name": "List Members",
       "description": "List subscribers/members in an audience list",
       "requiresWrite": false
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "campaign-stats",
+      "id": "campaign_stats",
       "title": "Show campaign stats",
       "prompt": "Show me the performance statistics for my recent email campaigns in Mailchimp.",
       "category": "marketing",
       "icon": "chart"
     },
     {
-      "id": "list-subscribers",
+      "id": "list_subscribers",
       "title": "List subscribers",
       "prompt": "Show me the subscribers in my main email list with their subscription status.",
       "category": "marketing",

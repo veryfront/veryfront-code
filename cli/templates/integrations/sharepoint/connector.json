@@ -42,31 +42,31 @@
   ],
   "tools": [
     {
-      "id": "list-sites",
+      "id": "list_sites",
       "name": "List SharePoint Sites",
       "description": "List all SharePoint sites the user has access to",
       "requiresWrite": false
     },
     {
-      "id": "get-site",
+      "id": "get_site",
       "name": "Get Site Details",
       "description": "Get detailed information about a specific SharePoint site",
       "requiresWrite": false
     },
     {
-      "id": "list-files",
+      "id": "list_files",
       "name": "List Files",
       "description": "List files and folders in a SharePoint document library",
       "requiresWrite": false
     },
     {
-      "id": "get-file",
+      "id": "get_file",
       "name": "Get File",
       "description": "Get file metadata and content from SharePoint",
       "requiresWrite": false
     },
     {
-      "id": "upload-file",
+      "id": "upload_file",
       "name": "Upload File",
       "description": "Upload a file to a SharePoint document library",
       "requiresWrite": true
@@ -74,21 +74,21 @@
   ],
   "prompts": [
     {
-      "id": "search-documents",
+      "id": "search_documents",
       "title": "Search documents",
       "prompt": "Search for documents in SharePoint sites and summarize their content.",
       "category": "productivity",
       "icon": "search"
     },
     {
-      "id": "list-recent-files",
+      "id": "list_recent_files",
       "title": "List recent files",
       "prompt": "Show me the most recently modified files across all SharePoint sites I have access to.",
       "category": "productivity",
       "icon": "document"
     },
     {
-      "id": "organize-documents",
+      "id": "organize_documents",
       "title": "Organize documents",
       "prompt": "Help me organize and categorize documents in a SharePoint library.",
       "category": "productivity",

@@ -12,46 +12,46 @@
   },
   "tools": [
     {
-      "id": "list-incidents",
+      "id": "list_incidents",
       "name": "List Incidents",
       "description": "List ServiceNow incidents with optional filters"
     },
     {
-      "id": "get-incident",
+      "id": "get_incident",
       "name": "Get Incident",
       "description": "Get details of a specific incident"
     },
     {
-      "id": "create-incident",
+      "id": "create_incident",
       "name": "Create Incident",
       "description": "Create a new incident in ServiceNow"
     },
     {
-      "id": "update-incident",
+      "id": "update_incident",
       "name": "Update Incident",
       "description": "Update an existing incident"
     },
     {
-      "id": "search-knowledge",
+      "id": "search_knowledge",
       "name": "Search Knowledge Base",
       "description": "Search ServiceNow knowledge base articles"
     }
   ],
   "prompts": [
     {
-      "id": "check-ticket-status",
+      "id": "check_ticket_status",
       "title": "Check ticket status",
       "prompt": "Check the status of my recent ServiceNow incidents and summarize any that need attention.",
       "category": "productivity"
     },
     {
-      "id": "create-incident-report",
+      "id": "create_incident_report",
       "title": "Create incident",
       "prompt": "Help me create a new incident in ServiceNow with the appropriate priority and category.",
       "category": "productivity"
     },
     {
-      "id": "search-kb",
+      "id": "search_kb",
       "title": "Search knowledge base",
       "prompt": "Search the ServiceNow knowledge base for solutions to common issues.",
       "category": "research"

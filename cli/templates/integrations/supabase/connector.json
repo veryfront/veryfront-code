@@ -37,31 +37,31 @@
   ],
   "tools": [
     {
-      "id": "list-tables",
+      "id": "list_tables",
       "name": "List Tables",
       "description": "List all tables in your Supabase database",
       "requiresWrite": false
     },
     {
-      "id": "query-table",
+      "id": "query_table",
       "name": "Query Table",
       "description": "Select rows from a table with optional filters and sorting",
       "requiresWrite": false
     },
     {
-      "id": "insert-row",
+      "id": "insert_row",
       "name": "Insert Row",
       "description": "Insert a new row into a table",
       "requiresWrite": true
     },
     {
-      "id": "update-row",
+      "id": "update_row",
       "name": "Update Row",
       "description": "Update an existing row in a table",
       "requiresWrite": true
     },
     {
-      "id": "delete-row",
+      "id": "delete_row",
       "name": "Delete Row",
       "description": "Delete a row from a table",
       "requiresWrite": true
@@ -69,28 +69,28 @@
   ],
   "prompts": [
     {
-      "id": "query-data",
+      "id": "query_data",
       "title": "Query my database",
       "prompt": "Help me query data from my Supabase database. Show me specific records or analyze patterns.",
       "category": "data",
       "icon": "search"
     },
     {
-      "id": "create-record",
+      "id": "create_record",
       "title": "Create a record",
       "prompt": "Create a new record in my Supabase database with the information I provide.",
       "category": "data",
       "icon": "plus"
     },
     {
-      "id": "update-records",
+      "id": "update_records",
       "title": "Update records",
       "prompt": "Find and update records in my Supabase database based on specific criteria.",
       "category": "data",
       "icon": "edit"
     },
     {
-      "id": "database-stats",
+      "id": "database_stats",
       "title": "Database statistics",
       "prompt": "Show me statistics and insights about my Supabase database tables and data.",
       "category": "analytics",

@@ -36,7 +36,7 @@
   ],
   "tools": [
     {
-      "id": "search-issues",
+      "id": "search_issues",
       "name": "Search Issues",
       "description": "Search for Linear issues by title or description",
       "requiresWrite": false,
@@ -53,7 +53,7 @@
       }
     },
     {
-      "id": "get-issue",
+      "id": "get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific Linear issue",
       "requiresWrite": false,
@@ -69,7 +69,7 @@
       }
     },
     {
-      "id": "create-issue",
+      "id": "create_issue",
       "name": "Create Issue",
       "description": "Create a new Linear issue in a team",
       "requiresWrite": true,
@@ -88,7 +88,7 @@
       }
     },
     {
-      "id": "update-issue",
+      "id": "update_issue",
       "name": "Update Issue",
       "description": "Update the status, assignee, or other properties of an issue",
       "requiresWrite": true,
@@ -107,7 +107,7 @@
       }
     },
     {
-      "id": "list-projects",
+      "id": "list_projects",
       "name": "List Projects",
       "description": "List all projects in the workspace",
       "requiresWrite": false,
@@ -125,28 +125,28 @@
   ],
   "prompts": [
     {
-      "id": "find-issues",
+      "id": "find_issues",
       "title": "Find my issues",
       "prompt": "Search for Linear issues assigned to me or related to a specific topic.",
       "category": "productivity",
       "icon": "search"
     },
     {
-      "id": "create-bug-report",
+      "id": "create_bug_report",
       "title": "Create bug report",
       "prompt": "Create a new bug report in Linear with title, description, and relevant labels.",
       "category": "productivity",
       "icon": "plus"
     },
     {
-      "id": "update-issue-status",
+      "id": "update_issue_status",
       "title": "Update issue status",
       "prompt": "Update the status of a Linear issue (e.g., mark as done, in progress, blocked).",
       "category": "productivity",
       "icon": "check"
     },
     {
-      "id": "project-overview",
+      "id": "project_overview",
       "title": "Project overview",
       "prompt": "Get an overview of all projects in Linear, including their status and key issues.",
       "category": "productivity",

@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-boards",
+      "id": "list_boards",
       "name": "List Boards",
       "description": "List all boards in the workspace",
       "requiresWrite": false
     },
     {
-      "id": "list-items",
+      "id": "list_items",
       "name": "List Items",
       "description": "List items in a board",
       "requiresWrite": false
     },
     {
-      "id": "get-item",
+      "id": "get_item",
       "name": "Get Item",
       "description": "Get details of a specific item",
       "requiresWrite": false
     },
     {
-      "id": "create-item",
+      "id": "create_item",
       "name": "Create Item",
       "description": "Create a new item in a board",
       "requiresWrite": true
     },
     {
-      "id": "update-item",
+      "id": "update_item",
       "name": "Update Item",
       "description": "Update an existing item",
       "requiresWrite": true
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "my-items",
+      "id": "my_items",
       "title": "Show my items",
       "prompt": "List all items assigned to me in Monday.com with their status and due dates.",
       "category": "productivity",
       "icon": "list"
     },
     {
-      "id": "create-item",
+      "id": "create_item",
       "title": "Create an item",
       "prompt": "Create a new item with a name, status, and assign it to someone.",
       "category": "productivity",

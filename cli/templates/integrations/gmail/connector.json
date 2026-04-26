@@ -39,7 +39,7 @@
   ],
   "tools": [
     {
-      "id": "list-emails",
+      "id": "list_emails",
       "name": "List Emails",
       "description": "List email message IDs from inbox. Use get-email to fetch full content for each message.",
       "requiresWrite": false,
@@ -55,7 +55,7 @@
       }
     },
     {
-      "id": "send-email",
+      "id": "send_email",
       "name": "Send Email",
       "description": "Send an email to recipients",
       "requiresWrite": true,
@@ -68,7 +68,7 @@
       }
     },
     {
-      "id": "get-email",
+      "id": "get_email",
       "name": "Get Email",
       "description": "Get a specific email by ID with full content",
       "requiresWrite": false,
@@ -82,7 +82,7 @@
       }
     },
     {
-      "id": "search-emails",
+      "id": "search_emails",
       "name": "Search Emails",
       "description": "Search emails by query",
       "requiresWrite": false,
@@ -99,21 +99,21 @@
   ],
   "prompts": [
     {
-      "id": "summarize-emails",
+      "id": "summarize_emails",
       "title": "Summarize today's emails",
       "prompt": "Summarize my unread emails from today. Group them by priority and highlight any that need immediate attention.",
       "category": "productivity",
       "icon": "mail"
     },
     {
-      "id": "draft-reply",
+      "id": "draft_reply",
       "title": "Draft a quick reply",
       "prompt": "Help me draft a reply to my most recent email. Keep it professional and concise.",
       "category": "productivity",
       "icon": "reply"
     },
     {
-      "id": "find-emails",
+      "id": "find_emails",
       "title": "Find important emails",
       "prompt": "Search my emails for important messages from the past week that I might have missed.",
       "category": "productivity",
