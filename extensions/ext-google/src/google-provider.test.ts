@@ -1,15 +1,9 @@
 import { describe, it } from "@std/testing/bdd";
 import { assertEquals } from "@std/assert";
 
-import {
-  ProviderOverloadedError,
-  ProviderQuotaError,
-} from "veryfront/provider/shared";
+import { ProviderOverloadedError, ProviderQuotaError } from "veryfront/provider/shared";
 
-import {
-  createGoogleEmbeddingRuntime,
-  createGoogleModelRuntime,
-} from "./google-provider.ts";
+import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "./google-provider.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];

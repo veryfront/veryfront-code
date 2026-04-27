@@ -7,14 +7,8 @@
  * @module extensions/ext-google/google-provider
  */
 
-import type {
-  AIProvider,
-  AIProviderConfig,
-} from "veryfront/extensions/interfaces";
-import type {
-  EmbeddingRuntime,
-  ModelRuntime,
-} from "veryfront/provider/types";
+import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
+import type { EmbeddingRuntime, ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,
   createGoogleRequestInit,

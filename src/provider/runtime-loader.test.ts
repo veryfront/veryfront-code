@@ -1,14 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { assertGreaterOrEqual } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import {
-  ProviderOverloadedError,
-  withToolInputStatusTransitions,
-} from "./runtime-loader.ts";
+import { ProviderOverloadedError, withToolInputStatusTransitions } from "./runtime-loader.ts";
 // createGoogleModelRuntime has moved to ext-google (PR 13, Task 7). Import
 // from the extension path so the shared "omits provider metadata" test still
 // exercises all three providers together.
-import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "../../extensions/ext-google/src/google-provider.ts";
+import { createGoogleModelRuntime } from "../../extensions/ext-google/src/google-provider.ts";
 // createAnthropicModelRuntime has moved to ext-anthropic (PR 12, Task 7). Import
 // from the extension path so cross-provider tests still exercise it.
 import { createAnthropicModelRuntime } from "../../extensions/ext-anthropic/src/anthropic-provider.ts";
@@ -30,13 +27,6 @@ function readRequestBody(init: RequestInit | undefined): string | null {
     return null;
   }
   return init.body;
-}
-
-function readRequestHeader(init: RequestInit | undefined, name: string): string | null {
-  if (!init || !("headers" in init)) {
-    return null;
-  }
-  return new Headers(init.headers).get(name);
 }
 
 describe("provider/runtime-loader", () => {
@@ -475,7 +465,6 @@ describe("provider/runtime-loader", () => {
         totalTokens: 6,
       });
     });
-
   });
 
   describe("transient error classification (529 / 503 / 429 / Retry-After)", () => {
