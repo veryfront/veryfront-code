@@ -32,7 +32,6 @@ import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
-import { createGoogleModelRuntime } from "./runtime-loader.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
 import type { ModelRuntime } from "./types.ts";
@@ -146,7 +145,20 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createGoogleModelRuntime({ apiKey: config.apiKey }, id);
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const provider = registry?.get("google");
+      if (provider) {
+        return provider.createModel(id, {
+          credential: config.apiKey,
+        });
+      }
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "Google provider not installed. Add @veryfront/ext-google to use google/* models.",
+        }),
+      );
     });
   }
 
