@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.288",
+  "version": "0.1.289",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -65,7 +65,9 @@
     "./extensions/interfaces": "./src/extensions/interfaces/index.ts",
     "./cli": "./cli/main.ts",
     "./chat/conversation": "./src/chat/conversation.ts",
-    "./chat/message-prep": "./src/chat/message-prep.ts"
+    "./chat/message-prep": "./src/chat/message-prep.ts",
+    "./chat/final-step-fallback": "./src/chat/final-step-fallback.ts",
+    "./chat/provider-errors": "./src/chat/provider-errors.ts"
   },
   "imports": {
     "veryfront/head": "./src/react/runtime/core.ts",
@@ -277,7 +279,9 @@
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
     "tailwind-merge": "npm:tailwind-merge@3.5.0",
     "veryfront/chat/conversation": "./src/chat/conversation.ts",
-    "veryfront/chat/message-prep": "./src/chat/message-prep.ts"
+    "veryfront/chat/message-prep": "./src/chat/message-prep.ts",
+    "veryfront/chat/final-step-fallback": "./src/chat/final-step-fallback.ts",
+    "veryfront/chat/provider-errors": "./src/chat/provider-errors.ts"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
