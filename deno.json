@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.286",
+  "version": "0.1.287",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -63,7 +63,8 @@
     "./embedding": "./src/embedding/index.ts",
     "./extensions": "./src/extensions/index.ts",
     "./extensions/interfaces": "./src/extensions/interfaces/index.ts",
-    "./cli": "./cli/main.ts"
+    "./cli": "./cli/main.ts",
+    "./chat/conversation": "./src/chat/conversation.ts"
   },
   "imports": {
     "veryfront/head": "./src/react/runtime/core.ts",
@@ -273,7 +274,8 @@
     "unified": "npm:unified@11.0.5",
     "vfile": "npm:vfile@6.0.3",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
-    "tailwind-merge": "npm:tailwind-merge@3.5.0"
+    "tailwind-merge": "npm:tailwind-merge@3.5.0",
+    "veryfront/chat/conversation": "./src/chat/conversation.ts"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
