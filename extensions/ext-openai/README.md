@@ -26,7 +26,7 @@ export default defineConfig({
 Once installed, use `openai/*` model strings anywhere Veryfront expects a model identifier:
 
 ```ts
-const response = await ai.chat("openai/gpt-4o", {
+const response = await ai.chat("openai/gpt-4.1", {
   prompt: [{ role: "user", content: "Hello" }],
 });
 ```
@@ -44,7 +44,7 @@ const result = await ai.embed("openai/text-embedding-3-small", {
 For models that support OpenAI's Responses API (structured output, native tools):
 
 ```ts
-const response = await ai.responses("openai/gpt-4o", {
+const response = await ai.responses("openai/gpt-4.1", {
   prompt: [{ role: "user", content: "What is 2+2?" }],
 });
 ```
@@ -53,9 +53,10 @@ const response = await ai.responses("openai/gpt-4o", {
 
 Any model accessible through the OpenAI Chat Completions, Responses, or Embeddings API:
 
-- **Chat:** `gpt-4o`, `gpt-4o-mini`, `gpt-4-turbo`, `gpt-3.5-turbo`, etc.
-- **Reasoning:** `o1`, `o3`, `o3-mini`, `o4-mini` (sampling parameters are automatically dropped with warnings)
-- **Embeddings:** `text-embedding-3-small`, `text-embedding-3-large`, `text-embedding-ada-002`
+- **Flagship:** `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `gpt-4o`, `gpt-4o-mini`
+- **Frontier:** `gpt-5`, `gpt-5-mini`, `gpt-5-nano`
+- **Reasoning:** `o3`, `o4-mini`, `o1`, `o1-mini`, `o3-mini` (sampling parameters are automatically dropped with warnings)
+- **Embeddings:** `text-embedding-3-small`, `text-embedding-3-large`
 - **OpenAI-compatible:** Any third-party model reachable via an OpenAI-compatible endpoint (set `OPENAI_BASE_URL`)
 
 ## Configuration Options
@@ -71,7 +72,7 @@ The extension accepts configuration through `AIProviderConfig` when creating run
 
 ## Model-Specific Behavior
 
-### Reasoning Models (o1, o3, o4)
+### Reasoning Models (o3, o4-mini, o1)
 
 Reasoning models automatically:
 
@@ -92,7 +93,7 @@ Native OpenAI models (`gpt-*`, `o*`, `chatgpt-*`) use `max_completion_tokens`. T
 Pass provider-specific options through `providerOptions`:
 
 ```ts
-const response = await ai.chat("openai/gpt-4o", {
+const response = await ai.chat("openai/gpt-4.1", {
   prompt: messages,
   providerOptions: {
     openai: {
