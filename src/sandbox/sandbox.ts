@@ -127,6 +127,12 @@ export interface SandboxListResult {
   };
 }
 
+/** Known sandbox session connection details used to attach without a lookup round-trip. */
+export interface SandboxAttachment extends SandboxOptions {
+  id: string;
+  endpoint: string;
+}
+
 /** Client for isolated ephemeral compute environments with command execution and file I/O. */
 export class Sandbox {
   private constructor(
@@ -191,6 +197,13 @@ export class Sandbox {
 
     const { endpoint } = await res.json();
     return new Sandbox(endpoint, id, authToken, apiUrl);
+  }
+
+  /** Attach to an already-known sandbox session and endpoint without a reconnect lookup. */
+  static attach(attachment: SandboxAttachment): Sandbox {
+    const apiUrl = Sandbox.resolveApiUrl(attachment);
+    const authToken = Sandbox.resolveAuthToken(attachment);
+    return new Sandbox(attachment.endpoint, attachment.id, authToken, apiUrl);
   }
 
   /** List sandbox sessions with optional pagination. */

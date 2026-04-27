@@ -18,6 +18,7 @@
  */
 
 export {
+  type SandboxAttachment,
   type CommandJob,
   type CommandJobHeartbeatStatus,
   type CommandJobOutput,

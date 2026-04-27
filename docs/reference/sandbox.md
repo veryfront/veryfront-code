@@ -39,6 +39,12 @@ Reconnect to an existing sandbox session.
 
 **Returns:** <code>Promise&lt;Sandbox&gt;</code>
 
+### `Sandbox.attach(attachment)`
+
+Attach to an already-known sandbox session and endpoint without a reconnect lookup.
+
+**Returns:** <code>Sandbox</code>
+
 ### `Sandbox.createLazy(options?)`
 
 Create a lazily-provisioned sandbox client that only claims a session on first use, sends an initial heartbeat before marking the session ready, pauses background heartbeats while async command jobs are active, and keeps the session alive until `close()`.
@@ -135,6 +141,18 @@ Options for creating a sandbox session.
 | `authToken?` | `string` | Explicit Veryfront auth token or API key override. Defaults to request-scoped credentials or `VERYFRONT_API_TOKEN`. |
 | `projectId?` | `string` | Optional project context for project-scoped or project-billed sandbox sessions.                                     |
 
+### `SandboxAttachment`
+
+Known sandbox session details for `Sandbox.attach(...)`.
+
+| Property   | Type     | Description                                                                                                         |
+| ---------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `id`       | `string` | Existing sandbox session ID.                                                                                        |
+| `endpoint` | `string` | Existing sandbox runtime endpoint URL.                                                                              |
+| `apiUrl?`  | `string` | Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env.                                                   |
+| `authToken?` | `string` | Explicit Veryfront auth token or API key override. Defaults to request-scoped credentials or `VERYFRONT_API_TOKEN`. |
+| `projectId?` | `string` | Optional project context metadata when the caller wants to preserve the same options shape as other sandbox factories. |
+
 ### `LazySandboxOptions`
 
 Options for a lazily-provisioned sandbox session.
@@ -217,6 +235,7 @@ Command job with captured stdout/stderr.
 | `ExecStreamEvent`    | Streaming event emitted during command execution.             |
 | `LazySandboxOptions` | Options for lazily-provisioned sandbox sessions.              |
 | `SandboxOptions`     | Options for creating a sandbox session.                       |
+| `SandboxAttachment`  | Known sandbox session details used for `Sandbox.attach(...)`. |
 
 ## Related
 
