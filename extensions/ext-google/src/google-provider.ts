@@ -66,7 +66,7 @@ export {
 };
 
 export interface GoogleRuntimeConfig {
-  apiKey?: string;
+  apiKey: string;
   baseURL?: string;
   name?: string;
   fetch?: typeof globalThis.fetch;
