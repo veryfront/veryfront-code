@@ -298,8 +298,14 @@ describe("Sandbox", () => {
       await sandbox.close();
 
       assertEquals(fetchCalls.length, 3);
-      assertEquals(fetchCalls[0]!.url, "https://attached.example.com/file?path=%2Fworkspace%2Fnote.txt");
-      assertEquals(fetchCalls[1]!.url, "https://api.test.com/sandbox-sessions/attached-1/heartbeat");
+      assertEquals(
+        fetchCalls[0]!.url,
+        "https://attached.example.com/file?path=%2Fworkspace%2Fnote.txt",
+      );
+      assertEquals(
+        fetchCalls[1]!.url,
+        "https://api.test.com/sandbox-sessions/attached-1/heartbeat",
+      );
       assertEquals(fetchCalls[2]!.url, "https://api.test.com/sandbox-sessions/attached-1");
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer attach-token");
     });
@@ -318,7 +324,10 @@ describe("Sandbox", () => {
       });
 
       assertEquals(await sandbox.readFile("/workspace/env.txt"), "env body");
-      assertEquals(fetchCalls[0]!.url, "https://attached-env.example.com/file?path=%2Fworkspace%2Fenv.txt");
+      assertEquals(
+        fetchCalls[0]!.url,
+        "https://attached-env.example.com/file?path=%2Fworkspace%2Fenv.txt",
+      );
       assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_attach_env");
     });
   });
