@@ -6,10 +6,7 @@
  * factory into this file along with all Anthropic-specific helpers.
  */
 
-import type {
-  AIProvider,
-  AIProviderConfig,
-} from "veryfront/extensions/interfaces";
+import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
 import type { ModelRuntime } from "veryfront/provider/types";
 import { createAnthropicModelRuntime } from "../../../src/provider/runtime-loader.ts";
 
