@@ -6,6 +6,7 @@ export const BROWSER_SAFE_EXPORTS = [
   "./chat",
   "./chat/ag-ui",
   "./chat/protocol",
+  "./chat/types",
   "./markdown",
   "./mdx",
 ];

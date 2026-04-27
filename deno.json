@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.285",
+  "version": "0.1.286",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -34,6 +34,7 @@
     "./chat": "./src/chat/index.ts",
     "./chat/ag-ui": "./src/chat/ag-ui.ts",
     "./chat/protocol": "./src/chat/protocol.ts",
+    "./chat/types": "./src/chat/types.ts",
     "./markdown": "./src/markdown/index.ts",
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
@@ -72,6 +73,7 @@
     "veryfront/chat": "./src/chat/index.ts",
     "veryfront/chat/ag-ui": "./src/chat/ag-ui.ts",
     "veryfront/chat/protocol": "./src/chat/protocol.ts",
+    "veryfront/chat/types": "./src/chat/types.ts",
     "veryfront/markdown": "./src/markdown/index.ts",
     "veryfront/mdx": "./src/mdx/index.ts",
     "veryfront/fs": "./src/fs/index.ts",
