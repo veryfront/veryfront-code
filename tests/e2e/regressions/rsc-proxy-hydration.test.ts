@@ -1,3 +1,4 @@
+import { registerTailwindExtension } from "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import "../../_helpers/log-guard.ts";
@@ -179,6 +180,7 @@ async function withProxyBrowserPage(
     defaultProjectId: context.projectId,
   });
   await server.ready;
+  await registerTailwindExtension();
   await waitForReady(port);
 
   const browserContext = await browser.newContext({ extraHTTPHeaders: headers });
@@ -311,6 +313,7 @@ describe(
           });
           context.trackResource(server);
           await server.ready;
+          await registerTailwindExtension();
           await waitForReady(port);
 
           const browserContext = await browser.newContext();

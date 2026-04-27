@@ -9,6 +9,7 @@
  * @see plans/architecture-audit/002.8-tailwind-compiler-state.md
  */
 
+import "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {

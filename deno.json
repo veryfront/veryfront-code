@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.282",
+  "version": "0.1.283",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -9,7 +9,8 @@
     "./extensions/ext-node-compat",
     "./extensions/ext-openai",
     "./extensions/ext-opentelemetry",
-    "./extensions/ext-redis"
+    "./extensions/ext-redis",
+    "./extensions/ext-tailwind"
   ],
   "exclude": [
     "npm/",
@@ -268,10 +269,6 @@
     "unist": "npm:@types/unist@3.0.2",
     "unified": "npm:unified@11.0.5",
     "vfile": "npm:vfile@6.0.3",
-    "tailwindcss": "https://esm.sh/tailwindcss@4.2.2",
-    "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.2.2/plugin",
-    "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.2.2/defaultTheme",
-    "tailwindcss/colors": "https://esm.sh/tailwindcss@4.2.2/colors",
     "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
     "@opentelemetry/core": "npm:@opentelemetry/core@2.6.0",
     "@opentelemetry/context-async-hooks": "npm:@opentelemetry/context-async-hooks@2.6.0",

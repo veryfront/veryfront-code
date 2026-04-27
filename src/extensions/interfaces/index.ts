@@ -25,7 +25,13 @@ export type { CacheStore } from "./cache-store.ts";
 export type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "./token-cache-store.ts";
 
 // CSS processor
-export type { CSSProcessOptions, CSSProcessor, CSSProcessResult } from "./css-processor.ts";
+export type {
+  CSSCompileOptions,
+  CSSCompiler,
+  CSSModuleSource,
+  CSSProcessor,
+  CSSStylesheetSource,
+} from "./css-processor.ts";
 
 // Content transformer
 export type {
