@@ -1,6 +1,6 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
-import { injectNodePositions } from "./babel-node-positions.ts";
+import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
+import { injectNodePositions } from "./inject-node-positions.ts";
 
 describe("babel-node-positions", () => {
   describe("injectNodePositions", () => {

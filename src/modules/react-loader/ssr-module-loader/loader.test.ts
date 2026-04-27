@@ -1,3 +1,4 @@
+import "../../../transforms/plugins/__tests__/code-parser-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path";

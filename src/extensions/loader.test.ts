@@ -7,7 +7,7 @@
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { ExtensionLoader } from "./loader.ts";
-import { reset, tryResolve } from "./contracts.ts";
+import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 
 function makeResolved(
@@ -368,5 +368,30 @@ describe("ExtensionLoader", () => {
         "boom",
       );
     });
+  });
+});
+
+describe("ExtensionLoader primeContracts", () => {
+  it("applies primed contracts after teardownAll so extensions can resolve them", async () => {
+    const loader = new ExtensionLoader(noopLogger);
+    const marker = { hello: "world" };
+    loader.primeContracts({ Primed: marker });
+
+    let observed: unknown = "unobserved";
+    const resolved: ResolvedExtension = {
+      source: "local-file",
+      origin: "virtual://t",
+      extension: {
+        name: "t-ext",
+        version: "0.0.1",
+        capabilities: [],
+        setup(ctx) {
+          observed = ctx.require("Primed");
+        },
+      },
+    };
+    await loader.setupAll([resolved], {});
+    assertEquals(observed, marker);
+    assertEquals(resolveContract("Primed"), marker);
   });
 });

@@ -55,16 +55,9 @@ export type {
 // Tracing exporter
 export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
 
-// AI model provider
-export type {
-  AIModelProvider,
-  ChatMessage,
-  CompletionOptions,
-  CompletionResult,
-  ContentPart,
-  StreamChunk,
-  ToolDefinition,
-} from "./ai-model-provider.ts";
+// AI provider (registry + per-provider contract)
+export type { AIProvider, AIProviderConfig, AIProviderRegistry } from "./ai-provider.ts";
+export { AIProviderRegistryName } from "./ai-provider.ts";
 
 // Embedding provider
 export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "./embedding-provider.ts";
@@ -75,6 +68,7 @@ export type {
   CodeParser,
   GenerateOptions,
   GenerateResult,
+  InjectJsxNodePositionsOptions,
   NodePath,
   ParseOptions,
   TraverseVisitor,

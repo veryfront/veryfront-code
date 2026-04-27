@@ -1,4 +1,4 @@
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { clearEmbeddingProviders, resolveEmbeddingModel } from "#veryfront/embedding/index.ts";
@@ -33,32 +33,37 @@ describe("provider/veryfront-cloud", () => {
     clearEmbeddingProviders();
   });
 
-  it("resolves veryfront-cloud openai models through the model registry", () => {
+  it("throws when resolving veryfront-cloud openai models without ext-openai installed", () => {
     setCloudBootstrap();
 
-    const model = resolveModel("veryfront-cloud/openai/gpt-5.2") as Record<string, unknown>;
-
-    assertExists(model.doGenerate);
-    assertExists(model.doStream);
+    // ext-openai is not registered in this test — expect the install hint.
+    assertThrows(
+      () => resolveModel("veryfront-cloud/openai/gpt-5.2"),
+      Error,
+      "OpenAI provider not installed",
+    );
   });
 
-  it("resolves veryfront-cloud moonshotai models through the model registry", () => {
+  it("throws when resolving veryfront-cloud moonshotai models without ext-openai installed", () => {
     setCloudBootstrap();
 
-    const model = resolveModel("veryfront-cloud/moonshotai/kimi-k2") as Record<string, unknown>;
-
-    assertExists(model.doGenerate);
-    assertExists(model.doStream);
+    // moonshotai routes through the openai provider, which requires ext-openai.
+    assertThrows(
+      () => resolveModel("veryfront-cloud/moonshotai/kimi-k2"),
+      Error,
+      "OpenAI provider not installed",
+    );
   });
 
-  it("resolves veryfront-cloud embedding models through the embedding registry", () => {
+  it("throws when resolving veryfront-cloud openai embedding models without ext-openai installed", () => {
     setCloudBootstrap();
 
-    const model = resolveEmbeddingModel(
-      "veryfront-cloud/openai/text-embedding-3-small",
-    ) as Record<string, unknown>;
-
-    assertExists(model.doEmbed);
+    // OpenAI embedding requires ext-openai.
+    assertThrows(
+      () => resolveEmbeddingModel("veryfront-cloud/openai/text-embedding-3-small"),
+      Error,
+      "OpenAI provider not installed",
+    );
   });
 
   it("prefers the default veryfront-cloud model when cloud bootstrap is active", () => {

@@ -1,8 +1,5 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import {
-  createGoogleEmbeddingRuntime,
-  createOpenAIEmbeddingRuntime,
-} from "#veryfront/provider/runtime-loader.ts";
+import { createGoogleEmbeddingRuntime } from "#veryfront/provider/runtime-loader.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import {
   createVeryfrontCloudFetch,
@@ -19,12 +16,9 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
 
   switch (provider) {
     case "openai":
-      return createOpenAIEmbeddingRuntime({
-        apiKey: apiToken,
-        baseURL,
-        name: "veryfront-cloud",
-        fetch,
-      }, upstreamModelId);
+      throw new Error(
+        "OpenAI provider not installed. Add @veryfront/ext-openai to use openai embedding models via veryfront-cloud.",
+      );
 
     case "google":
       return createGoogleEmbeddingRuntime({

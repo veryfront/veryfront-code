@@ -3,6 +3,8 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { InvalidationProjectContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
+import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import { createAIProviderRegistry } from "#veryfront/extensions/registries/ai-provider-registry.ts";
 import type { TracingExporter } from "#veryfront/extensions/interfaces/tracing-exporter.ts";
 import {
   setGlobalActiveSpanAccessor,
@@ -198,6 +200,7 @@ export async function bootstrap(
       projectDir,
       config,
       logger: bootstrapLog,
+      primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
     });
     wireTracingShim();
     return {
@@ -239,6 +242,7 @@ export async function bootstrap(
       projectDir,
       config,
       logger: bootstrapLog,
+      primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
     });
     wireTracingShim();
     return {
@@ -302,6 +306,7 @@ export async function bootstrap(
         projectDir,
         config,
         logger: bootstrapLog,
+        primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
       }),
     fsDispose,
   );

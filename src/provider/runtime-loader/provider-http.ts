@@ -44,7 +44,7 @@ export class ProviderQuotaError extends ProviderError {}
 /** Non-retryable 4xx/5xx that doesn't fit another bucket. */
 export class ProviderRequestError extends ProviderError {}
 
-function parseRetryAfterMs(header: string | null): number | undefined {
+export function parseRetryAfterMs(header: string | null): number | undefined {
   if (!header) return undefined;
   const asNumber = Number(header);
   if (Number.isFinite(asNumber) && asNumber >= 0) {
@@ -65,7 +65,7 @@ function parseRetryAfterMs(header: string | null): number | undefined {
  * where HTTP status alone is ambiguous — notably OpenAI
  * `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429.
  */
-async function buildProviderError(
+export async function buildProviderError(
   provider: ProviderKind,
   response: Response,
 ): Promise<ProviderError> {

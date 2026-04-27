@@ -74,6 +74,12 @@ export interface GenerateResult {
  * Implementations parse source code into ASTs, traverse/transform
  * nodes, and generate code back from modified trees.
  */
+/** Options for {@link CodeParser.injectJsxNodePositions}. */
+export interface InjectJsxNodePositionsOptions {
+  /** Source file path — emitted into `data-node-file` attributes. */
+  filePath: string;
+}
+
 export interface CodeParser {
   /** Parse source code into an abstract syntax tree. */
   parse(options: ParseOptions): Promise<ASTNode>;
@@ -81,4 +87,10 @@ export interface CodeParser {
   traverse(ast: ASTNode, visitor: TraverseVisitor): void;
   /** Generate source code from an AST. */
   generate(ast: ASTNode, options?: GenerateOptions): Promise<GenerateResult>;
+  /**
+   * Inject `data-node-*` attributes into every JSX element in the source,
+   * enabling Studio Navigator to map rendered elements back to their
+   * source positions. Parsing failures return the input unchanged.
+   */
+  injectJsxNodePositions(source: string, options: InjectJsxNodePositionsOptions): string;
 }

@@ -30,6 +30,8 @@ export interface OrchestrateOptions {
   projectDir: string;
   config: { extensions?: ExtensionConfigEntry[] };
   logger: ExtensionLogger;
+  /** Contracts to seed into the registry after teardown, before setup(). */
+  primeContracts?: Record<string, unknown>;
   /** @internal Override discovery functions in tests. */
   discovery?: {
     discoverPackageExtensions: typeof defaultDiscovery.discoverPackageExtensions;
@@ -167,6 +169,9 @@ export async function orchestrateExtensions(
   );
 
   const loader = new ExtensionLoader(logger);
+  if (options.primeContracts) {
+    loader.primeContracts(options.primeContracts);
+  }
   await loader.setupAll(merged, config as Record<string, unknown>);
   return loader;
 }

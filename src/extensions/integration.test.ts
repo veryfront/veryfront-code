@@ -6,11 +6,15 @@
  * @module extensions/integration.test
  */
 
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { detectConflicts, ExtensionLoader, resolve, tryResolve } from "./index.ts";
 import type { Extension, ResolvedExtension } from "./index.ts";
 import { register, reset } from "./contracts.ts";
+import { AIProviderRegistryName } from "./interfaces/index.ts";
+import type { AIProviderRegistry } from "./interfaces/index.ts";
+import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
+import extOpenAI from "../../extensions/ext-openai/src/index.ts";
 import {
   _resetShimForTests,
   getTracer,
@@ -165,10 +169,29 @@ describe("extensions/integration", () => {
     assertEquals(order, ["c", "b", "a"]);
   });
 
+  it("ext-openai registers into the primed AIProviderRegistry", async () => {
+    const registry = createAIProviderRegistry();
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ [AIProviderRegistryName]: registry });
+    await loader.setupAll(
+      [
+        {
+          source: "local-file",
+          origin: "virtual://ext-openai",
+          extension: extOpenAI(),
+        } satisfies ResolvedExtension,
+      ],
+      {},
+    );
+    const resolved = resolve<AIProviderRegistry>(AIProviderRegistryName);
+    assertEquals(resolved, registry);
+    assert(registry.has("openai"));
+    await loader.teardownAll();
+  });
+
   it("ext-opentelemetry: TracingExporter registers and returns a real tracer", async () => {
     _resetShimForTests();
 
-    // Build a minimal in-process TracingExporter stub (no real OTLP needed).
     let shimProvider: { getTracer(name: string): unknown } | null = null;
 
     const noopSpan = {
@@ -221,15 +244,12 @@ describe("extensions/integration", () => {
     const loader = new ExtensionLoader(noopLogger);
     await loader.setupAll([makeResolved(otelExt)], {});
 
-    // Wire the shim (mirrors what bootstrap.ts does)
     const tracing = tryResolve<TracingExporter>("TracingExporter");
     assertExists(tracing);
     setGlobalTracerProvider(tracing.getProvider() as Parameters<typeof setGlobalTracerProvider>[0]);
 
-    // Verify getTracer() now returns a real (non-noop) tracer
     const tracer = getTracer("test-service");
     assertExists(tracer);
-    // The real provider's tracer has _name set
     assertEquals((tracer as unknown as { _name?: string })._name, "test-service");
 
     assertExists(shimProvider);

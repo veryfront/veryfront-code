@@ -4,9 +4,12 @@
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
-    "./extensions/ext-redis",
-    "./extensions/ext-opentelemetry",
+    "./extensions/ext-babel",
+    "./extensions/ext-jwt",
     "./extensions/ext-node-compat",
+    "./extensions/ext-openai",
+    "./extensions/ext-opentelemetry",
+    "./extensions/ext-redis",
     "./extensions/ext-tailwind"
   ],
   "exclude": [
@@ -266,17 +269,6 @@
     "unist": "npm:@types/unist@3.0.2",
     "unified": "npm:unified@11.0.5",
     "vfile": "npm:vfile@6.0.3",
-    "@opentelemetry/api": "npm:@opentelemetry/api@1.9.0",
-    "@opentelemetry/core": "npm:@opentelemetry/core@2.6.0",
-    "@opentelemetry/context-async-hooks": "npm:@opentelemetry/context-async-hooks@2.6.0",
-    "@opentelemetry/sdk-trace-base": "npm:@opentelemetry/sdk-trace-base@2.6.0",
-    "@opentelemetry/exporter-trace-otlp-http": "npm:@opentelemetry/exporter-trace-otlp-http@0.213.0",
-    "@opentelemetry/resources": "npm:@opentelemetry/resources@2.6.0",
-    "@opentelemetry/semantic-conventions": "npm:@opentelemetry/semantic-conventions@1.40.0",
-    "@babel/parser": "npm:@babel/parser@7.29.2",
-    "@babel/traverse": "npm:@babel/traverse@7.29.0",
-    "@babel/generator": "npm:@babel/generator@7.29.1",
-    "@babel/types": "npm:@babel/types@7.29.0",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
     "tailwind-merge": "npm:tailwind-merge@3.5.0"
   },

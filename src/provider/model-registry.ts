@@ -19,6 +19,9 @@ import {
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
+import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
@@ -29,11 +32,7 @@ import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
-import {
-  createAnthropicModelRuntime,
-  createGoogleModelRuntime,
-  createOpenAIModelRuntime,
-} from "./runtime-loader.ts";
+import { createAnthropicModelRuntime, createGoogleModelRuntime } from "./runtime-loader.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
 import type { ModelRuntime } from "./types.ts";
@@ -92,10 +91,18 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createOpenAIModelRuntime(
-        { apiKey: config.apiKey, baseURL: config.baseURL },
-        id,
-      );
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const provider = registry?.get("openai");
+      if (provider) {
+        return provider.createModel(id, {
+          credential: config.apiKey,
+          baseURL: config.baseURL,
+        });
+      }
+      throw toError(createError({
+        type: "config",
+        message: "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/* models.",
+      }));
     });
   }
 
@@ -207,13 +214,19 @@ function isMissingProviderConfiguration(errorData: ReturnType<typeof fromError>)
  */
 export function findAvailableCloudModel(): string | null {
   autoInitializeFromEnv();
+  const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
   for (const { provider, model, hasKey } of CLOUD_UPGRADE_CANDIDATES) {
     if (!hasKey()) continue;
     if (!manager.has(provider)) continue;
+    if (registry && !registry.has(provider) && !isBuiltinProvider(provider)) continue;
     const resolvedModel = typeof model === "function" ? model() : model;
     return `${provider}/${resolvedModel}`;
   }
   return null;
+}
+
+function isBuiltinProvider(provider: string): boolean {
+  return provider === "anthropic" || provider === "google" || provider === "veryfront-cloud";
 }
 
 /**
