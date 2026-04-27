@@ -101,7 +101,7 @@ function resolveFromImportMap(specifier) {
       if (target.endsWith("*.ts") && suffix.endsWith(".ts")) {
         suffix = suffix.slice(0, -3);
       }
-      return target.replace("*", suffix);
+      return target.replaceAll("*", suffix);
     }
   }
 
