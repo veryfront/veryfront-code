@@ -10,7 +10,11 @@ import { describe, it } from "@std/testing/bdd";
 
 import { EsbuildBundler } from "./esbuild-bundler.ts";
 
-describe("EsbuildBundler.transform", () => {
+describe({
+  name: "EsbuildBundler.transform",
+  sanitizeOps: false,
+  sanitizeResources: false,
+}, () => {
   it("compiles TS to JS", async () => {
     const bundler = new EsbuildBundler();
     const result = await bundler.transform({
