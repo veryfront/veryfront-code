@@ -14,9 +14,9 @@ export function resolve<T>(name: string): T {
   if (impl === undefined) {
     const recommendation = getRecommendation(name);
     throw MISSING_EXTENSION_ERROR.create({
-      message: `Missing extension for contract "${name}"${
-        recommendation ? `. Recommended: ${recommendation}` : ""
-      }`,
+      message: recommendation
+        ? `Missing extension for contract "${name}". Install it with: deno add ${recommendation}`
+        : `Missing extension for contract "${name}"`,
       detail: recommendation ? `Install it with: deno add ${recommendation}` : undefined,
     });
   }
