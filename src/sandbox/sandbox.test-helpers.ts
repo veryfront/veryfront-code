@@ -1,5 +1,7 @@
 export type FetchCall = { url: string; init?: RequestInit };
-export type MockResponseEntry = Response | (() => Response);
+export type MockResponseEntry =
+  | Response
+  | ((input: string | URL | Request, init?: RequestInit) => Response | Promise<Response>);
 
 export const SANDBOX_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
@@ -21,7 +23,7 @@ export function installMockFetch(
     state.calls.push({ url, init });
     const entry = state.responses.shift();
     if (!entry) throw new Error(`No mock response for: ${url}`);
-    return typeof entry === "function" ? entry() : entry;
+    return typeof entry === "function" ? await entry(input, init) : entry;
   }) as typeof fetch;
 }
 

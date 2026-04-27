@@ -736,6 +736,7 @@ describe("Sandbox", () => {
         authToken: "test-token",
         apiUrl: "https://api.test.com",
         heartbeatIntervalMs: 1_000_000,
+        controlRequestTimeoutMs: 0,
       });
 
       const readPromise = sandbox.readFile("notes.txt");
@@ -1024,6 +1025,46 @@ describe("Sandbox", () => {
           fetchCalls[3]!.url,
           "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec/jobs",
         );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("times out stalled lazy command-job control requests", async () => {
+      let capturedSignal: AbortSignal | undefined;
+
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        (_input, init) =>
+          new Promise<Response>((_, reject) => {
+            capturedSignal = init?.signal instanceof AbortSignal ? init.signal : undefined;
+            capturedSignal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("The operation was aborted.", "AbortError")),
+              { once: true },
+            );
+          }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        controlRequestTimeoutMs: 1,
+      });
+
+      try {
+        await assertRejects(
+          () => sandbox.startCommandJob("npm test"),
+          Error,
+        );
+        assertEquals(capturedSignal?.aborted, true);
+        assertEquals(fetchCalls[2]!.init?.signal instanceof AbortSignal, true);
       } finally {
         await sandbox.close();
       }
