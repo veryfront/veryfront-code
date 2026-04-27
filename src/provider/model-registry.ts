@@ -232,7 +232,7 @@ export function findAvailableCloudModel(): string | null {
 }
 
 function isBuiltinProvider(provider: string): boolean {
-  return provider === "anthropic" || provider === "google" || provider === "veryfront-cloud";
+  return provider === "google" || provider === "veryfront-cloud";
 }
 
 /**
