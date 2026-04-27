@@ -32,4 +32,8 @@ export {
   type SandboxOptions,
   type SandboxSession,
 } from "./sandbox.ts";
-export { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
+export {
+  LazySandbox,
+  type LazySandboxOptions,
+  resolveDefaultSandboxRuntimeEndpoint,
+} from "./lazy-sandbox.ts";
