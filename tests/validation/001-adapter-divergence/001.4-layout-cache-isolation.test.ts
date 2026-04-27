@@ -9,6 +9,7 @@
  * @see plans/architecture-audit/001.4-layout-cache-no-project-scope.md
  */
 
+import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {

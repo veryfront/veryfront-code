@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import {
   createMockHistory,
   createMockLocation,

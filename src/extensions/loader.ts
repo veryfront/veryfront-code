@@ -253,7 +253,12 @@ export class ExtensionLoader {
         }
       }
     }
+    const hadSetupExtensions = this.setupOrder.length > 0;
     this.setupOrder = [];
-    reset();
+    // Only clear the contract registry when this loader actually registered
+    // contracts via setupAll(). Otherwise an idempotent teardown on an empty
+    // loader would wipe contracts registered out-of-band (e.g. by the test
+    // harness in `tests/_helpers/contract-init.ts`).
+    if (hadSetupExtensions) reset();
   }
 }

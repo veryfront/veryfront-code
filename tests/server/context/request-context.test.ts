@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertStrictEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {

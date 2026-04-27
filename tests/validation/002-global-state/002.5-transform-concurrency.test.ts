@@ -11,6 +11,7 @@
  * 4. clearSSRModuleCache properly resets semaphore state
  */
 
+import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import {

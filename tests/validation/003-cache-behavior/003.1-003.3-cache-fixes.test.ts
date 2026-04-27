@@ -15,6 +15,7 @@
  * @see plans/architecture-audit/003.3-multitenancy-cache-isolation.md
  */
 
+import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 

@@ -28,9 +28,7 @@ function parseStatusLines(lines) {
     if (line.length < 4) continue;
     const pathPart = line.slice(3).trim();
     if (!pathPart) continue;
-    const resolved = pathPart.includes("->")
-      ? pathPart.split("->").pop()?.trim()
-      : pathPart;
+    const resolved = pathPart.includes("->") ? pathPart.split("->").pop()?.trim() : pathPart;
     if (resolved) files.add(resolved);
   }
   return Array.from(files);
@@ -138,10 +136,14 @@ process.chdir(cwd);
 
 const changedFiles = getChangedFiles(base);
 if (changedFiles.length === 0) {
-  const child = spawn(process.execPath, [resolve(scriptDir, "run-concurrent-tests.mjs"), "--fast"], {
-    stdio: "inherit",
-    env: process.env,
-  });
+  const child = spawn(
+    process.execPath,
+    [resolve(scriptDir, "run-concurrent-tests.mjs"), "--fast"],
+    {
+      stdio: "inherit",
+      env: process.env,
+    },
+  );
   child.on("exit", (code) => process.exit(code ?? 1));
   return;
 }
@@ -162,10 +164,14 @@ for (const file of changedFiles) {
 
 const selectedTests = Array.from(testCandidates).map((file) => toPosixPath(file));
 if (selectedTests.length === 0) {
-  const child = spawn(process.execPath, [resolve(scriptDir, "run-concurrent-tests.mjs"), "--fast"], {
-    stdio: "inherit",
-    env: process.env,
-  });
+  const child = spawn(
+    process.execPath,
+    [resolve(scriptDir, "run-concurrent-tests.mjs"), "--fast"],
+    {
+      stdio: "inherit",
+      env: process.env,
+    },
+  );
   child.on("exit", (code) => process.exit(code ?? 1));
   return;
 }
@@ -209,10 +215,14 @@ if (bun.length > 0) runners.push(spawnRunner("bun", bunRunner, bun, bunEnv));
 if (node.length > 0) runners.push(spawnRunner("node", nodeRunner, node, nodeEnv));
 
 if (runners.length === 0) {
-  const child = spawn(process.execPath, [resolve(scriptDir, "run-concurrent-tests.mjs"), "--fast"], {
-    stdio: "inherit",
-    env: process.env,
-  });
+  const child = spawn(
+    process.execPath,
+    [resolve(scriptDir, "run-concurrent-tests.mjs"), "--fast"],
+    {
+      stdio: "inherit",
+      env: process.env,
+    },
+  );
   child.on("exit", (code) => process.exit(code ?? 1));
   return;
 }

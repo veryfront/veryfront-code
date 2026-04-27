@@ -4,6 +4,7 @@
  * Total: 6 tests
  */
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {

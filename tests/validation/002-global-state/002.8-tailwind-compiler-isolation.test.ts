@@ -10,6 +10,7 @@
  */
 
 import "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
+import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {

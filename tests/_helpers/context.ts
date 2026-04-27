@@ -21,6 +21,7 @@
  * ```
  */
 
+import "./contract-init.ts";
 import { join } from "#veryfront/compat/path";
 import {
   isAlreadyExistsError,

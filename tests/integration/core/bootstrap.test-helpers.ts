@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { assert, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { remove, writeTextFile } from "#veryfront/compat/fs.ts";

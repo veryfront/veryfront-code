@@ -13,6 +13,7 @@
  *
  * Binary is cached after first compilation (~60s → ~2s on subsequent runs).
  */
+import "../../_helpers/contract-init.ts";
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";

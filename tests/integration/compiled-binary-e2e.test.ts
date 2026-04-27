@@ -18,6 +18,7 @@
  *   VERYFRONT_BINARY=/path/to/bin    # Use specific binary path
  *   VERYFRONT_BINARY_FRESH=1         # Force recompilation
  */
+import "../_helpers/contract-init.ts";
 
 import {
   assert,
