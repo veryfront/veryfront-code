@@ -298,6 +298,27 @@ function addToolDefinition(
 }
 
 /**
+ * Merge forwarded integration tool definitions into the remote defs array.
+ * Forwarded definitions are provided by the API when the runtime cannot
+ * fetch them directly (e.g., the runtime token lacks user auth).
+ * Only appends definitions not already present in the array.
+ */
+function appendForwardedToolDefinitions(
+  remoteDefs: ToolDefinition[],
+  forwarded: ToolDefinition[] | undefined,
+  allowedNames: string[] | undefined,
+): void {
+  if (!forwarded?.length) return;
+  const existing = new Set(remoteDefs.map((def) => def.name));
+  for (const def of forwarded) {
+    if (existing.has(def.name)) continue;
+    if (allowedNames && !allowedNames.includes(def.name)) continue;
+    remoteDefs.push(def);
+    existing.add(def.name);
+  }
+}
+
+/**
  * Get available tools based on agent configuration.
  * When tools === true, loads all tools from registry.
  * Otherwise loads specific tools from config.
@@ -311,6 +332,7 @@ export async function getAvailableTools(
     includeSkillTools?: boolean;
     includeIntegrationTools?: boolean;
     allowedRemoteToolNames?: string[];
+    forwardedRemoteToolDefinitions?: ToolDefinition[];
     remoteToolSources?: RemoteToolSource[];
     remoteToolContext?: ToolExecutionContext;
   },
@@ -333,6 +355,7 @@ export async function getAvailableTools(
 
     // Append remote integration tools (per-request, project-scoped)
     const remoteDefs = await getRemoteToolDefinitions(options);
+    appendForwardedToolDefinitions(remoteDefs, options?.forwardedRemoteToolDefinitions, options?.allowedRemoteToolNames);
     for (const def of remoteDefs) {
       logToolDefinition(def.name, def);
     }
@@ -343,6 +366,7 @@ export async function getAvailableTools(
 
   const tools: ToolDefinition[] = [];
   const remoteDefs = await getRemoteToolDefinitions(options);
+  appendForwardedToolDefinitions(remoteDefs, options?.forwardedRemoteToolDefinitions, options?.allowedRemoteToolNames);
   const remoteToolNames = new Set(remoteDefs.map((def) => def.name));
   const explicitlyRequestedRemoteToolNames = new Set<string>();
   const unresolvedConfiguredToolNames: string[] = [];

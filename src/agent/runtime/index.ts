@@ -110,6 +110,7 @@ const LOAD_SKILL_TOOL_ID = "load-skill";
 
 type RuntimeToolFilterConfig = AgentConfig & {
   __vfAllowedRemoteTools?: string[];
+  __vfForwardedIntegrationToolDefs?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
 };
 
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
@@ -418,6 +419,27 @@ function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined
   return raw.every((toolName) => typeof toolName === "string") ? raw : [];
 }
 
+function getRuntimeForwardedIntegrationToolDefs(
+  config: AgentConfig,
+): ToolDefinition[] | undefined {
+  const configWithFilters = config as RuntimeToolFilterConfig;
+  const raw = configWithFilters.__vfForwardedIntegrationToolDefs;
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  return raw
+    .filter(
+      (def): def is { name: string; description: string; parameters: Record<string, unknown> } =>
+        typeof def === "object" &&
+        def !== null &&
+        typeof def.name === "string" &&
+        typeof def.description === "string",
+    )
+    .map((def) => ({
+      name: def.name,
+      description: def.description,
+      parameters: def.parameters ?? { type: "object", properties: {} },
+    }));
+}
+
 type ResolvedModelTransport = {
   requestedModel: string;
   resolvedModelString: string;
@@ -722,6 +744,7 @@ export class AgentRuntime {
       // Request-scoped skill policy (not class-level mutable state)
       let activeSkillPolicy: string[] | undefined;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
+      const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
 
@@ -743,6 +766,7 @@ export class AgentRuntime {
         let tools = isLocal ? [] : await getAvailableTools(this.config.tools, {
           includeSkillTools: Boolean(this.config.skills),
           allowedRemoteToolNames,
+          forwardedRemoteToolDefinitions,
           remoteToolSources: this.config.remoteTools,
           remoteToolContext: toolContext,
         });
@@ -1004,6 +1028,7 @@ export class AgentRuntime {
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
+    const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
 
@@ -1026,6 +1051,7 @@ export class AgentRuntime {
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
         allowedRemoteToolNames,
+        forwardedRemoteToolDefinitions,
         remoteToolSources: this.config.remoteTools,
         remoteToolContext: toolContext,
       });
