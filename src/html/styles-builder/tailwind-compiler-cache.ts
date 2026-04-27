@@ -8,12 +8,13 @@
  * The actual tailwindcss `compile()` call is routed through the
  * `CSSProcessor` extension contract (default implementation:
  * `@veryfront/ext-tailwind`). When no `CSSProcessor` is registered, the
- * compile path throws with an actionable install message.
+ * compile path returns a no-op compiler that emits empty CSS and logs an
+ * actionable install message.
  *
  * @module html/styles-builder/tailwind-compiler-cache
  */
 
-import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
 import type { CSSCompiler, CSSProcessor } from "#veryfront/extensions/interfaces/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEPENDENCY_MISSING, NETWORK_ERROR } from "#veryfront/errors";
@@ -107,14 +108,23 @@ export async function getCompiler(
 
   logger.debug("Creating new compiler", { hash, projectSlug });
 
+  const processor = tryResolveContract<CSSProcessor>("CSSProcessor");
+  if (!processor) {
+    logger.warn("No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-tailwind");
+    const noopCompiler: CSSCompiler = { build: () => "" };
+    compilerCache.set(hash, {
+      compiler: noopCompiler,
+      createdAt: Date.now(),
+      pluginCache: new Map(),
+      pluginErrors: new Map(),
+    });
+    return noopCompiler;
+  }
+
   const tailwindBase = await getTailwindBaseCSS();
   const pluginCache = new Map<string, unknown>();
   const pluginErrors = new Map<string, Error>();
 
-  // Throws MISSING_EXTENSION_ERROR with an actionable "Install it with: `deno add
-  // @veryfront/ext-tailwind`" hint when no CSSProcessor is registered, so a project
-  // that requested CSS compilation doesn't silently render unstyled.
-  const processor = resolveContract<CSSProcessor>("CSSProcessor");
   const newCompiler = await processor.compile(stylesheet, {
     base: "/",
     loadStylesheet: (id: string) => {
