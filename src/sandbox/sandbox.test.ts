@@ -276,6 +276,62 @@ describe("Sandbox", () => {
     });
   });
 
+  describe("attach()", () => {
+    it("should attach to an already-known sandbox session without a reconnect lookup", async () => {
+      mockFetch([
+        textResponse("attached body"),
+        jsonResponse({ ok: true }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.attach({
+        id: "attached-1",
+        endpoint: "https://attached.example.com",
+        authToken: "attach-token",
+        apiUrl: "https://api.test.com",
+      });
+
+      assertEquals(sandbox.id, "attached-1");
+      assertEquals(sandbox.url, "https://attached.example.com");
+      assertEquals(await sandbox.readFile("/workspace/note.txt"), "attached body");
+      await sandbox.heartbeat();
+      await sandbox.close();
+
+      assertEquals(fetchCalls.length, 3);
+      assertEquals(
+        fetchCalls[0]!.url,
+        "https://attached.example.com/file?path=%2Fworkspace%2Fnote.txt",
+      );
+      assertEquals(
+        fetchCalls[1]!.url,
+        "https://api.test.com/sandbox-sessions/attached-1/heartbeat",
+      );
+      assertEquals(fetchCalls[2]!.url, "https://api.test.com/sandbox-sessions/attached-1");
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer attach-token");
+    });
+
+    it("should resolve authToken and apiUrl from environment when omitted", async () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_attach_env");
+      setEnv("VERYFRONT_API_URL", "https://attach.api.test");
+
+      mockFetch([
+        textResponse("env body"),
+      ]);
+
+      const sandbox = Sandbox.attach({
+        id: "attached-env",
+        endpoint: "https://attached-env.example.com",
+      });
+
+      assertEquals(await sandbox.readFile("/workspace/env.txt"), "env body");
+      assertEquals(
+        fetchCalls[0]!.url,
+        "https://attached-env.example.com/file?path=%2Fworkspace%2Fenv.txt",
+      );
+      assertEquals(headerValue(fetchCalls, 0, "Authorization"), "Bearer vf_attach_env");
+    });
+  });
+
   describe("executeCommand()", () => {
     it("should execute command and collect output", async () => {
       mockFetch([

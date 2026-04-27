@@ -30,6 +30,15 @@ You can also reconnect to an existing session:
 const sandbox = await Sandbox.get(sessionId);
 ```
 
+If you already know both the sandbox session ID and its runtime endpoint, attach without doing a reconnect lookup:
+
+```ts
+const sandbox = Sandbox.attach({
+  id: sessionId,
+  endpoint: sandboxEndpoint,
+});
+```
+
 If you want to defer session creation until the first command or file operation, use the lazy client:
 
 ```ts

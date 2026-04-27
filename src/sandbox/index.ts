@@ -26,6 +26,7 @@ export {
   type ExecResult,
   type ExecStreamEvent,
   Sandbox,
+  type SandboxAttachment,
   type SandboxListOptions,
   type SandboxListResult,
   type SandboxOptions,
