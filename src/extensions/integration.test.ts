@@ -16,6 +16,7 @@ import type { AIProviderRegistry } from "./interfaces/index.ts";
 import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
 import extOpenAI from "../../extensions/ext-openai/src/index.ts";
 import extAnthropic from "../../extensions/ext-anthropic/src/index.ts";
+import extGoogle from "../../extensions/ext-google/src/index.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -201,6 +202,26 @@ describe("extensions/integration", () => {
     const resolved = resolve<AIProviderRegistry>(AIProviderRegistryName);
     assertEquals(resolved, registry);
     assert(registry.has("anthropic"));
+    await loader.teardownAll();
+  });
+
+  it("ext-google registers into the primed AIProviderRegistry", async () => {
+    const registry = createAIProviderRegistry();
+    const loader = new ExtensionLoader(noopLogger);
+    loader.primeContracts({ [AIProviderRegistryName]: registry });
+    await loader.setupAll(
+      [
+        {
+          source: "local-file",
+          origin: "virtual://ext-google",
+          extension: extGoogle(),
+        } satisfies ResolvedExtension,
+      ],
+      {},
+    );
+    const resolved = resolve<AIProviderRegistry>(AIProviderRegistryName);
+    assertEquals(resolved, registry);
+    assert(registry.has("google"));
     await loader.teardownAll();
   });
 });
