@@ -9,7 +9,6 @@ import {
   resolveSandboxApiUrl,
   resolveSandboxAuthToken,
   type SandboxOptions,
-  waitForSandboxReady,
 } from "./sandbox.ts";
 
 export interface LazySandboxOptions extends SandboxOptions {
@@ -18,6 +17,7 @@ export interface LazySandboxOptions extends SandboxOptions {
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatGraceMs?: number;
+  controlRequestTimeoutMs?: number;
   execStartTimeoutMs?: number;
   execStartMaxAttempts?: number;
   execStartRetryDelayMs?: number;
@@ -34,6 +34,7 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 180_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_HEARTBEAT_GRACE_MS = 5_000;
+const DEFAULT_CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_EXEC_START_TIMEOUT_MS = 30_000;
 const DEFAULT_EXEC_START_MAX_ATTEMPTS = 3;
 const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
@@ -53,6 +54,7 @@ export class LazySandbox {
   private readonly pollIntervalMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatGraceMs: number;
+  private readonly controlRequestTimeoutMs: number;
   private readonly execStartTimeoutMs: number;
   private readonly execStartMaxAttempts: number;
   private readonly execStartRetryDelayMs: number;
@@ -81,6 +83,8 @@ export class LazySandbox {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     this.heartbeatGraceMs = options.heartbeatGraceMs ?? DEFAULT_HEARTBEAT_GRACE_MS;
+    this.controlRequestTimeoutMs = options.controlRequestTimeoutMs ??
+      DEFAULT_CONTROL_REQUEST_TIMEOUT_MS;
     this.execStartTimeoutMs = options.execStartTimeoutMs ?? DEFAULT_EXEC_START_TIMEOUT_MS;
     this.execStartMaxAttempts = options.execStartMaxAttempts ?? DEFAULT_EXEC_START_MAX_ATTEMPTS;
     this.execStartRetryDelayMs = options.execStartRetryDelayMs ??
@@ -174,9 +178,12 @@ export class LazySandbox {
   async readFile(path: string): Promise<string> {
     await this.touchSession();
 
-    const res = await fetch(`${this.requireEndpoint()}/file?path=${encodeURIComponent(path)}`, {
-      headers: this.authHeaders(),
-    });
+    const res = await this.fetchControl(
+      `${this.requireEndpoint()}/file?path=${encodeURIComponent(path)}`,
+      {
+        headers: this.authHeaders(),
+      },
+    );
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({ detail: `Read file failed: ${res.status} ${await res.text()}` });
@@ -188,7 +195,7 @@ export class LazySandbox {
   async writeFiles(files: Array<{ path: string; content: string }>): Promise<void> {
     await this.touchSession();
 
-    const res = await fetch(`${this.requireEndpoint()}/files`, {
+    const res = await this.fetchControl(`${this.requireEndpoint()}/files`, {
       method: "POST",
       headers: this.jsonHeaders(),
       body: JSON.stringify({ files }),
@@ -205,7 +212,7 @@ export class LazySandbox {
     await this.touchSession();
     const endpoint = this.resolveRuntimeEndpoint();
 
-    const res = await fetch(`${endpoint}/exec/jobs`, {
+    const res = await this.fetchControl(`${endpoint}/exec/jobs`, {
       method: "POST",
       headers: this.jsonHeaders(),
       body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
@@ -225,7 +232,7 @@ export class LazySandbox {
   async getCommandJob(jobId: string): Promise<CommandJob> {
     const endpoint = await this.resolveCommandJobEndpoint(jobId);
 
-    const res = await fetch(`${endpoint}/exec/jobs/${jobId}`, {
+    const res = await this.fetchControl(`${endpoint}/exec/jobs/${jobId}`, {
       headers: this.authHeaders(),
     });
 
@@ -243,7 +250,7 @@ export class LazySandbox {
   async getCommandJobOutput(jobId: string): Promise<CommandJobOutput> {
     const endpoint = await this.resolveCommandJobEndpoint(jobId);
 
-    const res = await fetch(`${endpoint}/exec/jobs/${jobId}/output`, {
+    const res = await this.fetchControl(`${endpoint}/exec/jobs/${jobId}/output`, {
       headers: this.authHeaders(),
     });
 
@@ -268,7 +275,7 @@ export class LazySandbox {
   async listCommandJobs(): Promise<CommandJob[]> {
     await this.ensure();
 
-    const res = await fetch(`${this.requireEndpoint()}/exec/jobs`, {
+    const res = await this.fetchControl(`${this.requireEndpoint()}/exec/jobs`, {
       headers: this.authHeaders(),
     });
 
@@ -286,7 +293,7 @@ export class LazySandbox {
   async cancelCommandJob(jobId: string): Promise<CommandJob> {
     const endpoint = await this.resolveCommandJobEndpoint(jobId);
 
-    const res = await fetch(`${endpoint}/exec/jobs/${jobId}/cancel`, {
+    const res = await this.fetchControl(`${endpoint}/exec/jobs/${jobId}/cancel`, {
       method: "POST",
       headers: this.authHeaders(),
     });
@@ -319,10 +326,13 @@ export class LazySandbox {
     }
 
     const promise = (async () => {
-      const res = await fetch(`${this.apiUrl}/sandbox-sessions/${currentSessionId}/heartbeat`, {
-        method: "POST",
-        headers: this.authHeaders(),
-      });
+      const res = await this.fetchControl(
+        `${this.apiUrl}/sandbox-sessions/${currentSessionId}/heartbeat`,
+        {
+          method: "POST",
+          headers: this.authHeaders(),
+        },
+      );
 
       if (!res.ok) {
         if (this.sessionId === currentSessionId) {
@@ -399,7 +409,7 @@ export class LazySandbox {
 
   private async bootstrapSession(): Promise<void> {
     const projectId = this.resolveProjectId();
-    const res = await fetch(`${this.apiUrl}/sandbox-sessions`, {
+    const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions`, {
       method: "POST",
       headers: this.jsonHeaders(),
       body: JSON.stringify(projectId ? { project_id: projectId } : {}),
@@ -435,26 +445,35 @@ export class LazySandbox {
       return session.endpoint;
     }
 
-    await waitForSandboxReady({
-      apiUrl: this.apiUrl,
-      id: session.id,
-      authToken: this.authToken,
-      maxWaitMs: this.startupTimeoutMs,
-      pollIntervalMs: this.pollIntervalMs,
-    });
+    return (await this.waitForReadySession(session.id)).endpoint;
+  }
 
-    const res = await fetch(`${this.apiUrl}/sandbox-sessions/${session.id}`, {
-      headers: this.authHeaders(),
-    });
+  private async waitForReadySession(sessionId: string): Promise<SandboxSessionRecord> {
+    const start = Date.now();
 
-    if (!res.ok) {
-      throw REQUEST_ERROR.create({
-        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
+    while (Date.now() - start < this.startupTimeoutMs) {
+      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+
+      const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
+        headers: this.authHeaders(),
       });
+
+      if (!res.ok) {
+        continue;
+      }
+
+      const session = await res.json() as SandboxSessionRecord;
+      if (session.status === "running") {
+        return session;
+      }
+      if (session.status === "error" || session.status === "deleting") {
+        throw REQUEST_ERROR.create({
+          detail: `Sandbox failed to start: status=${session.status}`,
+        });
+      }
     }
 
-    const nextSession = await res.json();
-    return nextSession.endpoint;
+    throw REQUEST_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
   }
 
   private async touchSession(): Promise<void> {
@@ -488,7 +507,7 @@ export class LazySandbox {
   }
 
   private async deleteSession(sessionId: string): Promise<void> {
-    await fetch(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
+    await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
       method: "DELETE",
       headers: this.authHeaders(),
     });
@@ -583,14 +602,11 @@ export class LazySandbox {
   }
 
   private async fetchExecStart(url: string, init: RequestInit): Promise<Response> {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), this.execStartTimeoutMs);
+    return fetchWithTimeout(url, this.execStartTimeoutMs, init);
+  }
 
-    try {
-      return await fetch(url, { ...init, signal: controller.signal });
-    } finally {
-      clearTimeout(timeout);
-    }
+  private async fetchControl(url: string, init: RequestInit = {}): Promise<Response> {
+    return fetchWithTimeout(url, this.controlRequestTimeoutMs, init);
   }
 
   private waitForExecStartRetry(): Promise<void> {
@@ -651,6 +667,25 @@ function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
 
   return typeof cause.code === "string" &&
     REPROVISIONABLE_EXEC_START_ERROR_CODES.has(cause.code);
+}
+
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number,
+  init: RequestInit = {},
+): Promise<Response> {
+  if (timeoutMs <= 0) {
+    return await fetch(url, init);
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function mapCommandJob(json: Record<string, unknown>): CommandJob {
