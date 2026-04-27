@@ -6,6 +6,7 @@
   "workspace": [
     "./extensions/ext-anthropic",
     "./extensions/ext-babel",
+    "./extensions/ext-google",
     "./extensions/ext-openai",
     "./extensions/ext-redis"
   ],
