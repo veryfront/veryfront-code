@@ -18,6 +18,10 @@ export interface LazySandboxOptions extends SandboxOptions {
   pollIntervalMs?: number;
   heartbeatIntervalMs?: number;
   heartbeatGraceMs?: number;
+  execStartTimeoutMs?: number;
+  execStartMaxAttempts?: number;
+  execStartRetryDelayMs?: number;
+  resolveRuntimeEndpoint?: (input: { endpoint: string; sessionId: string }) => string;
 }
 
 interface SandboxSessionRecord {
@@ -30,6 +34,15 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 180_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 const DEFAULT_HEARTBEAT_GRACE_MS = 5_000;
+const DEFAULT_EXEC_START_TIMEOUT_MS = 30_000;
+const DEFAULT_EXEC_START_MAX_ATTEMPTS = 3;
+const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
+const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
+  "ECONNREFUSED",
+  "ECONNRESET",
+  "ENOTFOUND",
+  "EHOSTUNREACH",
+]);
 
 /** Lazily provisions sandbox sessions and keeps them alive while in use. */
 export class LazySandbox {
@@ -40,6 +53,15 @@ export class LazySandbox {
   private readonly pollIntervalMs: number;
   private readonly heartbeatIntervalMs: number;
   private readonly heartbeatGraceMs: number;
+  private readonly execStartTimeoutMs: number;
+  private readonly execStartMaxAttempts: number;
+  private readonly execStartRetryDelayMs: number;
+  private readonly resolveRuntimeEndpointOption:
+    | ((input: {
+      endpoint: string;
+      sessionId: string;
+    }) => string)
+    | undefined;
 
   private endpoint: string | null = null;
   private sessionId: string | null = null;
@@ -59,6 +81,11 @@ export class LazySandbox {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
     this.heartbeatIntervalMs = options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
     this.heartbeatGraceMs = options.heartbeatGraceMs ?? DEFAULT_HEARTBEAT_GRACE_MS;
+    this.execStartTimeoutMs = options.execStartTimeoutMs ?? DEFAULT_EXEC_START_TIMEOUT_MS;
+    this.execStartMaxAttempts = options.execStartMaxAttempts ?? DEFAULT_EXEC_START_MAX_ATTEMPTS;
+    this.execStartRetryDelayMs = options.execStartRetryDelayMs ??
+      DEFAULT_EXEC_START_RETRY_DELAY_MS;
+    this.resolveRuntimeEndpointOption = options.resolveRuntimeEndpoint;
   }
 
   async ensure(): Promise<void> {
@@ -104,15 +131,17 @@ export class LazySandbox {
 
   async *executeStream(command: string, options?: ExecOptions): AsyncGenerator<ExecStreamEvent> {
     await this.touchSession();
+    let res: Response;
+    try {
+      res = await this.startExec(command, options);
+    } catch (error) {
+      if (!shouldReprovisionAfterExecStartFailure(error)) {
+        throw error;
+      }
 
-    const res = await fetch(`${this.requireEndpoint()}/exec`, {
-      method: "POST",
-      headers: this.jsonHeaders(),
-      body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
-    });
-
-    if (!res.ok) {
-      throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
+      await this.reprovisionAfterExecStartFailure();
+      await this.touchSession();
+      res = await this.startExec(command, options);
     }
 
     if (!res.body) {
@@ -174,7 +203,7 @@ export class LazySandbox {
 
   async startCommandJob(command: string, options?: ExecOptions): Promise<CommandJob> {
     await this.touchSession();
-    const endpoint = this.requireEndpoint();
+    const endpoint = this.resolveRuntimeEndpoint();
 
     const res = await fetch(`${endpoint}/exec/jobs`, {
       method: "POST",
@@ -500,7 +529,7 @@ export class LazySandbox {
     }
 
     await this.ensure();
-    return this.requireEndpoint();
+    return this.resolveRuntimeEndpoint();
   }
 
   private updateTrackedCommandJob(job: Pick<CommandJob, "id" | "status">, endpoint: string): void {
@@ -519,6 +548,77 @@ export class LazySandbox {
     }
   }
 
+  private async startExec(command: string, options?: ExecOptions): Promise<Response> {
+    const endpoint = this.resolveRuntimeEndpoint();
+    const body = JSON.stringify({ command, ...this.resolveExecOptions(options) });
+
+    for (let attempt = 1; attempt <= this.execStartMaxAttempts; attempt += 1) {
+      try {
+        const res = await this.fetchExecStart(`${endpoint}/exec`, {
+          method: "POST",
+          headers: this.jsonHeaders(),
+          body,
+        });
+
+        if (res.ok) {
+          return res;
+        }
+
+        if (isRetryableExecStartStatus(res.status) && attempt < this.execStartMaxAttempts) {
+          await this.waitForExecStartRetry();
+          continue;
+        }
+
+        throw REQUEST_ERROR.create({ detail: `Exec failed: ${res.status} ${await res.text()}` });
+      } catch (error) {
+        if (!isRetryableExecStartError(error) || attempt >= this.execStartMaxAttempts) {
+          throw error;
+        }
+
+        await this.waitForExecStartRetry();
+      }
+    }
+
+    throw new Error("Sandbox exec failed before a request was made");
+  }
+
+  private async fetchExecStart(url: string, init: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.execStartTimeoutMs);
+
+    try {
+      return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  private waitForExecStartRetry(): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, this.execStartRetryDelayMs));
+  }
+
+  private async reprovisionAfterExecStartFailure(): Promise<void> {
+    const sessionId = this.sessionId;
+    if (!sessionId) return;
+
+    await this.deleteSession(sessionId);
+    this.resetSessionState(sessionId);
+  }
+
+  private resolveRuntimeEndpoint(): string {
+    const endpoint = this.requireEndpoint();
+    const sessionId = this.requireSessionId();
+    return this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ?? endpoint;
+  }
+
+  private requireSessionId(): string {
+    if (!this.sessionId) {
+      throw new Error("Sandbox session unavailable");
+    }
+
+    return this.sessionId;
+  }
+
   private authHeaders(): HeadersInit {
     return { Authorization: `Bearer ${this.authToken}` };
   }
@@ -529,6 +629,28 @@ export class LazySandbox {
       "Content-Type": "application/json",
     };
   }
+}
+
+function isRetryableExecStartStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504;
+}
+
+function isRetryableExecStartError(error: unknown): boolean {
+  return error instanceof Error && /fetch failed/i.test(error.message);
+}
+
+function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const cause = error.cause;
+  if (typeof cause !== "object" || cause === null || !("code" in cause)) {
+    return false;
+  }
+
+  return typeof cause.code === "string" &&
+    REPROVISIONABLE_EXEC_START_ERROR_CODES.has(cause.code);
 }
 
 function mapCommandJob(json: Record<string, unknown>): CommandJob {

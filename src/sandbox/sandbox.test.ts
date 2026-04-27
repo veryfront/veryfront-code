@@ -978,6 +978,162 @@ describe("Sandbox", () => {
       }
     });
 
+    it("uses the lazy runtime endpoint resolver for exec and async jobs", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        jsonResponse({
+          id: "job-1",
+          status: "completed",
+          exit_code: 0,
+          signal: null,
+          started_at: "2026-01-01T00:00:00Z",
+          finished_at: "2026-01-01T00:00:01Z",
+          heartbeat_status: "disabled",
+          last_heartbeat_at: null,
+          last_heartbeat_error: null,
+          heartbeat_failure_count: 0,
+        }),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        resolveRuntimeEndpoint: ({ sessionId }) =>
+          `http://sandbox.veryfront-sandbox-${sessionId}.svc.cluster.local`,
+      });
+
+      try {
+        await sandbox.executeCommand("echo ok");
+        await sandbox.startCommandJob("npm test");
+
+        assertEquals(
+          fetchCalls[2]!.url,
+          "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec",
+        );
+        assertEquals(
+          fetchCalls[3]!.url,
+          "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec/jobs",
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("retries retryable lazy exec transport failures before streaming starts", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://sandbox-1.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        () => {
+          throw new TypeError("fetch failed");
+        },
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        execStartRetryDelayMs: 0,
+        execStartTimeoutMs: 15_000,
+      });
+
+      try {
+        const result = await sandbox.executeCommand("echo ok");
+        assertEquals(result.stdout, "ok\n");
+        assertEquals(fetchCalls[2]!.url, "https://sandbox-1.example.com/exec");
+        assertEquals(fetchCalls[3]!.url, "https://sandbox-1.example.com/exec");
+        assertEquals(fetchCalls[2]!.init?.signal instanceof AbortSignal, true);
+      } finally {
+        await sandbox.close();
+      }
+    });
+
+    it("reprovisions lazy exec after exhausted in-cluster transport failures", async () => {
+      const connectionRefusedError = () =>
+        new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://1111111111.sandbox.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        () => {
+          throw connectionRefusedError();
+        },
+        () => {
+          throw connectionRefusedError();
+        },
+        () => {
+          throw connectionRefusedError();
+        },
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "sandbox-2",
+          endpoint: "https://2222222222.sandbox.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        execStartRetryDelayMs: 0,
+        resolveRuntimeEndpoint: ({ sessionId }) =>
+          `http://sandbox.veryfront-sandbox-${sessionId}.svc.cluster.local`,
+      });
+
+      try {
+        const result = await sandbox.executeCommand("echo ok");
+        assertEquals(result.stdout, "ok\n");
+        assertEquals(
+          fetchCalls.filter((call) =>
+            call.url === "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec"
+          ).length,
+          3,
+        );
+        assertEquals(
+          fetchCalls.some((call) =>
+            call.url === "https://api.test.com/sandbox-sessions/sandbox-1" &&
+            call.init?.method === "DELETE"
+          ),
+          true,
+        );
+        assertEquals(
+          fetchCalls.some((call) =>
+            call.url === "http://sandbox.veryfront-sandbox-sandbox-2.svc.cluster.local/exec"
+          ),
+          true,
+        );
+      } finally {
+        await sandbox.close();
+      }
+    });
+
     it("pauses heartbeats while async jobs are active and resumes them after the job completes", async () => {
       const originalSetInterval = globalThis.setInterval;
       const originalClearInterval = globalThis.clearInterval;
