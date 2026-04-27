@@ -40,29 +40,36 @@ export interface SendEmailOptions {
   isHtml?: boolean;
 }
 
+// TokenStore adapter keyed by (serviceId, userId). All API calls must pass
+// the authenticated user's id — NEVER use a shared "current-user" constant
+// in production; that re-introduces VULN-AUTH-2.
 const tokenStoreAdapter = {
-  async getTokens(serviceId: string): Promise<unknown> {
-    return tokenStore.getToken("current-user", serviceId);
+  async getTokens(serviceId: string, userId: string): Promise<unknown> {
+    return tokenStore.getToken(userId, serviceId);
   },
   async setTokens(
     serviceId: string,
+    userId: string,
     tokens: { accessToken: string; refreshToken?: string; expiresAt?: number },
   ): Promise<void> {
-    await tokenStore.setToken("current-user", serviceId, tokens);
+    await tokenStore.setToken(userId, serviceId, tokens);
   },
-  async clearTokens(serviceId: string): Promise<void> {
-    await tokenStore.revokeToken("current-user", serviceId);
-  },
-  async getState(): Promise<null> {
-    return null;
+  async clearTokens(serviceId: string, userId: string): Promise<void> {
+    await tokenStore.revokeToken(userId, serviceId);
   },
   async setState(): Promise<void> {},
-  async clearState(): Promise<void> {},
+  async consumeState(): Promise<null> {
+    return null;
+  },
 };
 
 const gmailService = new OAuthService(gmailConfig, tokenStoreAdapter);
 
-export function createGmailClient(): {
+/**
+ * Create a Gmail client scoped to a specific user. Pass the authenticated
+ * user's id (from your session). Tokens are looked up and stored per-user.
+ */
+export function createGmailClient(userId: string): {
   isConnected(): Promise<boolean>;
   listMessages(options?: {
     maxResults?: number;
@@ -78,7 +85,7 @@ export function createGmailClient(): {
   archiveEmail(messageId: string): Promise<void>;
 } {
   async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    return gmailService.fetch<T>(endpoint, options);
+    return gmailService.fetch<T>(userId, endpoint, options);
   }
 
   function formatAddresses(addresses: string | string[] | undefined): string {
@@ -88,7 +95,7 @@ export function createGmailClient(): {
 
   return {
     async isConnected(): Promise<boolean> {
-      const token = await gmailService.getAccessToken();
+      const token = await gmailService.getAccessToken(userId);
       return token !== null;
     },
 

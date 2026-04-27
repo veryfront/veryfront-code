@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-tasks",
+      "id": "list_tasks",
       "name": "List Tasks",
       "description": "List tasks in a list or assigned to a user",
       "requiresWrite": false
     },
     {
-      "id": "get-task",
+      "id": "get_task",
       "name": "Get Task",
       "description": "Get details of a specific task",
       "requiresWrite": false
     },
     {
-      "id": "create-task",
+      "id": "create_task",
       "name": "Create Task",
       "description": "Create a new task in a list",
       "requiresWrite": true
     },
     {
-      "id": "update-task",
+      "id": "update_task",
       "name": "Update Task",
       "description": "Update an existing task",
       "requiresWrite": true
     },
     {
-      "id": "list-lists",
+      "id": "list_lists",
       "name": "List Lists",
       "description": "List all lists in a folder or space",
       "requiresWrite": false
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "my-tasks",
+      "id": "my_tasks",
       "title": "Show my tasks",
       "prompt": "List all tasks assigned to me in ClickUp with their due dates and priorities.",
       "category": "productivity",
       "icon": "list"
     },
     {
-      "id": "create-task",
+      "id": "create_task",
       "title": "Create a task",
       "prompt": "Create a new task with a title, description, due date, and assignee.",
       "category": "productivity",

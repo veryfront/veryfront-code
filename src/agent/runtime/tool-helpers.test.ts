@@ -210,14 +210,14 @@ describe("tool-helpers", () => {
       await assertRejects(
         () =>
           executeConfiguredTool(
-            "gmail:list-emails",
+            "gmail__list_emails",
             {},
             undefined,
             { toolCallId: "tool-3" },
-            ["gmail:get-email"],
+            ["gmail__get_email"],
           ),
         Error,
-        'Tool "gmail:list-emails" is not allowed for this run',
+        'Tool "gmail__list_emails" is not allowed for this run',
       );
     });
 
@@ -305,14 +305,14 @@ describe("tool-helpers", () => {
       toolRegistry.clearAll();
       try {
         const defs = await withMockRemoteIntegrationTools([
-          "gmail:list-emails",
-          "gmail:get-email",
+          "gmail__list_emails",
+          "gmail__get_email",
         ], () =>
           getAvailableTools(true, {
-            allowedRemoteToolNames: ["gmail:get-email"],
+            allowedRemoteToolNames: ["gmail__get_email"],
           }));
 
-        assertEquals(defs.map((def) => def.name), ["gmail:get-email"]);
+        assertEquals(defs.map((def) => def.name), ["gmail__get_email"]);
       } finally {
         toolRegistry.clearAll();
       }
@@ -324,15 +324,15 @@ describe("tool-helpers", () => {
       try {
         await assertRejects(
           () =>
-            withMockRemoteIntegrationTools(["gmail:list-emails"], () =>
+            withMockRemoteIntegrationTools(["gmail__list_emails"], () =>
               getAvailableTools(
                 {
-                  "gmail:get-email": true,
+                  "gmail__get_email": true,
                 },
-                { allowedRemoteToolNames: ["gmail:list-emails"] },
+                { allowedRemoteToolNames: ["gmail__list_emails"] },
               )),
           Error,
-          'Unknown tool reference: gmail:get-email. Tool names must exactly match tool({ id: "..." }). Available tools: gmail:list-emails',
+          'Unknown tool reference: gmail__get_email. Tool names must exactly match tool({ id: "..." }). Available tools: gmail__list_emails',
         );
       } finally {
         toolRegistry.clearAll();
@@ -344,17 +344,17 @@ describe("tool-helpers", () => {
 
       try {
         const defs = await withMockRemoteIntegrationTools([
-          "gmail:list-emails",
-          "gmail:get-email",
+          "gmail__list_emails",
+          "gmail__get_email",
         ], () =>
           getAvailableTools(
             {
-              "gmail:get-email": true,
+              "gmail__get_email": true,
             },
-            { allowedRemoteToolNames: ["gmail:list-emails", "gmail:get-email"] },
+            { allowedRemoteToolNames: ["gmail__list_emails", "gmail__get_email"] },
           ));
 
-        assertEquals(defs.map((def) => def.name), ["gmail:get-email"]);
+        assertEquals(defs.map((def) => def.name), ["gmail__get_email"]);
       } finally {
         toolRegistry.clearAll();
       }

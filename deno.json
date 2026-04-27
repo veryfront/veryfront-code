@@ -1,12 +1,14 @@
 {
   "name": "veryfront",
-  "version": "0.1.229",
+  "version": "0.1.282",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
     "./extensions/ext-babel",
     "./extensions/ext-jwt",
+    "./extensions/ext-node-compat",
     "./extensions/ext-openai",
+    "./extensions/ext-opentelemetry",
     "./extensions/ext-redis"
   ],
   "exclude": [
@@ -33,6 +35,11 @@
     "./markdown": "./src/markdown/index.ts",
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
+    "./agent/conversation-bootstrap": "./src/agent/conversation-bootstrap.ts",
+    "./agent/durable": "./src/agent/durable.ts",
+    "./agent/invoke-agent-child-runs": "./src/agent/invoke-agent-child-runs.ts",
+    "./channels/control-plane": "./src/channels/control-plane.ts",
+    "./channels/invoke": "./src/channels/invoke.ts",
     "./tool": "./src/tool/index.ts",
     "./workflow": "./src/workflow/index.ts",
     "./workflow/worker": "./src/workflow/worker/index.ts",
@@ -273,9 +280,7 @@
     "@opentelemetry/resources": "npm:@opentelemetry/resources@2.6.0",
     "@opentelemetry/semantic-conventions": "npm:@opentelemetry/semantic-conventions@1.40.0",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
-    "tailwind-merge": "npm:tailwind-merge@3.5.0",
-    "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.5.2",
-    "#kreuzberg-wasm-glue": "npm:@kreuzberg/wasm@4.5.2/dist/pkg/kreuzberg_wasm.js"
+    "tailwind-merge": "npm:tailwind-merge@3.5.0"
   },
   "compilerOptions": {
     "jsx": "react-jsx",

@@ -6,15 +6,55 @@ import {
   getGoogleStreamGenerateContentUrl,
 } from "./runtime-loader/provider-endpoints.ts";
 import {
+  extractGoogleEmbedding,
+  extractGoogleUsageTokens,
+  isNumberArray,
+} from "./runtime-loader/provider-embedding-responses.ts";
+import {
+  normalizeAnthropicFinishReason,
+  normalizeGoogleFinishReason,
+} from "./runtime-loader/provider-finish-reasons.ts";
+import {
   createAnthropicRequestInit,
   createGoogleRequestInit,
 } from "./runtime-loader/provider-request-init.ts";
+import { parseSseChunk } from "./runtime-loader/provider-sse.ts";
+import {
+  extractAnthropicUsage,
+  extractGoogleUsage,
+  mergeUsage,
+  type RuntimeUsage,
+} from "./runtime-loader/provider-usage.ts";
+import type { ProviderKind } from "./runtime-loader/provider-http.ts";
+import {
+  buildProviderError,
+  parseRetryAfterMs,
+  requestJson,
+  requestStream,
+} from "./runtime-loader/provider-http.ts";
+import { readRecord } from "./runtime-loader/provider-records.ts";
 import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "./runtime-loader/tool-input-status.ts";
 
+export {
+  ProviderError,
+  ProviderOverloadedError,
+  ProviderQuotaError,
+  ProviderRateLimitError,
+  ProviderRequestError,
+} from "./runtime-loader/provider-http.ts";
 export { TOOL_INPUT_PENDING_THRESHOLD_MS, withToolInputStatusTransitions };
+export {
+  buildProviderError,
+  isNumberArray,
+  mergeUsage,
+  parseRetryAfterMs,
+  readRecord,
+  requestJson,
+  requestStream,
+};
 
 export interface AnthropicRuntimeConfig {
   apiKey?: string;
@@ -281,6 +321,52 @@ type OpenAICompatibleLanguageOptions = {
    */
   mcpServers?: Array<Record<string, unknown>>;
 };
+export type OpenAICompatibleChatMessage =
+  | { role: "system"; content: string }
+  | { role: "user"; content: string }
+  | {
+    role: "assistant";
+    content: string | null;
+    tool_calls?: Array<{
+      id: string;
+      type: "function";
+      function: {
+        name: string;
+        arguments: string;
+      };
+    }>;
+  }
+  | {
+    role: "tool";
+    tool_call_id: string;
+    content: string;
+  };
+export type OpenAICompatibleChatRequest = {
+  model: string;
+  messages: OpenAICompatibleChatMessage[];
+  stream?: boolean;
+  stream_options?: {
+    include_usage?: boolean;
+  };
+  max_tokens?: number;
+  max_completion_tokens?: number;
+  temperature?: number;
+  top_p?: number;
+  stop?: string[];
+  tools?: Array<{
+    type: "function";
+    function: {
+      name: string;
+      parameters: unknown;
+      description?: string;
+    };
+  }>;
+  tool_choice?: unknown;
+  seed?: number;
+  presence_penalty?: number;
+  frequency_penalty?: number;
+  [key: string]: unknown;
+};
 type AnthropicCompatibleMessage = {
   role: "user" | "assistant";
   content: Array<Record<string, unknown>>;
@@ -329,48 +415,6 @@ type GoogleCompatibleRequest = {
   [key: string]: unknown;
 };
 
-export function isNumberArray(value: unknown): value is number[] {
-  return Array.isArray(value) && value.every((entry) => typeof entry === "number");
-}
-
-export function readRecord(value: unknown): Record<string, unknown> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  return Object.fromEntries(Object.entries(value));
-}
-
-function extractGoogleEmbedding(payload: unknown): number[] {
-  const record = readRecord(payload);
-  const embeddings = record?.embeddings;
-
-  if (Array.isArray(embeddings) && embeddings.length > 0) {
-    const firstEmbedding = readRecord(embeddings[0]);
-    const values = firstEmbedding?.values;
-    if (isNumberArray(values)) {
-      return values;
-    }
-  }
-
-  const embedding = readRecord(record?.embedding);
-  const values = embedding?.values;
-  if (isNumberArray(values)) {
-    return values;
-  }
-
-  throw new Error("Invalid Google embedding response: embedding vector missing");
-}
-
-function extractGoogleUsageTokens(payload: unknown): number | undefined {
-  const record = readRecord(payload);
-  const usageMetadata = readRecord(record?.usageMetadata);
-  const promptTokenCount = usageMetadata?.promptTokenCount;
-  return typeof promptTokenCount === "number" ? promptTokenCount : undefined;
-}
-
-type ProviderKind = "anthropic" | "openai" | "google";
-
 /**
  * Structured warning emitted when a provider runtime drops or rewrites a
  * caller-provided option. Mirrors the AI ecosystem convention (Vercel AI
@@ -378,54 +422,6 @@ type ProviderKind = "anthropic" | "openai" | "google";
  * runtime result so callers can discover silently-dropped fields without
  * having to read the source.
  */
-export type OpenAICompatibleChatMessage =
-  | { role: "system"; content: string }
-  | { role: "user"; content: string }
-  | {
-    role: "assistant";
-    content: string | null;
-    tool_calls?: Array<{
-      id: string;
-      type: "function";
-      function: {
-        name: string;
-        arguments: string;
-      };
-    }>;
-  }
-  | {
-    role: "tool";
-    tool_call_id: string;
-    content: string;
-  };
-
-export type OpenAICompatibleChatRequest = {
-  model: string;
-  messages: OpenAICompatibleChatMessage[];
-  stream?: boolean;
-  stream_options?: {
-    include_usage?: boolean;
-  };
-  max_tokens?: number;
-  max_completion_tokens?: number;
-  temperature?: number;
-  top_p?: number;
-  stop?: string[];
-  tools?: Array<{
-    type: "function";
-    function: {
-      name: string;
-      parameters: unknown;
-      description?: string;
-    };
-  }>;
-  tool_choice?: unknown;
-  seed?: number;
-  presence_penalty?: number;
-  frequency_penalty?: number;
-  [key: string]: unknown;
-};
-
 export type ProviderWarning = {
   type: "unsupported-setting" | "other";
   setting?: string;
@@ -453,210 +449,6 @@ export function createWarningCollector(): WarningCollector {
       return list.slice();
     },
   };
-}
-
-/**
- * Base class for typed provider errors. The `retryable` flag is the
- * primary signal for callers (or a retry wrapper) to decide whether to
- * re-issue the request. `retryAfterMs` is set when the provider gave an
- * explicit delay hint (Retry-After header, Retry-Info trailer).
- */
-export class ProviderError extends Error {
-  readonly provider: ProviderKind;
-  readonly status: number;
-  readonly retryable: boolean;
-  readonly retryAfterMs?: number;
-
-  constructor(options: {
-    provider: ProviderKind;
-    status: number;
-    message: string;
-    retryable: boolean;
-    retryAfterMs?: number;
-  }) {
-    super(options.message);
-    this.name = new.target.name;
-    this.provider = options.provider;
-    this.status = options.status;
-    this.retryable = options.retryable;
-    if (options.retryAfterMs !== undefined) {
-      this.retryAfterMs = options.retryAfterMs;
-    }
-  }
-}
-
-/** Provider reports it is overloaded (Anthropic 529, OpenAI/Google 503). */
-export class ProviderOverloadedError extends ProviderError {}
-
-/** Provider is rate limiting this API key (OpenAI/Google 429 with Retry-After). */
-export class ProviderRateLimitError extends ProviderError {}
-
-/** Provider account quota is exhausted — non-retryable. */
-export class ProviderQuotaError extends ProviderError {}
-
-/** Non-retryable 4xx/5xx that doesn't fit another bucket. */
-export class ProviderRequestError extends ProviderError {}
-
-export function parseRetryAfterMs(header: string | null): number | undefined {
-  if (!header) return undefined;
-  const asNumber = Number(header);
-  if (Number.isFinite(asNumber) && asNumber >= 0) {
-    return Math.round(asNumber * 1000);
-  }
-  // HTTP-date form (rare in practice for LLM providers).
-  const parsed = Date.parse(header);
-  if (!Number.isNaN(parsed)) {
-    return Math.max(0, parsed - Date.now());
-  }
-  return undefined;
-}
-
-/**
- * Inspect a non-2xx response and build the most specific ProviderError
- * subclass we can. Reads the response body as text (it's already dead
- * on the wire by this point). Body classification handles the cases
- * where HTTP status alone is ambiguous — notably OpenAI
- * `insufficient_quota` vs `rate_limit_exceeded` both arriving as 429.
- */
-export async function buildProviderError(
-  provider: ProviderKind,
-  response: Response,
-): Promise<ProviderError> {
-  const rawBody = await response.text();
-  const message = rawBody.trim() || `${response.status} ${response.statusText}`.trim();
-  const status = response.status;
-  const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
-
-  const parsedBody = (() => {
-    try {
-      return JSON.parse(rawBody) as Record<string, unknown>;
-    } catch {
-      return undefined;
-    }
-  })();
-  const errorRecord = readRecord(parsedBody?.error);
-  const errorCode = typeof errorRecord?.code === "string"
-    ? errorRecord.code
-    : typeof errorRecord?.type === "string"
-    ? errorRecord.type
-    : typeof errorRecord?.status === "string"
-    ? errorRecord.status
-    : undefined;
-
-  // Anthropic 529 = overloaded. Anthropic surfaces this with
-  // { error: { type: "overloaded_error" } } in the body.
-  if (provider === "anthropic" && status === 529) {
-    return new ProviderOverloadedError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
-
-  // OpenAI / Google 503 = overloaded.
-  if ((provider === "openai" || provider === "google") && status === 503) {
-    return new ProviderOverloadedError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
-
-  // OpenAI 429 splits based on the error code in the body:
-  //  - insufficient_quota → hard quota, non-retryable
-  //  - rate_limit_exceeded / tokens_per_min_exceeded → retry with Retry-After
-  if (provider === "openai" && status === 429) {
-    if (errorCode === "insufficient_quota") {
-      return new ProviderQuotaError({
-        provider,
-        status,
-        message,
-        retryable: false,
-      });
-    }
-    return new ProviderRateLimitError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
-
-  // Google 429 RESOURCE_EXHAUSTED is almost always the daily free-tier
-  // quota — surface as a hard quota error so callers don't hot-loop on
-  // retries that can't possibly succeed until midnight UTC.
-  if (provider === "google" && status === 429) {
-    if (errorCode === "RESOURCE_EXHAUSTED") {
-      return new ProviderQuotaError({
-        provider,
-        status,
-        message,
-        retryable: false,
-      });
-    }
-    return new ProviderRateLimitError({
-      provider,
-      status,
-      message,
-      retryable: true,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    });
-  }
-
-  return new ProviderRequestError({
-    provider,
-    status,
-    message,
-    retryable: false,
-  });
-}
-
-export async function requestJson(options: {
-  url: string;
-  fetchImpl: typeof globalThis.fetch;
-  init: RequestInit;
-  providerLabel: string;
-  providerKind: ProviderKind;
-}): Promise<unknown> {
-  const response = await options.fetchImpl(options.url, options.init);
-  if (!response.ok) {
-    const err = await buildProviderError(options.providerKind, response);
-    err.message = `${options.providerLabel} request failed: ${err.message}`;
-    throw err;
-  }
-
-  return response.json();
-}
-
-export async function requestStream(options: {
-  url: string;
-  fetchImpl: typeof globalThis.fetch;
-  init: RequestInit;
-  providerLabel: string;
-  providerKind: ProviderKind;
-}): Promise<ReadableStream<Uint8Array>> {
-  const response = await options.fetchImpl(options.url, options.init);
-  if (!response.ok) {
-    const err = await buildProviderError(options.providerKind, response);
-    err.message = `${options.providerLabel} request failed: ${err.message}`;
-    throw err;
-  }
-
-  if (!response.body) {
-    throw new ProviderRequestError({
-      provider: options.providerKind,
-      status: response.status,
-      message: `${options.providerLabel} request failed: stream body missing`,
-      retryable: false,
-    });
-  }
-
-  return response.body;
 }
 
 export function stringifyJsonValue(value: unknown): string {
@@ -780,85 +572,6 @@ export function readProviderOptions(
   }
 
   return merged;
-}
-
-function normalizeAnthropicFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  switch (raw) {
-    case "tool_use":
-      return { unified: "tool-calls", raw };
-    case "end_turn":
-    case "stop_sequence":
-      return { unified: "stop", raw };
-    case "max_tokens":
-      return { unified: "length", raw };
-    default:
-      return raw;
-  }
-}
-
-type RuntimeUsage = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  cacheCreationInputTokens?: number;
-  cacheReadInputTokens?: number;
-};
-
-function extractAnthropicUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usage);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.input_tokens;
-  const outputTokens = usage.output_tokens;
-  const cacheCreationInputTokens = usage.cache_creation_input_tokens;
-  const cacheReadInputTokens = usage.cache_read_input_tokens;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof inputTokens === "number" || typeof outputTokens === "number"
-      ? (typeof inputTokens === "number" ? inputTokens : 0) +
-        (typeof outputTokens === "number" ? outputTokens : 0)
-      : undefined,
-    ...(typeof cacheCreationInputTokens === "number" ? { cacheCreationInputTokens } : {}),
-    ...(typeof cacheReadInputTokens === "number" ? { cacheReadInputTokens } : {}),
-  };
-}
-
-export function mergeUsage(
-  current: RuntimeUsage | undefined,
-  next: RuntimeUsage | undefined,
-): RuntimeUsage | undefined {
-  if (!current) {
-    return next;
-  }
-
-  if (!next) {
-    return current;
-  }
-
-  const inputTokens = next.inputTokens ?? current.inputTokens;
-  const outputTokens = next.outputTokens ?? current.outputTokens;
-  const cacheCreationInputTokens = next.cacheCreationInputTokens ??
-    current.cacheCreationInputTokens;
-  const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
-
-  return {
-    inputTokens,
-    outputTokens,
-    totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
-    ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
-    ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
-  };
 }
 
 function normalizeAnthropicToolChoice(toolChoice: unknown): unknown {
@@ -1500,36 +1213,6 @@ function buildAnthropicGenerateResult(payload: unknown): {
   };
 }
 
-function parseSseChunk(chunk: string): {
-  events: Array<unknown | "[DONE]">;
-  remainder: string;
-} {
-  const blocks = chunk.split(/\r?\n\r?\n/);
-  const remainder = blocks.pop() ?? "";
-  const events = blocks.flatMap((block) => {
-    const dataLines = block.split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart());
-
-    if (!dataLines.length) {
-      return [];
-    }
-
-    const payload = dataLines.join("\n").trim();
-    if (payload === "[DONE]") {
-      return ["[DONE]" as const];
-    }
-
-    try {
-      return [JSON.parse(payload) as unknown];
-    } catch {
-      return [];
-    }
-  });
-
-  return { events, remainder };
-}
-
 async function* streamAnthropicCompatibleParts(
   stream: ReadableStream<Uint8Array>,
 ): AsyncIterable<unknown> {
@@ -1768,48 +1451,6 @@ async function* streamAnthropicCompatibleParts(
     type: "finish",
     finishReason,
     ...(usage ? { usage } : {}),
-  };
-}
-
-function normalizeGoogleFinishReason(
-  raw: unknown,
-): string | { unified: string; raw: string } | null {
-  if (typeof raw !== "string") {
-    return null;
-  }
-
-  switch (raw) {
-    case "STOP":
-      return { unified: "stop", raw };
-    case "MAX_TOKENS":
-      return { unified: "length", raw };
-    case "SAFETY":
-    case "RECITATION":
-      return { unified: "content-filter", raw };
-    default:
-      return raw.toLowerCase();
-  }
-}
-
-function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usageMetadata);
-  if (!usage) {
-    return undefined;
-  }
-
-  const inputTokens = usage.promptTokenCount;
-  const outputTokens = usage.candidatesTokenCount;
-  const totalTokens = usage.totalTokenCount;
-  const cachedContentTokenCount = usage.cachedContentTokenCount;
-
-  return {
-    inputTokens: typeof inputTokens === "number" ? inputTokens : undefined,
-    outputTokens: typeof outputTokens === "number" ? outputTokens : undefined,
-    totalTokens: typeof totalTokens === "number" ? totalTokens : undefined,
-    ...(typeof cachedContentTokenCount === "number"
-      ? { cacheReadInputTokens: cachedContentTokenCount }
-      : {}),
   };
 }
 

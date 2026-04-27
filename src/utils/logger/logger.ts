@@ -65,6 +65,12 @@ export interface LogEntry {
   task?: string;
   event_kind?: string;
   user_visible?: string;
+  user_id?: string;
+  conversation_id?: string;
+  /** @deprecated Use `user_id` instead. Kept for Grafana dashboard transition. */
+  userId?: string;
+  /** @deprecated Use `conversation_id` instead. Kept for Grafana dashboard transition. */
+  conversationId?: string;
   // Duration for timed operations
   /** @deprecated Use `duration_ms` instead. Kept for Grafana dashboard transition. Planned removal after Grafana dashboard migration is complete. */
   durationMs?: number;
@@ -326,6 +332,12 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "event_kind", (v) => String(v));
     extractToEntryField(entry, mergedContext, "user_visible", (v) => String(v));
     extractToEntryField(entry, mergedContext, "duration_ms", (v) => Number(v));
+    extractToEntryField(entry, mergedContext, "user_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "conversation_id", (v) => String(v));
+
+    // Also extract camelCase variants so callers can use either convention
+    extractToEntryField(entry, mergedContext, "userId", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "conversationId", (v) => String(v));
 
     // Emit snake_case aliases for camelCase fields (transition period)
     if (entry.requestId && !entry.request_id) entry.request_id = entry.requestId;
@@ -333,6 +345,10 @@ class ConsoleLogger implements Logger {
     if (entry.spanId && !entry.span_id) entry.span_id = entry.spanId;
     if (entry.projectSlug && !entry.project_slug) entry.project_slug = entry.projectSlug;
     if (entry.durationMs != null && entry.duration_ms == null) entry.duration_ms = entry.durationMs;
+    if (entry.userId && !entry.user_id) entry.user_id = entry.userId;
+    if (entry.conversationId && !entry.conversation_id) {
+      entry.conversation_id = entry.conversationId;
+    }
 
     if (Object.keys(mergedContext).length > 0) entry.context = mergedContext;
     if (error) entry.error = error;

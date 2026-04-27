@@ -6,7 +6,7 @@ import {
   SpanKind,
   SpanStatusCode,
   trace,
-} from "@opentelemetry/api";
+} from "#veryfront/observability/tracing/api-shim.ts";
 import type { ErrorAttributes, HttpAttributes } from "./types.ts";
 
 const logger = serverLogger.component("auto-instrument");

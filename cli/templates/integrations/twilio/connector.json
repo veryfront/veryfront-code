@@ -40,31 +40,31 @@
   ],
   "tools": [
     {
-      "id": "send-sms",
+      "id": "send_sms",
       "name": "Send SMS",
       "description": "Send an SMS text message to a phone number",
       "requiresWrite": true
     },
     {
-      "id": "send-whatsapp",
+      "id": "send_whatsapp",
       "name": "Send WhatsApp Message",
       "description": "Send a WhatsApp message to a phone number",
       "requiresWrite": true
     },
     {
-      "id": "list-messages",
+      "id": "list_messages",
       "name": "List Messages",
       "description": "List recent SMS and WhatsApp messages",
       "requiresWrite": false
     },
     {
-      "id": "get-message",
+      "id": "get_message",
       "name": "Get Message",
       "description": "Get details about a specific message",
       "requiresWrite": false
     },
     {
-      "id": "list-calls",
+      "id": "list_calls",
       "name": "List Calls",
       "description": "List recent phone calls",
       "requiresWrite": false
@@ -72,28 +72,28 @@
   ],
   "prompts": [
     {
-      "id": "send-notification",
+      "id": "send_notification",
       "title": "Send SMS notification",
       "prompt": "Help me send an SMS notification to a customer about their order status.",
       "category": "communication",
       "icon": "message"
     },
     {
-      "id": "check-messages",
+      "id": "check_messages",
       "title": "Check recent messages",
       "prompt": "Show me the most recent SMS and WhatsApp messages from the last 24 hours.",
       "category": "communication",
       "icon": "inbox"
     },
     {
-      "id": "call-summary",
+      "id": "call_summary",
       "title": "Call summary",
       "prompt": "Give me a summary of recent calls including duration and status.",
       "category": "analytics",
       "icon": "phone"
     },
     {
-      "id": "whatsapp-outreach",
+      "id": "whatsapp_outreach",
       "title": "WhatsApp outreach",
       "prompt": "Help me draft and send a WhatsApp message for customer outreach.",
       "category": "communication",

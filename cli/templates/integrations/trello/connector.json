@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-boards",
+      "id": "list_boards",
       "name": "List Boards",
       "description": "List all boards accessible to the user",
       "requiresWrite": false
     },
     {
-      "id": "list-cards",
+      "id": "list_cards",
       "name": "List Cards",
       "description": "List cards in a board or list",
       "requiresWrite": false
     },
     {
-      "id": "get-card",
+      "id": "get_card",
       "name": "Get Card",
       "description": "Get details of a specific card",
       "requiresWrite": false
     },
     {
-      "id": "create-card",
+      "id": "create_card",
       "name": "Create Card",
       "description": "Create a new card in a list",
       "requiresWrite": true
     },
     {
-      "id": "update-card",
+      "id": "update_card",
       "name": "Update Card",
       "description": "Update an existing card",
       "requiresWrite": true
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "my-boards",
+      "id": "my_boards",
       "title": "Show my boards",
       "prompt": "List all my Trello boards with their lists and card counts.",
       "category": "productivity",
       "icon": "grid"
     },
     {
-      "id": "create-card",
+      "id": "create_card",
       "title": "Create a card",
       "prompt": "Create a new card with a title, description, and due date.",
       "category": "productivity",

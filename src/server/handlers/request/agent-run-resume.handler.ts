@@ -1,4 +1,8 @@
 import {
+  CONTROL_PLANE_AGENT_RUNS_PATH_PREFIX,
+  LEGACY_INTERNAL_AGENT_RUNS_PATH_PREFIX,
+} from "#veryfront/channels/control-plane.ts";
+import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
 } from "#veryfront/internal-agents/control-plane-auth.ts";
@@ -19,7 +23,8 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 
-const RESUME_PATH_REGEX = /^\/internal\/agents\/runs\/([^/]+)\/resume$/;
+const RESUME_PATH_REGEX =
+  /^\/(?:api\/control-plane\/agents|internal\/agents)\/runs\/([^/]+)\/resume$/;
 
 function getRunId(pathname: string): string | null {
   return RESUME_PATH_REGEX.exec(pathname)?.[1] ?? null;
@@ -29,7 +34,10 @@ export class AgentRunResumeHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AgentRunResumeHandler",
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
-    patterns: [{ pattern: "/internal/agents/runs/", prefix: true, method: "POST" }],
+    patterns: [
+      { pattern: CONTROL_PLANE_AGENT_RUNS_PATH_PREFIX, prefix: true, method: "POST" },
+      { pattern: LEGACY_INTERNAL_AGENT_RUNS_PATH_PREFIX, prefix: true, method: "POST" },
+    ],
   };
 
   constructor(private readonly sessionManager: AgentRunSessionManager = agentRunSessionManager) {

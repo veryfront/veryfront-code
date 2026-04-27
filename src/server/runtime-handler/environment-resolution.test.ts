@@ -66,6 +66,26 @@ describe("environment-resolution", () => {
     assertEquals(result.releaseId, undefined);
   });
 
+  it("allows public control-plane agent paths without releaseId in proxy production", () => {
+    const result = resolveEnvironment({
+      proxyEnv: "production",
+      reqCtxMode: "production",
+      releaseId: undefined,
+      projectSlug: "my-project",
+      projectId: "proj_123",
+      environmentName: undefined,
+      host: "10.192.2.245:20000",
+      isLocalProject: false,
+      isProxyMode: true,
+      pathname: "/api/control-plane/agents/runs/run_1",
+      defaultEnvironment: undefined,
+    });
+
+    assertEquals(result.errorResponse, undefined);
+    assertEquals(result.resolvedEnvironment, "production");
+    assertEquals(result.releaseId, undefined);
+  });
+
   it("still requires releaseId for non-control-plane proxy production paths", () => {
     const result = resolveEnvironment({
       proxyEnv: "production",

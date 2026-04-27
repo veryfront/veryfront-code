@@ -99,6 +99,14 @@ export async function startCliProductionServer(
     signal: options.signal,
     defaultProjectSlug: options.defaultProjectSlug,
     defaultProjectId: options.defaultProjectId,
+    // Do NOT register a `localProjects` mapping here. `vf serve` and the
+    // compiled binary are production deployments, and `isLocalProject: true`
+    // flips `isDev` on in security headers (suppressing CSP) and in the SSR
+    // error overlay (exposing absolute paths and stack traces) — the exact
+    // dev-surface leak VULN-SRV-1 / VULN-SRV-2 was closing. The strategy
+    // narrowing in `client-module-strategy.ts` already routes hydration
+    // through `/_veryfront/rsc/module?` for non-local deployments, so no
+    // `localProjects` entry is required for the compiled binary to work.
   };
   return await startProductionServer(serverOptions);
 }

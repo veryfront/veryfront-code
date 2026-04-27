@@ -33,7 +33,7 @@
   ],
   "tools": [
     {
-      "id": "list-repos",
+      "id": "list_repos",
       "name": "List Repositories",
       "description": "Get list of user's repositories",
       "requiresWrite": false,
@@ -48,7 +48,7 @@
       }
     },
     {
-      "id": "get-repo",
+      "id": "get_repo",
       "name": "Get Repository",
       "description": "Get details of a specific repository",
       "requiresWrite": false,
@@ -62,7 +62,7 @@
       }
     },
     {
-      "id": "list-prs",
+      "id": "list_prs",
       "name": "List Pull Requests",
       "description": "Get pull requests for a repository",
       "requiresWrite": false,
@@ -78,7 +78,7 @@
       }
     },
     {
-      "id": "create-issue",
+      "id": "create_issue",
       "name": "Create Issue",
       "description": "Create a new issue in a repository",
       "requiresWrite": true,
@@ -98,7 +98,7 @@
       }
     },
     {
-      "id": "get-pr-diff",
+      "id": "get_pr_diff",
       "name": "Get PR Diff",
       "description": "Get the diff for a pull request",
       "requiresWrite": false,
@@ -114,7 +114,7 @@
       }
     },
     {
-      "id": "list-issues",
+      "id": "list_issues",
       "name": "List Issues",
       "description": "List issues for a repository",
       "requiresWrite": false,
@@ -135,21 +135,21 @@
   ],
   "prompts": [
     {
-      "id": "review-prs",
+      "id": "review_prs",
       "title": "Review my open PRs",
       "prompt": "Show me my open pull requests and help me review them. Summarize the changes and any comments.",
       "category": "development",
       "icon": "git-pull-request"
     },
     {
-      "id": "create-issue",
+      "id": "create_issue",
       "title": "Create GitHub issue",
       "prompt": "Help me create a new GitHub issue with a clear description and appropriate labels.",
       "category": "development",
       "icon": "circle-dot"
     },
     {
-      "id": "summarize-commits",
+      "id": "summarize_commits",
       "title": "Summarize recent commits",
       "prompt": "Summarize the recent commits in my repository and highlight significant changes.",
       "category": "development",

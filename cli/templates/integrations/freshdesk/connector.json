@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-tickets",
+      "id": "list_tickets",
       "name": "List Tickets",
       "description": "List support tickets from Freshdesk",
       "requiresWrite": false
     },
     {
-      "id": "get-ticket",
+      "id": "get_ticket",
       "name": "Get Ticket",
       "description": "Get details of a specific ticket",
       "requiresWrite": false
     },
     {
-      "id": "create-ticket",
+      "id": "create_ticket",
       "name": "Create Ticket",
       "description": "Create a new support ticket",
       "requiresWrite": true
     },
     {
-      "id": "update-ticket",
+      "id": "update_ticket",
       "name": "Update Ticket",
       "description": "Update an existing ticket",
       "requiresWrite": true
     },
     {
-      "id": "list-contacts",
+      "id": "list_contacts",
       "name": "List Contacts",
       "description": "List customer contacts in Freshdesk",
       "requiresWrite": false
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "my-tickets",
+      "id": "my_tickets",
       "title": "Show my tickets",
       "prompt": "List all open support tickets assigned to me with their priority and status.",
       "category": "support",
       "icon": "inbox"
     },
     {
-      "id": "create-ticket",
+      "id": "create_ticket",
       "title": "Create a ticket",
       "prompt": "Create a new support ticket with a subject, description, priority, and contact.",
       "category": "support",

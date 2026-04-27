@@ -1536,9 +1536,9 @@ export default function ClientPage() {
     await withServer(projectDir, async (server) => {
       await withBrowserPageAgainstServer(server, async ({ page, diagnostics }) => {
         await assertCounterHydration(page, {
-          expectedStrategy: "fs",
+          expectedStrategy: "rsc-module",
           expectedPagePath: "app/page.tsx",
-          expectedModulePath: "/_veryfront/fs/",
+          expectedModulePath: "/_veryfront/rsc/module",
         });
 
         assertNoBrowserHydrationErrors(diagnostics, "Unexpected hydration errors");

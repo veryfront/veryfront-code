@@ -33,25 +33,25 @@
   ],
   "tools": [
     {
-      "id": "list-projects",
+      "id": "list_projects",
       "name": "List Projects",
       "description": "List all projects in your Sentry organization",
       "requiresWrite": false
     },
     {
-      "id": "list-issues",
+      "id": "list_issues",
       "name": "List Issues",
       "description": "List issues/errors in a Sentry project with optional filters",
       "requiresWrite": false
     },
     {
-      "id": "get-issue",
+      "id": "get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific Sentry issue",
       "requiresWrite": false
     },
     {
-      "id": "resolve-issue",
+      "id": "resolve_issue",
       "name": "Resolve Issue",
       "description": "Mark a Sentry issue as resolved",
       "requiresWrite": true
@@ -59,21 +59,21 @@
   ],
   "prompts": [
     {
-      "id": "check-errors",
+      "id": "check_errors",
       "title": "Check recent errors",
       "prompt": "Show me recent errors and issues in my Sentry projects and help me prioritize which ones to fix.",
       "category": "development",
       "icon": "alert-triangle"
     },
     {
-      "id": "analyze-issue",
+      "id": "analyze_issue",
       "title": "Analyze an issue",
       "prompt": "Help me analyze a specific Sentry issue, understand its root cause, and suggest a fix.",
       "category": "development",
       "icon": "bug"
     },
     {
-      "id": "project-health",
+      "id": "project_health",
       "title": "Project health check",
       "prompt": "Give me an overview of the health of my Sentry projects, including error rates and trending issues.",
       "category": "analytics",

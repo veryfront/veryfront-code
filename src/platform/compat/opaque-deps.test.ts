@@ -1,8 +1,22 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { register, reset } from "../../extensions/contracts.ts";
+import type { NodeCompat } from "../../extensions/interfaces/node-compat.ts";
 import { importClaudeAgentSDK, importKreuzberg, importTransformers } from "./opaque-deps.ts";
 
+const stubKreuzbergModule = {
+  extractBytes: async (_data: Uint8Array, _mimeType: string) => ({ content: "stub-content" }),
+};
+
+const stubNodeCompat: NodeCompat = {
+  importKreuzberg: async () => stubKreuzbergModule,
+};
+
 describe("platform/compat/opaque-deps", () => {
+  afterEach(() => {
+    reset();
+  });
+
   describe("importTransformers", () => {
     it("should be a function", () => {
       assertEquals(typeof importTransformers, "function");
@@ -58,7 +72,17 @@ describe("platform/compat/opaque-deps", () => {
       assertEquals(typeof importKreuzberg, "function");
     });
 
-    it("should return a module with extractBytes", async () => {
+    it("throws an actionable error when NodeCompat is not registered", async () => {
+      // No extension registered — expect a helpful install message.
+      await assertRejects(
+        () => importKreuzberg(),
+        Error,
+        "ext-node-compat",
+      );
+    });
+
+    it("delegates to NodeCompat.importKreuzberg when the extension is registered", async () => {
+      register<NodeCompat>("NodeCompat", stubNodeCompat);
       const mod = await importKreuzberg();
       assertExists(mod);
       assertEquals(typeof mod.extractBytes, "function");

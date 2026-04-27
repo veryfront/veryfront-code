@@ -6,8 +6,8 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import { attachErrorToActiveSpan, attachErrorToSpan } from "./tracing.ts";
 import { CONFIG_NOT_FOUND, RENDER_ERROR } from "./error-registry.ts";
-import type { Span } from "@opentelemetry/api";
-import { SpanStatusCode } from "@opentelemetry/api";
+import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
+import { SpanStatusCode } from "#veryfront/observability/tracing/api-shim.ts";
 
 describe("tracing", () => {
   describe("attachErrorToSpan", () => {

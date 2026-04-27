@@ -175,10 +175,10 @@ export async function getRemoteIntegrationToolDefinitions(): Promise<
 
 /**
  * Check if a tool name looks like a remote integration tool.
- * Integration tools use "integration:tool-id" format.
+ * Integration tools use "integration__tool_id" format (double underscore separator).
  */
 export function isRemoteIntegrationTool(toolName: string): boolean {
-  return toolName.includes(":");
+  return toolName.includes("__");
 }
 
 /**

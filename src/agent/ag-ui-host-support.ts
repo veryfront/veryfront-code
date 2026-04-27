@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { formatAgUiEvent } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import type { Message } from "./types.ts";
+import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
@@ -173,34 +174,10 @@ export async function parseAgUiRequest(request: Request): Promise<AgUiRequest> {
 export async function parseAgUiRequestOrError(
   request: Request,
 ): Promise<AgUiRequest | Response> {
-  try {
-    return await parseAgUiRequest(request);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return Response.json(
-        {
-          error: "Invalid AG-UI request",
-          details: error.issues.map((issue) => ({
-            path: issue.path,
-            message: issue.message,
-          })),
-        },
-        { status: 400 },
-      );
-    }
-
-    if (error instanceof SyntaxError || error instanceof TypeError) {
-      return Response.json(
-        {
-          error: "Invalid AG-UI request",
-          details: [{ path: [], message: "Malformed JSON request body" }],
-        },
-        { status: 400 },
-      );
-    }
-
-    throw error;
-  }
+  return await parseAgUiJsonRequestOrError(
+    () => parseAgUiRequest(request),
+    "Invalid AG-UI request",
+  );
 }
 
 export function normalizeAgUiMessages(messages: AgUiRequest["messages"]): Message[] {
@@ -228,6 +205,17 @@ export function createAgUiRunErrorEvent(message: string, code?: string): AgUiSse
 export function createAgUiSseErrorResponse(event: AgUiSseEvent, status: number): Response {
   return new Response(decoder.decode(formatAgUiEvent(event.event, event.payload)), {
     status,
+    headers: {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      "Connection": "keep-alive",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+export function createAgUiSseResponse(stream: ReadableStream<Uint8Array>): Response {
+  return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",

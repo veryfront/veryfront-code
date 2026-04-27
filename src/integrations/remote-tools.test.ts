@@ -173,11 +173,11 @@ describe("integrations/remote-tools", () => {
       Response.json({
         content: [{ text: '{"ignored":true}' }],
         structuredContent: { repos: ["veryfront"] },
-      }), async () => await executeRemoteIntegrationTool("github:list-repos", {}));
+      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
 
     assertEquals(result, { repos: ["veryfront"] });
-    assertStrictEquals(isRemoteIntegrationTool("github:list-repos"), true);
-    assertStrictEquals(isRemoteIntegrationTool("list-repos"), false);
+    assertStrictEquals(isRemoteIntegrationTool("github__list_repos"), true);
+    assertStrictEquals(isRemoteIntegrationTool("list_repos"), false);
   });
 
   it("posts integration config as a full replace payload", async () => {

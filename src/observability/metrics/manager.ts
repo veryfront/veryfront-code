@@ -3,7 +3,8 @@
  * Main OpenTelemetry metrics initialization and management
  */
 
-import type { Meter } from "@opentelemetry/api";
+import type { Meter } from "#veryfront/observability/tracing/api-shim.ts";
+import { getGlobalMetricsAPI } from "#veryfront/observability/tracing/api-shim.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { loadConfig } from "./config.ts";
@@ -79,8 +80,15 @@ export class MetricsManager {
     }
 
     try {
-      this.api = await import("@opentelemetry/api");
-      this.meter = this.api.metrics.getMeter(finalConfig.prefix, RUNTIME_VERSION);
+      // The metrics API is injected by ext-opentelemetry via setGlobalMetricsAPI().
+      // When the extension is not active, metrics collection is disabled.
+      const metricsApi = getGlobalMetricsAPI();
+      if (!metricsApi) {
+        logger.debug("No metrics API available — metrics collection disabled");
+        return;
+      }
+      this.api = { metrics: metricsApi } as OpenTelemetryAPI;
+      this.meter = metricsApi.getMeter(finalConfig.prefix, RUNTIME_VERSION);
 
       this.instruments = initializeInstruments(this.meter, finalConfig, this.runtimeState);
       this.recorder.instruments = this.instruments;

@@ -1,4 +1,4 @@
-import type { Context, Span, SpanKind, TextMapPropagator, Tracer } from "@opentelemetry/api";
+import type { Context, Span, SpanKind, TextMapPropagator, Tracer } from "./api-shim.ts";
 
 export interface TracingConfig {
   enabled: boolean;

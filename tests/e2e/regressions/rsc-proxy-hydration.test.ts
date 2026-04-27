@@ -292,13 +292,33 @@ describe(
             LOCAL_RSC_CONFIG_SOURCE,
           );
 
-          const server = await context.createProductionServer({ hostname: "127.0.0.1" });
+          // Explicitly register the test project as local so the `fs`
+          // client-module strategy and the `/_veryfront/fs/` module loader
+          // are unlocked. Post-VULN-SRV-1/2 these strictly gate on
+          // `isLocalProject`, and the test context writes its sources
+          // outside of the `standardProjectDirs` (`data/projects/`,
+          // `projects/`) discovery roots.
+          const port = await context.allocatePort();
+          const controller = new AbortController();
+          const server = await startProductionServer({
+            projectDir: context.projectDir,
+            port,
+            bindAddress: "127.0.0.1",
+            signal: controller.signal,
+            defaultProjectSlug: context.projectId,
+            defaultProjectId: context.projectId,
+            localProjects: { [context.projectId]: context.projectDir },
+          });
+          context.trackResource(server);
+          await server.ready;
+          await waitForReady(port);
+
           const browserContext = await browser.newContext();
           const page = await browserContext.newPage();
           const diagnostics = captureBrowserDiagnostics(page);
 
           try {
-            const response = await page.goto(`http://127.0.0.1:${server.port}/`);
+            const response = await page.goto(`http://127.0.0.1:${port}/`);
             assertEquals(response?.status(), 200);
 
             await assertCounterHydration(page, {
@@ -368,9 +388,14 @@ describe(
             context,
             getProxyHeaders("preview"),
             async (page, diagnostics) => {
+              // Preview pods hydrate via the RSC module endpoint, same as
+              // production. The `fs` strategy + `/_veryfront/fs/` module
+              // loader are dev-only surfaces gated on `isLocalProject` under
+              // VULN-SRV-1/2 — a trusted `x-environment: preview` header
+              // cannot unlock them because they serve raw project source.
               await assertCounterHydration(page, {
-                expectedStrategy: "fs",
-                expectedModulePath: "/_veryfront/fs/",
+                expectedStrategy: "rsc-module",
+                expectedModulePath: "/_veryfront/rsc/module?",
               });
 
               const hydrationErrors = findHydrationOrCspFailures(

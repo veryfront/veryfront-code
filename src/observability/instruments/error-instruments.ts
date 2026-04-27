@@ -5,7 +5,7 @@
  * observability dashboards and alerting.
  */
 
-import type { Counter, Meter } from "@opentelemetry/api";
+import type { Counter, Meter } from "#veryfront/observability/tracing/api-shim.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 import type { VeryfrontError } from "#veryfront/errors/types.ts";
 

@@ -43,31 +43,31 @@
   ],
   "tools": [
     {
-      "id": "list-guilds",
+      "id": "list_guilds",
       "name": "List Guilds",
       "description": "List Discord servers (guilds) the user is a member of",
       "requiresWrite": false
     },
     {
-      "id": "list-channels",
+      "id": "list_channels",
       "name": "List Channels",
       "description": "List channels in a Discord server",
       "requiresWrite": false
     },
     {
-      "id": "get-messages",
+      "id": "get_messages",
       "name": "Get Messages",
       "description": "Get recent messages from a Discord channel",
       "requiresWrite": false
     },
     {
-      "id": "send-message",
+      "id": "send_message",
       "name": "Send Message",
       "description": "Send a message to a Discord channel",
       "requiresWrite": true
     },
     {
-      "id": "get-user",
+      "id": "get_user",
       "name": "Get User",
       "description": "Get information about the authenticated Discord user",
       "requiresWrite": false
@@ -75,21 +75,21 @@
   ],
   "prompts": [
     {
-      "id": "check-messages",
+      "id": "check_messages",
       "title": "Check my Discord messages",
       "prompt": "Check my recent Discord messages across all servers and summarize any important updates or mentions.",
       "category": "communication",
       "icon": "message"
     },
     {
-      "id": "send-announcement",
+      "id": "send_announcement",
       "title": "Send an announcement",
       "prompt": "Send an announcement message to a specific Discord channel.",
       "category": "communication",
       "icon": "megaphone"
     },
     {
-      "id": "list-servers",
+      "id": "list_servers",
       "title": "List my servers",
       "prompt": "Show me all the Discord servers I'm a member of with their details.",
       "category": "communication",
