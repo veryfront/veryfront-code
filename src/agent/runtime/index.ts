@@ -47,7 +47,7 @@ import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { AGENT_DEFAULTS } from "../defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import type { ToolExecutionContext } from "#veryfront/tool";
+import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 
@@ -110,7 +110,9 @@ const LOAD_SKILL_TOOL_ID = "load-skill";
 
 type RuntimeToolFilterConfig = AgentConfig & {
   __vfAllowedRemoteTools?: string[];
-  __vfForwardedIntegrationToolDefs?: Array<{ name: string; description: string; parameters: Record<string, unknown> }>;
+  __vfForwardedIntegrationToolDefs?: Array<
+    { name: string; description: string; parameters: Record<string, unknown> }
+  >;
 };
 
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
@@ -436,10 +438,10 @@ function getRuntimeForwardedIntegrationToolDefs(
     .map((def) => ({
       name: def.name,
       description: def.description,
-      parameters:
-        typeof def.parameters === "object" && def.parameters !== null && !Array.isArray(def.parameters)
-          ? def.parameters
-          : { type: "object", properties: {} },
+      parameters: typeof def.parameters === "object" && def.parameters !== null &&
+          !Array.isArray(def.parameters)
+        ? def.parameters
+        : { type: "object", properties: {} },
     }));
 }
 

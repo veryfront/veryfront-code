@@ -396,7 +396,10 @@ describe("tool-helpers", () => {
           "gmail__get_email",
           "gmail__list_emails",
         ]);
-        assertEquals(defs.find((d) => d.name === "gmail__get_email")?.description, "Get a specific email by ID");
+        assertEquals(
+          defs.find((d) => d.name === "gmail__get_email")?.description,
+          "Get a specific email by ID",
+        );
       } finally {
         toolRegistry.clearAll();
       }

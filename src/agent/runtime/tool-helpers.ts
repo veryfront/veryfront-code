@@ -355,7 +355,11 @@ export async function getAvailableTools(
 
     // Append remote integration tools (per-request, project-scoped)
     const remoteDefs = await getRemoteToolDefinitions(options);
-    appendForwardedToolDefinitions(remoteDefs, options?.forwardedRemoteToolDefinitions, options?.allowedRemoteToolNames);
+    appendForwardedToolDefinitions(
+      remoteDefs,
+      options?.forwardedRemoteToolDefinitions,
+      options?.allowedRemoteToolNames,
+    );
     for (const def of remoteDefs) {
       logToolDefinition(def.name, def);
     }
@@ -366,7 +370,11 @@ export async function getAvailableTools(
 
   const tools: ToolDefinition[] = [];
   const remoteDefs = await getRemoteToolDefinitions(options);
-  appendForwardedToolDefinitions(remoteDefs, options?.forwardedRemoteToolDefinitions, options?.allowedRemoteToolNames);
+  appendForwardedToolDefinitions(
+    remoteDefs,
+    options?.forwardedRemoteToolDefinitions,
+    options?.allowedRemoteToolNames,
+  );
   const remoteToolNames = new Set(remoteDefs.map((def) => def.name));
   const explicitlyRequestedRemoteToolNames = new Set<string>();
   const unresolvedConfiguredToolNames: string[] = [];
