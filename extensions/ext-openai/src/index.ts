@@ -12,17 +12,19 @@ import { OpenAIProvider } from "./openai-provider.ts";
 
 const extOpenAI: ExtensionFactory = () => {
   const provider = new OpenAIProvider();
+  let registry: AIProviderRegistry | undefined;
   return {
     name: "ext-openai",
     version: "0.1.0",
     capabilities: [{ type: "contract", name: "AIProvider:openai" }],
     setup(ctx) {
-      const registry = ctx.require<AIProviderRegistry>(AIProviderRegistryName);
+      registry = ctx.require<AIProviderRegistry>(AIProviderRegistryName);
       registry.register(provider);
       ctx.logger.info("[ext-openai] OpenAI provider registered");
     },
     teardown() {
-      // No resources to release.
+      registry?.unregister(provider.id);
+      registry = undefined;
     },
   };
 };

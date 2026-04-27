@@ -214,13 +214,19 @@ function isMissingProviderConfiguration(errorData: ReturnType<typeof fromError>)
  */
 export function findAvailableCloudModel(): string | null {
   autoInitializeFromEnv();
+  const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
   for (const { provider, model, hasKey } of CLOUD_UPGRADE_CANDIDATES) {
     if (!hasKey()) continue;
     if (!manager.has(provider)) continue;
+    if (registry && !registry.has(provider) && !isBuiltinProvider(provider)) continue;
     const resolvedModel = typeof model === "function" ? model() : model;
     return `${provider}/${resolvedModel}`;
   }
   return null;
+}
+
+function isBuiltinProvider(provider: string): boolean {
+  return provider === "anthropic" || provider === "google" || provider === "veryfront-cloud";
 }
 
 /**
