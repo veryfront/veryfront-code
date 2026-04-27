@@ -436,7 +436,10 @@ function getRuntimeForwardedIntegrationToolDefs(
     .map((def) => ({
       name: def.name,
       description: def.description,
-      parameters: def.parameters ?? { type: "object", properties: {} },
+      parameters:
+        typeof def.parameters === "object" && def.parameters !== null && !Array.isArray(def.parameters)
+          ? def.parameters
+          : { type: "object", properties: {} },
     }));
 }
 
