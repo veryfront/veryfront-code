@@ -145,6 +145,7 @@
     "veryfront/testing/assert": "./src/testing/assert.ts",
     "veryfront/testing/bdd": "./src/testing/bdd.ts",
     "veryfront/extensions/bundler": "./src/extensions/bundler.ts",
+    "veryfront/extensions/contracts": "./src/extensions/contracts.ts",
     "veryfront/extensions/interfaces": "./src/extensions/interfaces/index.ts",
     "#veryfront": "./src/index.ts",
     "#veryfront/agent": "./src/agent/index.ts",
