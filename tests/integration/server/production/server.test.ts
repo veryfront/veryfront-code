@@ -14,6 +14,7 @@ import { startProductionServer } from "../../../../src/server/production-server.
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { assertDrained } from "../../../_helpers/utils.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
+import { registerExtMdx } from "../../../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 import { delay } from "#std/async";
 
 if (typeof globalThis.addEventListener === "function") {
@@ -41,6 +42,7 @@ async function startServer(
     defaultProjectId: context.projectId,
   });
   await server.ready;
+  await registerExtMdx();
   return server;
 }
 
