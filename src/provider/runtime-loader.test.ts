@@ -5,7 +5,10 @@ import {
   ProviderOverloadedError,
   withToolInputStatusTransitions,
 } from "./runtime-loader.ts";
-import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "./runtime-loader.ts";
+// createGoogleModelRuntime has moved to ext-google (PR 13, Task 7). Import
+// from the extension path so the shared "omits provider metadata" test still
+// exercises all three providers together.
+import { createGoogleEmbeddingRuntime, createGoogleModelRuntime } from "../../extensions/ext-google/src/google-provider.ts";
 // createAnthropicModelRuntime has moved to ext-anthropic (PR 12, Task 7). Import
 // from the extension path so cross-provider tests still exercise it.
 import { createAnthropicModelRuntime } from "../../extensions/ext-anthropic/src/anthropic-provider.ts";

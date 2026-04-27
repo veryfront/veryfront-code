@@ -1,5 +1,5 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createGoogleEmbeddingRuntime } from "#veryfront/provider/runtime-loader.ts";
+import { createGoogleEmbeddingRuntime } from "../../../extensions/ext-google/src/google-provider.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import {
   createVeryfrontCloudFetch,
