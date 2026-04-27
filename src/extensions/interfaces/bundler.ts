@@ -253,8 +253,8 @@ export interface BundlerPluginBuild {
 export interface BundlerPlugin {
   /** Unique plugin name. */
   name: string;
-  /** Called once when the plugin is registered. */
-  setup(build: BundlerPluginBuild): void;
+  /** Called once when the plugin is registered. May be async. */
+  setup(build: BundlerPluginBuild): void | Promise<void>;
 }
 
 /** Incremental/rebuild context produced by {@link Bundler.context}. */

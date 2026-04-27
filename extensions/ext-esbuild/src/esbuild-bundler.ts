@@ -114,7 +114,9 @@ export class EsbuildBundler implements Bundler {
   }
 
   async stop(): Promise<void> {
-    if (!esbuildModule) return;
-    await esbuildModule.stop();
+    const m = esbuildModule;
+    if (!m) return;
+    esbuildModule = null;
+    await m.stop();
   }
 }
