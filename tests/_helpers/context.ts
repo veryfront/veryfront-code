@@ -36,6 +36,7 @@ import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
 import { resetAllTestState } from "../../src/testing/isolation.ts";
+import { registerExtMdx } from "../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 import { SERVER_CONFIG, TEST_TIMEOUTS } from "./constants.ts";
 import {
   getHttpServerUrl,
@@ -269,6 +270,10 @@ export class TestContext {
       defaultProjectId: this.projectId,
     });
 
+    // Bootstrap (setupAll → teardownAll → reset()) wipes the contract
+    // registry, so re-register the MDX ContentTransformer here.
+    await registerExtMdx();
+
     const testServer = server as TestServer;
     testServer.port = port;
     // Use 127.0.0.1 explicitly to avoid IPv6 resolution issues with localhost
@@ -300,6 +305,10 @@ export class TestContext {
       defaultProjectSlug: this.projectId,
       defaultProjectId: this.projectId,
     });
+
+    // Bootstrap (setupAll → teardownAll → reset()) wipes the contract
+    // registry, so re-register the MDX ContentTransformer here.
+    await registerExtMdx();
 
     const testServer = server as TestServer;
     testServer.port = port;
@@ -521,6 +530,11 @@ export async function withTestContext<T>(
     return await runWithCacheDir(context.testCacheDir, async () => {
       // Reset ALL state before test to ensure clean isolation
       await resetAllTestState();
+
+      // resetAllTestState can flush the contract registry via bootstrap;
+      // re-register the MDX ContentTransformer so direct-compiler tests
+      // (which don't start a server) still resolve it.
+      await registerExtMdx();
 
       // Clear MDX renderer cache at the START of each test to ensure
       // the singleton picks up this test's cache dir (via AsyncLocalStorage),

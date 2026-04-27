@@ -7,6 +7,23 @@ import {
   type StartProductionServerOptions,
 } from "veryfront/server";
 import type { RuntimeAdapter } from "veryfront/platform";
+import { tryResolve } from "veryfront/extensions";
+import { register } from "../../src/extensions/contracts.ts";
+import type { ContentTransformer } from "veryfront/extensions/interfaces";
+import { MdxContentTransformer } from "../../extensions/ext-mdx/src/index.ts";
+
+/**
+ * The CLI ships ext-mdx baked in so the compiled binary can render MDX/Markdown
+ * pages out of the box. Library consumers (programmatic `startProductionServer`)
+ * still opt in via `veryfront.config.ts` extensions. Bootstrap's
+ * `setupAll → teardownAll → reset()` clears the contract registry, so this
+ * must run *after* the server-start call returns. We skip registration when a
+ * user-provided extension already supplied the contract.
+ */
+function ensureBuiltinContentTransformer(): void {
+  if (tryResolve<ContentTransformer>("ContentTransformer")) return;
+  register<ContentTransformer>("ContentTransformer", new MdxContentTransformer());
+}
 
 export interface StartCliProxyModeServerOptions {
   port: number;
@@ -43,7 +60,7 @@ export async function startCliProxyModeServer(
     setEnv("NODE_ENV", "development");
   }
 
-  return await startProductionServer({
+  const result = await startProductionServer({
     port: options.port,
     projectDir: options.projectDir,
     signal: options.signal,
@@ -52,6 +69,8 @@ export async function startCliProxyModeServer(
     defaultProjectId: options.defaultProjectId,
     discoveryConfig: buildDiscoveryConfig(options),
   });
+  ensureBuiltinContentTransformer();
+  return result;
 }
 
 export interface StartCliDevServerOptions {
@@ -72,7 +91,9 @@ export async function startCliDevServer(
     enableFastRefresh: options.enableFastRefresh,
     signal: options.signal,
   };
-  return await startDevServer(devOptions);
+  const result = await startDevServer(devOptions);
+  ensureBuiltinContentTransformer();
+  return result;
 }
 
 export interface StartCliProductionServerOptions {
@@ -108,5 +129,7 @@ export async function startCliProductionServer(
     // through `/_veryfront/rsc/module?` for non-local deployments, so no
     // `localProjects` entry is required for the compiled binary to work.
   };
-  return await startProductionServer(serverOptions);
+  const result = await startProductionServer(serverOptions);
+  ensureBuiltinContentTransformer();
+  return result;
 }
