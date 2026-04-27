@@ -141,10 +141,14 @@ export {
 export { agent } from "./factory.ts";
 export {
   type AgentContract,
+  type AgentRegistry,
   type AgentServiceDefinition,
+  type AgentServiceRegistryContract,
   type AgentServiceServerConfig,
+  type AgentServiceSingleAgentContract,
   defineAgentService,
   type DurableRunSink,
+  type NormalizedAgentServiceContract,
 } from "./agent-service.ts";
 export {
   type AgUiRuntimeHandlerConfig,
