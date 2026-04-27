@@ -110,7 +110,9 @@ export async function getCompiler(
 
   const processor = tryResolveContract<CSSProcessor>("CSSProcessor");
   if (!processor) {
-    logger.warn("No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-tailwind");
+    logger.warn(
+      "No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-tailwind",
+    );
     const noopCompiler: CSSCompiler = { build: () => "" };
     compilerCache.set(hash, {
       compiler: noopCompiler,
