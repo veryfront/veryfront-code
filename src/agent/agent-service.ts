@@ -26,19 +26,68 @@ export interface AgentServiceServerConfig {
   cors?: boolean;
 }
 
-/**
- * Phase-0 contract draft for the future framework-owned hosted agent service.
- */
-export interface AgentContract<
+export type AgentRegistry = Record<string, Agent>;
+
+export interface AgentServiceContractBase<
   TStartInput = void,
   TRun = unknown,
   TEvent = unknown,
   TTerminalState = unknown,
 > {
   serviceName: string;
-  agent: Agent;
   server?: AgentServiceServerConfig;
   durableRunSink?: DurableRunSink<TStartInput, TRun, TEvent, TTerminalState>;
+}
+
+/**
+ * Multi-agent hosted-service contract. Framework services route to
+ * `defaultAgentId` unless the host chooses another registered agent.
+ */
+export interface AgentServiceRegistryContract<
+  TStartInput = void,
+  TRun = unknown,
+  TEvent = unknown,
+  TTerminalState = unknown,
+> extends AgentServiceContractBase<TStartInput, TRun, TEvent, TTerminalState> {
+  agents: AgentRegistry;
+  defaultAgentId: string;
+}
+
+/**
+ * Single-agent convenience accepted by `defineAgentService()`. Implementations
+ * must normalize this shape into the same registry path used by multi-agent
+ * services so framework users are not boxed into one-agent-per-process.
+ */
+export interface AgentServiceSingleAgentContract<
+  TStartInput = void,
+  TRun = unknown,
+  TEvent = unknown,
+  TTerminalState = unknown,
+> extends AgentServiceContractBase<TStartInput, TRun, TEvent, TTerminalState> {
+  agent: Agent;
+  defaultAgentId?: string;
+}
+
+/**
+ * Phase-0 contract draft for the future framework-owned hosted agent service.
+ */
+export type AgentContract<
+  TStartInput = void,
+  TRun = unknown,
+  TEvent = unknown,
+  TTerminalState = unknown,
+> =
+  | AgentServiceRegistryContract<TStartInput, TRun, TEvent, TTerminalState>
+  | AgentServiceSingleAgentContract<TStartInput, TRun, TEvent, TTerminalState>;
+
+export interface NormalizedAgentServiceContract<
+  TStartInput = void,
+  TRun = unknown,
+  TEvent = unknown,
+  TTerminalState = unknown,
+> extends AgentServiceContractBase<TStartInput, TRun, TEvent, TTerminalState> {
+  agents: AgentRegistry;
+  defaultAgentId: string;
 }
 
 /**
@@ -51,11 +100,46 @@ export interface AgentServiceDefinition<
   TEvent = unknown,
   TTerminalState = unknown,
 > {
-  contract: AgentContract<TStartInput, TRun, TEvent, TTerminalState>;
+  contract: NormalizedAgentServiceContract<TStartInput, TRun, TEvent, TTerminalState>;
 }
 
 const DEFINE_AGENT_SERVICE_STUB_ERROR =
   "defineAgentService() is a Phase 0 stub. The framework contract is reserved, but the hosted runtime implementation has not landed yet.";
+
+function getSingleAgentDefaultId(contract: {
+  agent: Agent;
+  defaultAgentId?: string;
+}): string {
+  return contract.defaultAgentId ?? contract.agent.id ?? "default";
+}
+
+function normalizeAgentServiceContract<
+  TStartInput = void,
+  TRun = unknown,
+  TEvent = unknown,
+  TTerminalState = unknown,
+>(
+  contract: AgentContract<TStartInput, TRun, TEvent, TTerminalState>,
+): NormalizedAgentServiceContract<TStartInput, TRun, TEvent, TTerminalState> {
+  if ("agents" in contract) {
+    return {
+      serviceName: contract.serviceName,
+      agents: contract.agents,
+      defaultAgentId: contract.defaultAgentId,
+      server: contract.server,
+      durableRunSink: contract.durableRunSink,
+    };
+  }
+
+  const defaultAgentId = getSingleAgentDefaultId(contract);
+  return {
+    serviceName: contract.serviceName,
+    agents: { [defaultAgentId]: contract.agent },
+    defaultAgentId,
+    server: contract.server,
+    durableRunSink: contract.durableRunSink,
+  };
+}
 
 /**
  * Reserve the public hosted agent-service signature before the runtime
@@ -69,6 +153,6 @@ export function defineAgentService<
 >(
   contract: AgentContract<TStartInput, TRun, TEvent, TTerminalState>,
 ): AgentServiceDefinition<TStartInput, TRun, TEvent, TTerminalState> {
-  void contract;
+  void normalizeAgentServiceContract(contract);
   throw new Error(DEFINE_AGENT_SERVICE_STUB_ERROR);
 }
