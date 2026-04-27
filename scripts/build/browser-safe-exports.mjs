@@ -8,6 +8,7 @@ export const BROWSER_SAFE_EXPORTS = [
   "./chat/protocol",
   "./chat/types",
   "./chat/conversation",
+  "./chat/message-prep",
   "./markdown",
   "./mdx",
 ];
