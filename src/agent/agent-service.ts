@@ -26,6 +26,23 @@ export interface AgentServiceServerConfig {
   cors?: boolean;
 }
 
+export interface AgentServiceRoute {
+  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
+  path: string;
+  handler: (request: Request, params: Record<string, string>) => Promise<Response> | Response;
+}
+
+export interface AgentServiceRuntime<
+  TStartInput = void,
+  TRun = unknown,
+  TEvent = unknown,
+  TTerminalState = unknown,
+> {
+  readonly contract: NormalizedAgentServiceContract<TStartInput, TRun, TEvent, TTerminalState>;
+  fetch(request: Request): Promise<Response>;
+  setShuttingDown(shuttingDown?: boolean): void;
+}
+
 export type AgentRegistry = Record<string, Agent>;
 
 export interface AgentServiceContractBase<
@@ -101,10 +118,13 @@ export interface AgentServiceDefinition<
   TTerminalState = unknown,
 > {
   contract: NormalizedAgentServiceContract<TStartInput, TRun, TEvent, TTerminalState>;
+  createRuntime(options?: { routes?: AgentServiceRoute[] }): AgentServiceRuntime<
+    TStartInput,
+    TRun,
+    TEvent,
+    TTerminalState
+  >;
 }
-
-const DEFINE_AGENT_SERVICE_STUB_ERROR =
-  "defineAgentService() is a Phase 0 stub. The framework contract is reserved, but the hosted runtime implementation has not landed yet.";
 
 function getSingleAgentDefaultId(contract: {
   agent: Agent;
@@ -141,9 +161,96 @@ function normalizeAgentServiceContract<
   };
 }
 
+function normalizePath(path: string): string {
+  if (path === "") return "/";
+  return path.startsWith("/") ? path : `/${path}`;
+}
+
+function splitPath(path: string): string[] {
+  const normalized = normalizePath(path);
+  if (normalized === "/") return [];
+  return normalized.split("/").filter(Boolean);
+}
+
+function matchRoute(
+  route: AgentServiceRoute,
+  request: Request,
+): Record<string, string> | undefined {
+  if (request.method.toUpperCase() !== route.method) {
+    return undefined;
+  }
+
+  const routeParts = splitPath(route.path);
+  const requestParts = splitPath(new URL(request.url).pathname);
+  if (routeParts.length !== requestParts.length) {
+    return undefined;
+  }
+
+  const params: Record<string, string> = {};
+  for (const [index, routePart] of routeParts.entries()) {
+    const requestPart = requestParts[index];
+    if (requestPart === undefined) {
+      return undefined;
+    }
+
+    if (routePart.startsWith(":")) {
+      params[routePart.slice(1)] = decodeURIComponent(requestPart);
+      continue;
+    }
+
+    if (routePart !== requestPart) {
+      return undefined;
+    }
+  }
+
+  return params;
+}
+
+function createAgentServiceRuntime<
+  TStartInput = void,
+  TRun = unknown,
+  TEvent = unknown,
+  TTerminalState = unknown,
+>(
+  contract: NormalizedAgentServiceContract<TStartInput, TRun, TEvent, TTerminalState>,
+  options: { routes?: AgentServiceRoute[] } = {},
+): AgentServiceRuntime<TStartInput, TRun, TEvent, TTerminalState> {
+  let shuttingDown = false;
+  const routes = options.routes ?? [];
+
+  return {
+    contract,
+    async fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (request.method === "GET" && path === "/readiness") {
+        return shuttingDown ? new Response("Shutting down", { status: 503 }) : new Response("OK");
+      }
+      if (request.method === "GET" && path === "/liveness") {
+        return new Response("OK");
+      }
+
+      for (const route of routes) {
+        const params = matchRoute(route, request);
+        if (params) {
+          return await route.handler(request, params);
+        }
+      }
+
+      return new Response("Not Found", { status: 404 });
+    },
+    setShuttingDown(next = true) {
+      shuttingDown = next;
+    },
+  };
+}
+
 /**
- * Reserve the public hosted agent-service signature before the runtime
- * implementation lands.
+ * Define a hosted agent service and expose a policy-neutral runtime shell.
+ *
+ * The first implementation slice owns contract normalization plus standard
+ * health/readiness behavior. Hosts pass product-specific routes explicitly so
+ * auth, observability, durable sinks, and AG-UI execution policy can keep
+ * migrating in smaller additive seams.
  */
 export function defineAgentService<
   TStartInput = void,
@@ -153,6 +260,11 @@ export function defineAgentService<
 >(
   contract: AgentContract<TStartInput, TRun, TEvent, TTerminalState>,
 ): AgentServiceDefinition<TStartInput, TRun, TEvent, TTerminalState> {
-  void normalizeAgentServiceContract(contract);
-  throw new Error(DEFINE_AGENT_SERVICE_STUB_ERROR);
+  const normalized = normalizeAgentServiceContract(contract);
+  return {
+    contract: normalized,
+    createRuntime(options) {
+      return createAgentServiceRuntime(normalized, options);
+    },
+  };
 }
