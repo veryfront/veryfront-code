@@ -181,6 +181,73 @@ describe("agent/ag-ui-runtime-handler", () => {
     });
   });
 
+  it("lets hosts short-circuit before parsing the runtime request body", async () => {
+    let beforeParseCalls = 0;
+    let executeCalls = 0;
+    const handler = createAgUiRuntimeHandler({
+      beforeParse: ({ request }) => {
+        beforeParseCalls += 1;
+        assertEquals(request.url, "http://localhost/api/ag-ui");
+        return Response.json({ errorCode: "UNAUTHENTICATED" }, { status: 401 });
+      },
+      execute: () => {
+        executeCalls += 1;
+        return Response.json({ ok: true });
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{not-json",
+      }),
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.json(), { errorCode: "UNAUTHENTICATED" });
+    assertEquals(beforeParseCalls, 1);
+    assertEquals(executeCalls, 0);
+  });
+
+  it("lets hosts preserve their validation-error response shape", async () => {
+    let executeCalls = 0;
+    const handler = createAgUiRuntimeHandler({
+      validationErrorResponse: async ({ response }) => {
+        const body = await response.json();
+        return Response.json(
+          {
+            errorCode: "VALIDATION_ERROR",
+            source: body,
+          },
+          { status: response.status },
+        );
+      },
+      execute: () => {
+        executeCalls += 1;
+        return Response.json({ ok: true });
+      },
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          threadId: crypto.randomUUID(),
+          runId: "run_invalid_runtime_request",
+          messages: "not-an-array",
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(executeCalls, 0);
+    const body = await response.json();
+    assertEquals(body.errorCode, "VALIDATION_ERROR");
+    assertEquals(body.source.error, "Invalid AG-UI runtime request");
+  });
+
   it("calls runtime lifecycle hooks for direct hosted AG-UI streams", async () => {
     const testAgent = createTestAgent();
     const threadId = crypto.randomUUID();

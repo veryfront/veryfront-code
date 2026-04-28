@@ -320,10 +320,29 @@ export type AgUiRuntimeHandlerExecute = (
   input: AgUiRuntimeHandlerExecuteInput,
 ) => Promise<Response> | Response;
 
+export interface AgUiRuntimeRequestGateInput {
+  request: Request;
+}
+
+export type AgUiRuntimeRequestGate = (
+  input: AgUiRuntimeRequestGateInput,
+) => Promise<Response | undefined | void> | Response | undefined | void;
+
+export interface AgUiRuntimeValidationErrorInput {
+  request: Request;
+  response: Response;
+}
+
+export type AgUiRuntimeValidationErrorResponse = (
+  input: AgUiRuntimeValidationErrorInput,
+) => Promise<Response> | Response;
+
 export interface AgUiRuntimeHandlerOptions {
   context?:
     | Record<string, unknown>
     | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
+  beforeParse?: AgUiRuntimeRequestGate;
+  validationErrorResponse?: AgUiRuntimeValidationErrorResponse;
   sessionManager?: RunResumeSessionManager<AgUiResumeValue>;
   execute?: AgUiRuntimeHandlerExecute;
   onToolCallSeen?: (context: AgUiRuntimeLifecycleContext) => Promise<void> | void;
@@ -352,8 +371,17 @@ export function createAgUiRuntimeHandler(
     const request = extractRequest(requestOrCtx);
 
     try {
+      const gateResult = await config.beforeParse?.({ request });
+      if (gateResult instanceof Response) {
+        return gateResult;
+      }
+
       const parsed = await parseAgUiRuntimeRequestOrError(request);
       if (parsed instanceof Response) {
+        if (config.validationErrorResponse) {
+          return await config.validationErrorResponse({ request, response: parsed });
+        }
+
         return parsed;
       }
 
