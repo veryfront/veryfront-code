@@ -481,10 +481,12 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
           token = await tokenManager.getToken(scope, projectSlug, customDomain);
         } catch (error) {
           tokenFetchError = error;
-          logger?.error(options.tokenFetchErrorMessage, error as Error, {
-            projectSlug,
-            customDomain,
-          });
+          if (!(customDomain && isMissingCustomDomainProjectError(error))) {
+            logger?.error(options.tokenFetchErrorMessage, error as Error, {
+              projectSlug,
+              customDomain,
+            });
+          }
         }
       }
     }
@@ -684,7 +686,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         const lookupResult = await lookupProjectByDomain(host, config.apiBaseUrl, token, logger);
         if (!lookupResult) {
-          logger?.error("Custom domain not found", undefined, { domain: host });
+          logger?.info("Custom domain not found", { domain: host });
           return makeErrorContext(base, 404, `No project configured for domain: ${host}`, token);
         }
 
