@@ -328,6 +328,13 @@ export {
   finalizeChildRunExecutionResources,
 } from "./child-run-execution-cleanup.ts";
 export {
+  buildChildRunResultSummary,
+  buildRootOwnedChildRunResultHint,
+  buildRootOwnedChildRunResultText,
+  summarizeChildRunResultText,
+  summarizeChildRunResultValue,
+} from "./child-run-result-summary.ts";
+export {
   buildChildRunExecutionSnapshot,
   buildChildRunFailureResult,
   buildChildRunFailureSnapshot,
