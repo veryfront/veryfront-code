@@ -10,11 +10,41 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
-      with:
-        deno-version: v2.7.7
-        cache: true
-        cache-hash: ${{ hashFiles('deno.json') }}
+    - name: Install pinned Deno
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        version="2.7.7"
+        os="$(uname -s)"
+        arch="$(uname -m)"
+
+        case "${os}" in
+          Linux) os_target="unknown-linux-gnu" ;;
+          Darwin) os_target="apple-darwin" ;;
+          *) echo "Unsupported Deno install OS: ${os}" >&2; exit 1 ;;
+        esac
+
+        case "${arch}" in
+          x86_64|amd64) arch_target="x86_64" ;;
+          arm64|aarch64) arch_target="aarch64" ;;
+          *) echo "Unsupported Deno install architecture: ${arch}" >&2; exit 1 ;;
+        esac
+
+        deno_dir="${RUNNER_TEMP}/deno-${version}-${arch_target}-${os_target}"
+        deno_bin="${deno_dir}/deno"
+        if [ ! -x "${deno_bin}" ]; then
+          mkdir -p "${deno_dir}"
+          zip_path="${deno_dir}/deno.zip"
+          curl --fail --location --show-error --retry 5 --retry-delay 2 \
+            "https://github.com/denoland/deno/releases/download/v${version}/deno-${arch_target}-${os_target}.zip" \
+            --output "${zip_path}"
+          unzip -oq "${zip_path}" -d "${deno_dir}"
+          chmod +x "${deno_bin}"
+        fi
+
+        echo "${deno_dir}" >> "${GITHUB_PATH}"
+        "${deno_bin}" --version
 
     - name: Generate template manifest
       shell: bash
