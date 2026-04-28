@@ -348,6 +348,13 @@ export {
   withHostedChildStreamIdleTimeout,
 } from "./hosted-child-stream-watchdog.ts";
 export {
+  buildHostedChildToolDescription,
+  expandHostedChildRequestedTools,
+  type HostedChildRequestedToolsInput,
+  sanitizeHostedChildRequestedTools,
+  shouldPruneSandboxToolsFromHostedChildRequest,
+} from "./hosted-child-requested-tools.ts";
+export {
   buildChildRunResultSummary,
   buildRootOwnedChildRunResultHint,
   buildRootOwnedChildRunResultText,
