@@ -316,6 +316,21 @@ export {
   buildChildRunExhaustedStepBudgetErrorMessage,
 } from "./child-run-final-step-support.ts";
 export {
+  buildChildRunExecutionSnapshot,
+  buildChildRunFailureResult,
+  buildChildRunFailureSnapshot,
+  buildChildRunResultCommon,
+  buildChildRunSuccessResult,
+  buildChildRunSuccessSnapshot,
+  type ChildRunExecutionResult,
+  type ChildRunExecutionSnapshot,
+  type ChildRunExecutionUsage,
+  type ChildRunResultCommon,
+  type ChildRunToolCallSnapshot,
+  type ChildRunToolResultSnapshot,
+  getChildRunSnapshotUsage,
+} from "./child-run-execution-snapshot.ts";
+export {
   type ConversationRunChunkMirror,
   type ConversationRunChunkMirrorApiOptions,
   type ConversationRunChunkMirrorOptions,
