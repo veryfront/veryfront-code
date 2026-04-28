@@ -15,6 +15,10 @@ export const BROWSER_SAFE_EXPORTS = [
   "./mdx",
 ];
 
+export const BROWSER_SAFE_DNT_TIMER_MODULES = [
+  "src/chat/final-step-fallback.js",
+];
+
 export const BROWSER_SAFE_CLIENT_MODULES = [
   "src/agent/react/use-voice-input.js",
   "src/react/components/chat/chat/components/code-block.js",

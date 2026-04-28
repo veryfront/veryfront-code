@@ -728,13 +728,13 @@ async function resolveStreamPromiseWithTimeout<T>(
   timeoutMs: number,
   fallback: T,
 ): Promise<T> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
 
   try {
     const resolved = await Promise.race([
       Promise.resolve(promise),
       new Promise<typeof STREAM_PROMISE_TIMEOUT_TOKEN>((resolve) => {
-        timeoutId = setTimeout(() => resolve(STREAM_PROMISE_TIMEOUT_TOKEN), timeoutMs);
+        timeoutId = globalThis.setTimeout(() => resolve(STREAM_PROMISE_TIMEOUT_TOKEN), timeoutMs);
       }),
     ]);
 
@@ -747,7 +747,7 @@ async function resolveStreamPromiseWithTimeout<T>(
     return fallback;
   } finally {
     if (timeoutId) {
-      clearTimeout(timeoutId);
+      globalThis.clearTimeout(timeoutId);
     }
   }
 }

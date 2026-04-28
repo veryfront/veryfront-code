@@ -12,7 +12,11 @@
  */
 
 import { build, emptyDir } from "jsr:@deno/dnt";
-import { BROWSER_SAFE_CLIENT_MODULES, BROWSER_SAFE_EXPORTS } from "./browser-safe-exports.mjs";
+import {
+	BROWSER_SAFE_CLIENT_MODULES,
+	BROWSER_SAFE_DNT_TIMER_MODULES,
+	BROWSER_SAFE_EXPORTS,
+} from "./browser-safe-exports.mjs";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -217,7 +221,10 @@ await build({
 			}
 		}
 
-		for (const path of BROWSER_SAFE_CLIENT_MODULES) {
+		for (const path of [
+			...BROWSER_SAFE_CLIENT_MODULES,
+			...BROWSER_SAFE_DNT_TIMER_MODULES,
+		]) {
 			normalizeBrowserTimerShim(
 				`./npm/esm/${path}`,
 				`${path} browser-safe dnt shim removal`,
