@@ -316,6 +316,12 @@ export {
   buildChildRunExhaustedStepBudgetErrorMessage,
 } from "./child-run-final-step-support.ts";
 export {
+  formatChildRunStreamPartError,
+  isChildRunAbortError,
+  throwIfChildRunAborted,
+  toChildRunToolInputRecord,
+} from "./child-run-execution-support.ts";
+export {
   buildChildRunExecutionSnapshot,
   buildChildRunFailureResult,
   buildChildRunFailureSnapshot,
