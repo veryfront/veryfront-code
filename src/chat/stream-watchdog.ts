@@ -20,6 +20,8 @@ export type ChatStreamWatchdogOptions = {
   idleTimeoutMs?: number;
   toolRunningTimeoutMs?: number;
   longRunningToolNames?: Iterable<string>;
+  setTimeoutFn?: typeof globalThis.setTimeout;
+  clearTimeoutFn?: typeof globalThis.clearTimeout;
 };
 
 export class ChatStreamIdleTimeoutError extends Error {
@@ -149,7 +151,7 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
 
   const clearTimer = () => {
     if (timer !== null) {
-      clearTimeout(timer);
+      resolvedOptions.clearTimeoutFn(timer);
       timer = null;
     }
   };
@@ -165,7 +167,7 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
       return;
     }
 
-    timer = setTimeout(() => {
+    timer = resolvedOptions.setTimeoutFn(() => {
       lastTimeoutState = state;
       controller.abort(
         new DOMException(new ChatStreamIdleTimeoutError(state).message, "AbortError"),
@@ -205,6 +207,8 @@ function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
     toolRunningTimeoutMs: options?.toolRunningTimeoutMs ??
       DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
     longRunningToolNames: new Set(options?.longRunningToolNames ?? ["invoke_agent"]),
+    setTimeoutFn: options?.setTimeoutFn ?? globalThis.setTimeout,
+    clearTimeoutFn: options?.clearTimeoutFn ?? globalThis.clearTimeout,
   };
 }
 
