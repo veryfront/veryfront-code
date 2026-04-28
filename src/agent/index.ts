@@ -328,6 +328,16 @@ export {
   finalizeChildRunExecutionResources,
 } from "./child-run-execution-cleanup.ts";
 export {
+  createHostedChildPendingToolLifecycle,
+  type HostedChildPendingToolCallPhase,
+  type HostedChildPendingToolCallState,
+  type HostedChildPendingToolLifecycleCloseLog,
+  type HostedChildPendingToolLifecycleCloseReason,
+  type HostedChildPendingToolLifecycleInput,
+  type HostedChildPendingToolLifecycleLogger,
+  type HostedChildPendingToolLifecycleUnknownToolLog,
+} from "./hosted-child-pending-tool-lifecycle.ts";
+export {
   buildChildRunResultSummary,
   buildRootOwnedChildRunResultHint,
   buildRootOwnedChildRunResultText,
