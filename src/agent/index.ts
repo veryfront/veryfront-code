@@ -355,6 +355,13 @@ export {
   shouldPruneSandboxToolsFromHostedChildRequest,
 } from "./hosted-child-requested-tools.ts";
 export {
+  getHostedChildWrittenArtifactPath,
+  type HostedChildWrittenArtifactPathInput,
+  isHostedChildCreateFileAlreadyExistsResult,
+  isHostedChildTextProjectArtifactPrompt,
+  normalizeHostedChildArtifactPath,
+} from "./hosted-child-artifact-support.ts";
+export {
   buildHostedChildCompletedLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
