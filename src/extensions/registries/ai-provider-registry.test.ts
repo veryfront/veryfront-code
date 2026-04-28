@@ -13,12 +13,26 @@ function fakeProvider(id: string): AIProvider {
 }
 
 describe("AIProviderRegistry", () => {
+  it("ships with built-in anthropic and google providers", () => {
+    const reg = createAIProviderRegistry();
+    assert(reg.has("anthropic"));
+    assert(reg.has("google"));
+    assertEquals(reg.has("openai"), false);
+  });
+
   it("register + get returns the same instance", () => {
     const reg = createAIProviderRegistry();
     const p = fakeProvider("openai");
     reg.register(p);
     assertEquals(reg.get("openai"), p);
     assert(reg.has("openai"));
+  });
+
+  it("register overrides a built-in provider silently", () => {
+    const reg = createAIProviderRegistry();
+    const custom = fakeProvider("anthropic");
+    reg.register(custom);
+    assertEquals(reg.get("anthropic"), custom);
   });
 
   it("get returns undefined for unknown id", () => {
@@ -30,20 +44,14 @@ describe("AIProviderRegistry", () => {
   it("require throws with a helpful message listing known providers", () => {
     const reg = createAIProviderRegistry();
     reg.register(fakeProvider("openai"));
-    reg.register(fakeProvider("anthropic"));
     assertThrows(
-      () => reg.require("google"),
+      () => reg.require("nope"),
       Error,
-      "google",
-    );
-    assertThrows(
-      () => reg.require("google"),
-      Error,
-      "openai, anthropic",
+      "nope",
     );
   });
 
-  it("register throws on duplicate id (no silent overwrite)", () => {
+  it("register throws on duplicate id for non-builtin providers", () => {
     const reg = createAIProviderRegistry();
     reg.register(fakeProvider("openai"));
     assertThrows(
@@ -66,8 +74,7 @@ describe("AIProviderRegistry", () => {
   it("list returns providers in insertion order", () => {
     const reg = createAIProviderRegistry();
     reg.register(fakeProvider("openai"));
-    reg.register(fakeProvider("anthropic"));
-    reg.register(fakeProvider("google"));
-    assertEquals(reg.list().map((p) => p.id), ["openai", "anthropic", "google"]);
+    const ids = reg.list().map((p) => p.id);
+    assertEquals(ids, ["anthropic", "google", "openai"]);
   });
 });

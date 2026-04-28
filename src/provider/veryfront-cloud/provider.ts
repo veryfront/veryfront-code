@@ -1,6 +1,5 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createAnthropicModelRuntime, createGoogleModelRuntime } from "../runtime-loader.ts";
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { resolve } from "#veryfront/extensions/contracts.ts";
 import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
 import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import type { ModelRuntime } from "../types.ts";
@@ -17,53 +16,30 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, projectSlug);
 
+  const registry = resolve<AIProviderRegistry>(AIProviderRegistryName);
+
   switch (provider) {
-    case "anthropic": {
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
-      const anthropic = registry?.get("anthropic");
-      if (anthropic) {
-        return anthropic.createModel(upstreamModelId, {
-          credential: apiToken,
-          authToken: apiToken,
-          baseURL,
-          name: "veryfront-cloud",
-          fetch,
-        });
-      }
-      // Fall back to the built-in runtime-loader when the extension is not
-      // registered.  Keeps Anthropic working until @veryfront/ext-anthropic is
-      // published to npm and adopted by all consumers.
-      return createAnthropicModelRuntime({
+    case "anthropic":
+    case "google": {
+      const p = registry.require(provider);
+      return p.createModel(upstreamModelId, {
+        credential: apiToken,
         authToken: apiToken,
         baseURL,
         name: "veryfront-cloud",
         fetch,
-      }, upstreamModelId);
+      });
     }
-
-    case "google":
-      return createGoogleModelRuntime({
-        apiKey: apiToken,
-        baseURL,
-        name: "veryfront-cloud",
-        fetch,
-      }, upstreamModelId);
 
     case "openai":
     case "moonshotai": {
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
-      const openai = registry?.get("openai");
-      if (openai) {
-        return openai.createModel(upstreamModelId, {
-          credential: apiToken,
-          baseURL,
-          name: "veryfront-cloud",
-          fetch,
-        });
-      }
-      throw new Error(
-        "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/moonshotai models via veryfront-cloud.",
-      );
+      const p = registry.require("openai");
+      return p.createModel(upstreamModelId, {
+        credential: apiToken,
+        baseURL,
+        name: "veryfront-cloud",
+        fetch,
+      });
     }
 
     default: {
