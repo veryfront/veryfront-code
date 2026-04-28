@@ -1,10 +1,20 @@
 import {
+  convertUiMessagesToModelMessages,
   getStringField,
   isReasoningPart,
   isToolCallPart,
   isToolResultPart,
 } from "./conversation.ts";
-import type { ChatModelMessage, ChatToolResultOutput, ChatToolResultPart } from "./types.ts";
+import {
+  buildDataFileAnnotation,
+  type ChatModelMessage,
+  type ChatToolResultOutput,
+  type ChatToolResultPart,
+  type ChatUiMessage,
+  type ChatUiMessagePart,
+  normalizeInlineAttachmentMediaType,
+  type UploadedFileReference,
+} from "./types.ts";
 
 const CHARS_PER_TOKEN = 4;
 
@@ -175,6 +185,221 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 interface ToolCallInfo {
   toolName: string;
   input: unknown;
+}
+
+export function isModelSupportedFileMediaType(mediaType: string): boolean {
+  return mediaType.startsWith("image/") || mediaType === "application/pdf" ||
+    mediaType === "text/plain";
+}
+
+export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): ChatUiMessage[] {
+  return messages.map((message) => {
+    if (!message.parts.some((part) => part.type === "file")) {
+      return message;
+    }
+
+    const parts = message.parts.map((part) => {
+      if (part.type !== "file") {
+        return part;
+      }
+
+      const mediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
+      if (mediaType === part.mediaType) {
+        return part;
+      }
+
+      return {
+        ...part,
+        mediaType,
+      };
+    });
+
+    return { ...message, parts };
+  });
+}
+
+export function rewriteUnsupportedFilePartsAsAnnotations(
+  messages: ChatUiMessage[],
+): ChatUiMessage[] {
+  return messages.map((message) => {
+    if (message.parts.length === 0) {
+      return message;
+    }
+
+    const kept: ChatUiMessagePart[] = [];
+    const dataFiles: UploadedFileReference[] = [];
+
+    for (const part of message.parts) {
+      if (part.type !== "file") {
+        kept.push(part);
+        continue;
+      }
+
+      const normalizedMediaType = normalizeInlineAttachmentMediaType(part.filename, part.mediaType);
+      if (isModelSupportedFileMediaType(normalizedMediaType)) {
+        kept.push({
+          ...part,
+          mediaType: normalizedMediaType,
+        });
+        continue;
+      }
+
+      dataFiles.push({
+        name: part.filename || "file",
+        mediaType: normalizedMediaType,
+        ...(part.url ? { url: part.url } : {}),
+        ...(part.uploadId ? { uploadId: part.uploadId } : {}),
+        ...(part.uploadPath ? { path: part.uploadPath } : {}),
+      });
+    }
+
+    if (dataFiles.length === 0) {
+      return message;
+    }
+
+    const annotation = buildDataFileAnnotation(dataFiles);
+    const lastTextIndex = kept.findLastIndex((part) => part.type === "text");
+
+    if (lastTextIndex >= 0) {
+      const textPart = kept[lastTextIndex];
+      if (textPart.type === "text") {
+        kept[lastTextIndex] = { type: "text", text: textPart.text + annotation };
+      }
+    } else {
+      kept.push({ type: "text", text: annotation.trimStart() });
+    }
+
+    return { ...message, parts: kept };
+  });
+}
+
+function isPendingToolPart(part: unknown): boolean {
+  if (!isRecord(part) || typeof part.type !== "string") {
+    return false;
+  }
+
+  const state = typeof part.state === "string" ? part.state : null;
+  const isPendingState = state === "pending" || state === "input-available" ||
+    state === "input-streaming";
+  if (!isPendingState) {
+    return false;
+  }
+
+  return part.type === "dynamic-tool" || part.type === "tool_call" || part.type.startsWith("tool-");
+}
+
+export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[] {
+  return messages.flatMap((message) => {
+    if (message.role !== "assistant" || message.parts.length === 0) {
+      return [message];
+    }
+
+    const parts = message.parts.filter((part) => !isPendingToolPart(part));
+    if (parts.length === message.parts.length) {
+      return [message];
+    }
+
+    if (parts.length === 0) {
+      return [];
+    }
+
+    return [{ ...message, parts }];
+  });
+}
+
+function isKeepableModelPart(part: unknown, includeReasoning: boolean): boolean {
+  if (!isRecord(part) || typeof part.type !== "string") return false;
+
+  switch (part.type) {
+    case "text":
+      return typeof part.text === "string" && part.text.trim().length > 0;
+    case "reasoning":
+      return includeReasoning;
+    case "tool-call":
+    case "tool-result":
+    case "image":
+      return true;
+    case "file": {
+      const hasMediaType = typeof part.mediaType === "string" && part.mediaType.length > 0;
+      if (!hasMediaType) {
+        return false;
+      }
+
+      const url = typeof part.url === "string" ? part.url : "";
+      if (url.startsWith("data:image/") && part.filename === "preview-screenshot.png") {
+        return false;
+      }
+      return true;
+    }
+    default:
+      return true;
+  }
+}
+
+function hasValidContent(message: ChatModelMessage): boolean {
+  const content = message.content;
+
+  if (content === undefined || content === null) return false;
+  if (typeof content === "string") return content.trim().length > 0;
+  if (Array.isArray(content)) return content.some((part) => isKeepableModelPart(part, false));
+  return true;
+}
+
+function cleanContent<T>(content: T[]): T[] {
+  const hasSubstantiveContent = content.some((part) => isKeepableModelPart(part, false));
+  return content.filter((part) => isKeepableModelPart(part, hasSubstantiveContent));
+}
+
+export function sanitizeModelMessages(messages: ChatModelMessage[]): ChatModelMessage[] {
+  const result: ChatModelMessage[] = [];
+
+  for (const message of messages) {
+    if (Array.isArray(message.content)) {
+      if (message.role === "user") {
+        const cleaned = cleanContent(message.content);
+        if (cleaned.length > 0) result.push({ ...message, content: cleaned });
+      } else if (message.role === "assistant") {
+        const cleaned = cleanContent(message.content);
+        if (cleaned.length > 0) result.push({ ...message, content: cleaned });
+      } else if (message.role === "tool") {
+        const cleaned = cleanContent(message.content);
+        if (cleaned.length > 0) result.push({ ...message, content: cleaned });
+      }
+      continue;
+    }
+
+    if (hasValidContent(message)) {
+      result.push(message);
+    }
+  }
+
+  return result;
+}
+
+function filterValidMessages(messages: ChatModelMessage[]): ChatModelMessage[] {
+  return messages.filter((message) => {
+    const content = message.content;
+    if (content === undefined || content === null) return false;
+    if (typeof content === "string") return content.trim().length > 0;
+    if (Array.isArray(content)) return content.length > 0;
+    return true;
+  });
+}
+
+export function prepareModelMessagesFromUiMessages(messages: ChatUiMessage[]): ChatModelMessage[] {
+  const validMessages = messages.filter((message) =>
+    message && typeof message === "object" && "role" in message
+  );
+  const normalizedMessages = normalizeMessageFilePartMediaTypes(validMessages);
+  const strippedPendingToolMessages = stripPendingToolParts(normalizedMessages);
+  const rewrittenMessages = rewriteUnsupportedFilePartsAsAnnotations(strippedPendingToolMessages);
+  const modelMessages = convertUiMessagesToModelMessages(rewrittenMessages);
+  const patchedMessages = ensureToolCallInputs(dedupeToolHistory(modelMessages));
+  const sanitized = sanitizeModelMessages(patchedMessages);
+  const masked = maskOldToolOutputs(sanitized);
+  const compacted = enforceTokenBudget(masked);
+  const filtered = filterValidMessages(compacted);
+  return repairToolPairs(filtered);
 }
 
 function buildToolCallMap(messages: ChatModelMessage[]): Map<string, ToolCallInfo> {
