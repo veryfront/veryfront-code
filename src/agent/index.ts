@@ -461,6 +461,12 @@ export {
   type ExecuteAgUiDetachedStartInput,
 } from "./ag-ui-detached-start.ts";
 export {
+  createDetachedRunTracker,
+  type DetachedRunDrainResult,
+  type DetachedRunTracker,
+  type DetachedRunTrackerOptions,
+} from "./detached-run-tracker.ts";
+export {
   type AgUiCancelHandlerOptions,
   type AgUiResumeHandlerOptions,
   type AgUiResumeSignal,
