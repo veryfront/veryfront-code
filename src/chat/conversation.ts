@@ -292,6 +292,157 @@ export function pushToolParts(
   });
 }
 
+function pushFileConversationPart(
+  parts: MessagePart[],
+  part: Extract<ChatUiMessagePart, { type: "file" }>,
+): void {
+  const uploadId = part.uploadId ?? extractUploadId(part.url);
+  if (!uploadId) return;
+
+  if (part.mediaType.startsWith("image/")) {
+    parts.push({
+      type: "image",
+      upload_id: uploadId,
+      media_type: part.mediaType,
+      ...(part.url ? { url: part.url } : {}),
+    });
+    return;
+  }
+
+  parts.push({
+    type: "file",
+    upload_id: uploadId,
+    media_type: part.mediaType,
+    ...(part.url ? { url: part.url } : {}),
+  });
+}
+
+export function toConversationPartsFromUiMessage(message: ChatUiMessage): MessagePart[] {
+  const parts: MessagePart[] = [];
+
+  for (const part of message.parts) {
+    if (part.type === "text") {
+      parts.push({ type: "text", text: part.text });
+      continue;
+    }
+
+    if (part.type === "reasoning") {
+      parts.push({ type: "reasoning", text: part.text });
+      continue;
+    }
+
+    if (part.type === "step-start") {
+      continue;
+    }
+
+    if (part.type === "source-url") {
+      parts.push({
+        type: "citation",
+        source_id: part.sourceId,
+        title: part.title,
+        url: part.url,
+      });
+      continue;
+    }
+
+    if (part.type === "source-document") {
+      parts.push({
+        type: "citation",
+        source_id: part.sourceId,
+        title: part.title,
+      });
+      continue;
+    }
+
+    if (part.type === "file") {
+      pushFileConversationPart(parts, part);
+      continue;
+    }
+
+    if (isDataUiPart(part)) {
+      const name = part.type.replace(/^data-/, "");
+      if (name.length > 0) {
+        parts.push({
+          type: "data",
+          name,
+          value: part.data,
+        });
+      }
+      continue;
+    }
+
+    if (isToolUiPart(part)) {
+      const toolName = getUiToolName(part);
+      if (!toolName) {
+        continue;
+      }
+
+      pushToolParts(parts, toolName, part.toolCallId, part.state, part);
+    }
+  }
+
+  return parts.filter((part) => messagePartSchema.safeParse(part).success);
+}
+
+function isToolComplete(part: ToolUiPart): boolean {
+  return part.state === "output-available" || part.state === "output-error" ||
+    part.state === "output-denied";
+}
+
+export function hasIncompleteToolParts(message: ChatUiMessage): boolean {
+  return message.parts.some((part) => isToolUiPart(part) && !isToolComplete(part));
+}
+
+export function markIncompleteToolPartsAsStopped(message: ChatUiMessage): ChatUiMessage {
+  return markIncompleteToolPartsAsErrored(message, "Stopped by user");
+}
+
+export function markIncompleteToolPartsAsErrored(
+  message: ChatUiMessage,
+  errorText: string,
+): ChatUiMessage {
+  let mutated = false;
+
+  const parts = message.parts.map((part) => {
+    if (!isToolUiPart(part) || isToolComplete(part)) {
+      return part;
+    }
+
+    mutated = true;
+    return markToolPartAsErrored(part, errorText);
+  });
+
+  return mutated ? { ...message, parts } : message;
+}
+
+function markToolPartAsErrored(part: ToolUiPart, errorText: string): ChatUiMessagePart {
+  if (part.type === "dynamic-tool") {
+    return {
+      type: "dynamic-tool",
+      toolName: part.toolName,
+      toolCallId: part.toolCallId,
+      ...(part.title ? { title: part.title } : {}),
+      ...(part.providerExecuted !== undefined ? { providerExecuted: part.providerExecuted } : {}),
+      ...(part.callProviderMetadata ? { callProviderMetadata: part.callProviderMetadata } : {}),
+      input: part.input,
+      state: "output-error",
+      errorText,
+    };
+  }
+
+  return {
+    type: part.type,
+    toolCallId: part.toolCallId,
+    ...(part.toolName ? { toolName: part.toolName } : {}),
+    ...(part.title ? { title: part.title } : {}),
+    ...(part.providerExecuted !== undefined ? { providerExecuted: part.providerExecuted } : {}),
+    ...(part.callProviderMetadata ? { callProviderMetadata: part.callProviderMetadata } : {}),
+    input: part.input,
+    state: "output-error",
+    errorText,
+  };
+}
+
 export function isToolCallPart(value: unknown): value is ToolCallLike {
   return (
     isRecord(value) &&

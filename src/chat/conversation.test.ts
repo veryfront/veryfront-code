@@ -8,13 +8,17 @@ import {
   convertUiMessagesToModelMessages,
   extractTextFromMessage,
   extractUploadId,
+  hasIncompleteToolParts,
   isRecord,
   isToolCallPart,
   mapToolState,
+  markIncompleteToolPartsAsErrored,
+  markIncompleteToolPartsAsStopped,
   messagePartSchema,
   messageStatusSchema,
   pushToolParts,
   stringifyUnknown,
+  toConversationPartsFromUiMessage,
 } from "veryfront/chat/conversation";
 
 describe("chat/conversation schemas", () => {
@@ -80,6 +84,126 @@ describe("chat/conversation helpers", () => {
       { type: "tool_call", id: "tc-1", name: "bash", input: { command: "ls" }, state: "completed" },
       { type: "tool_result", tool_call_id: "tc-1", output: "ok", is_error: false },
     ]);
+  });
+
+  it("maps UI messages into persistable conversation parts", () => {
+    const message: ChatUiMessage = {
+      id: "assistant-2",
+      role: "assistant",
+      parts: [
+        { type: "step-start" },
+        { type: "text", text: "Real content" },
+        { type: "reasoning", text: "Thinking…" },
+        { type: "source-url", sourceId: "src-1", url: "https://example.com", title: "Example" },
+        { type: "source-document", sourceId: "doc-1", title: "Design Doc" },
+        { type: "data-rollout", data: { approved: true } },
+        {
+          type: "file",
+          mediaType: "image/png",
+          url: "https://files.example.com/uploaded/11111111-1111-4111-a111-111111111111",
+        },
+        {
+          type: "file",
+          mediaType: "application/pdf",
+          filename: "brief.pdf",
+          url: "https://files.example.com/uploaded/22222222-2222-4222-a222-222222222222",
+        },
+        {
+          type: "tool-form_input",
+          toolCallId: "tool-1",
+          input: { title: "Continue?" },
+          state: "output-available",
+          output: { approved: true },
+        },
+      ],
+    };
+
+    assertEquals(toConversationPartsFromUiMessage(message), [
+      { type: "text", text: "Real content" },
+      { type: "reasoning", text: "Thinking…" },
+      { type: "citation", source_id: "src-1", title: "Example", url: "https://example.com" },
+      { type: "citation", source_id: "doc-1", title: "Design Doc" },
+      { type: "data", name: "rollout", value: { approved: true } },
+      {
+        type: "image",
+        upload_id: "11111111-1111-4111-a111-111111111111",
+        media_type: "image/png",
+        url: "https://files.example.com/uploaded/11111111-1111-4111-a111-111111111111",
+      },
+      {
+        type: "file",
+        upload_id: "22222222-2222-4222-a222-222222222222",
+        media_type: "application/pdf",
+        url: "https://files.example.com/uploaded/22222222-2222-4222-a222-222222222222",
+      },
+      {
+        type: "tool_call",
+        id: "tool-1",
+        name: "form_input",
+        input: { title: "Continue?" },
+        state: "completed",
+      },
+      {
+        type: "tool_result",
+        tool_call_id: "tool-1",
+        output: { approved: true },
+        is_error: false,
+      },
+    ]);
+  });
+
+  it("marks incomplete UI tool parts as stopped or errored", () => {
+    const message: ChatUiMessage = {
+      id: "assistant-3",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "update_file",
+          toolCallId: "tool-3",
+          input: {},
+          state: "pending",
+        },
+        {
+          type: "tool-form_input",
+          toolCallId: "tool-4",
+          input: { title: "Continue?" },
+          state: "approval-requested",
+          approval: { id: "approval-1" },
+        },
+      ],
+    };
+
+    assertEquals(hasIncompleteToolParts(message), true);
+    assertEquals(markIncompleteToolPartsAsErrored(message, "Assistant ended before completion"), {
+      id: "assistant-3",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "update_file",
+          toolCallId: "tool-3",
+          input: {},
+          state: "output-error",
+          errorText: "Assistant ended before completion",
+        },
+        {
+          type: "tool-form_input",
+          toolCallId: "tool-4",
+          input: { title: "Continue?" },
+          state: "output-error",
+          errorText: "Assistant ended before completion",
+        },
+      ],
+    });
+    assertEquals(markIncompleteToolPartsAsStopped(message).parts[0], {
+      type: "dynamic-tool",
+      toolName: "update_file",
+      toolCallId: "tool-3",
+      input: {},
+      state: "output-error",
+      errorText: "Stopped by user",
+    });
   });
 
   it("extracts upload ids and safely stringifies unknown values", () => {
