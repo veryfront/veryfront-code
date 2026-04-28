@@ -322,6 +322,12 @@ export {
   toChildRunToolInputRecord,
 } from "./child-run-execution-support.ts";
 export {
+  type ChildRunExecutionBufferCleanupInput,
+  type ChildRunExecutionResourceFinalizeInput,
+  closeChildRunExecutionBuffers,
+  finalizeChildRunExecutionResources,
+} from "./child-run-execution-cleanup.ts";
+export {
   buildChildRunExecutionSnapshot,
   buildChildRunFailureResult,
   buildChildRunFailureSnapshot,
