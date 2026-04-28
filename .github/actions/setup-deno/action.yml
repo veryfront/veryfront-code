@@ -6,6 +6,10 @@ inputs:
     description: Pre-warm the esm.sh cache for tests
     required: false
     default: "false"
+  warm-redis-cache:
+    description: Pre-warm the deno.land Redis cache for unit and integration tests
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -18,10 +22,15 @@ runs:
         version="2.7.7"
         os="$(uname -s)"
         arch="$(uname -m)"
+        deno_exe="deno"
 
         case "${os}" in
           Linux) os_target="unknown-linux-gnu" ;;
           Darwin) os_target="apple-darwin" ;;
+          MINGW*|MSYS*|CYGWIN*)
+            os_target="pc-windows-msvc"
+            deno_exe="deno.exe"
+            ;;
           *) echo "Unsupported Deno install OS: ${os}" >&2; exit 1 ;;
         esac
 
@@ -32,7 +41,7 @@ runs:
         esac
 
         deno_dir="${RUNNER_TEMP}/deno-${version}-${arch_target}-${os_target}"
-        deno_bin="${deno_dir}/deno"
+        deno_bin="${deno_dir}/${deno_exe}"
         if [ ! -x "${deno_bin}" ]; then
           mkdir -p "${deno_dir}"
           zip_path="${deno_dir}/deno.zip"
@@ -50,10 +59,11 @@ runs:
       shell: bash
       run: deno run -A scripts/build/generate-templates-manifest.ts && deno fmt cli/templates/manifest.json
 
-    - name: Warm Deno module cache
+    - name: Warm Redis module cache
+      if: inputs.warm-redis-cache == 'true'
       shell: bash
       run: |
-        deno cache --reload=https://deno.land/x/redis https://deno.land/x/redis@v0.32.1/mod.ts
+        deno cache --reload=https://deno.land/x/redis https://deno.land/x/redis@v0.32.1/mod.ts || true
 
     - name: Warm esm.sh cache
       if: inputs.warm-cache == 'true'
