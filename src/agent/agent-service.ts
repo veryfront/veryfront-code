@@ -50,6 +50,7 @@ export interface AgentServiceRuntime<
 > {
   readonly contract: NormalizedAgentServiceContract<TStartInput, TRun, TEvent, TTerminalState>;
   fetch(request: Request): Promise<Response>;
+  request(input: string | URL | Request, init?: RequestInit): Promise<Response>;
   setShuttingDown(shuttingDown?: boolean): void;
 }
 
@@ -295,6 +296,15 @@ function withCorsHeaders(
   });
 }
 
+function toRuntimeRequest(input: string | URL | Request, init?: RequestInit): Request {
+  if (input instanceof Request) {
+    return init === undefined ? input : new Request(input, init);
+  }
+
+  const requestUrl = typeof input === "string" ? new URL(input, "http://localhost") : input;
+  return new Request(requestUrl, init);
+}
+
 function createAgentServiceRuntime<
   TStartInput = void,
   TRun = unknown,
@@ -308,7 +318,7 @@ function createAgentServiceRuntime<
   const routes = options.routes ?? [];
   const corsConfig = normalizeCorsConfig(contract.server);
 
-  return {
+  const runtime: AgentServiceRuntime<TStartInput, TRun, TEvent, TTerminalState> = {
     contract,
     async fetch(request) {
       if (
@@ -342,10 +352,15 @@ function createAgentServiceRuntime<
       response = new Response("Not Found", { status: 404 });
       return withCorsHeaders(response, corsConfig, request);
     },
+    request(input, init) {
+      return runtime.fetch(toRuntimeRequest(input, init));
+    },
     setShuttingDown(next = true) {
       shuttingDown = next;
     },
   };
+
+  return runtime;
 }
 
 /**

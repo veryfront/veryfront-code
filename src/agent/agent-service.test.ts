@@ -127,6 +127,33 @@ describe("agent/agent-service", () => {
     assertEquals(await shuttingDown.text(), "Shutting down");
   });
 
+  it("provides a host request helper for relative runtime checks", async () => {
+    const runtime = defineAgentService({
+      serviceName: "veryfront-agent",
+      agent: assistant,
+    }).createRuntime({
+      routes: [
+        {
+          method: "POST",
+          path: "/echo",
+          handler: async (request) =>
+            Response.json({
+              method: request.method,
+              body: await request.text(),
+            }),
+        },
+      ],
+    });
+
+    const ready = await runtime.request("/readiness");
+    assertEquals(ready.status, 200);
+    assertEquals(await ready.text(), "OK");
+
+    const echo = await runtime.request("/echo", { method: "POST", body: "hello" });
+    assertEquals(echo.status, 200);
+    assertEquals(await echo.json(), { method: "POST", body: "hello" });
+  });
+
   it("dispatches host-owned routes without taking over product policy", async () => {
     const runtime = defineAgentService({
       serviceName: "veryfront-agent",
