@@ -142,9 +142,11 @@ export { agent } from "./factory.ts";
 export {
   type AgentContract,
   type AgentRegistry,
+  type AgentServiceCorsConfig,
   type AgentServiceDefinition,
   type AgentServiceRegistryContract,
   type AgentServiceRoute,
+  type AgentServiceRouteMethod,
   type AgentServiceServerConfig,
   type AgentServiceSingleAgentContract,
   defineAgentService,
