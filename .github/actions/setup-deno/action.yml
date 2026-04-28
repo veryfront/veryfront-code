@@ -50,6 +50,11 @@ runs:
       shell: bash
       run: deno run -A scripts/build/generate-templates-manifest.ts && deno fmt cli/templates/manifest.json
 
+    - name: Warm Deno module cache
+      shell: bash
+      run: |
+        deno cache --reload=https://deno.land/x/redis https://deno.land/x/redis@v0.32.1/mod.ts
+
     - name: Warm esm.sh cache
       if: inputs.warm-cache == 'true'
       shell: bash
