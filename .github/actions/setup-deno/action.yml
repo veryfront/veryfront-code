@@ -5,14 +5,14 @@ inputs:
   warm-cache:
     description: Pre-warm the esm.sh cache for tests
     required: false
-    default: 'false'
+    default: "false"
 
 runs:
   using: composite
   steps:
     - uses: denoland/setup-deno@667a34cdef165d8d2b2e98dde39547c9daac7282 # v2.0.4
       with:
-        deno-version: 2.7.7
+        deno-version: v2.7.7
         cache: true
         cache-hash: ${{ hashFiles('deno.json') }}
 
