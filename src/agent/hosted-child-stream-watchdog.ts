@@ -79,7 +79,7 @@ export async function* withHostedChildStreamIdleTimeout<T>(input: {
   while (true) {
     throwIfChildRunAborted(input.abortSignal);
 
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
     const watchdogState = input.getWatchdogState();
     if (!pendingNext) {
       pendingNext = iterator.next();
@@ -91,7 +91,7 @@ export async function* withHostedChildStreamIdleTimeout<T>(input: {
       >([
         pendingNext,
         new Promise<typeof HOSTED_CHILD_STREAM_TIMEOUT_TOKEN>((resolve) => {
-          timeoutId = setTimeout(() => {
+          timeoutId = globalThis.setTimeout(() => {
             resolve(HOSTED_CHILD_STREAM_TIMEOUT_TOKEN);
           }, watchdogState.timeoutMs);
         }),
@@ -115,7 +115,7 @@ export async function* withHostedChildStreamIdleTimeout<T>(input: {
       yield result.value;
     } finally {
       if (timeoutId) {
-        clearTimeout(timeoutId);
+        globalThis.clearTimeout(timeoutId);
       }
     }
   }
@@ -125,18 +125,21 @@ export async function resolveHostedChildPromiseWithTimeout<T>(
   promise: PromiseLike<T>,
   timeoutMs: number,
 ): Promise<T | typeof HOSTED_CHILD_STREAM_TIMEOUT_TOKEN> {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
 
   try {
     return await Promise.race([
       Promise.resolve(promise),
       new Promise<typeof HOSTED_CHILD_STREAM_TIMEOUT_TOKEN>((resolve) => {
-        timeoutId = setTimeout(() => resolve(HOSTED_CHILD_STREAM_TIMEOUT_TOKEN), timeoutMs);
+        timeoutId = globalThis.setTimeout(
+          () => resolve(HOSTED_CHILD_STREAM_TIMEOUT_TOKEN),
+          timeoutMs,
+        );
       }),
     ]);
   } finally {
     if (timeoutId) {
-      clearTimeout(timeoutId);
+      globalThis.clearTimeout(timeoutId);
     }
   }
 }
