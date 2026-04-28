@@ -4,6 +4,7 @@ const TEXT_PROJECT_ARTIFACT_PATH_PATTERN = /(?:^|[\s`"'(])(?:[\w./-]+\/)?[\w.-]+
 
 const DEFAULT_WRITING_TOOL_NAMES = ["create_file", "update_file"];
 const CREATE_FILE_ALREADY_EXISTS_PATTERN = /file already exists/i;
+const TOOL_ERROR_VALUES = new Set(["error", "tool_error"]);
 const MAX_NESTED_TOOL_RESULT_DEPTH = 8;
 
 export interface HostedChildWrittenArtifactPathInput {
@@ -55,9 +56,16 @@ export function normalizeHostedChildArtifactPath(path: string): string | null {
   }
 
   const prefixedPath = trimmedPath.replace(/^\.\//, "/");
-  const normalizedPath = prefixedPath.startsWith("/") ? prefixedPath : `/${prefixedPath}`;
+  const normalizedPath = (prefixedPath.startsWith("/") ? prefixedPath : `/${prefixedPath}`).replace(
+    /\/{2,}/g,
+    "/",
+  );
 
-  return normalizedPath.replace(/\/{2,}/g, "/");
+  if (normalizedPath.split("/").includes("..")) {
+    return null;
+  }
+
+  return normalizedPath;
 }
 
 function isHostedChildCreateFileAlreadyExistsResultAtDepth(
@@ -99,7 +107,15 @@ function hasAlreadyExistsContentPart(content: unknown): boolean {
 }
 
 function isErrorToolOutput(output: unknown): boolean {
-  return isRecord(output) && output.isError === true;
+  if (!isRecord(output)) {
+    return false;
+  }
+
+  if (output.isError === true) {
+    return true;
+  }
+
+  return typeof output.error === "string" && TOOL_ERROR_VALUES.has(output.error);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

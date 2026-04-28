@@ -58,6 +58,8 @@ Deno.test("normalizeHostedChildArtifactPath normalizes project artifact paths", 
   assertEquals(normalizeHostedChildArtifactPath("'/plans/report.md,'"), "/plans/report.md");
   assertEquals(normalizeHostedChildArtifactPath("https://example.com/report.md"), null);
   assertEquals(normalizeHostedChildArtifactPath("/workspace/report.md"), null);
+  assertEquals(normalizeHostedChildArtifactPath("../report.md"), null);
+  assertEquals(normalizeHostedChildArtifactPath("docs/../report.md"), null);
 });
 
 Deno.test("getHostedChildWrittenArtifactPath returns normalized paths for writing tools", () => {
@@ -94,6 +96,14 @@ Deno.test("getHostedChildWrittenArtifactPath ignores non-writing tools, failed w
       toolName: "create_file",
       toolInput: { path: "test.md" },
       toolOutput: { isError: true, content: [{ text: "failed" }] },
+    }),
+    null,
+  );
+  assertEquals(
+    getHostedChildWrittenArtifactPath({
+      toolName: "create_file",
+      toolInput: { path: "test.md" },
+      toolOutput: { error: "tool_error", message: "File already exists: test.md" },
     }),
     null,
   );
