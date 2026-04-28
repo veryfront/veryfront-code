@@ -355,6 +355,13 @@ export {
   shouldPruneSandboxToolsFromHostedChildRequest,
 } from "./hosted-child-requested-tools.ts";
 export {
+  buildHostedChildCompletedLog,
+  buildHostedChildErrorLog,
+  buildHostedChildExhaustedStepBudgetLog,
+  type HostedChildExecutionLogEntry,
+  type HostedChildExecutionLogLevel,
+} from "./hosted-child-execution-logging.ts";
+export {
   buildChildRunResultSummary,
   buildRootOwnedChildRunResultHint,
   buildRootOwnedChildRunResultText,
