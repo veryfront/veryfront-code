@@ -311,6 +311,17 @@ export {
   createConversationRunMirror,
 } from "./conversation-run-mirror.ts";
 export {
+  type ConversationRunChunkMirror,
+  type ConversationRunChunkMirrorApiOptions,
+  type ConversationRunChunkMirrorOptions,
+  type ConversationRunChunkMirrorPrepareChunkEventsInput,
+  type ConversationRunChunkMirrorPreparedChunk,
+  type ConversationRunChunkMirrorPreparedEvents,
+  type ConversationRunChunkMirrorPrepareExternalEventsInput,
+  type ConversationRunChunkMirrorQueueOptions,
+  createConversationRunChunkMirror,
+} from "./conversation-run-chunk-mirror.ts";
+export {
   type ConversationRunStreamMirror,
   createConversationRunStreamMirror,
 } from "./conversation-run-stream-mirror.ts";
