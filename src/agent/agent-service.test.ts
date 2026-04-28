@@ -152,4 +152,87 @@ describe("agent/agent-service", () => {
     const missing = await runtime.fetch(new Request("https://agent.test/not-found"));
     assertEquals(missing.status, 404);
   });
+
+  it("handles CORS preflight through the runtime shell", async () => {
+    const runtime = defineAgentService({
+      serviceName: "veryfront-agent",
+      agent: assistant,
+      server: {
+        cors: {
+          origins: ["http://localhost:3000"],
+          credentials: true,
+        },
+      },
+    }).createRuntime();
+
+    const response = await runtime.fetch(
+      new Request("https://agent.test/api/ag-ui/runs", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "http://localhost:3000",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "Content-Type,Authorization",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(response.headers.get("Access-Control-Allow-Origin"), "http://localhost:3000");
+    assertEquals(response.headers.get("Access-Control-Allow-Credentials"), "true");
+    assertEquals(
+      response.headers.get("Access-Control-Allow-Headers"),
+      "Content-Type,Authorization",
+    );
+  });
+
+  it("does not allow disallowed CORS origins", async () => {
+    const runtime = defineAgentService({
+      serviceName: "veryfront-agent",
+      agent: assistant,
+      server: {
+        cors: {
+          origins: ["http://localhost:3000"],
+          credentials: true,
+        },
+      },
+    }).createRuntime();
+
+    const response = await runtime.fetch(
+      new Request("https://agent.test/api/ag-ui/runs", {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://evil.example",
+          "Access-Control-Request-Method": "POST",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 204);
+    assertEquals(response.headers.get("Access-Control-Allow-Origin"), null);
+  });
+
+  it("adds CORS headers to runtime responses for allowed origins", async () => {
+    const runtime = defineAgentService({
+      serviceName: "veryfront-agent",
+      agent: assistant,
+      server: {
+        cors: {
+          origins: ["http://localhost:3000"],
+          credentials: true,
+        },
+      },
+    }).createRuntime();
+
+    const response = await runtime.fetch(
+      new Request("https://agent.test/readiness", {
+        headers: {
+          Origin: "http://localhost:3000",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(response.headers.get("Access-Control-Allow-Origin"), "http://localhost:3000");
+    assertEquals(response.headers.get("Access-Control-Allow-Credentials"), "true");
+  });
 });

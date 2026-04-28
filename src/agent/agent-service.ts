@@ -20,14 +20,24 @@ export interface DurableRunSink<
  * Placeholder host-facing server config reserved for the future hosted service
  * implementation.
  */
+export type AgentServiceRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
+
+export interface AgentServiceCorsConfig {
+  origins?: string[];
+  credentials?: boolean;
+  allowMethods?: AgentServiceRouteMethod[];
+  allowHeaders?: string[];
+  maxAgeSeconds?: number;
+}
+
 export interface AgentServiceServerConfig {
   port?: number;
   basePath?: string;
-  cors?: boolean;
+  cors?: boolean | AgentServiceCorsConfig;
 }
 
 export interface AgentServiceRoute {
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
+  method: AgentServiceRouteMethod;
   path: string;
   handler: (request: Request, params: Record<string, string>) => Promise<Response> | Response;
 }
@@ -206,6 +216,85 @@ function matchRoute(
   return params;
 }
 
+function normalizeCorsConfig(
+  server: AgentServiceServerConfig | undefined,
+): AgentServiceCorsConfig | undefined {
+  const cors = server?.cors;
+  if (!cors) return undefined;
+  if (cors === true) return { origins: ["*"] };
+  return cors;
+}
+
+function getAllowedCorsOrigin(
+  config: AgentServiceCorsConfig,
+  request: Request,
+): string | undefined {
+  const origin = request.headers.get("Origin");
+  if (!origin) return undefined;
+
+  const origins = config.origins ?? ["*"];
+  if (origins.includes("*")) {
+    return config.credentials ? origin : "*";
+  }
+
+  return origins.includes(origin) ? origin : undefined;
+}
+
+function appendCorsHeaders(
+  headers: Headers,
+  config: AgentServiceCorsConfig,
+  request: Request,
+): void {
+  const allowedOrigin = getAllowedCorsOrigin(config, request);
+  if (!allowedOrigin) return;
+
+  headers.set("Access-Control-Allow-Origin", allowedOrigin);
+  headers.append("Vary", "Origin");
+
+  if (config.credentials) {
+    headers.set("Access-Control-Allow-Credentials", "true");
+  }
+}
+
+function createCorsPreflightResponse(
+  request: Request,
+  config: AgentServiceCorsConfig,
+): Response {
+  const headers = new Headers();
+  appendCorsHeaders(headers, config, request);
+
+  const allowMethods = config.allowMethods ?? ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+  headers.set("Access-Control-Allow-Methods", allowMethods.join(", "));
+
+  const requestedHeaders = request.headers.get("Access-Control-Request-Headers");
+  const allowHeaders = config.allowHeaders?.join(", ") ?? requestedHeaders;
+  if (allowHeaders) {
+    headers.set("Access-Control-Allow-Headers", allowHeaders);
+  }
+
+  if (config.maxAgeSeconds !== undefined) {
+    headers.set("Access-Control-Max-Age", String(config.maxAgeSeconds));
+  }
+
+  return new Response(null, { status: 204, headers });
+}
+
+function withCorsHeaders(
+  response: Response,
+  config: AgentServiceCorsConfig | undefined,
+  request: Request,
+): Response {
+  if (!config) return response;
+
+  const headers = new Headers(response.headers);
+  appendCorsHeaders(headers, config, request);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 function createAgentServiceRuntime<
   TStartInput = void,
   TRun = unknown,
@@ -217,26 +306,41 @@ function createAgentServiceRuntime<
 ): AgentServiceRuntime<TStartInput, TRun, TEvent, TTerminalState> {
   let shuttingDown = false;
   const routes = options.routes ?? [];
+  const corsConfig = normalizeCorsConfig(contract.server);
 
   return {
     contract,
     async fetch(request) {
+      if (
+        corsConfig && request.method === "OPTIONS" &&
+        request.headers.has("Access-Control-Request-Method")
+      ) {
+        return createCorsPreflightResponse(request, corsConfig);
+      }
+
       const path = new URL(request.url).pathname;
+      let response: Response;
       if (request.method === "GET" && path === "/readiness") {
-        return shuttingDown ? new Response("Shutting down", { status: 503 }) : new Response("OK");
+        response = shuttingDown
+          ? new Response("Shutting down", { status: 503 })
+          : new Response("OK");
+        return withCorsHeaders(response, corsConfig, request);
       }
       if (request.method === "GET" && path === "/liveness") {
-        return new Response("OK");
+        response = new Response("OK");
+        return withCorsHeaders(response, corsConfig, request);
       }
 
       for (const route of routes) {
         const params = matchRoute(route, request);
         if (params) {
-          return await route.handler(request, params);
+          response = await route.handler(request, params);
+          return withCorsHeaders(response, corsConfig, request);
         }
       }
 
-      return new Response("Not Found", { status: 404 });
+      response = new Response("Not Found", { status: 404 });
+      return withCorsHeaders(response, corsConfig, request);
     },
     setShuttingDown(next = true) {
       shuttingDown = next;
