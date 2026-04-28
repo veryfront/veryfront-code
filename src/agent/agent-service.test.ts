@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type AgentContract,
@@ -44,7 +44,7 @@ describe("agent/agent-service", () => {
     };
 
     assertEquals(contract.serviceName, "veryfront-agent");
-    assertEquals(contract.agents.assistant.id, "phase-0-service-stub");
+    assertEquals(contract.agents.assistant?.id, "phase-0-service-stub");
     assertEquals(contract.defaultAgentId, "assistant");
     assertEquals(contract.server?.port, 3001);
     assertEquals(contract.durableRunSink?.startRun({ requestId: "run-123" }), {
@@ -71,17 +71,64 @@ describe("agent/agent-service", () => {
     };
 
     assertEquals(registryContract.defaultAgentId, "assistant");
-    assertEquals(registryContract.agents.reviewer.id, "reviewer");
+    assertEquals(registryContract.agents.reviewer?.id, "reviewer");
     assertEquals(singleAgentContract.agent.id, "phase-0-service-stub");
   });
 
-  it("throws until the hosted runtime service implementation lands", async () => {
-    await assertRejects(
-      async () => {
-        defineAgentService({ serviceName: "veryfront-agent", agent: assistant });
-      },
-      Error,
-      "Phase 0 stub",
+  it("normalizes single-agent convenience into the registry contract", () => {
+    const service = defineAgentService({
+      serviceName: "veryfront-agent",
+      agent: assistant,
+    });
+
+    assertEquals(service.contract.serviceName, "veryfront-agent");
+    assertEquals(service.contract.defaultAgentId, assistant.id);
+    assertEquals(service.contract.agents[assistant.id], assistant);
+  });
+
+  it("creates a runtime with readiness and liveness routes", async () => {
+    const runtime = defineAgentService({
+      serviceName: "veryfront-agent",
+      agent: assistant,
+    }).createRuntime();
+
+    const ready = await runtime.fetch(new Request("https://agent.test/readiness"));
+    assertEquals(ready.status, 200);
+    assertEquals(await ready.text(), "OK");
+
+    const live = await runtime.fetch(new Request("https://agent.test/liveness"));
+    assertEquals(live.status, 200);
+    assertEquals(await live.text(), "OK");
+
+    runtime.setShuttingDown();
+    const shuttingDown = await runtime.fetch(new Request("https://agent.test/readiness"));
+    assertEquals(shuttingDown.status, 503);
+    assertEquals(await shuttingDown.text(), "Shutting down");
+  });
+
+  it("dispatches host-owned routes without taking over product policy", async () => {
+    const runtime = defineAgentService({
+      serviceName: "veryfront-agent",
+      agents: { assistant },
+      defaultAgentId: "assistant",
+    }).createRuntime({
+      routes: [
+        {
+          method: "DELETE",
+          path: "/api/ag-ui/runs/:runId",
+          handler: (_request, params) => Response.json({ runId: params.runId }),
+        },
+      ],
+    });
+
+    const response = await runtime.fetch(
+      new Request("https://agent.test/api/ag-ui/runs/run-123", { method: "DELETE" }),
     );
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), { runId: "run-123" });
+
+    const missing = await runtime.fetch(new Request("https://agent.test/not-found"));
+    assertEquals(missing.status, 404);
   });
 });
