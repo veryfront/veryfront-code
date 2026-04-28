@@ -101,6 +101,26 @@ describe("chat/stream-watchdog", () => {
     );
   });
 
+  it("accepts injected timer functions for host test instrumentation", () => {
+    using time = new FakeTime();
+    const watchdog = createChatStreamWatchdog({
+      ...watchdogOptions,
+      setTimeoutFn: globalThis.setTimeout,
+      clearTimeoutFn: globalThis.clearTimeout,
+    });
+    watchdog.observe({
+      type: "tool-input-available",
+      toolCallId: "tool-3",
+      toolName: "bash",
+      input: {},
+    });
+
+    time.tick(301);
+
+    assertEquals(watchdog.signal.aborted, true);
+    watchdog.dispose();
+  });
+
   it("aborts with AbortError and records timeout state", () => {
     using time = new FakeTime();
     const watchdog = createChatStreamWatchdog(watchdogOptions);
