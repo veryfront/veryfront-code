@@ -151,6 +151,12 @@ export {
   type NormalizedAgentServiceContract,
 } from "./agent-service.ts";
 export {
+  type CachedRequestAuthResult,
+  createRequestAuthCache,
+  type CreateRequestAuthCacheOptions,
+  type RequestAuthCache,
+} from "./request-auth-cache.ts";
+export {
   type AgUiRuntimeHandlerConfig,
   type AgUiRuntimeHandlerConfigWithAgent,
   type AgUiRuntimeHandlerExecute,
