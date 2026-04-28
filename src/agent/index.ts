@@ -338,6 +338,16 @@ export {
   type HostedChildPendingToolLifecycleUnknownToolLog,
 } from "./hosted-child-pending-tool-lifecycle.ts";
 export {
+  composeAbortSignals,
+  HOSTED_CHILD_STREAM_TIMEOUT_TOKEN,
+  HostedChildStreamIdleTimeoutError,
+  type HostedChildStreamWatchdogPhase,
+  type HostedChildStreamWatchdogState,
+  resolveHostedChildPromiseWithTimeout,
+  resolveHostedChildStreamWatchdogState,
+  withHostedChildStreamIdleTimeout,
+} from "./hosted-child-stream-watchdog.ts";
+export {
   buildChildRunResultSummary,
   buildRootOwnedChildRunResultHint,
   buildRootOwnedChildRunResultText,
