@@ -144,6 +144,7 @@ export {
   type AgentRegistry,
   type AgentServiceDefinition,
   type AgentServiceRegistryContract,
+  type AgentServiceRoute,
   type AgentServiceServerConfig,
   type AgentServiceSingleAgentContract,
   defineAgentService,

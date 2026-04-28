@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   type AgentContract,
   type AgentServiceRegistryContract,
+  type AgentServiceRoute,
   type AgentServiceSingleAgentContract,
   defineAgentService,
   type DurableRunSink,
@@ -84,6 +85,26 @@ describe("agent/agent-service", () => {
     assertEquals(service.contract.serviceName, "veryfront-agent");
     assertEquals(service.contract.defaultAgentId, assistant.id);
     assertEquals(service.contract.agents[assistant.id], assistant);
+  });
+
+  it("exports the host route type accepted by service runtimes", async () => {
+    const routes: AgentServiceRoute[] = [
+      {
+        method: "GET",
+        path: "/custom/:id",
+        handler: (_request, params) => Response.json({ id: params.id }),
+      },
+    ];
+
+    const runtime = defineAgentService({
+      serviceName: "route-type-service",
+      agent: assistant,
+    }).createRuntime({ routes });
+
+    const response = await runtime.fetch(new Request("https://agent.test/custom/route-1"));
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), { id: "route-1" });
   });
 
   it("creates a runtime with readiness and liveness routes", async () => {
