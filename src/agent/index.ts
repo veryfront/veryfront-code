@@ -311,6 +311,11 @@ export {
   createConversationRunMirror,
 } from "./conversation-run-mirror.ts";
 export {
+  appendMissingChildRunToolCalls,
+  appendMissingChildRunToolResults,
+  buildChildRunExhaustedStepBudgetErrorMessage,
+} from "./child-run-final-step-support.ts";
+export {
   type ConversationRunChunkMirror,
   type ConversationRunChunkMirrorApiOptions,
   type ConversationRunChunkMirrorOptions,
