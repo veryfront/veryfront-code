@@ -5,7 +5,10 @@ import {
   enforceTokenBudget,
   estimateTokens,
   maskOldToolOutputs,
+  prepareModelMessagesFromUiMessages,
   repairToolPairs,
+  rewriteUnsupportedFilePartsAsAnnotations,
+  stripPendingToolParts,
 } from "./message-prep.ts";
 
 Deno.test("repairToolPairs moves a later tool result immediately after the matching tool call", () => {
@@ -165,4 +168,117 @@ Deno.test("compressTurn emits a two-message summary shell", () => {
     role: "assistant",
     content: "Acknowledged.",
   });
+});
+
+Deno.test("stripPendingToolParts removes stale assistant tool calls before model conversion", () => {
+  const messages = [
+    {
+      id: "assistant-1",
+      role: "assistant" as const,
+      parts: [
+        { type: "text" as const, text: "Let me ask one thing." },
+        {
+          type: "dynamic-tool" as const,
+          toolName: "form_input",
+          toolCallId: "tool-form",
+          state: "input-available" as const,
+          input: { title: "Intake" },
+        },
+      ],
+    },
+  ];
+
+  assertEquals(stripPendingToolParts(messages), [
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "text", text: "Let me ask one thing." }],
+    },
+  ]);
+});
+
+Deno.test("rewriteUnsupportedFilePartsAsAnnotations converts non-model-native files into text annotations", () => {
+  const messages = [
+    {
+      id: "user-1",
+      role: "user" as const,
+      parts: [
+        { type: "text" as const, text: "Read this data." },
+        {
+          type: "file" as const,
+          mediaType: "application/zip",
+          filename: "archive.zip",
+          uploadId: "upload-zip",
+          uploadPath: "uploads/archive.zip",
+          url: "https://files.example.com/archive.zip",
+        },
+      ],
+    },
+  ];
+
+  assertEquals(rewriteUnsupportedFilePartsAsAnnotations(messages)[0].parts, [
+    {
+      type: "text",
+      text: "Read this data.\n\n<uploaded_files>\n" +
+        '<file name="archive.zip" upload_id="upload-zip" path="uploads/archive.zip" ' +
+        'url="https://files.example.com/archive.zip" type="application/zip" />\n' +
+        "</uploaded_files>",
+    },
+  ]);
+});
+
+Deno.test("prepareModelMessagesFromUiMessages normalizes UI history into model-safe tool order", () => {
+  const prepared = prepareModelMessagesFromUiMessages([
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Inspect rollout state." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "search_files",
+          toolCallId: "tool-1",
+          state: "output-available",
+          input: { query: "rollout" },
+          output: { matches: 2 },
+        },
+      ],
+    },
+  ]);
+
+  assertEquals(prepared, [
+    {
+      role: "user",
+      content: [{ type: "text", text: "Inspect rollout state." }],
+    },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "search_files",
+          input: { query: "rollout" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "tool-1",
+          toolName: "search_files",
+          output: {
+            type: "json",
+            value: { matches: 2 },
+          },
+        },
+      ],
+    },
+  ]);
 });
