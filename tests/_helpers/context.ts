@@ -28,8 +28,10 @@ import {
   makeTempDir,
   mkdir,
   remove,
+  symlink,
   writeTextFile,
 } from "../../src/platform/compat/fs.ts";
+import { resolve as resolvePath } from "#veryfront/compat/path";
 import { deleteEnv, getEnv, setEnv } from "../../src/platform/compat/process.ts";
 import { startDevServer } from "../../src/server/dev-server.ts";
 import { startProductionServer } from "../../src/server/production-server.ts";
@@ -61,6 +63,79 @@ try {
 } catch {
   // Ignore if already initialized or module missing
 }
+
+// Register the ext-babel CodeParser contract. In production this happens
+// via extension discovery; integration tests scaffold ephemeral project
+// directories with no extensions/ folder, so we register directly against
+// the shared contract registry. Must run again after each test because
+// production-server shutdown calls ExtensionLoader.teardownAll() which
+// clears the registry.
+export async function registerExtBabelForTests(): Promise<void> {
+  try {
+    const { register } = await import("../../src/extensions/contracts.ts");
+    const extBabelFactory = (await import("../../extensions/ext-babel/src/index.ts")).default;
+    const ext = extBabelFactory();
+    const noopLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    };
+    await ext.setup?.({
+      config: {},
+      logger: noopLogger,
+      provide: (name: string, impl: unknown) => register(name, impl),
+      get: () => undefined,
+      resolve: () => {
+        throw new Error("resolve not used in setup");
+      },
+    } as never);
+  } catch {
+    // Ignore if ext-babel cannot be loaded — injectJsxNodePositions is optional
+  }
+}
+
+// Register the ext-openai AIProviderRegistry contract. In production this
+// happens via extension discovery; integration tests scaffold ephemeral
+// project directories, so we register directly against the shared contract
+// registry. Must run again after each test because production-server shutdown
+// calls ExtensionLoader.teardownAll() which clears the registry.
+export async function registerExtOpenAIForTests(): Promise<void> {
+  try {
+    const { register } = await import("../../src/extensions/contracts.ts");
+    const { createAIProviderRegistry } = await import(
+      "../../src/extensions/registries/ai-provider-registry.ts"
+    );
+    const { AIProviderRegistryName } = await import(
+      "../../src/extensions/interfaces/index.ts"
+    );
+    const extOpenAIFactory = (await import("../../extensions/ext-openai/src/index.ts")).default;
+    const ext = extOpenAIFactory();
+    const registry = createAIProviderRegistry();
+    register(AIProviderRegistryName, registry);
+    const noopLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    };
+    await ext.setup?.({
+      config: {},
+      logger: noopLogger,
+      provide: (name: string, impl: unknown) => register(name, impl),
+      get: (name: string) => (name === AIProviderRegistryName ? registry : undefined),
+      require: (name: string) => {
+        if (name === AIProviderRegistryName) return registry;
+        throw new Error(`require not supported for "${name}" in test setup`);
+      },
+    } as never);
+  } catch {
+    // Ignore if ext-openai cannot be loaded — provider is optional
+  }
+}
+
+await registerExtBabelForTests();
+await registerExtOpenAIForTests();
 
 export { esbuildInitialized };
 
@@ -466,6 +541,37 @@ export class TestContext {
       await mkdir(join(this.projectDir, dir), { recursive: true });
     }
 
+    // Symlink ext-babel into the project's extensions/ dir so that
+    // `orchestrateExtensions` (run from bootstrapProd) discovers it and
+    // registers the CodeParser contract. Without this, bootstrap's
+    // internal teardownAll() would wipe the registry we seeded earlier.
+    try {
+      const extBabelDir = join(this.projectDir, "extensions", "ext-babel");
+      await mkdir(extBabelDir, { recursive: true });
+      const extBabelReal = resolvePath("extensions/ext-babel/src/index.ts");
+      await writeTextFile(
+        join(extBabelDir, "index.ts"),
+        `export { default } from "${"file://" + extBabelReal}";\n`,
+      );
+    } catch {
+      // Ignore — graceful fallback via tryResolve in the shim covers it.
+    }
+
+    // Materialize ext-openai into the project's extensions/ dir so that
+    // `discoverProjectExtensions` can find it during integration tests
+    // that exercise openai/* model paths.
+    try {
+      const extOpenAIDir = join(this.projectDir, "extensions", "ext-openai");
+      await mkdir(extOpenAIDir, { recursive: true });
+      const extOpenAIReal = resolvePath("extensions/ext-openai/src/index.ts");
+      await writeTextFile(
+        join(extOpenAIDir, "index.ts"),
+        `export { default } from "${"file://" + extOpenAIReal}";\n`,
+      );
+    } catch {
+      // Ignore — ext-openai is optional; tests that don't need it will still pass.
+    }
+
     await writeTextFile(
       join(this.projectDir, "veryfront.config.js"),
       `export default {
@@ -535,6 +641,14 @@ export async function withTestContext<T>(
       // re-register the MDX ContentTransformer so direct-compiler tests
       // (which don't start a server) still resolve it.
       await registerExtMdx();
+
+      // Re-register ext-babel for unit tests that import via #veryfront
+      // rather than going through `startProductionServer`'s bootstrap.
+      await registerExtBabelForTests();
+
+      // Re-register ext-openai so openai/* model paths resolve after
+      // teardownAll() clears the registry between tests.
+      await registerExtOpenAIForTests();
 
       // Clear MDX renderer cache at the START of each test to ensure
       // the singleton picks up this test's cache dir (via AsyncLocalStorage),

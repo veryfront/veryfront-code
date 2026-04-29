@@ -41,31 +41,31 @@
   ],
   "tools": [
     {
-      "id": "list-emails",
+      "id": "list_emails",
       "name": "List Emails",
       "description": "List recent emails from inbox or a specific folder",
       "requiresWrite": false
     },
     {
-      "id": "get-email",
+      "id": "get_email",
       "name": "Get Email",
       "description": "Get detailed information about a specific email",
       "requiresWrite": false
     },
     {
-      "id": "send-email",
+      "id": "send_email",
       "name": "Send Email",
       "description": "Send a new email message",
       "requiresWrite": true
     },
     {
-      "id": "search-emails",
+      "id": "search_emails",
       "name": "Search Emails",
       "description": "Search emails by query, subject, sender, or date",
       "requiresWrite": false
     },
     {
-      "id": "list-folders",
+      "id": "list_folders",
       "name": "List Folders",
       "description": "List all mail folders in the mailbox",
       "requiresWrite": false
@@ -73,21 +73,21 @@
   ],
   "prompts": [
     {
-      "id": "check-emails",
+      "id": "check_emails",
       "title": "Check my emails",
       "prompt": "List my recent unread emails and summarize the most important ones.",
       "category": "productivity",
       "icon": "mail"
     },
     {
-      "id": "search-emails",
+      "id": "search_emails",
       "title": "Search my emails",
       "prompt": "Search my emails for specific topics, senders, or date ranges.",
       "category": "productivity",
       "icon": "search"
     },
     {
-      "id": "draft-email",
+      "id": "draft_email",
       "title": "Draft an email",
       "prompt": "Help me draft a professional email with proper formatting and tone.",
       "category": "productivity",

@@ -34,25 +34,25 @@
   ],
   "tools": [
     {
-      "id": "list-repositories",
+      "id": "list_repositories",
       "name": "List Repositories",
       "description": "Get list of user's repositories",
       "requiresWrite": false
     },
     {
-      "id": "list-pull-requests",
+      "id": "list_pull_requests",
       "name": "List Pull Requests",
       "description": "Get pull requests for a repository",
       "requiresWrite": false
     },
     {
-      "id": "create-pull-request",
+      "id": "create_pull_request",
       "name": "Create Pull Request",
       "description": "Create a new pull request",
       "requiresWrite": true
     },
     {
-      "id": "list-issues",
+      "id": "list_issues",
       "name": "List Issues",
       "description": "Get issues for a repository",
       "requiresWrite": false
@@ -60,21 +60,21 @@
   ],
   "prompts": [
     {
-      "id": "review-prs",
+      "id": "review_prs",
       "title": "Review my pull requests",
       "prompt": "Show me my open pull requests on Bitbucket and help me review them. Summarize the changes and any comments.",
       "category": "development",
       "icon": "git-pull-request"
     },
     {
-      "id": "list-repos",
+      "id": "list_repos",
       "title": "List my repositories",
       "prompt": "Show me all my Bitbucket repositories with their details and recent activity.",
       "category": "development",
       "icon": "folder"
     },
     {
-      "id": "check-issues",
+      "id": "check_issues",
       "title": "Check repository issues",
       "prompt": "Show me the open issues in my repositories and help me prioritize them.",
       "category": "development",

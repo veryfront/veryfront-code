@@ -42,31 +42,31 @@
   ],
   "tools": [
     {
-      "id": "list-bases",
+      "id": "list_bases",
       "name": "List Bases",
       "description": "List all accessible Airtable bases",
       "requiresWrite": false
     },
     {
-      "id": "get-base",
+      "id": "get_base",
       "name": "Get Base",
       "description": "Get schema information for a specific base",
       "requiresWrite": false
     },
     {
-      "id": "list-records",
+      "id": "list_records",
       "name": "List Records",
       "description": "List records from a table with optional filtering",
       "requiresWrite": false
     },
     {
-      "id": "get-record",
+      "id": "get_record",
       "name": "Get Record",
       "description": "Get a specific record by ID",
       "requiresWrite": false
     },
     {
-      "id": "create-record",
+      "id": "create_record",
       "name": "Create Record",
       "description": "Create a new record in a table",
       "requiresWrite": true
@@ -74,21 +74,21 @@
   ],
   "prompts": [
     {
-      "id": "query-data",
+      "id": "query_data",
       "title": "Query my data",
       "prompt": "Search and query records from my Airtable bases. Find specific information across tables.",
       "category": "productivity",
       "icon": "search"
     },
     {
-      "id": "add-record",
+      "id": "add_record",
       "title": "Add a record",
       "prompt": "Create a new record in an Airtable table with the specified field values.",
       "category": "productivity",
       "icon": "plus"
     },
     {
-      "id": "analyze-base",
+      "id": "analyze_base",
       "title": "Analyze base structure",
       "prompt": "Analyze the structure and schema of an Airtable base, including all tables and their fields.",
       "category": "productivity",

@@ -30,6 +30,31 @@ You can also reconnect to an existing session:
 const sandbox = await Sandbox.get(sessionId);
 ```
 
+If you already know both the sandbox session ID and its runtime endpoint, attach without doing a reconnect lookup:
+
+```ts
+const sandbox = Sandbox.attach({
+  id: sessionId,
+  endpoint: sandboxEndpoint,
+});
+```
+
+If you want to defer session creation until the first command or file operation, use the lazy client:
+
+```ts
+const sandbox = Sandbox.createLazy({
+  projectId: "proj_123",
+});
+```
+
+If your project context can change over time, prefer `getProjectId()` so lazy exec and async job calls inherit the latest project reference automatically:
+
+```ts
+const sandbox = Sandbox.createLazy({
+  getProjectId: () => currentProjectId,
+});
+```
+
 If you need to override the resolved credentials, pass `authToken`
 explicitly. This can be a JWT or a Studio-generated API key.
 
@@ -74,6 +99,7 @@ console.log(content);
 ## Lifecycle best practices
 
 - Always call `await sandbox.close()` in `finally` blocks.
+- Prefer `Sandbox.createLazy()` for agent-style workflows that may not need a session every run.
 - Use `sandbox.heartbeat()` during long-running sessions to avoid idle timeouts.
 - Persist `sandbox.id` only when you need reconnect semantics.
 - Keep auth tokens and API keys server-side only. Do not expose them to browsers.

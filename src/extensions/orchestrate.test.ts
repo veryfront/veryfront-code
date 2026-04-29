@@ -8,7 +8,7 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
-import { reset, tryResolve } from "./contracts.ts";
+import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 
 const noopLogger = {
@@ -350,6 +350,19 @@ describe("orchestrateExtensions()", () => {
     // ...but the post-merge filter removed the extension, so the contract
     // never gets registered.
     assertEquals(tryResolve("LocalContract"), undefined);
+    await loader.teardownAll();
+  });
+
+  it("orchestrateExtensions passes primeContracts through to the loader", async () => {
+    const marker = { seeded: true };
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: {},
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+      primeContracts: { Seeded: marker },
+    });
+    assertEquals(resolveContract("Seeded"), marker);
     await loader.teardownAll();
   });
 });

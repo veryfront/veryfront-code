@@ -1,11 +1,11 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
-import {
-  createGoogleEmbeddingRuntime,
-  createOpenAIEmbeddingRuntime,
-} from "#veryfront/provider/runtime-loader.ts";
+import { createGoogleEmbeddingRuntime } from "#veryfront/provider/runtime-loader.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
+import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
 
 type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
@@ -44,9 +44,20 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createOpenAIEmbeddingRuntime(
-        { apiKey: config.apiKey, baseURL: config.baseURL },
-        id,
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const provider = registry?.get("openai");
+      if (provider?.createEmbedding) {
+        return provider.createEmbedding(id, {
+          credential: config.apiKey,
+          baseURL: config.baseURL,
+        });
+      }
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/* embedding models.",
+        }),
       );
     });
   }

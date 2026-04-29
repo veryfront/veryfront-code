@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-meetings",
+      "id": "list_meetings",
       "name": "List Meetings",
       "description": "List all scheduled meetings for a user",
       "requiresWrite": false
     },
     {
-      "id": "get-meeting",
+      "id": "get_meeting",
       "name": "Get Meeting",
       "description": "Get details of a specific meeting",
       "requiresWrite": false
     },
     {
-      "id": "create-meeting",
+      "id": "create_meeting",
       "name": "Create Meeting",
       "description": "Create a new Zoom meeting",
       "requiresWrite": true
     },
     {
-      "id": "update-meeting",
+      "id": "update_meeting",
       "name": "Update Meeting",
       "description": "Update an existing meeting",
       "requiresWrite": true
     },
     {
-      "id": "delete-meeting",
+      "id": "delete_meeting",
       "name": "Delete Meeting",
       "description": "Delete a scheduled meeting",
       "requiresWrite": true
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "my-meetings",
+      "id": "my_meetings",
       "title": "Show my meetings",
       "prompt": "List all my upcoming Zoom meetings with their dates, times, and join URLs.",
       "category": "productivity",
       "icon": "video"
     },
     {
-      "id": "create-meeting",
+      "id": "create_meeting",
       "title": "Schedule a meeting",
       "prompt": "Create a new Zoom meeting with a topic, time, duration, and password.",
       "category": "productivity",

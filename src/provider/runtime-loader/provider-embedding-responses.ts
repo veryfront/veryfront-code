@@ -1,6 +1,6 @@
 import { readRecord } from "./provider-records.ts";
 
-function isNumberArray(value: unknown): value is number[] {
+export function isNumberArray(value: unknown): value is number[] {
   return Array.isArray(value) && value.every((entry) => typeof entry === "number");
 }
 

@@ -12,41 +12,41 @@
   },
   "tools": [
     {
-      "id": "list-tickets",
+      "id": "list_tickets",
       "name": "List Tickets",
       "description": "List Zendesk tickets with optional filters"
     },
     {
-      "id": "get-ticket",
+      "id": "get_ticket",
       "name": "Get Ticket",
       "description": "Get details of a specific ticket"
     },
     {
-      "id": "create-ticket",
+      "id": "create_ticket",
       "name": "Create Ticket",
       "description": "Create a new ticket in Zendesk"
     },
     {
-      "id": "search-tickets",
+      "id": "search_tickets",
       "name": "Search Tickets",
       "description": "Search tickets using Zendesk query syntax"
     }
   ],
   "prompts": [
     {
-      "id": "check-ticket-status",
+      "id": "check_ticket_status",
       "title": "Check ticket status",
       "prompt": "Check the status of my recent Zendesk tickets and summarize any that need attention.",
       "category": "productivity"
     },
     {
-      "id": "create-support-ticket",
+      "id": "create_support_ticket",
       "title": "Create support ticket",
       "prompt": "Help me create a new support ticket in Zendesk with the appropriate priority and tags.",
       "category": "productivity"
     },
     {
-      "id": "search-tickets",
+      "id": "search_tickets",
       "title": "Search tickets",
       "prompt": "Search Zendesk tickets for specific issues or customer inquiries.",
       "category": "research"

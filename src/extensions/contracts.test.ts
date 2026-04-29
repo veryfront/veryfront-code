@@ -32,7 +32,7 @@ describe("extensions/contracts", () => {
       assertThrows(
         () => resolve("Bundler"),
         Error,
-        "Recommended: @veryfront/ext-esbuild",
+        "deno add @veryfront/ext-esbuild",
       );
     });
   });

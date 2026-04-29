@@ -1,13 +1,17 @@
 {
   "name": "veryfront",
-  "version": "0.1.268",
+  "version": "0.1.283",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
+    "./extensions/ext-babel",
+    "./extensions/ext-jwt",
     "./extensions/ext-mdx",
-    "./extensions/ext-redis",
+    "./extensions/ext-node-compat",
+    "./extensions/ext-openai",
     "./extensions/ext-opentelemetry",
-    "./extensions/ext-node-compat"
+    "./extensions/ext-redis",
+    "./extensions/ext-tailwind"
   ],
   "exclude": [
     "npm/",
@@ -266,14 +270,6 @@
     "unist": "npm:@types/unist@3.0.2",
     "unified": "npm:unified@11.0.5",
     "vfile": "npm:vfile@6.0.3",
-    "tailwindcss": "https://esm.sh/tailwindcss@4.2.2",
-    "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.2.2/plugin",
-    "tailwindcss/defaultTheme": "https://esm.sh/tailwindcss@4.2.2/defaultTheme",
-    "tailwindcss/colors": "https://esm.sh/tailwindcss@4.2.2/colors",
-    "@babel/parser": "npm:@babel/parser@7.29.2",
-    "@babel/traverse": "npm:@babel/traverse@7.29.0",
-    "@babel/generator": "npm:@babel/generator@7.29.1",
-    "@babel/types": "npm:@babel/types@7.29.0",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
     "tailwind-merge": "npm:tailwind-merge@3.5.0"
   },

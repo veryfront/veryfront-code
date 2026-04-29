@@ -42,31 +42,31 @@
   ],
   "tools": [
     {
-      "id": "list-chats",
+      "id": "list_chats",
       "name": "List Chats",
       "description": "List recent Teams chats",
       "requiresWrite": false
     },
     {
-      "id": "get-messages",
+      "id": "get_messages",
       "name": "Get Messages",
       "description": "Get messages from a specific chat",
       "requiresWrite": false
     },
     {
-      "id": "send-message",
+      "id": "send_message",
       "name": "Send Message",
       "description": "Send a message to a chat or channel",
       "requiresWrite": true
     },
     {
-      "id": "list-teams",
+      "id": "list_teams",
       "name": "List Teams",
       "description": "List all joined Teams",
       "requiresWrite": false
     },
     {
-      "id": "list-channels",
+      "id": "list_channels",
       "name": "List Channels",
       "description": "List channels in a specific Team",
       "requiresWrite": false
@@ -74,21 +74,21 @@
   ],
   "prompts": [
     {
-      "id": "check-messages",
+      "id": "check_messages",
       "title": "Check my messages",
       "prompt": "Check my recent Teams messages and summarize any important conversations or action items.",
       "category": "communication",
       "icon": "message"
     },
     {
-      "id": "send-update",
+      "id": "send_update",
       "title": "Send team update",
       "prompt": "Send a status update message to a specific Teams channel about project progress.",
       "category": "communication",
       "icon": "send"
     },
     {
-      "id": "find-conversation",
+      "id": "find_conversation",
       "title": "Find a conversation",
       "prompt": "Search through my Teams chats to find discussions about a specific topic.",
       "category": "communication",

@@ -35,31 +35,31 @@
   ],
   "tools": [
     {
-      "id": "list-invoices",
+      "id": "list_invoices",
       "name": "List Invoices",
       "description": "List invoices from QuickBooks",
       "requiresWrite": false
     },
     {
-      "id": "get-invoice",
+      "id": "get_invoice",
       "name": "Get Invoice",
       "description": "Get details of a specific invoice",
       "requiresWrite": false
     },
     {
-      "id": "create-invoice",
+      "id": "create_invoice",
       "name": "Create Invoice",
       "description": "Create a new invoice in QuickBooks",
       "requiresWrite": true
     },
     {
-      "id": "list-customers",
+      "id": "list_customers",
       "name": "List Customers",
       "description": "List all customers in QuickBooks",
       "requiresWrite": false
     },
     {
-      "id": "get-customer",
+      "id": "get_customer",
       "name": "Get Customer",
       "description": "Get details of a specific customer",
       "requiresWrite": false
@@ -67,14 +67,14 @@
   ],
   "prompts": [
     {
-      "id": "recent-invoices",
+      "id": "recent_invoices",
       "title": "Show recent invoices",
       "prompt": "List the most recent invoices from QuickBooks with their status and amounts.",
       "category": "accounting",
       "icon": "receipt"
     },
     {
-      "id": "create-invoice",
+      "id": "create_invoice",
       "title": "Create an invoice",
       "prompt": "Create a new invoice for a customer with line items and amounts.",
       "category": "accounting",

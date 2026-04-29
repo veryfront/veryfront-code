@@ -41,31 +41,31 @@
   ],
   "tools": [
     {
-      "id": "list-contacts",
+      "id": "list_contacts",
       "name": "List Contacts",
       "description": "List contacts from your HubSpot CRM",
       "requiresWrite": false
     },
     {
-      "id": "get-contact",
+      "id": "get_contact",
       "name": "Get Contact",
       "description": "Get detailed information about a specific contact",
       "requiresWrite": false
     },
     {
-      "id": "create-contact",
+      "id": "create_contact",
       "name": "Create Contact",
       "description": "Create a new contact in HubSpot CRM",
       "requiresWrite": true
     },
     {
-      "id": "list-deals",
+      "id": "list_deals",
       "name": "List Deals",
       "description": "List sales deals from your HubSpot CRM",
       "requiresWrite": false
     },
     {
-      "id": "create-deal",
+      "id": "create_deal",
       "name": "Create Deal",
       "description": "Create a new deal in HubSpot CRM",
       "requiresWrite": true
@@ -73,21 +73,21 @@
   ],
   "prompts": [
     {
-      "id": "find-contacts",
+      "id": "find_contacts",
       "title": "Find contacts",
       "prompt": "Search for contacts in my HubSpot CRM and show me their key information.",
       "category": "crm",
       "icon": "search"
     },
     {
-      "id": "create-contact",
+      "id": "create_contact",
       "title": "Create a contact",
       "prompt": "Create a new contact in HubSpot CRM with the information I provide.",
       "category": "crm",
       "icon": "plus"
     },
     {
-      "id": "pipeline-summary",
+      "id": "pipeline_summary",
       "title": "Pipeline summary",
       "prompt": "Show me a summary of my current sales deals and pipeline status.",
       "category": "crm",
