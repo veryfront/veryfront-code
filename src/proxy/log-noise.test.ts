@@ -33,6 +33,11 @@ describe("proxy log noise classification", () => {
     }
   });
 
+  it("classifies redirects below warning severity", () => {
+    assertEquals(getProxyFailureLogLevel(302, "GET", "/"), "info");
+    assertEquals(getProxyFailureLogLevel(304, "GET", "/asset.js"), "info");
+  });
+
   it("downgrades scanner-probe 502s while preserving normal 5xx errors", () => {
     assertEquals(getProxyFailureLogLevel(502, "GET", "/wp.php"), "warn");
     assertEquals(getProxyFailureLogLevel(502, "HEAD", "//autoload_classmap.php"), "warn");

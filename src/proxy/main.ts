@@ -300,7 +300,7 @@ function forwardToServer(req: Request): Promise<Response> {
         async () => {
           if (ctx.error) {
             const ms = Math.round(performance.now() - startTime);
-            const logLevel = ctx.error.status < 500 ? "warn" : "error";
+            const logLevel = getProxyFailureLogLevel(ctx.error.status, req.method, url.pathname);
             proxyLogger[logLevel](`${ctx.error.status} ${req.method} ${url.pathname}`, { ms });
             endSpan(spanInfo?.span, ctx.error.status);
             return createProxyErrorResponse(ctx.error);
