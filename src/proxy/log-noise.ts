@@ -22,7 +22,7 @@ export function isLikelyScannerProbePath(pathname: string): boolean {
     .some((segment) => SCANNER_PROBE_SEGMENTS.has(segment));
 }
 
-export type ProxyFailureLogLevel = "warn" | "error";
+export type ProxyFailureLogLevel = "info" | "warn" | "error";
 
 export function getProxyFailureLogLevel(
   status: number,
@@ -37,5 +37,6 @@ export function getProxyFailureLogLevel(
     return "warn";
   }
 
+  if (status < 400) return "info";
   return status < 500 ? "warn" : "error";
 }
