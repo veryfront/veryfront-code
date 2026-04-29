@@ -14,7 +14,10 @@
  * @module html/styles-builder/tailwind-compiler-cache
  */
 
-import { tryResolve as tryResolveContract } from "#veryfront/extensions/contracts.ts";
+import {
+  register as registerContract,
+  tryResolve as tryResolveContract,
+} from "#veryfront/extensions/contracts.ts";
 import type { CSSCompiler, CSSProcessor } from "#veryfront/extensions/interfaces/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEPENDENCY_MISSING, NETWORK_ERROR } from "#veryfront/errors";
@@ -71,6 +74,37 @@ async function getTailwindBaseCSS(): Promise<string> {
   return tailwindBaseCSS;
 }
 
+async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
+  const registeredProcessor = tryResolveContract<CSSProcessor>("CSSProcessor");
+  if (registeredProcessor) return registeredProcessor;
+
+  try {
+    const { default: createTailwindExtension } = await import(
+      "../../../extensions/ext-tailwind/src/index.ts"
+    );
+    const extension = createTailwindExtension();
+    await extension.setup?.({
+      config: {},
+      logger,
+      provide: (name: string, impl: unknown) => registerContract(name, impl),
+      get: () => undefined,
+      require: <T>(name: string): T => {
+        const contract = tryResolveContract<T>(name);
+        if (contract === undefined) {
+          throw new Error(`Missing required extension contract: ${name}`);
+        }
+        return contract;
+      },
+    });
+  } catch (error) {
+    logger.warn("Failed to register built-in CSSProcessor extension", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return tryResolveContract<CSSProcessor>("CSSProcessor");
+}
+
 function evictOldestCompiler(): void {
   if (compilerCache.size < MAX_CACHED_COMPILERS) return;
 
@@ -108,7 +142,7 @@ export async function getCompiler(
 
   logger.debug("Creating new compiler", { hash, projectSlug });
 
-  const processor = tryResolveContract<CSSProcessor>("CSSProcessor");
+  const processor = await resolveCSSProcessor();
   if (!processor) {
     logger.warn(
       "No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-tailwind",
