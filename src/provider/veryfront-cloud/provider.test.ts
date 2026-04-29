@@ -33,37 +33,33 @@ describe("provider/veryfront-cloud", () => {
     clearEmbeddingProviders();
   });
 
-  it("throws when resolving veryfront-cloud openai models without ext-openai installed", () => {
+  it("resolves veryfront-cloud openai models without project ext-openai installed", () => {
     setCloudBootstrap();
 
-    // ext-openai is not registered in this test — expect the install hint.
-    assertThrows(
-      () => resolveModel("veryfront-cloud/openai/gpt-5.2"),
-      Error,
-      "OpenAI provider not installed",
-    );
+    const model = resolveModel("veryfront-cloud/openai/gpt-5.2") as Record<string, unknown>;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
   });
 
-  it("throws when resolving veryfront-cloud moonshotai models without ext-openai installed", () => {
+  it("resolves veryfront-cloud moonshotai models without project ext-openai installed", () => {
     setCloudBootstrap();
 
-    // moonshotai routes through the openai provider, which requires ext-openai.
-    assertThrows(
-      () => resolveModel("veryfront-cloud/moonshotai/kimi-k2"),
-      Error,
-      "OpenAI provider not installed",
-    );
+    const model = resolveModel("veryfront-cloud/moonshotai/kimi-k2") as Record<string, unknown>;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
   });
 
-  it("throws when resolving veryfront-cloud openai embedding models without ext-openai installed", () => {
+  it("resolves veryfront-cloud openai embedding models without project ext-openai installed", () => {
     setCloudBootstrap();
 
-    // OpenAI embedding requires ext-openai.
-    assertThrows(
-      () => resolveEmbeddingModel("veryfront-cloud/openai/text-embedding-3-small"),
-      Error,
-      "OpenAI provider not installed",
-    );
+    const model = resolveEmbeddingModel("veryfront-cloud/openai/text-embedding-3-small") as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals(typeof model.doEmbed, "function");
   });
 
   it("prefers the default veryfront-cloud model when cloud bootstrap is active", () => {
