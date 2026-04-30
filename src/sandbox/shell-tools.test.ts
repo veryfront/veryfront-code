@@ -1,6 +1,10 @@
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { normalizeBashToolSet, renameSandboxFileTools } from "./shell-tools.ts";
+import {
+  createSandboxShellTools,
+  normalizeBashToolSet,
+  renameSandboxFileTools,
+} from "./shell-tools.ts";
 
 describe("sandbox/shell-tools", () => {
   it("renames bash-tool file tools to sandbox-scoped names", () => {
@@ -38,6 +42,31 @@ describe("sandbox/shell-tools", () => {
 
     assertExists(tools.readFile);
     assertEquals(tools.bash.description, "bash");
+  });
+
+  it("creates sandbox shell tools with an injected bash-tool factory", async () => {
+    const tools = await createSandboxShellTools(
+      {
+        executeCommand: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+        readFile: async () => "content",
+        writeFiles: async () => undefined,
+      },
+      async (input) => {
+        assertEquals(input.destination, "/workspace");
+        assertStringIncludes(input.promptOptions.toolPrompt, "agent-browser");
+        return {
+          tools: {
+            readFile: { description: "read" },
+            writeFile: { description: "write" },
+          },
+        };
+      },
+    );
+
+    assertExists(tools.sandbox_read_file);
+    assertExists(tools.sandbox_write_file);
+    assertEquals(tools.readFile, undefined);
+    assertEquals(tools.writeFile, undefined);
   });
 
   it("normalizes bash-tool definitions from unknown objects", async () => {

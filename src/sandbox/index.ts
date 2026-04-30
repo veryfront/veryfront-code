@@ -39,6 +39,7 @@ export {
 } from "./lazy-sandbox.ts";
 export {
   type BashToolSandboxLike,
+  type CreateSandboxBashTool,
   createSandboxShellTools,
   normalizeBashToolSet,
   renameSandboxFileTools,

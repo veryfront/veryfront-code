@@ -49,9 +49,9 @@ type CreateBashToolInput = {
   };
 };
 
-type BashToolModule = {
-  createBashTool: (input: CreateBashToolInput) => Promise<{ tools: Record<string, unknown> }>;
-};
+export type CreateSandboxBashTool = (
+  input: CreateBashToolInput,
+) => Promise<{ tools: Record<string, unknown> }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -228,8 +228,8 @@ export function renameSandboxFileTools(bashTools: SandboxShellToolSet): SandboxS
 
 export async function createSandboxShellTools(
   sandbox: BashToolSandboxLike,
+  createBashTool: CreateSandboxBashTool,
 ): Promise<SandboxShellToolSet> {
-  const { createBashTool } = await import("bash-tool").then((module: BashToolModule) => module);
   const { tools: bashTools } = await createBashTool({
     sandbox,
     destination: SANDBOX_WORKING_DIRECTORY,
