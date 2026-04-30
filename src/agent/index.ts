@@ -240,6 +240,22 @@ export {
   type CreateAgUiTrackedBrowserResponseInput,
 } from "./ag-ui-tracked-browser-response.ts";
 export {
+  applyPartToStreamedStepState,
+  buildRecoveredStepParts,
+  createFrameworkStreamState,
+  createStreamedStepState,
+  DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS,
+  type ForkPart,
+  type ForkRecoveredPartsState,
+  type ForkRuntimeStep,
+  type ForkRuntimeStreamLogger,
+  type ForkRuntimeStreamResult,
+  type FrameworkStreamState,
+  mapFrameworkEventToForkParts,
+  resolveForkStepResponse,
+  runFrameworkForkStep,
+} from "./fork-runtime-stream.ts";
+export {
   type ConversationRunContext,
   createConversationRunContext,
 } from "./conversation-run-context.ts";
