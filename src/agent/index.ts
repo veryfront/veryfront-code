@@ -395,10 +395,14 @@ export {
 } from "./hosted-child-requested-tools.ts";
 export {
   getHostedChildWrittenArtifactPath,
+  type HostedChildFileWriteFallbackLogger,
+  type HostedChildFileWriteFallbackTool,
+  type HostedChildFileWriteFallbackToolExecute,
   type HostedChildWrittenArtifactPathInput,
   isHostedChildCreateFileAlreadyExistsResult,
   isHostedChildTextProjectArtifactPrompt,
   normalizeHostedChildArtifactPath,
+  withHostedChildRerunnableFileWriteFallbacks,
 } from "./hosted-child-artifact-support.ts";
 export {
   buildHostedChildCompletedLog,

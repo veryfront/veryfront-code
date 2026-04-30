@@ -1,3 +1,6 @@
+import type { ToolExecutionContext } from "#veryfront/tool";
+import { toChildRunToolInputRecord } from "./child-run-execution-support.ts";
+
 const TEXT_PROJECT_ARTIFACT_CUE_PATTERN =
   /\b(markdown|reference document|research report|report|write-up|writeup|save it to the project|save everything to the project|save the results to the project|compile everything into a single well-structured markdown file)\b/i;
 const TEXT_PROJECT_ARTIFACT_PATH_PATTERN = /(?:^|[\s`"'(])(?:[\w./-]+\/)?[\w.-]+\.md\b/i;
@@ -12,6 +15,81 @@ export interface HostedChildWrittenArtifactPathInput {
   toolInput: unknown;
   toolOutput: unknown;
   writingToolNames?: readonly string[];
+}
+
+export type HostedChildFileWriteFallbackToolExecute = (
+  toolInput: unknown,
+  execOptions?: ToolExecutionContext,
+) => Promise<unknown> | unknown;
+
+export interface HostedChildFileWriteFallbackTool {
+  execute?: HostedChildFileWriteFallbackToolExecute;
+}
+
+export interface HostedChildFileWriteFallbackLogger {
+  info?: (message: string, metadata?: Record<string, unknown>) => void;
+}
+
+export function withHostedChildRerunnableFileWriteFallbacks(input: {
+  tools: Record<string, HostedChildFileWriteFallbackTool>;
+  createToolName?: string;
+  updateToolName?: string;
+  logger?: HostedChildFileWriteFallbackLogger;
+}): Record<string, HostedChildFileWriteFallbackTool> {
+  const createToolName = input.createToolName ?? "create_file";
+  const updateToolName = input.updateToolName ?? "update_file";
+  const createFileTool = input.tools[createToolName];
+  const updateFileTool = input.tools[updateToolName];
+
+  if (!createFileTool?.execute || !updateFileTool?.execute) {
+    return input.tools;
+  }
+
+  const createFileExecute = createFileTool.execute;
+  const updateFileExecute = updateFileTool.execute;
+
+  return {
+    ...input.tools,
+    [createToolName]: {
+      ...createFileTool,
+      execute: async (toolInput: unknown, execOptions?: ToolExecutionContext) => {
+        const normalizedToolInput = toChildRunToolInputRecord(toolInput);
+        const result = await createFileExecute(toolInput, execOptions);
+        if (!isHostedChildCreateFileAlreadyExistsResult(result)) {
+          return result;
+        }
+
+        const projectReference = normalizedToolInput.project_reference;
+        const branchId = normalizedToolInput.branch_id;
+        const path = normalizedToolInput.path;
+        const content = normalizedToolInput.content;
+
+        if (
+          typeof projectReference !== "string" || typeof path !== "string" ||
+          typeof content !== "string"
+        ) {
+          return result;
+        }
+
+        input.logger?.info?.(
+          "Falling back from create_file to update_file for existing project artifact",
+          {
+            path,
+          },
+        );
+
+        return updateFileExecute(
+          {
+            project_reference: projectReference,
+            ...(typeof branchId === "string" ? { branch_id: branchId } : {}),
+            path,
+            content,
+          },
+          execOptions,
+        );
+      },
+    },
+  };
 }
 
 export function isHostedChildTextProjectArtifactPrompt(prompt: string): boolean {
