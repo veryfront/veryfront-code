@@ -2,8 +2,8 @@
  * Inline implementation of the `clsx` class-name joining utility.
  *
  * API-compatible with the MIT-licensed `clsx` npm package — this is a
- * clean-room rewrite against the public API (named `clsx` export, `ClassValue`
- * type, default export alias); no source was copied.
+ * clean-room rewrite against the public API surface veryfront uses (named
+ * `clsx` export and `ClassValue` type); no source was copied.
  *
  * Replaces the `clsx` npm dep per spec §8.3 (inline micro-utilities in core).
  */
@@ -36,5 +36,3 @@ export function clsx(...args: Value[]): string {
   }
   return out.join(" ");
 }
-
-export default clsx;

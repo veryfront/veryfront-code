@@ -4,7 +4,7 @@
  * @module cli/commands/extension/validate-command
  */
 
-import { validateExtension } from "#veryfront/extensions/validation.ts";
+import { validateExtension } from "veryfront/extensions";
 
 export interface ValidationReport {
   valid: boolean;
