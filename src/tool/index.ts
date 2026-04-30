@@ -58,6 +58,8 @@ export { createRemoteMCPToolSource } from "./remote-mcp.ts";
 export type { RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
 export { createContext7ToolSource } from "./context7.ts";
 export type { Context7ToolSourceConfig } from "./context7.ts";
+export { createToolsFromHostDefinitions } from "./host-tools.ts";
+export type { HostToolDefinition, HostToolMaterializationOptions } from "./host-tools.ts";
 export {
   createToolsFromRemoteDefinitions,
   loadRemoteToolsFromSource,
