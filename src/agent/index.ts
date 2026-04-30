@@ -256,6 +256,16 @@ export {
   runFrameworkForkStep,
 } from "./fork-runtime-stream.ts";
 export {
+  executeHostedChildForkStream,
+  type ExecuteHostedChildForkStreamInput,
+  finalizeHostedChildForkCompletion,
+  handleHostedChildForkStreamPart,
+  type HostedChildForkPendingToolLifecycle,
+  type HostedChildForkStreamHandlingState,
+  type HostedChildForkStreamLogger,
+  type HostedChildForkStreamTraceInput,
+} from "./hosted-child-fork-stream-execution.ts";
+export {
   type ConversationRunContext,
   createConversationRunContext,
 } from "./conversation-run-context.ts";
