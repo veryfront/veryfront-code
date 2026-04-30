@@ -230,6 +230,12 @@ export {
   type CreateAgUiRuntimeBrowserResponseInput,
 } from "./ag-ui-runtime-browser-response.ts";
 export {
+  type ChatUiMessageStreamFinish,
+  type ChatUiMessageStreamFinishPart,
+  type ChatUiMessageStreamOptions,
+  createChatUiMessageStreamFromDataStream,
+} from "./chat-ui-message-stream.ts";
+export {
   createAgUiTrackedBrowserResponse,
   type CreateAgUiTrackedBrowserResponseInput,
 } from "./ag-ui-tracked-browser-response.ts";
