@@ -151,7 +151,7 @@ function buildOrderedFallbackPartsFromContentMessages(messages: unknown[]): Chat
 
         if (existingIndex >= 0) {
           const existingPart = orderedParts[existingIndex];
-          if (!isToolUiPart(existingPart)) {
+          if (existingPart === undefined || !isToolUiPart(existingPart)) {
             continue;
           }
 
@@ -243,7 +243,7 @@ function buildOrderedFallbackPartsFromUiMessages(messages: unknown[]): ChatPart[
         }
 
         const existingPart = orderedParts[existingIndex];
-        if (!isToolUiPart(existingPart)) {
+        if (existingPart === undefined || !isToolUiPart(existingPart)) {
           continue;
         }
 
