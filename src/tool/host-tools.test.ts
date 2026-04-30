@@ -92,4 +92,25 @@ describe("tool/host-tools", () => {
 
     assertEquals(tools, {});
   });
+
+  it("skips parser-like schemas without dropping valid host tools", () => {
+    const parserLikeSchema = {
+      parse: (input: unknown) => input,
+    };
+
+    const tools = createToolsFromHostDefinitions({
+      parserLike: {
+        description: "Not Zod",
+        inputSchema: parserLikeSchema,
+        execute: () => ({ ok: false }),
+      },
+      valid: {
+        description: "Valid tool",
+        inputSchema: z.object({}),
+        execute: () => ({ ok: true }),
+      },
+    });
+
+    assertEquals(Object.keys(tools), ["valid"]);
+  });
 });

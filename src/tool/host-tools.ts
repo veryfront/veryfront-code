@@ -20,7 +20,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function isZodSchema(value: unknown): value is z.ZodSchema<unknown> {
-  return isRecord(value) && typeof value.parse === "function";
+  if (!isRecord(value) || typeof value.parse !== "function") return false;
+  if (!isRecord(value._def)) return false;
+  return typeof value._def.typeName === "string" || typeof value._def.type === "string";
 }
 
 function isHostToolDefinition(value: unknown): value is HostToolDefinition {
@@ -63,22 +65,26 @@ export function createToolsFromHostDefinitions(
     const execute = async (input: unknown, context: ToolExecutionContext | undefined) =>
       await definition.execute(input, normalizeExecutionContext(toolName, context, options));
 
-    tools[toolName] = definition.inputSchemaJson
-      ? dynamicTool({
-        id: toolName,
-        description: definition.description,
-        inputSchema: definition.inputSchema,
-        inputSchemaJson: definition.inputSchemaJson,
-        execute,
-        mcp: definition.mcp,
-      })
-      : tool({
-        id: toolName,
-        description: definition.description,
-        inputSchema: definition.inputSchema,
-        execute,
-        mcp: definition.mcp,
-      });
+    try {
+      tools[toolName] = definition.inputSchemaJson
+        ? dynamicTool({
+          id: toolName,
+          description: definition.description,
+          inputSchema: definition.inputSchema,
+          inputSchemaJson: definition.inputSchemaJson,
+          execute,
+          mcp: definition.mcp,
+        })
+        : tool({
+          id: toolName,
+          description: definition.description,
+          inputSchema: definition.inputSchema,
+          execute,
+          mcp: definition.mcp,
+        });
+    } catch {
+      continue;
+    }
   }
 
   return tools;
