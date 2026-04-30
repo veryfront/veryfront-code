@@ -1,13 +1,17 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import type { Message as AgentMessage } from "./schemas/index.ts";
+import type { AgentResponse, Message as AgentMessage } from "./schemas/index.ts";
 import {
+  buildForkRuntimeStepFromResponse,
   buildRecoveredStepParts,
   createFrameworkStreamState,
+  createInitialForkRuntimeMessages,
   createStreamedStepState,
   type ForkRuntimeStep,
   mapFrameworkEventToForkParts,
+  resolveForkRuntimeContinuationState,
   resolveForkStepResponse,
+  shouldContinueForkRuntimeStep,
 } from "./fork-runtime-stream.ts";
 
 describe("agent/fork-runtime-stream", () => {
@@ -154,5 +158,90 @@ describe("agent/fork-runtime-stream", () => {
     );
     assertEquals(response.status, "completed");
     assertExists(response.messages.find((message) => message.role === "assistant"));
+  });
+
+  it("builds fork runtime steps and continuation decisions from agent responses", () => {
+    const response: AgentResponse = {
+      text: "Saved.",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{
+            type: "tool-create_file",
+            toolCallId: "tool-1",
+            toolName: "create_file",
+            args: { path: "plans/a.md" },
+          }],
+        },
+      ],
+      toolCalls: [
+        {
+          id: "tool-1",
+          name: "create_file",
+          args: { path: "plans/a.md" },
+          status: "completed",
+          result: { path: "plans/a.md", success: true },
+        },
+      ],
+      status: "completed",
+      metadata: { finishReason: "tool-calls" },
+    };
+
+    const step = buildForkRuntimeStepFromResponse(response);
+
+    assertEquals(step, {
+      text: "Saved.",
+      messages: response.messages,
+      toolCalls: [{ toolCallId: "tool-1", toolName: "create_file", input: { path: "plans/a.md" } }],
+      toolResults: [{
+        toolCallId: "tool-1",
+        toolName: "create_file",
+        input: { path: "plans/a.md" },
+        output: { path: "plans/a.md", success: true },
+      }],
+      finishReason: "tool-calls",
+    });
+    assertEquals(shouldContinueForkRuntimeStep(step, response), true);
+  });
+
+  it("creates initial fork messages and resolves constrained continuation state", async () => {
+    const initialMessages: AgentMessage[] = [
+      {
+        id: "user-1",
+        role: "user",
+        timestamp: 1,
+        parts: [{ type: "text", text: "Existing context" }],
+      },
+    ];
+    const messages = createInitialForkRuntimeMessages({
+      initialMessages,
+      prompt: "Continue the task.",
+    });
+
+    assertEquals(messages.length, 2);
+    assertEquals(messages[0]?.parts, [{ type: "text", text: "Existing context" }]);
+    assertEquals(messages[1]?.role, "user");
+    assertEquals(messages[1]?.parts, [{ type: "text", text: "Continue the task." }]);
+
+    const continuation = await resolveForkRuntimeContinuationState({
+      continuationStepsRemaining: 1,
+      step: {
+        text: "Ready.",
+        messages: [],
+        toolCalls: [],
+        toolResults: [],
+        finishReason: "stop",
+      },
+      currentMessages: messages,
+      stepIndex: 0,
+      onBeforeStop: () => "Write the artifact now.",
+    });
+
+    assertExists(continuation);
+    assertEquals(continuation.continuationStepsRemaining, 0);
+    assertEquals(continuation.currentMessages.at(-1)?.parts, [
+      { type: "text", text: "Write the artifact now." },
+    ]);
   });
 });
