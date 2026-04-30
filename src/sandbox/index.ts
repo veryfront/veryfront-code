@@ -37,3 +37,11 @@ export {
   type LazySandboxOptions,
   resolveDefaultSandboxRuntimeEndpoint,
 } from "./lazy-sandbox.ts";
+export {
+  type BashToolSandboxLike,
+  createSandboxShellTools,
+  normalizeBashToolSet,
+  renameSandboxFileTools,
+  type SandboxShellToolDefinition,
+  type SandboxShellToolSet,
+} from "./shell-tools.ts";

@@ -135,6 +135,7 @@ await build({
 			"@types/react-dom": "^19.0.0",
 			"ws": "^8.18.0",
 			"@kreuzberg/node": "^4.4.2",
+			"bash-tool": "^1.3.16",
 		},
 		// Native binary deps that should not block install if they fail
 		optionalDependencies: {
