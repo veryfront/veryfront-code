@@ -4,6 +4,7 @@ import {
   isHostedChildCreateFileAlreadyExistsResult,
   isHostedChildTextProjectArtifactPrompt,
   normalizeHostedChildArtifactPath,
+  withHostedChildRerunnableFileWriteFallbacks,
 } from "./hosted-child-artifact-support.ts";
 
 Deno.test("isHostedChildTextProjectArtifactPrompt recognizes markdown artifact cues", () => {
@@ -115,4 +116,75 @@ Deno.test("getHostedChildWrittenArtifactPath ignores non-writing tools, failed w
     }),
     null,
   );
+});
+
+Deno.test("withHostedChildRerunnableFileWriteFallbacks retries existing create_file results through update_file", async () => {
+  const updateInputs: unknown[] = [];
+  const infoLogs: unknown[] = [];
+  const tools = withHostedChildRerunnableFileWriteFallbacks({
+    tools: {
+      create_file: {
+        execute: () => ({
+          isError: true,
+          content: [{ type: "text", text: "File already exists at /plans/report.md" }],
+        }),
+      },
+      update_file: {
+        execute: (input) => {
+          updateInputs.push(input);
+          return { success: true };
+        },
+      },
+    },
+    logger: {
+      info: (_message, metadata) => {
+        infoLogs.push(metadata);
+      },
+    },
+  });
+
+  const result = await tools.create_file?.execute?.({
+    project_reference: "project-1",
+    branch_id: "branch-1",
+    path: "/plans/report.md",
+    content: "# Report",
+  });
+
+  assertEquals(result, { success: true });
+  assertEquals(updateInputs, [{
+    project_reference: "project-1",
+    branch_id: "branch-1",
+    path: "/plans/report.md",
+    content: "# Report",
+  }]);
+  assertEquals(infoLogs, [{ path: "/plans/report.md" }]);
+});
+
+Deno.test("withHostedChildRerunnableFileWriteFallbacks keeps original result when fallback inputs are missing", async () => {
+  const originalResult = {
+    isError: true,
+    content: [{ type: "text", text: "File already exists at /plans/report.md" }],
+  };
+  let updateCallCount = 0;
+  const tools = withHostedChildRerunnableFileWriteFallbacks({
+    tools: {
+      create_file: {
+        execute: () => originalResult,
+      },
+      update_file: {
+        execute: () => {
+          updateCallCount += 1;
+          return { success: true };
+        },
+      },
+    },
+  });
+
+  const result = await tools.create_file?.execute?.({
+    path: "/plans/report.md",
+    content: "# Report",
+  });
+
+  assertEquals(result, originalResult);
+  assertEquals(updateCallCount, 0);
 });
