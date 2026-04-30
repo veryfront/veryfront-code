@@ -241,19 +241,26 @@ export {
 } from "./ag-ui-tracked-browser-response.ts";
 export {
   applyPartToStreamedStepState,
+  buildForkRuntimeStepFromResponse,
   buildRecoveredStepParts,
+  createForkRuntimeUserMessage,
   createFrameworkStreamState,
+  createInitialForkRuntimeMessages,
   createStreamedStepState,
   DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS,
   type ForkPart,
   type ForkRecoveredPartsState,
+  type ForkRuntimeContinuationPromptResolver,
   type ForkRuntimeStep,
   type ForkRuntimeStreamLogger,
   type ForkRuntimeStreamResult,
   type FrameworkStreamState,
+  getMaxForkRuntimeStepCount,
   mapFrameworkEventToForkParts,
+  resolveForkRuntimeContinuationState,
   resolveForkStepResponse,
   runFrameworkForkStep,
+  shouldContinueForkRuntimeStep,
 } from "./fork-runtime-stream.ts";
 export {
   executeHostedChildForkStream,

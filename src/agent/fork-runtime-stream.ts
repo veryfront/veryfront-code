@@ -234,6 +234,112 @@ export async function runFrameworkForkStep(input: {
   };
 }
 
+export type ForkRuntimeContinuationPromptResolver = (input: {
+  step: ForkRuntimeStep;
+  stepIndex: number;
+}) => Promise<string | null> | string | null;
+
+export function buildForkRuntimeStepFromResponse(response: AgentResponse): ForkRuntimeStep {
+  const toolCalls = response.toolCalls.map((toolCall) => ({
+    toolCallId: toolCall.id,
+    toolName: toolCall.name,
+    input: toolCall.args,
+  }));
+  const toolResults = response.toolCalls.flatMap((toolCall) =>
+    toolCall.status === "completed"
+      ? [
+        {
+          toolCallId: toolCall.id,
+          toolName: toolCall.name,
+          input: toolCall.args,
+          output: toolCall.result,
+        },
+      ]
+      : []
+  );
+  const finishReasonValue = response.metadata?.finishReason;
+
+  return {
+    text: response.text,
+    messages: structuredClone(response.messages),
+    toolCalls,
+    toolResults,
+    finishReason: typeof finishReasonValue === "string" ? finishReasonValue : null,
+  };
+}
+
+export function shouldContinueForkRuntimeStep(
+  step: ForkRuntimeStep,
+  response: AgentResponse,
+): boolean {
+  return step.finishReason === "tool-calls" &&
+    response.toolCalls.some((toolCall) => toolCall.status !== "error");
+}
+
+export function createForkRuntimeUserMessage(input: {
+  text: string;
+  id?: string;
+  timestamp?: number;
+}): AgentMessage {
+  return {
+    id: input.id ?? crypto.randomUUID(),
+    role: "user",
+    parts: [{ type: "text", text: input.text }],
+    timestamp: input.timestamp ?? Date.now(),
+  };
+}
+
+export function createInitialForkRuntimeMessages(input: {
+  initialMessages?: readonly AgentMessage[];
+  prompt?: string;
+}): AgentMessage[] {
+  const currentMessages = input.initialMessages?.map((message) => ({
+    ...message,
+    parts: [...message.parts],
+  })) ?? [];
+
+  if (typeof input.prompt !== "string") {
+    return currentMessages;
+  }
+
+  return [...currentMessages, createForkRuntimeUserMessage({ text: input.prompt })];
+}
+
+export function getMaxForkRuntimeStepCount(input: {
+  maxSteps: number;
+  maxContinuationSteps?: number;
+}): number {
+  return input.maxSteps + (input.maxContinuationSteps ?? 0);
+}
+
+export async function resolveForkRuntimeContinuationState(input: {
+  continuationStepsRemaining: number;
+  onBeforeStop?: ForkRuntimeContinuationPromptResolver;
+  step: ForkRuntimeStep;
+  currentMessages: AgentMessage[];
+  stepIndex: number;
+}): Promise<{ continuationStepsRemaining: number; currentMessages: AgentMessage[] } | null> {
+  if (input.continuationStepsRemaining <= 0 || !input.onBeforeStop) {
+    return null;
+  }
+
+  const continuationPrompt = await input.onBeforeStop({
+    step: input.step,
+    stepIndex: input.stepIndex,
+  });
+  if (typeof continuationPrompt !== "string" || continuationPrompt.trim().length === 0) {
+    return null;
+  }
+
+  return {
+    continuationStepsRemaining: input.continuationStepsRemaining - 1,
+    currentMessages: [
+      ...input.currentMessages,
+      createForkRuntimeUserMessage({ text: continuationPrompt }),
+    ],
+  };
+}
+
 export function createStreamedStepState(): StreamedStepState {
   return {
     text: "",
