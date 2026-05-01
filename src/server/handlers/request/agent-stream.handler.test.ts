@@ -1,4 +1,3 @@
-import type { Agent } from "#veryfront/agent";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -284,8 +283,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (agent) => {
-        const config = agent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] };
-        capturedAllowedTools = config.__vfAllowedRemoteTools;
+        capturedAllowedTools = agent.config.allowedRemoteTools;
 
         return {
           stream: async (_messages, _context, callbacks) => {
@@ -346,8 +344,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (agent) => {
-        const config = agent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] };
-        capturedAllowedTools = config.__vfAllowedRemoteTools;
+        capturedAllowedTools = agent.config.allowedRemoteTools;
 
         return {
           stream: async (_messages, _context, callbacks) => {
