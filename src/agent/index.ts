@@ -512,6 +512,18 @@ export {
   createConversationRunStreamMirror,
 } from "./conversation-run-stream-mirror.ts";
 export {
+  buildDetachedFallbackChunks,
+  type BuildDetachedFallbackChunksInput,
+  type BuildDetachedFallbackMessageInput,
+  buildDetachedFallbackMessageState,
+  buildFinalizedMessageFallbackChunks,
+  type BuildFinalizedMessageFallbackChunksInput,
+  buildFinalizedMessageState,
+  type BuildFinalizedMessageStateInput,
+  type DetachedFallbackMessageState,
+  type FinalizedMessageState,
+} from "./hosted-finalized-message.ts";
+export {
   finalizeHostedDetached,
   type FinalizeHostedDetachedOptions,
   finalizeHostedResponse,
