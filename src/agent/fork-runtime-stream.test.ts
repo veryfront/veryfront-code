@@ -4,43 +4,43 @@ import type { AgentResponse, Message as AgentMessage } from "./schemas/index.ts"
 import {
   buildForkRuntimeStepFromResponse,
   buildRecoveredStepParts,
-  createFrameworkStreamState,
+  createForkRuntimeStreamMappingState,
   createInitialForkRuntimeMessages,
   createStreamedStepState,
   type ForkRuntimeStep,
-  mapFrameworkEventToForkParts,
+  mapAgUiRuntimeEventToForkParts,
   resolveForkRuntimeContinuationState,
   resolveForkStepResponse,
   shouldContinueForkRuntimeStep,
 } from "./fork-runtime-stream.ts";
 
 describe("agent/fork-runtime-stream", () => {
-  it("maps framework tool input and output events into fork parts", () => {
-    const state = createFrameworkStreamState();
+  it("maps AG-UI runtime tool input and output events into fork parts", () => {
+    const state = createForkRuntimeStreamMappingState();
 
     assertEquals(
-      mapFrameworkEventToForkParts(
+      mapAgUiRuntimeEventToForkParts(
         { type: "tool-input-start", toolCallId: "tool-1", toolName: "create_file" },
         state,
       ),
       [{ type: "tool-input-start", toolCallId: "tool-1", toolName: "create_file" }],
     );
     assertEquals(
-      mapFrameworkEventToForkParts(
+      mapAgUiRuntimeEventToForkParts(
         { type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: '{"path":' },
         state,
       ),
       [{ type: "tool-input-delta", toolCallId: "tool-1", delta: '{"path":' }],
     );
     assertEquals(
-      mapFrameworkEventToForkParts(
+      mapAgUiRuntimeEventToForkParts(
         { type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: '"/plans/a.md"}' },
         state,
       ),
       [{ type: "tool-input-delta", toolCallId: "tool-1", delta: '"/plans/a.md"}' }],
     );
     assertEquals(
-      mapFrameworkEventToForkParts(
+      mapAgUiRuntimeEventToForkParts(
         { type: "tool-input-available", toolCallId: "tool-1", toolName: "create_file", input: {} },
         state,
       ),
@@ -52,7 +52,7 @@ describe("agent/fork-runtime-stream", () => {
       }],
     );
     assertEquals(
-      mapFrameworkEventToForkParts(
+      mapAgUiRuntimeEventToForkParts(
         { type: "tool-output-available", toolCallId: "tool-1", output: { path: "/plans/a.md" } },
         state,
       ),
@@ -75,10 +75,10 @@ describe("agent/fork-runtime-stream", () => {
         warnings.push({ message, metadata });
       },
     };
-    const state = createFrameworkStreamState({ logger });
+    const state = createForkRuntimeStreamMappingState({ logger });
 
     assertEquals(
-      mapFrameworkEventToForkParts(
+      mapAgUiRuntimeEventToForkParts(
         { type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: "{}" },
         state,
       ),

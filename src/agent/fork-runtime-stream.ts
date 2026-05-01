@@ -92,7 +92,7 @@ export interface ForkRecoveredPartsState {
   logger?: ForkRuntimeStreamLogger;
 }
 
-type FrameworkToolCallState = RecoveredToolObservation & {
+type ForkRuntimeToolCallState = RecoveredToolObservation & {
   toolName: string;
   inputText: string;
   input: Record<string, unknown>;
@@ -119,12 +119,15 @@ type StreamedStepState = {
   messages: StreamedMessage[];
 };
 
-export type FrameworkStreamState = {
-  toolCalls: Map<string, FrameworkToolCallState>;
+export type ForkRuntimeStreamMappingState = {
+  toolCalls: Map<string, ForkRuntimeToolCallState>;
   emittedToolCallIds: Set<string>;
   emittedToolResultIds: Set<string>;
   logger?: ForkRuntimeStreamLogger;
 };
+
+/** @deprecated Use ForkRuntimeStreamMappingState. */
+export type FrameworkStreamState = ForkRuntimeStreamMappingState;
 
 export type ForkPart =
   | ForkStreamPart
@@ -153,15 +156,15 @@ export interface ForkRuntimeStreamResult {
 
 export const DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS = 1_000;
 
-function createFrameworkForkAbortError(abortSignal?: AbortSignal): Error {
+function createAgentRuntimeForkAbortError(abortSignal?: AbortSignal): Error {
   if (abortSignal?.reason instanceof Error) {
     return abortSignal.reason;
   }
 
-  return new DOMException("Framework fork aborted before completion.", "AbortError");
+  return new DOMException("Agent runtime fork aborted before completion.", "AbortError");
 }
 
-export async function runFrameworkForkStep(input: {
+export type RunAgentRuntimeForkStepInput = {
   apiUrl: string;
   authToken: string;
   projectId: string | null;
@@ -170,9 +173,15 @@ export async function runFrameworkForkStep(input: {
   system: string;
   abortSignal?: AbortSignal;
   forkToolNames: string[];
-  frameworkTools: Record<string, Tool | boolean>;
+  runtimeTools: Record<string, Tool | boolean>;
   providerOptions?: Record<string, unknown>;
-}): Promise<{
+};
+
+export type RunFrameworkForkStepInput = Omit<RunAgentRuntimeForkStepInput, "runtimeTools"> & {
+  frameworkTools: Record<string, Tool | boolean>;
+};
+
+export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInput): Promise<{
   stream: ReadableStream<Uint8Array>;
   responsePromise: Promise<AgentResponse>;
 }> {
@@ -183,7 +192,7 @@ export async function runFrameworkForkStep(input: {
     rejectResponsePromise = reject;
   });
   const abortHandler = () => {
-    rejectResponsePromise(createFrameworkForkAbortError(input.abortSignal));
+    rejectResponsePromise(createAgentRuntimeForkAbortError(input.abortSignal));
   };
 
   if (input.abortSignal) {
@@ -197,14 +206,14 @@ export async function runFrameworkForkStep(input: {
   const runtimeConfig = {
     model: input.model,
     system: input.system,
-    tools: input.frameworkTools,
+    tools: input.runtimeTools,
     maxSteps: 1,
     ...(input.providerOptions
       ? { resolveModelTransport: () => ({ providerOptions: input.providerOptions }) }
       : {}),
     __vfAllowedRemoteTools: input.forkToolNames,
   };
-  const runtime = new AgentRuntime("invoke-agent-child-framework", runtimeConfig);
+  const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig);
 
   const stream = await runWithVeryfrontCloudContextAsync(
     {
@@ -232,6 +241,25 @@ export async function runFrameworkForkStep(input: {
     stream,
     responsePromise,
   };
+}
+
+/** @deprecated Use runAgentRuntimeForkStep with runtimeTools. */
+export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<{
+  stream: ReadableStream<Uint8Array>;
+  responsePromise: Promise<AgentResponse>;
+}> {
+  return runAgentRuntimeForkStep({
+    apiUrl: input.apiUrl,
+    authToken: input.authToken,
+    projectId: input.projectId,
+    model: input.model,
+    messages: input.messages,
+    system: input.system,
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+    forkToolNames: input.forkToolNames,
+    runtimeTools: input.frameworkTools,
+    ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+  });
 }
 
 export type ForkRuntimeContinuationPromptResolver = (input: {
@@ -591,7 +619,7 @@ export async function resolveForkStepResponse(input: {
   }
 
   if (input.abortSignal?.aborted) {
-    throw createFrameworkForkAbortError(input.abortSignal);
+    throw createAgentRuntimeForkAbortError(input.abortSignal);
   }
 
   const fallbackState = hasFallbackStepContent(input.streamedStepState)
@@ -599,7 +627,9 @@ export async function resolveForkStepResponse(input: {
     : buildRecoverablePriorWorkState(input.currentMessages);
 
   if (!fallbackState) {
-    throw new Error("Framework fork stream ended without onFinish and without recoverable output.");
+    throw new Error(
+      "Agent runtime fork stream ended without onFinish and without recoverable output.",
+    );
   }
 
   return buildFallbackAgentResponse({
@@ -701,7 +731,7 @@ function getParsedStreamedToolInput(inputText: string): Record<string, unknown> 
 
 function buildToolCallPartIfNeeded(
   toolCallId: string,
-  state: FrameworkStreamState,
+  state: ForkRuntimeStreamMappingState,
 ): ForkToolCallPart[] {
   const toolCall = state.toolCalls.get(toolCallId);
   if (!toolCall || state.emittedToolCallIds.has(toolCallId)) {
@@ -719,9 +749,9 @@ function buildToolCallPartIfNeeded(
   ];
 }
 
-export function createFrameworkStreamState(
+export function createForkRuntimeStreamMappingState(
   input: { logger?: ForkRuntimeStreamLogger } = {},
-): FrameworkStreamState {
+): ForkRuntimeStreamMappingState {
   return {
     toolCalls: new Map(),
     emittedToolCallIds: new Set(),
@@ -730,9 +760,9 @@ export function createFrameworkStreamState(
   };
 }
 
-export function mapFrameworkEventToForkParts(
+export function mapAgUiRuntimeEventToForkParts(
   event: AgUiRuntimeStreamEvent,
-  state: FrameworkStreamState,
+  state: ForkRuntimeStreamMappingState,
 ): ForkPart[] {
   switch (event.type) {
     case "reasoning-delta":
@@ -882,4 +912,19 @@ export function mapFrameworkEventToForkParts(
     default:
       return [];
   }
+}
+
+/** @deprecated Use createForkRuntimeStreamMappingState. */
+export function createFrameworkStreamState(
+  input: { logger?: ForkRuntimeStreamLogger } = {},
+): ForkRuntimeStreamMappingState {
+  return createForkRuntimeStreamMappingState(input);
+}
+
+/** @deprecated Use mapAgUiRuntimeEventToForkParts. */
+export function mapFrameworkEventToForkParts(
+  event: AgUiRuntimeStreamEvent,
+  state: ForkRuntimeStreamMappingState,
+): ForkPart[] {
+  return mapAgUiRuntimeEventToForkParts(event, state);
 }
