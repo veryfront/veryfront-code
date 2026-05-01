@@ -14,12 +14,14 @@ export type HostToolTraceAttributeInput = {
   context: ToolExecutionContext | undefined;
 };
 
-export type TraceHostToolsOptions = {
+export type TraceHostToolsOptions<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+> = {
   trace: HostToolTraceRunner;
   buildAttributes?: (
     input: HostToolTraceAttributeInput,
-  ) => HostToolTraceAttributes | undefined;
-  setAttributes?: (attributes: HostToolTraceAttributes) => void;
+  ) => TAttributes | undefined;
+  setAttributes?: (attributes: TAttributes) => void;
   getSpanName?: (toolName: string) => string;
 };
 
@@ -31,9 +33,11 @@ function getToolCallId(context: ToolExecutionContext | undefined): string | unde
   return typeof context?.toolCallId === "string" ? context.toolCallId : undefined;
 }
 
-export function traceHostTools(
+export function traceHostTools<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
   tools: HostToolSet,
-  options: TraceHostToolsOptions,
+  options: TraceHostToolsOptions<TAttributes>,
 ): HostToolSet {
   const traced: HostToolSet = {};
   const getSpanName = options.getSpanName ?? defaultSpanName;
