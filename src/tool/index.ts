@@ -55,6 +55,13 @@ export type {
 
 export { dynamicTool, tool } from "./factory.ts";
 export type { DynamicToolConfig } from "./factory.ts";
+export { createSleepTool, DEFAULT_SLEEP_TOOL_MAX_SECONDS, sleepTool } from "./sleep.ts";
+export type {
+  CreateSleepToolOptions,
+  SleepToolInput,
+  SleepToolOutput,
+  SleepToolWait,
+} from "./sleep.ts";
 export { createRemoteMCPToolSource } from "./remote-mcp.ts";
 export type { RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
 export { createContext7ToolSource } from "./context7.ts";
