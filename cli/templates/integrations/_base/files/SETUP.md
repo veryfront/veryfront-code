@@ -72,13 +72,13 @@ GOOGLE_CLIENT_SECRET=your-client-secret
 
 ### Required Scopes by Service
 
-| Service | Scopes |
-|---------|--------|
-| Gmail | `gmail.readonly`, `gmail.send`, `gmail.modify` |
-| Calendar | `calendar.readonly`, `calendar.events` |
-| Drive | `drive.readonly`, `drive.file` |
-| Docs | `documents.readonly`, `documents` |
-| Sheets | `spreadsheets.readonly`, `spreadsheets` |
+| Service  | Scopes                                                                                                                           |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Gmail    | `gmail.readonly`, `gmail.send`, `gmail.modify`, `gmail.labels`, `gmail.compose`, `https://mail.google.com/` for permanent delete |
+| Calendar | `calendar.readonly`, `calendar.events`                                                                                           |
+| Drive    | `drive.readonly`, `drive.file`                                                                                                   |
+| Docs     | `documents.readonly`, `documents`                                                                                                |
+| Sheets   | `spreadsheets.readonly`, `spreadsheets`                                                                                          |
 
 ---
 
@@ -108,12 +108,12 @@ MICROSOFT_TENANT_ID=common
 
 ### Required Scopes by Service
 
-| Service | Scopes |
-|---------|--------|
-| Outlook | `Mail.Read`, `Mail.Send`, `Calendars.ReadWrite` |
-| Teams | `Team.ReadBasic.All`, `Chat.ReadWrite`, `ChannelMessage.Send` |
-| SharePoint | `Sites.Read.All`, `Files.ReadWrite.All` |
-| OneDrive | `Files.Read`, `Files.ReadWrite` |
+| Service    | Scopes                                                        |
+| ---------- | ------------------------------------------------------------- |
+| Outlook    | `Mail.Read`, `Mail.Send`, `Calendars.ReadWrite`               |
+| Teams      | `Team.ReadBasic.All`, `Chat.ReadWrite`, `ChannelMessage.Send` |
+| SharePoint | `Sites.Read.All`, `Files.ReadWrite.All`                       |
+| OneDrive   | `Files.Read`, `Files.ReadWrite`                               |
 
 ---
 
@@ -141,9 +141,9 @@ ATLASSIAN_CLOUD_ID=your-cloud-id
 
 ### Required Scopes
 
-| Service | Scopes |
-|---------|--------|
-| Jira | `read:jira-work`, `write:jira-work`, `read:jira-user` |
+| Service    | Scopes                                                    |
+| ---------- | --------------------------------------------------------- |
+| Jira       | `read:jira-work`, `write:jira-work`, `read:jira-user`     |
 | Confluence | `read:confluence-content.all`, `write:confluence-content` |
 
 ---
@@ -661,12 +661,12 @@ curl http://localhost:3000/api/connections
 
 ### Common Issues
 
-| Error | Solution |
-|-------|----------|
+| Error                  | Solution                                                       |
+| ---------------------- | -------------------------------------------------------------- |
 | "Invalid redirect URI" | Ensure callback URL matches exactly (including trailing slash) |
-| "Invalid client" | Check CLIENT_ID is correct and app is published |
-| "Access denied" | Verify all required scopes are added |
-| "Token expired" | Implement refresh token flow or re-authenticate |
+| "Invalid client"       | Check CLIENT_ID is correct and app is published                |
+| "Access denied"        | Verify all required scopes are added                           |
+| "Token expired"        | Implement refresh token flow or re-authenticate                |
 
 ### Debug Mode
 

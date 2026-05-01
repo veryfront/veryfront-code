@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import { createGmailClient, parseEmailHeaders } from "../../lib/gmail-client.ts";
+import { createGmailClient, parseEmailHeaders } from "../lib/gmail-client.ts";
+import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "search-emails",
@@ -21,7 +22,7 @@ export default tool({
       .describe("Maximum number of results to return"),
   }),
   execute: async ({ query, maxResults }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = resolveUserId(context);
     const gmail = createGmailClient(userId);
 
     try {

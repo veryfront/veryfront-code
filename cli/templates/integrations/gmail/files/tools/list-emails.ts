@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import { createGmailClient, parseEmailHeaders } from "../../lib/gmail-client.ts";
+import { createGmailClient, parseEmailHeaders } from "../lib/gmail-client.ts";
+import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "list-emails",
@@ -20,7 +21,7 @@ export default tool({
       .describe("Filter by Gmail label (e.g., 'INBOX', 'IMPORTANT', 'STARRED')"),
   }),
   execute: async ({ maxResults, unreadOnly, label }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = resolveUserId(context);
 
     try {
       const gmail = createGmailClient(userId);
