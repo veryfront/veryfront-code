@@ -77,6 +77,13 @@ export {
   loadRemoteToolsFromSource,
 } from "./remote-source-tools.ts";
 export type { RemoteToolMaterializationOptions } from "./remote-source-tools.ts";
+export { traceHostTools } from "./tracing.ts";
+export type {
+  HostToolTraceAttributeInput,
+  HostToolTraceAttributes,
+  HostToolTraceRunner,
+  TraceHostToolsOptions,
+} from "./tracing.ts";
 export {
   filterProjectScopedRemoteToolDefinitions,
   hydrateProjectScopedRemoteToolInput,
