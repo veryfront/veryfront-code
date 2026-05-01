@@ -1,5 +1,5 @@
 import {
-  convertUiMessagesToModelMessages,
+  convertUiMessagesToProviderModelMessages,
   getStringField,
   isReasoningPart,
   isToolCallPart,
@@ -7,12 +7,12 @@ import {
 } from "./conversation.ts";
 import {
   buildDataFileAnnotation,
-  type ChatModelMessage,
   type ChatToolResultOutput,
   type ChatToolResultPart,
   type ChatUiMessage,
   type ChatUiMessagePart,
   normalizeInlineAttachmentMediaType,
+  type ProviderModelMessage,
   type UploadedFileReference,
 } from "./types.ts";
 
@@ -28,10 +28,10 @@ function truncate(text: string, maxLen: number): string {
 }
 
 export function compressTurn(
-  messages: ChatModelMessage[],
+  messages: ProviderModelMessage[],
   startIdx: number,
   endIdx: number,
-): ChatModelMessage[] {
+): ProviderModelMessage[] {
   let userQuery = "";
   const toolNames: string[] = [];
   let assistantConclusion = "";
@@ -71,7 +71,7 @@ interface TurnWindow {
   compressed?: boolean;
 }
 
-function collectTurns(messages: ChatModelMessage[]): TurnWindow[] {
+function collectTurns(messages: ProviderModelMessage[]): TurnWindow[] {
   const turns: TurnWindow[] = [];
   let currentTurn: TurnWindow | null = null;
 
@@ -97,10 +97,10 @@ function collectTurns(messages: ChatModelMessage[]): TurnWindow[] {
 }
 
 export function enforceTokenBudgetWithTurnCompression(
-  messages: ChatModelMessage[],
+  messages: ProviderModelMessage[],
   budget: number,
   overhead: number,
-): ChatModelMessage[] {
+): ProviderModelMessage[] {
   const effectiveBudget = budget - overhead;
   let totalTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
   if (totalTokens <= effectiveBudget) return messages;
@@ -336,7 +336,7 @@ function isKeepableModelPart(part: unknown, includeReasoning: boolean): boolean 
   }
 }
 
-function hasValidContent(message: ChatModelMessage): boolean {
+function hasValidContent(message: ProviderModelMessage): boolean {
   const content = message.content;
 
   if (content === undefined || content === null) return false;
@@ -350,8 +350,10 @@ function cleanContent<T>(content: T[]): T[] {
   return content.filter((part) => isKeepableModelPart(part, hasSubstantiveContent));
 }
 
-export function sanitizeModelMessages(messages: ChatModelMessage[]): ChatModelMessage[] {
-  const result: ChatModelMessage[] = [];
+export function sanitizeProviderModelMessages(
+  messages: ProviderModelMessage[],
+): ProviderModelMessage[] {
+  const result: ProviderModelMessage[] = [];
 
   for (const message of messages) {
     if (Array.isArray(message.content)) {
@@ -376,7 +378,12 @@ export function sanitizeModelMessages(messages: ChatModelMessage[]): ChatModelMe
   return result;
 }
 
-function filterValidMessages(messages: ChatModelMessage[]): ChatModelMessage[] {
+/**
+ * @deprecated Use sanitizeProviderModelMessages for provider-facing model payloads.
+ */
+export const sanitizeModelMessages = sanitizeProviderModelMessages;
+
+function filterValidMessages(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   return messages.filter((message) => {
     const content = message.content;
     if (content === undefined || content === null) return false;
@@ -386,23 +393,25 @@ function filterValidMessages(messages: ChatModelMessage[]): ChatModelMessage[] {
   });
 }
 
-export function prepareModelMessagesFromUiMessages(messages: ChatUiMessage[]): ChatModelMessage[] {
+export function prepareProviderModelMessagesFromUiMessages(
+  messages: ChatUiMessage[],
+): ProviderModelMessage[] {
   const validMessages = messages.filter((message) =>
     message && typeof message === "object" && "role" in message
   );
   const normalizedMessages = normalizeMessageFilePartMediaTypes(validMessages);
   const strippedPendingToolMessages = stripPendingToolParts(normalizedMessages);
   const rewrittenMessages = rewriteUnsupportedFilePartsAsAnnotations(strippedPendingToolMessages);
-  const modelMessages = convertUiMessagesToModelMessages(rewrittenMessages);
-  const patchedMessages = ensureToolCallInputs(dedupeToolHistory(modelMessages));
-  const sanitized = sanitizeModelMessages(patchedMessages);
+  const providerModelMessages = convertUiMessagesToProviderModelMessages(rewrittenMessages);
+  const patchedMessages = ensureToolCallInputs(dedupeToolHistory(providerModelMessages));
+  const sanitized = sanitizeProviderModelMessages(patchedMessages);
   const masked = maskOldToolOutputs(sanitized);
   const compacted = enforceTokenBudget(masked);
   const filtered = filterValidMessages(compacted);
   return repairToolPairs(filtered);
 }
 
-function buildToolCallMap(messages: ChatModelMessage[]): Map<string, ToolCallInfo> {
+function buildToolCallMap(messages: ProviderModelMessage[]): Map<string, ToolCallInfo> {
   const map = new Map<string, ToolCallInfo>();
 
   for (const msg of messages) {
@@ -492,7 +501,7 @@ function wrapToolResultOutput(
   return original;
 }
 
-export function maskOldToolOutputs(messages: ChatModelMessage[]): ChatModelMessage[] {
+export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === "user") {
@@ -572,7 +581,7 @@ function createSyntheticToolResult(toolCallId: string, toolName: string): ChatTo
   };
 }
 
-export function repairToolPairs(messages: ChatModelMessage[]): ChatModelMessage[] {
+export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   const result = [...messages];
   let mutated = false;
 
@@ -701,7 +710,7 @@ export function repairToolPairs(messages: ChatModelMessage[]): ChatModelMessage[
         content: [...repairedResults, ...nextMessage.content],
       };
     } else {
-      const toolMessage: ChatModelMessage = {
+      const toolMessage: ProviderModelMessage = {
         role: "tool",
         content: repairedResults,
       };
@@ -718,7 +727,7 @@ export function estimateOverhead(instructions: unknown, toolCount: number): numb
   return instructionTokens + toolCount * TOKENS_PER_TOOL;
 }
 
-export function ensureToolCallInputs(messages: ChatModelMessage[]): ChatModelMessage[] {
+export function ensureToolCallInputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   let mutated = false;
 
   const result = messages.map((msg) => {
@@ -749,9 +758,9 @@ export function ensureToolCallInputs(messages: ChatModelMessage[]): ChatModelMes
 }
 
 export function compactForStep(
-  messages: ChatModelMessage[],
+  messages: ProviderModelMessage[],
   overhead: number = 0,
-): ChatModelMessage[] {
+): ProviderModelMessage[] {
   const compacted = enforceTokenBudget(
     maskOldToolOutputs(messages),
     DEFAULT_TOKEN_BUDGET,
@@ -768,12 +777,12 @@ export function compactForStep(
   return ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
 }
 
-export function dedupeToolHistory(messages: ChatModelMessage[]): ChatModelMessage[] {
+export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   const seenToolCallIds = new Set<string>();
   const seenToolResultIds = new Set<string>();
   let mutated = false;
 
-  const deduped: ChatModelMessage[] = [];
+  const deduped: ProviderModelMessage[] = [];
 
   const filterParts = <T>(parts: T[]): { filtered: T[]; changed: boolean } => {
     const filtered = parts.filter((part) => {
@@ -829,10 +838,10 @@ export function dedupeToolHistory(messages: ChatModelMessage[]): ChatModelMessag
 }
 
 export function enforceTokenBudget(
-  messages: ChatModelMessage[],
+  messages: ProviderModelMessage[],
   budget: number = DEFAULT_TOKEN_BUDGET,
   overhead: number = 0,
-): ChatModelMessage[] {
+): ProviderModelMessage[] {
   if (messages.length === 0) {
     return messages;
   }
@@ -840,4 +849,7 @@ export function enforceTokenBudget(
   return enforceTokenBudgetWithTurnCompression(messages, budget, overhead);
 }
 
-export const prepareProviderModelMessagesFromUiMessages = prepareModelMessagesFromUiMessages;
+/**
+ * @deprecated Use prepareProviderModelMessagesFromUiMessages for provider-facing model payloads.
+ */
+export const prepareModelMessagesFromUiMessages = prepareProviderModelMessagesFromUiMessages;

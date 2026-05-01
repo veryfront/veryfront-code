@@ -250,6 +250,9 @@ export type ProviderModelMessage =
   | ChatAssistantMessage
   | ChatToolMessage;
 
+/**
+ * @deprecated Use ProviderModelMessage for provider-facing model payloads.
+ */
 export type ChatModelMessage = ProviderModelMessage;
 
 export interface DurableRootRunDescriptor {

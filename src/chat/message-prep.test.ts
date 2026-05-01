@@ -1,11 +1,11 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
-import type { ChatModelMessage } from "./types.ts";
+import type { ProviderModelMessage } from "./types.ts";
 import {
   compressTurn,
   enforceTokenBudget,
   estimateTokens,
   maskOldToolOutputs,
-  prepareModelMessagesFromUiMessages,
+  prepareProviderModelMessagesFromUiMessages,
   repairToolPairs,
   rewriteUnsupportedFilePartsAsAnnotations,
   stripPendingToolParts,
@@ -91,7 +91,7 @@ Deno.test("maskOldToolOutputs masks large historical tool outputs and removes st
       ],
     },
     { role: "user", content: "now summarize it" },
-  ] satisfies ChatModelMessage[];
+  ] satisfies ProviderModelMessage[];
 
   const masked = maskOldToolOutputs(messages);
 
@@ -227,8 +227,8 @@ Deno.test("rewriteUnsupportedFilePartsAsAnnotations converts non-model-native fi
   ]);
 });
 
-Deno.test("prepareModelMessagesFromUiMessages normalizes UI history into model-safe tool order", () => {
-  const prepared = prepareModelMessagesFromUiMessages([
+Deno.test("prepareProviderModelMessagesFromUiMessages normalizes UI history into provider-safe tool order", () => {
+  const prepared = prepareProviderModelMessagesFromUiMessages([
     {
       id: "user-1",
       role: "user",

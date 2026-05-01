@@ -1,19 +1,19 @@
 /**
- * Model Message Converter
+ * Text-Generation Runtime Message Converter
  *
  * Converts between veryfront's internal Message format and the current
- * model-runtime message format.
+ * text-generation runtime message format.
  *
- * @module ai/agent/runtime/model-message-converter
+ * @module ai/agent/runtime/text-generation-runtime-message-converter
  */
 
 import type {
-  ModelRuntimeAssistantMessage,
-  ModelRuntimeMessage,
-  ModelRuntimeTextPart,
-  ModelRuntimeToolCallPart,
-  ModelRuntimeToolMessage,
-} from "./model-runtime-types.ts";
+  TextGenerationRuntimeAssistantMessage,
+  TextGenerationRuntimeMessage,
+  TextGenerationRuntimeTextPart,
+  TextGenerationRuntimeToolCallPart,
+  TextGenerationRuntimeToolMessage,
+} from "./text-generation-runtime-message-types.ts";
 import {
   getTextFromParts,
   getToolArguments,
@@ -23,9 +23,9 @@ import {
 } from "../types.ts";
 
 /**
- * Convert a veryfront Message to the current model-runtime message format.
+ * Convert a veryfront Message to the current text-generation runtime message format.
  */
-export function convertToModelMessage(msg: Message): ModelRuntimeMessage {
+export function convertToTextGenerationRuntimeMessage(msg: Message): TextGenerationRuntimeMessage {
   switch (msg.role) {
     case "system": {
       const text = getTextFromParts(msg.parts);
@@ -38,7 +38,7 @@ export function convertToModelMessage(msg: Message): ModelRuntimeMessage {
     }
 
     case "assistant": {
-      const content: Array<ModelRuntimeTextPart | ModelRuntimeToolCallPart> = [];
+      const content: Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart> = [];
 
       for (const part of msg.parts) {
         if (part.type === "text" && "text" in part) {
@@ -66,12 +66,15 @@ export function convertToModelMessage(msg: Message): ModelRuntimeMessage {
         content.push({ type: "text", text: "" });
       }
 
-      const assistantMessage: ModelRuntimeAssistantMessage = { role: "assistant", content };
+      const assistantMessage: TextGenerationRuntimeAssistantMessage = {
+        role: "assistant",
+        content,
+      };
       return assistantMessage;
     }
 
     case "tool": {
-      const content: ModelRuntimeToolMessage["content"] = [];
+      const content: TextGenerationRuntimeToolMessage["content"] = [];
 
       for (const part of msg.parts) {
         if (part.type !== "tool-result") continue;
@@ -85,7 +88,7 @@ export function convertToModelMessage(msg: Message): ModelRuntimeMessage {
         });
       }
 
-      const toolMessage: ModelRuntimeToolMessage = { role: "tool", content };
+      const toolMessage: TextGenerationRuntimeToolMessage = { role: "tool", content };
       return toolMessage;
     }
 
@@ -99,7 +102,7 @@ export function convertToModelMessage(msg: Message): ModelRuntimeMessage {
 
 function convertToolResultPart(
   part: ToolResultPart,
-): ModelRuntimeToolMessage {
+): TextGenerationRuntimeToolMessage {
   return {
     role: "tool",
     content: [{
@@ -112,15 +115,17 @@ function convertToolResultPart(
 }
 
 /**
- * Convert an array of veryfront Messages to the current model-runtime message format.
+ * Convert an array of veryfront Messages to the current text-generation runtime message format.
  */
-export function convertToModelMessages(messages: Message[]): ModelRuntimeMessage[] {
-  const modelMessages: ModelRuntimeMessage[] = [];
+export function convertToTextGenerationRuntimeMessages(
+  messages: Message[],
+): TextGenerationRuntimeMessage[] {
+  const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
   const toolResultMessageIndexes = new Map<string, number>();
 
   for (const message of messages) {
     if (message.role !== "tool") {
-      modelMessages.push(convertToModelMessage(message));
+      textGenerationRuntimeMessages.push(convertToTextGenerationRuntimeMessage(message));
       continue;
     }
 
@@ -129,7 +134,7 @@ export function convertToModelMessages(messages: Message[]): ModelRuntimeMessage
     );
 
     if (toolResultParts.length === 0) {
-      modelMessages.push(convertToModelMessage(message));
+      textGenerationRuntimeMessages.push(convertToTextGenerationRuntimeMessage(message));
       continue;
     }
 
@@ -138,14 +143,17 @@ export function convertToModelMessages(messages: Message[]): ModelRuntimeMessage
       const existingIndex = toolResultMessageIndexes.get(toolResultPart.toolCallId);
 
       if (existingIndex === undefined) {
-        toolResultMessageIndexes.set(toolResultPart.toolCallId, modelMessages.length);
-        modelMessages.push(toolResultMessage);
+        toolResultMessageIndexes.set(
+          toolResultPart.toolCallId,
+          textGenerationRuntimeMessages.length,
+        );
+        textGenerationRuntimeMessages.push(toolResultMessage);
         continue;
       }
 
-      modelMessages[existingIndex] = toolResultMessage;
+      textGenerationRuntimeMessages[existingIndex] = toolResultMessage;
     }
   }
 
-  return modelMessages;
+  return textGenerationRuntimeMessages;
 }

@@ -33,7 +33,7 @@ import {
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/index.ts";
-import { convertToModelMessages } from "./model-message-converter.ts";
+import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
@@ -789,7 +789,7 @@ export class AgentRuntime {
           return generateText({
             model: languageModel,
             system: currentSystemPrompt,
-            messages: convertToModelMessages(currentMessages),
+            messages: convertToTextGenerationRuntimeMessages(currentMessages),
             tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
               allowedToolNames: allowedRemoteToolNames,
@@ -1069,7 +1069,7 @@ export class AgentRuntime {
       const result = streamText({
         model: languageModel,
         system: currentSystemPrompt,
-        messages: convertToModelMessages(currentMessages),
+        messages: convertToTextGenerationRuntimeMessages(currentMessages),
         tools: convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
           allowedToolNames: allowedRemoteToolNames,
