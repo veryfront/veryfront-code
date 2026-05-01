@@ -377,6 +377,16 @@ when bootstrap credentials are present.
 
 **Returns:** `Agent`
 
+### Runtime instruction helpers
+
+Use these helpers when a host needs to add the current tool surface to runtime
+system instructions without copying prompt bookkeeping.
+
+| Export                        | Type                                               | Description                                                                                               |
+| ----------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `withRuntimeToolInventory()`  | `(instructions, toolNames) => ChatSystemMessage[]` | Append the canonical current-run tool inventory system message, replacing any previous inventory message. |
+| `flattenSystemInstructions()` | `(instructions) => string`                         | Flatten system messages into the string form consumed by model runtimes.                                  |
+
 ### Browser AG-UI stream encoder
 
 Use these helpers when a host needs to turn the framework runtime stream event
