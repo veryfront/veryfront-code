@@ -236,6 +236,11 @@ export {
   createChatUiMessageStreamFromDataStream,
 } from "./chat-ui-message-stream.ts";
 export {
+  createToolExecutionDataEventBridgeStream,
+  type ToolExecutionDataEventBridgeStreamInput,
+  type ToolExecutionDataEventPublisher,
+} from "./tool-execution-data-event-bridge.ts";
+export {
   createAgUiTrackedBrowserResponse,
   type CreateAgUiTrackedBrowserResponseInput,
 } from "./ag-ui-tracked-browser-response.ts";
