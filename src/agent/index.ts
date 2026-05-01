@@ -442,6 +442,17 @@ export {
   type SlashCommandArtifactPolicyInput,
 } from "./slash-command-artifact-policy.ts";
 export {
+  buildRuntimeSkillDefinition,
+  normalizeRuntimeSkillReferencePath,
+  type ParsedRuntimeSkillDocument,
+  parseRuntimeSkillDocument,
+  parseRuntimeSkillMetadata,
+  type RuntimeSkillDefinition,
+  type RuntimeSkillFrontmatter,
+  RuntimeSkillFrontmatterSchema,
+  type RuntimeSkillMetadataLogger,
+} from "./runtime-skill-metadata.ts";
+export {
   buildHostedChildCompletedLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
