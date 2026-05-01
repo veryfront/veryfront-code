@@ -46,3 +46,14 @@ export {
   type SandboxShellToolDefinition,
   type SandboxShellToolSet,
 } from "./shell-tools.ts";
+export {
+  createHostedSandboxClient,
+  createHostedSandboxTools,
+  createProjectScopedExecOptions,
+  type HostedSandboxClient,
+  type HostedSandboxClientOptions,
+  type HostedSandboxJobClient,
+  type HostedSandboxToolsOptions,
+  type HostedSandboxToolsResult,
+  unwrapSandboxWorkingDirectoryCommand,
+} from "./hosted-tools.ts";
