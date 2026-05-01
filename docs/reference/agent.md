@@ -48,10 +48,13 @@ import {
   parseAgUiRequestOrError,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
+  parseRuntimeAgentRunInvocation,
+  parseRuntimeAgentRunInvocationOrError,
   registerAgent,
   runHostedChildLifecycle,
   runHostedLifecycle,
   RunResumeSessionManager,
+  RuntimeAgentRunInvocationSchema,
   shouldSkipHostedChildTerminalPersistence,
   waitForHumanInput,
 } from "veryfront/agent";
@@ -706,6 +709,31 @@ Parse and validate the canonical runtime AG-UI request body into
 Parse the canonical runtime AG-UI request body and return either the parsed
 request or a `400` JSON `Response` when validation fails.
 
+### `RuntimeAgentRunInvocationSchema`
+
+Validate the control-plane runtime agent invocation wrapper for separately
+deployed runtime services.
+
+Use this schema when a trusted control plane invokes a runtime agent service
+with run, project, target, lineage, tool, context, and forwarded-prop metadata.
+It wraps the message payload that a host can then normalize into the local
+agent runtime input model.
+
+This schema is not a replacement for `AgUiRuntimeRequestSchema`. Use
+`AgUiRuntimeRequestSchema` for public AG-UI runtime routes. Use
+`RuntimeAgentRunInvocationSchema` for signed service-to-service invocation
+routes where the control plane owns durable run identity and project context.
+
+### `parseRuntimeAgentRunInvocation(request)`
+
+Parse and validate the control-plane runtime agent invocation body into
+`RuntimeAgentRunInvocationSchema`.
+
+### `parseRuntimeAgentRunInvocationOrError(request)`
+
+Parse the control-plane runtime agent invocation body and return either the
+parsed request or a `400` JSON `Response` when validation fails.
+
 ### `normalizeAgUiRuntimeMessages(messages)`
 
 Normalize canonical runtime AG-UI `messages` into the package `Message[]`
@@ -834,34 +862,36 @@ Clear all stored messages from memory.
 
 ### Functions
 
-| Name                             | Description                                                             |
-| -------------------------------- | ----------------------------------------------------------------------- |
-| `agent`                          | Create an agent                                                         |
-| `agentAsTool`                    | Wrap agent as callable tool                                             |
-| `createAgUiCancelHandler`        | Create a DELETE handler for hosted AG-UI run cancellation               |
-| `createAgUiDetachedStartHandler` | Create a POST handler for detached hosted AG-UI run kickoff             |
-| `executeAgUiDetachedStart`       | Run detached hosted-start lifecycle from a validated request object     |
-| `createAgUiHandler`              | Create a POST handler for an AG-UI route                                |
-| `createAgUiRuntimeHandler`       | Create a POST handler for the canonical runtime AG-UI request contract  |
-| `createAgUiRunErrorEvent`        | Create a `RunError` AG-UI SSE event                                     |
-| `createAgUiSseErrorResponse`     | Create an AG-UI SSE error `Response`                                    |
-| `createAgUiResumeHandler`        | Create a POST handler for hosted AG-UI run resume values                |
-| `normalizeAgUiRuntimeMessages`   | Normalize runtime AG-UI messages into package `Message[]`               |
-| `parseAgUiRuntimeRequest`        | Parse and validate the canonical runtime AG-UI request body             |
-| `parseAgUiRuntimeRequestOrError` | Parse runtime AG-UI input or return a `400` validation `Response`       |
-| `createChatHandler`              | Create a POST handler for a chat API route.                             |
-| `createMemory`                   | Create memory (buffer, conversation, summary)                           |
-| `createRedisMemory`              | Create Redis-backed memory                                              |
-| `createWorkflow`                 | Create sequential agent workflow                                        |
-| `getAgent`                       | Get agent by ID                                                         |
-| `getAgentsAsTools`               | Get agents as tools (multi-agent)                                       |
-| `getAllAgentIds`                 | List registered agent IDs                                               |
-| `getTextFromParts`               | Extract text from multi-part message                                    |
-| `getToolArguments`               | Extract parsed tool call args                                           |
-| `hasArgs`                        | Check for parsed args on tool call                                      |
-| `hasInput`                       | Check for raw input on tool call                                        |
-| `registerAgent`                  | Register agent for discovery                                            |
-| `waitForHumanInput`              | Wait for a canonical human-input response over hosted AG-UI run control |
+| Name                                    | Description                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| `agent`                                 | Create an agent                                                          |
+| `agentAsTool`                           | Wrap agent as callable tool                                              |
+| `createAgUiCancelHandler`               | Create a DELETE handler for hosted AG-UI run cancellation                |
+| `createAgUiDetachedStartHandler`        | Create a POST handler for detached hosted AG-UI run kickoff              |
+| `executeAgUiDetachedStart`              | Run detached hosted-start lifecycle from a validated request object      |
+| `createAgUiHandler`                     | Create a POST handler for an AG-UI route                                 |
+| `createAgUiRuntimeHandler`              | Create a POST handler for the canonical runtime AG-UI request contract   |
+| `createAgUiRunErrorEvent`               | Create a `RunError` AG-UI SSE event                                      |
+| `createAgUiSseErrorResponse`            | Create an AG-UI SSE error `Response`                                     |
+| `createAgUiResumeHandler`               | Create a POST handler for hosted AG-UI run resume values                 |
+| `normalizeAgUiRuntimeMessages`          | Normalize runtime AG-UI messages into package `Message[]`                |
+| `parseAgUiRuntimeRequest`               | Parse and validate the canonical runtime AG-UI request body              |
+| `parseAgUiRuntimeRequestOrError`        | Parse runtime AG-UI input or return a `400` validation `Response`        |
+| `parseRuntimeAgentRunInvocation`        | Parse and validate a control-plane runtime agent invocation body         |
+| `parseRuntimeAgentRunInvocationOrError` | Parse a runtime agent invocation or return a `400` validation `Response` |
+| `createChatHandler`                     | Create a POST handler for a chat API route.                              |
+| `createMemory`                          | Create memory (buffer, conversation, summary)                            |
+| `createRedisMemory`                     | Create Redis-backed memory                                               |
+| `createWorkflow`                        | Create sequential agent workflow                                         |
+| `getAgent`                              | Get agent by ID                                                          |
+| `getAgentsAsTools`                      | Get agents as tools (multi-agent)                                        |
+| `getAllAgentIds`                        | List registered agent IDs                                                |
+| `getTextFromParts`                      | Extract text from multi-part message                                     |
+| `getToolArguments`                      | Extract parsed tool call args                                            |
+| `hasArgs`                               | Check for parsed args on tool call                                       |
+| `hasInput`                              | Check for raw input on tool call                                         |
+| `registerAgent`                         | Register agent for discovery                                             |
+| `waitForHumanInput`                     | Wait for a canonical human-input response over hosted AG-UI run control  |
 
 ### Classes
 
@@ -878,17 +908,30 @@ Clear all stored messages from memory.
 
 ### Schemas
 
-| Name                             | Description                                                            |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| `AgUiDetachedStartRequestSchema` | Canonical detached hosted-run kickoff request schema                   |
-| `AgUiRequestSchema`              | Convenience request schema for `createAgUiHandler()`                   |
-| `AgUiRuntimeRequestSchema`       | Canonical open-source AG-UI runtime request contract for hosted runs   |
-| `AgUiResumeSignalSchema`         | Canonical hosted-run resume payload for AG-UI tool-result continuation |
-| `HumanInputFieldSchema`          | Canonical human-input field schema                                     |
-| `HumanInputOptionSchema`         | Canonical human-input option schema                                    |
-| `HumanInputPendingRequestSchema` | Canonical pending human-input request envelope for hosts               |
-| `HumanInputRequestSchema`        | Canonical human-input request payload                                  |
-| `HumanInputResultSchema`         | Canonical human-input resumed result payload                           |
+| Name                                | Description                                                            |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `AgUiDetachedStartRequestSchema`    | Canonical detached hosted-run kickoff request schema                   |
+| `AgUiRequestSchema`                 | Convenience request schema for `createAgUiHandler()`                   |
+| `AgUiRuntimeRequestSchema`          | Canonical open-source AG-UI runtime request contract for hosted runs   |
+| `AgUiResumeSignalSchema`            | Canonical hosted-run resume payload for AG-UI tool-result continuation |
+| `HumanInputFieldSchema`             | Canonical human-input field schema                                     |
+| `HumanInputOptionSchema`            | Canonical human-input option schema                                    |
+| `HumanInputPendingRequestSchema`    | Canonical pending human-input request envelope for hosts               |
+| `HumanInputRequestSchema`           | Canonical human-input request payload                                  |
+| `HumanInputResultSchema`            | Canonical human-input resumed result payload                           |
+| `RuntimeAgentContextItemSchema`     | Control-plane runtime agent invocation context item schema             |
+| `RuntimeAgentIdSchema`              | Control-plane runtime agent id schema                                  |
+| `RuntimeAgentProjectContextSchema`  | Control-plane runtime agent project and target context schema          |
+| `RuntimeAgentRunContextSchema`      | Control-plane runtime agent run identity and lineage context schema    |
+| `RuntimeAgentRunIdSchema`           | Control-plane runtime agent run id schema                              |
+| `RuntimeAgentRunInvocationSchema`   | Control-plane runtime agent invocation wrapper schema                  |
+| `RuntimeAgentServiceIdSchema`       | Control-plane runtime agent service id schema                          |
+| `RuntimeAgentSourceContextSchema`   | Control-plane runtime agent source context schema                      |
+| `RuntimeAgentTargetKindSchema`      | Control-plane runtime target kind schema                               |
+| `RuntimeAgentToolCallIdSchema`      | Control-plane runtime tool call id schema                              |
+| `RuntimeAgentToolNameSchema`        | Control-plane runtime tool name schema                                 |
+| `RuntimeAgentToolSchema`            | Control-plane runtime tool descriptor schema                           |
+| `RuntimeAgentValidatedClaimsSchema` | Control-plane runtime validated claims schema                          |
 
 ### Types
 
@@ -951,6 +994,14 @@ Clear all stored messages from memory.
 | `ResolvedRuntimeState`                     | Step-boundary system/context refresh result                                                                                   |
 | `RuntimeStateRequest`                      | Step-boundary runtime refresh hook input                                                                                      |
 | `RuntimeStateResolver`                     | Hook that refreshes system/context state during long-lived runs                                                               |
+| `RuntimeAgentContextItem`                  | Validated control-plane runtime agent invocation context item                                                                 |
+| `RuntimeAgentProjectContext`               | Validated control-plane runtime agent project and target context                                                              |
+| `RuntimeAgentRunContext`                   | Validated control-plane runtime agent run identity and lineage context                                                        |
+| `RuntimeAgentRunInvocation`                | Validated control-plane runtime agent invocation wrapper                                                                      |
+| `RuntimeAgentSourceContext`                | Validated control-plane runtime agent source context                                                                          |
+| `RuntimeAgentTargetKind`                   | Runtime target kind for a control-plane runtime agent invocation                                                              |
+| `RuntimeAgentTool`                         | Validated control-plane runtime agent tool descriptor                                                                         |
+| `RuntimeAgentValidatedClaims`              | Validated claims attached to a control-plane runtime agent invocation                                                         |
 | `StreamToolCall`                           | Streaming tool call                                                                                                           |
 | `ToolCall`                                 | Completed tool call                                                                                                           |
 | `ToolCallPart`                             | Tool call message segment                                                                                                     |

@@ -182,6 +182,32 @@ export {
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "./runtime-ag-ui-contract.ts";
+export {
+  parseRuntimeAgentRunInvocation,
+  parseRuntimeAgentRunInvocationOrError,
+  type RuntimeAgentContextItem,
+  RuntimeAgentContextItemSchema,
+  RuntimeAgentIdSchema,
+  type RuntimeAgentProjectContext,
+  RuntimeAgentProjectContextSchema,
+  type RuntimeAgentRunContext,
+  RuntimeAgentRunContextSchema,
+  RuntimeAgentRunIdSchema,
+  type RuntimeAgentRunInvocation,
+  RuntimeAgentRunInvocationSchema,
+  RuntimeAgentServiceIdSchema,
+  type RuntimeAgentSourceContext,
+  RuntimeAgentSourceContextSchema,
+  type RuntimeAgentTargetKind,
+  RuntimeAgentTargetKindSchema,
+  type RuntimeAgentTool,
+  RuntimeAgentToolCallIdSchema,
+  RuntimeAgentToolNameSchema,
+  RuntimeAgentToolSchema,
+  type RuntimeAgentValidatedClaims,
+  RuntimeAgentValidatedClaimsSchema,
+  validateRuntimeAgentTargetSelection,
+} from "./runtime-agent-invocation-contract.ts";
 export { normalizeAgUiRuntimeMessages } from "./ag-ui-runtime-support.ts";
 export {
   type AgUiBrowserEncodedEvent,
