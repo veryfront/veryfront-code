@@ -1,17 +1,17 @@
 import { isRecord } from "../chat/conversation.ts";
 import {
   buildDataFileAnnotation,
-  type ChatModelMessage,
   type ChatToolResultPart,
+  type ProviderModelMessage,
   type UploadedFileReference,
 } from "../chat/types.ts";
 import { toChildRunToolInputRecord } from "./child-run-execution-support.ts";
 
-type StructuredModelPart = Exclude<ChatModelMessage["content"], string>[number];
+type StructuredProviderPart = Exclude<ProviderModelMessage["content"], string>[number];
 
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
-type FrameworkMessageLikePart =
+type AgentRuntimeMessageLikePart =
   | { type: "text"; text: string }
   | {
     type: string;
@@ -38,7 +38,7 @@ type FrameworkMessageLikePart =
     output: unknown;
   };
 
-export type FrameworkMessagePart =
+export type AgentRuntimeMessagePart =
   | { type: "text"; text: string }
   | {
     type: string;
@@ -53,32 +53,32 @@ export type FrameworkMessagePart =
     result: unknown;
   };
 
-export interface FrameworkMessage {
+export interface AgentRuntimeMessage {
   id: string;
-  role: ChatModelMessage["role"];
-  parts: FrameworkMessagePart[];
+  role: ProviderModelMessage["role"];
+  parts: AgentRuntimeMessagePart[];
   timestamp: number;
 }
 
-interface FrameworkModelContentParts {
-  textParts: FrameworkModelTextPart[];
-  toolCallParts: FrameworkModelToolCallPart[];
+interface AgentRuntimeProviderContentParts {
+  textParts: ProviderTextPart[];
+  toolCallParts: ProviderToolCallPart[];
   toolResultParts: ChatToolResultPart[];
 }
 
-type FrameworkModelTextPart = { type: "text"; text: string };
+type ProviderTextPart = { type: "text"; text: string };
 
-type FrameworkModelToolCallPart = {
+type ProviderToolCallPart = {
   type: "tool-call";
   toolCallId: string;
   toolName: string;
   input: Record<string, unknown>;
 };
 
-export class FrameworkMessageConversionError extends Error {
+export class AgentRuntimeMessageConversionError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = "FrameworkMessageConversionError";
+    this.name = "AgentRuntimeMessageConversionError";
   }
 }
 
@@ -95,18 +95,18 @@ function getOptionalStringField(part: unknown, key: string): string | undefined 
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-function createFrameworkMessageId(message: ChatModelMessage, index: number): string {
-  return `framework-${message.role}-${index + 1}`;
+function createAgentRuntimeMessageId(message: ProviderModelMessage, index: number): string {
+  return `agent-runtime-${message.role}-${index + 1}`;
 }
 
-function createTextFrameworkPart(text: string): FrameworkMessagePart | null {
+function createTextAgentRuntimePart(text: string): AgentRuntimeMessagePart | null {
   return hasTextContent(text) ? { type: "text", text } : null;
 }
 
-function convertStructuredPart(part: StructuredModelPart): FrameworkMessagePart | null {
+function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessagePart | null {
   switch (part.type) {
     case "text":
-      return createTextFrameworkPart(part.text);
+      return createTextAgentRuntimePart(part.text);
 
     case "reasoning":
       return null;
@@ -133,14 +133,14 @@ function convertStructuredPart(part: StructuredModelPart): FrameworkMessagePart 
 
     default: {
       const exhaustiveCheck: never = part;
-      throw new FrameworkMessageConversionError(
-        `Unsupported framework message part: ${String(exhaustiveCheck)}`,
+      throw new AgentRuntimeMessageConversionError(
+        `Unsupported agent runtime message part: ${String(exhaustiveCheck)}`,
       );
     }
   }
 }
 
-function createAttachmentReference(part: StructuredModelPart): UploadedFileReference | null {
+function createAttachmentReference(part: StructuredProviderPart): UploadedFileReference | null {
   const filename = getOptionalStringField(part, "filename");
   const mediaType = getOptionalStringField(part, "mediaType");
   const uploadId = getOptionalStringField(part, "uploadId");
@@ -164,7 +164,7 @@ function createAttachmentReference(part: StructuredModelPart): UploadedFileRefer
 
 function buildAttachmentContextPart(
   attachmentReferences: UploadedFileReference[],
-): FrameworkMessagePart | null {
+): AgentRuntimeMessagePart | null {
   if (attachmentReferences.length === 0) {
     return null;
   }
@@ -177,13 +177,15 @@ function buildAttachmentContextPart(
   };
 }
 
-function convertContentToFrameworkParts(message: ChatModelMessage): FrameworkMessage["parts"] {
+function convertContentToAgentRuntimeParts(
+  message: ProviderModelMessage,
+): AgentRuntimeMessage["parts"] {
   if (typeof message.content === "string") {
-    const textPart = createTextFrameworkPart(message.content);
+    const textPart = createTextAgentRuntimePart(message.content);
     return textPart ? [textPart] : [];
   }
 
-  const parts: FrameworkMessage["parts"] = [];
+  const parts: AgentRuntimeMessage["parts"] = [];
   const attachmentReferences: UploadedFileReference[] = [];
 
   for (const part of message.content) {
@@ -238,13 +240,13 @@ function toToolResultOutput(value: unknown): { type: "json"; value: JsonValue } 
   };
 }
 
-export function getFrameworkTextPart(part: unknown): { type: "text"; text: string } | null {
+export function getAgentRuntimeTextPart(part: unknown): { type: "text"; text: string } | null {
   return isRecord(part) && part.type === "text" && typeof part.text === "string"
     ? { type: "text", text: part.text }
     : null;
 }
 
-export function getFrameworkToolCallPart(
+export function getAgentRuntimeToolCallPart(
   part: unknown,
 ): { toolCallId: string; toolName: string; input: Record<string, unknown> } | null {
   if (!isRecord(part) || typeof part.type !== "string") {
@@ -268,7 +270,7 @@ export function getFrameworkToolCallPart(
   };
 }
 
-export function getFrameworkToolResultPart(
+export function getAgentRuntimeToolResultPart(
   part: unknown,
 ): { toolCallId: string; toolName: string; output: unknown } | null {
   if (!isRecord(part) || part.type !== "tool-result") {
@@ -301,31 +303,31 @@ export function createToolResultPart(part: {
   };
 }
 
-function joinTextParts(textParts: readonly FrameworkModelTextPart[]): string {
+function joinTextParts(textParts: readonly ProviderTextPart[]): string {
   return textParts.map((part) => part.text).join("\n\n");
 }
 
-function collectFrameworkModelContentParts(
-  parts: ReadonlyArray<FrameworkMessageLikePart>,
-): FrameworkModelContentParts {
-  const textParts: FrameworkModelTextPart[] = [];
-  const toolCallParts: FrameworkModelToolCallPart[] = [];
+function collectAgentRuntimeProviderContentParts(
+  parts: ReadonlyArray<AgentRuntimeMessageLikePart>,
+): AgentRuntimeProviderContentParts {
+  const textParts: ProviderTextPart[] = [];
+  const toolCallParts: ProviderToolCallPart[] = [];
   const toolResultParts: ChatToolResultPart[] = [];
 
   for (const part of parts) {
-    const textPart = getFrameworkTextPart(part);
+    const textPart = getAgentRuntimeTextPart(part);
     if (textPart) {
       textParts.push(textPart);
       continue;
     }
 
-    const toolResultPart = getFrameworkToolResultPart(part);
+    const toolResultPart = getAgentRuntimeToolResultPart(part);
     if (toolResultPart) {
       toolResultParts.push(createToolResultPart(toolResultPart));
       continue;
     }
 
-    const toolCallPart = getFrameworkToolCallPart(part);
+    const toolCallPart = getAgentRuntimeToolCallPart(part);
     if (toolCallPart) {
       toolCallParts.push({
         type: "tool-call",
@@ -339,10 +341,12 @@ function collectFrameworkModelContentParts(
   return { textParts, toolCallParts, toolResultParts };
 }
 
-function createModelMessageFromFrameworkMessage(
-  message: Pick<FrameworkMessage, "role"> & { parts: ReadonlyArray<FrameworkMessageLikePart> },
-): ChatModelMessage | null {
-  const { textParts, toolCallParts, toolResultParts } = collectFrameworkModelContentParts(
+function createProviderMessageFromAgentRuntimeMessage(
+  message: Pick<AgentRuntimeMessage, "role"> & {
+    parts: ReadonlyArray<AgentRuntimeMessageLikePart>;
+  },
+): ProviderModelMessage | null {
+  const { textParts, toolCallParts, toolResultParts } = collectAgentRuntimeProviderContentParts(
     message.parts,
   );
 
@@ -391,8 +395,8 @@ function createModelMessageFromFrameworkMessage(
 
     default: {
       const exhaustiveCheck: never = message.role;
-      throw new FrameworkMessageConversionError(
-        `Unsupported framework message role when converting to model message: ${
+      throw new AgentRuntimeMessageConversionError(
+        `Unsupported agent runtime message role when converting to provider model message: ${
           String(exhaustiveCheck)
         }`,
       );
@@ -400,26 +404,26 @@ function createModelMessageFromFrameworkMessage(
   }
 }
 
-export function convertModelMessagesToFrameworkMessages(
-  messages: readonly ChatModelMessage[],
-): FrameworkMessage[] {
+export function convertProviderMessagesToAgentRuntimeMessages(
+  messages: readonly ProviderModelMessage[],
+): AgentRuntimeMessage[] {
   return messages.map((message, index) => ({
-    id: createFrameworkMessageId(message, index),
+    id: createAgentRuntimeMessageId(message, index),
     role: message.role,
-    parts: convertContentToFrameworkParts(message),
+    parts: convertContentToAgentRuntimeParts(message),
     timestamp: index,
   }));
 }
 
-export function convertFrameworkMessagesToModelMessages(
+export function convertAgentRuntimeMessagesToProviderMessages(
   messages: ReadonlyArray<
-    Pick<FrameworkMessage, "role"> & { parts: ReadonlyArray<FrameworkMessageLikePart> }
+    Pick<AgentRuntimeMessage, "role"> & { parts: ReadonlyArray<AgentRuntimeMessageLikePart> }
   >,
-): ChatModelMessage[] {
-  const converted: ChatModelMessage[] = [];
+): ProviderModelMessage[] {
+  const converted: ProviderModelMessage[] = [];
 
   for (const message of messages) {
-    const convertedMessage = createModelMessageFromFrameworkMessage(message);
+    const convertedMessage = createProviderMessageFromAgentRuntimeMessage(message);
     if (convertedMessage) {
       converted.push(convertedMessage);
     }
