@@ -273,6 +273,7 @@ export {
   type CreateAgUiTrackedBrowserResponseInput,
 } from "./ag-ui-tracked-browser-response.ts";
 export {
+  type AgentRuntimeForkStepRunner,
   applyPartToStreamedStepState,
   buildForkRuntimeStepFromResponse,
   buildRecoveredStepParts,
@@ -286,6 +287,7 @@ export {
   type ForkRecoveredPartsState,
   type ForkRuntimeContinuationPromptResolver,
   type ForkRuntimeStep,
+  type ForkRuntimeStepPreparer,
   type ForkRuntimeStreamLogger,
   type ForkRuntimeStreamMappingState,
   type ForkRuntimeStreamResult,
@@ -300,6 +302,8 @@ export {
   runFrameworkForkStep,
   type RunFrameworkForkStepInput,
   shouldContinueForkRuntimeStep,
+  startAgentRuntimeFork,
+  type StartAgentRuntimeForkInput,
 } from "./fork-runtime-stream.ts";
 export {
   executeHostedChildForkStream,

@@ -6,6 +6,7 @@ import type { AgUiRuntimeStreamEvent } from "./ag-ui-browser-encoder.ts";
 import {
   mergeToolInputDelta,
   parseToolInputObject,
+  streamDataStreamEvents,
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
 import {
@@ -155,6 +156,84 @@ export interface ForkRuntimeStreamResult {
 }
 
 export const DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS = 1_000;
+
+type ForkRuntimeStepPreparationInput = {
+  messages: AgentMessage[];
+  buildInstructions: () => string;
+  forkToolNames: readonly string[];
+};
+
+type ForkRuntimeStepPreparation = {
+  messages: AgentMessage[];
+  system: string;
+};
+
+export type ForkRuntimeStepPreparer = (
+  input: ForkRuntimeStepPreparationInput,
+) => ForkRuntimeStepPreparation | Promise<ForkRuntimeStepPreparation>;
+
+export type AgentRuntimeForkStepRunner = (
+  input: RunAgentRuntimeForkStepInput,
+) => Promise<{
+  stream: ReadableStream<Uint8Array>;
+  responsePromise: Promise<AgentResponse>;
+}>;
+
+export type StartAgentRuntimeForkInput = {
+  apiUrl: string;
+  authToken: string;
+  projectId: string | null;
+  model: string;
+  maxSteps: number;
+  prompt?: string;
+  maxContinuationSteps?: number;
+  abortSignal?: AbortSignal;
+  forkToolNames: string[];
+  runtimeTools: Record<string, Tool | boolean>;
+  providerOptions?: Record<string, unknown>;
+  buildInstructions: () => string;
+  onBeforeStop?: ForkRuntimeContinuationPromptResolver;
+  initialMessages?: readonly AgentMessage[];
+  responseTimeoutMs?: number;
+  logger?: ForkRuntimeStreamLogger;
+  prepareStep?: ForkRuntimeStepPreparer;
+  runStep?: AgentRuntimeForkStepRunner;
+};
+
+function createForkRuntimeDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve: (value: T | PromiseLike<T>) => void = () => {};
+  let reject: (reason?: unknown) => void = () => {};
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+
+  return { promise, resolve, reject };
+}
+
+async function prepareForkRuntimeStep(input: {
+  prepareStep?: ForkRuntimeStepPreparer;
+  messages: AgentMessage[];
+  buildInstructions: () => string;
+  forkToolNames: string[];
+}): Promise<ForkRuntimeStepPreparation> {
+  if (input.prepareStep) {
+    return input.prepareStep({
+      messages: input.messages,
+      buildInstructions: input.buildInstructions,
+      forkToolNames: input.forkToolNames,
+    });
+  }
+
+  return {
+    messages: input.messages,
+    system: input.buildInstructions(),
+  };
+}
 
 function createAgentRuntimeForkAbortError(abortSignal?: AbortSignal): Error {
   if (abortSignal?.reason instanceof Error) {
@@ -365,6 +444,114 @@ export async function resolveForkRuntimeContinuationState(input: {
       ...input.currentMessages,
       createForkRuntimeUserMessage({ text: continuationPrompt }),
     ],
+  };
+}
+
+export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRuntimeStreamResult {
+  const stepsDeferred = createForkRuntimeDeferred<readonly ForkRuntimeStep[]>();
+  const totalUsageDeferred = createForkRuntimeDeferred<
+    | {
+      inputTokens?: number;
+      outputTokens?: number;
+    }
+    | undefined
+  >();
+  const steps: ForkRuntimeStep[] = [];
+  let accumulatedInputTokens = 0;
+  let accumulatedOutputTokens = 0;
+  const runStep = input.runStep ?? runAgentRuntimeForkStep;
+
+  return {
+    fullStream: (async function* (): AsyncGenerator<ForkPart> {
+      if (!input.initialMessages?.length && typeof input.prompt !== "string") {
+        throw new Error(
+          "startAgentRuntimeFork requires a prompt when no initialMessages are provided.",
+        );
+      }
+
+      let currentMessages = createInitialForkRuntimeMessages({
+        initialMessages: input.initialMessages,
+        prompt: input.prompt,
+      });
+      let continuationStepsRemaining = input.maxContinuationSteps ?? 0;
+
+      try {
+        while (steps.length < getMaxForkRuntimeStepCount(input)) {
+          const prepared = await prepareForkRuntimeStep({
+            prepareStep: input.prepareStep,
+            messages: currentMessages,
+            buildInstructions: input.buildInstructions,
+            forkToolNames: input.forkToolNames,
+          });
+          const state = createForkRuntimeStreamMappingState({ logger: input.logger });
+          const streamedStepState = createStreamedStepState();
+          const { stream, responsePromise } = await runStep({
+            apiUrl: input.apiUrl,
+            authToken: input.authToken,
+            projectId: input.projectId,
+            model: input.model,
+            messages: prepared.messages,
+            system: prepared.system,
+            ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+            forkToolNames: input.forkToolNames,
+            runtimeTools: input.runtimeTools,
+            ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
+          });
+
+          for await (const event of streamDataStreamEvents(stream)) {
+            const parts = mapAgUiRuntimeEventToForkParts(event, state);
+            for (const part of parts) {
+              applyPartToStreamedStepState(streamedStepState, part);
+              yield part;
+            }
+          }
+
+          const response = await resolveForkStepResponse({
+            responsePromise,
+            responseTimeoutMs: input.responseTimeoutMs ?? DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS,
+            ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
+            currentMessages,
+            streamedStepState,
+          });
+          const step = buildForkRuntimeStepFromResponse(response);
+          for (const recoveredPart of buildRecoveredStepParts(step, state)) {
+            yield recoveredPart;
+          }
+          steps.push(step);
+          accumulatedInputTokens += response.usage?.promptTokens ?? 0;
+          accumulatedOutputTokens += response.usage?.completionTokens ?? 0;
+          currentMessages = response.messages;
+
+          if (!shouldContinueForkRuntimeStep(step, response)) {
+            const followUpState = await resolveForkRuntimeContinuationState({
+              continuationStepsRemaining,
+              onBeforeStop: input.onBeforeStop,
+              step,
+              currentMessages,
+              stepIndex: steps.length - 1,
+            });
+            if (followUpState) {
+              continuationStepsRemaining = followUpState.continuationStepsRemaining;
+              currentMessages = followUpState.currentMessages;
+              continue;
+            }
+            break;
+          }
+        }
+
+        stepsDeferred.resolve(steps);
+        totalUsageDeferred.resolve({
+          inputTokens: accumulatedInputTokens,
+          outputTokens: accumulatedOutputTokens,
+        });
+      } catch (error) {
+        stepsDeferred.reject(error);
+        totalUsageDeferred.reject(error);
+        throw error;
+      }
+    })(),
+    steps: stepsDeferred.promise,
+    totalUsage: totalUsageDeferred.promise,
   };
 }
 
