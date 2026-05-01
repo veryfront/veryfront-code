@@ -1,7 +1,8 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { z } from "zod";
-import { createToolsFromHostDefinitions } from "./host-tools.ts";
+import { createToolsFromHostDefinitions, type HostToolSet } from "./host-tools.ts";
+import type { ToolExecutionContext, ToolSet } from "./types.ts";
 
 const emptyJsonSchema = { type: "object" as const, properties: {} };
 
@@ -13,8 +14,8 @@ describe("tool/host-tools", () => {
       search: {
         description: "Search docs",
         inputSchema: z.object({ query: z.string() }),
-        execute: (input, context) => {
-          receivedContextToolCallId = String(context.toolCallId);
+        execute: (input: unknown, context?: ToolExecutionContext) => {
+          receivedContextToolCallId = String(context?.toolCallId);
           return input;
         },
       },
@@ -39,10 +40,10 @@ describe("tool/host-tools", () => {
       read_file: {
         description: "Read a file",
         inputSchema: z.object({ path: z.string() }),
-        execute: (_input, context) => {
-          receivedProjectId = String(context.projectId);
-          receivedToolCallId = String(context.toolCallId);
-          receivedAbortSignal = context.abortSignal;
+        execute: (_input: unknown, context?: ToolExecutionContext) => {
+          receivedProjectId = String(context?.projectId);
+          receivedToolCallId = String(context?.toolCallId);
+          receivedAbortSignal = context?.abortSignal;
           return { ok: true };
         },
       },
@@ -112,5 +113,19 @@ describe("tool/host-tools", () => {
     });
 
     assertEquals(Object.keys(tools), ["valid"]);
+  });
+
+  it("exposes host tool set and materialized tool set types for runtime hosts", () => {
+    const hostTools: HostToolSet = {
+      search: {
+        description: "Search docs",
+        inputSchema: z.object({ query: z.string() }),
+        execute: (input: unknown) => input,
+      },
+    };
+
+    const tools: ToolSet = createToolsFromHostDefinitions(hostTools);
+
+    assertEquals(Object.keys(tools), ["search"]);
   });
 });

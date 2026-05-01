@@ -1,15 +1,32 @@
 import { z } from "zod";
 import { dynamicTool, tool } from "./factory.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
-import type { Tool, ToolConfig, ToolExecutionContext } from "./types.ts";
+import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
 
-export interface HostToolDefinition {
+type HostToolExecute = {
+  bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
+}["bivarianceHack"];
+
+export type HostToolDefinition = {
+  id?: string;
+  type?: Tool["type"];
+  title?: string;
+  description?: string;
+  inputSchema?: unknown;
+  inputSchemaJson?: JsonSchema;
+  parameters?: unknown;
+  providerOptions?: unknown;
+  execute?: Tool["execute"] | HostToolExecute;
+  mcp?: ToolConfig["mcp"];
+};
+
+export type HostToolSet = Record<string, HostToolDefinition>;
+
+type RunnableHostToolDefinition = HostToolDefinition & {
   description: string;
   inputSchema: z.ZodSchema<unknown>;
-  inputSchemaJson?: JsonSchema;
-  execute: (input: unknown, context: ToolExecutionContext) => Promise<unknown> | unknown;
-  mcp?: ToolConfig["mcp"];
-}
+  execute: HostToolExecute;
+};
 
 export interface HostToolMaterializationOptions {
   generateToolCallId?: (toolName: string) => string;
@@ -25,7 +42,7 @@ function isZodSchema(value: unknown): value is z.ZodSchema<unknown> {
   return typeof value._def.typeName === "string" || typeof value._def.type === "string";
 }
 
-function isHostToolDefinition(value: unknown): value is HostToolDefinition {
+function isHostToolDefinition(value: unknown): value is RunnableHostToolDefinition {
   return (
     isRecord(value) &&
     typeof value.description === "string" &&
@@ -54,10 +71,18 @@ function normalizeExecutionContext(
 }
 
 export function createToolsFromHostDefinitions(
+  definitions: HostToolSet,
+  options?: HostToolMaterializationOptions,
+): ToolSet;
+export function createToolsFromHostDefinitions(
+  definitions: Record<string, unknown>,
+  options?: HostToolMaterializationOptions,
+): ToolSet;
+export function createToolsFromHostDefinitions(
   definitions: Record<string, unknown>,
   options: HostToolMaterializationOptions = {},
-): Record<string, Tool<unknown, unknown>> {
-  const tools: Record<string, Tool<unknown, unknown>> = {};
+): ToolSet {
+  const tools: ToolSet = {};
 
   for (const [toolName, definition] of Object.entries(definitions)) {
     if (!isHostToolDefinition(definition)) continue;
