@@ -418,6 +418,24 @@ export {
   withHostedChildRerunnableFileWriteFallbacks,
 } from "./hosted-child-artifact-support.ts";
 export {
+  buildDefaultResearchArtifactPathReminder,
+  buildDefaultResearchArtifactPaths,
+  type DefaultResearchArtifactPaths,
+  shouldInjectDefaultResearchArtifactPath,
+  withDefaultResearchArtifactPath,
+} from "./default-research-artifact-policy.ts";
+export {
+  applyDefaultResearchArtifactPath,
+  type DefaultResearchArtifactContext,
+  type DefaultResearchArtifactLogger,
+  type DefaultResearchArtifacts,
+  extractLatestUserText,
+  fetchLatestConversationUserText,
+  mirrorDefaultResearchRunArtifact,
+  shouldRetryCreateResearchArtifactAsUpdate,
+  updateDefaultResearchArtifacts,
+} from "./default-research-artifact-support.ts";
+export {
   buildHostedChildCompletedLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
