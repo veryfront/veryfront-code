@@ -1,3 +1,4 @@
+import { isResponseLike } from "./response-like.ts";
 export type CachedRequestAuthResult<TAuth> = TAuth | Response;
 
 export interface CreateRequestAuthCacheOptions<TAuth> {
@@ -15,7 +16,7 @@ export function createRequestAuthCache<TAuth>(
   options: CreateRequestAuthCacheOptions<TAuth>,
 ): RequestAuthCache<TAuth> {
   const cache = new WeakMap<Request, TAuth>();
-  const shouldCache = options.shouldCache ?? ((result) => !(result instanceof Response));
+  const shouldCache = options.shouldCache ?? ((result) => !isResponseLike(result));
 
   return {
     async authenticate(request) {
@@ -25,7 +26,7 @@ export function createRequestAuthCache<TAuth>(
       }
 
       const result = await options.authenticate(request);
-      if (shouldCache(result) && !(result instanceof Response)) {
+      if (shouldCache(result) && !isResponseLike(result)) {
         cache.set(request, result);
       }
       return result;
