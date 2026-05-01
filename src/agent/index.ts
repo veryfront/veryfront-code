@@ -139,6 +139,7 @@ export {
 } from "./composition/index.ts";
 
 export { agent } from "./factory.ts";
+export { isResponseLike } from "./response-like.ts";
 export {
   type AgentContract,
   type AgentRegistry,

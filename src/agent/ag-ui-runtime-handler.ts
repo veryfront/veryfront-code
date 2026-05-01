@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isResponseLike } from "./response-like.ts";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
@@ -372,12 +373,12 @@ export function createAgUiRuntimeHandler(
 
     try {
       const gateResult = await config.beforeParse?.({ request });
-      if (gateResult instanceof Response) {
+      if (isResponseLike(gateResult)) {
         return gateResult;
       }
 
       const parsed = await parseAgUiRuntimeRequestOrError(request);
-      if (parsed instanceof Response) {
+      if (isResponseLike(parsed)) {
         if (config.validationErrorResponse) {
           return await config.validationErrorResponse({ request, response: parsed });
         }

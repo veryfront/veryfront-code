@@ -471,6 +471,21 @@ modules.
 | `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`                                                      | Map one runtime stream event into zero or more browser/public AG-UI events.                                                                                                                                                  |
 | `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]`                                                   | Emit terminal browser/public AG-UI events after the runtime stream finishes.                                                                                                                                                 |
 
+### Response-like guards
+
+Use `isResponseLike` when host hooks can return a `Response` created by a
+different JavaScript runtime realm. It avoids fragile `instanceof Response`
+checks at route boundaries.
+
+```ts
+import { isResponseLike } from "veryfront/agent";
+
+const result = await beforeParse(request);
+if (isResponseLike(result)) {
+  return result;
+}
+```
+
 ### Provider-native tool inventory
 
 Use these helpers when a host needs to derive provider-native remote-tool
