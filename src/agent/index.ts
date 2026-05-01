@@ -240,6 +240,7 @@ export {
   type ToolExecutionDataEventBridgeStreamInput,
   type ToolExecutionDataEventPublisher,
 } from "./tool-execution-data-event-bridge.ts";
+export { flattenSystemInstructions, withRuntimeToolInventory } from "./runtime-tool-inventory.ts";
 export {
   createAgUiTrackedBrowserResponse,
   type CreateAgUiTrackedBrowserResponseInput,
