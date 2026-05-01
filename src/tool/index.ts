@@ -70,6 +70,12 @@ export {
   loadRemoteToolsFromSource,
 } from "./remote-source-tools.ts";
 export type { RemoteToolMaterializationOptions } from "./remote-source-tools.ts";
+export {
+  filterProjectScopedRemoteToolDefinitions,
+  hydrateProjectScopedRemoteToolInput,
+  isProjectNavigationRemoteTool,
+} from "./project-scoped-remote-tools.ts";
+export type { ProjectScopedRemoteToolOptions } from "./project-scoped-remote-tools.ts";
 
 export { toolRegistry } from "./registry.ts";
 
