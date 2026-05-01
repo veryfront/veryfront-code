@@ -839,3 +839,5 @@ export function enforceTokenBudget(
 
   return enforceTokenBudgetWithTurnCompression(messages, budget, overhead);
 }
+
+export const prepareProviderModelMessagesFromUiMessages = prepareModelMessagesFromUiMessages;

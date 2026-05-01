@@ -244,11 +244,13 @@ export type ChatToolMessage = {
   content: ChatToolResultPart[];
 };
 
-export type ChatModelMessage =
+export type ProviderModelMessage =
   | ChatSystemMessage
   | ChatUserMessage
   | ChatAssistantMessage
   | ChatToolMessage;
+
+export type ChatModelMessage = ProviderModelMessage;
 
 export interface DurableRootRunDescriptor {
   runId: string;

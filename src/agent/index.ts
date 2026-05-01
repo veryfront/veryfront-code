@@ -363,16 +363,16 @@ export {
   toChildRunToolInputRecord,
 } from "./child-run-execution-support.ts";
 export {
-  convertFrameworkMessagesToModelMessages,
-  convertModelMessagesToFrameworkMessages,
+  type AgentRuntimeMessage,
+  AgentRuntimeMessageConversionError,
+  type AgentRuntimeMessagePart,
+  convertAgentRuntimeMessagesToProviderMessages,
+  convertProviderMessagesToAgentRuntimeMessages,
   createToolResultPart,
-  type FrameworkMessage,
-  FrameworkMessageConversionError,
-  type FrameworkMessagePart,
-  getFrameworkTextPart,
-  getFrameworkToolCallPart,
-  getFrameworkToolResultPart,
-} from "./framework-message-adapter.ts";
+  getAgentRuntimeTextPart,
+  getAgentRuntimeToolCallPart,
+  getAgentRuntimeToolResultPart,
+} from "./agent-runtime-message-adapter.ts";
 export {
   type ChildRunExecutionBufferCleanupInput,
   type ChildRunExecutionResourceFinalizeInput,

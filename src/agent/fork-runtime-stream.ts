@@ -471,7 +471,7 @@ export function applyPartToStreamedStepState(state: StreamedStepState, part: For
   }
 }
 
-function buildFallbackFrameworkMessages(
+function buildFallbackAgentRuntimeMessages(
   baseMessages: readonly AgentMessage[],
   state: StreamedStepState,
 ): AgentMessage[] {
@@ -560,7 +560,7 @@ function buildFallbackAgentResponse(input: {
 }): AgentResponse {
   return {
     text: input.state.text,
-    messages: buildFallbackFrameworkMessages(input.baseMessages, input.state),
+    messages: buildFallbackAgentRuntimeMessages(input.baseMessages, input.state),
     toolCalls: [...input.state.toolCalls.values()].map((toolCall) => ({
       id: toolCall.toolCallId,
       name: toolCall.toolName,
