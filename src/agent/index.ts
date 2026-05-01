@@ -596,6 +596,7 @@ export {
   type HostedChildLifecycleTerminalState,
   runHostedChildExecutionLifecycle,
   runHostedChildLifecycle,
+  shouldSkipHostedChildTerminalPersistence,
 } from "./hosted-child-lifecycle.ts";
 export {
   appendHostedChildMirrorChunk,
@@ -611,8 +612,11 @@ export {
 } from "./hosted-child-mirror.ts";
 export {
   type HostedChildRunIdentifiers,
+  type HostedChildTerminalErrorCode,
+  hostedChildTerminalErrorCodes,
   HostedChildTerminalStateError,
   type HostedChildTerminalStatus,
+  isHostedChildTerminalErrorCode,
   monitorHostedChildRunStatus,
   resolveHostedChildTerminalErrorCode,
 } from "./hosted-child-status.ts";
