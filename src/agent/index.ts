@@ -363,6 +363,17 @@ export {
   toChildRunToolInputRecord,
 } from "./child-run-execution-support.ts";
 export {
+  convertFrameworkMessagesToModelMessages,
+  convertModelMessagesToFrameworkMessages,
+  createToolResultPart,
+  type FrameworkMessage,
+  FrameworkMessageConversionError,
+  type FrameworkMessagePart,
+  getFrameworkTextPart,
+  getFrameworkToolCallPart,
+  getFrameworkToolResultPart,
+} from "./framework-message-adapter.ts";
+export {
   type ChildRunExecutionBufferCleanupInput,
   type ChildRunExecutionResourceFinalizeInput,
   closeChildRunExecutionBuffers,
