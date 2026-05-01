@@ -10,6 +10,7 @@ import { tokenStore } from "./token-store.ts";
 import type { OAuthToken } from "./token-store.ts";
 
 export type GmailMessageFormat = "full" | "metadata" | "minimal" | "raw";
+export type GmailThreadFormat = Exclude<GmailMessageFormat, "raw">;
 export type GmailLabelVisibility = "labelShow" | "labelShowIfUnread" | "labelHide";
 export type GmailMessageListVisibility = "show" | "hide";
 export type GmailHistoryType = "messageAdded" | "messageDeleted" | "labelAdded" | "labelRemoved";
@@ -184,7 +185,7 @@ export interface GmailClient {
   batchModifyMessages(messageIds: string[], labels: ModifyLabelsOptions): Promise<void>;
   batchDeleteMessages(messageIds: string[]): Promise<void>;
   listThreads(options?: ListMessagesOptions): Promise<GmailThreadList>;
-  getThread(threadId: string, format?: GmailMessageFormat): Promise<GmailThread>;
+  getThread(threadId: string, format?: GmailThreadFormat): Promise<GmailThread>;
   modifyThreadLabels(threadId: string, labels: ModifyLabelsOptions): Promise<GmailThread>;
   trashThread(threadId: string): Promise<GmailThread>;
   untrashThread(threadId: string): Promise<GmailThread>;
@@ -422,7 +423,7 @@ export function createGmailClient(userId: string): GmailClient {
       return apiRequest<GmailThreadList>(withQuery("/users/me/threads", params));
     },
 
-    getThread(threadId: string, format: GmailMessageFormat = "full"): Promise<GmailThread> {
+    getThread(threadId: string, format: GmailThreadFormat = "full"): Promise<GmailThread> {
       return apiRequest<GmailThread>(`/users/me/threads/${threadId}?format=${format}`);
     },
 
