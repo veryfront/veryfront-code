@@ -1,6 +1,6 @@
 import { assertEquals, assertRejects, assertStrictEquals } from "@std/assert";
 import type { HostToolSet } from "./host-tools.ts";
-import { traceHostTools } from "./tracing.ts";
+import { traceHostTools, type TraceHostToolsOptions } from "./tracing.ts";
 
 function requireTool(tools: HostToolSet, toolName: string) {
   const definition = tools[toolName];
@@ -77,6 +77,29 @@ Deno.test("traceHostTools publishes attributes with tool name and tool call id",
       "context.seen": true,
     },
   ]);
+});
+
+Deno.test("traceHostTools keeps build/set attribute callbacks on the same narrowed type", async () => {
+  type NarrowAttributes = Record<string, string | number>;
+  const seen: NarrowAttributes[] = [];
+  const options: TraceHostToolsOptions<NarrowAttributes> = {
+    trace: (_spanName, operation) => operation(),
+    buildAttributes: ({ toolName }) => ({
+      "tool.name": toolName,
+      count: 1,
+    }),
+    setAttributes: (attributes) => {
+      const toolName: string | number | undefined = attributes["tool.name"];
+      if (toolName) {
+        seen.push(attributes);
+      }
+    },
+  };
+  const traced = traceHostTools({ typed: { execute: () => "ok" } }, options);
+
+  await requireTool(traced, "typed").execute?.({});
+
+  assertEquals(seen, [{ "tool.name": "typed", count: 1 }]);
 });
 
 Deno.test("traceHostTools preserves non-execute properties on wrapped tools", () => {
