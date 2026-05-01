@@ -1,4 +1,0 @@
-# Xero OAuth Configuration
-# Get your credentials from https://developer.xero.com/app/manage
-XERO_CLIENT_ID=your-client-id
-XERO_CLIENT_SECRET=your-client-secret
