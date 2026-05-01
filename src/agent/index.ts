@@ -525,10 +525,13 @@ export {
   publishInvokeAgentChildRunProgress,
 } from "./invoke-agent-child-runs.ts";
 export {
+  type HostedChildExecutionLifecycleOptions,
+  type HostedChildExecutionLifecycleResult,
   type HostedChildLifecycleAdapter,
   type HostedChildLifecycleRunnerOptions,
   type HostedChildLifecycleRunResult,
   type HostedChildLifecycleTerminalState,
+  runHostedChildExecutionLifecycle,
   runHostedChildLifecycle,
 } from "./hosted-child-lifecycle.ts";
 export {
