@@ -436,6 +436,12 @@ export {
   updateDefaultResearchArtifacts,
 } from "./default-research-artifact-support.ts";
 export {
+  containsExactArtifactPathValue,
+  evaluateSlashCommandArtifactPolicy,
+  type SlashCommandArtifactPolicy,
+  type SlashCommandArtifactPolicyInput,
+} from "./slash-command-artifact-policy.ts";
+export {
   buildHostedChildCompletedLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
