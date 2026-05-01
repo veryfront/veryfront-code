@@ -410,6 +410,14 @@ export function enforceSkillPolicy(
 }
 
 function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
+  if (Object.hasOwn(config, "allowedRemoteTools")) {
+    const raw = config.allowedRemoteTools;
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+  }
+
   const configWithRuntimeFilters = config as RuntimeToolFilterConfig;
   if (!Object.hasOwn(configWithRuntimeFilters, "__vfAllowedRemoteTools")) {
     return undefined;

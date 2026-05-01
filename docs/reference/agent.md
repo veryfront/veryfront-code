@@ -291,6 +291,22 @@ const allowedRemoteToolNames = expandAllowedRemoteToolNames({
 });
 ```
 
+### Remote tool allowlists
+
+Use `allowedRemoteTools` when a host discovers a remote tool inventory but only
+wants a subset exposed to the model and executable at runtime. Omit it to expose
+all tools returned by `remoteTools`. Use an empty array to expose none.
+
+```ts
+import { agent } from "veryfront/agent";
+
+const assistant = agent({
+  system: "Use only the selected remote tools.",
+  remoteTools: [docsTools],
+  allowedRemoteTools: ["docs_search"],
+});
+```
+
 ### Human input over hosted AG-UI runs
 
 ```ts
@@ -364,6 +380,7 @@ when bootstrap credentials are present.
 | `system`                 | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code>                                                                | System prompt — string, function, or async function                                  |
 | `tools?`                 | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code>                                                                                  | Tools available to the agent                                                         |
 | `remoteTools?`           | `RemoteToolSource[]`                                                                                                                                | Remote tool sources queried per request (for example remote MCP)                     |
+| `allowedRemoteTools?`    | `string[]`                                                                                                                                          | Restrict `remoteTools` exposure and execution to these tool names.                   |
 | `maxSteps?`              | `number`                                                                                                                                            | Max tool-call iterations per request                                                 |
 | `streaming?`             | `boolean`                                                                                                                                           | Enable streaming responses                                                           |
 | `memory?`                | `MemoryConfig`                                                                                                                                      | Conversation memory settings                                                         |
