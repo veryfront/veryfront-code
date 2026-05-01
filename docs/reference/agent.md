@@ -38,8 +38,10 @@ import {
   expandAllowedRemoteToolNames,
   getAgentsAsTools,
   getProviderNativeToolNames,
+  hostedChildTerminalErrorCodes,
   HostedLifecycleTerminalState,
   HumanInputRequestSchema,
+  isHostedChildTerminalErrorCode,
   normalizeAgUiMessages,
   normalizeAgUiRuntimeMessages,
   parseAgUiRequest,
@@ -50,6 +52,7 @@ import {
   runHostedChildLifecycle,
   runHostedLifecycle,
   RunResumeSessionManager,
+  shouldSkipHostedChildTerminalPersistence,
   waitForHumanInput,
 } from "veryfront/agent";
 ```
@@ -427,6 +430,10 @@ modules.
 | `runHostedLifecycle()`                                   | `(options) => Promise<HostedLifecycleRunResult>`                                                   | Orchestrate start/observe/finalize/cancel sequencing with host-owned adapters.                                                                                                                                               |
 | `runHostedResponseStreamWithHeartbeat()`                 | `(options) => Promise<void>`                                                                       | Stream hosted execution chunks through one writer while the package owns heartbeat timing plus the generic hosted lifecycle loop and the host keeps heartbeat chunk and logging policy local.                                |
 | `runHostedChildLifecycle()`                              | `(options) => Promise<HostedChildLifecycleRunResult>`                                              | Orchestrate pending/running/completed/failed/cancelled child lifecycle sequencing with host-owned adapters.                                                                                                                  |
+| `runHostedChildExecutionLifecycle()`                     | `(options) => Promise<HostedChildExecutionLifecycleResult>`                                        | Wrap hosted child lifecycle sequencing around local child execution snapshots and normalize terminal child-run errors.                                                                                                       |
+| `hostedChildTerminalErrorCodes`                          | `{ cancelled, failed, completedExternally }`                                                       | Canonical durable child terminal error codes emitted when an externally controlled child run reaches a terminal state before local execution completes.                                                                      |
+| `isHostedChildTerminalErrorCode()`                       | `(value) => value is HostedChildTerminalErrorCode`                                                 | Check whether an unknown value is one of the canonical hosted child terminal error codes.                                                                                                                                    |
+| `shouldSkipHostedChildTerminalPersistence()`             | `(terminalState) => boolean`                                                                       | Determine whether a hosted child terminal state already reflects external durable child persistence and should not be finalized again by lifecycle adapters.                                                                 |
 | `createConversationHostedStreamLifecycleAdapter()`       | `(options) => HostedLifecycleAdapter<ConversationRunProjection, ChatStreamEvent>`                  | Create a conversation-backed hosted lifecycle adapter that appends canonical conversation-run events directly from public chat stream events.                                                                                |
 | `createConversationAgentRun()`                           | `(input) => Promise<ConversationRunProjection>`                                                    | Create a conversation-owned durable agent run and read back its canonical projection.                                                                                                                                        |
 | `getConversationRun()`                                   | `(input) => Promise<ConversationRunProjection>`                                                    | Read the canonical projection for an existing conversation-owned durable run.                                                                                                                                                |

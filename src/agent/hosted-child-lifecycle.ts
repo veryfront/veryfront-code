@@ -7,6 +7,7 @@ import {
 import { isChildRunAbortError } from "./child-run-execution-support.ts";
 import {
   HostedChildTerminalStateError,
+  isHostedChildTerminalErrorCode,
   resolveHostedChildTerminalErrorCode,
 } from "./hosted-child-status.ts";
 
@@ -87,6 +88,12 @@ export type HostedChildExecutionLifecycleResult<
     error: unknown;
     terminalState: HostedChildLifecycleTerminalState;
   };
+
+export function shouldSkipHostedChildTerminalPersistence(
+  terminalState: Pick<HostedChildLifecycleTerminalState, "terminalErrorCode">,
+): boolean {
+  return isHostedChildTerminalErrorCode(terminalState.terminalErrorCode);
+}
 
 export interface HostedChildExecutionLifecycleOptions<
   TLocalResult extends ChildRunExecutionResult,

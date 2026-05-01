@@ -5,10 +5,30 @@ import {
   type HostedChildLifecycleAdapter,
   runHostedChildExecutionLifecycle,
   runHostedChildLifecycle,
+  shouldSkipHostedChildTerminalPersistence,
 } from "./hosted-child-lifecycle.ts";
 import { HostedChildTerminalStateError } from "./hosted-child-status.ts";
 
 describe("agent/hosted-child-lifecycle", () => {
+  it("identifies externally persisted terminal states", () => {
+    assertEquals(
+      shouldSkipHostedChildTerminalPersistence({ terminalErrorCode: "DURABLE_CHILD_CANCELLED" }),
+      true,
+    );
+    assertEquals(
+      shouldSkipHostedChildTerminalPersistence({ terminalErrorCode: "DURABLE_CHILD_FAILED" }),
+      true,
+    );
+    assertEquals(
+      shouldSkipHostedChildTerminalPersistence({
+        terminalErrorCode: "DURABLE_CHILD_COMPLETED_EXTERNALLY",
+      }),
+      true,
+    );
+    assertEquals(shouldSkipHostedChildTerminalPersistence({ terminalErrorCode: "OTHER" }), false);
+    assertEquals(shouldSkipHostedChildTerminalPersistence({ terminalErrorCode: null }), false);
+  });
+
   it("runs pending, running, and completed around successful execution", async () => {
     const calls: string[] = [];
     const adapter: HostedChildLifecycleAdapter = {
