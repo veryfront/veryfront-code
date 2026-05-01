@@ -266,6 +266,8 @@ export {
   executeHostedChildForkStream,
   type ExecuteHostedChildForkStreamInput,
   finalizeHostedChildForkCompletion,
+  handleHostedChildForkFailure,
+  type HandleHostedChildForkFailureInput,
   handleHostedChildForkStreamPart,
   type HostedChildForkPendingToolLifecycle,
   type HostedChildForkStreamHandlingState,

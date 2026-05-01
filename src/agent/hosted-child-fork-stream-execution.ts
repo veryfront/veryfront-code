@@ -34,6 +34,7 @@ import {
 } from "./child-run-result-summary.ts";
 import {
   buildHostedChildCompletedLog,
+  buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
   type HostedChildExecutionLogEntry,
 } from "./hosted-child-execution-logging.ts";
@@ -113,6 +114,20 @@ export interface ExecuteHostedChildForkStreamInput {
   logger?: HostedChildForkStreamLogger;
   writeLog?: (entry: HostedChildExecutionLogEntry) => void;
   tracePart?: (input: HostedChildForkStreamTraceInput) => void | Promise<void>;
+}
+
+export interface HandleHostedChildForkFailureInput {
+  error: unknown;
+  description: string;
+  kind: string;
+  finalText: string;
+  toolCalls: Array<{ toolName: string; toolCallId: string; input?: unknown }>;
+  toolResults: Array<{ toolName: string; toolCallId: string; input: unknown; output: unknown }>;
+  usage?: ChildRunExecutionUsage;
+  startTime: number;
+  onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
+  shouldRethrowError?: (error: unknown) => boolean;
+  writeLog?: (entry: HostedChildExecutionLogEntry) => void;
 }
 
 function isSoftIdleHeartbeatPhase(phase: HostedChildStreamWatchdogState["phase"]): boolean {
@@ -246,6 +261,38 @@ export async function finalizeHostedChildForkCompletion(input: {
   const snapshot = buildChildRunSuccessSnapshot(common, finalText);
   await input.onSettled?.(snapshot);
   return buildChildRunSuccessResult(common, buildChildRunResultSummary(finalText));
+}
+
+export async function handleHostedChildForkFailure(
+  input: HandleHostedChildForkFailureInput,
+): Promise<ChildRunExecutionResult> {
+  input.writeLog?.(
+    buildHostedChildErrorLog({
+      description: input.description,
+      kind: input.kind,
+      error: input.error,
+      finalText: input.finalText,
+      toolCallsLength: input.toolCalls.length,
+      toolResultsLength: input.toolResults.length,
+    }),
+  );
+
+  if (input.shouldRethrowError?.(input.error)) {
+    throw input.error;
+  }
+
+  const errorText = input.error instanceof Error ? input.error.message : "Unknown error";
+  const common = buildChildRunResultCommon({
+    description: input.description,
+    steps: input.toolCalls.length,
+    toolCalls: input.toolCalls,
+    toolResults: input.toolResults,
+    usage: input.usage,
+    durationMs: Date.now() - input.startTime,
+  });
+  const snapshot = buildChildRunFailureSnapshot(common, errorText, input.finalText || null);
+  await input.onSettled?.(snapshot);
+  return buildChildRunFailureResult(common, errorText);
 }
 
 export async function handleHostedChildForkStreamPart(input: {

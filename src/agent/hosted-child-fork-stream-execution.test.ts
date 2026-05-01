@@ -1,7 +1,8 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   executeHostedChildForkStream,
+  handleHostedChildForkFailure,
   type HostedChildForkPendingToolLifecycle,
 } from "./hosted-child-fork-stream-execution.ts";
 import type { ForkPart, ForkRuntimeStep } from "./fork-runtime-stream.ts";
@@ -126,5 +127,55 @@ describe("hosted child fork stream execution", () => {
       chunks.find((chunk) => typeof chunk === "object" && chunk !== null && "type" in chunk),
     );
     assertEquals(writeLogs.length, 1);
+  });
+
+  it("builds failure result and snapshot for child fork errors", async () => {
+    const writeLogs: unknown[] = [];
+    const snapshots: unknown[] = [];
+
+    const result = await handleHostedChildForkFailure({
+      error: new Error("Model failed"),
+      description: "Inspect repo",
+      kind: "invoke_agent",
+      finalText: "partial",
+      toolCalls: [{ toolName: "read_file", toolCallId: "tool-1", input: { path: "README.md" } }],
+      toolResults: [{ toolName: "read_file", toolCallId: "tool-1", input: {}, output: {} }],
+      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      startTime: Date.now(),
+      onSettled: (snapshot) => {
+        snapshots.push(snapshot);
+      },
+      writeLog: (entry) => {
+        writeLogs.push(entry);
+      },
+    });
+
+    assertEquals(result.success, false);
+    if (!result.success) {
+      assertEquals(result.error, "Model failed");
+    }
+    assertEquals(result.steps, 1);
+    assertEquals(result.toolCalls.length, 1);
+    assertEquals(result.toolResults.length, 1);
+    assertEquals(snapshots.length, 1);
+    assertEquals(writeLogs.length, 1);
+  });
+
+  it("rethrows child fork errors when host policy requires it", async () => {
+    await assertRejects(
+      () =>
+        handleHostedChildForkFailure({
+          error: new Error("Insufficient credits"),
+          description: "Inspect repo",
+          kind: "invoke_agent",
+          finalText: "",
+          toolCalls: [],
+          toolResults: [],
+          startTime: Date.now(),
+          shouldRethrowError: () => true,
+        }),
+      Error,
+      "Insufficient credits",
+    );
   });
 });
