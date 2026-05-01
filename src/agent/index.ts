@@ -593,6 +593,15 @@ export {
   normalizeChatUiMessageStream,
 } from "../chat/chat-ui-message-helpers.ts";
 export {
+  cloneMirroredToolChunkState,
+  computeOpenToolCalls,
+  createMirroredToolChunkState,
+  isDurableMirroredOutputChunk,
+  type MirroredToolChunkState,
+  type OpenToolCalls,
+  recordMirroredToolChunkState,
+} from "./mirrored-tool-chunk-state.ts";
+export {
   type HostedStreamPartForUiChunkMapping,
   type HostedUiChunkMappingOptions,
   mapHostedStreamPartToChatUiChunks,
