@@ -2,10 +2,12 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RunCancelledError, RunResumeSessionManager } from "./index.ts";
 import {
+  executeDurableHumanInputFlow,
   HumanInputPendingRequestSchema,
   HumanInputResultSchema,
   HumanInputResumeError,
   InvalidHumanInputResultError,
+  waitForDurableHumanInputResolution,
   waitForHumanInput,
 } from "./human-input.ts";
 
@@ -162,5 +164,102 @@ describe("agent/human-input", () => {
     sessionManager.cancelRun("run_1");
 
     await assertRejects(() => pending, RunCancelledError);
+  });
+
+  it("bridges a durable request snapshot into the local human input wait", async () => {
+    const result = await executeDurableHumanInputFlow({
+      runId: "run_1",
+      threadId: crypto.randomUUID(),
+      toolCallId: "tool_1",
+      request: {
+        title: "Repository details",
+        fields: [{ type: "text", name: "repo", label: "Repository" }],
+      },
+      timeoutMs: 100,
+      pollIntervalMs: 1,
+      onRequest: (request) => ({
+        id: "input_request_1",
+        request,
+      }),
+      getSnapshot: (createdRequest) => ({
+        id: createdRequest.id,
+        status: "submitted",
+        values: {
+          repo: createdRequest.request.request.title,
+        },
+      }),
+      resolveSnapshot: (snapshot) =>
+        snapshot.status === "submitted"
+          ? {
+            submitted: true,
+            values: snapshot.values,
+          }
+          : undefined,
+    });
+
+    assertEquals(result.createdRequest.id, "input_request_1");
+    assertEquals(result.result, {
+      submitted: true,
+      values: {
+        repo: "Repository details",
+      },
+    });
+  });
+
+  it("surfaces durable request timeout as a human input resume error", async () => {
+    await assertRejects(
+      () =>
+        executeDurableHumanInputFlow({
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          toolCallId: "tool_1",
+          request: {
+            title: "Repository details",
+            fields: [{ type: "text", name: "repo", label: "Repository" }],
+          },
+          timeoutMs: 0,
+          pollIntervalMs: 1,
+          onRequest: () => ({
+            id: "input_request_1",
+          }),
+          getSnapshot: (createdRequest) => ({
+            id: createdRequest.id,
+            status: "open",
+          }),
+          resolveSnapshot: () => undefined,
+        }),
+      HumanInputResumeError,
+      "Timed out while waiting for durable human input resolution",
+    );
+  });
+
+  it("polls durable human input snapshots until a resolution is available", async () => {
+    const snapshots: Array<{
+      status: "open" | "submitted" | "expired";
+      values: Record<string, string | number | boolean | null>;
+    }> = [
+      { status: "open", values: {} },
+      { status: "submitted", values: { repo: "veryfront" } },
+    ];
+
+    const result = await waitForDurableHumanInputResolution({
+      deadline: Date.now() + 100,
+      pollIntervalMs: 1,
+      getSnapshot: () => snapshots.shift() ?? { status: "expired", values: {} },
+      resolveSnapshot: (snapshot) =>
+        snapshot.status === "submitted"
+          ? {
+            submitted: true,
+            values: snapshot.values,
+          }
+          : undefined,
+    });
+
+    assertEquals(result, {
+      submitted: true,
+      values: {
+        repo: "veryfront",
+      },
+    });
   });
 });

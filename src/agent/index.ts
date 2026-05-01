@@ -642,6 +642,9 @@ export {
   createAgUiHandler,
 } from "./ag-ui-handler.ts";
 export {
+  type DurableHumanInputFlowResult,
+  executeDurableHumanInputFlow,
+  type ExecuteDurableHumanInputFlowOptions,
   type HumanInputField,
   type HumanInputFieldInput,
   HumanInputFieldSchema,
@@ -655,7 +658,10 @@ export {
   type HumanInputResult,
   HumanInputResultSchema,
   HumanInputResumeError,
+  type HumanInputResumeValue,
   InvalidHumanInputResultError,
+  waitForDurableHumanInputResolution,
+  type WaitForDurableHumanInputResolutionOptions,
   waitForHumanInput,
   type WaitForHumanInputOptions,
 } from "./human-input.ts";
