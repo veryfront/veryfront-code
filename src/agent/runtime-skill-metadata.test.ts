@@ -1,5 +1,6 @@
 import { assertEquals, assertExists } from "@std/assert";
 import {
+  buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
   parseRuntimeSkillMetadata,
@@ -185,4 +186,113 @@ Deno.test("normalizeRuntimeSkillReferencePath rejects empty paths", () => {
 
 Deno.test("normalizeRuntimeSkillReferencePath rejects empty segments", () => {
   assertEquals(normalizeRuntimeSkillReferencePath("docs//guide.md"), null);
+});
+
+const loadedSkillMessages = {
+  allowedToolsNote: "Use only allowed tools.",
+  noCurrentRunToolsNote: "No direct tools are available.",
+  unavailableCurrentRunToolsDelegationNote: "Delegate unavailable tools.",
+  overrideNote: "Forward overrides.",
+  referenceNote: "Load references separately.",
+};
+
+Deno.test("buildRuntimeLoadedSkillResponse includes basic response fields", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "plan",
+    instructions: "Plan carefully.",
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+  });
+
+  assertEquals(response, {
+    skillId: "plan",
+    instructions: "Plan carefully.",
+    nextStep: "Continue after loading.",
+  });
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse filters allowed tools to current run surface", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "write",
+    instructions: `---
+allowed-tools: read_file, write_file, shell
+---
+Write carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: ["read_file", "write_file"],
+  });
+
+  assertEquals(response.allowedTools, ["read_file", "write_file"]);
+  assertEquals(response.delegationTools, ["read_file", "write_file", "shell"]);
+  assertEquals(response.unavailableCurrentRunTools, ["shell"]);
+  assertEquals(response.note, "Use only allowed tools.");
+  assertEquals(response.delegationNote, "Delegate unavailable tools.");
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse returns empty allowedTools when declared tools have no current run overlap", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "write",
+    instructions: `---
+allowed-tools:
+  - shell
+---
+Write carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    availableToolNames: ["read_file"],
+  });
+
+  assertEquals(response.allowedTools, []);
+  assertEquals(response.delegationTools, ["shell"]);
+  assertEquals(response.unavailableCurrentRunTools, ["shell"]);
+  assertEquals(response.note, "No direct tools are available.");
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse preserves runtime overrides and references", () => {
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "research",
+    instructions: `---
+model: sonnet
+thinking: 2000
+max-steps: 8
+---
+Research carefully.`,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    references: ["references/guide.md"],
+  });
+
+  assertEquals(response.model, "sonnet");
+  assertEquals(response.thinking, 2000);
+  assertEquals(response.maxSteps, 8);
+  assertEquals(response.overrideNote, "Forward overrides.");
+  assertEquals(response.references, ["references/guide.md"]);
+  assertEquals(response.referenceNote, "Load references separately.");
+});
+
+Deno.test("buildRuntimeLoadedSkillResponse logs invalid metadata and returns a base response", () => {
+  const instructions = `---
+allowed-tools:
+  - shell
+  - 123
+---
+Body`;
+  const errors: Array<Record<string, unknown> | undefined> = [];
+  const response = buildRuntimeLoadedSkillResponse({
+    skillId: "invalid",
+    instructions,
+    nextStep: "Continue after loading.",
+    messages: loadedSkillMessages,
+    logger: {
+      error: (_message, metadata) => errors.push(metadata),
+    },
+  });
+
+  assertEquals(response, {
+    skillId: "invalid",
+    instructions,
+    nextStep: "Continue after loading.",
+  });
+  assertEquals(errors.length, 1);
 });
