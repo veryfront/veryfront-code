@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ChatModelMessage, ChatUiMessage, ChatUiMessagePart } from "./types.ts";
+import type { ChatUiMessage, ChatUiMessagePart, ProviderModelMessage } from "./types.ts";
 
 const textPartSchema = z.object({ type: z.literal("text"), text: z.string() });
 const imagePartSchema = z.object({
@@ -469,7 +469,7 @@ export function isReasoningPart(value: unknown): value is ReasoningPartLike {
   return isRecord(value) && value.type === "reasoning" && typeof value.text === "string";
 }
 
-export function extractTextFromMessage(message: ChatModelMessage): string {
+export function extractTextFromMessage(message: ProviderModelMessage): string {
   if (!message || !message.content) return "";
 
   const { content } = message;
@@ -703,7 +703,7 @@ function buildToolResultOutput(toolPart: { state: string; output?: unknown; erro
   return null;
 }
 
-function convertSystemMessage(message: ChatUiMessage): ChatModelMessage[] {
+function convertSystemMessage(message: ChatUiMessage): ProviderModelMessage[] {
   const content = message.parts.flatMap((part) => (isTextPart(part) ? [part.text] : [])).join("");
   if (content.length === 0) {
     return [];
@@ -717,7 +717,7 @@ function convertSystemMessage(message: ChatUiMessage): ChatModelMessage[] {
   ];
 }
 
-function convertUserMessage(message: ChatUiMessage): ChatModelMessage[] {
+function convertUserMessage(message: ChatUiMessage): ProviderModelMessage[] {
   const content: Array<
     { type: "text"; text: string } | {
       type: "file";
@@ -751,7 +751,7 @@ function convertUserMessage(message: ChatUiMessage): ChatModelMessage[] {
   ];
 }
 
-function convertAssistantMessage(message: ChatUiMessage): ChatModelMessage[] {
+function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[] {
   const rawToolNamesById = buildRawToolNameMap(message.parts);
   const assistantContent: Array<
     | { type: "text"; text: string }
@@ -775,7 +775,7 @@ function convertAssistantMessage(message: ChatUiMessage): ChatModelMessage[] {
       };
   }> = [];
   const pendingToolCallIds = new Set<string>();
-  const messages: ChatModelMessage[] = [];
+  const messages: ProviderModelMessage[] = [];
 
   const flushAssistantMessage = (content: typeof assistantContent) => {
     if (content.length === 0) {
@@ -914,7 +914,9 @@ function convertAssistantMessage(message: ChatUiMessage): ChatModelMessage[] {
   return messages;
 }
 
-export function convertUiMessagesToModelMessages(messages: ChatUiMessage[]): ChatModelMessage[] {
+export function convertUiMessagesToProviderModelMessages(
+  messages: ChatUiMessage[],
+): ProviderModelMessage[] {
   return messages.flatMap((message) => {
     switch (message.role) {
       case "system":
@@ -928,3 +930,8 @@ export function convertUiMessagesToModelMessages(messages: ChatUiMessage[]): Cha
     }
   });
 }
+
+/**
+ * @deprecated Use convertUiMessagesToProviderModelMessages for provider-facing model payloads.
+ */
+export const convertUiMessagesToModelMessages = convertUiMessagesToProviderModelMessages;

@@ -1,11 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type { ChatModelMessage, ChatUiMessage } from "veryfront/chat/types";
+import type { ChatUiMessage, ProviderModelMessage } from "veryfront/chat/types";
 import {
   apiConversationSchema,
   apiMessageSchema,
   conversationTypeSchema,
-  convertUiMessagesToModelMessages,
+  convertUiMessagesToProviderModelMessages,
   extractTextFromMessage,
   extractUploadId,
   hasIncompleteToolParts,
@@ -216,8 +216,8 @@ describe("chat/conversation helpers", () => {
     assertEquals(stringifyUnknown({ a: 1 }), '{"a":1}');
   });
 
-  it("extracts text from model messages", () => {
-    const message: ChatModelMessage = {
+  it("extracts text from provider model messages", () => {
+    const message: ProviderModelMessage = {
       role: "assistant",
       content: [
         { type: "text", text: "first" },
@@ -230,8 +230,8 @@ describe("chat/conversation helpers", () => {
   });
 });
 
-describe("convertUiMessagesToModelMessages", () => {
-  it("converts assistant tool UI parts into assistant and tool model messages", () => {
+describe("convertUiMessagesToProviderModelMessages", () => {
+  it("converts assistant tool UI parts into assistant and tool provider model messages", () => {
     const messages: ChatUiMessage[] = [
       {
         id: "message-1",
@@ -251,7 +251,7 @@ describe("convertUiMessagesToModelMessages", () => {
       },
     ];
 
-    assertEquals(convertUiMessagesToModelMessages(messages), [
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
       {
         role: "assistant",
         content: [

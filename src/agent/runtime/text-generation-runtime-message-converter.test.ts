@@ -1,21 +1,24 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { convertToModelMessage, convertToModelMessages } from "./model-message-converter.ts";
+import {
+  convertToTextGenerationRuntimeMessage,
+  convertToTextGenerationRuntimeMessages,
+} from "./text-generation-runtime-message-converter.ts";
 import type {
-  ModelRuntimeAssistantMessage,
-  ModelRuntimeToolMessage,
-} from "./model-runtime-types.ts";
+  TextGenerationRuntimeAssistantMessage,
+  TextGenerationRuntimeToolMessage,
+} from "./text-generation-runtime-message-types.ts";
 import type { Message } from "../types.ts";
 
-describe("model-message-converter", () => {
-  describe("convertToModelMessage", () => {
+describe("text-generation-runtime-message-converter", () => {
+  describe("convertToTextGenerationRuntimeMessage", () => {
     it("converts a system message", () => {
       const msg: Message = {
         id: "s1",
         role: "system",
         parts: [{ type: "text", text: "You are helpful" }],
       };
-      const result = convertToModelMessage(msg);
+      const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result, { role: "system", content: "You are helpful" });
     });
 
@@ -25,7 +28,7 @@ describe("model-message-converter", () => {
         role: "user",
         parts: [{ type: "text", text: "Hello" }],
       };
-      const result = convertToModelMessage(msg);
+      const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result, { role: "user", content: "Hello" });
     });
 
@@ -38,7 +41,7 @@ describe("model-message-converter", () => {
           { type: "text", text: "world" },
         ],
       };
-      const result = convertToModelMessage(msg);
+      const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result, { role: "user", content: "Hello world" });
     });
 
@@ -48,9 +51,9 @@ describe("model-message-converter", () => {
         role: "assistant",
         parts: [{ type: "text", text: "Sure, I can help." }],
       };
-      const result = convertToModelMessage(msg);
+      const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result.role, "assistant");
-      const content = (result as ModelRuntimeAssistantMessage).content;
+      const content = (result as TextGenerationRuntimeAssistantMessage).content;
       assertEquals(content.length, 1);
       assertEquals(content[0], { type: "text", text: "Sure, I can help." });
     });
@@ -69,9 +72,9 @@ describe("model-message-converter", () => {
           },
         ],
       };
-      const result = convertToModelMessage(msg);
+      const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result.role, "assistant");
-      const content = (result as ModelRuntimeAssistantMessage).content;
+      const content = (result as TextGenerationRuntimeAssistantMessage).content;
       assertEquals(content.length, 2);
       assertEquals(content[0], { type: "text", text: "Let me search." });
       assertEquals(content[1], {
@@ -88,9 +91,9 @@ describe("model-message-converter", () => {
         role: "assistant",
         parts: [],
       };
-      const result = convertToModelMessage(msg);
+      const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result.role, "assistant");
-      const content = (result as ModelRuntimeAssistantMessage).content;
+      const content = (result as TextGenerationRuntimeAssistantMessage).content;
       assertEquals(content.length, 1);
       assertEquals(content[0], { type: "text", text: "" });
     });
@@ -108,9 +111,9 @@ describe("model-message-converter", () => {
           },
         ],
       };
-      const result = convertToModelMessage(msg);
+      const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result.role, "tool");
-      const content = (result as ModelRuntimeToolMessage).content;
+      const content = (result as TextGenerationRuntimeToolMessage).content;
       assertEquals(content.length, 1);
       assertEquals(content[0], {
         type: "tool-result",
@@ -132,8 +135,8 @@ describe("model-message-converter", () => {
           } as Message["parts"][0],
         ],
       };
-      const result = convertToModelMessage(msg);
-      const content = (result as ModelRuntimeToolMessage).content;
+      const result = convertToTextGenerationRuntimeMessage(msg);
+      const content = (result as TextGenerationRuntimeToolMessage).content;
       assertEquals(content.length, 1);
       const firstPart = content[0];
       assertEquals(firstPart?.toolName, "unknown");
@@ -145,7 +148,7 @@ describe("model-message-converter", () => {
         role: "custom" as Message["role"],
         parts: [{ type: "text", text: "fallback" }],
       } as Message;
-      const result = convertToModelMessage(msg);
+      const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result.role, "user");
       assertEquals(result.content, "fallback");
     });
@@ -163,8 +166,8 @@ describe("model-message-converter", () => {
           },
         ],
       };
-      const result = convertToModelMessage(msg);
-      const content = (result as ModelRuntimeAssistantMessage).content;
+      const result = convertToTextGenerationRuntimeMessage(msg);
+      const content = (result as TextGenerationRuntimeAssistantMessage).content;
       const firstPart = content[0];
       assertEquals(content.length, 1);
       assertEquals(firstPart?.type, "tool-call");
@@ -188,28 +191,28 @@ describe("model-message-converter", () => {
           } as Message["parts"][0],
         ],
       };
-      const result = convertToModelMessage(msg);
-      const content = (result as ModelRuntimeAssistantMessage).content;
+      const result = convertToTextGenerationRuntimeMessage(msg);
+      const content = (result as TextGenerationRuntimeAssistantMessage).content;
       assertEquals(content.length, 1);
       const firstPart = content[0];
       assertEquals(firstPart?.type, "text");
     });
   });
 
-  describe("convertToModelMessages", () => {
+  describe("convertToTextGenerationRuntimeMessages", () => {
     it("converts an array of messages", () => {
       const messages: Message[] = [
         { id: "u1", role: "user", parts: [{ type: "text", text: "hi" }] },
         { id: "a1", role: "assistant", parts: [{ type: "text", text: "hello" }] },
       ];
-      const result = convertToModelMessages(messages);
+      const result = convertToTextGenerationRuntimeMessages(messages);
       assertEquals(result.length, 2);
       assertEquals(result[0]?.role, "user");
       assertEquals(result[1]?.role, "assistant");
     });
 
     it("returns empty array for empty input", () => {
-      assertEquals(convertToModelMessages([]), []);
+      assertEquals(convertToTextGenerationRuntimeMessages([]), []);
     });
 
     it("splits multiple tool results into one provider message per tool call", () => {
@@ -232,7 +235,7 @@ describe("model-message-converter", () => {
         ],
       }];
 
-      const result = convertToModelMessages(messages);
+      const result = convertToTextGenerationRuntimeMessages(messages);
 
       assertEquals(result.length, 2);
       assertEquals(result[0], {
@@ -279,7 +282,7 @@ describe("model-message-converter", () => {
         },
       ];
 
-      const result = convertToModelMessages(messages);
+      const result = convertToTextGenerationRuntimeMessages(messages);
 
       assertEquals(result.length, 1);
       assertEquals(result[0], {
