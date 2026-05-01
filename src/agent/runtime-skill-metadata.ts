@@ -49,6 +49,31 @@ export type RuntimeSkillDefinition = {
   references?: string[];
 };
 
+export type RuntimeLoadedSkillResponseMessages = {
+  allowedToolsNote: string;
+  noCurrentRunToolsNote: string;
+  unavailableCurrentRunToolsDelegationNote: string;
+  overrideNote: string;
+  referenceNote: string;
+};
+
+export type RuntimeLoadedSkillResponse = {
+  skillId: string;
+  instructions: string;
+  nextStep: string;
+  allowedTools?: string[];
+  note?: string;
+  delegationTools?: string[];
+  unavailableCurrentRunTools?: string[];
+  delegationNote?: string;
+  model?: string;
+  thinking?: false | number;
+  maxSteps?: number;
+  overrideNote?: string;
+  references?: string[];
+  referenceNote?: string;
+};
+
 export type RuntimeSkillMetadataLogger = {
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
@@ -155,4 +180,64 @@ export function normalizeRuntimeSkillReferencePath(path: string): string | null 
   }
 
   return segments.join("/");
+}
+
+export function buildRuntimeLoadedSkillResponse(input: {
+  skillId: string;
+  instructions: string;
+  nextStep: string;
+  messages: RuntimeLoadedSkillResponseMessages;
+  references?: readonly string[];
+  availableToolNames?: readonly string[];
+  logger?: RuntimeSkillMetadataLogger;
+}): RuntimeLoadedSkillResponse {
+  const metadata = parseRuntimeSkillMetadata(input.instructions, { logger: input.logger });
+  const declaredAllowedTools = metadata?.allowedTools ?? [];
+  const availableToolNameSet = input.availableToolNames && input.availableToolNames.length > 0
+    ? new Set(input.availableToolNames)
+    : null;
+  const currentRunAllowedTools = availableToolNameSet
+    ? declaredAllowedTools.filter((toolName) => availableToolNameSet.has(toolName))
+    : declaredAllowedTools;
+  const unavailableCurrentRunTools = availableToolNameSet && declaredAllowedTools.length > 0
+    ? declaredAllowedTools.filter((toolName) => !availableToolNameSet.has(toolName))
+    : [];
+  const hasOverrides = metadata?.model !== undefined || metadata?.thinking !== undefined ||
+    metadata?.maxSteps !== undefined;
+  const hasDeclaredAllowedTools = declaredAllowedTools.length > 0;
+
+  return {
+    skillId: input.skillId,
+    instructions: input.instructions,
+    nextStep: input.nextStep,
+    ...(hasDeclaredAllowedTools
+      ? {
+        allowedTools: currentRunAllowedTools,
+        note: currentRunAllowedTools.length > 0
+          ? input.messages.allowedToolsNote
+          : input.messages.noCurrentRunToolsNote,
+      }
+      : {}),
+    ...(hasDeclaredAllowedTools ? { delegationTools: declaredAllowedTools } : {}),
+    ...(unavailableCurrentRunTools.length > 0
+      ? {
+        unavailableCurrentRunTools,
+        delegationNote: input.messages.unavailableCurrentRunToolsDelegationNote,
+      }
+      : {}),
+    ...(metadata?.model ? { model: metadata.model } : {}),
+    ...(metadata?.thinking !== undefined ? { thinking: metadata.thinking } : {}),
+    ...(metadata?.maxSteps !== undefined ? { maxSteps: metadata.maxSteps } : {}),
+    ...(hasOverrides
+      ? {
+        overrideNote: input.messages.overrideNote,
+      }
+      : {}),
+    ...(input.references && input.references.length > 0
+      ? {
+        references: [...input.references],
+        referenceNote: input.messages.referenceNote,
+      }
+      : {}),
+  };
 }
