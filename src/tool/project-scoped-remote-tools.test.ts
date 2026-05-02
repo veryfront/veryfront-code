@@ -198,6 +198,45 @@ Deno.test("createProjectScopedRemoteToolCatalog filters, caches, and hydrates pr
   assertEquals(listContexts, [{ projectId: "project-1" }]);
 });
 
+Deno.test("createProjectScopedRemoteToolCatalog resolves dynamic default project ids", async () => {
+  const listContexts: (ToolExecutionContext | undefined)[] = [];
+  let defaultProjectId: string | null = null;
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools(context) {
+      listContexts.push(context);
+      return [
+        toolDefinition({ name: "list_projects" }),
+        toolDefinition({ name: "list_files", required: ["project_reference"] }),
+      ];
+    },
+    async executeTool() {
+      return { ok: true };
+    },
+  };
+  const catalog = createProjectScopedRemoteToolCatalog({
+    source,
+    defaultProjectId: () => defaultProjectId,
+  });
+
+  assertEquals((await catalog.listTools()).map((tool) => tool.name), ["list_projects"]);
+  defaultProjectId = "project-2";
+
+  const prepared = await catalog.prepareExecution({
+    toolName: "list_files",
+    toolInput: { pattern: "src" },
+    context: {},
+  });
+
+  assertEquals(prepared.activeProjectId, "project-2");
+  assertEquals(prepared.toolInput, {
+    pattern: "src",
+    project_reference: "project-2",
+  });
+  assertEquals(prepared.executeContext, { projectId: "project-2" });
+  assertEquals(listContexts, [undefined, { projectId: "project-2" }]);
+});
+
 Deno.test("createProjectScopedRemoteToolCatalog rejects disallowed execution", async () => {
   const source: RemoteToolSource = {
     id: "api",
