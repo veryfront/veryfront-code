@@ -97,6 +97,7 @@ export type {
   ListProjectScopedRemoteToolNameOptions,
   ProjectScopedRemoteToolCatalog,
   ProjectScopedRemoteToolCatalogOptions,
+  ProjectScopedRemoteToolDefaultProjectId,
   ProjectScopedRemoteToolDefinitions,
   ProjectScopedRemoteToolExecution,
   ProjectScopedRemoteToolExecutionInput,

@@ -4,9 +4,15 @@ export type ProjectScopedRemoteToolOptions = {
   projectNavigationToolNames?: readonly string[];
 };
 
+export type ProjectScopedRemoteToolDefaultProjectId =
+  | string
+  | null
+  | undefined
+  | (() => string | null | undefined);
+
 export type ProjectScopedRemoteToolCatalogOptions = {
   source: RemoteToolSource;
-  defaultProjectId?: string | null;
+  defaultProjectId?: ProjectScopedRemoteToolDefaultProjectId;
   allowedToolNames?: ReadonlySet<string> | null;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
 };
@@ -144,6 +150,15 @@ export function resolveProjectScopedRemoteToolProjectId(
   return defaultProjectId || null;
 }
 
+function resolveDefaultProjectId(
+  defaultProjectId: ProjectScopedRemoteToolDefaultProjectId,
+): string | null {
+  const resolvedProjectId = typeof defaultProjectId === "function"
+    ? defaultProjectId()
+    : defaultProjectId;
+  return resolvedProjectId || null;
+}
+
 function withActiveProjectContext(
   context: ToolExecutionContext | undefined,
   activeProjectId: string | null,
@@ -173,7 +188,7 @@ export function createProjectScopedRemoteToolCatalog(
   ): Promise<ProjectScopedRemoteToolDefinitions> {
     const activeProjectId = resolveProjectScopedRemoteToolProjectId(
       context,
-      input.defaultProjectId,
+      resolveDefaultProjectId(input.defaultProjectId),
     );
 
     if (cachedToolDefinitions && cachedProjectId === activeProjectId) {
