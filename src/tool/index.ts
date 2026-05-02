@@ -85,11 +85,23 @@ export type {
   TraceHostToolsOptions,
 } from "./tracing.ts";
 export {
+  createProjectScopedRemoteToolCatalog,
   filterProjectScopedRemoteToolDefinitions,
   hydrateProjectScopedRemoteToolInput,
   isProjectNavigationRemoteTool,
+  isRemoteToolNameAllowed,
+  listProjectScopedRemoteToolNames,
+  resolveProjectScopedRemoteToolProjectId,
 } from "./project-scoped-remote-tools.ts";
-export type { ProjectScopedRemoteToolOptions } from "./project-scoped-remote-tools.ts";
+export type {
+  ListProjectScopedRemoteToolNameOptions,
+  ProjectScopedRemoteToolCatalog,
+  ProjectScopedRemoteToolCatalogOptions,
+  ProjectScopedRemoteToolDefinitions,
+  ProjectScopedRemoteToolExecution,
+  ProjectScopedRemoteToolExecutionInput,
+  ProjectScopedRemoteToolOptions,
+} from "./project-scoped-remote-tools.ts";
 
 export { toolRegistry } from "./registry.ts";
 
