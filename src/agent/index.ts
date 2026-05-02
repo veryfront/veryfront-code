@@ -170,6 +170,16 @@ export {
   createAgUiRuntimeHandler,
 } from "./ag-ui-runtime-handler.ts";
 export {
+  type AgUiForwardedConfigOptions,
+  createAgUiRuntimeContextMap,
+  deriveAgUiForwardedConfig,
+  parseAgUiContextBoolean,
+  parseAgUiContextJsonValue,
+  parseAgUiContextNullableString,
+  parseAgUiContextSchema,
+  parseAgUiContextString,
+} from "./ag-ui-forwarded-context.ts";
+export {
   type AgUiRuntimeContextItem,
   AgUiRuntimeContextItemSchema,
   type AgUiRuntimeInjectedTool,
