@@ -728,6 +728,7 @@ export {
   type AgUiDetachedStartHandlerOptions,
   type AgUiDetachedStartRequest,
   AgUiDetachedStartRequestSchema,
+  buildDetachedAgUiStartRequest,
   createAgUiDetachedStartHandler,
   executeAgUiDetachedStart,
   type ExecuteAgUiDetachedStartInput,
