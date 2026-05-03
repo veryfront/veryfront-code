@@ -715,6 +715,7 @@ export {
 } from "../chat/hosted-ui-chunk-mapping.ts";
 export {
   expandAllowedRemoteToolNames,
+  getForkRuntimeAllowedToolNames,
   getProviderNativeToolNames,
   type ProviderNativeToolInventoryOptions,
 } from "./provider-native-tool-inventory.ts";

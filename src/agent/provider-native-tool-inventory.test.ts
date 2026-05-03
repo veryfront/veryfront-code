@@ -1,6 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { expandAllowedRemoteToolNames, getProviderNativeToolNames } from "./index.ts";
+import type { HostToolSet } from "#veryfront/tool";
+import {
+  expandAllowedRemoteToolNames,
+  getForkRuntimeAllowedToolNames,
+  getProviderNativeToolNames,
+} from "./index.ts";
 
 describe("provider-native-tool-inventory", () => {
   it("returns anthropic provider-native tool names for an explicit provider", () => {
@@ -47,6 +52,22 @@ describe("provider-native-tool-inventory", () => {
         toolNames: ["create_file"],
       }),
       ["create_file"],
+    );
+  });
+
+  it("builds fork runtime allowed tool names from host tool definitions", () => {
+    const forkTools: HostToolSet = {
+      create_file: { description: "Create a file" },
+      web_search: { description: "Search the web" },
+    };
+
+    assertEquals(
+      getForkRuntimeAllowedToolNames({
+        provider: "anthropic",
+        forkModel: "claude-sonnet-4-6",
+        forkTools,
+      }),
+      ["create_file", "web_fetch", "web_search"],
     );
   });
 });
