@@ -6,6 +6,7 @@ import {
   createConversationRecord,
   ensureConversationProjectLink,
   fetchConversationRecord,
+  persistConversationUserMessage,
 } from "./conversation-bootstrap.ts";
 
 const API_URL = "https://api.example.com";
@@ -13,6 +14,8 @@ const AUTH_TOKEN = "token-123";
 const CONVERSATION_ID = "11111111-1111-4111-a111-111111111111";
 const CHILD_CONVERSATION_ID = "22222222-2222-4222-a222-222222222222";
 const MESSAGE_ID = "33333333-3333-4333-a333-333333333333";
+const USER_MESSAGE_ID = "33333333-3333-4333-a333-333333333334";
+const PARENT_MESSAGE_ID = "33333333-3333-4333-a333-333333333335";
 const PROJECT_ID = "44444444-4444-4444-8444-444444444444";
 const BRANCH_ID = "55555555-5555-4555-8555-555555555555";
 const originalFetch = globalThis.fetch;
@@ -117,6 +120,62 @@ describe("agent/conversation-bootstrap", () => {
     });
     assertEquals(conversation, { id: CHILD_CONVERSATION_ID, projectId: PROJECT_ID });
     assertEquals(message, { id: MESSAGE_ID });
+  });
+
+  it("persists a UI user message through the conversation messages endpoint", async () => {
+    let capturedUrl = "";
+    let capturedInit: RequestInit | undefined;
+    stubFetchWithRecorder((input, init) => {
+      capturedUrl = String(input);
+      capturedInit = init;
+      return jsonResponse({ id: MESSAGE_ID }, 201);
+    });
+
+    const result = await persistConversationUserMessage({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      parentMessageId: PARENT_MESSAGE_ID,
+      message: {
+        id: USER_MESSAGE_ID,
+        role: "user",
+        parts: [{ type: "text", text: "Hello" }],
+        metadata: { source: "test" },
+      },
+    });
+
+    assertEquals(result, { id: MESSAGE_ID });
+    assertEquals(capturedUrl, `${API_URL}/conversations/${CONVERSATION_ID}/messages`);
+    assertEquals(capturedInit?.method, "POST");
+    assertEquals(capturedInit?.headers, {
+      Authorization: `Bearer ${AUTH_TOKEN}`,
+      "Content-Type": "application/json",
+    });
+    assertEquals(JSON.parse(String(capturedInit?.body)), {
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }],
+      idempotency_key: USER_MESSAGE_ID,
+      parent_id: PARENT_MESSAGE_ID,
+      metadata: { source: "test" },
+    });
+  });
+
+  it("rejects UI user messages without persistable parts", async () => {
+    await assertRejects(
+      () =>
+        persistConversationUserMessage({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          message: {
+            id: USER_MESSAGE_ID,
+            role: "user",
+            parts: [],
+          },
+        }),
+      Error,
+      "CONVERSATION_USER_MESSAGE_REQUIRES_PERSISTABLE_PARTS",
+    );
   });
 
   it("bootstraps a conversation-backed agent run", async () => {

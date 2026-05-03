@@ -347,6 +347,7 @@ export {
 export {
   bootstrapConversationAgentRun,
   type BootstrapConversationAgentRunResult,
+  type ConversationControlPlaneResponseError,
   type ConversationMessageRecord,
   ConversationMessageRecordSchema,
   type ConversationRecord,
@@ -355,6 +356,8 @@ export {
   createConversationRecord,
   ensureConversationProjectLink,
   fetchConversationRecord,
+  persistConversationUserMessage,
+  type PersistConversationUserMessageFailure,
 } from "./conversation-bootstrap.ts";
 export {
   bootstrapHostedChildRun,
