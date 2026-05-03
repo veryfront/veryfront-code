@@ -766,6 +766,10 @@ export {
   createAgUiHandler,
 } from "./ag-ui-handler.ts";
 export {
+  createHostedFormInputTool,
+  type HostedFormInputToolContext,
+} from "./hosted-form-input-tool.ts";
+export {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
   createInputRequestRequestSchema,
