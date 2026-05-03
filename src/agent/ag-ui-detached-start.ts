@@ -10,6 +10,7 @@ import {
   type RunResumeSessionManager,
 } from "./runtime/index.ts";
 import type { Agent } from "./types.ts";
+import type { ChatUiMessage, MessageMetadata } from "../chat/types.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const AG_UI_DETACHED_RUN_ID_SCHEMA = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
@@ -81,6 +82,76 @@ export const AgUiDetachedStartAcceptedSchema = z.object({
 
 export type AgUiDetachedStartRequest = z.infer<typeof AgUiDetachedStartRequestSchema>;
 export type AgUiDetachedStartAccepted = z.infer<typeof AgUiDetachedStartAcceptedSchema>;
+
+function toDetachedAgUiMessageMetadata(
+  metadata: MessageMetadata | undefined,
+): Record<string, unknown> | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const normalizedMetadata: Record<string, unknown> = {
+    ...(metadata.modelId ? { modelId: metadata.modelId } : {}),
+    ...(metadata.usage
+      ? {
+        usage: {
+          ...(metadata.usage.inputTokens !== undefined
+            ? { inputTokens: metadata.usage.inputTokens }
+            : {}),
+          ...(metadata.usage.outputTokens !== undefined
+            ? { outputTokens: metadata.usage.outputTokens }
+            : {}),
+          ...(metadata.usage.cachedInputTokens !== undefined
+            ? { cachedInputTokens: metadata.usage.cachedInputTokens }
+            : {}),
+        },
+      }
+      : {}),
+  };
+
+  return Object.keys(normalizedMetadata).length > 0 ? normalizedMetadata : undefined;
+}
+
+export function buildDetachedAgUiStartRequest(input: {
+  runId: string;
+  threadId: string;
+  messages: ChatUiMessage[];
+  model?: string;
+  forwardedProps?: Record<string, unknown>;
+  createThreadId?: () => string;
+}): AgUiDetachedStartRequest {
+  const effectiveThreadId = z.string().uuid().safeParse(input.threadId).success
+    ? input.threadId
+    : (input.createThreadId?.() ?? crypto.randomUUID());
+  const effectiveMessages: AgUiDetachedStartRequest["messages"] = input.messages.length > 0
+    ? input.messages.map((message) => {
+      const metadata = toDetachedAgUiMessageMetadata(message.metadata);
+
+      return {
+        id: message.id,
+        role: message.role,
+        parts: message.parts,
+        ...(metadata ? { metadata } : {}),
+      };
+    })
+    : [
+      {
+        id: `${input.runId}:placeholder`,
+        role: "user",
+        parts: [{ type: "text", text: "" }],
+      },
+    ];
+
+  return {
+    runId: input.runId,
+    threadId: effectiveThreadId,
+    messages: effectiveMessages,
+    tools: [],
+    context: [],
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
+  };
+}
 
 export interface ExecuteAgUiDetachedStartInput {
   request: AgUiDetachedStartRequest;
