@@ -766,6 +766,22 @@ export {
   createAgUiHandler,
 } from "./ag-ui-handler.ts";
 export {
+  buildInputRequestLifecycleDataEvent,
+  createInputRequest,
+  createInputRequestRequestSchema,
+  createInputRequestResponseSchema,
+  type FormInputToolInput,
+  formInputToolInputSchema,
+  getInputRequest,
+  getInputRequestResponseSchema,
+  inputRequestLifecycleDataEventSchema,
+  type InputRequestOutput,
+  inputRequestOutputSchema,
+  inputRequestRestSchema,
+  inputResponseRestSchema,
+  inputResponseValuesSchema,
+} from "./input-request-protocol.ts";
+export {
   type DurableHumanInputFlowResult,
   executeDurableHumanInputFlow,
   type ExecuteDurableHumanInputFlowOptions,
