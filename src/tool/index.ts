@@ -63,6 +63,7 @@ export type {
   SleepToolWait,
 } from "./sleep.ts";
 export { createRemoteMCPToolSource } from "./remote-mcp.ts";
+export { hasToolExecutionErrorMarker, isErroredToolExecutionResult } from "./result.ts";
 export type { RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
 export { createContext7ToolSource } from "./context7.ts";
 export type { Context7ToolSourceConfig } from "./context7.ts";
