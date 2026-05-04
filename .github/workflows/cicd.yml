@@ -72,6 +72,10 @@ jobs:
           warm-cache: "true"
       - name: Configure apt retries
         run: |
+          sudo sed -i \
+            -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
           {
             echo 'Acquire::ForceIPv4 "true";'
             echo 'Acquire::Retries "5";'
@@ -116,6 +120,10 @@ jobs:
           warm-cache: "true"
       - name: Configure apt retries
         run: |
+          sudo sed -i \
+            -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
           {
             echo 'Acquire::ForceIPv4 "true";'
             echo 'Acquire::Retries "5";'
