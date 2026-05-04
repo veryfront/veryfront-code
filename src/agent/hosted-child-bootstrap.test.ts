@@ -165,7 +165,7 @@ describe("agent/hosted-child-bootstrap", () => {
     });
   });
 
-  it("returns the queued child run status for external runtime providers", async () => {
+  it("returns the queued child run status for external agent implementations", async () => {
     const requests: { url: string; body: unknown }[] = [];
     stubFetchWithRecorder(async (input, init) => {
       requests.push({
@@ -216,7 +216,7 @@ describe("agent/hosted-child-bootstrap", () => {
       prompt: "Find the latest logs.",
       runId: "run_child_queued",
       agentId: "invoke-agent-child",
-      runtimeProviderId: "codex",
+      implementationKind: "codex",
       branchId: BRANCH_ID,
     });
 
@@ -231,7 +231,7 @@ describe("agent/hosted-child-bootstrap", () => {
       request: {
         mode: "agent",
         agent_id: "invoke-agent-child",
-        runtime_provider_id: "codex",
+        implementation_kind: "codex",
         initial_status: "pending",
         source_target_kind: "preview_branch",
         runtime_target_kind: "preview_branch",
