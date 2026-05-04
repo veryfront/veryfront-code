@@ -111,6 +111,16 @@ export type {
 } from "./types.ts";
 
 export {
+  DEFAULT_PROJECT_STEERING_PATHS,
+  getProjectSteeringMutation,
+  isSuccessfulProjectSteeringMutationResult,
+  PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES,
+  type ProjectSteeringMutationInput,
+  type ProjectSteeringMutationResult,
+  type ProjectSteeringPaths,
+} from "./project-steering-mutation.ts";
+
+export {
   applyAgentProjectContextChange,
   getConfirmedProjectContextSwitchId,
   type MutableAgentProjectContext,
