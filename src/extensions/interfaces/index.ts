@@ -51,9 +51,12 @@ export type {
 
 // Content transformer
 export type {
+  CompilationMode,
+  CompilationTarget,
+  ContentCompileOptions,
+  ContentPlugin,
+  ContentRuntimeBundle,
   ContentTransformer,
-  ContentTransformOptions,
-  ContentTransformResult,
 } from "./content-transformer.ts";
 
 // Database client

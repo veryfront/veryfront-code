@@ -6,6 +6,7 @@ import { NodeAdapter, nodeAdapter } from "#veryfront/platform/adapters/runtime/n
 import { startProductionServer } from "../../../src/server/production-server.ts";
 import { getFreePort } from "../../_helpers/utils.ts";
 import { makeTempDir, mkdir, remove, writeTextFile } from "#veryfront/testing/deno-compat";
+import { registerExtMdx } from "../../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 
 // Note: Sanitizers disabled due to React 19 SSR MessagePort cleanup issue
 // See: https://github.com/facebook/react/issues/24669
@@ -197,6 +198,7 @@ describe(
               defaultProjectId: testProjectId,
             });
             await server.ready;
+            await registerExtMdx();
 
             try {
               const health = await fetch(`http://127.0.0.1:${port}/healthz`);
