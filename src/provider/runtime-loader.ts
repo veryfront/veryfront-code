@@ -1,4 +1,3 @@
-import type { ModelRuntime } from "./types.ts";
 import { isNumberArray } from "./runtime-loader/provider-embedding-responses.ts";
 import { mergeUsage, type RuntimeUsage } from "./runtime-loader/provider-usage.ts";
 import type { ProviderKind } from "./runtime-loader/provider-http.ts";
