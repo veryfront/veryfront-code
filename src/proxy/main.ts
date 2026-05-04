@@ -23,6 +23,8 @@
 import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./handler.ts";
 import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
+import { register } from "../extensions/contracts.ts";
+import { createAuthProvider } from "../../extensions/ext-jwt/src/index.ts";
 import {
   endSpan,
   extractContext,
@@ -35,6 +37,7 @@ import {
   withSpan,
 } from "./tracing.ts";
 import { proxyLogger, runWithProxyRequestContext } from "./logger.ts";
+import { getProxyFailureLogLevel } from "./log-noise.ts";
 import { RendererRouter } from "./renderer-router.ts";
 import { ServerResolver } from "./server-resolver.ts";
 import { parseProjectDomain } from "#veryfront/server/utils/domain-parser.ts";
@@ -108,6 +111,8 @@ const VERYFRONT_SERVER_RETRY_COUNT = parseInt(
 const VERYFRONT_SERVER_RETRY_DELAY_MS = parseInt(
   getEnv("VERYFRONT_SERVER_RETRY_DELAY_MS") || String(DEFAULT_SERVER_RETRY_DELAY_MS),
 );
+
+register("AuthProvider", createAuthProvider({}));
 
 // Initialize cache and proxy handler
 const cache = await createCacheFromEnv();
@@ -299,7 +304,7 @@ function forwardToServer(req: Request): Promise<Response> {
         async () => {
           if (ctx.error) {
             const ms = Math.round(performance.now() - startTime);
-            const logLevel = ctx.error.status < 500 ? "warn" : "error";
+            const logLevel = getProxyFailureLogLevel(ctx.error.status, req.method, url.pathname);
             proxyLogger[logLevel](`${ctx.error.status} ${req.method} ${url.pathname}`, { ms });
             endSpan(spanInfo?.span, ctx.error.status);
             return createProxyErrorResponse(ctx.error);
@@ -454,7 +459,8 @@ function forwardToServer(req: Request): Promise<Response> {
 
           // All retries exhausted or non-retryable error
           const ms = Math.round(performance.now() - startTime);
-          proxyLogger.error(`502 ${req.method} ${url.pathname}`, { ms }, lastError as Error);
+          const logLevel = getProxyFailureLogLevel(502, req.method, url.pathname);
+          proxyLogger[logLevel](`502 ${req.method} ${url.pathname}`, { ms }, lastError as Error);
           endSpan(spanInfo?.span, 502, lastError as Error);
           return jsonErrorResponse(502, {
             error: "Proxy Error",

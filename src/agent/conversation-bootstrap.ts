@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { isUuid, toConversationPartsFromUiMessage } from "../chat/conversation.ts";
+import type { ChatUiMessage } from "../chat/types.ts";
 import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
 
 const CONVERSATION_API_TIMEOUT_MS = 15_000;
@@ -22,6 +24,18 @@ export const ConversationMessageRecordSchema = z.object({
 export type ConversationRecord = z.infer<typeof ConversationRecordSchema>;
 export type ConversationMessageRecord = z.infer<typeof ConversationMessageRecordSchema>;
 
+export interface ConversationControlPlaneResponseError {
+  status: number;
+  statusText: string;
+  body: string;
+}
+
+export interface PersistConversationUserMessageFailure
+  extends ConversationControlPlaneResponseError {
+  conversationId: string;
+  messageId: string;
+}
+
 async function controlPlaneJson<T>(input: {
   authToken: string;
   url: string;
@@ -29,6 +43,7 @@ async function controlPlaneJson<T>(input: {
   body?: unknown;
   responseSchema: z.ZodSchema<T>;
   operation: string;
+  onResponseError?: (error: ConversationControlPlaneResponseError) => void;
 }): Promise<T> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), CONVERSATION_API_TIMEOUT_MS);
@@ -55,6 +70,11 @@ async function controlPlaneJson<T>(input: {
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
+    input.onResponseError?.({
+      status: response.status,
+      statusText: response.statusText,
+      body,
+    });
     throw new Error(
       `${input.operation} failed (${response.status}): ${body || response.statusText}`,
     );
@@ -129,6 +149,8 @@ export async function createConversationMessage(input: {
   apiUrl: string;
   conversationId: string;
   body: unknown;
+  operation?: string;
+  onResponseError?: (error: ConversationControlPlaneResponseError) => void;
 }): Promise<ConversationMessageRecord> {
   return controlPlaneJson({
     authToken: input.authToken,
@@ -136,7 +158,44 @@ export async function createConversationMessage(input: {
     method: "POST",
     body: input.body,
     responseSchema: ConversationMessageRecordSchema,
-    operation: "Create conversation message",
+    operation: input.operation ?? "Create conversation message",
+    onResponseError: input.onResponseError,
+  });
+}
+
+export async function persistConversationUserMessage(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  message: ChatUiMessage;
+  parentMessageId?: string;
+  operation?: string;
+  onFailure?: (failure: PersistConversationUserMessageFailure) => void;
+}): Promise<ConversationMessageRecord> {
+  const parts = toConversationPartsFromUiMessage(input.message);
+  if (parts.length === 0) {
+    throw new Error("CONVERSATION_USER_MESSAGE_REQUIRES_PERSISTABLE_PARTS");
+  }
+
+  return createConversationMessage({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: input.conversationId,
+    operation: input.operation ?? "Persist conversation user message",
+    body: {
+      role: "user",
+      parts,
+      idempotency_key: input.message.id,
+      ...(isUuid(input.parentMessageId) ? { parent_id: input.parentMessageId } : {}),
+      ...(input.message.metadata ? { metadata: input.message.metadata } : {}),
+    },
+    onResponseError: (error) => {
+      input.onFailure?.({
+        conversationId: input.conversationId,
+        messageId: input.message.id,
+        ...error,
+      });
+    },
   });
 }
 
@@ -155,6 +214,7 @@ export async function bootstrapConversationAgentRun(input: {
   handoffMessageBody: unknown;
   runId?: string;
   agentId: string;
+  implementationKind?: string | null;
   projectId?: string | null;
   branchId?: string | null;
 }): Promise<BootstrapConversationAgentRunResult> {
@@ -185,6 +245,7 @@ export async function bootstrapConversationAgentRun(input: {
     conversationId: conversation.id,
     runId: input.runId,
     agentId: input.agentId,
+    implementationKind: input.implementationKind,
     projectId: effectiveProjectId,
     branchId: input.branchId,
   });

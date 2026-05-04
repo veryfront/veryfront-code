@@ -1,19 +1,38 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  hostedChildTerminalErrorCodes,
   HostedChildTerminalStateError,
+  isHostedChildTerminalErrorCode,
   monitorHostedChildRunStatus,
   resolveHostedChildTerminalErrorCode,
 } from "./hosted-child-status.ts";
 
 describe("agent/hosted-child-status", () => {
   it("maps terminal statuses to durable child error codes", () => {
-    assertEquals(resolveHostedChildTerminalErrorCode("cancelled"), "DURABLE_CHILD_CANCELLED");
-    assertEquals(resolveHostedChildTerminalErrorCode("failed"), "DURABLE_CHILD_FAILED");
+    assertEquals(
+      resolveHostedChildTerminalErrorCode("cancelled"),
+      hostedChildTerminalErrorCodes.cancelled,
+    );
+    assertEquals(
+      resolveHostedChildTerminalErrorCode("failed"),
+      hostedChildTerminalErrorCodes.failed,
+    );
     assertEquals(
       resolveHostedChildTerminalErrorCode("completed"),
-      "DURABLE_CHILD_COMPLETED_EXTERNALLY",
+      hostedChildTerminalErrorCodes.completedExternally,
     );
+  });
+
+  it("recognizes hosted child terminal error codes", () => {
+    assertEquals(isHostedChildTerminalErrorCode(hostedChildTerminalErrorCodes.cancelled), true);
+    assertEquals(isHostedChildTerminalErrorCode(hostedChildTerminalErrorCodes.failed), true);
+    assertEquals(
+      isHostedChildTerminalErrorCode(hostedChildTerminalErrorCodes.completedExternally),
+      true,
+    );
+    assertEquals(isHostedChildTerminalErrorCode("OTHER"), false);
+    assertEquals(isHostedChildTerminalErrorCode(null), false);
   });
 
   it("stores status and identifiers on HostedChildTerminalStateError", () => {

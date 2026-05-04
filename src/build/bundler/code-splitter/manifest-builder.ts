@@ -3,7 +3,7 @@
  * @module code-splitter/manifest-builder
  */
 
-import type { Metafile } from "esbuild";
+import type { Metafile } from "veryfront/extensions/bundler";
 import { join, relative } from "#veryfront/compat/path/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import type { ChunkInfo, ChunkManifest, MetafileOutput } from "./types.ts";

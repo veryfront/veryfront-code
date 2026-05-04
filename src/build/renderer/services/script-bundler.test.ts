@@ -1,7 +1,7 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { bundleScript } from "./script-bundler.ts";
-import * as esbuild from "esbuild";
+import * as esbuild from "veryfront/extensions/bundler";
 import type { BundleResult } from "../types/bundler-types.ts";
 
 function createBundleResult(): BundleResult {

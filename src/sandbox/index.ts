@@ -32,4 +32,28 @@ export {
   type SandboxOptions,
   type SandboxSession,
 } from "./sandbox.ts";
-export { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
+export {
+  LazySandbox,
+  type LazySandboxOptions,
+  resolveDefaultSandboxRuntimeEndpoint,
+} from "./lazy-sandbox.ts";
+export {
+  type BashToolSandboxLike,
+  type CreateSandboxBashTool,
+  createSandboxShellTools,
+  normalizeBashToolSet,
+  renameSandboxFileTools,
+  type SandboxShellToolDefinition,
+  type SandboxShellToolSet,
+} from "./shell-tools.ts";
+export {
+  createHostedSandboxClient,
+  createHostedSandboxTools,
+  createProjectScopedExecOptions,
+  type HostedSandboxClient,
+  type HostedSandboxClientOptions,
+  type HostedSandboxJobClient,
+  type HostedSandboxToolsOptions,
+  type HostedSandboxToolsResult,
+  unwrapSandboxWorkingDirectoryCommand,
+} from "./hosted-tools.ts";

@@ -10,6 +10,7 @@
  * 3. Selective invalidation clears specific paths and their stat/dir caches
  */
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {

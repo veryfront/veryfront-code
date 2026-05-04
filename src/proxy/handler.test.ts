@@ -156,6 +156,32 @@ function createHandler(port: number, apiBasePath = "") {
   });
 }
 
+function createRecordingLogger() {
+  const entries: Array<{
+    level: "debug" | "info" | "warn" | "error";
+    message: string;
+    extra?: Record<string, unknown>;
+  }> = [];
+
+  return {
+    entries,
+    logger: {
+      debug(message: string, extra?: Record<string, unknown>) {
+        entries.push({ level: "debug", message, extra });
+      },
+      info(message: string, extra?: Record<string, unknown>) {
+        entries.push({ level: "info", message, extra });
+      },
+      warn(message: string, extra?: Record<string, unknown>) {
+        entries.push({ level: "warn", message, extra });
+      },
+      error(message: string, _error?: Error, extra?: Record<string, unknown>) {
+        entries.push({ level: "error", message, extra });
+      },
+    },
+  };
+}
+
 /** Per-test JWKS store so tests can register RS256 tokens by URL. */
 const jwksVerifiers = new Map<string, Map<string, TokenPayload>>();
 
@@ -328,6 +354,105 @@ describe("Proxy Handler", () => {
         assertEquals(
           ctx.error?.message,
           "No project configured for domain: ai-chatbot.veryfront.com",
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("logs expected custom domain token-mint misses below error level", async () => {
+      const { entries, logger } = createRecordingLogger();
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response('{"error":"Project not found for domain"}', {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-client",
+            previewApiClientSecret: "test-secret",
+          },
+          logger,
+        });
+
+        const req = new Request("http://unknown-domain.com/page", {
+          headers: { host: "unknown-domain.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(
+          entries.filter((entry) => entry.level === "error").map((entry) => entry.message),
+          [],
+        );
+        assertEquals(
+          entries.some((entry) =>
+            entry.level === "info" &&
+            entry.message === "Custom domain project not found during token fetch"
+          ),
+          true,
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
+    it("logs custom domains missing after lookup below error level", async () => {
+      const { entries, logger } = createRecordingLogger();
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+        if (pathname.startsWith("/projects/")) return createNotFoundResponse();
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createProxyHandler({
+          config: {
+            apiBaseUrl: `http://127.0.0.1:${port}`,
+            apiClientId: "test-client",
+            apiClientSecret: "test-secret",
+            previewApiClientId: "test-client",
+            previewApiClientSecret: "test-secret",
+          },
+          logger,
+        });
+
+        const req = new Request("http://unknown-domain.com/page", {
+          headers: { host: "unknown-domain.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(
+          entries.filter((entry) => entry.level === "error").map((entry) => entry.message),
+          [],
+        );
+        assertEquals(
+          entries.some((entry) =>
+            entry.level === "info" && entry.message === "Custom domain not found"
+          ),
+          true,
         );
 
         await handler.close();

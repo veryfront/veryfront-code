@@ -12,36 +12,42 @@ const PROJECTS = getProjectsToTest();
 
 for (const subdomain of PROJECTS) {
   test.describe(`${subdomain} SSR without JavaScript`, () => {
-    test("root page renders meaningful SSR HTML with JavaScript disabled", async ({ browser }, testInfo) => {
-      const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
-      const context = await browser.newContext({ javaScriptEnabled: false });
-      const page = await context.newPage();
+    test(
+      "root page renders meaningful SSR HTML with JavaScript disabled",
+      async ({ browser }, testInfo) => {
+        const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
+        const context = await browser.newContext({ javaScriptEnabled: false });
+        const page = await context.newPage();
 
-      try {
-        const response = await page.goto(`${runtime.getUrl(subdomain)}/`);
+        try {
+          const response = await page.goto(`${runtime.getUrl(subdomain)}/`);
 
-        expect(response?.ok()).toBeTruthy();
-        await expect(page.locator("#project-name")).toHaveText(subdomain);
-        await expect(page.locator("#counter")).toHaveText("Count: 0");
-        await expect(page.locator("#about-link")).toHaveAttribute("href", "/about");
-      } finally {
-        await context.close();
-      }
-    });
+          expect(response?.ok()).toBeTruthy();
+          await expect(page.locator("#project-name")).toHaveText(subdomain);
+          await expect(page.locator("#counter")).toHaveText("Count: 0");
+          await expect(page.locator("#about-link")).toHaveAttribute("href", "/about");
+        } finally {
+          await context.close();
+        }
+      },
+    );
 
-    test("secondary route renders meaningful SSR HTML with JavaScript disabled", async ({ browser }, testInfo) => {
-      const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
-      const context = await browser.newContext({ javaScriptEnabled: false });
-      const page = await context.newPage();
+    test(
+      "secondary route renders meaningful SSR HTML with JavaScript disabled",
+      async ({ browser }, testInfo) => {
+        const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
+        const context = await browser.newContext({ javaScriptEnabled: false });
+        const page = await context.newPage();
 
-      try {
-        const response = await page.goto(`${runtime.getUrl(subdomain)}/about`);
+        try {
+          const response = await page.goto(`${runtime.getUrl(subdomain)}/about`);
 
-        expect(response?.ok()).toBeTruthy();
-        await expect(page.locator("#about-page")).toHaveText(`About ${subdomain}`);
-      } finally {
-        await context.close();
-      }
-    });
+          expect(response?.ok()).toBeTruthy();
+          await expect(page.locator("#about-page")).toHaveText(`About ${subdomain}`);
+        } finally {
+          await context.close();
+        }
+      },
+    );
   });
 }

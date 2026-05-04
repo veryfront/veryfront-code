@@ -3,7 +3,7 @@ import {
   getReactImportMap,
   REACT_DEFAULT_VERSION,
 } from "#veryfront/utils";
-import type { OnResolveArgs, Plugin, PluginBuild } from "esbuild";
+import type { OnResolveArgs, Plugin, PluginBuild } from "veryfront/extensions/bundler";
 import { join } from "#veryfront/compat/path/index.ts";
 
 export function createSplitterPlugin(projectDir: string): Plugin {

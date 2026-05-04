@@ -8,15 +8,31 @@
 
 // Bundler
 export type {
+  BuildContext,
+  BuildFailure,
   BundleOptions,
   BundleOutput,
   Bundler,
   BundleResult,
+  BundlerMessage,
+  BundlerMessageLocation,
   BundlerPlugin,
   BundlerPluginBuild,
+  Loader,
+  Metafile,
+  MetafileInput,
+  MetafileOutput,
+  OnLoadArgs,
+  OnLoadResult,
+  OnResolveArgs,
+  OnResolveResult,
+  StdinOptions,
   TransformOptions,
   TransformResult,
 } from "./bundler.ts";
+
+// Module lexer
+export type { ImportSpecifier, ModuleLexer } from "./module-lexer.ts";
 
 // Cache store
 export type { CacheStore } from "./cache-store.ts";
@@ -35,9 +51,12 @@ export type {
 
 // Content transformer
 export type {
+  CompilationMode,
+  CompilationTarget,
+  ContentCompileOptions,
+  ContentPlugin,
+  ContentRuntimeBundle,
   ContentTransformer,
-  ContentTransformOptions,
-  ContentTransformResult,
 } from "./content-transformer.ts";
 
 // Database client
@@ -76,8 +95,12 @@ export type {
 
 // Schema validator
 export type {
+  InferSchema,
+  InferShape,
   Schema,
+  SchemaFactory,
   SchemaValidator,
+  SchemaValidatorCoerce,
   ValidationFailure,
   ValidationIssue,
   ValidationResult,

@@ -21,6 +21,7 @@
  *   Updated the SSR module loader to correctly resolve relative paths by
  *   normalizing the path segments before looking up the module.
  */
+import "../../_helpers/contract-init.ts";
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {

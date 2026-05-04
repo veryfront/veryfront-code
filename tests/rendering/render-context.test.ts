@@ -5,6 +5,7 @@
  * through cache key generation and context creation.
  */
 
+import "../_helpers/contract-init.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {

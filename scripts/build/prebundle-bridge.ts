@@ -20,7 +20,7 @@ const outputPath = join(bridgeDir, "bridge-bundle.generated.ts");
 
 console.log("[prebundle-bridge] Bundling studio bridge modules...");
 
-const { build } = await import("esbuild");
+const { build } = await import("npm:esbuild@0.27.4");
 const { outputFiles } = await build({
   bundle: true,
   write: false,

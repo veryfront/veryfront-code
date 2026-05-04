@@ -5,7 +5,7 @@
  * boundary. These cover only the shapes the framework consumes today.
  */
 
-import type { ModelRuntimeMessage } from "./model-runtime-types.ts";
+import type { TextGenerationRuntimeMessage } from "./text-generation-runtime-message-types.ts";
 
 export type RuntimeToolSet = Record<string, unknown>;
 
@@ -47,7 +47,7 @@ export interface RuntimeRepairToolCall {
 export interface RuntimeToolCallRepairContext {
   error: unknown;
   inputSchema: (...args: unknown[]) => unknown;
-  messages: ModelRuntimeMessage[];
+  messages: TextGenerationRuntimeMessage[];
   system?: string;
   toolCall: RuntimeRepairToolCall;
   tools: RuntimeToolSet;

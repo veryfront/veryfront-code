@@ -9,6 +9,7 @@
  * @see plans/architecture-audit/001.1-layout-bug-critical.md
  */
 
+import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {

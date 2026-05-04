@@ -29,7 +29,7 @@ describe(
   },
   () => {
     afterEach(async () => {
-      const esbuild = await import("esbuild");
+      const esbuild = await import("veryfront/extensions/bundler");
       esbuild.stop();
     });
 

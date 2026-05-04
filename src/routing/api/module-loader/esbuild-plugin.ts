@@ -6,7 +6,7 @@ import {
   type LockfileManager,
   serverLogger,
 } from "#veryfront/utils";
-import type { Message, Plugin } from "esbuild";
+import type { Message, Plugin } from "veryfront/extensions/bundler";
 
 const logger = serverLogger.component("api");
 

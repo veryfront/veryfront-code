@@ -7,6 +7,7 @@
  * The key invariant: pending invalidations are shared across ALL adapter instances.
  */
 
+import "../_helpers/contract-init.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import {

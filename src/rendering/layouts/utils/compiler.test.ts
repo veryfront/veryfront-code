@@ -1,3 +1,4 @@
+import "../../../transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { compileMDXLayouts } from "./compiler.ts";

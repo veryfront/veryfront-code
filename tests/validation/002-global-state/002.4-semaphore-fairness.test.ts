@@ -9,6 +9,7 @@
  * @see plans/architecture-audit/002.4-semaphore-starvation.md
  */
 
+import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import {

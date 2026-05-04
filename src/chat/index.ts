@@ -257,3 +257,17 @@ export {
   type UseVoiceInputOptions,
   type UseVoiceInputResult,
 } from "#veryfront/agent/react/use-voice-input.ts";
+
+export {
+  ChatStreamIdleTimeoutError,
+  type ChatStreamWatchdogOptions,
+  type ChatStreamWatchdogPhase,
+  type ChatStreamWatchdogState,
+  createChatStreamWatchdog,
+  createChatStreamWatchdogState,
+  DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+  DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+  getNextChatStreamWatchdogState,
+  isHeartbeatOnlyMetadataChunk,
+  isLongRunningToolRunning,
+} from "./stream-watchdog.ts";

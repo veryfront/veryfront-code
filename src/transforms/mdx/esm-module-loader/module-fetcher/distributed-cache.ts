@@ -151,7 +151,7 @@ export async function readDistributedCache(
 
       const unresolvedDeps = await findMissingFileDependenciesInCode(moduleCode, log);
       if (unresolvedDeps.length > 0) {
-        log.warn(
+        log.debug(
           `${LOG_PREFIX_MDX_LOADER} Cached code has ${unresolvedDeps.length} missing file dependencies, invalidating`,
           { normalizedPath, missingDeps: unresolvedDeps.slice(0, 5) },
         );

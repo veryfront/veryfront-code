@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { DataFetcher } from "#veryfront/data/index.ts";

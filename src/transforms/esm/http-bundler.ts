@@ -6,7 +6,7 @@
  */
 
 import { rendererLogger as logger } from "#veryfront/utils";
-import type { Plugin } from "esbuild";
+import type { Plugin } from "veryfront/extensions/bundler";
 import { replaceSpecifiers } from "./lexer.ts";
 import { DEFAULT_REACT_VERSION, getReactUrls } from "./package-registry.ts";
 import {

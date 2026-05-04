@@ -9,6 +9,7 @@
  * @see plans/architecture-audit/014.1-node-env-missing.md
  */
 
+import "../../_helpers/contract-init.ts";
 import { assert } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 

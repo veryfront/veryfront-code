@@ -7,6 +7,7 @@
  *
  * No API keys required. LLM calls are not made.
  */
+import "../_helpers/contract-init.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createJobsClient } from "../../src/jobs/index.ts";

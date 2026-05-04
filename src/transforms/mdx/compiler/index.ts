@@ -7,13 +7,21 @@
 export { compileMDXRuntime } from "./mdx-compiler.ts";
 export { extractFrontmatter } from "./frontmatter-extractor.ts";
 export { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts";
-export type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./types.ts";
+export type {
+  CompilationMode,
+  CompilationTarget,
+  ContentRuntimeBundle,
+} from "#veryfront/extensions/interfaces/index.ts";
 export type { FrontmatterExtractionResult } from "./frontmatter-extractor.ts";
 export type { ImportRewriterConfig } from "./import-rewriter.ts";
 
 import { compileMDXRuntime } from "./mdx-compiler.ts";
 import { compileMarkdownRuntime } from "../../md/compiler/index.ts";
-import type { CompilationMode, CompilationTarget, MdxRuntimeBundle } from "./types.ts";
+import type {
+  CompilationMode,
+  CompilationTarget,
+  ContentRuntimeBundle,
+} from "#veryfront/extensions/interfaces/index.ts";
 
 function isMarkdownFile(filePath?: string): boolean {
   return filePath?.endsWith(".md") ?? false;
@@ -28,7 +36,7 @@ export function compileContent(
   target: CompilationTarget = "server",
   baseUrl?: string,
   studioEmbed?: boolean,
-): Promise<MdxRuntimeBundle> {
+): Promise<ContentRuntimeBundle> {
   if (isMarkdownFile(filePath)) {
     return compileMarkdownRuntime(
       mode,

@@ -138,7 +138,7 @@ async function loadMiddlewareFromVirtualFS(
   const source = typeof content === "string" ? content : new TextDecoder().decode(content);
   const loader = getEsbuildLoader(middlewarePath);
 
-  const { build } = await import("esbuild");
+  const { build } = await import("veryfront/extensions/bundler");
   const result = await build({
     bundle: false,
     write: false,

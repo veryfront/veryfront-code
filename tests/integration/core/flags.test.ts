@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { assertEquals } from "#veryfront/testing/assert";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { isRSCEnabled } from "#veryfront/utils/feature-flags.ts";

@@ -11,7 +11,10 @@
     "scopes": [
       "https://www.googleapis.com/auth/gmail.readonly",
       "https://www.googleapis.com/auth/gmail.send",
-      "https://www.googleapis.com/auth/gmail.modify"
+      "https://www.googleapis.com/auth/gmail.modify",
+      "https://www.googleapis.com/auth/gmail.labels",
+      "https://www.googleapis.com/auth/gmail.compose",
+      "https://mail.google.com/"
     ],
     "callbackPath": "/api/auth/gmail/callback",
     "requiredApis": [
@@ -47,9 +50,27 @@
         "method": "GET",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
         "params": {
-          "maxResults": { "type": "number", "in": "query", "description": "Maximum number of messages to return (1-500)", "default": 20 },
-          "q": { "type": "string", "in": "query", "description": "Gmail search query (e.g. is:unread, from:user@example.com)" },
-          "labelIds": { "type": "string[]", "in": "query", "description": "Only return messages with these label IDs (e.g. INBOX, UNREAD)" }
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of messages to return (1-500)",
+            "default": 20
+          },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Gmail search query (e.g. is:unread, from:user@example.com)"
+          },
+          "labelIds": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Only return messages with these label IDs (e.g. INBOX, UNREAD)"
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token for pagination"
+          }
         },
         "response": { "transform": "messages" }
       }
@@ -63,7 +84,12 @@
         "method": "POST",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
         "body": {
-          "raw": { "type": "string", "description": "Base64url-encoded RFC 2822 email message", "required": true }
+          "raw": {
+            "type": "string",
+            "description": "Base64url-encoded RFC 2822 email message",
+            "required": true
+          },
+          "threadId": { "type": "string", "description": "Thread ID for a reply" }
         }
       }
     },
@@ -76,8 +102,18 @@
         "method": "GET",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}",
         "params": {
-          "messageId": { "type": "string", "in": "path", "description": "Email message ID", "required": true },
-          "format": { "type": "string", "in": "query", "description": "Format: full, metadata, minimal, raw", "default": "full" }
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          },
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Format: full, metadata, minimal, raw",
+            "default": "full"
+          }
         }
       }
     },
@@ -90,10 +126,626 @@
         "method": "GET",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
         "params": {
-          "q": { "type": "string", "in": "query", "description": "Gmail search query", "required": true },
-          "maxResults": { "type": "number", "in": "query", "description": "Maximum results", "default": 10 }
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Gmail search query",
+            "required": true
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum results",
+            "default": 10
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token for pagination"
+          }
         },
         "response": { "transform": "messages" }
+      }
+    },
+    {
+      "id": "mark_email_read",
+      "name": "Mark Email Read",
+      "description": "Mark an email as read",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}/modify",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "removeLabelIds": {
+            "type": "array",
+            "description": "Label IDs to remove, use UNREAD",
+            "default": ["UNREAD"]
+          }
+        }
+      }
+    },
+    {
+      "id": "archive_email",
+      "name": "Archive Email",
+      "description": "Archive an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}/modify",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "removeLabelIds": {
+            "type": "array",
+            "description": "Label IDs to remove, use INBOX",
+            "default": ["INBOX"]
+          }
+        }
+      }
+    },
+    {
+      "id": "list_labels",
+      "name": "List Labels",
+      "description": "List Gmail labels",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        "response": { "transform": "labels" }
+      }
+    },
+    {
+      "id": "get_label",
+      "name": "Get Label",
+      "description": "Get a Gmail label",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels/{labelId}",
+        "params": {
+          "labelId": { "type": "string", "in": "path", "description": "Label ID", "required": true }
+        }
+      }
+    },
+    {
+      "id": "create_label",
+      "name": "Create Label",
+      "description": "Create a Gmail user label",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
+        "body": {
+          "name": { "type": "string", "description": "Label display name", "required": true },
+          "messageListVisibility": {
+            "type": "string",
+            "description": "Message list visibility: show or hide"
+          },
+          "labelListVisibility": { "type": "string", "description": "Label list visibility" },
+          "color": { "type": "object", "description": "Label color object" }
+        }
+      }
+    },
+    {
+      "id": "update_label",
+      "name": "Update Label",
+      "description": "Update a Gmail user label",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels/{labelId}",
+        "params": {
+          "labelId": { "type": "string", "in": "path", "description": "Label ID", "required": true }
+        },
+        "body": {
+          "name": { "type": "string", "description": "Label display name", "required": true },
+          "messageListVisibility": {
+            "type": "string",
+            "description": "Message list visibility: show or hide"
+          },
+          "labelListVisibility": { "type": "string", "description": "Label list visibility" },
+          "color": { "type": "object", "description": "Label color object" }
+        }
+      }
+    },
+    {
+      "id": "delete_label",
+      "name": "Delete Label",
+      "description": "Delete a Gmail user label",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels/{labelId}",
+        "params": {
+          "labelId": { "type": "string", "in": "path", "description": "Label ID", "required": true }
+        }
+      }
+    },
+    {
+      "id": "apply_labels",
+      "name": "Apply Labels",
+      "description": "Apply or remove labels on an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}/modify",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "addLabelIds": { "type": "array", "description": "Label IDs to add" },
+          "removeLabelIds": { "type": "array", "description": "Label IDs to remove" }
+        }
+      }
+    },
+    {
+      "id": "modify_email_labels",
+      "name": "Modify Email Labels",
+      "description": "Modify labels on an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}/modify",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "addLabelIds": { "type": "array", "description": "Label IDs to add" },
+          "removeLabelIds": { "type": "array", "description": "Label IDs to remove" }
+        }
+      }
+    },
+    {
+      "id": "trash_email",
+      "name": "Trash Email",
+      "description": "Move an email to trash",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}/trash",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "untrash_email",
+      "name": "Untrash Email",
+      "description": "Remove an email from trash",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}/untrash",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_email",
+      "name": "Delete Email",
+      "description": "Permanently delete an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "batch_modify_emails",
+      "name": "Batch Modify Emails",
+      "description": "Modify labels on multiple emails",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify",
+        "body": {
+          "ids": { "type": "array", "description": "Email message IDs", "required": true },
+          "addLabelIds": { "type": "array", "description": "Label IDs to add" },
+          "removeLabelIds": { "type": "array", "description": "Label IDs to remove" }
+        }
+      }
+    },
+    {
+      "id": "batch_delete_emails",
+      "name": "Batch Delete Emails",
+      "description": "Permanently delete multiple emails",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchDelete",
+        "body": {
+          "ids": { "type": "array", "description": "Email message IDs", "required": true }
+        }
+      }
+    },
+    {
+      "id": "list_threads",
+      "name": "List Threads",
+      "description": "List Gmail threads",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads",
+        "params": {
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of threads to return (1-500)",
+            "default": 20
+          },
+          "q": { "type": "string", "in": "query", "description": "Gmail search query" },
+          "labelIds": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Only return threads with these label IDs"
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token for pagination"
+          }
+        },
+        "response": { "transform": "threads" }
+      }
+    },
+    {
+      "id": "get_thread",
+      "name": "Get Thread",
+      "description": "Get a Gmail thread",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}",
+        "params": {
+          "threadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Thread ID",
+            "required": true
+          },
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Format: full, metadata, minimal",
+            "default": "full"
+          }
+        }
+      }
+    },
+    {
+      "id": "modify_thread_labels",
+      "name": "Modify Thread Labels",
+      "description": "Modify labels on a Gmail thread",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}/modify",
+        "params": {
+          "threadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Thread ID",
+            "required": true
+          }
+        },
+        "body": {
+          "addLabelIds": { "type": "array", "description": "Label IDs to add" },
+          "removeLabelIds": { "type": "array", "description": "Label IDs to remove" }
+        }
+      }
+    },
+    {
+      "id": "trash_thread",
+      "name": "Trash Thread",
+      "description": "Move a Gmail thread to trash",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}/trash",
+        "params": {
+          "threadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Thread ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "untrash_thread",
+      "name": "Untrash Thread",
+      "description": "Remove a Gmail thread from trash",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}/untrash",
+        "params": {
+          "threadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Thread ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_thread",
+      "name": "Delete Thread",
+      "description": "Permanently delete a Gmail thread",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/threads/{threadId}",
+        "params": {
+          "threadId": {
+            "type": "string",
+            "in": "path",
+            "description": "Thread ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_draft",
+      "name": "Create Draft",
+      "description": "Create a Gmail draft",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+        "body": {
+          "message": {
+            "type": "object",
+            "description": "Draft message containing raw RFC 2822 content",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_drafts",
+      "name": "List Drafts",
+      "description": "List Gmail drafts",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts",
+        "params": {
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of drafts to return (1-500)",
+            "default": 20
+          },
+          "q": { "type": "string", "in": "query", "description": "Gmail search query" },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token for pagination"
+          }
+        },
+        "response": { "transform": "drafts" }
+      }
+    },
+    {
+      "id": "get_draft",
+      "name": "Get Draft",
+      "description": "Get a Gmail draft",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draftId}",
+        "params": {
+          "draftId": {
+            "type": "string",
+            "in": "path",
+            "description": "Draft ID",
+            "required": true
+          },
+          "format": {
+            "type": "string",
+            "in": "query",
+            "description": "Format: full, metadata, minimal, raw",
+            "default": "full"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_draft",
+      "name": "Update Draft",
+      "description": "Replace a Gmail draft",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draftId}",
+        "params": {
+          "draftId": { "type": "string", "in": "path", "description": "Draft ID", "required": true }
+        },
+        "body": {
+          "message": {
+            "type": "object",
+            "description": "Draft message containing raw RFC 2822 content",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "send_draft",
+      "name": "Send Draft",
+      "description": "Send an existing Gmail draft",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
+        "body": {
+          "id": { "type": "string", "description": "Draft ID", "required": true }
+        }
+      }
+    },
+    {
+      "id": "delete_draft",
+      "name": "Delete Draft",
+      "description": "Permanently delete a Gmail draft",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draftId}",
+        "params": {
+          "draftId": { "type": "string", "in": "path", "description": "Draft ID", "required": true }
+        }
+      }
+    },
+    {
+      "id": "get_attachment",
+      "name": "Get Attachment",
+      "description": "Get a Gmail message attachment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{messageId}/attachments/{attachmentId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Email message ID",
+            "required": true
+          },
+          "attachmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attachment ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_profile",
+      "name": "Get Profile",
+      "description": "Get the Gmail mailbox profile",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/profile"
+      }
+    },
+    {
+      "id": "list_history",
+      "name": "List History",
+      "description": "List Gmail mailbox history changes",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/history",
+        "params": {
+          "startHistoryId": {
+            "type": "string",
+            "in": "query",
+            "description": "History ID to start after",
+            "required": true
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum history records",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Page token for pagination"
+          },
+          "labelId": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return history for this label"
+          },
+          "historyTypes": {
+            "type": "string[]",
+            "in": "query",
+            "description": "History event types"
+          }
+        }
+      }
+    },
+    {
+      "id": "watch_mailbox",
+      "name": "Watch Mailbox",
+      "description": "Start Gmail push notifications for mailbox changes",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/watch",
+        "body": {
+          "topicName": {
+            "type": "string",
+            "description": "Cloud Pub/Sub topic name",
+            "required": true
+          },
+          "labelIds": { "type": "array", "description": "Labels used to filter notifications" },
+          "labelFilterBehavior": {
+            "type": "string",
+            "description": "Label filter behavior: include or exclude"
+          }
+        }
+      }
+    },
+    {
+      "id": "stop_mailbox_watch",
+      "name": "Stop Mailbox Watch",
+      "description": "Stop Gmail push notifications",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/stop"
       }
     }
   ],

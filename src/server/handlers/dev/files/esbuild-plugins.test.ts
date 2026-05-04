@@ -11,7 +11,7 @@ async function bundleWithPlugin(
   contents: string,
   importMapImports: Record<string, string>,
 ): Promise<string> {
-  const { build } = await import("esbuild");
+  const { build } = await import("veryfront/extensions/bundler");
   const result = await build({
     bundle: true,
     write: false,
@@ -35,7 +35,7 @@ describe(
   { sanitizeResources: false, sanitizeOps: false },
   () => {
     afterEach(async () => {
-      const esbuild = await import("esbuild");
+      const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();
     });
 
@@ -69,7 +69,7 @@ describe(
   { sanitizeResources: false, sanitizeOps: false },
   () => {
     afterEach(async () => {
-      const esbuild = await import("esbuild");
+      const esbuild = await import("veryfront/extensions/bundler");
       await esbuild.stop();
     });
 
@@ -78,7 +78,7 @@ describe(
       projectDir: string,
       adapter = createMockAdapter(),
     ): Promise<{ errors: ReadonlyArray<{ text: string }>; output: string }> {
-      const { build } = await import("esbuild");
+      const { build } = await import("veryfront/extensions/bundler");
       try {
         const result = await build({
           bundle: true,

@@ -1,9 +1,20 @@
 /**
- * Reusable Zod validation schemas — common types (email, slug, URL, UUID,
- * pagination) and primitives (file paths, hex colors, semver, timestamps).
+ * Reusable validation schemas — common types (email, slug, URL, UUID,
+ * pagination) and primitives (file paths, hex colors, semver, timestamps),
+ * plus the `defineSchema` lazy-factory helper.
+ *
+ * Importing this module also registers the default zod-backed
+ * `SchemaValidator` adapter so that `defineSchema(...)` works out of the box.
  *
  * @module schemas
  */
+
+import { registerZodAdapter } from "./zod-adapter.ts";
+
+// Register the default SchemaValidator implementation once at module load.
+registerZodAdapter();
+
+export { defineSchema } from "./define.ts";
 
 export {
   CommonSchemas,

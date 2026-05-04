@@ -24,7 +24,6 @@ const logger = serverLogger.component("internal-agent-run-stream");
 
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
-    __vfAllowedRemoteTools?: string[];
     __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
   };
 };
@@ -194,7 +193,7 @@ export async function createRuntimeAgentStreamResponse(
       ...agent.config,
       tools: mergedTools,
       ...(allowedRemoteToolNames !== undefined
-        ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
+        ? { allowedRemoteTools: allowedRemoteToolNames }
         : {}),
       ...(forwardedIntegrationToolDefs !== undefined
         ? { __vfForwardedIntegrationToolDefs: forwardedIntegrationToolDefs }

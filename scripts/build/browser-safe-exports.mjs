@@ -6,8 +6,18 @@ export const BROWSER_SAFE_EXPORTS = [
   "./chat",
   "./chat/ag-ui",
   "./chat/protocol",
+  "./chat/types",
+  "./chat/conversation",
+  "./chat/message-prep",
+  "./chat/final-step-fallback",
+  "./chat/provider-errors",
   "./markdown",
   "./mdx",
+];
+
+export const BROWSER_SAFE_DNT_TIMER_MODULES = [
+  "src/agent/hosted-child-stream-watchdog.js",
+  "src/chat/final-step-fallback.js",
 ];
 
 export const BROWSER_SAFE_CLIENT_MODULES = [

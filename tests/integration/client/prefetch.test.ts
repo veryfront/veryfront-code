@@ -3,6 +3,7 @@
  * Tests link prefetching, cache management, and intersection observer
  */
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import type { PrefetchOptions } from "#veryfront/rendering/client/prefetch.ts";

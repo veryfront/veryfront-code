@@ -11,7 +11,7 @@ import {
 
 describe("server/services/rsc/endpoints/endpoint-router", () => {
   afterEach(async () => {
-    const esbuild = await import("esbuild");
+    const esbuild = await import("veryfront/extensions/bundler");
     await esbuild.stop();
   });
 

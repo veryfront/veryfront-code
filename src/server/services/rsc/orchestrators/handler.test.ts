@@ -14,7 +14,7 @@ describe(
         .__vfTestPreserveEsbuild;
       if (preserveEsbuild) return;
 
-      const { stop } = await import("esbuild");
+      const { stop } = await import("veryfront/extensions/bundler");
       await stop();
       await delay(100);
     });

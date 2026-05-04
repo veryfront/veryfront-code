@@ -4,6 +4,7 @@
  * These tests validate the real parser path (`handleStreamingResponse`)
  * against the veryfront stream event protocol.
  */
+import "../_helpers/contract-init.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 
