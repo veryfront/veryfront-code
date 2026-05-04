@@ -656,6 +656,12 @@ export {
   toMirroredHostedStreamPart,
 } from "./hosted-child-mirror.ts";
 export {
+  type HostedChildRunStatusMonitor,
+  type StartedHostedChildForkRuntime,
+  startHostedChildForkRuntimeWithHostTools,
+  type StartHostedChildForkRuntimeWithHostToolsInput,
+} from "./hosted-child-fork-runtime-start.ts";
+export {
   type HostedChildRunIdentifiers,
   type HostedChildTerminalErrorCode,
   hostedChildTerminalErrorCodes,
@@ -663,6 +669,7 @@ export {
   type HostedChildTerminalStatus,
   isHostedChildTerminalErrorCode,
   monitorHostedChildRunStatus,
+  type MonitorHostedChildRunStatusInput,
   resolveHostedChildTerminalErrorCode,
 } from "./hosted-child-status.ts";
 export {
