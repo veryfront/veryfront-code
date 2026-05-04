@@ -38,7 +38,6 @@ import { startProductionServer } from "../../src/server/production-server.ts";
 import { resetApiHandler } from "../../src/server/handlers/request/api/index.ts";
 import { runWithCacheDir } from "../../src/utils/cache-dir.ts";
 import { resetAllTestState } from "../../src/testing/isolation.ts";
-import { registerExtMdx } from "../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 import { SERVER_CONFIG, TEST_TIMEOUTS } from "./constants.ts";
 import {
   getHttpServerUrl,
@@ -134,8 +133,36 @@ export async function registerExtOpenAIForTests(): Promise<void> {
   }
 }
 
+// Register the ext-mdx ContentTransformer contract. Same pattern as ext-babel
+// and ext-openai — must run again after resetAllTestState() or teardownAll().
+export async function registerExtMdxForTests(): Promise<void> {
+  try {
+    const { register } = await import("../../src/extensions/contracts.ts");
+    const extMdxFactory = (await import("../../extensions/ext-mdx/src/index.ts")).default;
+    const ext = extMdxFactory();
+    const noopLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    };
+    await ext.setup?.({
+      config: {},
+      logger: noopLogger,
+      provide: (name: string, impl: unknown) => register(name, impl),
+      get: () => undefined,
+      resolve: () => {
+        throw new Error("resolve not used in setup");
+      },
+    } as never);
+  } catch {
+    // Ignore if ext-mdx cannot be loaded
+  }
+}
+
 await registerExtBabelForTests();
 await registerExtOpenAIForTests();
+await registerExtMdxForTests();
 
 export { esbuildInitialized };
 
@@ -345,10 +372,6 @@ export class TestContext {
       defaultProjectId: this.projectId,
     });
 
-    // Bootstrap (setupAll → teardownAll → reset()) wipes the contract
-    // registry, so re-register the MDX ContentTransformer here.
-    await registerExtMdx();
-
     const testServer = server as TestServer;
     testServer.port = port;
     // Use 127.0.0.1 explicitly to avoid IPv6 resolution issues with localhost
@@ -380,10 +403,6 @@ export class TestContext {
       defaultProjectSlug: this.projectId,
       defaultProjectId: this.projectId,
     });
-
-    // Bootstrap (setupAll → teardownAll → reset()) wipes the contract
-    // registry, so re-register the MDX ContentTransformer here.
-    await registerExtMdx();
 
     const testServer = server as TestServer;
     testServer.port = port;
@@ -572,6 +591,21 @@ export class TestContext {
       // Ignore — ext-openai is optional; tests that don't need it will still pass.
     }
 
+    // Materialize ext-mdx into the project's extensions/ dir so that
+    // `discoverProjectExtensions` re-registers ContentTransformer after
+    // bootstrap's teardownAll() wipes the contract registry.
+    try {
+      const extMdxDir = join(this.projectDir, "extensions", "ext-mdx");
+      await mkdir(extMdxDir, { recursive: true });
+      const extMdxReal = resolvePath("extensions/ext-mdx/src/index.ts");
+      await writeTextFile(
+        join(extMdxDir, "index.ts"),
+        `export { default } from "${"file://" + extMdxReal}";\n`,
+      );
+    } catch {
+      // Ignore — graceful fallback via tryResolve in the shim covers it.
+    }
+
     await writeTextFile(
       join(this.projectDir, "veryfront.config.js"),
       `export default {
@@ -637,17 +671,10 @@ export async function withTestContext<T>(
       // Reset ALL state before test to ensure clean isolation
       await resetAllTestState();
 
-      // resetAllTestState can flush the contract registry via bootstrap;
-      // re-register the MDX ContentTransformer so direct-compiler tests
-      // (which don't start a server) still resolve it.
-      await registerExtMdx();
-
-      // Re-register ext-babel for unit tests that import via #veryfront
-      // rather than going through `startProductionServer`'s bootstrap.
+      // Re-register all extension contracts after resetAllTestState()
+      // wipes the registry via teardownAll().
       await registerExtBabelForTests();
-
-      // Re-register ext-openai so openai/* model paths resolve after
-      // teardownAll() clears the registry between tests.
+      await registerExtMdxForTests();
       await registerExtOpenAIForTests();
 
       // Clear MDX renderer cache at the START of each test to ensure

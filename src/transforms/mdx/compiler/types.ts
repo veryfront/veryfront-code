@@ -1,4 +1,4 @@
-export interface MdxRuntimeBundle {
+export interface ContentRuntimeBundle {
   compiledCode: string;
   frontmatter: Record<string, unknown>;
   globals: Record<string, unknown>;

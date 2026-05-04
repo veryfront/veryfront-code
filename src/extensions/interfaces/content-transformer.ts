@@ -26,7 +26,7 @@ export type CompilationMode = "development" | "production";
 export type CompilationTarget = "browser" | "server";
 
 /** Runtime bundle returned by the compilation pipeline. */
-export interface MdxRuntimeBundle {
+export interface ContentRuntimeBundle {
   /** Compiled ESM source containing the default MDX/MD component export. */
   compiledCode: string;
   /** Front-matter extracted from the source document. */
@@ -43,8 +43,8 @@ export interface MdxRuntimeBundle {
 
 /** Options for {@link ContentTransformer.compileMdx} and {@link ContentTransformer.compileMarkdown}. */
 export interface ContentCompileOptions {
-  /** Compilation mode. */
-  mode: CompilationMode;
+  /** Compilation mode — defaults to "production" when omitted. */
+  mode?: CompilationMode;
   /** Absolute project root (used for resolving relative import rewrites). */
   projectDir: string;
   /** Source document content. */
@@ -82,9 +82,9 @@ export type ContentPlugin = unknown | [unknown, ...unknown[]];
  */
 export interface ContentTransformer {
   /** Compile MDX source into a runtime bundle. */
-  compileMdx(options: ContentCompileOptions): Promise<MdxRuntimeBundle>;
+  compileMdx(options: ContentCompileOptions): Promise<ContentRuntimeBundle>;
   /** Compile plain Markdown into a runtime bundle. */
-  compileMarkdown(options: ContentCompileOptions): Promise<MdxRuntimeBundle>;
+  compileMarkdown(options: ContentCompileOptions): Promise<ContentRuntimeBundle>;
   /** Return the canonical remark plugin list. */
   getRemarkPlugins(): ContentPlugin[];
   /** Return the canonical rehype plugin list. */

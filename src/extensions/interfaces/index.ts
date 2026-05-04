@@ -40,7 +40,7 @@ export type {
   ContentCompileOptions,
   ContentPlugin,
   ContentTransformer,
-  MdxRuntimeBundle,
+  ContentRuntimeBundle,
 } from "./content-transformer.ts";
 
 // Database client

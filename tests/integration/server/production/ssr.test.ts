@@ -7,7 +7,6 @@ import { join } from "#veryfront/compat/path";
 import { startProductionServer } from "../../../../src/server/production-server.ts";
 import { type TestContext, withTestContext } from "../../../_helpers/context.ts";
 import { cleanupBundler } from "../../../../src/rendering/cleanup.ts";
-import { registerExtMdx } from "../../../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 
 function registerUnhandledRejectionGuard(): void {
   if (typeof globalThis.addEventListener !== "function") return;
@@ -276,7 +275,6 @@ describe(
         });
         context.trackResource(server);
         await server.ready;
-        await registerExtMdx();
 
         try {
           const res = await fetch(`http://127.0.0.1:${port}/`);
@@ -342,7 +340,6 @@ describe(
         });
         context.trackResource(server);
         await server.ready;
-        await registerExtMdx();
 
         try {
           const res1 = await fetch(`http://127.0.0.1:${port}/`);

@@ -4,7 +4,7 @@ import type { ContentTransformer } from "#veryfront/extensions/interfaces/index.
 import type {
   CompilationMode,
   CompilationTarget,
-  MdxRuntimeBundle,
+  ContentRuntimeBundle,
 } from "../../mdx/compiler/types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -20,10 +20,10 @@ export function compileMarkdownRuntime(
   target: CompilationTarget = "server",
   baseUrl?: string,
   studioEmbed?: boolean,
-): Promise<MdxRuntimeBundle> {
+): Promise<ContentRuntimeBundle> {
   return withSpan(
     "transforms.compileMarkdownRuntime",
-    async (): Promise<MdxRuntimeBundle> => {
+    async (): Promise<ContentRuntimeBundle> => {
       try {
         const transformer = resolveContract<ContentTransformer>("ContentTransformer");
         return await transformer.compileMarkdown({

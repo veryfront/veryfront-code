@@ -3,7 +3,6 @@ import { join } from "#veryfront/compat/path";
 import { describe, it } from "#veryfront/testing/bdd";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
 import { withTestContext } from "../../_helpers/context.ts";
-import { registerExtMdx } from "../../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 
 describe("Server Public Entrypoints", { sanitizeResources: false, sanitizeOps: false }, () => {
   it("exposes server APIs from package root and server subpath", async () => {
@@ -40,7 +39,6 @@ describe("Server Public Entrypoints", { sanitizeResources: false, sanitizeOps: f
 
       try {
         await server.ready;
-        await registerExtMdx();
         const response = await fetch(`http://127.0.0.1:${port}/`);
         assertEquals(response.status, 200);
 

@@ -22,17 +22,17 @@ import type {
   ContentCompileOptions,
   ContentPlugin,
   ContentTransformer,
-  MdxRuntimeBundle,
+  ContentRuntimeBundle,
 } from "veryfront/extensions/interfaces";
 import { compileMdx } from "./compiler/mdx-compile.ts";
 import { compileMarkdown } from "./compiler/markdown-compile.ts";
 import { getRehypePlugins, getRemarkPlugins } from "./plugins/plugin-loader.ts";
 
 class MdxContentTransformer implements ContentTransformer {
-  compileMdx(options: ContentCompileOptions): Promise<MdxRuntimeBundle> {
+  compileMdx(options: ContentCompileOptions): Promise<ContentRuntimeBundle> {
     return compileMdx(options);
   }
-  compileMarkdown(options: ContentCompileOptions): Promise<MdxRuntimeBundle> {
+  compileMarkdown(options: ContentCompileOptions): Promise<ContentRuntimeBundle> {
     return compileMarkdown(options);
   }
   getRemarkPlugins(): ContentPlugin[] {
