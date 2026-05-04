@@ -16,10 +16,10 @@ export default defineConfig({
 
 ## Environment Variables
 
-| Variable                        | Required | Description                                                        |
-| ------------------------------- | -------- | ------------------------------------------------------------------ |
-| `GOOGLE_API_KEY`                | Yes      | Your Google AI API key (from [AI Studio](https://aistudio.google.com/apikey)). |
-| `GOOGLE_GENERATIVE_AI_API_KEY`  | No       | Alternative name for the API key (checked as fallback).            |
+| Variable                       | Required | Description                                                                    |
+| ------------------------------ | -------- | ------------------------------------------------------------------------------ |
+| `GOOGLE_API_KEY`               | Yes      | Your Google AI API key (from [AI Studio](https://aistudio.google.com/apikey)). |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | No       | Alternative name for the API key (checked as fallback).                        |
 
 ## Usage
 
@@ -51,12 +51,12 @@ Any model accessible through the Google Generative Language API:
 
 The extension accepts configuration through `AIProviderConfig` when creating runtimes:
 
-| Option       | Type           | Default                                         | Description                            |
-| ------------ | -------------- | ----------------------------------------------- | -------------------------------------- |
-| `credential` | `string`       | —                                               | API key (typically from env var).      |
+| Option       | Type           | Default                                            | Description                            |
+| ------------ | -------------- | -------------------------------------------------- | -------------------------------------- |
+| `credential` | `string`       | —                                                  | API key (typically from env var).      |
 | `baseURL`    | `string`       | `https://generativelanguage.googleapis.com/v1beta` | API base URL override.                 |
-| `name`       | `string`       | `"google"`                                      | Display name for errors and telemetry. |
-| `fetch`      | `typeof fetch` | `globalThis.fetch`                              | Custom fetch implementation.           |
+| `name`       | `string`       | `"google"`                                         | Display name for errors and telemetry. |
+| `fetch`      | `typeof fetch` | `globalThis.fetch`                                 | Custom fetch implementation.           |
 
 ## Model Defaults
 
@@ -120,7 +120,7 @@ Gemini supports provider-native tools alongside function declarations. Use the `
 ```ts
 tools: [
   { type: "provider", name: "code_execution", id: "google.code_execution", args: {} },
-]
+];
 ```
 
 ### Google Search
@@ -128,7 +128,7 @@ tools: [
 ```ts
 tools: [
   { type: "provider", name: "google_search", id: "google.google_search", args: {} },
-]
+];
 ```
 
 Provider tools can be combined with regular function tools in the same request. When Google Search is used, the response includes `groundingMetadata` with web search queries, grounding chunks, and citation indices.
@@ -173,8 +173,8 @@ Gemini supports per-request `labels` for tracking and attribution:
 ```ts
 const response = await ai.chat("google/gemini-2.5-pro", {
   prompt: messages,
-  userId: "user_42",           // maps to labels.user_id
-  requestLabels: {             // explicit labels (wins over userId)
+  userId: "user_42", // maps to labels.user_id
+  requestLabels: { // explicit labels (wins over userId)
     team: "search",
     experiment: "v2",
   },
@@ -187,22 +187,22 @@ When `requestLabels` is set, it takes precedence. Otherwise, `userId` is sent as
 
 The following settings emit `unsupported-setting` warnings and are silently dropped:
 
-| Setting            | Reason                                                                    |
-| ------------------ | ------------------------------------------------------------------------- |
-| `presencePenalty`  | Gemini `generateContent` does not accept presence penalty.                |
-| `frequencyPenalty` | Gemini `generateContent` does not accept frequency penalty.               |
+| Setting            | Reason                                                                                              |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| `presencePenalty`  | Gemini `generateContent` does not accept presence penalty.                                          |
+| `frequencyPenalty` | Gemini `generateContent` does not accept frequency penalty.                                         |
 | `responseFormat`   | Gemini uses `generationConfig.responseMimeType` + `responseSchema` instead (use `providerOptions`). |
 
 ## Error Handling
 
 The extension surfaces typed provider errors:
 
-| Error Class              | Trigger                              | Retryable |
-| ------------------------ | ------------------------------------ | --------- |
-| `ProviderOverloadedError`| HTTP 503                             | Yes       |
-| `ProviderQuotaError`     | HTTP 429 `RESOURCE_EXHAUSTED`        | No        |
-| `ProviderRateLimitError` | HTTP 429 with `Retry-After`          | Yes       |
-| `ProviderRequestError`   | Other HTTP errors                    | No        |
+| Error Class               | Trigger                       | Retryable |
+| ------------------------- | ----------------------------- | --------- |
+| `ProviderOverloadedError` | HTTP 503                      | Yes       |
+| `ProviderQuotaError`      | HTTP 429 `RESOURCE_EXHAUSTED` | No        |
+| `ProviderRateLimitError`  | HTTP 429 with `Retry-After`   | Yes       |
+| `ProviderRequestError`    | Other HTTP errors             | No        |
 
 If the extension is not installed and a `google/*` model is requested:
 
@@ -212,13 +212,13 @@ If the extension is not installed and a `google/*` model is requested:
 
 The unified `toolChoice` option maps to Gemini's `functionCallingConfig`:
 
-| Input                                    | Gemini Mode | Effect                                  |
-| ---------------------------------------- | ----------- | --------------------------------------- |
-| `"auto"`                                 | `AUTO`      | Model decides whether to call tools.    |
-| `"any"` / `"required"`                   | `ANY`       | Model must call at least one tool.      |
-| `"none"`                                 | `NONE`      | Model must not call tools.              |
-| `{ type: "tool", name: "fn" }`           | `ANY`       | Pinned to one function.                 |
-| `{ type: "tools", names: ["a", "b"] }`   | `ANY`       | Restricted to named subset.             |
+| Input                                  | Gemini Mode | Effect                               |
+| -------------------------------------- | ----------- | ------------------------------------ |
+| `"auto"`                               | `AUTO`      | Model decides whether to call tools. |
+| `"any"` / `"required"`                 | `ANY`       | Model must call at least one tool.   |
+| `"none"`                               | `NONE`      | Model must not call tools.           |
+| `{ type: "tool", name: "fn" }`         | `ANY`       | Pinned to one function.              |
+| `{ type: "tools", names: ["a", "b"] }` | `ANY`       | Restricted to named subset.          |
 
 ## Running Tests
 
@@ -232,6 +232,7 @@ deno task test
 ```
 
 The test suite covers:
+
 - Generate and stream request/response mapping
 - Extended thinking (thinkingConfig budget mapping, thought-part streaming)
 - Embedding runtime (single and batch)
