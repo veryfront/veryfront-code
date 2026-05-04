@@ -1387,7 +1387,6 @@ describe("provider/runtime-loader", () => {
       return { runtime, getBody: () => capturedBody };
     }
 
-
     it("emits Anthropic thinking block with medium effort budget by default", async () => {
       const { runtime, getBody } = createAnthropicCaptureRuntime();
       await runtime.doGenerate({
@@ -1647,7 +1646,6 @@ describe("provider/runtime-loader", () => {
         totalTokens: 6,
       });
     });
-
   });
 
   describe("transient error classification (529 / 503 / 429 / Retry-After)", () => {
@@ -1747,7 +1745,6 @@ describe("provider/runtime-loader", () => {
         { status: 200, headers: { "content-type": "application/json" } },
       );
     }
-
 
     function settings(result: { warnings?: unknown[] }): string[] {
       return (result.warnings ?? []).flatMap((w) => {
@@ -2282,7 +2279,6 @@ describe("provider/runtime-loader", () => {
         },
       ]);
     });
-
 
     it("warns and omits response_format on Anthropic when responseFormat is structured", async () => {
       let captured: Record<string, unknown> | null = null;
