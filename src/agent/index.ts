@@ -110,6 +110,11 @@ export type {
   ToolResultPart,
 } from "./types.ts";
 
+export {
+  applyAgentProjectContextChange,
+  getConfirmedProjectContextSwitchId,
+  type MutableAgentProjectContext,
+} from "./project-context.ts";
 export { getTextFromParts, getToolArguments, hasArgs, hasInput } from "./types.ts";
 
 export {
