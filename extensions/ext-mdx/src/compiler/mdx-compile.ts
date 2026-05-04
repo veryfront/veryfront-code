@@ -10,6 +10,7 @@ type PluggableList = Pluggable[];
 
 export async function compileMdx(options: ContentCompileOptions): Promise<ContentRuntimeBundle> {
   const {
+    mode = "production",
     projectDir,
     content,
     frontmatter: providedFrontmatter,
@@ -39,7 +40,7 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
 
   const compiled = await compile(body, {
     outputFormat: "program",
-    development: false,
+    development: mode === "development",
     remarkPlugins,
     rehypePlugins,
     providerImportSource: undefined,

@@ -133,28 +133,15 @@ export async function registerExtOpenAIForTests(): Promise<void> {
   }
 }
 
-// Register the ext-mdx ContentTransformer contract. Same pattern as ext-babel
-// and ext-openai — must run again after resetAllTestState() or teardownAll().
+// Register the ext-mdx ContentTransformer contract. Delegates to the same
+// helper used by unit-test side-effect imports — must run again after
+// resetAllTestState() or teardownAll().
 export async function registerExtMdxForTests(): Promise<void> {
   try {
-    const { register } = await import("../../src/extensions/contracts.ts");
-    const extMdxFactory = (await import("../../extensions/ext-mdx/src/index.ts")).default;
-    const ext = extMdxFactory();
-    const noopLogger = {
-      debug: () => {},
-      info: () => {},
-      warn: () => {},
-      error: () => {},
-    };
-    await ext.setup?.({
-      config: {},
-      logger: noopLogger,
-      provide: (name: string, impl: unknown) => register(name, impl),
-      get: () => undefined,
-      resolve: () => {
-        throw new Error("resolve not used in setup");
-      },
-    } as never);
+    const { registerExtMdx } = await import(
+      "../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts"
+    );
+    await registerExtMdx();
   } catch {
     // Ignore if ext-mdx cannot be loaded
   }

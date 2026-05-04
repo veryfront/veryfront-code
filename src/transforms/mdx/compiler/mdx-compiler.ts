@@ -1,7 +1,7 @@
 import { rendererLogger } from "#veryfront/utils";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type { ContentTransformer } from "#veryfront/extensions/interfaces/index.ts";
-import type { CompilationMode, CompilationTarget, ContentRuntimeBundle } from "./types.ts";
+import type { CompilationMode, CompilationTarget, ContentRuntimeBundle } from "#veryfront/extensions/interfaces/index.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 
