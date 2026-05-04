@@ -33,6 +33,9 @@ export {
   withToolInputStatusTransitions,
 } from "../runtime-loader/tool-input-status.ts";
 
+// SSE chunk parser
+export { parseSseChunk } from "../runtime-loader/provider-sse.ts";
+
 // Retry / error / HTTP plumbing (currently in runtime-loader.ts).
 export {
   buildProviderError,
@@ -53,6 +56,7 @@ export {
   stringifyJsonValue,
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
+  unwrapToolInputSchema,
 } from "../runtime-loader.ts";
 
 export type {

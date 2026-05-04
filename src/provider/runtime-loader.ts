@@ -1567,7 +1567,7 @@ function toGoogleTools(
   return result.length > 0 ? result : undefined;
 }
 
-function unwrapToolInputSchema(inputSchema: unknown): unknown {
+export function unwrapToolInputSchema(inputSchema: unknown): unknown {
   if (typeof inputSchema !== "object" || inputSchema === null || Array.isArray(inputSchema)) {
     return inputSchema;
   }
