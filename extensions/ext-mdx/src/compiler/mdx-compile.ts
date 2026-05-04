@@ -10,7 +10,6 @@ type PluggableList = Pluggable[];
 
 export async function compileMdx(options: ContentCompileOptions): Promise<ContentRuntimeBundle> {
   const {
-    mode = "production",
     projectDir,
     content,
     frontmatter: providedFrontmatter,
@@ -40,7 +39,9 @@ export async function compileMdx(options: ContentCompileOptions): Promise<Conten
 
   const compiled = await compile(body, {
     outputFormat: "program",
-    development: mode === "development",
+    // Always false: @mdx-js/mdx development mode emits extra JSX
+    // transforms that break the existing rendering pipeline.
+    development: false,
     remarkPlugins,
     rehypePlugins,
     providerImportSource: undefined,
