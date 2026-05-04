@@ -21,6 +21,7 @@
  * ```
  */
 
+import "./contract-init.ts";
 import { join } from "#veryfront/compat/path";
 import {
   isAlreadyExistsError,
@@ -52,7 +53,7 @@ import { getFreePort } from "./utils.ts";
 // This is done globally so all tests share the same esbuild instance
 let esbuildInitialized = false;
 try {
-  const { initialize } = await import("esbuild");
+  const { initialize } = await import("npm:esbuild@0.27.4");
   await initialize({ worker: false });
   esbuildInitialized = true;
 

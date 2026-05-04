@@ -1,6 +1,6 @@
 import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "#veryfront/utils";
-import * as esbuild from "esbuild";
+import * as esbuild from "veryfront/extensions/bundler";
 import { extract } from "#std/front-matter/yaml.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";

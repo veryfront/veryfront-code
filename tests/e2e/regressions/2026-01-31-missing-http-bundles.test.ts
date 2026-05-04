@@ -25,6 +25,7 @@
  *   bundles exist before returning cached transforms for SSR. If bundles are
  *   missing, the pipeline re-runs the transform to regenerate them.
  */
+import "../../_helpers/contract-init.ts";
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {

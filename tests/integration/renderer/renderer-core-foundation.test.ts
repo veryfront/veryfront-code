@@ -6,6 +6,7 @@
  */
 
 import "../../../src/html/styles-builder/__tests__/css-processor-setup.ts";
+import "../../_helpers/contract-init.ts";
 import {
   assert,
   assertEquals,

@@ -10,6 +10,7 @@
     "./extensions/ext-node-compat",
     "./extensions/ext-openai",
     "./extensions/ext-opentelemetry",
+    "./extensions/ext-esbuild",
     "./extensions/ext-redis",
     "./extensions/ext-tailwind"
   ],
@@ -143,6 +144,9 @@
     "veryfront/testing": "./src/testing/index.ts",
     "veryfront/testing/assert": "./src/testing/assert.ts",
     "veryfront/testing/bdd": "./src/testing/bdd.ts",
+    "veryfront/extensions/bundler": "./src/extensions/bundler.ts",
+    "veryfront/extensions/contracts": "./src/extensions/contracts.ts",
+    "veryfront/extensions/interfaces": "./src/extensions/interfaces/index.ts",
     "#veryfront": "./src/index.ts",
     "#veryfront/agent": "./src/agent/index.ts",
     "#veryfront/agent/react": "./src/agent/react/index.ts",
@@ -275,9 +279,6 @@
     "rehype-raw": "npm:rehype-raw@7.0.0",
     "rehype-sanitize": "npm:rehype-sanitize@6.0.0",
     "rehype-stringify": "npm:rehype-stringify@10.0.1",
-    "esbuild": "npm:esbuild@0.27.4",
-    "esbuild/mod.js": "npm:esbuild@0.27.4",
-    "es-module-lexer": "npm:es-module-lexer@2.0.0",
     "gray-matter": "npm:gray-matter@4.0.3",
     "zod": "npm:zod@4.3.6",
     "mdast": "npm:@types/mdast@4.0.3",
@@ -440,7 +441,6 @@
       "npm:onnxruntime-node@1.21.0"
     ],
     "deny": [
-      "npm:esbuild@0.27.4",
       "npm:protobufjs@7.5.4"
     ]
   }

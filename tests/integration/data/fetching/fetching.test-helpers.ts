@@ -1,3 +1,4 @@
+import "../../../_helpers/contract-init.ts";
 import type { DataContext } from "#veryfront/data/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { runWithCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";

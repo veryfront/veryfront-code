@@ -104,7 +104,10 @@ for (const subdomain of PROJECTS) {
 
     test("studio_embed=true works", async ({ page }, testInfo) => {
       const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
-      test.skip(runtime.modeName !== "production", "studio embed is only relevant on the production host lane");
+      test.skip(
+        runtime.modeName !== "production",
+        "studio embed is only relevant on the production host lane",
+      );
 
       await page.goto(`${runtime.getUrl(subdomain)}/?studio_embed=true`);
       await page.waitForLoadState("networkidle");
@@ -131,7 +134,10 @@ for (const subdomain of PROJECTS) {
 
     test("branch preview subdomains resolve", async ({ page }, testInfo) => {
       const runtime = getRuntimeForPlaywrightProject(testInfo.project.name);
-      test.skip(runtime.modeName !== "preview", "branch preview coverage only applies to preview hosts");
+      test.skip(
+        runtime.modeName !== "preview",
+        "branch preview coverage only applies to preview hosts",
+      );
 
       const branchPreviewUrl = `http://${subdomain}--feature.preview.lvh.me:8080`;
       const response = await visit(page, `${branchPreviewUrl}/`);

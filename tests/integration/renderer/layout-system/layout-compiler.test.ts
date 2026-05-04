@@ -2,6 +2,7 @@
  * Tests for LayoutCompiler
  */
 
+import "../../../_helpers/contract-init.ts";
 // Disable LRU intervals during testing to prevent resource leaks
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 

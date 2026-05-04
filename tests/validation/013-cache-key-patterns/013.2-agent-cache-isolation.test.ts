@@ -9,6 +9,7 @@
  * @see plans/architecture-audit/013.2-agent-cache-project-isolation.md
  */
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { createCache } from "../../../src/agent/middleware/cache/cache.ts";

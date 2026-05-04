@@ -1,4 +1,4 @@
-import type { Metafile } from "esbuild";
+import type { Metafile } from "veryfront/extensions/bundler";
 
 export type MetafileOutput = Metafile["outputs"][string];
 

@@ -6,6 +6,7 @@
  * - API Server (data endpoints and caching)
  */
 
+import "../../../_helpers/contract-init.ts";
 import {
   assert,
   assertEquals,

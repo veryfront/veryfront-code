@@ -5,7 +5,7 @@
  * for dynamic import during discovery.
  */
 
-import type { Plugin, PluginBuild } from "esbuild";
+import type { Plugin, PluginBuild } from "veryfront/extensions/bundler";
 import { isDeno, isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
@@ -165,7 +165,7 @@ export async function importModule(
   }
 
   const loader = getEsbuildLoader(filePath);
-  const { build } = await import("esbuild");
+  const { build } = await import("veryfront/extensions/bundler");
   const fileDir = pathHelper.dirname(filePath);
 
   // When using fsAdapter (VFS), bundle all relative imports via the plugin.

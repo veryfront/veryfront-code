@@ -1,5 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
-import type { BuildResult, Plugin } from "esbuild";
+import type { BuildResult, Plugin } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
@@ -327,7 +327,7 @@ function loadAndTranspileModule(
         userExternals.push(name, `${name}/*`);
       }
 
-      const { build } = await import("esbuild");
+      const { build } = await import("veryfront/extensions/bundler");
 
       // Many npm packages use CJS require() for Node built-ins (e.g. require('fs')).
       // When esbuild bundles CJS into ESM output, these become __require() shims that

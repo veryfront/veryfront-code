@@ -10,6 +10,9 @@
  * @module
  */
 
+import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-esbuild";
+import { register as registerContract } from "../extensions/contracts.ts";
+
 const g = globalThis as Record<string, unknown>;
 
 g.__vfDisableLruInterval = true;
@@ -17,3 +20,9 @@ g.__vfTestEnv = true;
 g.__vfTestEnvMask = {
   prefixes: ["VERYFRONT_", "OTEL_", "OAUTH_", "GITHUB_", "OPENAI_", "ANTHROPIC_", "GOOGLE_"],
 };
+
+// Tests don't run the extension orchestrator; prime the Bundler + ModuleLexer
+// contracts here so transforms that depend on them (lexer.ts, parse-cache.ts,
+// the platform/compat/esbuild shim, and bundler call-sites) work in tests.
+registerContract("Bundler", new EsbuildBundler());
+registerContract("ModuleLexer", new EsModuleLexer());

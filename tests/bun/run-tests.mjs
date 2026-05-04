@@ -134,14 +134,16 @@ if (!env.NODE_ENV) env.NODE_ENV = "production";
 if (!env.LOG_FORMAT) env.LOG_FORMAT = "text";
 // Don't scale time by default - many tests have timing-sensitive operations
 if (!env.VF_TEST_TIME_SCALE) env.VF_TEST_TIME_SCALE = "1";
-for (const key of [
-  "OPENAI_API_KEY",
-  "OPENAI_BASE_URL",
-  "ANTHROPIC_API_KEY",
-  "ANTHROPIC_BASE_URL",
-  "GOOGLE_API_KEY",
-  "GOOGLE_GENERATIVE_AI_API_KEY",
-]) {
+for (
+  const key of [
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_BASE_URL",
+    "GOOGLE_API_KEY",
+    "GOOGLE_GENERATIVE_AI_API_KEY",
+  ]
+) {
   delete env[key];
 }
 

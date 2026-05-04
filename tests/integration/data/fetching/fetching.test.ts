@@ -2,6 +2,7 @@
  * Comprehensive Tests for Data Fetching System (fetching.ts)
  ***********************/
 
+import "../../../_helpers/contract-init.ts";
 // Disable LRU interval to prevent resource leaks in tests
 (globalThis as Record<string, unknown>).__vfDisableLruInterval = true;
 

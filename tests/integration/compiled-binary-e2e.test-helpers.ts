@@ -1,3 +1,4 @@
+import "../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";

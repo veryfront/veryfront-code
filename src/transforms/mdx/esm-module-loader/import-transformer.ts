@@ -91,7 +91,7 @@ export async function transformJsxImports(
   adapter: ESMLoaderContext["adapter"],
   esmCacheDir: string,
 ): Promise<string> {
-  const { transform } = await import("esbuild");
+  const { transform } = await import("veryfront/extensions/bundler");
 
   const importsToProcess: Array<{
     fullMatch: string;

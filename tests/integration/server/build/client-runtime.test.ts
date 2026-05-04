@@ -1,3 +1,4 @@
+import "../../../_helpers/contract-init.ts";
 import { assert, assertStringIncludes } from "#veryfront/testing/assert";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import {

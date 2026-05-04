@@ -8,6 +8,7 @@
  * - CORS headers
  * - Content-Type headers
  */
+import "../../_helpers/contract-init.ts";
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createProject, ensureBinaryCompiled, pages, withServer } from "../setup/index.ts";

@@ -3,7 +3,7 @@
  */
 
 import { bundlerLogger as logger } from "#veryfront/utils";
-import * as esbuild from "esbuild";
+import * as esbuild from "veryfront/extensions/bundler";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 

@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertMatch } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";

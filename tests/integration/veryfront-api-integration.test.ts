@@ -2,6 +2,7 @@
  * @file Integration tests for Veryfront API FSAdapter
  */
 
+import "../_helpers/contract-init.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { bootstrap } from "#veryfront/server/bootstrap.ts";

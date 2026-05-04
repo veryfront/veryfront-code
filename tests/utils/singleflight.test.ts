@@ -1,3 +1,4 @@
+import "../_helpers/contract-init.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { Singleflight } from "../../src/utils/singleflight.ts";

@@ -11,12 +11,17 @@
  */
 
 import { dirname, extname, fromFileUrl, join } from "#std/path.ts";
+import { EsbuildBundler, EsModuleLexer } from "../../extensions/ext-esbuild/src/index.ts";
+import { register as registerContract } from "../../src/extensions/contracts.ts";
 import {
   generateClientModule,
   generatePrefetchScript,
 } from "../../src/build/production-build/client-runtime.ts";
 import { CLIENT_STYLES } from "../../src/build/production-build/templates.ts";
 import { extractCandidates } from "../../src/html/styles-builder/candidate-extractor.ts";
+
+registerContract("Bundler", new EsbuildBundler());
+registerContract("ModuleLexer", new EsModuleLexer());
 
 const scriptDir = dirname(fromFileUrl(import.meta.url));
 const projectRoot = join(scriptDir, "..", "..");

@@ -9,7 +9,7 @@ import {
   writeTextFile,
 } from "#veryfront/testing/deno-compat.ts";
 import { join } from "#veryfront/compat/path";
-import * as esbuild from "esbuild";
+import * as esbuild from "veryfront/extensions/bundler";
 import { transformToESM } from "./index.ts";
 
 describe(

@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { describe, it } from "#std/testing/bdd";
 import { invalidateProjectCaches } from "../../../src/server/context/cache-invalidation.ts";
 

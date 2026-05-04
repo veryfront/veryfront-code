@@ -7,7 +7,10 @@ import { getTemplate } from "../../../cli/templates/index.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { createTestDenoConfig } from "../../_helpers/import-maps.ts";
 
-async function scaffoldTemplate(projectDir: string, templateName: "agentic-workflow"): Promise<void> {
+async function scaffoldTemplate(
+  projectDir: string,
+  templateName: "agentic-workflow",
+): Promise<void> {
   const files = await getTemplate(templateName);
   if (!files) {
     throw new Error(`Template ${templateName} was not found`);
