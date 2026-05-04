@@ -115,14 +115,17 @@ describe("request-context", () => {
       assertEquals(ctx.mode, "preview");
     });
 
-    it("uses x-environment header for custom domains", () => {
+    it("ignores x-environment header on custom domains (VULN-SRV-1/2)", () => {
+      // The x-environment header is client-controlled and must NOT be able to
+      // flip a production request into preview mode. Mode is derived from the
+      // proxy-terminated Host / X-Forwarded-Host signal only.
       const ctx = createRequestContext(
         new Request("https://custom-domain.com/page", {
           headers: { "x-environment": "preview" },
         }),
       );
 
-      assertEquals(ctx.mode, "preview");
+      assertEquals(ctx.mode, "production");
     });
 
     it("defaults to production for custom domains without header", () => {

@@ -1,8 +1,10 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
+  CONTROL_PLANE_AGENTS_LIST_PATH,
   type ControlPlaneAgentsListRequest,
   ControlPlaneAgentsListRequestSchema,
+  LEGACY_INTERNAL_AGENTS_LIST_PATH,
   listRuntimeAgents,
   type RuntimeAgentDiscoveryDeps,
 } from "../../../channels/control-plane.ts";
@@ -23,7 +25,10 @@ export class InternalAgentsListHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "InternalAgentsListHandler",
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
-    patterns: [{ pattern: "/internal/agents/list", exact: true, method: "POST" }],
+    patterns: [
+      { pattern: CONTROL_PLANE_AGENTS_LIST_PATH, exact: true, method: "POST" },
+      { pattern: LEGACY_INTERNAL_AGENTS_LIST_PATH, exact: true, method: "POST" },
+    ],
   };
 
   constructor(private readonly deps: RuntimeAgentDiscoveryDeps = defaultChannelInvokeDeps) {

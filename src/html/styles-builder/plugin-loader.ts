@@ -7,9 +7,6 @@
  * @module html/styles-builder/plugin-loader
  */
 
-import plugin from "tailwindcss/plugin";
-import defaultTheme from "tailwindcss/defaultTheme";
-import colors from "tailwindcss/colors";
 import { serverLogger } from "#veryfront/utils";
 import {
   type ErrorSlug,
@@ -68,19 +65,10 @@ try {
   });
 }
 
-// Set up global shims for tailwindcss subpaths - used by dynamically loaded plugins
-(globalThis as Record<string, unknown>).__tailwindPluginShim = {
-  default: plugin,
-  __esModule: true,
-};
-(globalThis as Record<string, unknown>).__tailwindDefaultThemeShim = {
-  default: defaultTheme,
-  __esModule: true,
-};
-(globalThis as Record<string, unknown>).__tailwindColorsShim = {
-  default: colors,
-  __esModule: true,
-};
+// Global shims for `tailwindcss/plugin`, `tailwindcss/defaultTheme`, and
+// `tailwindcss/colors` used by dynamically loaded plugin bundles are installed
+// by the `@veryfront/ext-tailwind` extension's `setup()` hook — they depend on
+// tailwindcss imports that live in the extension package, not in core.
 
 function isRealDenoRuntime(): boolean {
   return typeof Deno !== "undefined" && typeof Deno.version === "object";

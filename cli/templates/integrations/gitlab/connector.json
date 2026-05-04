@@ -36,31 +36,31 @@
   ],
   "tools": [
     {
-      "id": "search-issues",
+      "id": "search_issues",
       "name": "Search Issues",
       "description": "Search for issues across projects",
       "requiresWrite": false
     },
     {
-      "id": "get-issue",
+      "id": "get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific issue",
       "requiresWrite": false
     },
     {
-      "id": "create-issue",
+      "id": "create_issue",
       "name": "Create Issue",
       "description": "Create a new issue in a project",
       "requiresWrite": true
     },
     {
-      "id": "list-merge-requests",
+      "id": "list_merge_requests",
       "name": "List Merge Requests",
       "description": "List merge requests for a project or across projects",
       "requiresWrite": false
     },
     {
-      "id": "list-projects",
+      "id": "list_projects",
       "name": "List Projects",
       "description": "List accessible GitLab projects",
       "requiresWrite": false
@@ -68,28 +68,28 @@
   ],
   "prompts": [
     {
-      "id": "find-issues",
+      "id": "find_issues",
       "title": "Find my issues",
       "prompt": "Search for issues assigned to me that are open. Show me the most important ones.",
       "category": "development",
       "icon": "bug"
     },
     {
-      "id": "review-mrs",
+      "id": "review_mrs",
       "title": "Review merge requests",
       "prompt": "Show me all open merge requests that need my review. Summarize what each one does.",
       "category": "development",
       "icon": "git-merge"
     },
     {
-      "id": "create-bug-report",
+      "id": "create_bug_report",
       "title": "Create bug report",
       "prompt": "Help me create a detailed bug report issue with steps to reproduce, expected vs actual behavior.",
       "category": "development",
       "icon": "plus"
     },
     {
-      "id": "project-status",
+      "id": "project_status",
       "title": "Project status",
       "prompt": "Give me a summary of my projects: open issues, merge requests, and recent activity.",
       "category": "development",

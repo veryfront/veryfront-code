@@ -210,11 +210,35 @@ export {
   type UseChatResult,
 } from "#veryfront/agent/react/use-chat/index.ts";
 
+export type {
+  ChatMessageMetadata,
+  ChatMessageMetadataUsage,
+  ChatUiMessageChunk,
+  ChildRunAudit,
+  ChildRunAuditToolCall,
+  ChildRunAuditToolResult,
+} from "./protocol.ts";
+
 export {
   useAgent,
   type UseAgentOptions,
   type UseAgentResult,
 } from "#veryfront/agent/react/use-agent.ts";
+
+export {
+  buildChatStreamChunkMessageMetadata,
+  type BuildChatStreamChunkMessageMetadataInput,
+  dedupeChatUiMessageChunks,
+  extractChatMessageMetadata,
+  normalizeChatMessageMetadata,
+  normalizeChatUiMessageChunk,
+  normalizeChatUiMessageStream,
+} from "./chat-ui-message-helpers.ts";
+export {
+  type HostedStreamPartForUiChunkMapping,
+  type HostedUiChunkMappingOptions,
+  mapHostedStreamPartToChatUiChunks,
+} from "./hosted-ui-chunk-mapping.ts";
 
 export {
   useCompletion,
@@ -233,3 +257,17 @@ export {
   type UseVoiceInputOptions,
   type UseVoiceInputResult,
 } from "#veryfront/agent/react/use-voice-input.ts";
+
+export {
+  ChatStreamIdleTimeoutError,
+  type ChatStreamWatchdogOptions,
+  type ChatStreamWatchdogPhase,
+  type ChatStreamWatchdogState,
+  createChatStreamWatchdog,
+  createChatStreamWatchdogState,
+  DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
+  DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
+  getNextChatStreamWatchdogState,
+  isHeartbeatOnlyMetadataChunk,
+  isLongRunningToolRunning,
+} from "./stream-watchdog.ts";

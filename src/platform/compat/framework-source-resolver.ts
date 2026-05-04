@@ -1,7 +1,30 @@
 import { join } from "#veryfront/compat/path/index.ts";
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { createFileSystem } from "./fs.ts";
 import { getFrameworkRoot, getFrameworkRootFromMeta } from "./vfs-paths.ts";
+
+/**
+ * Reject candidate paths that contain traversal indicators — plain `..`,
+ * NUL, or any percent-encoded variant (including multiply-encoded forms such
+ * as `%252e` or `%25252e`). The public `/_vf_modules/...` route reaches this
+ * resolver, so a malicious basePath like
+ * `_veryfront/%2e%2e%2fsecret.ts` would otherwise be joined with the
+ * framework lookupDir and escape it.
+ */
+function hasDangerousSegments(candidate: string): boolean {
+  if (candidate.includes("\0")) return true;
+  // Plain-text traversal (post URL-decode).
+  if (/(^|[/\\])\.\.([/\\]|$)/.test(candidate)) return true;
+  // Any occurrence of a percent sign is treated as suspicious: this resolver
+  // is called with inputs taken from URL path segments which have already
+  // been decoded once upstream. A lingering `%` means the attacker
+  // double-encoded the input, or that decoding missed a sequence — either
+  // way, refuse to probe the filesystem. Framework source paths never
+  // legitimately contain `%`.
+  if (candidate.includes("%")) return true;
+  return false;
+}
 
 export const FRAMEWORK_ROOT = getFrameworkRootFromMeta(import.meta.url);
 export const FRAMEWORK_SRC_DIR = join(FRAMEWORK_ROOT, "src");
@@ -105,6 +128,11 @@ export async function resolveFrameworkSourcePath(
   relativePathWithoutExt: string,
   options: ResolveFrameworkSourcePathOptions = {},
 ): Promise<FrameworkSourceLookupResult | null> {
+  // VULN-FS-3: Reject any candidate containing traversal indicators
+  // (plain or percent-encoded) before joining with the framework lookup dir.
+  // The public /_vf_modules/... route reaches this function with user input.
+  if (hasDangerousSegments(relativePathWithoutExt)) return null;
+
   const fs = options.fileSystem ?? createFileSystem();
   const lookupDirs = getFrameworkSourceLookupDirs(options.extraLookupDirs);
   const extensions = options.extensions ?? DEFAULT_FRAMEWORK_SOURCE_EXTENSIONS;
@@ -118,6 +146,10 @@ export async function resolveFrameworkSourcePath(
     for (const candidate of candidates) {
       for (const ext of extensions) {
         const candidatePath = join(lookupDir, candidate + ext);
+
+        // Defence in depth: even if the candidate passed the textual gate
+        // above, confirm the joined path is physically within the lookup dir.
+        if (!isWithinDirectory(lookupDir, candidatePath)) continue;
 
         try {
           const stat = await fs.stat(candidatePath);

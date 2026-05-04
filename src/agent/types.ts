@@ -79,6 +79,11 @@ export interface AgentConfig {
   system: string | (() => string) | (() => Promise<string>);
   tools?: true | Record<string, Tool | boolean>;
   remoteTools?: RemoteToolSource[];
+  /**
+   * Optional remote tool name allowlist. When set, only matching tools from
+   * `remoteTools` are exposed to the model and executable at runtime.
+   */
+  allowedRemoteTools?: string[];
   maxSteps?: number;
   streaming?: boolean;
   memory?: MemoryConfig;

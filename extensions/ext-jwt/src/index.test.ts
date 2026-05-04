@@ -7,13 +7,7 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
-import {
-  createLocalJWKSet,
-  exportJWK,
-  generateKeyPair,
-  type JSONWebKeySet,
-  SignJWT,
-} from "jose";
+import { createLocalJWKSet, exportJWK, generateKeyPair, type JSONWebKeySet, SignJWT } from "jose";
 
 import factory, { type JwksResolver } from "./index.ts";
 

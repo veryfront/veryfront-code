@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isResponseLike } from "./response-like.ts";
 import { getAgent } from "./composition/index.ts";
 import type { Agent } from "./types.ts";
 import {
@@ -6,9 +7,6 @@ import {
   RunAlreadyExistsError,
   type RunResumeSessionManager,
 } from "./runtime/index.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
-import { type Tool, toolRegistry } from "#veryfront/tool";
 import {
   createStreamTransformState,
   finalizeRunEvents,
@@ -17,11 +15,12 @@ import {
 } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import { streamDataStreamEvents } from "./data-stream.ts";
 import {
-  type AgUiInjectedTool,
   type AgUiRequest,
   normalizeAgUiMessages,
   parseAgUiRequestOrError,
 } from "./ag-ui-host-support.ts";
+import { extractRequest } from "./ag-ui-request-shared.ts";
+import { type AgUiResumeValue, buildMergedAgUiTools } from "./ag-ui-tool-shared.ts";
 
 export {
   type AgUiContextItem,
@@ -38,34 +37,7 @@ const AG_UI_HEADERS: Record<string, string> = {
   Connection: "keep-alive",
 };
 
-type AgUiResumeValue = { result: unknown; isError: boolean };
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
-
-function isRequest(obj: unknown): obj is Request {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "json" in obj &&
-    typeof obj.json === "function" &&
-    "url" in obj &&
-    typeof obj.url === "string" &&
-    "method" in obj &&
-    typeof obj.method === "string"
-  );
-}
-
-function extractRequest(requestOrCtx: unknown): Request {
-  if (isRequest(requestOrCtx)) return requestOrCtx;
-
-  if (typeof requestOrCtx === "object" && requestOrCtx !== null && "request" in requestOrCtx) {
-    const candidate = (requestOrCtx as Record<string, unknown>).request;
-    if (isRequest(candidate)) return candidate;
-  }
-
-  throw INVALID_ARGUMENT.create({
-    detail: "Invalid handler argument: expected Request or APIContext",
-  });
-}
 
 function generateRunId(): string {
   return `run_${crypto.randomUUID().replaceAll("-", "")}`;
@@ -239,38 +211,6 @@ async function createAgUiDirectStreamResponse(
   });
 }
 
-function createInjectedAgUiTool(
-  runId: string,
-  tool: AgUiInjectedTool,
-  sessionManager: RunResumeSessionManager<AgUiResumeValue>,
-): Tool {
-  return {
-    id: tool.name,
-    type: "function",
-    description: tool.description ?? tool.name,
-    inputSchema: z.record(z.string(), z.unknown()),
-    inputSchemaJson: (tool.parameters ??
-      { type: "object", properties: {}, additionalProperties: true }) as Tool["inputSchemaJson"],
-    execute: async (_input, context) => {
-      const toolCallId = typeof context?.toolCallId === "string" ? context.toolCallId : null;
-      if (!toolCallId) {
-        throw new Error(`Missing toolCallId for injected tool "${tool.name}"`);
-      }
-
-      sessionManager.prepareForSignal(runId, toolCallId);
-      const submitted = await sessionManager.waitForSignal(runId, toolCallId);
-      if (submitted.isError) {
-        throw new Error(
-          typeof submitted.result === "string"
-            ? submitted.result
-            : JSON.stringify(submitted.result),
-        );
-      }
-      return submitted.result;
-    },
-  };
-}
-
 async function createAgUiInjectedToolsStreamResponse(
   agent: Agent,
   request: AgUiRequest,
@@ -289,26 +229,9 @@ async function createAgUiInjectedToolsStreamResponse(
     throw error;
   }
 
-  const injectedTools = Object.fromEntries(
-    request.tools.map((tool) => [tool.name, createInjectedAgUiTool(runId, tool, sessionManager)]),
-  );
-
-  const mergedTools: Agent["config"]["tools"] = !agent.config.tools
-    ? injectedTools
-    : agent.config.tools === true
-    ? {
-      ...Object.fromEntries(
-        [...toolRegistry.getAll()]
-          .filter(([toolId]) => agent.config.skills || !SKILL_TOOL_IDS.has(toolId))
-          .map(([toolId]) => [toolId, true]),
-      ),
-      ...injectedTools,
-    }
-    : { ...agent.config.tools, ...injectedTools };
-
   const runtime = new AgentRuntime(agent.id, {
     ...agent.config,
-    tools: mergedTools,
+    tools: buildMergedAgUiTools(agent, runId, request.tools, sessionManager),
   });
 
   let upstreamBody: ReadableStream<Uint8Array>;
@@ -403,7 +326,7 @@ export function createAgUiHandler(
 
     try {
       const parsed = await parseAgUiRequestOrError(request);
-      if (parsed instanceof Response) {
+      if (isResponseLike(parsed)) {
         return parsed;
       }
 

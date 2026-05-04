@@ -25,7 +25,13 @@ export type { CacheStore } from "./cache-store.ts";
 export type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "./token-cache-store.ts";
 
 // CSS processor
-export type { CSSProcessOptions, CSSProcessor, CSSProcessResult } from "./css-processor.ts";
+export type {
+  CSSCompileOptions,
+  CSSCompiler,
+  CSSModuleSource,
+  CSSProcessor,
+  CSSStylesheetSource,
+} from "./css-processor.ts";
 
 // Content transformer
 export type {
@@ -47,7 +53,7 @@ export type {
 } from "./auth-provider.ts";
 
 // Tracing exporter
-export type { SpanData, TracingExporter } from "./tracing-exporter.ts";
+export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
 
 // AI provider (registry + per-provider contract)
 export type { AIProvider, AIProviderConfig, AIProviderRegistry } from "./ai-provider.ts";
@@ -70,8 +76,12 @@ export type {
 
 // Schema validator
 export type {
+  InferSchema,
+  InferShape,
   Schema,
+  SchemaFactory,
   SchemaValidator,
+  SchemaValidatorCoerce,
   ValidationFailure,
   ValidationIssue,
   ValidationResult,
@@ -79,4 +89,9 @@ export type {
 } from "./schema-validator.ts";
 
 // Node compatibility
-export type { NodeCompat } from "./node-compat.ts";
+export type {
+  KreuzbergExtractor,
+  NodeCompat,
+  NodeCompatSqliteDatabase,
+  SqliteStatement,
+} from "./node-compat.ts";

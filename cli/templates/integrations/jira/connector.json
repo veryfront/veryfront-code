@@ -45,31 +45,31 @@
   ],
   "tools": [
     {
-      "id": "search-issues",
+      "id": "search_issues",
       "name": "Search Issues",
       "description": "Search Jira issues using JQL (Jira Query Language)",
       "requiresWrite": false
     },
     {
-      "id": "get-issue",
+      "id": "get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific Jira issue",
       "requiresWrite": false
     },
     {
-      "id": "create-issue",
+      "id": "create_issue",
       "name": "Create Issue",
       "description": "Create a new Jira issue in a project",
       "requiresWrite": true
     },
     {
-      "id": "update-issue",
+      "id": "update_issue",
       "name": "Update Issue",
       "description": "Update an existing Jira issue (status, fields, etc.)",
       "requiresWrite": true
     },
     {
-      "id": "list-projects",
+      "id": "list_projects",
       "name": "List Projects",
       "description": "List all accessible Jira projects",
       "requiresWrite": false
@@ -77,28 +77,28 @@
   ],
   "prompts": [
     {
-      "id": "find-bugs",
+      "id": "find_bugs",
       "title": "Find open bugs",
       "prompt": "Search for all open bugs assigned to me or in my current sprint.",
       "category": "productivity",
       "icon": "bug"
     },
     {
-      "id": "create-task",
+      "id": "create_task",
       "title": "Create a task",
       "prompt": "Create a new task in Jira with a title, description, and priority.",
       "category": "productivity",
       "icon": "plus"
     },
     {
-      "id": "sprint-summary",
+      "id": "sprint_summary",
       "title": "Sprint summary",
       "prompt": "Get a summary of all issues in the current sprint, organized by status.",
       "category": "productivity",
       "icon": "list"
     },
     {
-      "id": "update-status",
+      "id": "update_status",
       "title": "Update issue status",
       "prompt": "Move an issue to a different status (To Do, In Progress, Done, etc.).",
       "category": "productivity",

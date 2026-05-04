@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("observability/tracing/otlp-setup", () => {
@@ -18,10 +18,12 @@ describe("observability/tracing/otlp-setup", () => {
     assertEquals(result, "ok");
   });
 
-  it("extractContext should return undefined when APIs are unavailable", async () => {
+  it("extractContext should return the active context (shim returns noop context)", async () => {
     const { extractContext } = await import("./otlp-setup.ts");
 
-    assertEquals(extractContext(new Headers()), undefined);
+    // With the api-shim, extractContext always returns a context object (noop when no provider).
+    const ctx = extractContext(new Headers());
+    assertExists(ctx);
   });
 
   it("injectContext should leave headers unchanged when APIs are unavailable", async () => {

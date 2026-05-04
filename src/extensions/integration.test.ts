@@ -6,9 +6,9 @@
  * @module extensions/integration.test
  */
 
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { detectConflicts, ExtensionLoader, resolve } from "./index.ts";
+import { detectConflicts, ExtensionLoader, resolve, tryResolve } from "./index.ts";
 import type { Extension, ResolvedExtension } from "./index.ts";
 import { register, reset } from "./contracts.ts";
 import { AIProviderRegistryName } from "./interfaces/index.ts";
@@ -17,6 +17,12 @@ import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
 import extOpenAI from "../../extensions/ext-openai/src/index.ts";
 import extAnthropic from "../../extensions/ext-anthropic/src/index.ts";
 import extGoogle from "../../extensions/ext-google/src/index.ts";
+import {
+  _resetShimForTests,
+  getTracer,
+  setGlobalTracerProvider,
+} from "#veryfront/observability/tracing/api-shim.ts";
+import type { TracingExporter } from "./interfaces/tracing-exporter.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -183,6 +189,75 @@ describe("extensions/integration", () => {
     assertEquals(resolved, registry);
     assert(registry.has("openai"));
     await loader.teardownAll();
+  });
+
+  it("ext-opentelemetry: TracingExporter registers and returns a real tracer", async () => {
+    _resetShimForTests();
+
+    let shimProvider: { getTracer(name: string): unknown } | null = null;
+
+    const noopSpan = {
+      setAttribute: () => noopSpan,
+      setAttributes: () => noopSpan,
+      setStatus: () => noopSpan,
+      recordException: () => {},
+      addEvent: () => noopSpan,
+      end: () => {},
+      spanContext: () => ({ traceId: "aabbcc", spanId: "112233", traceFlags: 1 }),
+      updateName: () => {},
+    };
+
+    const testProvider = {
+      getTracer: (name: string) => ({
+        startSpan: () => noopSpan,
+        startActiveSpan: (_: string, fn: (s: typeof noopSpan) => unknown) => fn(noopSpan),
+        _name: name,
+      }),
+    };
+
+    const exporterStub: TracingExporter = {
+      async start(_cfg: Record<string, unknown>) {
+        shimProvider = testProvider;
+        setGlobalTracerProvider(testProvider);
+      },
+      async export(_spans) {},
+      async shutdown() {
+        shimProvider = null;
+      },
+      getProvider() {
+        return testProvider;
+      },
+      getMetricsAPI() {
+        return null;
+      },
+    };
+
+    const otelExt = makeExt("ext-opentelemetry", {
+      provides: { TracingExporter: exporterStub },
+      async setup(ctx) {
+        await exporterStub.start(ctx.config);
+        ctx.provide("TracingExporter", exporterStub);
+      },
+      async teardown() {
+        await exporterStub.shutdown();
+      },
+    });
+
+    const loader = new ExtensionLoader(noopLogger);
+    await loader.setupAll([makeResolved(otelExt)], {});
+
+    const tracing = tryResolve<TracingExporter>("TracingExporter");
+    assertExists(tracing);
+    setGlobalTracerProvider(tracing.getProvider() as Parameters<typeof setGlobalTracerProvider>[0]);
+
+    const tracer = getTracer("test-service");
+    assertExists(tracer);
+    assertEquals((tracer as unknown as { _name?: string })._name, "test-service");
+
+    assertExists(shimProvider);
+
+    await loader.teardownAll();
+    _resetShimForTests();
   });
 
   it("ext-anthropic registers into the primed AIProviderRegistry", async () => {

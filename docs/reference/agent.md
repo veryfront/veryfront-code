@@ -16,6 +16,7 @@ Route examples below use the default app router. The hosted AG-UI path is owned 
 import {
   agent,
   agentAsTool,
+  AgentContract,
   AgentRuntime,
   AgUiDetachedStartRequestSchema,
   AgUiRequestSchema,
@@ -31,21 +32,30 @@ import {
   createAgUiRuntimeHandler,
   createAgUiSseErrorResponse,
   createMemory,
+  defineAgentService,
+  DurableRunSink,
   executeAgUiDetachedStart,
   expandAllowedRemoteToolNames,
   getAgentsAsTools,
   getProviderNativeToolNames,
+  hostedChildTerminalErrorCodes,
   HostedLifecycleTerminalState,
   HumanInputRequestSchema,
+  isHostedChildTerminalErrorCode,
   normalizeAgUiMessages,
   normalizeAgUiRuntimeMessages,
   parseAgUiRequest,
   parseAgUiRequestOrError,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
+  parseRuntimeAgentRunInvocation,
+  parseRuntimeAgentRunInvocationOrError,
   registerAgent,
+  runHostedChildLifecycle,
   runHostedLifecycle,
   RunResumeSessionManager,
+  RuntimeAgentRunInvocationSchema,
+  shouldSkipHostedChildTerminalPersistence,
   waitForHumanInput,
 } from "veryfront/agent";
 ```
@@ -219,6 +229,38 @@ await runHostedLifecycle({
 });
 ```
 
+### Phase-0 hosted service contract stub
+
+```ts
+import { agent, defineAgentService, type DurableRunSink } from "veryfront/agent";
+
+const assistant = agent({
+  system: "You are a hosted assistant.",
+});
+
+const durableRunSink: DurableRunSink = {
+  startRun: () => ({ runId: "run_123" }),
+  appendEvents: async () => {},
+  finalizeRun: async () => {},
+  cancelRun: async () => {},
+};
+
+// Phase 0 reserves the public signature only. This currently throws until the
+// hosted runtime implementation lands in a later migration phase.
+defineAgentService({
+  serviceName: "veryfront-agent",
+  agent: assistant,
+  durableRunSink,
+});
+```
+
+For a conversations/control-plane host composition that combines
+`runHostedLifecycle()` with the public durable-run helpers, see
+[`Conversation-backed agent hosts`](./agent-conversation-control-plane.md).
+For higher-level root-run and child-run adapter factories over those same public exports, see [`Conversation-backed lifecycle adapters`](./agent-conversation-lifecycle.md).
+For a small helper that carries durable run lineage and effective parent lineage together, see [`Conversation run context helpers`](./agent-conversation-run-context.md).
+For helpers that start or normalize a conversation-backed root run before host execution begins, see [`Conversation root-run helpers`](./agent-conversation-root-run-context.md).
+
 ### Browser AG-UI encoder
 
 ```ts
@@ -255,12 +297,29 @@ const allowedRemoteToolNames = expandAllowedRemoteToolNames({
 });
 ```
 
+### Remote tool allowlists
+
+Use `allowedRemoteTools` when a host discovers a remote tool inventory but only
+wants a subset exposed to the model and executable at runtime. Omit it to expose
+all tools returned by `remoteTools`. Use an empty array to expose none.
+
+```ts
+import { agent } from "veryfront/agent";
+
+const assistant = agent({
+  system: "Use only the selected remote tools.",
+  remoteTools: [docsTools],
+  allowedRemoteTools: ["docs_search"],
+});
+```
+
 ### Human input over hosted AG-UI runs
 
 ```ts
 import {
   HostedLifecycleTerminalState,
   HumanInputRequestSchema,
+  runHostedChildLifecycle,
   runHostedLifecycle,
   RunResumeSessionManager,
   waitForHumanInput,
@@ -327,6 +386,7 @@ when bootstrap credentials are present.
 | `system`                 | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code>                                                                | System prompt — string, function, or async function                                  |
 | `tools?`                 | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code>                                                                                  | Tools available to the agent                                                         |
 | `remoteTools?`           | `RemoteToolSource[]`                                                                                                                                | Remote tool sources queried per request (for example remote MCP)                     |
+| `allowedRemoteTools?`    | `string[]`                                                                                                                                          | Restrict `remoteTools` exposure and execution to these tool names.                   |
 | `maxSteps?`              | `number`                                                                                                                                            | Max tool-call iterations per request                                                 |
 | `streaming?`             | `boolean`                                                                                                                                           | Enable streaming responses                                                           |
 | `memory?`                | `MemoryConfig`                                                                                                                                      | Conversation memory settings                                                         |
@@ -340,19 +400,102 @@ when bootstrap credentials are present.
 
 **Returns:** `Agent`
 
+### Runtime instruction helpers
+
+Use these helpers when a host needs to add the current tool surface to runtime
+system instructions without copying prompt bookkeeping.
+
+| Export                        | Type                                               | Description                                                                                               |
+| ----------------------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| `withRuntimeToolInventory()`  | `(instructions, toolNames) => ChatSystemMessage[]` | Append the canonical current-run tool inventory system message, replacing any previous inventory message. |
+| `flattenSystemInstructions()` | `(instructions) => string`                         | Flatten system messages into the string form consumed by model runtimes.                                  |
+
 ### Browser AG-UI stream encoder
 
 Use these helpers when a host needs to turn the framework runtime stream event
 family into browser/public AG-UI events without importing internal transport
 modules.
 
-| Export                                                   | Type                                             | Description                                                                    |
-| -------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `createAgUiBrowserEncoderState()`                        | `() => AgUiBrowserEncoderState`                  | Create mutable encoder state for one browser AG-UI stream.                     |
-| `buildAgUiBrowserFinalizeResponse()`                     | `(metadata) => AgentResponse \| null`            | Convert browser-finished metadata into the canonical final AgentResponse.      |
-| `runHostedLifecycle()`                                   | `(options) => Promise<HostedLifecycleRunResult>` | Orchestrate start/observe/finalize/cancel sequencing with host-owned adapters. |
-| `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`    | Map one runtime stream event into zero or more browser/public AG-UI events.    |
-| `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]` | Emit terminal browser/public AG-UI events after the runtime stream finishes.   |
+| Export                                                   | Type                                                                                               | Description                                                                                                                                                                                                                  |
+| -------------------------------------------------------- | -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `createAgUiBrowserEncoderState()`                        | `() => AgUiBrowserEncoderState`                                                                    | Create mutable encoder state for one browser AG-UI stream.                                                                                                                                                                   |
+| `buildAgUiBrowserFinalizeResponse()`                     | `(metadata) => AgentResponse \| null`                                                              | Convert browser-finished metadata into the canonical final AgentResponse.                                                                                                                                                    |
+| `createAgUiBrowserChunkEncoder()`                        | `(options) => AgUiBrowserChunkEncoder`                                                             | Combine host chunk metadata tracking with runtime-event mapping so hosts with product-specific chunk types can reuse the canonical browser AG-UI encoder and finalize path in one helper.                                    |
+| `createAgUiRuntimeChatStreamEncoder()`                   | `(options) => AgUiRuntimeChatStreamEncoder`                                                        | Reuse the canonical runtime-event to `ChatStreamEvent` bridge for hosted runtimes that still own local response-message ids, error formatting, or final message assembly while deleting parallel tool/text step bookkeeping. |
+| `createAgUiRuntimeEventEncoder()`                        | `(options?) => AgUiRuntimeEventEncoder`                                                            | Reuse the canonical browser AG-UI event mapper over runtime stream events while tracking browser encoder state and enriching `ToolCallResult` events with the last captured tool input.                                      |
+| `createToolExecutionDataEventBridgeStream()`             | `(input) => ReadableStream<Uint8Array>`                                                            | Merge host-published tool execution data events into an existing framework data-stream SSE response before UI message or browser AG-UI encoding.                                                                             |
+| `createAgUiBrowserFinalizeTracker()`                     | `(options) => AgUiBrowserFinalizeTracker`                                                          | Track browser-facing finish metadata and RunError suppression for one host-owned stream while the host keeps its own chunk encoder and metadata extraction policy.                                                           |
+| `createAgUiChunkEncoderBridge()`                         | `(options) => AgUiChunkEncoderBridge`                                                              | Reuse the canonical browser AG-UI event mapper for host-owned chunk types that can be projected into runtime stream events, while the host keeps its own chunk-to-runtime-event adaptation local.                            |
+| `normalizeAgUiBrowserRuntimeRequest()`                   | `(input, defaults?) => AgUiRuntimeRequest`                                                         | Apply host-supplied thread/run defaults to one canonical runtime AG-UI request while preserving only object-like state snapshots for browser response framing.                                                               |
+| `createAgUiSseResponse()`                                | `(stream) => Response`                                                                             | Wrap one AG-UI SSE stream in the canonical browser response headers without rebuilding the header set in each host.                                                                                                          |
+| `createAgUiRuntimeBrowserResponse()`                     | `(input) => Response`                                                                              | Apply AG-UI runtime browser defaults, construct the browser stream, and wrap it in canonical SSE headers while hosts keep encoder and finalize policy local.                                                                 |
+| `createAgUiTrackedBrowserResponse()`                     | `(input) => Response`                                                                              | Combine browser request defaulting, host chunk encoding, finalize tracking, and canonical SSE response assembly in one helper while hosts still control chunk-to-runtime-event and metadata extraction policy.               |
+| `runHostedLifecycle()`                                   | `(options) => Promise<HostedLifecycleRunResult>`                                                   | Orchestrate start/observe/finalize/cancel sequencing with host-owned adapters.                                                                                                                                               |
+| `runHostedResponseStreamWithHeartbeat()`                 | `(options) => Promise<void>`                                                                       | Stream hosted execution chunks through one writer while the package owns heartbeat timing plus the generic hosted lifecycle loop and the host keeps heartbeat chunk and logging policy local.                                |
+| `runHostedChildLifecycle()`                              | `(options) => Promise<HostedChildLifecycleRunResult>`                                              | Orchestrate pending/running/completed/failed/cancelled child lifecycle sequencing with host-owned adapters.                                                                                                                  |
+| `runHostedChildExecutionLifecycle()`                     | `(options) => Promise<HostedChildExecutionLifecycleResult>`                                        | Wrap hosted child lifecycle sequencing around local child execution snapshots and normalize terminal child-run errors.                                                                                                       |
+| `hostedChildTerminalErrorCodes`                          | `{ cancelled, failed, completedExternally }`                                                       | Canonical durable child terminal error codes emitted when an externally controlled child run reaches a terminal state before local execution completes.                                                                      |
+| `isHostedChildTerminalErrorCode()`                       | `(value) => value is HostedChildTerminalErrorCode`                                                 | Check whether an unknown value is one of the canonical hosted child terminal error codes.                                                                                                                                    |
+| `shouldSkipHostedChildTerminalPersistence()`             | `(terminalState) => boolean`                                                                       | Determine whether a hosted child terminal state already reflects external durable child persistence and should not be finalized again by lifecycle adapters.                                                                 |
+| `createConversationHostedStreamLifecycleAdapter()`       | `(options) => HostedLifecycleAdapter<ConversationRunProjection, ChatStreamEvent>`                  | Create a conversation-backed hosted lifecycle adapter that appends canonical conversation-run events directly from public chat stream events.                                                                                |
+| `createConversationAgentRun()`                           | `(input) => Promise<ConversationRunProjection>`                                                    | Create a conversation-owned durable agent run and read back its canonical projection.                                                                                                                                        |
+| `getConversationRun()`                                   | `(input) => Promise<ConversationRunProjection>`                                                    | Read the canonical projection for an existing conversation-owned durable run.                                                                                                                                                |
+| `appendConversationRunEvents()`                          | `(input) => Promise<AppendConversationRunEventsResponse>`                                          | Append control-plane events to a conversation-owned durable run through the canonical events route.                                                                                                                          |
+| `flushConversationRunEventBatches()`                     | `(input) => Promise<{ outcome, latestEventId, latestExternalEventSequence, ... }>`                 | Flush one host-owned queue of conversation-run events through canonical batching plus append-execution recovery.                                                                                                             |
+| `flushConversationRunEventQueue()`                       | `(input) => Promise<{ outcome, latestEventId, latestExternalEventSequence, pendingEvents?, ... }>` | Drain one host-owned queue of conversation-run events until it fully flushes, stops, or yields a canonical retry payload.                                                                                                    |
+| `createConversationRunEventQueueController()`            | `(input) => ConversationRunEventQueueController`                                                   | Create a timerless queue controller that owns pending-event buffering plus canonical flush/retry state while the host keeps scheduling and logging policy.                                                                   |
+| `createConversationRunMirror()`                          | `(input) => ConversationRunMirror`                                                                 | Create a reusable conversation-run mirror that owns queue flushing, in-flight coordination, and retry scheduling while the host still controls event shaping and logging callbacks.                                          |
+| `normalizeConversationRunEvent()`                        | `(event) => ConversationRunEvent[]`                                                                | Normalize one conversation-run event to stay under control-plane payload limits by splitting or summarizing oversized payloads.                                                                                              |
+| `normalizeConversationRunEvents()`                       | `(events) => ConversationRunEvent[]`                                                               | Normalize a whole conversation-run event list through the shared payload-limit rules before it is queued or appended.                                                                                                        |
+| `getConversationRunEventJsonByteLength()`                | `(value) => number`                                                                                | Measure the UTF-8 JSON payload size used by the conversation-run event normalization helpers.                                                                                                                                |
+| `ConversationRunEventEncoder`                            | `class`                                                                                            | Encode public chat stream events into canonical conversation-run events without rebuilding the control-plane event contract in each host.                                                                                    |
+| `encodeConversationRunEvents()`                          | `(events, encoder?) => ConversationRunEvent[]`                                                     | Encode a whole list of public chat stream events into canonical conversation-run events.                                                                                                                                     |
+| `normalizeEncodedConversationRunEvents()`                | `(events, encoder?) => ConversationRunEvent[]`                                                     | Encode and normalize public chat stream events into payload-safe conversation-run events in one step.                                                                                                                        |
+| `prepareConversationRunStreamEvents()`                   | `(events, encoder?) => ConversationRunEvent[]`                                                     | Encode and normalize public chat stream events in one host-facing helper before queueing them into a conversation-run mirror.                                                                                                |
+| `prepareConversationRunExternalEvents()`                 | `(events) => ConversationRunEvent[]`                                                               | Normalize already-encoded conversation-run events before they are appended or queued.                                                                                                                                        |
+| `createConversationRunStreamMirror()`                    | `(input) => ConversationRunStreamMirror`                                                           | Create a higher-level conversation-run mirror that accepts public chat stream events, normalizes them, and forwards them through the reusable mirror runtime.                                                                |
+| `createConversationHostedTerminalAdapter()`              | `(input) => ConversationHostedTerminalAdapter`                                                     | Bind one conversation-owned run to reusable terminal-state normalization plus durable finalize/cancel dispatch while hosts keep tracing or other terminal observers local.                                                   |
+| `prepareConversationRootRunLifecycle()`                  | `(input, options) => Promise<ConversationRootRunLifecycle>`                                        | Start a root run, derive effective parent lineage, and optionally attach a host-owned mirror in one reusable control-plane lifecycle helper.                                                                                 |
+| `finalizeHostedResponse()`                               | `(options) => Promise<void>`                                                                       | Run generic hosted response-finalization sequencing around final-step lookup, fallback chunk append, mirror flush, terminal dispatch, and cleanup while hosts keep fallback semantics local.                                 |
+| `finalizeHostedDetached()`                               | `(options) => Promise<void>`                                                                       | Run generic detached hosted finalization sequencing around fallback chunk append, mirror flush, terminal dispatch, and cleanup while hosts keep fallback semantics local.                                                    |
+| `buildFinalizedMessageState()`                           | `(input) => FinalizedMessageState`                                                                 | Build a persisted/finalized assistant message pair from streamed output and provider final-step fallback data.                                                                                                               |
+| `buildDetachedFallbackMessageState()`                    | `(input) => DetachedFallbackMessageState`                                                          | Build a detached assistant fallback message from provider final-step data.                                                                                                                                                   |
+| `buildFinalizedMessageFallbackChunks()`                  | `(input) => ChatUiMessageChunk[]`                                                                  | Build missing finalized fallback chunks while respecting already mirrored tool chunks.                                                                                                                                       |
+| `buildDetachedFallbackChunks()`                          | `(input) => ChatUiMessageChunk[]`                                                                  | Build missing detached fallback chunks while avoiding duplicate durable output.                                                                                                                                              |
+| `isAppendableConversationRunProjection()`                | `(run) => boolean`                                                                                 | Check whether a conversation-owned durable run is still appendable or has already moved into a waiting/terminal state.                                                                                                       |
+| `resyncConversationRunAppendCursor()`                    | `(input) => Promise<{ result, run }>`                                                              | Re-read a conversation-owned durable run after an append cursor mismatch and classify whether the cursor advanced, stayed appendable, or became non-appendable.                                                              |
+| `recoverConversationRunCursorMismatch()`                 | `(input) => Promise<{ outcome, latestEventId, latestExternalEventSequence, ... }>`                 | Apply retry-limit gating plus canonical cursor-resync classification for a conversation-run cursor mismatch in one reusable helper.                                                                                          |
+| `recoverConversationRunAppendFailure()`                  | `(input) => Promise<{ outcome, latestEventId, latestExternalEventSequence, ... }>`                 | Classify append failures into resume/stop/retry outcomes while sharing the canonical cursor-mismatch and ignorable-rejection rules.                                                                                          |
+| `recoverConversationRunAppendExecution()`                | `(input) => Promise<{ outcome, latestEventId, latestExternalEventSequence, pendingEvents?, ... }>` | Apply append-failure recovery to a host-owned pending-events queue while preserving canonical control-plane resume/stop/retry decisions.                                                                                     |
+| `monitorConversationRunStatus()`                         | `(input) => Promise<void>`                                                                         | Poll a conversation-owned durable run until it reaches a terminal state and report the terminal projection through a typed error callback.                                                                                   |
+| `finalizeConversationAgentRun()`                         | `(input) => Promise<void>`                                                                         | Finalize a conversation-owned durable agent run through the canonical complete route.                                                                                                                                        |
+| `resolveConversationRunTargets()`                        | `({ projectId?, branchId? }) => ConversationRunTargets`                                            | Resolve project/branch target metadata for durable conversation-backed runs.                                                                                                                                                 |
+| `bootstrapConversationAgentRun()`                        | `(input) => Promise<BootstrapConversationAgentRunResult>`                                          | Create a conversation, seed it with a handoff message, and create a conversation-owned agent run in one reusable flow.                                                                                                       |
+| `ensureConversationProjectLink()`                        | `(input) => Promise<void>`                                                                         | Link a conversation to a project when it is currently unowned.                                                                                                                                                               |
+| `createConversationRecord()`                             | `(input) => Promise<ConversationRecord>`                                                           | Create a conversation through the control-plane conversations API.                                                                                                                                                           |
+| `createConversationMessage()`                            | `(input) => Promise<ConversationMessageRecord>`                                                    | Create a conversation message through the control-plane conversations API.                                                                                                                                                   |
+| `buildInvokeAgentChildRunStateDelta()`                   | `(input) => InvokeAgentChildRunStateDelta`                                                         | Build the canonical `invokeAgentChildRuns` state-delta payload for one child-run lifecycle transition.                                                                                                                       |
+| `buildInvokeAgentChildRunLifecycleCustomEvent()`         | `(input) => InvokeAgentChildRunLifecycleCustomEvent`                                               | Build the AG-UI custom lifecycle event emitted for invoke-agent child-run progress.                                                                                                                                          |
+| `buildInvokeAgentChildRunProgressEvents()`               | `(input) => readonly [InvokeAgentChildRunStateDelta, InvokeAgentChildRunLifecycleCustomEvent]`     | Build the paired state-delta and custom lifecycle events for invoke-agent child-run progress.                                                                                                                                |
+| `publishInvokeAgentChildRunProgress()`                   | `(input) => Promise<void>`                                                                         | Publish invoke-agent child-run progress through a shared parent-run publisher or the canonical conversation-run events route.                                                                                                |
+| `startAgentRuntimeFork()`                                | `(input) => ForkRuntimeStreamResult`                                                               | Run the reusable child/fork runtime step loop while hosts inject prompt preparation, runtime tools, provider options, and optional continuation policy.                                                                      |
+| `mapRuntimeStreamEventToAgUiBrowserEvents(state, event)` | `(state, event) => AgUiBrowserEncodedEvent[]`                                                      | Map one runtime stream event into zero or more browser/public AG-UI events.                                                                                                                                                  |
+| `finalizeAgUiBrowserEvents(state, response)`             | `(state, response) => AgUiBrowserEncodedEvent[]`                                                   | Emit terminal browser/public AG-UI events after the runtime stream finishes.                                                                                                                                                 |
+
+### Response-like guards
+
+Use `isResponseLike` when host hooks can return a `Response` created by a
+different JavaScript runtime realm. It avoids fragile `instanceof Response`
+checks at route boundaries.
+
+```ts
+import { isResponseLike } from "veryfront/agent";
+
+const result = await beforeParse(request);
+if (isResponseLike(result)) {
+  return result;
+}
+```
 
 ### Provider-native tool inventory
 
@@ -567,6 +710,31 @@ Parse and validate the canonical runtime AG-UI request body into
 Parse the canonical runtime AG-UI request body and return either the parsed
 request or a `400` JSON `Response` when validation fails.
 
+### `RuntimeAgentRunInvocationSchema`
+
+Validate the control-plane runtime agent invocation wrapper for separately
+deployed runtime services.
+
+Use this schema when a trusted control plane invokes a runtime agent service
+with run, project, target, lineage, tool, context, and forwarded-prop metadata.
+It wraps the message payload that a host can then normalize into the local
+agent runtime input model.
+
+This schema is not a replacement for `AgUiRuntimeRequestSchema`. Use
+`AgUiRuntimeRequestSchema` for public AG-UI runtime routes. Use
+`RuntimeAgentRunInvocationSchema` for signed service-to-service invocation
+routes where the control plane owns durable run identity and project context.
+
+### `parseRuntimeAgentRunInvocation(request)`
+
+Parse and validate the control-plane runtime agent invocation body into
+`RuntimeAgentRunInvocationSchema`.
+
+### `parseRuntimeAgentRunInvocationOrError(request)`
+
+Parse the control-plane runtime agent invocation body and return either the
+parsed request or a `400` JSON `Response` when validation fails.
+
 ### `normalizeAgUiRuntimeMessages(messages)`
 
 Normalize canonical runtime AG-UI `messages` into the package `Message[]`
@@ -695,34 +863,36 @@ Clear all stored messages from memory.
 
 ### Functions
 
-| Name                             | Description                                                             |
-| -------------------------------- | ----------------------------------------------------------------------- |
-| `agent`                          | Create an agent                                                         |
-| `agentAsTool`                    | Wrap agent as callable tool                                             |
-| `createAgUiCancelHandler`        | Create a DELETE handler for hosted AG-UI run cancellation               |
-| `createAgUiDetachedStartHandler` | Create a POST handler for detached hosted AG-UI run kickoff             |
-| `executeAgUiDetachedStart`       | Run detached hosted-start lifecycle from a validated request object     |
-| `createAgUiHandler`              | Create a POST handler for an AG-UI route                                |
-| `createAgUiRuntimeHandler`       | Create a POST handler for the canonical runtime AG-UI request contract  |
-| `createAgUiRunErrorEvent`        | Create a `RunError` AG-UI SSE event                                     |
-| `createAgUiSseErrorResponse`     | Create an AG-UI SSE error `Response`                                    |
-| `createAgUiResumeHandler`        | Create a POST handler for hosted AG-UI run resume values                |
-| `normalizeAgUiRuntimeMessages`   | Normalize runtime AG-UI messages into package `Message[]`               |
-| `parseAgUiRuntimeRequest`        | Parse and validate the canonical runtime AG-UI request body             |
-| `parseAgUiRuntimeRequestOrError` | Parse runtime AG-UI input or return a `400` validation `Response`       |
-| `createChatHandler`              | Create a POST handler for a chat API route.                             |
-| `createMemory`                   | Create memory (buffer, conversation, summary)                           |
-| `createRedisMemory`              | Create Redis-backed memory                                              |
-| `createWorkflow`                 | Create sequential agent workflow                                        |
-| `getAgent`                       | Get agent by ID                                                         |
-| `getAgentsAsTools`               | Get agents as tools (multi-agent)                                       |
-| `getAllAgentIds`                 | List registered agent IDs                                               |
-| `getTextFromParts`               | Extract text from multi-part message                                    |
-| `getToolArguments`               | Extract parsed tool call args                                           |
-| `hasArgs`                        | Check for parsed args on tool call                                      |
-| `hasInput`                       | Check for raw input on tool call                                        |
-| `registerAgent`                  | Register agent for discovery                                            |
-| `waitForHumanInput`              | Wait for a canonical human-input response over hosted AG-UI run control |
+| Name                                    | Description                                                              |
+| --------------------------------------- | ------------------------------------------------------------------------ |
+| `agent`                                 | Create an agent                                                          |
+| `agentAsTool`                           | Wrap agent as callable tool                                              |
+| `createAgUiCancelHandler`               | Create a DELETE handler for hosted AG-UI run cancellation                |
+| `createAgUiDetachedStartHandler`        | Create a POST handler for detached hosted AG-UI run kickoff              |
+| `executeAgUiDetachedStart`              | Run detached hosted-start lifecycle from a validated request object      |
+| `createAgUiHandler`                     | Create a POST handler for an AG-UI route                                 |
+| `createAgUiRuntimeHandler`              | Create a POST handler for the canonical runtime AG-UI request contract   |
+| `createAgUiRunErrorEvent`               | Create a `RunError` AG-UI SSE event                                      |
+| `createAgUiSseErrorResponse`            | Create an AG-UI SSE error `Response`                                     |
+| `createAgUiResumeHandler`               | Create a POST handler for hosted AG-UI run resume values                 |
+| `normalizeAgUiRuntimeMessages`          | Normalize runtime AG-UI messages into package `Message[]`                |
+| `parseAgUiRuntimeRequest`               | Parse and validate the canonical runtime AG-UI request body              |
+| `parseAgUiRuntimeRequestOrError`        | Parse runtime AG-UI input or return a `400` validation `Response`        |
+| `parseRuntimeAgentRunInvocation`        | Parse and validate a control-plane runtime agent invocation body         |
+| `parseRuntimeAgentRunInvocationOrError` | Parse a runtime agent invocation or return a `400` validation `Response` |
+| `createChatHandler`                     | Create a POST handler for a chat API route.                              |
+| `createMemory`                          | Create memory (buffer, conversation, summary)                            |
+| `createRedisMemory`                     | Create Redis-backed memory                                               |
+| `createWorkflow`                        | Create sequential agent workflow                                         |
+| `getAgent`                              | Get agent by ID                                                          |
+| `getAgentsAsTools`                      | Get agents as tools (multi-agent)                                        |
+| `getAllAgentIds`                        | List registered agent IDs                                                |
+| `getTextFromParts`                      | Extract text from multi-part message                                     |
+| `getToolArguments`                      | Extract parsed tool call args                                            |
+| `hasArgs`                               | Check for parsed args on tool call                                       |
+| `hasInput`                              | Check for raw input on tool call                                         |
+| `registerAgent`                         | Register agent for discovery                                             |
+| `waitForHumanInput`                     | Wait for a canonical human-input response over hosted AG-UI run control  |
 
 ### Classes
 
@@ -739,85 +909,113 @@ Clear all stored messages from memory.
 
 ### Schemas
 
-| Name                             | Description                                                            |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| `AgUiDetachedStartRequestSchema` | Canonical detached hosted-run kickoff request schema                   |
-| `AgUiRequestSchema`              | Convenience request schema for `createAgUiHandler()`                   |
-| `AgUiRuntimeRequestSchema`       | Canonical open-source AG-UI runtime request contract for hosted runs   |
-| `AgUiResumeSignalSchema`         | Canonical hosted-run resume payload for AG-UI tool-result continuation |
-| `HumanInputFieldSchema`          | Canonical human-input field schema                                     |
-| `HumanInputOptionSchema`         | Canonical human-input option schema                                    |
-| `HumanInputPendingRequestSchema` | Canonical pending human-input request envelope for hosts               |
-| `HumanInputRequestSchema`        | Canonical human-input request payload                                  |
-| `HumanInputResultSchema`         | Canonical human-input resumed result payload                           |
+| Name                                | Description                                                            |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `AgUiDetachedStartRequestSchema`    | Canonical detached hosted-run kickoff request schema                   |
+| `AgUiRequestSchema`                 | Convenience request schema for `createAgUiHandler()`                   |
+| `AgUiRuntimeRequestSchema`          | Canonical open-source AG-UI runtime request contract for hosted runs   |
+| `AgUiResumeSignalSchema`            | Canonical hosted-run resume payload for AG-UI tool-result continuation |
+| `HumanInputFieldSchema`             | Canonical human-input field schema                                     |
+| `HumanInputOptionSchema`            | Canonical human-input option schema                                    |
+| `HumanInputPendingRequestSchema`    | Canonical pending human-input request envelope for hosts               |
+| `HumanInputRequestSchema`           | Canonical human-input request payload                                  |
+| `HumanInputResultSchema`            | Canonical human-input resumed result payload                           |
+| `RuntimeAgentContextItemSchema`     | Control-plane runtime agent invocation context item schema             |
+| `RuntimeAgentIdSchema`              | Control-plane runtime agent id schema                                  |
+| `RuntimeAgentProjectContextSchema`  | Control-plane runtime agent project and target context schema          |
+| `RuntimeAgentRunContextSchema`      | Control-plane runtime agent run identity and lineage context schema    |
+| `RuntimeAgentRunIdSchema`           | Control-plane runtime agent run id schema                              |
+| `RuntimeAgentRunInvocationSchema`   | Control-plane runtime agent invocation wrapper schema                  |
+| `RuntimeAgentServiceIdSchema`       | Control-plane runtime agent service id schema                          |
+| `RuntimeAgentSourceContextSchema`   | Control-plane runtime agent source context schema                      |
+| `RuntimeAgentTargetKindSchema`      | Control-plane runtime target kind schema                               |
+| `RuntimeAgentToolCallIdSchema`      | Control-plane runtime tool call id schema                              |
+| `RuntimeAgentToolNameSchema`        | Control-plane runtime tool name schema                                 |
+| `RuntimeAgentToolSchema`            | Control-plane runtime tool descriptor schema                           |
+| `RuntimeAgentValidatedClaimsSchema` | Control-plane runtime validated claims schema                          |
 
 ### Types
 
-| Name                              | Description                                                                  |
-| --------------------------------- | ---------------------------------------------------------------------------- |
-| `AgUiDetachedStartAccepted`       | Accepted response shape for detached hosted AG-UI kickoff                    |
-| `AgUiDetachedStartHandlerOptions` | Options for `createAgUiDetachedStartHandler`                                 |
-| `AgUiDetachedStartRequest`        | Validated detached hosted AG-UI kickoff request                              |
-| `ExecuteAgUiDetachedStartInput`   | Input shape for `executeAgUiDetachedStart`                                   |
-| `Agent`                           | `agent()` return type                                                        |
-| `AgentConfig`                     | Agent configuration                                                          |
-| `AgentContext`                    | Agent handler context                                                        |
-| `AgentMiddleware`                 | Agent execution middleware                                                   |
-| `AgentResponse`                   | Agent execution response                                                     |
-| `AgentStatus`                     | Agent status (idle, running, etc.)                                           |
-| `AgentStreamResult`               | Streaming result (`.toDataStreamResponse()`)                                 |
-| `AgUiContextItem`                 | AG-UI runtime context item                                                   |
-| `AgUiHandlerConfigWithAgent`      | Direct-agent form for `createAgUiHandler`                                    |
-| `AgUiHandlerOptions`              | Options for `createAgUiHandler`                                              |
-| `AgUiCancelHandlerOptions`        | Options for `createAgUiCancelHandler`                                        |
-| `AgUiInjectedTool`                | AG-UI client-injected tool descriptor                                        |
-| `AgUiRequest`                     | Validated AG-UI runtime request body                                         |
-| `AgUiSseEvent`                    | AG-UI SSE event object used by host-facing AG-UI helpers                     |
-| `AgUiResumeHandlerOptions`        | Options for `createAgUiResumeHandler`                                        |
-| `AgUiResumeSignal`                | Validated hosted-run resume payload                                          |
-| `HumanInputField`                 | Canonical form/input field definition                                        |
-| `HumanInputFieldInput`            | Input shape accepted by `waitForHumanInput()` before defaults normalize      |
-| `HumanInputOption`                | Canonical select/radio option definition                                     |
-| `HumanInputPendingRequest`        | Pending human-input envelope passed to `onRequest`                           |
-| `HumanInputRequest`               | Normalized human-input request payload                                       |
-| `HumanInputRequestInput`          | Input shape accepted by `HumanInputRequestSchema`                            |
-| `HumanInputResult`                | Validated human-input resumed result                                         |
-| `RunResumeSessionManagerOptions`  | Options for `RunResumeSessionManager`                                        |
-| `RunSessionStatus`                | Status of a resumable run session                                            |
-| `SubmitResumeValueOutcome`        | Result of submitting an accepted or duplicate resume value                   |
-| `WaitForHumanInputOptions`        | Options for `waitForHumanInput()`                                            |
-| `ChatHandlerBeforeStream`         | Hook signature for `createChatHandler` customization before streaming.       |
-| `ChatHandlerBeforeStreamContext`  | Input passed to `beforeStream` hook.                                         |
-| `ChatHandlerBeforeStreamResult`   | Message/context mutations returned from `beforeStream`.                      |
-| `ChatHandlerMessageInput`         | Message shape for `prepend`/`append`/`replaceMessages` in `beforeStream`.    |
-| `ChatHandlerOptions`              | Options for `createChatHandler` — customize context and pre-stream behavior. |
-| `EdgeConfig`                      | Agent-to-agent edge config                                                   |
-| `Memory`                          | Memory interface                                                             |
-| `MemoryConfig`                    | Memory creation config                                                       |
-| `MemoryPersistence`               | Memory storage backend                                                       |
-| `MemoryStats`                     | Memory usage stats                                                           |
-| `Message`                         | Chat message (user, assistant, system, tool)                                 |
-| `MessagePart`                     | Multi-part message segment                                                   |
-| `ModelTransportRequest`           | Request-aware model transport hook input                                     |
-| `ModelTransportResolver`          | Hook that resolves request-aware model runtime/transport behavior            |
-| `ModelProvider`                   | Model provider interface                                                     |
-| `ModelString`                     | Model configuration string format: "provider/model-name"                     |
-| `RemoteToolSource`                | Runtime-discovered remote tool source                                        |
-| `RedisClient`                     | Redis client interface (compatible with ioredis and node-redis)              |
-| `RedisMemoryConfig`               | Redis memory configuration                                                   |
-| `ResolvedModelTransport`          | Request-aware model runtime / headers / providerOptions resolution           |
-| `ResolvedRuntimeState`            | Step-boundary system/context refresh result                                  |
-| `RuntimeStateRequest`             | Step-boundary runtime refresh hook input                                     |
-| `RuntimeStateResolver`            | Hook that refreshes system/context state during long-lived runs              |
-| `StreamToolCall`                  | Streaming tool call                                                          |
-| `ToolCall`                        | Completed tool call                                                          |
-| `ToolCallPart`                    | Tool call message segment                                                    |
-| `ToolCallPartWithArgs`            | Tool call with parsed args                                                   |
-| `ToolCallPartWithInput`           | Tool call with raw input                                                     |
-| `ToolResultPart`                  | Tool execution result segment                                                |
-| `WorkflowConfig`                  | `createWorkflow` config                                                      |
-| `WorkflowResult`                  | Completed workflow result                                                    |
-| `WorkflowStep`                    | Workflow step definition                                                     |
+| Name                                       | Description                                                                                                                   |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `AgUiDetachedStartAccepted`                | Accepted response shape for detached hosted AG-UI kickoff                                                                     |
+| `AgUiDetachedStartHandlerOptions`          | Options for `createAgUiDetachedStartHandler`                                                                                  |
+| `AgUiDetachedStartRequest`                 | Validated detached hosted AG-UI kickoff request                                                                               |
+| `ExecuteAgUiDetachedStartInput`            | Input shape for `executeAgUiDetachedStart`                                                                                    |
+| `Agent`                                    | `agent()` return type                                                                                                         |
+| `AgentConfig`                              | Agent configuration                                                                                                           |
+| `AgentContext`                             | Agent handler context                                                                                                         |
+| `AgentMiddleware`                          | Agent execution middleware                                                                                                    |
+| `AgentResponse`                            | Agent execution response                                                                                                      |
+| `AgentStatus`                              | Agent status (idle, running, etc.)                                                                                            |
+| `AgentStreamResult`                        | Streaming result (`.toDataStreamResponse()`)                                                                                  |
+| `AgUiContextItem`                          | AG-UI runtime context item                                                                                                    |
+| `AgUiHandlerConfigWithAgent`               | Direct-agent form for `createAgUiHandler`                                                                                     |
+| `AgUiHandlerOptions`                       | Options for `createAgUiHandler`                                                                                               |
+| `AgUiCancelHandlerOptions`                 | Options for `createAgUiCancelHandler`                                                                                         |
+| `AgUiInjectedTool`                         | AG-UI client-injected tool descriptor                                                                                         |
+| `AgUiRequest`                              | Validated AG-UI runtime request body                                                                                          |
+| `AgUiSseEvent`                             | AG-UI SSE event object used by host-facing AG-UI helpers                                                                      |
+| `AgUiResumeHandlerOptions`                 | Options for `createAgUiResumeHandler`                                                                                         |
+| `AgUiResumeSignal`                         | Validated hosted-run resume payload                                                                                           |
+| `HumanInputField`                          | Canonical form/input field definition                                                                                         |
+| `HumanInputFieldInput`                     | Input shape accepted by `waitForHumanInput()` before defaults normalize                                                       |
+| `HumanInputOption`                         | Canonical select/radio option definition                                                                                      |
+| `HumanInputPendingRequest`                 | Pending human-input envelope passed to `onRequest`                                                                            |
+| `HumanInputRequest`                        | Normalized human-input request payload                                                                                        |
+| `HumanInputRequestInput`                   | Input shape accepted by `HumanInputRequestSchema`                                                                             |
+| `HumanInputResult`                         | Validated human-input resumed result                                                                                          |
+| `RunResumeSessionManagerOptions`           | Options for `RunResumeSessionManager`                                                                                         |
+| `RunSessionStatus`                         | Status of a resumable run session                                                                                             |
+| `SubmitResumeValueOutcome`                 | Result of submitting an accepted or duplicate resume value                                                                    |
+| `WaitForHumanInputOptions`                 | Options for `waitForHumanInput()`                                                                                             |
+| `ChatHandlerBeforeStream`                  | Hook signature for `createChatHandler` customization before streaming.                                                        |
+| `ChatHandlerBeforeStreamContext`           | Input passed to `beforeStream` hook.                                                                                          |
+| `ChatHandlerBeforeStreamResult`            | Message/context mutations returned from `beforeStream`.                                                                       |
+| `ChatHandlerMessageInput`                  | Message shape for `prepend`/`append`/`replaceMessages` in `beforeStream`.                                                     |
+| `ChatHandlerOptions`                       | Options for `createChatHandler` — customize context and pre-stream behavior.                                                  |
+| `BuildChatStreamChunkMessageMetadataInput` | Input for building canonical hosted chunk metadata from streamed finish parts.                                                |
+| `ChatMessageMetadata`                      | Canonical hosted message metadata shape for streamed assistant messages.                                                      |
+| `ChatMessageMetadataUsage`                 | Usage counters nested under `ChatMessageMetadata.usage`.                                                                      |
+| `EdgeConfig`                               | Agent-to-agent edge config                                                                                                    |
+| `Memory`                                   | Memory interface                                                                                                              |
+| `MemoryConfig`                             | Memory creation config                                                                                                        |
+| `MemoryPersistence`                        | Memory storage backend                                                                                                        |
+| `MemoryStats`                              | Memory usage stats                                                                                                            |
+| `Message`                                  | Chat message (user, assistant, system, tool)                                                                                  |
+| `MessagePart`                              | Multi-part message segment                                                                                                    |
+| `ModelTransportRequest`                    | Request-aware model transport hook input                                                                                      |
+| `ModelTransportResolver`                   | Hook that resolves request-aware model runtime/transport behavior                                                             |
+| `ModelProvider`                            | Model provider interface                                                                                                      |
+| `ModelString`                              | Model configuration string format: "provider/model-name"                                                                      |
+| `RemoteToolSource`                         | Runtime-discovered remote tool source                                                                                         |
+| `RedisClient`                              | Redis client interface (compatible with ioredis and node-redis)                                                               |
+| `RedisMemoryConfig`                        | Redis memory configuration                                                                                                    |
+| `ResolvedModelTransport`                   | Request-aware model runtime / headers / providerOptions resolution                                                            |
+| `ResolvedRuntimeState`                     | Step-boundary system/context refresh result                                                                                   |
+| `RuntimeStateRequest`                      | Step-boundary runtime refresh hook input                                                                                      |
+| `RuntimeStateResolver`                     | Hook that refreshes system/context state during long-lived runs                                                               |
+| `RuntimeAgentContextItem`                  | Validated control-plane runtime agent invocation context item                                                                 |
+| `RuntimeAgentProjectContext`               | Validated control-plane runtime agent project and target context                                                              |
+| `RuntimeAgentRunContext`                   | Validated control-plane runtime agent run identity and lineage context                                                        |
+| `RuntimeAgentRunInvocation`                | Validated control-plane runtime agent invocation wrapper                                                                      |
+| `RuntimeAgentSourceContext`                | Validated control-plane runtime agent source context                                                                          |
+| `RuntimeAgentTargetKind`                   | Runtime target kind for a control-plane runtime agent invocation                                                              |
+| `RuntimeAgentTool`                         | Validated control-plane runtime agent tool descriptor                                                                         |
+| `RuntimeAgentValidatedClaims`              | Validated claims attached to a control-plane runtime agent invocation                                                         |
+| `StreamToolCall`                           | Streaming tool call                                                                                                           |
+| `ToolCall`                                 | Completed tool call                                                                                                           |
+| `ToolCallPart`                             | Tool call message segment                                                                                                     |
+| `ToolCallPartWithArgs`                     | Tool call with parsed args                                                                                                    |
+| `ToolCallPartWithInput`                    | Tool call with raw input                                                                                                      |
+| `ToolResultPart`                           | Tool execution result segment                                                                                                 |
+| `ChatUiMessageChunk`                       | Canonical hosted UI-stream chunk union for message lifecycle, text, reasoning, tool, file, source, approval, and data events. |
+| `ChildRunAudit`                            | Child-run audit summary nested inside hosted message metadata.                                                                |
+| `ChildRunAuditToolCall`                    | Child-run audit tool-call entry.                                                                                              |
+| `ChildRunAuditToolResult`                  | Child-run audit tool-result entry.                                                                                            |
+| `WorkflowConfig`                           | `createWorkflow` config                                                                                                       |
+| `WorkflowResult`                           | Completed workflow result                                                                                                     |
+| `WorkflowStep`                             | Workflow step definition                                                                                                      |
 
 ## Related
 

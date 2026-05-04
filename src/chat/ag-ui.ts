@@ -10,6 +10,7 @@ import {
   toRenderableCustomChunk,
 } from "./ag-ui-helpers.ts";
 import type { ChatStreamEvent } from "./protocol.ts";
+import type { ChatUiMessage, ChatUiMessagePart } from "./types.ts";
 import { z } from "zod";
 
 type JsonPatchOperation = {
@@ -23,6 +24,40 @@ type ToolCallState = {
   toolName: string;
   argsText: string;
 };
+
+export type AgUiRuntimeToolCall = {
+  id: string;
+  type: "function";
+  function: {
+    name: string;
+    arguments: string;
+  };
+};
+
+export type AgUiRuntimeMessage =
+  | {
+    id: string;
+    role: "system";
+    content: string;
+  }
+  | {
+    id: string;
+    role: "user";
+    content: string;
+  }
+  | {
+    id: string;
+    role: "assistant";
+    content?: string;
+    toolCalls?: AgUiRuntimeToolCall[];
+  }
+  | {
+    id: string;
+    role: "tool";
+    toolCallId: string;
+    content: string;
+    error?: string;
+  };
 
 export type ParsedSseEvent = {
   id: number | null;
@@ -143,6 +178,195 @@ export const AgUiWireEventNameSchema = z.enum([
   "RunFinished",
   "RunError",
 ]);
+
+function parseRuntimeToolInput(rawArguments: string): unknown {
+  try {
+    return JSON.parse(rawArguments);
+  } catch {
+    return { raw: rawArguments };
+  }
+}
+
+function parseRuntimeToolOutput(rawContent: string): unknown {
+  try {
+    return JSON.parse(rawContent);
+  } catch {
+    return rawContent;
+  }
+}
+
+function createRuntimeSystemMessage(
+  message: Extract<AgUiRuntimeMessage, { role: "system" }>,
+): ChatUiMessage {
+  return {
+    id: message.id,
+    role: "system",
+    parts: [{ type: "text", text: message.content }],
+  };
+}
+
+function createRuntimeUserMessage(
+  message: Extract<AgUiRuntimeMessage, { role: "user" }>,
+): ChatUiMessage {
+  return {
+    id: message.id,
+    role: "user",
+    parts: [{ type: "text", text: message.content }],
+  };
+}
+
+function createRuntimeAssistantMessage(
+  message: Extract<AgUiRuntimeMessage, { role: "assistant" }>,
+): ChatUiMessage | null {
+  const parts: ChatUiMessagePart[] = [];
+
+  if (typeof message.content === "string" && message.content.trim().length > 0) {
+    parts.push({ type: "text", text: message.content });
+  }
+
+  for (const toolCall of message.toolCalls ?? []) {
+    parts.push({
+      type: "dynamic-tool",
+      toolName: toolCall.function.name,
+      toolCallId: toolCall.id,
+      input: parseRuntimeToolInput(toolCall.function.arguments),
+      state: "input-available",
+    });
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return {
+    id: message.id,
+    role: "assistant",
+    parts,
+  };
+}
+
+function buildResolvedRuntimeToolPart(input: {
+  toolName: string;
+  toolCallId: string;
+  toolInput: unknown;
+  title?: string;
+  providerExecuted?: boolean;
+  error?: string;
+  content: string;
+}): ChatUiMessagePart {
+  if (typeof input.error === "string" && input.error.length > 0) {
+    return {
+      type: "dynamic-tool",
+      toolName: input.toolName,
+      toolCallId: input.toolCallId,
+      ...(input.title ? { title: input.title } : {}),
+      ...(input.providerExecuted !== undefined ? { providerExecuted: input.providerExecuted } : {}),
+      input: input.toolInput,
+      state: "output-error",
+      errorText: input.error,
+    };
+  }
+
+  return {
+    type: "dynamic-tool",
+    toolName: input.toolName,
+    toolCallId: input.toolCallId,
+    ...(input.title ? { title: input.title } : {}),
+    ...(input.providerExecuted !== undefined ? { providerExecuted: input.providerExecuted } : {}),
+    input: input.toolInput,
+    state: "output-available",
+    output: parseRuntimeToolOutput(input.content),
+  };
+}
+
+function applyRuntimeToolResultMessage(
+  messages: ChatUiMessage[],
+  message: Extract<AgUiRuntimeMessage, { role: "tool" }>,
+): void {
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
+    const currentMessage = messages[messageIndex];
+    if (currentMessage.role !== "assistant") {
+      continue;
+    }
+
+    const partIndex = currentMessage.parts.findIndex(
+      (part) =>
+        part.type === "dynamic-tool" &&
+        part.toolCallId === message.toolCallId &&
+        (part.state === "input-available" || part.state === "input-streaming"),
+    );
+
+    if (partIndex === -1) {
+      continue;
+    }
+
+    const part = currentMessage.parts[partIndex];
+    if (part.type !== "dynamic-tool") {
+      continue;
+    }
+
+    currentMessage.parts.splice(
+      partIndex,
+      1,
+      buildResolvedRuntimeToolPart({
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        ...(part.title ? { title: part.title } : {}),
+        ...(part.providerExecuted !== undefined ? { providerExecuted: part.providerExecuted } : {}),
+        toolInput: part.input,
+        error: message.error,
+        content: message.content,
+      }),
+    );
+    return;
+  }
+
+  messages.push({
+    id: message.id,
+    role: "assistant",
+    parts: [
+      buildResolvedRuntimeToolPart({
+        toolName: "unknown",
+        toolCallId: message.toolCallId,
+        toolInput: {},
+        error: message.error,
+        content: message.content,
+      }),
+    ],
+  });
+}
+
+export function mapAgUiRuntimeMessagesToChatUiMessages(
+  messages: AgUiRuntimeMessage[],
+): ChatUiMessage[] {
+  const mappedMessages: ChatUiMessage[] = [];
+
+  for (const message of messages) {
+    switch (message.role) {
+      case "system":
+        mappedMessages.push(createRuntimeSystemMessage(message));
+        break;
+
+      case "user":
+        mappedMessages.push(createRuntimeUserMessage(message));
+        break;
+
+      case "assistant": {
+        const assistantMessage = createRuntimeAssistantMessage(message);
+        if (assistantMessage) {
+          mappedMessages.push(assistantMessage);
+        }
+        break;
+      }
+
+      case "tool":
+        applyRuntimeToolResultMessage(mappedMessages, message);
+        break;
+    }
+  }
+
+  return mappedMessages;
+}
 
 export const AgUiWireEventSchema = z.discriminatedUnion("eventName", [
   z.object({

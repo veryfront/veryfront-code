@@ -6,7 +6,7 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import { type EnvReader, OAuthService } from "../providers/base.ts";
 import { memoryTokenStore } from "../token-store/memory.ts";
-import type { OAuthServiceConfig, OAuthState, TokenStore } from "../types.ts";
+import type { OAuthServiceConfig, StoredOAuthState, TokenStore } from "../types.ts";
 
 const logger = baseLogger.component("o-auth");
 
@@ -23,8 +23,8 @@ export interface OAuthCallbackHandlerOptions {
   /** Error redirect path */
   errorRedirect?: string;
 
-  /** Custom success callback */
-  onSuccess?: (serviceId: string, tokens: unknown) => void | Promise<void>;
+  /** Custom success callback (called with the user id the tokens were stored under) */
+  onSuccess?: (serviceId: string, tokens: unknown, userId: string) => void | Promise<void>;
 
   /** Custom error callback */
   onError?: (serviceId: string, error: string) => void | Promise<void>;
@@ -102,7 +102,7 @@ export function createOAuthCallbackHandler(
 
     if (!code) return handleError(appUrl, "no_code");
 
-    let storedState: OAuthState | null = null;
+    let storedState: StoredOAuthState | null = null;
 
     if (!skipStateValidation && !state) {
       return handleError(appUrl, "invalid_state", "Missing state parameter", {
@@ -111,10 +111,18 @@ export function createOAuthCallbackHandler(
     }
 
     if (state) {
-      storedState = await tokenStore.getState(state);
+      // Atomic read+delete. Unknown/expired/forged state all return null.
+      storedState = await tokenStore.consumeState(state);
       if (!skipStateValidation && !storedState) {
         return handleError(appUrl, "invalid_state", "Invalid or expired state", {
           serviceId: config.serviceId,
+        });
+      }
+      // A state record from a different service must never authorize this one.
+      if (storedState && storedState.serviceId !== config.serviceId) {
+        return handleError(appUrl, "invalid_state", "State serviceId mismatch", {
+          serviceId: config.serviceId,
+          stateServiceId: storedState.serviceId,
         });
       }
     }
@@ -138,11 +146,20 @@ export function createOAuthCallbackHandler(
         );
       }
 
-      await tokenStore.setTokens(config.serviceId, result.tokens);
+      // Without state (skipStateValidation) we have no userId — refuse to
+      // store tokens under a shared slot. Callers who need this path must
+      // provide a store that handles it themselves (e.g. cookie-scoped).
+      if (!storedState) {
+        return handleError(
+          appUrl,
+          "invalid_state",
+          `Cannot store tokens for ${config.serviceId}: no state (and thus no userId) available`,
+        );
+      }
 
-      if (state) await tokenStore.clearState(state);
+      await tokenStore.setTokens(config.serviceId, storedState.userId, result.tokens);
 
-      await onSuccess?.(config.serviceId, result.tokens);
+      await onSuccess?.(config.serviceId, result.tokens, storedState.userId);
 
       const successUrl = new URL(successRedirect, appUrl);
       successUrl.searchParams.set("connected", config.serviceId);

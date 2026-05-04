@@ -1,12 +1,16 @@
 export type FetchCall = { url: string; init?: RequestInit };
-export type MockResponseEntry = Response | (() => Response);
+export type MockResponseEntry =
+  | Response
+  | ((input: string | URL | Request, init?: RequestInit) => Response | Promise<Response>);
 
 export const SANDBOX_ENV_KEYS = [
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_API_URL",
+  "KUBERNETES_SERVICE_HOST",
 ] as const;
 
 const originalSetTimeout = globalThis.setTimeout;
+const originalDateNow = Date.now;
 
 export function installMockFetch(
   state: { calls: FetchCall[]; responses: MockResponseEntry[] },
@@ -20,18 +24,25 @@ export function installMockFetch(
     state.calls.push({ url, init });
     const entry = state.responses.shift();
     if (!entry) throw new Error(`No mock response for: ${url}`);
-    return typeof entry === "function" ? entry() : entry;
+    return typeof entry === "function" ? await entry(input, init) : entry;
   }) as typeof fetch;
 }
 
-export function mockTimers(): void {
-  (globalThis as Record<string, unknown>).setTimeout = (fn: () => void, _ms?: number) => {
+export function mockTimers(options: { advanceTimeByMs?: boolean } = {}): void {
+  let fakeNow = 0;
+
+  Date.now = () => fakeNow;
+  (globalThis as Record<string, unknown>).setTimeout = (fn: () => void, ms?: number) => {
+    if (options.advanceTimeByMs) {
+      fakeNow += ms ?? 0;
+    }
     return originalSetTimeout(fn, 0);
   };
 }
 
 export function restoreTimers(): void {
   (globalThis as Record<string, unknown>).setTimeout = originalSetTimeout;
+  Date.now = originalDateNow;
 }
 
 export function jsonResponse(body: unknown, status = 200): Response {

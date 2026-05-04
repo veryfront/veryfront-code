@@ -43,31 +43,31 @@
   ],
   "tools": [
     {
-      "id": "list-documents",
+      "id": "list_documents",
       "name": "List Documents",
       "description": "List recent Google Docs documents from Drive",
       "requiresWrite": false
     },
     {
-      "id": "get-document",
+      "id": "get_document",
       "name": "Get Document",
       "description": "Get document content and metadata",
       "requiresWrite": false
     },
     {
-      "id": "create-document",
+      "id": "create_document",
       "name": "Create Document",
       "description": "Create a new document with optional initial content",
       "requiresWrite": true
     },
     {
-      "id": "update-document",
+      "id": "update_document",
       "name": "Update Document",
       "description": "Update document content using batch requests",
       "requiresWrite": true
     },
     {
-      "id": "search-documents",
+      "id": "search_documents",
       "name": "Search Documents",
       "description": "Search for documents by query string",
       "requiresWrite": false
@@ -75,21 +75,21 @@
   ],
   "prompts": [
     {
-      "id": "summarize-doc",
+      "id": "summarize_doc",
       "title": "Summarize a document",
       "prompt": "Read a Google Docs document and provide a concise summary of its contents, key points, and main themes.",
       "category": "productivity",
       "icon": "file-text"
     },
     {
-      "id": "create-report",
+      "id": "create_report",
       "title": "Create a report document",
       "prompt": "Create a new Google Docs document with a well-formatted report including headings, bullet points, and structured content.",
       "category": "productivity",
       "icon": "plus"
     },
     {
-      "id": "edit-document",
+      "id": "edit_document",
       "title": "Edit a document",
       "prompt": "Update an existing Google Docs document with new content, formatting changes, or corrections.",
       "category": "productivity",

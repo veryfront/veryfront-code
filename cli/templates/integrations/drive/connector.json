@@ -38,31 +38,31 @@
   ],
   "tools": [
     {
-      "id": "list-files",
+      "id": "list_files",
       "name": "List Files",
       "description": "List files and folders in a Google Drive folder or root",
       "requiresWrite": false
     },
     {
-      "id": "get-file",
+      "id": "get_file",
       "name": "Get File",
       "description": "Get metadata and details about a specific file or folder",
       "requiresWrite": false
     },
     {
-      "id": "search-files",
+      "id": "search_files",
       "name": "Search Files",
       "description": "Search for files and folders using queries",
       "requiresWrite": false
     },
     {
-      "id": "create-folder",
+      "id": "create_folder",
       "name": "Create Folder",
       "description": "Create a new folder in Google Drive",
       "requiresWrite": true
     },
     {
-      "id": "upload-file",
+      "id": "upload_file",
       "name": "Upload File",
       "description": "Upload or create a file in Google Drive",
       "requiresWrite": true
@@ -70,21 +70,21 @@
   ],
   "prompts": [
     {
-      "id": "organize-files",
+      "id": "organize_files",
       "title": "Organize Drive files",
       "prompt": "Help me organize files in Google Drive by creating folders and moving files based on file types or names.",
       "category": "productivity",
       "icon": "folder"
     },
     {
-      "id": "find-document",
+      "id": "find_document",
       "title": "Find a document",
       "prompt": "Search Google Drive for a specific file or document by name, type, or content.",
       "category": "productivity",
       "icon": "search"
     },
     {
-      "id": "backup-files",
+      "id": "backup_files",
       "title": "Create backup structure",
       "prompt": "Create a backup folder structure in Google Drive and organize important files.",
       "category": "productivity",

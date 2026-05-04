@@ -24,7 +24,7 @@ const logger = serverLogger.component("internal-agent-run-stream");
 
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
-    __vfAllowedRemoteTools?: string[];
+    __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
   };
 };
 
@@ -137,6 +137,35 @@ function getAllowedRemoteToolNames(
   return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
 }
 
+interface ForwardedToolDef {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+  parameters?: Record<string, unknown>;
+}
+
+function getForwardedIntegrationToolDefinitions(
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): ForwardedToolDef[] | undefined {
+  const runtimeOverrides = isRecord(forwardedProps?.runtimeOverrides)
+    ? forwardedProps.runtimeOverrides
+    : null;
+  if (!runtimeOverrides) return undefined;
+  const defs = runtimeOverrides.integrationToolDefinitions;
+  if (!Array.isArray(defs) || defs.length === 0) return undefined;
+  return defs.filter(
+    (def): def is ForwardedToolDef =>
+      typeof def === "object" &&
+      def !== null &&
+      typeof def.name === "string" &&
+      typeof def.description === "string",
+  ).map((def) => ({
+    name: def.name,
+    description: def.description,
+    parameters: def.inputSchema ?? def.parameters ?? { type: "object", properties: {} },
+  }));
+}
+
 export async function createRuntimeAgentStreamResponse(
   input: RuntimeRunAgentInput,
   agent: Agent,
@@ -157,13 +186,17 @@ export async function createRuntimeAgentStreamResponse(
 
   const mergedTools = buildMergedTools(agent, input, deps.sessionManager);
   const allowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
+  const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(input.forwardedProps);
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
     config: {
       ...agent.config,
       tools: mergedTools,
       ...(allowedRemoteToolNames !== undefined
-        ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
+        ? { allowedRemoteTools: allowedRemoteToolNames }
+        : {}),
+      ...(forwardedIntegrationToolDefs !== undefined
+        ? { __vfForwardedIntegrationToolDefs: forwardedIntegrationToolDefs }
         : {}),
     },
   };

@@ -250,7 +250,10 @@ export class SSRService implements SSRServiceLike {
     nonce?: string,
   ): SSRRenderResult {
     const errorObj = error instanceof Error ? error : new Error(String(error));
-    const isDev = ctx.isLocalProject || ctx.requestContext?.mode === "preview";
+    // Dev-only overlay (full stack, absolute paths, line numbers) must never
+    // be exposed outside a local project — including remote preview, which is
+    // internet-reachable. See VULN-SRV-1 / VULN-SRV-2.
+    const isDev = Boolean(ctx.isLocalProject);
 
     if (error instanceof VeryfrontError && error.slug === "file-not-found") {
       logger.debug("Page not found", { slug, error: errorObj.message });

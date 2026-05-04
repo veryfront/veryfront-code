@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
@@ -8,6 +9,10 @@ const MAX_FORWARDED_PROPS_BYTES = 65_536;
 const MAX_RUNTIME_MESSAGES = 100;
 
 const encoder = new TextEncoder();
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
@@ -143,6 +148,24 @@ export type AgUiRuntimeContextItem = z.infer<typeof AgUiRuntimeContextItemSchema
 export type AgUiRuntimeMessage = z.infer<typeof AgUiRuntimeMessageSchema>;
 export type AgUiRuntimeRequest = z.infer<typeof AgUiRuntimeRequestSchema>;
 
+export function normalizeAgUiBrowserRuntimeRequest(
+  input: AgUiRuntimeRequest,
+  defaults?: {
+    threadId?: string;
+    runId?: string;
+  },
+): AgUiRuntimeRequest {
+  const { state, ...rest } = input;
+
+  return {
+    ...rest,
+    threadId: defaults?.threadId ?? input.threadId,
+    runId: defaults?.runId ?? input.runId,
+    messages: input.messages,
+    ...(isRecord(state) ? { state } : {}),
+  };
+}
+
 export async function parseAgUiRuntimeRequest(request: Request): Promise<AgUiRuntimeRequest> {
   return AgUiRuntimeRequestSchema.parse(await request.json());
 }
@@ -150,32 +173,8 @@ export async function parseAgUiRuntimeRequest(request: Request): Promise<AgUiRun
 export async function parseAgUiRuntimeRequestOrError(
   request: Request,
 ): Promise<AgUiRuntimeRequest | Response> {
-  try {
-    return await parseAgUiRuntimeRequest(request);
-  } catch (error) {
-    if (error instanceof z.ZodError) {
-      return Response.json(
-        {
-          error: "Invalid AG-UI runtime request",
-          details: error.issues.map((issue) => ({
-            path: issue.path,
-            message: issue.message,
-          })),
-        },
-        { status: 400 },
-      );
-    }
-
-    if (error instanceof SyntaxError || error instanceof TypeError) {
-      return Response.json(
-        {
-          error: "Invalid AG-UI runtime request",
-          details: [{ path: [], message: "Malformed JSON request body" }],
-        },
-        { status: 400 },
-      );
-    }
-
-    throw error;
-  }
+  return await parseAgUiJsonRequestOrError(
+    () => parseAgUiRuntimeRequest(request),
+    "Invalid AG-UI runtime request",
+  );
 }

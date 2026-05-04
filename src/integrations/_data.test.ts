@@ -16,7 +16,7 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
-  it("adds endpoint specs for all 22 tools across the 5 targeted integrations", () => {
+  it("adds endpoint specs for all 53 tools across the 5 targeted integrations", () => {
     const targetedConnectors = ["calendar", "github", "gmail", "linear", "slack"];
     let totalEndpointTools = 0;
 
@@ -33,11 +33,25 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 22);
+    assertEquals(totalEndpointTools, 53);
+  });
+
+  it("keeps gmail connector tools aligned with scaffolded tool files", async () => {
+    const gmail = getConnector("gmail");
+    const toolFiles: string[] = [];
+
+    for await (const entry of Deno.readDir("cli/templates/integrations/gmail/files/tools")) {
+      if (entry.isFile && entry.name.endsWith(".ts")) {
+        toolFiles.push(entry.name.replace(/\.ts$/, ""));
+      }
+    }
+
+    const expectedFiles = gmail.tools.map((tool) => tool.id.replaceAll("_", "-")).sort();
+    assertEquals(toolFiles.sort(), expectedFiles);
   });
 
   it("keeps github list-issues on GraphQL so pull requests stay separate", () => {
-    const tool = getTool("github", "list-issues");
+    const tool = getTool("github", "list_issues");
 
     assertEquals(tool.endpoint?.type, "graphql");
     assertEquals(tool.endpoint?.url, "https://api.github.com/graphql");
@@ -47,27 +61,27 @@ describe("integration endpoint specs", () => {
   });
 
   it("preserves executor-compatible defaults and GraphQL variable shapes", () => {
-    const calendarListEvents = getTool("calendar", "list-events");
+    const calendarListEvents = getTool("calendar", "list_events");
     assertEquals(calendarListEvents.endpoint?.params?.calendarId?.default, "primary");
     assertEquals(calendarListEvents.endpoint?.params?.orderBy?.default, "startTime");
 
-    const gmailListEmails = getTool("gmail", "list-emails");
+    const gmailListEmails = getTool("gmail", "list_emails");
     assertEquals(gmailListEmails.endpoint?.params?.labelIds?.type, "string[]");
 
-    const gmailGetEmail = getTool("gmail", "get-email");
+    const gmailGetEmail = getTool("gmail", "get_email");
     assertEquals(gmailGetEmail.endpoint?.params?.format?.default, "full");
 
-    const linearSearchIssues = getTool("linear", "search-issues");
+    const linearSearchIssues = getTool("linear", "search_issues");
     assertStringIncludes(
       linearSearchIssues.endpoint?.query ?? "",
       "issueSearch(query: $query, first: $first)",
     );
 
-    const linearCreateIssue = getTool("linear", "create-issue");
+    const linearCreateIssue = getTool("linear", "create_issue");
     assertStringIncludes(linearCreateIssue.endpoint?.query ?? "", "issueCreate(input: {");
     assertStringIncludes(linearCreateIssue.endpoint?.query ?? "", "teamId: $teamId");
 
-    const linearUpdateIssue = getTool("linear", "update-issue");
+    const linearUpdateIssue = getTool("linear", "update_issue");
     assertStringIncludes(linearUpdateIssue.endpoint?.query ?? "", "issueUpdate(id: $id, input: {");
     assertStringIncludes(linearUpdateIssue.endpoint?.query ?? "", "stateId: $stateId");
   });

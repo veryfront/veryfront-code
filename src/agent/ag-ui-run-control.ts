@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { extractRequest } from "./ag-ui-request-shared.ts";
 import {
   RunNotActiveError,
   RunResumeSessionManager,
@@ -25,32 +25,6 @@ type ResumeValue = {
   result: unknown;
   isError: boolean;
 };
-
-function isRequest(value: unknown): value is Request {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "json" in value &&
-    typeof value.json === "function" &&
-    "url" in value &&
-    typeof value.url === "string" &&
-    "method" in value &&
-    typeof value.method === "string"
-  );
-}
-
-function extractRequest(requestOrCtx: unknown): Request {
-  if (isRequest(requestOrCtx)) return requestOrCtx;
-
-  if (typeof requestOrCtx === "object" && requestOrCtx !== null && "request" in requestOrCtx) {
-    const candidate = (requestOrCtx as Record<string, unknown>).request;
-    if (isRequest(candidate)) return candidate;
-  }
-
-  throw INVALID_ARGUMENT.create({
-    detail: "Invalid handler argument: expected Request or APIContext",
-  });
-}
 
 function getRunId(pathname: string, regex: RegExp): string | null {
   return regex.exec(pathname)?.[1] ?? null;

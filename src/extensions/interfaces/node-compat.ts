@@ -7,19 +7,83 @@
  */
 
 /**
+ * Minimal interface for a prepared SQLite statement, compatible with
+ * `better-sqlite3`'s `Statement` shape.
+ */
+export interface SqliteStatement {
+  get(...params: unknown[]): unknown;
+  run(...params: unknown[]): void;
+  all(...params: unknown[]): unknown[];
+}
+
+/**
+ * Minimal interface for a SQLite database connection, compatible with
+ * `better-sqlite3`'s `Database` shape as consumed by `SqliteKv`.
+ *
+ * Mirrors `SqliteDatabase` in `src/platform/compat/kv/types.ts` — kept
+ * separate here so extensions can import from the public
+ * `veryfront/extensions/interfaces` entrypoint without taking a dependency
+ * on internal platform paths.
+ */
+export interface NodeCompatSqliteDatabase {
+  exec(sql: string): void;
+  prepare(sql: string): SqliteStatement;
+  close(): void;
+}
+
+/**
+ * Shape returned by the kreuzberg document-extraction module.
+ *
+ * Matches the subset used by `importKreuzberg()` in `opaque-deps.ts`.
+ */
+export interface KreuzbergExtractor {
+  extractBytes(
+    data: Uint8Array,
+    mimeType: string,
+  ): Promise<{ content: string }>;
+}
+
+/**
  * NodeCompat contract interface.
  *
- * Implementations provide access to Node.js-compatible APIs in
- * environments where native Node modules are unavailable (e.g. Deno).
+ * Implementations provide access to Node.js-only packages
+ * (`@kreuzberg/wasm`, `better-sqlite3`) in environments where those
+ * packages are available (i.e. a full Node/Deno runtime, not a compiled
+ * binary or edge runtime).
  *
- * Each getter returns the module's namespace object, matching the
- * shape of the corresponding Node.js built-in.
+ * Both methods are optional on the interface so that partial
+ * implementations (e.g. SQLite-only or kreuzberg-only) are valid.
  */
 export interface NodeCompat {
-  /** Return a Node-compatible `fs` module (sync + async + promises). */
-  getFS(): unknown;
-  /** Return a Node-compatible `path` module. */
-  getPath(): unknown;
-  /** Return a Node-compatible `WebSocket` constructor. */
-  getWebSocket(): unknown;
+  /**
+   * Initialise and return the kreuzberg document-extraction module.
+   *
+   * Callers should fall back to a "no extraction" path when this
+   * method is absent or throws.
+   */
+  importKreuzberg?(): Promise<KreuzbergExtractor>;
+
+  /**
+   * Run kreuzberg extraction inside an isolated Worker thread.
+   *
+   * Owned by the extension so that the worker script lives in a module
+   * graph where `@kreuzberg/wasm` resolves and the NodeCompat contract
+   * is reachable (Deno worker isolates do not share the main-thread
+   * contract registry).
+   *
+   * Callers on Node/Bun can skip workers and use `importKreuzberg()`
+   * directly — native bindings don't need WASM-hang isolation.
+   */
+  extractInWorker?(buffer: ArrayBuffer, mimeType: string): Promise<string>;
+
+  /**
+   * Open (or create) a SQLite database at `path`.
+   *
+   * Returns a database compatible with `SqliteKv`.
+   * When `path` is omitted an in-memory database is created.
+   *
+   * Callers should fall back to the in-memory KV when this method is
+   * absent or throws.
+   */
+  openSqliteDatabase?(path?: string): Promise<NodeCompatSqliteDatabase>;
 }

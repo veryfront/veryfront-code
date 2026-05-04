@@ -1,4 +1,3 @@
-import type { Agent } from "#veryfront/agent";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -131,6 +130,51 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: ReasoningMessageEnd");
   });
 
+  it("accepts the public control-plane stream route", async () => {
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, _context, callbacks) => {
+          callbacks?.onFinish?.({
+            text: "hello from runtime",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: undefined,
+            metadata: { finishReason: "stop" },
+          });
+
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+  });
+
   it("accepts the canonical runtime AG-UI request shape on the existing internal stream route", async () => {
     let streamContext: Record<string, unknown> | undefined;
 
@@ -239,8 +283,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (agent) => {
-        const config = agent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] };
-        capturedAllowedTools = config.__vfAllowedRemoteTools;
+        capturedAllowedTools = agent.config.allowedRemoteTools;
 
         return {
           stream: async (_messages, _context, callbacks) => {
@@ -301,8 +344,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (agent) => {
-        const config = agent.config as Agent["config"] & { __vfAllowedRemoteTools?: string[] };
-        capturedAllowedTools = config.__vfAllowedRemoteTools;
+        capturedAllowedTools = agent.config.allowedRemoteTools;
 
         return {
           stream: async (_messages, _context, callbacks) => {

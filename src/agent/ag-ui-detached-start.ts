@@ -1,58 +1,25 @@
 import { z } from "zod";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
-import { type Tool, toolRegistry } from "#veryfront/tool";
 import { streamDataStreamEvents } from "./data-stream.ts";
-import {
-  type AgUiInjectedTool,
-  AgUiRequestSchema,
-  normalizeAgUiMessages,
-} from "./ag-ui-host-support.ts";
+import { AgUiRequestSchema, normalizeAgUiMessages } from "./ag-ui-host-support.ts";
+import { extractRequest } from "./ag-ui-request-shared.ts";
+import { type AgUiResumeValue, buildMergedAgUiTools } from "./ag-ui-tool-shared.ts";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
   type RunResumeSessionManager,
 } from "./runtime/index.ts";
 import type { Agent } from "./types.ts";
+import type { ChatUiMessage, MessageMetadata } from "../chat/types.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const AG_UI_DETACHED_RUN_ID_SCHEMA = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
-type AgUiResumeValue = {
-  result: unknown;
-  isError: boolean;
-};
 
 type AgUiContextValue =
   | Record<string, unknown>
   | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
 
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
-
-function isRequest(obj: unknown): obj is Request {
-  return (
-    typeof obj === "object" &&
-    obj !== null &&
-    "json" in obj &&
-    typeof obj.json === "function" &&
-    "url" in obj &&
-    typeof obj.url === "string" &&
-    "method" in obj &&
-    typeof obj.method === "string"
-  );
-}
-
-function extractRequest(requestOrCtx: unknown): Request {
-  if (isRequest(requestOrCtx)) return requestOrCtx;
-
-  if (typeof requestOrCtx === "object" && requestOrCtx !== null && "request" in requestOrCtx) {
-    const candidate = (requestOrCtx as Record<string, unknown>).request;
-    if (isRequest(candidate)) return candidate;
-  }
-
-  throw INVALID_ARGUMENT.create({
-    detail: "Invalid handler argument: expected Request or APIContext",
-  });
-}
 
 function buildStreamContext(
   request: AgUiDetachedStartRequest,
@@ -71,66 +38,12 @@ function buildStreamContext(
   };
 }
 
-function createInjectedAgUiTool(
-  runId: string,
-  tool: AgUiInjectedTool,
-  sessionManager: RunResumeSessionManager<AgUiResumeValue>,
-): Tool {
-  return {
-    id: tool.name,
-    type: "function",
-    description: tool.description ?? tool.name,
-    inputSchema: z.record(z.string(), z.unknown()),
-    inputSchemaJson: (tool.parameters ??
-      { type: "object", properties: {}, additionalProperties: true }) as Tool["inputSchemaJson"],
-    execute: async (_input, context) => {
-      const toolCallId = typeof context?.toolCallId === "string" ? context.toolCallId : null;
-      if (!toolCallId) {
-        throw new Error(`Missing toolCallId for injected tool "${tool.name}"`);
-      }
-
-      sessionManager.prepareForSignal(runId, toolCallId);
-      const submitted = await sessionManager.waitForSignal(runId, toolCallId);
-      if (submitted.isError) {
-        throw new Error(
-          typeof submitted.result === "string"
-            ? submitted.result
-            : JSON.stringify(submitted.result),
-        );
-      }
-      return submitted.result;
-    },
-  };
-}
-
 function buildMergedTools(
   agent: Agent,
   request: AgUiDetachedStartRequest,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
 ): Agent["config"]["tools"] {
-  const injectedTools = Object.fromEntries(
-    request.tools.map((tool) => [
-      tool.name,
-      createInjectedAgUiTool(request.runId, tool, sessionManager),
-    ]),
-  );
-
-  if (!agent.config.tools) {
-    return Object.keys(injectedTools).length > 0 ? injectedTools : undefined;
-  }
-
-  if (agent.config.tools === true) {
-    const merged: Record<string, Tool | boolean> = {};
-    for (const [toolId] of toolRegistry.getAll()) {
-      if (!agent.config.skills && SKILL_TOOL_IDS.has(toolId)) {
-        continue;
-      }
-      merged[toolId] = true;
-    }
-    return { ...merged, ...injectedTools };
-  }
-
-  return { ...agent.config.tools, ...injectedTools };
+  return buildMergedAgUiTools(agent, request.runId, request.tools, sessionManager);
 }
 
 function scheduleDetachedTask(requestOrCtx: unknown, task: Promise<void>): void {
@@ -169,6 +82,76 @@ export const AgUiDetachedStartAcceptedSchema = z.object({
 
 export type AgUiDetachedStartRequest = z.infer<typeof AgUiDetachedStartRequestSchema>;
 export type AgUiDetachedStartAccepted = z.infer<typeof AgUiDetachedStartAcceptedSchema>;
+
+function toDetachedAgUiMessageMetadata(
+  metadata: MessageMetadata | undefined,
+): Record<string, unknown> | undefined {
+  if (!metadata) {
+    return undefined;
+  }
+
+  const normalizedMetadata: Record<string, unknown> = {
+    ...(metadata.modelId ? { modelId: metadata.modelId } : {}),
+    ...(metadata.usage
+      ? {
+        usage: {
+          ...(metadata.usage.inputTokens !== undefined
+            ? { inputTokens: metadata.usage.inputTokens }
+            : {}),
+          ...(metadata.usage.outputTokens !== undefined
+            ? { outputTokens: metadata.usage.outputTokens }
+            : {}),
+          ...(metadata.usage.cachedInputTokens !== undefined
+            ? { cachedInputTokens: metadata.usage.cachedInputTokens }
+            : {}),
+        },
+      }
+      : {}),
+  };
+
+  return Object.keys(normalizedMetadata).length > 0 ? normalizedMetadata : undefined;
+}
+
+export function buildDetachedAgUiStartRequest(input: {
+  runId: string;
+  threadId: string;
+  messages: ChatUiMessage[];
+  model?: string;
+  forwardedProps?: Record<string, unknown>;
+  createThreadId?: () => string;
+}): AgUiDetachedStartRequest {
+  const effectiveThreadId = z.string().uuid().safeParse(input.threadId).success
+    ? input.threadId
+    : (input.createThreadId?.() ?? crypto.randomUUID());
+  const effectiveMessages: AgUiDetachedStartRequest["messages"] = input.messages.length > 0
+    ? input.messages.map((message) => {
+      const metadata = toDetachedAgUiMessageMetadata(message.metadata);
+
+      return {
+        id: message.id,
+        role: message.role,
+        parts: message.parts,
+        ...(metadata ? { metadata } : {}),
+      };
+    })
+    : [
+      {
+        id: `${input.runId}:placeholder`,
+        role: "user",
+        parts: [{ type: "text", text: "" }],
+      },
+    ];
+
+  return {
+    runId: input.runId,
+    threadId: effectiveThreadId,
+    messages: effectiveMessages,
+    tools: [],
+    context: [],
+    ...(input.model ? { model: input.model } : {}),
+    ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
+  };
+}
 
 export interface ExecuteAgUiDetachedStartInput {
   request: AgUiDetachedStartRequest;

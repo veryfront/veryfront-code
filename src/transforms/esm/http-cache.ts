@@ -108,7 +108,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
     if (deps.length > 0) {
       const depsValid = await validateBundleDepsExist(deps, cacheDir);
       if (!depsValid) {
-        httpCacheLog.warn("Local cache has missing deps, will re-fetch", {
+        httpCacheLog.debug("Local cache has missing deps, will re-fetch", {
           url: normalizedUrl,
           hash,
           missingDeps: deps.length,
@@ -170,7 +170,7 @@ async function cacheHttpModuleInternal(url: string, options: CacheOptions): Prom
       if (deps.length > 0) {
         const depsExist = await validateBundleDepsExist(deps, cacheDir);
         if (!depsExist) {
-          httpCacheLog.warn("Cached code has missing bundle deps, will re-fetch", {
+          httpCacheLog.debug("Cached code has missing bundle deps, will re-fetch", {
             url: normalizedUrl,
             hash,
             missingDeps: deps.length,

@@ -2,7 +2,7 @@ import type { PageWithData, StaticPathsResult } from "./types.ts";
 import { serverLogger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
-import type { Span } from "@opentelemetry/api";
+import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 
 const EMPTY_STATIC_PATHS_RESULT: StaticPathsResult = { paths: [], fallback: false };
 

@@ -36,31 +36,31 @@
   ],
   "tools": [
     {
-      "id": "list-files",
+      "id": "list_files",
       "name": "List Files",
       "description": "List recent Figma files accessible to the user",
       "requiresWrite": false
     },
     {
-      "id": "get-file",
+      "id": "get_file",
       "name": "Get File",
       "description": "Get detailed information about a Figma file including components and styles",
       "requiresWrite": false
     },
     {
-      "id": "get-comments",
+      "id": "get_comments",
       "name": "Get Comments",
       "description": "Get all comments on a Figma file",
       "requiresWrite": false
     },
     {
-      "id": "post-comment",
+      "id": "post_comment",
       "name": "Post Comment",
       "description": "Post a comment on a Figma file",
       "requiresWrite": true
     },
     {
-      "id": "list-projects",
+      "id": "list_projects",
       "name": "List Projects",
       "description": "List all projects in a team",
       "requiresWrite": false
@@ -68,28 +68,28 @@
   ],
   "prompts": [
     {
-      "id": "review-design",
+      "id": "review_design",
       "title": "Review a design",
       "prompt": "Review a Figma design file and provide feedback on the components, layout, and design system usage.",
       "category": "design",
       "icon": "eye"
     },
     {
-      "id": "summarize-comments",
+      "id": "summarize_comments",
       "title": "Summarize comments",
       "prompt": "Read all comments on a Figma file and summarize the feedback, action items, and unresolved discussions.",
       "category": "design",
       "icon": "message"
     },
     {
-      "id": "extract-components",
+      "id": "extract_components",
       "title": "Extract components",
       "prompt": "List all components in a Figma file and describe their structure, variants, and properties.",
       "category": "design",
       "icon": "component"
     },
     {
-      "id": "design-feedback",
+      "id": "design_feedback",
       "title": "Give design feedback",
       "prompt": "Review the design file and post constructive feedback as comments on specific elements.",
       "category": "design",

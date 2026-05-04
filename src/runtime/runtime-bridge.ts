@@ -5,7 +5,7 @@
  * module. Higher-level framework code imports framework-owned runtime
  * types and calls into this bridge at the edge.
  */
-import type { ModelRuntimeMessage } from "#veryfront/agent/runtime/model-runtime-types.ts";
+import type { TextGenerationRuntimeMessage } from "#veryfront/agent/runtime/text-generation-runtime-message-types.ts";
 import type {
   RuntimeGenerateTextResult,
   RuntimeStreamResult,
@@ -21,7 +21,7 @@ import type {
 type GenerateTextOptions = {
   model: ModelRuntime;
   system?: unknown;
-  messages: ModelRuntimeMessage[];
+  messages: TextGenerationRuntimeMessage[];
   tools?: RuntimeToolSet;
   experimental_repairToolCall?: RuntimeToolCallRepairFunction;
   maxOutputTokens?: number;
@@ -41,7 +41,7 @@ type GenerateTextOptions = {
 type StreamTextOptions = {
   model: ModelRuntime;
   system?: unknown;
-  messages: ModelRuntimeMessage[];
+  messages: TextGenerationRuntimeMessage[];
   tools?: RuntimeToolSet;
   experimental_repairToolCall?: RuntimeToolCallRepairFunction;
   maxOutputTokens?: number;
@@ -165,7 +165,7 @@ function normalizeSystemPrompt(system: GenerateTextOptions["system"]): string | 
 
 function toRuntimePrompt(
   system: string | undefined,
-  messages: ModelRuntimeMessage[],
+  messages: TextGenerationRuntimeMessage[],
 ): RuntimePromptMessage[] {
   const prompt: RuntimePromptMessage[] = [];
 

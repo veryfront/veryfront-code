@@ -33,7 +33,7 @@ import {
   setSpanAttributes,
   withSpan,
 } from "#veryfront/observability/tracing/index.ts";
-import { convertToModelMessages } from "./model-message-converter.ts";
+import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtime-message-converter.ts";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
@@ -47,7 +47,7 @@ import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { AGENT_DEFAULTS } from "../defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
-import type { ToolExecutionContext } from "#veryfront/tool";
+import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
 
@@ -110,6 +110,9 @@ const LOAD_SKILL_TOOL_ID = "load-skill";
 
 type RuntimeToolFilterConfig = AgentConfig & {
   __vfAllowedRemoteTools?: string[];
+  __vfForwardedIntegrationToolDefs?: Array<
+    { name: string; description: string; parameters: Record<string, unknown> }
+  >;
 };
 
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
@@ -407,6 +410,14 @@ export function enforceSkillPolicy(
 }
 
 function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
+  if (Object.hasOwn(config, "allowedRemoteTools")) {
+    const raw = config.allowedRemoteTools;
+    if (!Array.isArray(raw)) {
+      return [];
+    }
+    return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+  }
+
   const configWithRuntimeFilters = config as RuntimeToolFilterConfig;
   if (!Object.hasOwn(configWithRuntimeFilters, "__vfAllowedRemoteTools")) {
     return undefined;
@@ -416,6 +427,30 @@ function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined
     return [];
   }
   return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+}
+
+function getRuntimeForwardedIntegrationToolDefs(
+  config: AgentConfig,
+): ToolDefinition[] | undefined {
+  const configWithFilters = config as RuntimeToolFilterConfig;
+  const raw = configWithFilters.__vfForwardedIntegrationToolDefs;
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  return raw
+    .filter(
+      (def): def is { name: string; description: string; parameters: Record<string, unknown> } =>
+        typeof def === "object" &&
+        def !== null &&
+        typeof def.name === "string" &&
+        typeof def.description === "string",
+    )
+    .map((def) => ({
+      name: def.name,
+      description: def.description,
+      parameters: typeof def.parameters === "object" && def.parameters !== null &&
+          !Array.isArray(def.parameters)
+        ? def.parameters
+        : { type: "object", properties: {} },
+    }));
 }
 
 type ResolvedModelTransport = {
@@ -722,6 +757,7 @@ export class AgentRuntime {
       // Request-scoped skill policy (not class-level mutable state)
       let activeSkillPolicy: string[] | undefined;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
+      const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
 
@@ -743,6 +779,7 @@ export class AgentRuntime {
         let tools = isLocal ? [] : await getAvailableTools(this.config.tools, {
           includeSkillTools: Boolean(this.config.skills),
           allowedRemoteToolNames,
+          forwardedRemoteToolDefinitions,
           remoteToolSources: this.config.remoteTools,
           remoteToolContext: toolContext,
         });
@@ -760,7 +797,7 @@ export class AgentRuntime {
           return generateText({
             model: languageModel,
             system: currentSystemPrompt,
-            messages: convertToModelMessages(currentMessages),
+            messages: convertToTextGenerationRuntimeMessages(currentMessages),
             tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
               allowedToolNames: allowedRemoteToolNames,
@@ -1004,6 +1041,7 @@ export class AgentRuntime {
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
+    const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
 
@@ -1026,6 +1064,7 @@ export class AgentRuntime {
       let tools = isLocalStreaming ? [] : await getAvailableTools(this.config.tools, {
         includeSkillTools: Boolean(this.config.skills),
         allowedRemoteToolNames,
+        forwardedRemoteToolDefinitions,
         remoteToolSources: this.config.remoteTools,
         remoteToolContext: toolContext,
       });
@@ -1038,7 +1077,7 @@ export class AgentRuntime {
       const result = streamText({
         model: languageModel,
         system: currentSystemPrompt,
-        messages: convertToModelMessages(currentMessages),
+        messages: convertToTextGenerationRuntimeMessages(currentMessages),
         tools: convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
           allowedToolNames: allowedRemoteToolNames,

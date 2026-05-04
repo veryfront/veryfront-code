@@ -181,8 +181,7 @@ export async function registerExtGoogleForTests(): Promise<void> {
     const { AIProviderRegistryName } = await import(
       "../../src/extensions/interfaces/index.ts"
     );
-    const extGoogleFactory =
-      (await import("../../extensions/ext-google/src/index.ts")).default;
+    const extGoogleFactory = (await import("../../extensions/ext-google/src/index.ts")).default;
     const ext = extGoogleFactory();
     const registry = tryResolve<ReturnType<typeof createAIProviderRegistry>>(
       AIProviderRegistryName,

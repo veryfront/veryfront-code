@@ -60,8 +60,9 @@ export async function encryptToken(token: OAuthToken): Promise<string> {
 
   const data = new TextEncoder().encode(JSON.stringify(token));
   const iv = crypto.getRandomValues(new Uint8Array(12));
+  const rawKey = new Uint8Array(key).buffer;
 
-  const cryptoKey = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["encrypt"]);
+  const cryptoKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt"]);
   const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, cryptoKey, data);
 
   const combined = new Uint8Array(iv.length + encrypted.byteLength);
@@ -92,8 +93,9 @@ export async function decryptToken(encrypted: string): Promise<OAuthToken | null
 
     const iv = combined.slice(0, 12);
     const ciphertext = combined.slice(12);
+    const rawKey = new Uint8Array(key).buffer;
 
-    const cryptoKey = await crypto.subtle.importKey("raw", key, "AES-GCM", false, ["decrypt"]);
+    const cryptoKey = await crypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["decrypt"]);
     const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, cryptoKey, ciphertext);
 
     return JSON.parse(new TextDecoder().decode(decrypted)) as OAuthToken;
@@ -112,7 +114,8 @@ export function generateEncryptionKey(): string {
 
 function getEnvVar(name: string): string | undefined {
   if (typeof process !== "undefined") return process.env?.[name];
-  return (globalThis as { Deno?: { env?: { get?: (key: string) => string | undefined } } }).Deno?.env?.get?.(name);
+  return (globalThis as { Deno?: { env?: { get?: (key: string) => string | undefined } } }).Deno
+    ?.env?.get?.(name);
 }
 
 function hexToKeyBytes(keyHex: string): Uint8Array | null {
@@ -147,10 +150,10 @@ function getEncryptionKey(): Uint8Array | null {
 export type StorageMode = "memory" | "database" | "kv" | "redis" | "custom";
 
 export function getStorageMode(): StorageMode {
-  const env =
-    typeof process !== "undefined"
-      ? process.env
-      : (globalThis as { Deno?: { env?: { toObject?: () => Record<string, string> } } }).Deno?.env?.toObject?.() ?? {};
+  const env = typeof process !== "undefined"
+    ? process.env
+    : (globalThis as { Deno?: { env?: { toObject?: () => Record<string, string> } } }).Deno?.env
+      ?.toObject?.() ?? {};
 
   if (env.DATABASE_URL) return "database";
   if (env.KV_REST_API_URL) return "kv";
@@ -166,7 +169,8 @@ export function isEncryptionEnabled(): boolean {
 // In-Memory Store (Development)
 // ============================================================================
 
-const tokens = (globalStore[TOKENS_KEY] as Map<string, OAuthToken> | undefined) ?? new Map<string, OAuthToken>();
+const tokens = (globalStore[TOKENS_KEY] as Map<string, OAuthToken> | undefined) ??
+  new Map<string, OAuthToken>();
 globalStore[TOKENS_KEY] = tokens;
 
 function getKey(userId: string, service: string): string {
@@ -232,7 +236,10 @@ export function createTokenStore(config: TokenStoreConfig): TokenStore {
 
 export const tokenStore: TokenStore = inMemoryStore;
 
-if (typeof process !== "undefined" && process.env?.NODE_ENV !== "production" && getStorageMode() === "memory") {
+if (
+  typeof process !== "undefined" && process.env?.NODE_ENV !== "production" &&
+  getStorageMode() === "memory"
+) {
   console.warn(
     "[Token Store] Using in-memory storage (development mode). " +
       "Tokens will be lost on restart. " +

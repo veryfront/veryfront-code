@@ -1,10 +1,10 @@
-# Agent Runtime AG-UI Contract
+# Agent runtime AG-UI contract
 
 This document defines the canonical runtime-facing request contract for the `veryfront` package.
 
 The goal is to make downstream consumers target one explicit AG-UI-aligned input model instead of treating the current runtime transport as a custom side protocol.
 
-## Canonical Contract
+## Canonical contract
 
 The canonical runtime contract is defined in [`src/agent/runtime-ag-ui-contract.ts`](../../src/agent/runtime-ag-ui-contract.ts) by [`AgUiRuntimeRequestSchema`](../../src/agent/runtime-ag-ui-contract.ts).
 
@@ -21,7 +21,7 @@ It is based on the AG-UI `RunAgentInput` shape:
 
 The runtime response contract remains AG-UI SSE.
 
-## Supported AG-UI Subset
+## Supported AG-UI subset
 
 The package runtime currently accepts a text-first subset of AG-UI messages:
 
@@ -38,7 +38,7 @@ Current message support is intentionally narrower than the full AG-UI type catal
 
 The package runtime does not currently treat `developer`, `activity`, or `reasoning` messages as canonical input roles for this contract.
 
-## Package/Runtime Extensions
+## Package and runtime extensions
 
 The canonical runtime contract keeps a small number of package/runtime extensions:
 
@@ -54,20 +54,32 @@ Structured runtime context currently supports:
 
 These extensions are part of the package runtime contract, not AG-UI core.
 
-## Transitional Transport Wrapper
+## Control-plane runtime invocation wrapper
 
-The current internal transport route, `/internal/agents/stream`, is a compatibility wrapper, not the canonical package contract.
+`RuntimeAgentRunInvocationSchema` defines the service-to-service wrapper used
+when a trusted control plane invokes a separately deployed runtime agent
+service.
 
-That wrapper currently adds transport-only fields:
+The wrapper carries control-plane-owned metadata that does not belong in the
+public AG-UI runtime request body:
 
-- `agentId`
-- `agentSource`
+- runtime service and agent ids
+- conversation, run, message, and input-anchor ids
+- project and runtime-target context
+- optional parent-run and spawn lineage
+- optional validated claims
+- runtime tools, context, source metadata, and forwarded props
 
-It also accepts the legacy message shape based on `parts`.
+The wrapper does not replace `AgUiRuntimeRequestSchema`. Hosts should use
+`AgUiRuntimeRequestSchema` for public AG-UI runtime routes and use
+`RuntimeAgentRunInvocationSchema` only for signed control-plane routes where
+the control plane owns durable run identity and project context.
 
-The wrapper is defined by [`InternalAgentStreamRequestSchema`](../../src/internal-agents/schema.ts) and normalized into the canonical runtime input with [`toRuntimeRunAgentInput()`](../../src/internal-agents/schema.ts).
+Private routes such as `/internal/agents/stream` can use this wrapper as their
+host-specific service boundary, then normalize the message payload into the
+local agent runtime input model before execution.
 
-## Endpoint Convention
+## Endpoint convention
 
 The package should standardize the runtime contract, not force one hardcoded route.
 
@@ -80,20 +92,32 @@ Recommended default convention:
 
 Hosts may override the route when needed.
 
-Current internal compatibility route:
+Public control-plane wrapper convention:
+
+- `POST /api/control-plane/agents/list`
+- `POST /api/control-plane/agents/stream`
+- `POST /api/control-plane/agents/runs/:runId/resume`
+- `DELETE /api/control-plane/agents/runs/:runId`
+
+Private signed control-plane wrappers:
 
 - `POST /internal/agents/stream`
-
-Current internal signed control-plane wrappers:
-
 - `POST /internal/agents/runs/:runId/resume`
 - `DELETE /internal/agents/runs/:runId`
 
+When a host needs to interoperate with the signed control-plane wrapper shape
+directly, the current request/response schemas and signature verification
+helpers are available as public package exports:
+
+- `veryfront/channels/control-plane`
+- `veryfront/channels/invoke`
+
 Those internal handlers are Veryfront-specific wrappers around the generic
 package-hosted run-control surface. Downstream package consumers should target
-the public `veryfront/agent` handlers instead of these internal routes.
+the public `veryfront/agent` handlers unless they are implementing a trusted
+control-plane runtime service.
 
-## What Downstream Consumers Should Target
+## What downstream consumers should target
 
 Downstream package/framework consumers should target:
 
@@ -104,4 +128,11 @@ Downstream package/framework consumers should target:
 - AG-UI SSE responses
 - the default endpoint convention `/api/ag-ui` unless a host explicitly documents another route
 
-They should not treat `/internal/agents/stream` and its extra wrapper fields as the long-term package contract.
+Control-plane runtime service implementers can also target:
+
+- `RuntimeAgentRunInvocationSchema`
+- `parseRuntimeAgentRunInvocation()`
+- `parseRuntimeAgentRunInvocationOrError()`
+
+They should not treat `/internal/agents/stream` as the public package AG-UI
+contract.

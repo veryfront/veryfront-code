@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   AgentRuntime,
   AgUiDetachedStartRequestSchema,
+  buildDetachedAgUiStartRequest,
   createAgUiDetachedStartHandler,
   executeAgUiDetachedStart,
   RunResumeSessionManager,
@@ -67,6 +68,77 @@ async function flushAsyncWork(): Promise<void> {
 }
 
 describe("agent/ag-ui-detached-start", () => {
+  it("builds a detached start request from chat UI messages", () => {
+    const request = buildDetachedAgUiStartRequest({
+      runId: "run_1",
+      threadId: "b2b4620f-7058-4407-a8df-1d88b860bc1d",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Done" }],
+          metadata: {
+            modelId: "anthropic/claude-sonnet-4-6",
+            usage: {
+              inputTokens: 12,
+              outputTokens: 34,
+              cachedInputTokens: 5,
+            },
+          },
+        },
+      ],
+      model: "anthropic/claude-sonnet-4-6",
+      forwardedProps: { projectId: "project-1" },
+    });
+
+    assertEquals(request, {
+      runId: "run_1",
+      threadId: "b2b4620f-7058-4407-a8df-1d88b860bc1d",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Done" }],
+          metadata: {
+            modelId: "anthropic/claude-sonnet-4-6",
+            usage: {
+              inputTokens: 12,
+              outputTokens: 34,
+              cachedInputTokens: 5,
+            },
+          },
+        },
+      ],
+      tools: [],
+      context: [],
+      model: "anthropic/claude-sonnet-4-6",
+      forwardedProps: { projectId: "project-1" },
+    });
+  });
+
+  it("builds detached start fallback ids and placeholder messages", () => {
+    const request = buildDetachedAgUiStartRequest({
+      runId: "run_2",
+      threadId: "not-a-uuid",
+      messages: [],
+      createThreadId: () => "generated-thread-id",
+    });
+
+    assertEquals(request, {
+      runId: "run_2",
+      threadId: "generated-thread-id",
+      messages: [
+        {
+          id: "run_2:placeholder",
+          role: "user",
+          parts: [{ type: "text", text: "" }],
+        },
+      ],
+      tools: [],
+      context: [],
+    });
+  });
+
   it("requires explicit run and thread ids", () => {
     const parsed = AgUiDetachedStartRequestSchema.parse({
       runId: "run_1",

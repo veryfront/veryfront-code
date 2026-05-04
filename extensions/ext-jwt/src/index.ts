@@ -63,9 +63,7 @@ function toUint8Array(secret: string | Uint8Array): Uint8Array {
 
 function getSecret(configSecret?: string | Uint8Array): Uint8Array {
   if (configSecret !== undefined) return toUint8Array(configSecret);
-  const env = typeof Deno !== "undefined"
-    ? Deno.env.get("JWT_SECRET")
-    : undefined;
+  const env = typeof Deno !== "undefined" ? Deno.env.get("JWT_SECRET") : undefined;
   if (!env) {
     throw new Error(
       "ext-jwt: no HMAC secret configured. Pass `secret` to the extension " +

@@ -5,10 +5,20 @@
  * stylesheet hash. Prevents race conditions when concurrent requests use
  * different stylesheets.
  *
+ * The actual tailwindcss `compile()` call is routed through the
+ * `CSSProcessor` extension contract (default implementation:
+ * `@veryfront/ext-tailwind`). When no `CSSProcessor` is registered, the
+ * compile path returns a no-op compiler that emits empty CSS and logs an
+ * actionable install message.
+ *
  * @module html/styles-builder/tailwind-compiler-cache
  */
 
-import { compile } from "tailwindcss";
+import {
+  register as registerContract,
+  tryResolve as tryResolveContract,
+} from "#veryfront/extensions/contracts.ts";
+import type { CSSCompiler, CSSProcessor } from "#veryfront/extensions/interfaces/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEPENDENCY_MISSING, NETWORK_ERROR } from "#veryfront/errors";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";
@@ -23,7 +33,7 @@ const logger = serverLogger.component("tailwind");
  * Each entry stores the compiler and its associated plugin state.
  */
 interface CompilerCacheEntry {
-  compiler: Awaited<ReturnType<typeof compile>>;
+  compiler: CSSCompiler;
   createdAt: number;
   pluginCache: Map<string, unknown>;
   pluginErrors: Map<string, Error>;
@@ -64,6 +74,37 @@ async function getTailwindBaseCSS(): Promise<string> {
   return tailwindBaseCSS;
 }
 
+async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
+  const registeredProcessor = tryResolveContract<CSSProcessor>("CSSProcessor");
+  if (registeredProcessor) return registeredProcessor;
+
+  try {
+    const { default: createTailwindExtension } = await import(
+      "../../../extensions/ext-tailwind/src/index.ts"
+    );
+    const extension = createTailwindExtension();
+    await extension.setup?.({
+      config: {},
+      logger,
+      provide: (name: string, impl: unknown) => registerContract(name, impl),
+      get: () => undefined,
+      require: <T>(name: string): T => {
+        const contract = tryResolveContract<T>(name);
+        if (contract === undefined) {
+          throw new Error(`Missing required extension contract: ${name}`);
+        }
+        return contract;
+      },
+    });
+  } catch (error) {
+    logger.warn("Failed to register built-in CSSProcessor extension", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return tryResolveContract<CSSProcessor>("CSSProcessor");
+}
+
 function evictOldestCompiler(): void {
   if (compilerCache.size < MAX_CACHED_COMPILERS) return;
 
@@ -86,7 +127,7 @@ function evictOldestCompiler(): void {
 export async function getCompiler(
   stylesheet: string,
   projectSlug?: string,
-): Promise<Awaited<ReturnType<typeof compile>>> {
+): Promise<CSSCompiler> {
   // Tailwind v4's compile().build() is stateful — it accumulates candidates
   // across calls. Without per-project isolation, projects sharing the same
   // stylesheet on the shared pool contaminate each other's CSS output.
@@ -101,11 +142,26 @@ export async function getCompiler(
 
   logger.debug("Creating new compiler", { hash, projectSlug });
 
+  const processor = await resolveCSSProcessor();
+  if (!processor) {
+    logger.warn(
+      "No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-tailwind",
+    );
+    const noopCompiler: CSSCompiler = { build: () => "" };
+    compilerCache.set(hash, {
+      compiler: noopCompiler,
+      createdAt: Date.now(),
+      pluginCache: new Map(),
+      pluginErrors: new Map(),
+    });
+    return noopCompiler;
+  }
+
   const tailwindBase = await getTailwindBaseCSS();
   const pluginCache = new Map<string, unknown>();
   const pluginErrors = new Map<string, Error>();
 
-  const newCompiler = await compile(stylesheet, {
+  const newCompiler = await processor.compile(stylesheet, {
     base: "/",
     loadStylesheet: (id: string) => {
       if (id === "tailwindcss") {
@@ -121,8 +177,7 @@ export async function getCompiler(
           detail: `Failed to load plugin "${id}": plugin not installed`,
         });
       }
-      // deno-lint-ignore no-explicit-any -- dynamically loaded plugin cannot be statically verified against Tailwind's Plugin | Config type
-      return { module: loaded as any, base: "/", path: "/" };
+      return { module: loaded, base: "/", path: "/" };
     },
   });
 

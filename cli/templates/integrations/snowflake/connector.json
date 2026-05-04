@@ -58,31 +58,31 @@
   ],
   "tools": [
     {
-      "id": "run-query",
+      "id": "run_query",
       "name": "Run Query",
       "description": "Execute a SQL query against your Snowflake data warehouse",
       "requiresWrite": false
     },
     {
-      "id": "list-databases",
+      "id": "list_databases",
       "name": "List Databases",
       "description": "List all databases in your Snowflake account",
       "requiresWrite": false
     },
     {
-      "id": "list-schemas",
+      "id": "list_schemas",
       "name": "List Schemas",
       "description": "List all schemas in a Snowflake database",
       "requiresWrite": false
     },
     {
-      "id": "list-tables",
+      "id": "list_tables",
       "name": "List Tables",
       "description": "List all tables in a Snowflake database schema",
       "requiresWrite": false
     },
     {
-      "id": "describe-table",
+      "id": "describe_table",
       "name": "Describe Table",
       "description": "Get detailed column information for a specific table",
       "requiresWrite": false
@@ -90,28 +90,28 @@
   ],
   "prompts": [
     {
-      "id": "query-data",
+      "id": "query_data",
       "title": "Query my data warehouse",
       "prompt": "Help me query data from my Snowflake data warehouse. Show me specific records or analyze patterns.",
       "category": "data",
       "icon": "search"
     },
     {
-      "id": "analyze-tables",
+      "id": "analyze_tables",
       "title": "Analyze table structure",
       "prompt": "Show me the structure of tables in my Snowflake database and help me understand the schema.",
       "category": "data",
       "icon": "database"
     },
     {
-      "id": "data-insights",
+      "id": "data_insights",
       "title": "Generate insights",
       "prompt": "Analyze my Snowflake data and generate insights about trends, patterns, and anomalies.",
       "category": "analytics",
       "icon": "chart"
     },
     {
-      "id": "optimize-queries",
+      "id": "optimize_queries",
       "title": "Optimize queries",
       "prompt": "Help me optimize my SQL queries for better performance in Snowflake.",
       "category": "analytics",

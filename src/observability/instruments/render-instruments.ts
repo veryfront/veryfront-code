@@ -1,4 +1,4 @@
-import type { Counter, Histogram, Meter } from "@opentelemetry/api";
+import type { Counter, Histogram, Meter } from "#veryfront/observability/tracing/api-shim.ts";
 import { DURATION_HISTOGRAM_BOUNDARIES_MS } from "#veryfront/config/defaults.ts";
 import type { MetricsConfig } from "../metrics/types.ts";
 

@@ -48,6 +48,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
+          warm-redis-cache: "true"
       - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: ${{ matrix.suite == 'integration' && 10 || 5 }}

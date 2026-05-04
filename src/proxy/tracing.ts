@@ -1,15 +1,29 @@
 /****
  * OpenTelemetry OTLP tracing for proxy.
- * Env: OTEL_TRACES_ENABLED, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_EXPORTER_OTLP_HEADERS
+ *
+ * Uses the core api-shim for in-process tracing; when ext-opentelemetry
+ * is loaded, the shim delegates to the real SDK provider.
+ *
+ * Env: OTEL_TRACES_ENABLED, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT,
+ *      OTEL_EXPORTER_OTLP_HEADERS
  */
 
-import type { Context, Span, Tracer } from "@opentelemetry/api";
+import {
+  type Context,
+  context as shimContext,
+  defaultTextMapGetter,
+  defaultTextMapSetter,
+  propagation as shimPropagation,
+  type Span,
+  SpanKind,
+  SpanStatusCode,
+  trace as shimTrace,
+  type Tracer,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { getEnv } from "./env.ts";
 import { proxyLogger } from "./logger.ts";
-import { PROXY_RUNTIME_VERSION } from "./version.ts";
 
 let initialized = false;
-let tracerProvider: { shutdown: () => Promise<void> } | null = null;
 let tracer: Tracer | null = null;
 
 interface OTLPConfig {
@@ -31,21 +45,6 @@ function parseHeaders(headerString: string | undefined): Record<string, string> 
   return headers;
 }
 
-/**
- * Parse OTEL_RESOURCE_ATTRIBUTES env var (key=value,key2=value2 format).
- */
-function parseResourceAttributes(attrString: string | undefined): Record<string, string> {
-  if (!attrString) return {};
-  const attrs: Record<string, string> = {};
-  for (const part of attrString.split(",")) {
-    const [key, ...valueParts] = part.split("=");
-    if (key && valueParts.length > 0) {
-      attrs[key.trim()] = valueParts.join("=").trim();
-    }
-  }
-  return attrs;
-}
-
 function getConfig(): OTLPConfig {
   return {
     enabled: getEnv("OTEL_TRACES_ENABLED") === "true",
@@ -53,15 +52,6 @@ function getConfig(): OTLPConfig {
     endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
     headers: parseHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS")),
   };
-}
-
-let traceApi: typeof import("@opentelemetry/api") | null = null;
-let propagationApi: typeof import("@opentelemetry/core") | null = null;
-
-async function loadApis(): Promise<void> {
-  if (traceApi) return;
-  traceApi = await import("@opentelemetry/api");
-  propagationApi = await import("@opentelemetry/core");
 }
 
 export async function initializeOTLPWithApis(): Promise<void> {
@@ -81,41 +71,11 @@ export async function initializeOTLPWithApis(): Promise<void> {
   }
 
   try {
-    const { trace } = await import("@opentelemetry/api");
-    const { BasicTracerProvider, BatchSpanProcessor } = await import(
-      "@opentelemetry/sdk-trace-base"
-    );
-    const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
-    const { resourceFromAttributes } = await import("@opentelemetry/resources");
-    const { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } = await import(
-      "@opentelemetry/semantic-conventions"
-    );
-
-    const resourceAttrs = parseResourceAttributes(getEnv("OTEL_RESOURCE_ATTRIBUTES"));
-    const resource = resourceFromAttributes({
-      [ATTR_SERVICE_NAME]: config.serviceName,
-      [ATTR_SERVICE_VERSION]: PROXY_RUNTIME_VERSION,
-      ...resourceAttrs,
-    });
-
-    const exporter = new OTLPTraceExporter({
-      url: `${config.endpoint}/v1/traces`,
-      headers: config.headers,
-    });
-
-    const provider = new BasicTracerProvider({
-      resource,
-      spanProcessors: [new BatchSpanProcessor(exporter)],
-    });
-
-    // In OTel SDK v2, provider.register() is removed.
-    trace.setGlobalTracerProvider(provider);
-
-    tracerProvider = provider;
-    tracer = trace.getTracer(config.serviceName);
+    // The shim's provider is wired by ext-opentelemetry via bootstrap.ts.
+    // We simply get a tracer from the shim — it delegates to the real SDK
+    // when the extension is active, otherwise returns the no-op tracer.
+    tracer = shimTrace.getTracer(config.serviceName);
     initialized = true;
-
-    await loadApis();
 
     proxyLogger.info("[otel] Initialized", {
       serviceName: config.serviceName,
@@ -128,51 +88,22 @@ export async function initializeOTLPWithApis(): Promise<void> {
 }
 
 export async function shutdownOTLP(): Promise<void> {
-  if (!tracerProvider) return;
-
-  try {
-    await tracerProvider.shutdown();
-    proxyLogger.info("[otel] Shutdown complete");
-  } catch (error) {
-    proxyLogger.error("[otel] Shutdown error", error);
-  }
-}
-
-function getPropagator(): import("@opentelemetry/core").W3CTraceContextPropagator | null {
-  if (!propagationApi) return null;
-  return new propagationApi.W3CTraceContextPropagator();
+  proxyLogger.info("[otel] Shutdown complete");
 }
 
 export function extractContext(headers: Headers): Context | undefined {
-  if (!traceApi) return undefined;
-
-  const propagator = getPropagator();
-  if (!propagator) return undefined;
-
   const carrier: Record<string, string> = {};
   headers.forEach((v, k) => {
     carrier[k.toLowerCase()] = v;
   });
 
-  return propagator.extract(
-    traceApi.context.active(),
-    carrier,
-    traceApi.defaultTextMapGetter,
-  );
+  const extracted = shimPropagation.extract(shimContext.active(), carrier, defaultTextMapGetter);
+  return extracted;
 }
 
 export function injectContext(headers: Headers): void {
-  if (!traceApi) return;
-
-  const propagator = getPropagator();
-  if (!propagator) return;
-
   const carrier: Record<string, string> = {};
-  propagator.inject(
-    traceApi.context.active(),
-    carrier,
-    traceApi.defaultTextMapSetter,
-  );
+  shimPropagation.inject(shimContext.active(), carrier, defaultTextMapSetter);
 
   for (const [k, v] of Object.entries(carrier)) {
     headers.set(k, v);
@@ -184,43 +115,38 @@ export function startServerSpan(
   path: string,
   parentContext?: Context,
 ): { span: Span; context: Context } | null {
-  if (!traceApi || !tracer) return null;
+  if (!tracer) return null;
 
-  const ctx = parentContext ?? traceApi.context.active();
-  const span = tracer.startSpan(`${method} ${path}`, { kind: traceApi.SpanKind.SERVER }, ctx);
-  return { span, context: traceApi.trace.setSpan(ctx, span) };
+  const ctx = parentContext ?? shimContext.active();
+  const span = tracer.startSpan(`${method} ${path}`, { kind: SpanKind.SERVER }, ctx);
+  return { span, context: shimTrace.setSpan(ctx, span) };
 }
 
 export function endSpan(span: Span | undefined, statusCode: number, error?: Error): void {
-  if (!span || !traceApi) return;
+  if (!span) return;
 
   span.setAttribute("http.status_code", statusCode);
 
   if (error) {
-    span.setStatus({ code: traceApi.SpanStatusCode.ERROR, message: error.message });
+    span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
     span.recordException(error);
     span.end();
     return;
   }
 
   if (statusCode >= 400) {
-    span.setStatus({ code: traceApi.SpanStatusCode.ERROR });
+    span.setStatus({ code: SpanStatusCode.ERROR });
   }
 
   span.end();
 }
 
 export function withContext<T>(spanContext: Context, fn: () => Promise<T>): Promise<T> {
-  if (!traceApi) return fn();
-  return traceApi.context.with(spanContext, fn);
+  return shimContext.with(spanContext, fn);
 }
 
-function getActiveSpanContext():
-  | import("@opentelemetry/api").SpanContext
-  | null {
-  if (!traceApi) return null;
-
-  const activeSpan = traceApi.trace.getSpan(traceApi.context.active());
+function getActiveSpanContext(): { traceId: string; spanId: string } | null {
+  const activeSpan = shimTrace.getActiveSpan?.();
   return activeSpan ? activeSpan.spanContext() : null;
 }
 
@@ -249,24 +175,24 @@ export async function withSpan<T>(
   fn: () => Promise<T>,
   attributes?: Record<string, string | number | boolean>,
 ): Promise<T> {
-  if (!traceApi || !tracer) return await fn();
+  if (!tracer) return await fn();
 
-  const parentContext = traceApi.context.active();
+  const parentContext = shimContext.active();
   const span = tracer.startSpan(
     name,
-    { kind: traceApi.SpanKind.INTERNAL, attributes },
+    { kind: SpanKind.INTERNAL, attributes },
     parentContext,
   );
 
-  const spanContext = traceApi.trace.setSpan(parentContext, span);
+  const spanContext = shimTrace.setSpan(parentContext, span);
 
   try {
-    const result = await traceApi.context.with(spanContext, fn);
-    span.setStatus({ code: traceApi.SpanStatusCode.OK });
+    const result = await shimContext.with(spanContext, fn);
+    span.setStatus({ code: SpanStatusCode.OK });
     return result;
   } catch (error) {
     span.setStatus({
-      code: traceApi.SpanStatusCode.ERROR,
+      code: SpanStatusCode.ERROR,
       message: error instanceof Error ? error.message : String(error),
     });
     if (error instanceof Error) span.recordException(error);

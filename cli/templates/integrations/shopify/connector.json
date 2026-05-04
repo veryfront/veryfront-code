@@ -42,31 +42,31 @@
   ],
   "tools": [
     {
-      "id": "list-products",
+      "id": "list_products",
       "name": "List Products",
       "description": "List products in your Shopify store",
       "requiresWrite": false
     },
     {
-      "id": "get-product",
+      "id": "get_product",
       "name": "Get Product",
       "description": "Get details of a specific product",
       "requiresWrite": false
     },
     {
-      "id": "list-orders",
+      "id": "list_orders",
       "name": "List Orders",
       "description": "List orders from your Shopify store",
       "requiresWrite": false
     },
     {
-      "id": "get-order",
+      "id": "get_order",
       "name": "Get Order",
       "description": "Get details of a specific order",
       "requiresWrite": false
     },
     {
-      "id": "list-customers",
+      "id": "list_customers",
       "name": "List Customers",
       "description": "List customers in your Shopify store",
       "requiresWrite": false
@@ -74,26 +74,26 @@
   ],
   "prompts": [
     {
-      "id": "list-products",
+      "id": "list_products",
       "title": "Show my products",
       "prompt": "List all products in my Shopify store with their prices and inventory levels.",
       "category": "ecommerce",
       "icon": "shopping-bag"
     },
     {
-      "id": "recent-orders",
+      "id": "recent_orders",
       "title": "Show recent orders",
       "prompt": "Show me the most recent orders from my Shopify store with customer details and order totals.",
       "category": "ecommerce",
       "icon": "receipt"
     },
     {
-      "id": "customer-list",
+      "id": "customer_list",
       "title": "Show my customers",
       "prompt": "List all customers in my Shopify store with their contact information and order history.",
       "category": "ecommerce",
       "icon": "users"
     }
   ],
-  "suggestedWith": ["stripe", "mailchimp", "analytics"]
+  "suggestedWith": ["stripe", "analytics"]
 }

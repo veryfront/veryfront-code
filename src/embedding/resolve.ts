@@ -3,6 +3,9 @@ import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/e
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
 import { createGoogleEmbeddingRuntime } from "../../extensions/ext-google/src/google-provider.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
+import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
 
 type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
@@ -30,7 +33,7 @@ function autoInitializeFromEnv(): void {
   autoInitialized = true;
 
   if (!providers.has("openai")) {
-    providers.set("openai", (_id) => {
+    providers.set("openai", (id) => {
       const config = getOpenAIEnvConfig();
       if (!config.apiKey) {
         throw toError(
@@ -40,6 +43,14 @@ function autoInitializeFromEnv(): void {
               "OPENAI_API_KEY not set. Set the environment variable or register a custom provider with registerEmbeddingProvider().",
           }),
         );
+      }
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const provider = registry?.get("openai");
+      if (provider?.createEmbedding) {
+        return provider.createEmbedding(id, {
+          credential: config.apiKey,
+          baseURL: config.baseURL,
+        });
       }
       throw toError(
         createError({

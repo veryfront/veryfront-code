@@ -1,9 +1,6 @@
 #!/usr/bin/env -S deno run --allow-all
 /**
  * Compile the Veryfront CLI binary with all required embedded assets.
- *
- * This centralizes deno compile arguments so local builds, CI, and binary
- * tests all embed the same Kreuzberg WASM assets.
  */
 
 import { parseArgs } from "jsr:@std/cli/parse-args";
@@ -15,7 +12,6 @@ const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
-  "src/embedding/upload-extraction-worker.ts",
   "src/rendering/rsc",
   "dist/framework-src",
 ];
@@ -24,28 +20,6 @@ interface CompileBinaryOptions {
   extraIncludes: string[];
   output: string;
   target?: string;
-}
-
-/**
- * Resolve the kreuzberg WASM assets that must be embedded in the compiled binary.
- *
- * NOTE: This runs under `deno run` (not compiled), so `import.meta.resolve`
- * returns a `file:` URL pointing into `node_modules`. It will NOT work inside
- * a compiled binary — only call this at build time.
- */
-export function resolveKreuzbergCompileIncludes(): string[] {
-  const resolved = import.meta.resolve("#kreuzberg-wasm-glue");
-  if (!resolved.startsWith("file:")) {
-    throw new Error(
-      `Expected #kreuzberg-wasm-glue to resolve to a file: URL, got: ${resolved}`,
-    );
-  }
-  const glueUrl = new URL(resolved);
-  return [
-    fromFileUrl(new URL("kreuzberg_wasm_bg.wasm", glueUrl)),
-    fromFileUrl(new URL("../pdfium.js", glueUrl)),
-    fromFileUrl(new URL("../pdfium.esm.wasm", glueUrl)),
-  ];
 }
 
 export function createCompileArgs(options: CompileBinaryOptions): string[] {
@@ -59,7 +33,6 @@ export function createCompileArgs(options: CompileBinaryOptions): string[] {
   for (const include of [
     ...DEFAULT_INCLUDES,
     ...getBinaryPluginBundleIncludes(),
-    ...resolveKreuzbergCompileIncludes(),
     ...options.extraIncludes,
   ]) {
     args.push("--include", include);

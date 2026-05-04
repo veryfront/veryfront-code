@@ -13,8 +13,9 @@
 import { logger as baseLogger } from "#veryfront/utils";
 import { api } from "../api.ts";
 import type { CapturedTenantContext } from "../types.ts";
-import { join, relative, resolve } from "@std/path";
+import { dirname, join, relative, resolve } from "@std/path";
 import { INITIALIZATION_ERROR, INVALID_ARGUMENT, SECURITY_VIOLATION } from "#veryfront/errors";
+import { isWithinDirectory } from "#veryfront/utils/path-utils.ts";
 
 const logger = baseLogger.component("workspace-sync");
 
@@ -228,8 +229,8 @@ export class WorkspaceSync {
         this.fileChecksums.set(path, hash);
 
         // Write to local filesystem (use safe path resolution)
-        const localPath = this.resolveSafePath(path);
-        const dir = localPath.substring(0, localPath.lastIndexOf("/"));
+        const localPath = await this.resolveSafePath(path);
+        const dir = dirname(localPath);
         await Deno.mkdir(dir, { recursive: true });
         await Deno.writeTextFile(localPath, content);
 
@@ -293,7 +294,7 @@ export class WorkspaceSync {
     // Check for deleted files
     for (const [path, originalHash] of this.fileChecksums) {
       try {
-        const localPath = this.resolveSafePath(path);
+        const localPath = await this.resolveSafePath(path);
         await Deno.stat(localPath);
       } catch (_) {
         // File was deleted
@@ -313,14 +314,26 @@ export class WorkspaceSync {
   }
 
   /**
-   * Recursively walk directory and detect changes
+   * Recursively walk directory and detect changes.
+   *
+   * SECURITY: Uses lstat (not stat) and skips any symlink it finds, so a
+   * symlink planted inside the workspace cannot cause us to descend into —
+   * or read the contents of — files outside the workspace (VULN-FS-4).
    */
   private async walkAndDetect(
     localPath: string,
     relativePath: string,
     changes: FileChange[],
   ): Promise<void> {
-    const stat = await Deno.stat(localPath);
+    const stat = await Deno.lstat(localPath);
+
+    // Ignore symlinks outright — we never treat them as real files here.
+    if (stat.isSymlink) {
+      if (this.config.debug) {
+        logger.info("Skipping symlink during change detection", { localPath });
+      }
+      return;
+    }
 
     if (stat.isDirectory) {
       for await (const entry of Deno.readDir(localPath)) {
@@ -333,7 +346,7 @@ export class WorkspaceSync {
       return;
     }
 
-    // It's a file - check for changes
+    // It's a regular file - check for changes
     const content = await Deno.readTextFile(localPath);
     const newHash = await checksum(content);
     const originalHash = this.fileChecksums.get(relativePath);
@@ -388,7 +401,7 @@ export class WorkspaceSync {
       }
 
       try {
-        const localPath = this.resolveSafePath(change.path);
+        const localPath = await this.resolveSafePath(change.path);
         const content = await Deno.readTextFile(localPath);
 
         if (options.onUpload) {
@@ -418,19 +431,95 @@ export class WorkspaceSync {
   }
 
   /**
-   * Safely resolve a path within the workspace, preventing path traversal attacks
+   * Safely resolve a path within the workspace, preventing path traversal
+   * and symlink-based escapes (VULN-FS-4).
+   *
+   * - Rejects NUL bytes outright.
+   * - Rejects any intermediate path segment that is a symlink.
+   * - Re-checks containment by realpath-ing the parent directory after the
+   *   segment walk, so a symlink that resolves through a non-symlink directory
+   *   chain still cannot escape the workspace.
+   *
+   * Note: this deliberately rejects ALL symlinks inside the workspace — even
+   * those whose targets remain within it — because the race window between
+   * resolution and use is not worth the complexity for our use-case.
    */
-  private resolveSafePath(path: string): string {
-    // Normalize the input path
+  private async resolveSafePath(path: string): Promise<string> {
+    // Reject NUL bytes — they confuse filesystem APIs and are never legitimate.
+    if (path.includes("\0")) {
+      throw SECURITY_VIOLATION.create({ detail: `NUL byte in path` });
+    }
+
+    // Workspace-relative paths only. A single leading "/" is the canonical
+    // API form for "the project root" (e.g. "/src/foo.ts") and is accepted;
+    // anything that syntactically looks like a system-absolute path beyond
+    // that one-slash convention is rejected.
+    //
+    // - Windows drive letters (C:\...) — rejected.
+    // - UNC paths (//host/share) — rejected.
+    // - Unix absolute paths with a leading slash are treated as
+    //   workspace-relative, but any component that tries to escape the
+    //   workspace is still caught by the traversal / realpath checks below.
+    if (/^[A-Za-z]:[\\/]/.test(path)) {
+      throw SECURITY_VIOLATION.create({ detail: `Absolute path not allowed: ${path}` });
+    }
+    if (path.startsWith("//")) {
+      throw SECURITY_VIOLATION.create({ detail: `Absolute path not allowed: ${path}` });
+    }
+
+    // Normalize the input path (treat leading "/" as workspace-relative).
     const normalizedPath = path.startsWith("/") ? path.slice(1) : path;
 
-    // Resolve the full path
-    const fullPath = resolve(join(this.workspaceDir, normalizedPath));
+    // Empty path resolves to the workspace dir itself — writing to it would
+    // clobber the workspace as a regular file. Reject explicitly.
+    if (normalizedPath === "") {
+      throw SECURITY_VIOLATION.create({ detail: `Empty path not allowed` });
+    }
 
-    // Verify the resolved path is within the workspace
+    // Resolve the full path lexically first (catches literal "..").
+    const fullPath = resolve(join(this.workspaceDir, normalizedPath));
     const relativePath = relative(this.workspaceDir, fullPath);
-    if (relativePath.startsWith("..") || !relativePath || relativePath === "..") {
+    if (!relativePath || relativePath.startsWith("..") || relativePath === "..") {
       throw SECURITY_VIOLATION.create({ detail: `Path traversal detected: ${path}` });
+    }
+
+    // Walk each segment and reject any existing symlink along the way.
+    // A segment that does not yet exist is fine — it will be created later.
+    const relSegments = relativePath === "" ? [] : relativePath.split(/[\\/]/).filter(Boolean);
+    let cursor = this.workspaceDir;
+    for (const seg of relSegments) {
+      cursor = join(cursor, seg);
+      try {
+        const info = await Deno.lstat(cursor);
+        if (info.isSymlink) {
+          throw SECURITY_VIOLATION.create({
+            detail: `Refusing to traverse symlink: ${cursor}`,
+          });
+        }
+      } catch (e) {
+        if (e instanceof Deno.errors.NotFound) {
+          // Segment doesn't exist yet — the rest of the chain will be
+          // created under a verified-non-symlink parent, so stop walking.
+          break;
+        }
+        throw e;
+      }
+    }
+
+    // Final containment check against the realpath of the parent directory,
+    // to defeat any symlink-in-parent we might have missed (e.g. one that
+    // appeared mid-walk). If the parent doesn't exist yet, that's fine —
+    // the segment walk above already proved every existing ancestor is real.
+    try {
+      const parentReal = await Deno.realPath(dirname(fullPath));
+      const workspaceReal = await Deno.realPath(this.workspaceDir);
+      if (!isWithinDirectory(workspaceReal, parentReal)) {
+        throw SECURITY_VIOLATION.create({
+          detail: `Resolved parent outside workspace: ${parentReal}`,
+        });
+      }
+    } catch (e) {
+      if (!(e instanceof Deno.errors.NotFound)) throw e;
     }
 
     return fullPath;
@@ -440,7 +529,7 @@ export class WorkspaceSync {
    * Read a file from the workspace
    */
   async readFile(path: string): Promise<string> {
-    const localPath = this.resolveSafePath(path);
+    const localPath = await this.resolveSafePath(path);
     return await Deno.readTextFile(localPath);
   }
 
@@ -448,10 +537,10 @@ export class WorkspaceSync {
    * Write a file to the workspace
    */
   async writeFile(path: string, content: string): Promise<void> {
-    const localPath = this.resolveSafePath(path);
+    const localPath = await this.resolveSafePath(path);
 
     // Ensure directory exists
-    const dir = localPath.substring(0, localPath.lastIndexOf("/"));
+    const dir = dirname(localPath);
     await Deno.mkdir(dir, { recursive: true });
 
     await Deno.writeTextFile(localPath, content);
@@ -461,7 +550,7 @@ export class WorkspaceSync {
    * Delete a file from the workspace
    */
   async deleteFile(path: string): Promise<void> {
-    const localPath = this.resolveSafePath(path);
+    const localPath = await this.resolveSafePath(path);
     await Deno.remove(localPath);
   }
 
@@ -470,7 +559,7 @@ export class WorkspaceSync {
    */
   async fileExists(path: string): Promise<boolean> {
     try {
-      const localPath = this.resolveSafePath(path);
+      const localPath = await this.resolveSafePath(path);
       await Deno.stat(localPath);
       return true;
     } catch (_) {

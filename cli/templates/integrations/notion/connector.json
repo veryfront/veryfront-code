@@ -36,25 +36,25 @@
   ],
   "tools": [
     {
-      "id": "search-notion",
+      "id": "search_notion",
       "name": "Search Notion",
       "description": "Search pages and databases in the workspace",
       "requiresWrite": false
     },
     {
-      "id": "read-page",
+      "id": "read_page",
       "name": "Read Page",
       "description": "Read the content of a Notion page",
       "requiresWrite": false
     },
     {
-      "id": "create-page",
+      "id": "create_page",
       "name": "Create Page",
       "description": "Create a new page in a database or as a subpage",
       "requiresWrite": true
     },
     {
-      "id": "query-database",
+      "id": "query_database",
       "name": "Query Database",
       "description": "Query a Notion database with filters and sorts",
       "requiresWrite": false
@@ -62,21 +62,21 @@
   ],
   "prompts": [
     {
-      "id": "search-docs",
+      "id": "search_docs",
       "title": "Search my docs",
       "prompt": "Search my Notion workspace for relevant documentation or notes about a topic.",
       "category": "productivity",
       "icon": "search"
     },
     {
-      "id": "summarize-page",
+      "id": "summarize_page",
       "title": "Summarize a page",
       "prompt": "Read and summarize a specific Notion page. Extract the key points and action items.",
       "category": "productivity",
       "icon": "document"
     },
     {
-      "id": "create-meeting-notes",
+      "id": "create_meeting_notes",
       "title": "Create meeting notes",
       "prompt": "Create a new meeting notes page with today's date, attendees, agenda, and action items sections.",
       "category": "productivity",

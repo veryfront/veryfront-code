@@ -98,10 +98,41 @@ export type HumanInputRequestInput = z.input<typeof HumanInputRequestSchema>;
 export type HumanInputResult = z.infer<typeof HumanInputResultSchema>;
 export type HumanInputPendingRequest = z.infer<typeof HumanInputPendingRequestSchema>;
 
-type HumanInputResumeValue = {
+export type HumanInputResumeValue = {
   result: unknown;
   isError: boolean;
 };
+
+export type DurableHumanInputFlowResult<TCreatedRequest> = {
+  result: HumanInputResult;
+  createdRequest: TCreatedRequest;
+};
+
+export interface ExecuteDurableHumanInputFlowOptions<
+  TCreatedRequest,
+  TSnapshot,
+> {
+  sessionManager?: RunResumeSessionManager<HumanInputResumeValue> | undefined;
+  runId: string;
+  threadId: string;
+  toolCallId: string;
+  request: HumanInputRequestInput;
+  timeoutMs: number;
+  pollIntervalMs: number;
+  onRequest: (
+    request: HumanInputPendingRequest,
+  ) => TCreatedRequest | Promise<TCreatedRequest>;
+  onCreatedRequest?: ((request: TCreatedRequest) => void | Promise<void>) | undefined;
+  getSnapshot: (request: TCreatedRequest) => TSnapshot | Promise<TSnapshot>;
+  resolveSnapshot: (snapshot: TSnapshot) => HumanInputResult | undefined;
+}
+
+export interface WaitForDurableHumanInputResolutionOptions<TSnapshot> {
+  deadline: number;
+  pollIntervalMs: number;
+  getSnapshot: () => TSnapshot | Promise<TSnapshot>;
+  resolveSnapshot: (snapshot: TSnapshot) => HumanInputResult | undefined;
+}
 
 export interface WaitForHumanInputOptions {
   sessionManager: RunResumeSessionManager<HumanInputResumeValue>;
@@ -124,6 +155,64 @@ export class InvalidHumanInputResultError extends Error {
   constructor(readonly detail: z.ZodIssue[]) {
     super("Invalid human input resume payload");
     this.name = "InvalidHumanInputResultError";
+  }
+}
+
+export async function executeDurableHumanInputFlow<
+  TCreatedRequest,
+  TSnapshot,
+>(
+  options: ExecuteDurableHumanInputFlowOptions<TCreatedRequest, TSnapshot>,
+): Promise<DurableHumanInputFlowResult<TCreatedRequest>> {
+  const sessionManager = options.sessionManager ??
+    new RunResumeSessionManager<HumanInputResumeValue>();
+  sessionManager.startRun({
+    runId: options.runId,
+    threadId: options.threadId,
+  });
+
+  let resolveCreatedRequest: ((request: TCreatedRequest) => void) | null = null;
+  const createdRequestPromise = new Promise<TCreatedRequest>((resolve) => {
+    resolveCreatedRequest = resolve;
+  });
+
+  try {
+    const result = await waitForHumanInput({
+      sessionManager,
+      runId: options.runId,
+      toolCallId: options.toolCallId,
+      request: options.request,
+      onRequest: async (pendingRequest) => {
+        const currentRequest = await options.onRequest(pendingRequest);
+        if (!resolveCreatedRequest) {
+          throw new Error("Durable human input flow could not track the created request");
+        }
+        resolveCreatedRequest(currentRequest);
+        await options.onCreatedRequest?.(currentRequest);
+
+        void bridgeDurableHumanInputRequest({
+          sessionManager,
+          runId: options.runId,
+          toolCallId: options.toolCallId,
+          createdRequest: currentRequest,
+          timeoutMs: options.timeoutMs,
+          pollIntervalMs: options.pollIntervalMs,
+          getSnapshot: options.getSnapshot,
+          resolveSnapshot: options.resolveSnapshot,
+        });
+      },
+    });
+
+    const createdRequest = await createdRequestPromise;
+
+    sessionManager.completeRun(options.runId);
+    return {
+      result,
+      createdRequest,
+    };
+  } catch (error) {
+    sessionManager.failRun(options.runId);
+    throw error;
   }
 }
 
@@ -150,4 +239,77 @@ export async function waitForHumanInput(
   }
 
   return parsed.data;
+}
+
+export async function waitForDurableHumanInputResolution<TSnapshot>(
+  options: WaitForDurableHumanInputResolutionOptions<TSnapshot>,
+): Promise<HumanInputResult> {
+  while (Date.now() < options.deadline) {
+    const snapshot = await options.getSnapshot();
+    const result = options.resolveSnapshot(snapshot);
+
+    if (result) {
+      return result;
+    }
+
+    await delay(options.pollIntervalMs);
+  }
+
+  throw new Error("Timed out while waiting for durable human input resolution");
+}
+
+async function bridgeDurableHumanInputRequest<
+  TCreatedRequest,
+  TSnapshot,
+>(input: {
+  sessionManager: RunResumeSessionManager<HumanInputResumeValue>;
+  runId: string;
+  toolCallId: string;
+  createdRequest: TCreatedRequest;
+  timeoutMs: number;
+  pollIntervalMs: number;
+  getSnapshot: (request: TCreatedRequest) => TSnapshot | Promise<TSnapshot>;
+  resolveSnapshot: (snapshot: TSnapshot) => HumanInputResult | undefined;
+}): Promise<void> {
+  try {
+    const resolved = await waitForDurableHumanInputResolution({
+      deadline: Date.now() + input.timeoutMs,
+      pollIntervalMs: input.pollIntervalMs,
+      getSnapshot: () => input.getSnapshot(input.createdRequest),
+      resolveSnapshot: input.resolveSnapshot,
+    });
+
+    submitHumanInputResumeValue(input.sessionManager, input.runId, input.toolCallId, {
+      result: resolved,
+      isError: false,
+    });
+  } catch (error) {
+    submitHumanInputResumeValue(input.sessionManager, input.runId, input.toolCallId, {
+      result: error instanceof Error ? error.message : String(error),
+      isError: true,
+    });
+  }
+}
+
+function submitHumanInputResumeValue(
+  sessionManager: RunResumeSessionManager<HumanInputResumeValue>,
+  runId: string,
+  toolCallId: string,
+  value: HumanInputResumeValue,
+) {
+  try {
+    sessionManager.submitSignal(runId, {
+      waitKey: toolCallId,
+      value,
+    });
+  } catch {
+    // Ignore late resume submissions once the local wait has already completed
+    // or the ephemeral session has been finalized.
+  }
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

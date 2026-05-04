@@ -1,4 +1,8 @@
-import type { Meter, ObservableGauge, ObservableResult } from "@opentelemetry/api";
+import type {
+  Meter,
+  ObservableGauge,
+  ObservableResult,
+} from "#veryfront/observability/tracing/api-shim.ts";
 import { getV8FlagsEnv } from "#veryfront/config/env.ts";
 import { getMemoryUsage } from "../metrics/config.ts";
 import type { MetricsConfig } from "../metrics/types.ts";

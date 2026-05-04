@@ -1,4 +1,5 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { createAnthropicModelRuntime } from "../runtime-loader.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
 import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
@@ -9,6 +10,7 @@ import {
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
+import { createVeryfrontCloudOpenAIModel } from "./openai.ts";
 
 export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
@@ -29,9 +31,12 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           fetch,
         });
       }
-      throw new Error(
-        "Anthropic provider not installed. Add @veryfront/ext-anthropic to use anthropic/* models via veryfront-cloud.",
-      );
+      return createAnthropicModelRuntime({
+        authToken: apiToken,
+        baseURL,
+        name: "veryfront-cloud",
+        fetch,
+      }, upstreamModelId);
     }
 
     case "google": {
@@ -62,9 +67,11 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           fetch,
         });
       }
-      throw new Error(
-        "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/moonshotai models via veryfront-cloud.",
-      );
+      return createVeryfrontCloudOpenAIModel(upstreamModelId, {
+        apiToken,
+        baseURL,
+        fetch,
+      });
     }
 
     default: {

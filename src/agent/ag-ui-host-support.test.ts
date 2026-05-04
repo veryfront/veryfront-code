@@ -3,6 +3,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createAgUiRunErrorEvent,
   createAgUiSseErrorResponse,
+  createAgUiSseResponse,
   normalizeAgUiMessages,
   parseAgUiRequest,
   parseAgUiRequestOrError,
@@ -123,5 +124,21 @@ describe("agent/ag-ui-host-support", () => {
     assertStringIncludes(body, "event: RunError");
     assertStringIncludes(body, '"code":"OVERLOADED_ERROR"');
     assertStringIncludes(body, "Overloaded right now");
+  });
+
+  it("creates AG-UI SSE responses with the standard stream headers", () => {
+    const response = createAgUiSseResponse(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("event: ping\\ndata: {}\\n\\n"));
+          controller.close();
+        },
+      }),
+    );
+
+    assertEquals(response.headers.get("content-type"), "text/event-stream; charset=utf-8");
+    assertEquals(response.headers.get("cache-control"), "no-cache, no-transform");
+    assertEquals(response.headers.get("connection"), "keep-alive");
+    assertEquals(response.headers.get("x-accel-buffering"), "no");
   });
 });

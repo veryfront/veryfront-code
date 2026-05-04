@@ -38,7 +38,7 @@
   ],
   "tools": [
     {
-      "id": "list-events",
+      "id": "list_events",
       "name": "List Events",
       "description": "Get upcoming calendar events",
       "requiresWrite": false,
@@ -57,7 +57,7 @@
       }
     },
     {
-      "id": "create-event",
+      "id": "create_event",
       "name": "Create Event",
       "description": "Schedule a new calendar event",
       "requiresWrite": true,
@@ -78,7 +78,7 @@
       }
     },
     {
-      "id": "get-event",
+      "id": "get_event",
       "name": "Get Event",
       "description": "Get details of a specific calendar event",
       "requiresWrite": false,
@@ -92,7 +92,7 @@
       }
     },
     {
-      "id": "find-free-time",
+      "id": "find_free_time",
       "name": "Find Free Time",
       "description": "Find available time slots in calendar",
       "requiresWrite": false,
@@ -109,21 +109,21 @@
   ],
   "prompts": [
     {
-      "id": "block-deep-work",
+      "id": "block_deep_work",
       "title": "Block time for deep work",
       "prompt": "Find a 2-hour block for focused work this week and add it to my calendar.",
       "category": "productivity",
       "icon": "clock"
     },
     {
-      "id": "schedule-meeting",
+      "id": "schedule_meeting",
       "title": "Schedule a meeting",
       "prompt": "Help me schedule a meeting. Find available time slots and create the calendar event.",
       "category": "productivity",
       "icon": "users"
     },
     {
-      "id": "today-agenda",
+      "id": "today_agenda",
       "title": "What's on my calendar today?",
       "prompt": "Show me my calendar for today and summarize my schedule.",
       "category": "productivity",
