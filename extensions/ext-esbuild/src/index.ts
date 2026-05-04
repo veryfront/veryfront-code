@@ -28,8 +28,12 @@ const extEsbuild: ExtensionFactory = () => {
       { type: "contract", name: "ModuleLexer" },
     ],
     setup(ctx) {
-      ctx.provide("Bundler", bundler);
-      ctx.provide("ModuleLexer", lexer);
+      if (!ctx.get("Bundler")) {
+        ctx.provide("Bundler", bundler);
+      }
+      if (!ctx.get("ModuleLexer")) {
+        ctx.provide("ModuleLexer", lexer);
+      }
       ctx.logger.info("[ext-esbuild] Bundler + ModuleLexer registered");
     },
     async teardown() {

@@ -62,6 +62,30 @@ describe("ext-esbuild setup/teardown", () => {
     await ext.teardown?.();
   });
 
+  it("skips registration when contracts are already provided", async () => {
+    const provided = new Map<string, unknown>();
+    const existingBundler = { name: "custom-bundler" };
+
+    const ctx = {
+      config: {},
+      logger: noopLogger,
+      provide: (name: string, impl: unknown) => provided.set(name, impl),
+      get: (name: string) => (name === "Bundler" ? existingBundler : undefined),
+      require: () => {
+        throw new Error("not used");
+      },
+    };
+
+    const ext = factory();
+    // deno-lint-ignore no-explicit-any
+    await ext.setup?.(ctx as any);
+
+    assertEquals(provided.has("Bundler"), false);
+    assertEquals(provided.has("ModuleLexer"), true);
+
+    await ext.teardown?.();
+  });
+
   it("teardown() completes without error when called without setup", async () => {
     const ext = factory();
     await ext.teardown?.();
