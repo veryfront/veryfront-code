@@ -73,7 +73,12 @@ jobs:
       - name: Force apt to IPv4
         run: echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
       - name: Install Chromium
-        run: deno run -A npm:playwright install --with-deps chromium
+        uses: nick-fields/retry@v4.0.0
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 20
+          command: deno run -A npm:playwright install --with-deps chromium
       - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: 10
@@ -97,7 +102,12 @@ jobs:
       - name: Force apt to IPv4
         run: echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
       - name: Install Chromium
-        run: deno run -A npm:playwright install --with-deps chromium
+        uses: nick-fields/retry@v4.0.0
+        with:
+          timeout_minutes: 10
+          max_attempts: 3
+          retry_wait_seconds: 20
+          command: deno run -A npm:playwright install --with-deps chromium
       - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: 15
