@@ -1,6 +1,7 @@
 import {
   createToolsFromHostDefinitions,
   type HostToolSet,
+  type HostToolTraceAttributes,
   type Tool,
   traceHostTools,
   type TraceHostToolsOptions,
@@ -207,7 +208,9 @@ export type StartAgentRuntimeForkInput = {
   runStep?: AgentRuntimeForkStepRunner;
 };
 
-export type StartAgentRuntimeForkWithHostToolsInput =
+export type StartAgentRuntimeForkWithHostToolsInput<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+> =
   & Omit<
     StartAgentRuntimeForkInput,
     "forkToolNames" | "model" | "runtimeTools"
@@ -216,11 +219,13 @@ export type StartAgentRuntimeForkWithHostToolsInput =
     provider: string;
     forkModel: string;
     forkTools: HostToolSet;
-    traceTools?: TraceHostToolsOptions;
+    traceTools?: TraceHostToolsOptions<TAttributes>;
   };
 
-export function startAgentRuntimeForkWithHostTools(
-  input: StartAgentRuntimeForkWithHostToolsInput,
+export function startAgentRuntimeForkWithHostTools<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: StartAgentRuntimeForkWithHostToolsInput<TAttributes>,
 ): {
   streamResult: ForkRuntimeStreamResult;
   forkToolNames: string[];

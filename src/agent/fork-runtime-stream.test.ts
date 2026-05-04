@@ -17,6 +17,7 @@ import {
   shouldContinueForkRuntimeStep,
   startAgentRuntimeFork,
   startAgentRuntimeForkWithHostTools,
+  type StartAgentRuntimeForkWithHostToolsInput,
 } from "./fork-runtime-stream.ts";
 
 const encoder = new TextEncoder();
@@ -402,6 +403,35 @@ describe("agent/fork-runtime-stream", () => {
     assertEquals(traceCalls, ["tool.create_file"]);
     assertEquals(attributes, [{ toolName: "create_file", toolCallId: "tool-call-1" }]);
     assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
+  });
+
+  it("preserves typed trace attributes for high-level host-tool forks", () => {
+    type NarrowTraceAttributes = {
+      toolName: string;
+      toolCallId: string | undefined;
+    };
+    const attributeNames: string[] = [];
+    const input: StartAgentRuntimeForkWithHostToolsInput<NarrowTraceAttributes> = {
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      provider: "anthropic",
+      forkModel: "anthropic/claude-sonnet-4",
+      maxSteps: 1,
+      forkTools: {},
+      buildInstructions: () => "Base instructions.",
+      traceTools: {
+        trace: (_spanName, operation) => operation(),
+        buildAttributes: ({ toolName, toolCallId }) => ({ toolName, toolCallId }),
+        setAttributes: (attributes) => {
+          attributeNames.push(attributes.toolName);
+        },
+      },
+    };
+
+    input.traceTools?.setAttributes?.({ toolName: "create_file", toolCallId: undefined });
+
+    assertEquals(attributeNames, ["create_file"]);
   });
 
   it("continues a high-level agent runtime fork when the continuation resolver returns a prompt", async () => {
