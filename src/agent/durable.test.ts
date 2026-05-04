@@ -201,6 +201,42 @@ describe("agent/durable", () => {
     );
   });
 
+  it("creates queued generic runtime agent runs when runtimeProviderId is provided", async () => {
+    const fetchCalls = stubFetchSequence(
+      acceptedRunResponse({ run_id: "run_codex_1" }),
+      jsonResponse(durableRunProjection({ run_id: "run_codex_1" }), 200),
+    );
+
+    await createConversationAgentRun({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      runId: "run_codex_1",
+      agentId: "codex",
+      runtimeProviderId: "codex",
+      projectId: null,
+      branchId: null,
+    });
+
+    assertEquals(
+      JSON.parse(String(fetchCalls[0]?.[1]?.body)),
+      {
+        kind: "agent",
+        owner: {
+          kind: "conversation",
+          id: CONVERSATION_ID,
+        },
+        public_id: "run_codex_1",
+        request: {
+          mode: "agent",
+          agent_id: "codex",
+          runtime_provider_id: "codex",
+          initial_status: "pending",
+        },
+      },
+    );
+  });
+
   it("accepts camelCase durable run responses for backward compatibility", async () => {
     stubFetchSequence(
       acceptedRunResponse({ runId: "run_child_2" }),

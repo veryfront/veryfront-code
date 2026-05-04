@@ -164,4 +164,80 @@ describe("agent/hosted-child-bootstrap", () => {
       },
     });
   });
+
+  it("returns the queued child run status for external runtime providers", async () => {
+    const requests: { url: string; body: unknown }[] = [];
+    stubFetchWithRecorder(async (input, init) => {
+      requests.push({
+        url: String(input),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+
+      const requestCount = requests.length;
+      if (requestCount === 1) {
+        return jsonResponse({ id: PARENT_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
+      }
+      if (requestCount === 2) {
+        return jsonResponse({ id: CHILD_CONVERSATION_ID, project_id: PROJECT_ID }, 200);
+      }
+      if (requestCount === 3) {
+        return jsonResponse({ id: CHILD_MESSAGE_ID }, 200);
+      }
+      if (requestCount === 4) {
+        return acceptedRunResponse({ run_id: "run_child_queued" });
+      }
+      if (requestCount === 5) {
+        return jsonResponse(
+          {
+            run_id: "run_child_queued",
+            conversation_id: CHILD_CONVERSATION_ID,
+            message_id: CHILD_MESSAGE_ID,
+            latest_event_id: 0,
+            latest_external_event_sequence: 0,
+            status: "pending",
+          },
+          200,
+        );
+      }
+
+      throw new Error("Unexpected fetch call");
+    });
+
+    const result = await bootstrapHostedChildRun({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      ensureProjectId: PROJECT_ID,
+      runProjectId: PROJECT_ID,
+      parentConversationId: PARENT_CONVERSATION_ID,
+      parentRunId: "parent-run-1",
+      parentMessageId: PARENT_MESSAGE_ID,
+      spawnedFromToolCallId: "tool-call-1",
+      description: "Inspect logs",
+      prompt: "Find the latest logs.",
+      runId: "run_child_queued",
+      agentId: "invoke-agent-child",
+      runtimeProviderId: "codex",
+      branchId: BRANCH_ID,
+    });
+
+    assertEquals(result.status, "pending");
+    assertEquals(requests[3].body, {
+      kind: "agent",
+      owner: {
+        kind: "conversation",
+        id: CHILD_CONVERSATION_ID,
+      },
+      public_id: "run_child_queued",
+      request: {
+        mode: "agent",
+        agent_id: "invoke-agent-child",
+        runtime_provider_id: "codex",
+        initial_status: "pending",
+        source_target_kind: "preview_branch",
+        runtime_target_kind: "preview_branch",
+        source_target_branch_id: BRANCH_ID,
+        runtime_target_branch_id: BRANCH_ID,
+      },
+    });
+  });
 });
