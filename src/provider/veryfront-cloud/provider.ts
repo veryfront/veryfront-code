@@ -1,5 +1,4 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createGoogleModelRuntime } from "../runtime-loader.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
 import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
@@ -36,13 +35,21 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
       );
     }
 
-    case "google":
-      return createGoogleModelRuntime({
-        apiKey: apiToken,
-        baseURL,
-        name: "veryfront-cloud",
-        fetch,
-      }, upstreamModelId);
+    case "google": {
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const google = registry?.get("google");
+      if (google) {
+        return google.createModel(upstreamModelId, {
+          credential: apiToken,
+          baseURL,
+          name: "veryfront-cloud",
+          fetch,
+        });
+      }
+      throw new Error(
+        "Google provider not installed. Add @veryfront/ext-google to use google/* models via veryfront-cloud.",
+      );
+    }
 
     case "openai":
     case "moonshotai": {

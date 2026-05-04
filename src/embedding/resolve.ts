@@ -1,7 +1,6 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/env.ts";
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
-import { createGoogleEmbeddingRuntime } from "#veryfront/provider/runtime-loader.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
@@ -74,7 +73,20 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createGoogleEmbeddingRuntime({ apiKey: config.apiKey }, id);
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const provider = registry?.get("google");
+      if (provider?.createEmbedding) {
+        return provider.createEmbedding(id, {
+          credential: config.apiKey,
+        });
+      }
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "Google provider not installed. Add @veryfront/ext-google to use google/* embedding models.",
+        }),
+      );
     });
   }
 
