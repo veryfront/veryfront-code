@@ -1,4 +1,10 @@
-import type { Tool } from "#veryfront/tool";
+import {
+  createToolsFromHostDefinitions,
+  type HostToolSet,
+  type Tool,
+  traceHostTools,
+  type TraceHostToolsOptions,
+} from "#veryfront/tool";
 import { isRecord } from "../chat/conversation.ts";
 import { safeJsonParse } from "../chat/provider-errors.ts";
 import { runWithVeryfrontCloudContextAsync } from "../provider/veryfront-cloud/context.ts";
@@ -13,6 +19,7 @@ import {
   HOSTED_CHILD_STREAM_TIMEOUT_TOKEN,
   resolveHostedChildPromiseWithTimeout,
 } from "./hosted-child-stream-watchdog.ts";
+import { getForkRuntimeAllowedToolNames } from "./provider-native-tool-inventory.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "./schemas/index.ts";
 
@@ -199,6 +206,59 @@ export type StartAgentRuntimeForkInput = {
   prepareStep?: ForkRuntimeStepPreparer;
   runStep?: AgentRuntimeForkStepRunner;
 };
+
+export type StartAgentRuntimeForkWithHostToolsInput =
+  & Omit<
+    StartAgentRuntimeForkInput,
+    "forkToolNames" | "model" | "runtimeTools"
+  >
+  & {
+    provider: string;
+    forkModel: string;
+    forkTools: HostToolSet;
+    traceTools?: TraceHostToolsOptions;
+  };
+
+export function startAgentRuntimeForkWithHostTools(
+  input: StartAgentRuntimeForkWithHostToolsInput,
+): {
+  streamResult: ForkRuntimeStreamResult;
+  forkToolNames: string[];
+} {
+  const forkTools = input.traceTools
+    ? traceHostTools(input.forkTools, input.traceTools)
+    : input.forkTools;
+  const runtimeTools = createToolsFromHostDefinitions(forkTools);
+  const forkToolNames = getForkRuntimeAllowedToolNames({
+    provider: input.provider,
+    forkModel: input.forkModel,
+    forkTools: input.forkTools,
+  });
+
+  return {
+    streamResult: startAgentRuntimeFork({
+      apiUrl: input.apiUrl,
+      authToken: input.authToken,
+      projectId: input.projectId,
+      model: input.forkModel,
+      maxSteps: input.maxSteps,
+      prompt: input.prompt,
+      maxContinuationSteps: input.maxContinuationSteps,
+      abortSignal: input.abortSignal,
+      forkToolNames,
+      runtimeTools,
+      providerOptions: input.providerOptions,
+      buildInstructions: input.buildInstructions,
+      onBeforeStop: input.onBeforeStop,
+      initialMessages: input.initialMessages,
+      responseTimeoutMs: input.responseTimeoutMs,
+      logger: input.logger,
+      prepareStep: input.prepareStep,
+      runStep: input.runStep,
+    }),
+    forkToolNames,
+  };
+}
 
 function createForkRuntimeDeferred<T>(): {
   promise: Promise<T>;

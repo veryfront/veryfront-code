@@ -314,6 +314,8 @@ export {
   shouldContinueForkRuntimeStep,
   startAgentRuntimeFork,
   type StartAgentRuntimeForkInput,
+  startAgentRuntimeForkWithHostTools,
+  type StartAgentRuntimeForkWithHostToolsInput,
 } from "./fork-runtime-stream.ts";
 export {
   executeHostedChildForkStream,

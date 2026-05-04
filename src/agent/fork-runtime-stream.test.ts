@@ -1,5 +1,6 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { z } from "zod";
 import type { AgentResponse, Message as AgentMessage } from "./schemas/index.ts";
 import {
   buildForkRuntimeStepFromResponse,
@@ -7,6 +8,7 @@ import {
   createForkRuntimeStreamMappingState,
   createInitialForkRuntimeMessages,
   createStreamedStepState,
+  type ForkPart,
   type ForkRuntimeStep,
   mapAgUiRuntimeEventToForkParts,
   resolveForkRuntimeContinuationState,
@@ -14,6 +16,7 @@ import {
   type RunAgentRuntimeForkStepInput,
   shouldContinueForkRuntimeStep,
   startAgentRuntimeFork,
+  startAgentRuntimeForkWithHostTools,
 } from "./fork-runtime-stream.ts";
 
 const encoder = new TextEncoder();
@@ -322,6 +325,83 @@ describe("agent/fork-runtime-stream", () => {
       inputTokens: 3,
       outputTokens: 4,
     });
+  });
+
+  it("starts a high-level agent runtime fork from host tool definitions", async () => {
+    const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
+    const traceCalls: string[] = [];
+    const attributes: Record<string, unknown>[] = [];
+    const response: AgentResponse = {
+      text: "Done.",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 2,
+          parts: [{ type: "text", text: "Done." }],
+        },
+      ],
+      toolCalls: [],
+      status: "completed",
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+      metadata: { finishReason: "stop" },
+    };
+
+    const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      provider: "anthropic",
+      forkModel: "anthropic/claude-sonnet-4",
+      maxSteps: 1,
+      prompt: "Do the work.",
+      forkTools: {
+        create_file: {
+          description: "Create a file.",
+          inputSchema: z.object({ path: z.string() }),
+          execute: () => ({ ok: true }),
+        },
+      },
+      traceTools: {
+        trace: (spanName, operation) => {
+          traceCalls.push(spanName);
+          return operation();
+        },
+        buildAttributes: ({ toolName, toolCallId }) => ({ toolName, toolCallId }),
+        setAttributes: (nextAttributes) => {
+          attributes.push(nextAttributes);
+        },
+      },
+      runStep: async (input) => {
+        capturedInputs.push(input);
+        const createFileTool = input.runtimeTools.create_file;
+        if (createFileTool && typeof createFileTool !== "boolean") {
+          await createFileTool.execute({ path: "artifact.md" }, { toolCallId: "tool-call-1" });
+        }
+
+        return {
+          stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+          responsePromise: Promise.resolve(response),
+        };
+      },
+      buildInstructions: () => "Base instructions.",
+    });
+
+    const parts: ForkPart[] = [];
+    for await (const part of streamResult.fullStream) {
+      parts.push(part);
+    }
+
+    assertEquals(forkToolNames, ["create_file", "web_fetch", "web_search"]);
+    assertEquals(capturedInputs[0]?.forkToolNames, forkToolNames);
+    assertEquals(Object.keys(capturedInputs[0]?.runtimeTools ?? {}), ["create_file"]);
+    assertEquals(traceCalls, ["tool.create_file"]);
+    assertEquals(attributes, [{ toolName: "create_file", toolCallId: "tool-call-1" }]);
+    assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
   });
 
   it("continues a high-level agent runtime fork when the continuation resolver returns a prompt", async () => {
