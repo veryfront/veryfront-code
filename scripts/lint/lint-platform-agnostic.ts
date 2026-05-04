@@ -54,6 +54,38 @@ const ALLOWED_PATHS = [
   "src/_shims/",
 ];
 
+// Specific files where platform-specific code is allowed.
+// These are worker entrypoints, test utilities, CLI-only code, smoke tests,
+// sandbox workers, proxy modules, and runtime detection — all of which
+// legitimately need direct platform API access.
+const ALLOWED_FILES = new Set([
+  // Test framework – directly wraps Deno.env for per-test isolation
+  "src/testing/bdd.ts",
+  // Explicit Deno compat layer for tests (makeTempFile, exit, etc.)
+  "src/testing/deno-compat.ts",
+  // Smoke test script — runs with `deno run --allow-all`
+  "src/provider/local/_smoke-test.ts",
+  // Worker entrypoints — run in their own Deno subprocess
+  "src/workflow/worker/job-entrypoint.ts",
+  "src/workflow/worker/dynamic-job-entrypoint.ts",
+  // Worker process executor — spawns subprocesses with Deno.Command
+  "src/workflow/worker/executors/process.ts",
+  // CLI error boundary — CLI-specific, exits process on fatal errors
+  "src/errors/middleware/cli-error-boundary.ts",
+  // Test helper for sandbox tests
+  "src/sandbox/sandbox.test-helpers.ts",
+  // Sandbox worker script — needs direct Deno API access (env, fs)
+  "src/security/sandbox/worker-script.ts",
+  // Proxy modules — Deno-native network proxy layer
+  "src/proxy/env.ts",
+  "src/proxy/logger.ts",
+  "src/proxy/renderer-router.ts",
+  // Runtime detection guards — must inspect global.Deno / global.process
+  "src/utils/runtime-guards.ts",
+  // Workspace sync — heavy Deno FS usage for local file operations
+  "src/workflow/claude-code/workspace-sync.ts",
+]);
+
 // File patterns to skip
 const SKIP_PATTERNS = [
   /\.test\.ts$/,
@@ -85,6 +117,60 @@ const EXCEPTIONS: Record<string, string[]> = {
   "src/ai/workflow/backends/inngest.ts": ["process.env"],
   // build/config/environment.ts documents process.env.NODE_ENV in JSDoc comment
   "src/build/config/environment.ts": ["process.env"],
+
+  // --- AsyncLocalStorage from node:async_hooks ---
+  // No platform abstraction exists for AsyncLocalStorage; these are server-only
+  // modules that rely on Node.js/Deno built-in async context propagation.
+  "src/utils/cache-dir.ts": ["node: import"],
+  "src/utils/logger/request-context.ts": ["node: import"],
+  "src/transforms/esm/in-flight-manager.ts": ["node: import"],
+  "src/react/head-collector.ts": ["node: import"],
+  "src/server/project-env/storage.ts": ["node: import"],
+  "src/workflow/executor/step-executor.ts": ["node: import"],
+  "src/modules/react-loader/css-import-collector.ts": ["node: import"],
+  "src/cache/request-cache-batcher.ts": ["node: import"],
+  "src/cache/cache-key-builder.ts": ["node: import"],
+  "src/provider/veryfront-cloud/context.ts": ["node: import"],
+  "src/observability/request-profiler.ts": ["node: import"],
+
+  // --- node:buffer (File / Buffer) ---
+  // File is global only on Node 20+; import from node:buffer for Node 18 compat
+  "src/embedding/upload-handler.ts": ["node: import"],
+  "src/security/input-validation/parsers.ts": ["node: import"],
+  // Buffer used for constant-time comparison in auth handler
+  "src/security/http/auth.ts": ["node: import"],
+
+  // --- node:zlib ---
+  // gunzipSync used for distributed cache decompression
+  "src/transforms/esm/http-cache-wrapper.ts": ["node: import"],
+
+  // --- node:url ---
+  // fileURLToPath for resolving React import paths in Node.js MDX loader
+  "src/transforms/mdx/esm-module-loader/utils/react-transforms.ts": ["node: import"],
+
+  // --- Code generation: emits node: imports / Deno API calls as string literals ---
+  // Module loader emits require shims and env access as generated code
+  "src/routing/api/module-loader/loader.ts": [
+    "node: import",
+    "Deno.env",
+    "process.env",
+  ],
+  // Compiled binary require shim emits node:module/node:path imports
+  "src/routing/api/module-loader/external-import-rewriter.ts": ["node: import"],
+
+  // --- Deno FS in server-side modules ---
+  // Extension discovery reads package.json with Deno.readTextFile
+  "src/extensions/discovery.ts": ["Deno.readTextFile()"],
+  // Studio bridge handler reads TypeScript source for on-the-fly bundling
+  "src/server/handlers/studio/bridge-modules.handler.ts": ["Deno.readTextFile()"],
+  // Plugin loader writes temp files for dynamic import in compiled binaries
+  "src/html/styles-builder/plugin-loader.ts": ["Deno.writeTextFile()"],
+  // JSDoc example references Deno.cwd() — not runtime code
+  "src/extensions/index.ts": ["Deno.cwd()"],
+  // JSDoc example references process.env — not runtime code
+  "src/jobs/index.ts": ["process.env"],
+  // JSDoc example references import { createServer } from "node:http"
+  "src/server/index.ts": ["node: import"],
 };
 
 interface Violation {
@@ -103,6 +189,11 @@ async function scanFile(filePath: string, relativePath: string): Promise<Violati
     if (relativePath.startsWith(allowedPath)) {
       return violations;
     }
+  }
+
+  // Check if file is individually allowed
+  if (ALLOWED_FILES.has(relativePath)) {
+    return violations;
   }
 
   // Check if file matches skip patterns

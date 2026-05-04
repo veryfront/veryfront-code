@@ -1,13 +1,14 @@
 /**
  * Cross-platform environment helpers for local AI provider.
  *
- * Abstracts Deno/Node env access so all local-AI checks go through
- * a single function — no duplicated `globalThis.Deno?.env` patterns.
+ * Uses the platform compat layer so all local-AI checks go through
+ * a single function — no duplicated env access patterns.
  *
  * @module provider/local
  */
 
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 const LOCAL_AI_DISABLED_MESSAGE =
   "Local AI disabled via VERYFRONT_DISABLE_LOCAL_AI environment variable.";
@@ -17,20 +18,7 @@ const LOCAL_AI_DISABLED_MESSAGE =
  * Works in Deno, Node, and compiled binaries.
  */
 export function isLocalAIDisabled(): boolean {
-  const denoVal = (globalThis as Record<string, unknown>).Deno as
-    | { env?: { get?: (key: string) => string | undefined } }
-    | undefined;
-  const denoEnvVal = denoVal?.env?.get?.("VERYFRONT_DISABLE_LOCAL_AI");
-  if (denoEnvVal === "1") return true;
-
-  if (
-    typeof process !== "undefined" &&
-    process.env?.VERYFRONT_DISABLE_LOCAL_AI === "1"
-  ) {
-    return true;
-  }
-
-  return false;
+  return getEnv("VERYFRONT_DISABLE_LOCAL_AI") === "1";
 }
 
 export function createLocalAIDisabledError(): Error {

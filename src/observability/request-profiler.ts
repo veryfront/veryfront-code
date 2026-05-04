@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 
 export interface RequestProfileRecord {
   sequence: number;
@@ -34,7 +35,7 @@ function roundMs(value: number): number {
 }
 
 function shouldEnableProfiling(): boolean {
-  return Deno.env.get("VERYFRONT_ENABLE_PERF_PROFILING") === "1";
+  return getEnv("VERYFRONT_ENABLE_PERF_PROFILING") === "1";
 }
 
 function shouldProfilePath(pathname: string): boolean {

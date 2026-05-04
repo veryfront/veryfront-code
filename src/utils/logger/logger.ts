@@ -1,5 +1,4 @@
-import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { hasDenoRuntime, hasNodeProcess } from "../runtime-guards.ts";
+import { getEnv, isStdoutTTY } from "#veryfront/platform/compat/process.ts";
 import { RUNTIME_VERSION } from "../version.ts";
 import {
   ANSI,
@@ -220,17 +219,11 @@ const TAG_COLORS: Record<string, string> = {
 
 function isTty(): boolean {
   try {
-    if (hasDenoRuntime(globalThis)) {
-      return Boolean(globalThis.Deno?.stdout?.isTerminal?.());
-    }
-    if (hasNodeProcess(globalThis)) {
-      return Boolean(globalThis.process?.stdout?.isTTY);
-    }
+    return isStdoutTTY();
   } catch (_) {
     /* expected: TTY detection may fail in restricted environments */
     return false;
   }
-  return false;
 }
 
 function shouldUseColor(): boolean {
