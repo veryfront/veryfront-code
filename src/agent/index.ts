@@ -229,6 +229,16 @@ export {
   parseAgUiRuntimeRequestOrError,
 } from "./runtime-ag-ui-contract.ts";
 export {
+  buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
+  buildHostedChatRequestFromRuntimeAgentInvocation,
+  buildHostedChatRequestInputFromRuntimeAgentInvocation,
+  type HostedChatRequest,
+  type HostedChatRequestInput,
+  hostedChatRequestSchema,
+  hostedChatRuntimeOverridesSchema,
+  hostedDurableRootRunDescriptorSchema,
+} from "./hosted-chat-request.ts";
+export {
   parseRuntimeAgentRunInvocation,
   parseRuntimeAgentRunInvocationOrError,
   type RuntimeAgentContextItem,
