@@ -292,6 +292,7 @@ export interface CreateConversationAgentRunInput {
   conversationId: string;
   runId?: string;
   agentId: string;
+  implementationKind?: string | null;
   projectId?: string | null;
   branchId?: string | null;
 }
@@ -1254,6 +1255,35 @@ export async function createConversationAgentRun(
   });
   const runId = input.runId ?? `run_${crypto.randomUUID()}`;
 
+  const request = input.implementationKind
+    ? {
+      mode: "agent" as const,
+      agent_id: input.agentId,
+      implementation_kind: input.implementationKind,
+      initial_status: "pending" as const,
+      ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
+      ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
+      ...(targets.targetBranchId
+        ? {
+          source_target_branch_id: targets.targetBranchId,
+          runtime_target_branch_id: targets.targetBranchId,
+        }
+        : {}),
+    }
+    : {
+      mode: "default_chat" as const,
+      agent_id: input.agentId,
+      initial_status: "running" as const,
+      ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
+      ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
+      ...(targets.targetBranchId
+        ? {
+          source_target_branch_id: targets.targetBranchId,
+          runtime_target_branch_id: targets.targetBranchId,
+        }
+        : {}),
+    };
+
   await controlPlaneJson({
     authToken: input.authToken,
     url: `${input.apiUrl}/runs`,
@@ -1265,19 +1295,7 @@ export async function createConversationAgentRun(
         id: input.conversationId,
       },
       public_id: runId,
-      request: {
-        mode: "default_chat",
-        agent_id: input.agentId,
-        initial_status: "running",
-        ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
-        ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
-        ...(targets.targetBranchId
-          ? {
-            source_target_branch_id: targets.targetBranchId,
-            runtime_target_branch_id: targets.targetBranchId,
-          }
-          : {}),
-      },
+      request,
     },
     responseSchema: CreateConversationRunAcceptedSchema,
     operation: "Create canonical durable run",
