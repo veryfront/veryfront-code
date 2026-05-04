@@ -50,19 +50,60 @@ export type {
   ToolDefinition,
   ToolExecutionContext,
   ToolExecutionDataEvent,
+  ToolSet,
 } from "./types.ts";
 
 export { dynamicTool, tool } from "./factory.ts";
 export type { DynamicToolConfig } from "./factory.ts";
+export { createSleepTool, DEFAULT_SLEEP_TOOL_MAX_SECONDS, sleepTool } from "./sleep.ts";
+export type {
+  CreateSleepToolOptions,
+  SleepToolInput,
+  SleepToolOutput,
+  SleepToolWait,
+} from "./sleep.ts";
 export { createRemoteMCPToolSource } from "./remote-mcp.ts";
+export { hasToolExecutionErrorMarker, isErroredToolExecutionResult } from "./result.ts";
 export type { RemoteMCPToolSourceConfig } from "./remote-mcp.ts";
 export { createContext7ToolSource } from "./context7.ts";
 export type { Context7ToolSourceConfig } from "./context7.ts";
+export { createToolsFromHostDefinitions } from "./host-tools.ts";
+export type {
+  HostToolDefinition,
+  HostToolMaterializationOptions,
+  HostToolSet,
+} from "./host-tools.ts";
 export {
   createToolsFromRemoteDefinitions,
   loadRemoteToolsFromSource,
 } from "./remote-source-tools.ts";
 export type { RemoteToolMaterializationOptions } from "./remote-source-tools.ts";
+export { traceHostTools } from "./tracing.ts";
+export type {
+  HostToolTraceAttributeInput,
+  HostToolTraceAttributes,
+  HostToolTraceRunner,
+  TraceHostToolsOptions,
+} from "./tracing.ts";
+export {
+  createProjectScopedRemoteToolCatalog,
+  filterProjectScopedRemoteToolDefinitions,
+  hydrateProjectScopedRemoteToolInput,
+  isProjectNavigationRemoteTool,
+  isRemoteToolNameAllowed,
+  listProjectScopedRemoteToolNames,
+  resolveProjectScopedRemoteToolProjectId,
+} from "./project-scoped-remote-tools.ts";
+export type {
+  ListProjectScopedRemoteToolNameOptions,
+  ProjectScopedRemoteToolCatalog,
+  ProjectScopedRemoteToolCatalogOptions,
+  ProjectScopedRemoteToolDefaultProjectId,
+  ProjectScopedRemoteToolDefinitions,
+  ProjectScopedRemoteToolExecution,
+  ProjectScopedRemoteToolExecutionInput,
+  ProjectScopedRemoteToolOptions,
+} from "./project-scoped-remote-tools.ts";
 
 export { toolRegistry } from "./registry.ts";
 

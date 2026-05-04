@@ -71,7 +71,7 @@ let _initLogged = false;
 function logInitOnce(): void {
   if (_initLogged) return;
   _initLogged = true;
-  logger.warn(`${LOG_PREFIX} Initialized`, {
+  logger.debug(`${LOG_PREFIX} Initialized`, {
     importMetaUrl: import.meta.url,
     frameworkRoot: FRAMEWORK_ROOT,
     embeddedSrcDir: EMBEDDED_SRC_DIR,

@@ -18,6 +18,7 @@ import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront
 import { runWithProjectEnv } from "../server/project-env/storage.ts";
 import type { ExecStreamEvent } from "./sandbox.ts";
 import { Sandbox } from "./sandbox.ts";
+import { resolveDefaultSandboxRuntimeEndpoint } from "./lazy-sandbox.ts";
 
 // Mock fetch for testing
 const originalFetch = globalThis.fetch;
@@ -679,6 +680,33 @@ describe("Sandbox", () => {
         () => sandbox.close(),
         Error,
         "Close sandbox failed: 503 delete failed",
+      );
+    });
+  });
+
+  describe("resolveDefaultSandboxRuntimeEndpoint()", () => {
+    it("keeps public sandbox endpoints outside Kubernetes", () => {
+      assertEquals(
+        resolveDefaultSandboxRuntimeEndpoint({ endpoint: "https://abc123.sandbox.veryfront.com" }),
+        "https://abc123.sandbox.veryfront.com",
+      );
+    });
+
+    it("routes public sandbox endpoints to their in-cluster service in Kubernetes", () => {
+      setEnv("KUBERNETES_SERVICE_HOST", "10.0.0.1");
+
+      assertEquals(
+        resolveDefaultSandboxRuntimeEndpoint({ endpoint: "https://abc123.sandbox.veryfront.com" }),
+        "http://sandbox.veryfront-sandbox-abc123.svc.cluster.local",
+      );
+    });
+
+    it("keeps non-matching sandbox endpoints unchanged in Kubernetes", () => {
+      setEnv("KUBERNETES_SERVICE_HOST", "10.0.0.1");
+
+      assertEquals(
+        resolveDefaultSandboxRuntimeEndpoint({ endpoint: "https://sandbox.example.com" }),
+        "https://sandbox.example.com",
       );
     });
   });

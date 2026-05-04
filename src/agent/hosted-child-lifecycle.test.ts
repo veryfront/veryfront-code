@@ -1,17 +1,46 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ChildRunExecutionResult } from "./child-run-execution-snapshot.ts";
 import {
   type HostedChildLifecycleAdapter,
+  runHostedChildExecutionLifecycle,
   runHostedChildLifecycle,
+  shouldSkipHostedChildTerminalPersistence,
 } from "./hosted-child-lifecycle.ts";
+import { HostedChildTerminalStateError } from "./hosted-child-status.ts";
 
 describe("agent/hosted-child-lifecycle", () => {
+  it("identifies externally persisted terminal states", () => {
+    assertEquals(
+      shouldSkipHostedChildTerminalPersistence({ terminalErrorCode: "DURABLE_CHILD_CANCELLED" }),
+      true,
+    );
+    assertEquals(
+      shouldSkipHostedChildTerminalPersistence({ terminalErrorCode: "DURABLE_CHILD_FAILED" }),
+      true,
+    );
+    assertEquals(
+      shouldSkipHostedChildTerminalPersistence({
+        terminalErrorCode: "DURABLE_CHILD_COMPLETED_EXTERNALLY",
+      }),
+      true,
+    );
+    assertEquals(shouldSkipHostedChildTerminalPersistence({ terminalErrorCode: "OTHER" }), false);
+    assertEquals(shouldSkipHostedChildTerminalPersistence({ terminalErrorCode: null }), false);
+  });
+
   it("runs pending, running, and completed around successful execution", async () => {
     const calls: string[] = [];
     const adapter: HostedChildLifecycleAdapter = {
-      pending: () => calls.push("pending"),
-      running: () => calls.push("running"),
-      completed: () => calls.push("completed"),
+      pending: () => {
+        calls.push("pending");
+      },
+      running: () => {
+        calls.push("running");
+      },
+      completed: () => {
+        calls.push("completed");
+      },
     };
 
     const result = await runHostedChildLifecycle({
@@ -43,9 +72,15 @@ describe("agent/hosted-child-lifecycle", () => {
     const calls: string[] = [];
     const error = new Error("boom");
     const adapter: HostedChildLifecycleAdapter = {
-      pending: () => calls.push("pending"),
-      running: () => calls.push("running"),
-      failed: (terminalState) => calls.push(`failed:${terminalState.terminalErrorCode}`),
+      pending: () => {
+        calls.push("pending");
+      },
+      running: () => {
+        calls.push("running");
+      },
+      failed: (terminalState) => {
+        calls.push(`failed:${terminalState.terminalErrorCode}`);
+      },
     };
 
     const result = await runHostedChildLifecycle({
@@ -62,7 +97,9 @@ describe("agent/hosted-child-lifecycle", () => {
 
     assertEquals(calls, ["pending", "running", "failed:STREAM_ERROR"]);
     assertEquals(result.status, "failed");
-    assertEquals(result.error, error);
+    if (result.status !== "completed") {
+      assertEquals(result.error, error);
+    }
     assertEquals(result.terminalState.terminalErrorMessage, "boom");
   });
 
@@ -70,9 +107,15 @@ describe("agent/hosted-child-lifecycle", () => {
     const calls: string[] = [];
     const error = new Error("aborted");
     const adapter: HostedChildLifecycleAdapter = {
-      pending: () => calls.push("pending"),
-      running: () => calls.push("running"),
-      cancelled: (terminalState) => calls.push(`cancelled:${terminalState.terminalErrorCode}`),
+      pending: () => {
+        calls.push("pending");
+      },
+      running: () => {
+        calls.push("running");
+      },
+      cancelled: (terminalState) => {
+        calls.push(`cancelled:${terminalState.terminalErrorCode}`);
+      },
     };
 
     const result = await runHostedChildLifecycle({
@@ -89,7 +132,9 @@ describe("agent/hosted-child-lifecycle", () => {
 
     assertEquals(calls, ["pending", "running", "cancelled:CANCELLED"]);
     assertEquals(result.status, "cancelled");
-    assertEquals(result.error, error);
+    if (result.status !== "completed") {
+      assertEquals(result.error, error);
+    }
   });
 
   it("reports terminal hook errors through onLifecycleError for failure states", async () => {
@@ -144,5 +189,141 @@ describe("agent/hosted-child-lifecycle", () => {
       Error,
       "persist failed",
     );
+  });
+
+  it("runs child execution lifecycle and snapshots successful local results", async () => {
+    const calls: string[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      pending: () => {
+        calls.push("pending");
+      },
+      running: () => {
+        calls.push("running");
+      },
+      completed: (terminalState) => {
+        calls.push(`completed:${terminalState.usage?.totalTokens ?? 0}`);
+      },
+    };
+    const localResult: ChildRunExecutionResult = {
+      success: true,
+      description: "Search docs",
+      summary: { text: "Found docs" },
+      steps: 2,
+      toolCalls: [],
+      toolResults: [],
+      usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      durationMs: 12,
+    };
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter,
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => localResult,
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(calls, ["pending", "running", "completed:7"]);
+    assertEquals(result.status, "completed");
+    if (result.status === "completed") {
+      assertEquals(result.result, localResult);
+      assertEquals(result.snapshot.fullResultText, "Found docs");
+    }
+  });
+
+  it("maps failed child execution snapshots to terminal failed states", async () => {
+    const calls: string[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      failed: (terminalState) => {
+        calls.push(`failed:${terminalState.terminalErrorCode}`);
+      },
+    };
+    const localResult: ChildRunExecutionResult = {
+      success: false,
+      description: "Search docs",
+      error: "search failed",
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
+      durationMs: 4,
+    };
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter,
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => localResult,
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(calls, ["failed:INVOKE_AGENT_FAILED"]);
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState.terminalErrorMessage, "search failed");
+    assertEquals(result.terminalState.usage?.totalTokens, 3);
+  });
+
+  it("skips selected terminal persistence while preserving failure state", async () => {
+    const calls: string[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      failed: () => {
+        calls.push("failed");
+      },
+    };
+    const localResult: ChildRunExecutionResult = {
+      success: false,
+      description: "Search docs",
+      error: "already persisted",
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 4,
+    };
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter,
+      executionFailedCode: "DURABLE_CHILD_FAILED",
+      execute: () => localResult,
+      getExecutionSnapshot: () => null,
+      skipTerminalPersistence: (terminalState) =>
+        terminalState.terminalErrorCode === "DURABLE_CHILD_FAILED",
+    });
+
+    assertEquals(calls, []);
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState.terminalErrorCode, "DURABLE_CHILD_FAILED");
+  });
+
+  it("preserves external terminal status without re-persisting it", async () => {
+    const calls: string[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      completed: () => {
+        calls.push("completed");
+      },
+      failed: () => {
+        calls.push("failed");
+      },
+      cancelled: () => {
+        calls.push("cancelled");
+      },
+    };
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter,
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => {
+        throw new HostedChildTerminalStateError("completed", {
+          childConversationId: "conversation-1",
+          childRunId: "run-1",
+          childMessageId: "message-1",
+          latestEventId: 1,
+          latestExternalEventSequence: 1,
+        });
+      },
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(calls, []);
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState.status, "completed");
+    assertEquals(result.terminalState.terminalErrorCode, "DURABLE_CHILD_COMPLETED_EXTERNALLY");
   });
 });

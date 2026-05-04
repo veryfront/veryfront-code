@@ -7,6 +7,7 @@ import {
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
 } from "#veryfront/provider/veryfront-cloud/shared.ts";
+import { createVeryfrontCloudOpenAIEmbeddingModel } from "#veryfront/provider/veryfront-cloud/openai.ts";
 
 export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "embedding");
@@ -16,9 +17,11 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
 
   switch (provider) {
     case "openai":
-      throw new Error(
-        "OpenAI provider not installed. Add @veryfront/ext-openai to use openai embedding models via veryfront-cloud.",
-      );
+      return createVeryfrontCloudOpenAIEmbeddingModel(upstreamModelId, {
+        apiToken,
+        baseURL,
+        fetch,
+      });
 
     case "google":
       return createGoogleEmbeddingRuntime({

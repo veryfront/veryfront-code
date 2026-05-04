@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isResponseLike } from "./response-like.ts";
 import { getAgent } from "./composition/index.ts";
 import type { Message } from "./types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
@@ -155,19 +156,6 @@ function extractLastUserText(messages: ParsedMessage[]): string {
   }
 
   return "";
-}
-
-function isResponseLike(value: unknown): value is Response {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "status" in value &&
-    typeof value.status === "number" &&
-    "headers" in value &&
-    typeof value.headers === "object" &&
-    "bodyUsed" in value &&
-    typeof value.bodyUsed === "boolean"
-  );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { z } from "zod";
-import { createGmailClient } from "../../lib/gmail-client.ts";
+import { createGmailClient } from "../lib/gmail-client.ts";
+import { resolveUserId } from "../lib/context.ts";
 
 function formatRecipients(value?: string | string[]): string | undefined {
   if (!value) return undefined;
@@ -25,7 +26,7 @@ export default tool({
     isHtml: z.boolean().default(false).describe("Whether the body contains HTML"),
   }),
   execute: async ({ to, subject, body, cc, bcc, isHtml }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = resolveUserId(context);
 
     try {
       const gmail = createGmailClient(userId);

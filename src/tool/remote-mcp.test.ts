@@ -92,6 +92,30 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("normalizes remote MCP tool responses with generic error markers", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:search_docs",
+        result: {
+          error: "rate_limited",
+          content: [{
+            text: "Try again later",
+          }],
+        },
+      }), async () => await source.executeTool("search_docs", { query: "auth" }));
+
+    assertEquals(result, {
+      error: "tool_error",
+      message: "Try again later",
+    });
+  });
+
   it("preserves caller accept types while adding the MCP-required media types", async () => {
     let acceptHeader = "";
 

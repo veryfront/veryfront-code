@@ -10,6 +10,25 @@ export interface HostedChildRunIdentifiers {
 
 type HostedConversationRunStatus = ConversationRunProjection["status"];
 
+export const hostedChildTerminalErrorCodes = Object.freeze({
+  cancelled: "DURABLE_CHILD_CANCELLED",
+  failed: "DURABLE_CHILD_FAILED",
+  completedExternally: "DURABLE_CHILD_COMPLETED_EXTERNALLY",
+});
+
+export type HostedChildTerminalErrorCode =
+  (typeof hostedChildTerminalErrorCodes)[keyof typeof hostedChildTerminalErrorCodes];
+
+export function isHostedChildTerminalErrorCode(
+  value: unknown,
+): value is HostedChildTerminalErrorCode {
+  return (
+    value === hostedChildTerminalErrorCodes.cancelled ||
+    value === hostedChildTerminalErrorCodes.failed ||
+    value === hostedChildTerminalErrorCodes.completedExternally
+  );
+}
+
 export type HostedChildTerminalStatus = Extract<
   HostedConversationRunStatus,
   "completed" | "failed" | "cancelled"
@@ -33,14 +52,16 @@ function isActiveHostedChildStatus(
   return status === "pending" || status === "running" || status === "waiting_for_tool";
 }
 
-export function resolveHostedChildTerminalErrorCode(status: HostedChildTerminalStatus): string {
+export function resolveHostedChildTerminalErrorCode(
+  status: HostedChildTerminalStatus,
+): HostedChildTerminalErrorCode {
   switch (status) {
     case "cancelled":
-      return "DURABLE_CHILD_CANCELLED";
+      return hostedChildTerminalErrorCodes.cancelled;
     case "failed":
-      return "DURABLE_CHILD_FAILED";
+      return hostedChildTerminalErrorCodes.failed;
     case "completed":
-      return "DURABLE_CHILD_COMPLETED_EXTERNALLY";
+      return hostedChildTerminalErrorCodes.completedExternally;
   }
 }
 

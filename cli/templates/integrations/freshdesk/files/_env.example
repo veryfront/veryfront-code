@@ -1,4 +1,0 @@
-# Freshdesk OAuth Configuration
-# Get your credentials from https://developers.freshdesk.com/apps/
-FRESHDESK_CLIENT_ID=your-client-id
-FRESHDESK_CLIENT_SECRET=your-client-secret

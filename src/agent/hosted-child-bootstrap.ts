@@ -1,4 +1,5 @@
 import { bootstrapConversationAgentRun } from "./conversation-bootstrap.ts";
+import { type ConversationRunProjection } from "./durable.ts";
 import { type HostedChildRunIdentifiers } from "./hosted-child-status.ts";
 
 export interface HostedChildConversationBodyInput {
@@ -17,11 +18,12 @@ export interface BootstrapHostedChildRunInput extends HostedChildConversationBod
   prompt: string;
   runId?: string;
   agentId: string;
+  implementationKind?: string | null;
   branchId?: string | null;
 }
 
 export interface BootstrapHostedChildRunResult extends HostedChildRunIdentifiers {
-  status: "running";
+  status: ConversationRunProjection["status"];
 }
 
 export function buildHostedChildConversationBody(input: HostedChildConversationBodyInput) {
@@ -57,6 +59,7 @@ export async function bootstrapHostedChildRun(
     },
     runId: input.runId,
     agentId: input.agentId,
+    implementationKind: input.implementationKind,
     projectId: input.runProjectId ?? null,
     branchId: input.branchId,
   });
@@ -67,6 +70,6 @@ export async function bootstrapHostedChildRun(
     childMessageId: result.run.messageId,
     latestEventId: result.run.latestEventId,
     latestExternalEventSequence: result.run.latestExternalEventSequence,
-    status: "running",
+    status: result.run.status,
   };
 }

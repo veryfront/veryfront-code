@@ -2,6 +2,17 @@
  * Cross-runtime test utilities — BDD framework (describe/it), assertions,
  * test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun.
  *
+ * @example
+ * ```ts
+ * import { assertEquals, describe, it } from "veryfront/testing";
+ *
+ * describe("math", () => {
+ *   it("adds numbers", () => {
+ *     assertEquals(1 + 1, 2);
+ *   });
+ * });
+ * ```
+ *
  * @module testing
  */
 

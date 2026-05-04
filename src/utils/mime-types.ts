@@ -151,5 +151,3 @@ export function charset(mime: string): string | false {
 export function extension(mime: string): string | false {
   return Object.hasOwn(EXT_BY_MIME, mime) ? EXT_BY_MIME[mime]! : false;
 }
-
-export default { lookup, charset, extension };

@@ -95,5 +95,5 @@
       "icon": "users"
     }
   ],
-  "suggestedWith": ["stripe", "mailchimp", "analytics"]
+  "suggestedWith": ["stripe", "analytics"]
 }

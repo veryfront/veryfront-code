@@ -10,6 +10,19 @@ export interface HostedChildMirrorState {
   textStarted: boolean;
 }
 
+export interface HostedChildMirrorContext {
+  mirror: HostedChildChunkMirror | null;
+  messageId: string | null;
+  reasoningMessageId: string | null;
+  state: HostedChildMirrorState;
+  appendChunk: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => Promise<void>;
+  closeReasoningSegment: () => Promise<void>;
+  closeTextSegment: () => Promise<void>;
+  markStepStarted: () => void;
+  hasStartedStep: () => boolean;
+  hasEmittedProgress: () => boolean;
+}
+
 type CoreMirroredPartType =
   | "reasoning-delta"
   | "text-delta"
@@ -205,4 +218,55 @@ export async function closeHostedChildTextSegment(input: {
       id: input.messageId,
     },
   });
+}
+
+export function createHostedChildMirrorContext(input: {
+  mirror: HostedChildChunkMirror | null;
+  messageId?: string | null;
+  reasoningMessageId?: string | null;
+}): HostedChildMirrorContext {
+  const messageId = input.messageId ?? null;
+  const reasoningMessageId = input.reasoningMessageId ??
+    (messageId ? `${messageId}:reasoning` : null);
+  const state: HostedChildMirrorState = {
+    reasoningStarted: false,
+    textStarted: false,
+  };
+  let emittedProgress = false;
+  let stepStarted = false;
+
+  const appendChunk = async (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => {
+    const mirrored = await appendHostedChildMirrorChunk({
+      mirror: input.mirror,
+      chunk,
+    });
+    if (mirrored) {
+      emittedProgress = true;
+    }
+  };
+
+  return {
+    mirror: input.mirror,
+    messageId,
+    reasoningMessageId,
+    state,
+    appendChunk,
+    closeReasoningSegment: () =>
+      closeHostedChildReasoningSegment({
+        mirror: input.mirror,
+        reasoningMessageId,
+        state,
+      }),
+    closeTextSegment: () =>
+      closeHostedChildTextSegment({
+        mirror: input.mirror,
+        messageId,
+        state,
+      }),
+    markStepStarted: () => {
+      stepStarted = true;
+    },
+    hasStartedStep: () => stepStarted,
+    hasEmittedProgress: () => emittedProgress,
+  };
 }
