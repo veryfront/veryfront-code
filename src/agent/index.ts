@@ -121,6 +121,16 @@ export {
 } from "./project-steering-mutation.ts";
 
 export {
+  parseRuntimeAgentMarkdownDefinition,
+  type ParseRuntimeAgentMarkdownDefinitionInput,
+  parseRuntimeAgentMarkdownDefinitionInputSchema,
+  type RuntimeAgentMarkdownDefinition,
+  runtimeAgentMarkdownDefinitionSchema,
+  type RuntimeAgentThinkingConfig,
+  runtimeAgentThinkingConfigSchema,
+} from "./runtime-agent-definition.ts";
+
+export {
   applyAgentProjectContextChange,
   getConfirmedProjectContextSwitchId,
   type MutableAgentProjectContext,
