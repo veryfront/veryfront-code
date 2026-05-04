@@ -229,6 +229,15 @@ export {
   parseAgUiRuntimeRequestOrError,
 } from "./runtime-ag-ui-contract.ts";
 export {
+  type AgentTraceAttributes,
+  type AgentTraceAttributeValue,
+  type AgentTraceUsage,
+  buildAgentRunTraceAttributes,
+  buildExecuteToolTraceAttributes,
+  buildFinalizedAgentRunTraceAttributes,
+  buildInvokeAgentTraceAttributes,
+} from "./agent-trace-attributes.ts";
+export {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
   buildHostedChatRequestFromRuntimeAgentInvocation,
   buildHostedChatRequestInputFromRuntimeAgentInvocation,
