@@ -201,7 +201,7 @@ describe("agent/durable", () => {
     );
   });
 
-  it("creates queued generic runtime agent runs when runtimeProviderId is provided", async () => {
+  it("creates queued generic agent runs when implementationKind is provided", async () => {
     const fetchCalls = stubFetchSequence(
       acceptedRunResponse({ run_id: "run_codex_1" }),
       jsonResponse(durableRunProjection({ run_id: "run_codex_1" }), 200),
@@ -213,7 +213,7 @@ describe("agent/durable", () => {
       conversationId: CONVERSATION_ID,
       runId: "run_codex_1",
       agentId: "codex",
-      runtimeProviderId: "codex",
+      implementationKind: "codex",
       projectId: null,
       branchId: null,
     });
@@ -230,7 +230,7 @@ describe("agent/durable", () => {
         request: {
           mode: "agent",
           agent_id: "codex",
-          runtime_provider_id: "codex",
+          implementation_kind: "codex",
           initial_status: "pending",
         },
       },

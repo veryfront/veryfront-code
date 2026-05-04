@@ -292,7 +292,7 @@ export interface CreateConversationAgentRunInput {
   conversationId: string;
   runId?: string;
   agentId: string;
-  runtimeProviderId?: string | null;
+  implementationKind?: string | null;
   projectId?: string | null;
   branchId?: string | null;
 }
@@ -1255,11 +1255,11 @@ export async function createConversationAgentRun(
   });
   const runId = input.runId ?? `run_${crypto.randomUUID()}`;
 
-  const request = input.runtimeProviderId
+  const request = input.implementationKind
     ? {
       mode: "agent" as const,
       agent_id: input.agentId,
-      runtime_provider_id: input.runtimeProviderId,
+      implementation_kind: input.implementationKind,
       initial_status: "pending" as const,
       ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
       ...(targets.runtimeTargetKind ? { runtime_target_kind: targets.runtimeTargetKind } : {}),
