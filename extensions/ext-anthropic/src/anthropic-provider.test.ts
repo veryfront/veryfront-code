@@ -2,7 +2,7 @@ import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import { createRuntimeJsonSchema } from "../../../src/agent/runtime/runtime-tool-builder.ts";
 
-import { createAnthropicModelRuntime } from "./anthropic-provider.ts";
+import { createAnthropicModelRuntime } from "../../../src/provider/runtime-loader.ts";
 
 // ---------------------------------------------------------------------------
 // Shared test helpers (inlined — no external fixture file needed)
