@@ -121,6 +121,17 @@ export {
 } from "./project-steering-mutation.ts";
 
 export {
+  clientAllowsStudioMcp,
+  resolveRuntimeClientProfile,
+  type RuntimeClientCapability,
+  runtimeClientCapabilitySchema,
+  type RuntimeClientProfile,
+  runtimeClientProfileSchema,
+  type RuntimeClientType,
+  runtimeClientTypeSchema,
+} from "./runtime-client-profile.ts";
+
+export {
   parseRuntimeAgentMarkdownDefinition,
   type ParseRuntimeAgentMarkdownDefinitionInput,
   parseRuntimeAgentMarkdownDefinitionInputSchema,
