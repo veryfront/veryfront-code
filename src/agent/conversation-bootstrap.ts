@@ -214,6 +214,7 @@ export async function bootstrapConversationAgentRun(input: {
   handoffMessageBody: unknown;
   runId?: string;
   agentId: string;
+  runtimeProviderId?: string | null;
   projectId?: string | null;
   branchId?: string | null;
 }): Promise<BootstrapConversationAgentRunResult> {
@@ -244,6 +245,7 @@ export async function bootstrapConversationAgentRun(input: {
     conversationId: conversation.id,
     runId: input.runId,
     agentId: input.agentId,
+    runtimeProviderId: input.runtimeProviderId,
     projectId: effectiveProjectId,
     branchId: input.branchId,
   });

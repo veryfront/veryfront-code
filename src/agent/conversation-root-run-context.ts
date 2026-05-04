@@ -57,6 +57,7 @@ export async function startConversationRootRun(input: {
   projectId?: string | null;
   branchId?: string | null;
   agentId: string;
+  runtimeProviderId?: string | null;
   providedRun?: ConversationRootRunDescriptor;
 }): Promise<ConversationRunProjection | null> {
   if (input.providedRun) {
@@ -81,6 +82,7 @@ export async function startConversationRootRun(input: {
     projectId: input.projectId ?? null,
     branchId: input.branchId,
     agentId: input.agentId,
+    runtimeProviderId: input.runtimeProviderId,
   });
 }
 
@@ -91,6 +93,7 @@ export function createConversationRootRunStartAdapter(input: {
   projectId?: string | null;
   branchId?: string | null;
   agentId: string;
+  runtimeProviderId?: string | null;
   providedRun?: ConversationRootRunDescriptor;
 }): (input: { abortSignal: AbortSignal }) => Promise<{ run: ConversationRunProjection | null }> {
   return async () => ({
@@ -101,6 +104,7 @@ export function createConversationRootRunStartAdapter(input: {
       projectId: input.projectId,
       branchId: input.branchId,
       agentId: input.agentId,
+      runtimeProviderId: input.runtimeProviderId,
       providedRun: input.providedRun,
     }),
   });
@@ -113,6 +117,7 @@ export async function prepareConversationRootRunContext(input: {
   projectId?: string | null;
   branchId?: string | null;
   agentId: string;
+  runtimeProviderId?: string | null;
   providedRun?: ConversationRootRunDescriptor;
   parentRunId?: string;
   parentMessageId?: string;
@@ -125,6 +130,7 @@ export async function prepareConversationRootRunContext(input: {
     projectId: input.projectId,
     branchId: input.branchId,
     agentId: input.agentId,
+    runtimeProviderId: input.runtimeProviderId,
     providedRun: input.providedRun,
   })({ abortSignal: new AbortController().signal });
 
