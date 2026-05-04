@@ -460,8 +460,10 @@ export {
 export {
   buildHostedChildToolDescription,
   expandHostedChildRequestedTools,
+  type HostedChildForkRuntimeToolSelectionResult,
   type HostedChildRequestedToolsInput,
   sanitizeHostedChildRequestedTools,
+  selectHostedChildForkRuntimeTools,
   shouldPruneSandboxToolsFromHostedChildRequest,
 } from "./hosted-child-requested-tools.ts";
 export {
