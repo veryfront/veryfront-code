@@ -77,11 +77,11 @@ async function walk(dir: string) {
       const raw = await Deno.readTextFile(full);
       const text = stripStringLiterals(raw);
       // Ignore console inside template strings that likely inject client code
-      if (text.includes("console.")) {
+      if (/console\.(?!ts\b)[a-z]/i.test(text)) {
         for (
           const line of text.split(/\r?\n/).map((l, i) => [i + 1, l] as const)
         ) {
-          if (line[1].includes("console.")) {
+          if (/console\.(?!ts\b)[a-z]/i.test(line[1])) {
             violations.push(`${full}:${line[0]}:${line[1].trim()}`);
           }
         }
