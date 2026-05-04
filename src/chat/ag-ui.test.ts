@@ -4,6 +4,7 @@ import {
   createAgUiChatEventDecoderState,
   decodeAgUiSseChunk,
   flushAgUiSseChunk,
+  mapAgUiRuntimeMessagesToChatUiMessages,
   parseSseEvent,
 } from "./ag-ui.ts";
 
@@ -340,5 +341,138 @@ describe("chat/ag-ui", () => {
       type: "data-state-delta",
       data: { phase: "planning" },
     }]);
+  });
+
+  it("maps runtime-native messages into chat UI messages with tool results", () => {
+    const result = mapAgUiRuntimeMessagesToChatUiMessages([
+      {
+        id: "system-1",
+        role: "system",
+        content: "Follow the project instructions",
+      },
+      {
+        id: "user-1",
+        role: "user",
+        content: "Inspect the project first",
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "Trying a search",
+        toolCalls: [
+          {
+            id: "tool-call-1",
+            type: "function",
+            function: {
+              name: "search_files",
+              arguments: '{"query":"auth"}',
+            },
+          },
+        ],
+      },
+      {
+        id: "tool-1",
+        role: "tool",
+        toolCallId: "tool-call-1",
+        content: '{"matches":2}',
+      },
+    ]);
+
+    assertEquals(result, [
+      {
+        id: "system-1",
+        role: "system",
+        parts: [{ type: "text", text: "Follow the project instructions" }],
+      },
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Inspect the project first" }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "Trying a search" },
+          {
+            type: "dynamic-tool",
+            toolName: "search_files",
+            toolCallId: "tool-call-1",
+            input: { query: "auth" },
+            state: "output-available",
+            output: { matches: 2 },
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("maps runtime tool errors and orphan tool results into assistant tool parts", () => {
+    const result = mapAgUiRuntimeMessagesToChatUiMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        content: "Working",
+        toolCalls: [
+          {
+            id: "tool-call-1",
+            type: "function",
+            function: {
+              name: "search_files",
+              arguments: "not-json",
+            },
+          },
+        ],
+      },
+      {
+        id: "tool-1",
+        role: "tool",
+        toolCallId: "tool-call-1",
+        content: "ignored on error",
+        error: "search failed",
+      },
+      {
+        id: "tool-orphan",
+        role: "tool",
+        toolCallId: "missing-tool-call",
+        content: '{"matches":2}',
+      },
+      {
+        id: "assistant-empty",
+        role: "assistant",
+      },
+    ]);
+
+    assertEquals(result, [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "Working" },
+          {
+            type: "dynamic-tool",
+            toolName: "search_files",
+            toolCallId: "tool-call-1",
+            input: { raw: "not-json" },
+            state: "output-error",
+            errorText: "search failed",
+          },
+        ],
+      },
+      {
+        id: "tool-orphan",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "unknown",
+            toolCallId: "missing-tool-call",
+            input: {},
+            state: "output-available",
+            output: { matches: 2 },
+          },
+        ],
+      },
+    ]);
   });
 });

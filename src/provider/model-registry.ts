@@ -32,7 +32,7 @@ import {
   getDefaultVeryfrontCloudModel,
   isVeryfrontCloudEnabled,
 } from "#veryfront/platform/cloud/resolver.ts";
-import { createAnthropicModelRuntime, createGoogleModelRuntime } from "./runtime-loader.ts";
+import { createGoogleModelRuntime } from "./runtime-loader.ts";
 import { createVeryfrontCloudModel } from "./veryfront-cloud/provider.ts";
 import { getModelRuntimeId, hasLocalModelRuntimeMarker } from "./runtime-inspection.ts";
 import type { ModelRuntime } from "./types.ts";
@@ -118,13 +118,19 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      return createAnthropicModelRuntime(
-        {
-          apiKey: config.apiKey,
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const provider = registry?.get("anthropic");
+      if (provider) {
+        return provider.createModel(id, {
+          credential: config.apiKey,
           baseURL: config.baseURL,
-        },
-        id,
-      );
+        });
+      }
+      throw toError(createError({
+        type: "config",
+        message:
+          "Anthropic provider not installed. Add @veryfront/ext-anthropic to use anthropic/* models.",
+      }));
     });
   }
 
@@ -226,7 +232,7 @@ export function findAvailableCloudModel(): string | null {
 }
 
 function isBuiltinProvider(provider: string): boolean {
-  return provider === "anthropic" || provider === "google" || provider === "veryfront-cloud";
+  return provider === "google" || provider === "veryfront-cloud";
 }
 
 /**

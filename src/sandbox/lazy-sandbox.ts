@@ -1,4 +1,5 @@
 import { REQUEST_ERROR } from "#veryfront/errors";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   type CommandJob,
   type CommandJobOutput,
@@ -44,6 +45,28 @@ const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
   "ENOTFOUND",
   "EHOSTUNREACH",
 ]);
+const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
+
+export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }): string {
+  if (!getHostEnv("KUBERNETES_SERVICE_HOST")) {
+    return input.endpoint;
+  }
+
+  let hostname: string;
+  try {
+    hostname = new URL(input.endpoint).hostname;
+  } catch {
+    return input.endpoint;
+  }
+
+  const match = hostname.match(VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN);
+  const shortId = match?.[1];
+  if (!shortId) {
+    return input.endpoint;
+  }
+
+  return `http://sandbox.veryfront-sandbox-${shortId}.svc.cluster.local`;
+}
 
 /** Lazily provisions sandbox sessions and keeps them alive while in use. */
 export class LazySandbox {
@@ -624,7 +647,8 @@ export class LazySandbox {
   private resolveRuntimeEndpoint(): string {
     const endpoint = this.requireEndpoint();
     const sessionId = this.requireSessionId();
-    return this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ?? endpoint;
+    return this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ??
+      resolveDefaultSandboxRuntimeEndpoint({ endpoint });
   }
 
   private requireSessionId(): string {

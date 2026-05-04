@@ -1,3 +1,5 @@
+import type { HostToolSet } from "#veryfront/tool";
+
 const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
   "web_fetch",
   "web_search",
@@ -57,4 +59,16 @@ export function expandAllowedRemoteToolNames(
       ...getProviderNativeToolNames(options),
     ]),
   ].sort();
+}
+
+export function getForkRuntimeAllowedToolNames(input: {
+  provider: string;
+  forkModel?: string;
+  forkTools: HostToolSet;
+}): string[] {
+  return expandAllowedRemoteToolNames({
+    provider: input.provider,
+    model: input.forkModel,
+    toolNames: Object.keys(input.forkTools),
+  });
 }

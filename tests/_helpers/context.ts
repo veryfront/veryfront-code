@@ -101,7 +101,7 @@ export async function registerExtBabelForTests(): Promise<void> {
 // calls ExtensionLoader.teardownAll() which clears the registry.
 export async function registerExtOpenAIForTests(): Promise<void> {
   try {
-    const { register } = await import("../../src/extensions/contracts.ts");
+    const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
     const { createAIProviderRegistry } = await import(
       "../../src/extensions/registries/ai-provider-registry.ts"
     );
@@ -110,7 +110,9 @@ export async function registerExtOpenAIForTests(): Promise<void> {
     );
     const extOpenAIFactory = (await import("../../extensions/ext-openai/src/index.ts")).default;
     const ext = extOpenAIFactory();
-    const registry = createAIProviderRegistry();
+    const registry = tryResolve<ReturnType<typeof createAIProviderRegistry>>(
+      AIProviderRegistryName,
+    ) ?? createAIProviderRegistry();
     register(AIProviderRegistryName, registry);
     const noopLogger = {
       debug: () => {},
@@ -133,8 +135,46 @@ export async function registerExtOpenAIForTests(): Promise<void> {
   }
 }
 
+export async function registerExtAnthropicForTests(): Promise<void> {
+  try {
+    const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
+    const { createAIProviderRegistry } = await import(
+      "../../src/extensions/registries/ai-provider-registry.ts"
+    );
+    const { AIProviderRegistryName } = await import(
+      "../../src/extensions/interfaces/index.ts"
+    );
+    const extAnthropicFactory =
+      (await import("../../extensions/ext-anthropic/src/index.ts")).default;
+    const ext = extAnthropicFactory();
+    const registry = tryResolve<ReturnType<typeof createAIProviderRegistry>>(
+      AIProviderRegistryName,
+    ) ?? createAIProviderRegistry();
+    register(AIProviderRegistryName, registry);
+    const noopLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    };
+    await ext.setup?.({
+      config: {},
+      logger: noopLogger,
+      provide: (name: string, impl: unknown) => register(name, impl),
+      get: (name: string) => (name === AIProviderRegistryName ? registry : undefined),
+      require: (name: string) => {
+        if (name === AIProviderRegistryName) return registry;
+        throw new Error(`require not supported for "${name}" in test setup`);
+      },
+    } as never);
+  } catch {
+    // Ignore if ext-anthropic cannot be loaded — provider is optional
+  }
+}
+
 await registerExtBabelForTests();
 await registerExtOpenAIForTests();
+await registerExtAnthropicForTests();
 
 export { esbuildInitialized };
 
@@ -563,6 +603,19 @@ export class TestContext {
       // Ignore — ext-openai is optional; tests that don't need it will still pass.
     }
 
+    // Materialize ext-anthropic for tests that exercise anthropic/* model paths.
+    try {
+      const extAnthropicDir = join(this.projectDir, "extensions", "ext-anthropic");
+      await mkdir(extAnthropicDir, { recursive: true });
+      const extAnthropicReal = resolvePath("extensions/ext-anthropic/src/index.ts");
+      await writeTextFile(
+        join(extAnthropicDir, "index.ts"),
+        `export { default } from "${"file://" + extAnthropicReal}";\n`,
+      );
+    } catch {
+      // Ignore — ext-anthropic is optional; tests that don't need it will still pass.
+    }
+
     await writeTextFile(
       join(this.projectDir, "veryfront.config.js"),
       `export default {
@@ -635,6 +688,10 @@ export async function withTestContext<T>(
       // Re-register ext-openai so openai/* model paths resolve after
       // teardownAll() clears the registry between tests.
       await registerExtOpenAIForTests();
+
+      // Re-register ext-anthropic so anthropic/* model paths resolve after
+      // teardownAll() clears the registry between tests.
+      await registerExtAnthropicForTests();
 
       // Clear MDX renderer cache at the START of each test to ensure
       // the singleton picks up this test's cache dir (via AsyncLocalStorage),

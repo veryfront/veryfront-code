@@ -1,5 +1,6 @@
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
 import type { JsonSchema } from "./schema/json-schema.ts";
+import { hasToolExecutionErrorMarker } from "./result.ts";
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
 type ResolvableValue<T> = T | ((context?: ToolExecutionContext) => T | Promise<T>);
@@ -277,7 +278,7 @@ function normalizeCallToolResult(result: unknown): unknown {
       rawContent.filter((item): item is JsonRpcCallToolContentItem => isRecord(item)),
     );
 
-    if (result.isError === true) {
+    if (hasToolExecutionErrorMarker(result)) {
       return parseJsonText(text) ?? { error: "tool_error", message: text };
     }
 

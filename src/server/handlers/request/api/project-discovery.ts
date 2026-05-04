@@ -115,7 +115,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
     if (
       result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
     ) {
-      logger.warn("Primitive discovery found 0 agents and 0 tools", {
+      logger.info("Primitive discovery found 0 agents and 0 tools", {
         ...logData,
         errorMessages: result.errors.map((e) => e.error.message).slice(0, 5),
         baseDir: ctx.projectDir,

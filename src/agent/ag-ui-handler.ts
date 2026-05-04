@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isResponseLike } from "./response-like.ts";
 import { getAgent } from "./composition/index.ts";
 import type { Agent } from "./types.ts";
 import {
@@ -325,7 +326,7 @@ export function createAgUiHandler(
 
     try {
       const parsed = await parseAgUiRequestOrError(request);
-      if (parsed instanceof Response) {
+      if (isResponseLike(parsed)) {
         return parsed;
       }
 

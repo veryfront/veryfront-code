@@ -10,6 +10,7 @@ import {
   parseVeryfrontCloudModelId,
   requireVeryfrontCloudBootstrap,
 } from "./shared.ts";
+import { createVeryfrontCloudOpenAIModel } from "./openai.ts";
 
 export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { provider, modelId: upstreamModelId } = parseVeryfrontCloudModelId(modelId, "language");
@@ -18,13 +19,28 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const fetch = createVeryfrontCloudFetch(apiToken, projectSlug);
 
   switch (provider) {
-    case "anthropic":
+    case "anthropic": {
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const anthropic = registry?.get("anthropic");
+      if (anthropic) {
+        return anthropic.createModel(upstreamModelId, {
+          credential: apiToken,
+          authToken: apiToken,
+          baseURL,
+          name: "veryfront-cloud",
+          fetch,
+        });
+      }
+      // Fall back to the built-in runtime-loader when the extension is not
+      // registered.  Keeps Anthropic working until @veryfront/ext-anthropic is
+      // published to npm and adopted by all consumers.
       return createAnthropicModelRuntime({
         authToken: apiToken,
         baseURL,
         name: "veryfront-cloud",
         fetch,
       }, upstreamModelId);
+    }
 
     case "google":
       return createGoogleModelRuntime({
@@ -46,9 +62,11 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           fetch,
         });
       }
-      throw new Error(
-        "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/moonshotai models via veryfront-cloud.",
-      );
+      return createVeryfrontCloudOpenAIModel(upstreamModelId, {
+        apiToken,
+        baseURL,
+        fetch,
+      });
     }
 
     default: {

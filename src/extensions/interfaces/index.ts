@@ -76,8 +76,12 @@ export type {
 
 // Schema validator
 export type {
+  InferSchema,
+  InferShape,
   Schema,
+  SchemaFactory,
   SchemaValidator,
+  SchemaValidatorCoerce,
   ValidationFailure,
   ValidationIssue,
   ValidationResult,

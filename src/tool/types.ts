@@ -136,6 +136,14 @@ export interface Tool<TInput = any, TOutput = any> {
 }
 
 /**
+ * Runtime tool map keyed by the tool name exposed to an agent.
+ *
+ * Hosts can use this for already-materialized framework tools, including
+ * tools loaded from remote sources.
+ */
+export type ToolSet = Record<string, Tool<unknown, unknown>>;
+
+/**
  * Provider-facing tool definition used for model/tool registration.
  */
 export interface ToolDefinition {
