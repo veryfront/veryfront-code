@@ -12,6 +12,7 @@ import { AnthropicProvider } from "./anthropic-provider.ts";
 
 const extAnthropic: ExtensionFactory = () => {
   const provider = new AnthropicProvider();
+  let registryRef: AIProviderRegistry | undefined;
   return {
     name: "ext-anthropic",
     version: "0.1.0",
@@ -19,10 +20,12 @@ const extAnthropic: ExtensionFactory = () => {
     setup(ctx) {
       const registry = ctx.require<AIProviderRegistry>(AIProviderRegistryName);
       registry.register(provider);
+      registryRef = registry;
       ctx.logger.info("[ext-anthropic] Anthropic provider registered");
     },
     teardown() {
-      // No resources to release.
+      registryRef?.unregister(provider.id);
+      registryRef = undefined;
     },
   };
 };
