@@ -580,7 +580,10 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
 // on BOTH branches of __vf_loadCjs (relative/absolute ids AND bare-package
 // ids), and must re-canonicalise via Deno.realPathSync so that a symlinked
 // node_modules entry cannot escape the project root.
-describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
   it("emits a __vf_assertContained call after bare-package resolution", () => {
     const shim = generateCompiledBinaryRequireShim("/fake/project");
     // The original (vulnerable) layout called __vf_assertContained only inside
@@ -663,7 +666,10 @@ describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", { sani
   });
 });
 
-describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", { sanitizeResources: false, sanitizeOps: false }, () => {
+describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
   it("re-canonicalisation via realPathSync catches a node_modules symlink escape", async () => {
     // Create a project root, a decoy "evil" package whose entry file is a
     // symlink pointing at a file outside the project root. If the shim only
