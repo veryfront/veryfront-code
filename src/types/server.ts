@@ -1,5 +1,5 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
+import type { VeryfrontConfig } from "../config/schemas/index.ts";
 import type { RequestContext } from "../server/context/request-context.ts";
 import type { EnrichedContext } from "../server/context/enriched-context.ts";
 
