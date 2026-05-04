@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { type ChatStreamEvent } from "../chat/protocol.ts";
+import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { normalizeConversationRunEvents } from "./conversation-run-event-normalization.ts";
 
 export const conversationRunEventTypes = {

@@ -1,4 +1,4 @@
-import type { ToolExecutionDataEvent } from "../tool/types.ts";
+import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 
 export type ToolExecutionDataEventPublisher = (event: ToolExecutionDataEvent) => void;
 

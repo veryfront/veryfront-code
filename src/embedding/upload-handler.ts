@@ -147,7 +147,7 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
  * ```ts
  * // app/api/uploads/route.ts
  * import { createUploadHandler } from "veryfront/embedding";
- * import { store } from "../../../lib/store.ts";
+ * import { store } from "lib/store.ts";
  *
  * export const { POST, GET } = createUploadHandler(store);
  * ```
@@ -156,7 +156,7 @@ function getSourceBlobStorage(): VeryfrontCloudBlobStorage | null {
  * ```ts
  * // app/api/uploads/[id]/route.ts
  * import { createUploadHandler } from "veryfront/embedding";
- * import { store } from "../../../../lib/store.ts";
+ * import { store } from "lib/store.ts";
  *
  * export const { DELETE } = createUploadHandler(store);
  * ```

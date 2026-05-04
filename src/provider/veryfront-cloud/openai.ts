@@ -1,5 +1,5 @@
 import type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.ts";
-import { OpenAIProvider } from "../../../extensions/ext-openai/src/openai-provider.ts";
+import { OpenAIProvider } from "@veryfront/ext-openai";
 
 const openAIProvider = new OpenAIProvider();
 

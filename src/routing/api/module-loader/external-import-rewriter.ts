@@ -2,7 +2,7 @@ import { isCompiledBinary, serverLogger } from "#veryfront/utils";
 import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
-import { rewriteNpmImports } from "../../../transforms/npm-import-rewrites.ts";
+import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { resolveExportEntry, toCjsDestructureBindings } from "./loader-helpers.ts";
 
 const logger = serverLogger.component("api");

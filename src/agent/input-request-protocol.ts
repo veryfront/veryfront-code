@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { ToolExecutionDataEvent } from "../tool/types.ts";
+import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import { HumanInputFieldSchema, HumanInputRequestSchema } from "./human-input.ts";
 
 export const formInputToolInputSchema = HumanInputRequestSchema.omit({ metadata: true });

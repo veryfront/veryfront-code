@@ -1,4 +1,4 @@
-import type { ChatMessageMetadata, ChatUiMessageChunk } from "../chat/protocol.ts";
+import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 
 export function isDurableMirroredOutputChunk(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,

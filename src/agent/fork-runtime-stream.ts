@@ -1,7 +1,7 @@
 import type { Tool } from "#veryfront/tool";
-import { isRecord } from "../chat/conversation.ts";
-import { safeJsonParse } from "../chat/provider-errors.ts";
-import { runWithVeryfrontCloudContextAsync } from "../provider/veryfront-cloud/context.ts";
+import { isRecord } from "#veryfront/chat/conversation.ts";
+import { safeJsonParse } from "#veryfront/chat/provider-errors.ts";
+import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
 import type { AgUiRuntimeStreamEvent } from "./ag-ui-browser-encoder.ts";
 import {
   mergeToolInputDelta,
