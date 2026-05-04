@@ -21,8 +21,8 @@ import type { ExtensionFactory } from "veryfront/extensions";
 import type {
   ContentCompileOptions,
   ContentPlugin,
-  ContentTransformer,
   ContentRuntimeBundle,
+  ContentTransformer,
 } from "veryfront/extensions/interfaces";
 import { compileMdx } from "./compiler/mdx-compile.ts";
 import { compileMarkdown } from "./compiler/markdown-compile.ts";
