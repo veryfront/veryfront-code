@@ -1,5 +1,4 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createAnthropicModelRuntime } from "../runtime-loader.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
 import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
@@ -31,12 +30,9 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           fetch,
         });
       }
-      return createAnthropicModelRuntime({
-        authToken: apiToken,
-        baseURL,
-        name: "veryfront-cloud",
-        fetch,
-      }, upstreamModelId);
+      throw new Error(
+        "Anthropic provider not installed. Add @veryfront/ext-anthropic to use anthropic/* models via veryfront-cloud.",
+      );
     }
 
     case "google": {
