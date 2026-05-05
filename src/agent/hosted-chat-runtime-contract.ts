@@ -1,4 +1,4 @@
-import type { ChatFinishReason } from "../chat/protocol.ts";
+import type { ChatFinishReason } from "#veryfront/chat/protocol.ts";
 import type {
   ChatSystemMessage,
   ChatUiMessage,

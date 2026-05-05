@@ -1,8 +1,9 @@
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { createRemoteMCPToolSource } from "./remote-mcp.ts";
 import type { RemoteToolSource } from "./types.ts";
 
 export interface Context7ToolSourceConfig {
-  /** Context7 API key. Falls back to Deno.env.get("CONTEXT7_API_KEY"). */
+  /** Context7 API key. Falls back to CONTEXT7_API_KEY env var. */
   apiKey?: string;
   /** Override the default endpoint (useful for testing). */
   endpoint?: string;
@@ -11,7 +12,7 @@ export interface Context7ToolSourceConfig {
 const DEFAULT_ENDPOINT = "https://mcp.context7.com/mcp";
 
 function resolveApiKey(config: Context7ToolSourceConfig): string {
-  const key = config.apiKey ?? Deno.env.get("CONTEXT7_API_KEY");
+  const key = config.apiKey ?? getEnv("CONTEXT7_API_KEY");
   if (!key) {
     throw new Error(
       "Context7 API key is required. Pass apiKey or set the CONTEXT7_API_KEY environment variable.",

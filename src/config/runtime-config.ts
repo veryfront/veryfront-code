@@ -174,6 +174,14 @@ export function updateRuntimeConfig(fileConfig: VeryfrontConfig): RuntimeConfig 
 }
 
 // ============================================================================
+// GlobalThis Bridge
+// ============================================================================
+// Register accessors on globalThis so bottom-layer code (platform/) can reach
+// runtime config without importing from config/ (which would violate layer rules).
+(globalThis as Record<string, unknown>).__vfGetRuntimeConfig = getRuntimeConfig;
+(globalThis as Record<string, unknown>).__vfIsRuntimeConfigInitialized = isRuntimeConfigInitialized;
+
+// ============================================================================
 // Test Utilities
 // ============================================================================
 

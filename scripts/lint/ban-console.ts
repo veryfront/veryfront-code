@@ -36,7 +36,30 @@ function shouldSkip(path: string): boolean {
     path.includes("/rendering/client/browser-stubs/") ||
     path.includes("/security/client/") ||
     // Allow console in dev tools
-    path.includes("/ai/dev/")
+    path.includes("/ai/dev/") ||
+    // Logger implementations — these ARE the console abstraction layer
+    path.includes("/utils/logger/logger.ts") ||
+    path.includes("/studio/bridge/bridge-logger.ts") ||
+    path.includes("/observability/log-buffer.ts") ||
+    path.includes("/proxy/logger.ts") ||
+    // Error infrastructure — needs raw console for output
+    path.includes("/errors/middleware/cli-error-boundary.ts") ||
+    path.includes("/errors/logging.ts") ||
+    // Process lifecycle — intentional console.error for fatal crashes
+    path.includes("/platform/compat/process/lifecycle.ts") ||
+    // Client-side code (runs in browser, not server)
+    path.includes("/rsc/client-boot.ts") ||
+    path.includes("/rsc/client-module-strategy.ts") ||
+    path.includes("/handlers/dev/scripts/hmr-scripts.ts") ||
+    path.includes("/client/spa/component-loader.ts") ||
+    // React hooks — client-side code
+    path.includes("/workflow/claude-code/react/") ||
+    path.includes("/agent/react/") ||
+    path.includes("/embedding/react/") ||
+    // Test utilities
+    path.includes("/agent/testing/agent-tester.ts") ||
+    path.includes("/testing/isolation.ts") ||
+    path.includes("/_smoke-test.ts")
   );
 }
 
@@ -54,11 +77,11 @@ async function walk(dir: string) {
       const raw = await Deno.readTextFile(full);
       const text = stripStringLiterals(raw);
       // Ignore console inside template strings that likely inject client code
-      if (text.includes("console.")) {
+      if (/console\.(?!ts\b)[a-z]/i.test(text)) {
         for (
           const line of text.split(/\r?\n/).map((l, i) => [i + 1, l] as const)
         ) {
-          if (line[1].includes("console.")) {
+          if (/console\.(?!ts\b)[a-z]/i.test(line[1])) {
             violations.push(`${full}:${line[0]}:${line[1].trim()}`);
           }
         }

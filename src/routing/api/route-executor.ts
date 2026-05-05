@@ -17,7 +17,7 @@ import { isAbsolute, join } from "#veryfront/compat/path/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-boundary.ts";
 import { serverLogger as logger } from "#veryfront/utils";
-import { isDevelopment as isDevelopmentEnv } from "#veryfront/build/config/environment.ts";
+import { isDevelopment as isDevelopmentEnv } from "#veryfront/platform/environment.ts";
 import type { HandlerContext } from "#veryfront/types";
 import {
   getWorkerPool,
@@ -29,7 +29,17 @@ import {
   type SerializedResponse,
   type WorkerResponse,
 } from "#veryfront/security/sandbox/worker-types.ts";
-import { getProjectEnvSnapshot } from "#veryfront/server/project-env/storage.ts";
+/**
+ * Read the current project env snapshot via the globalThis bridge registered by
+ * server/project-env/storage.ts.  This avoids a direct import from the server/
+ * layer (which would violate the layer architecture).
+ */
+function getProjectEnvSnapshot(): Record<string, string> | undefined {
+  const getter = (globalThis as Record<string, unknown>).__vfProjectEnvSnapshotGetter as
+    | (() => Record<string, string> | undefined)
+    | undefined;
+  return getter?.();
+}
 
 function isDevelopment(adapter: RuntimeAdapter): boolean {
   const env = adapter.env.get("MODE") ??

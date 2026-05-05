@@ -45,6 +45,7 @@ Learn Veryfront Code from the ground up: pages, routing, AI agents, and deployme
 | [OAuth](./oauth.md)                | OAuth 2.0 helpers with a built-in provider catalog.                                               |
 | [MCP Server](./mcp-server.md)      | Expose tools, prompts, and resources over Model Context Protocol.                                 |
 | [Sandbox](./sandbox.md)            | Run isolated commands and file operations in ephemeral sandbox sessions.                          |
+| [Extensions](./extensions.md)      | Build custom extensions to add capabilities and integrate third-party services.                    |
 | [Integrations](../integrations.md) | Config-driven integration tools with OAuth, token management, and API execution across the built-in connector catalog. |
 
 ## Production

@@ -1,12 +1,7 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
-import { createRuntimeJsonSchema } from "../../../src/agent/runtime/runtime-tool-builder.ts";
 
-import { createAnthropicModelRuntime } from "../../../src/provider/runtime-loader.ts";
-
-// ---------------------------------------------------------------------------
-// Shared test helpers (inlined — no external fixture file needed)
-// ---------------------------------------------------------------------------
+import { createAnthropicModelRuntime } from "./anthropic-provider.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];
@@ -29,10 +24,6 @@ function readRequestHeader(init: RequestInit | undefined, name: string): string 
   }
   return new Headers(init.headers).get(name);
 }
-
-// ---------------------------------------------------------------------------
-// Anthropic provider — core generate / stream / SSE
-// ---------------------------------------------------------------------------
 
 describe("anthropic-provider", () => {
   it("creates an Anthropic-compatible language runtime without SDK helpers for generate", async () => {
@@ -171,16 +162,18 @@ describe("anthropic-provider", () => {
         type: "function",
         name: "create_file",
         description: "Create a project file",
-        inputSchema: createRuntimeJsonSchema({
-          type: "object",
-          properties: {
-            project_reference: { type: "string" },
-            path: { type: "string" },
-            content: { type: "string" },
+        inputSchema: {
+          jsonSchema: {
+            type: "object",
+            properties: {
+              project_reference: { type: "string" },
+              path: { type: "string" },
+              content: { type: "string" },
+            },
+            required: ["project_reference", "path", "content"],
+            additionalProperties: false,
           },
-          required: ["project_reference", "path", "content"],
-          additionalProperties: false,
-        }),
+        },
       }],
       toolChoice: "auto",
       maxOutputTokens: 64,
@@ -955,14 +948,7 @@ describe("anthropic-provider", () => {
     assertEquals("parallel_tool_calls" in (requestBody ?? {}), false);
   });
 
-  // ---------------------------------------------------------------------------
-  // Anthropic max_tokens model-aware defaults
-  // ---------------------------------------------------------------------------
-
   describe("Anthropic max_tokens model-aware defaults", () => {
-    // Minimal fetch stub that captures the outbound request body and returns
-    // a trivial generate-mode response, so each test can assert what max_tokens
-    // ends up on the wire without wiring the full streaming path.
     function createCapturingRuntime(modelId: string) {
       let capturedBody: Record<string, unknown> | null = null;
       const runtime = createAnthropicModelRuntime({
@@ -1030,14 +1016,7 @@ describe("anthropic-provider", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
-  // Anthropic prompt caching (cache_control breakpoints)
-  // ---------------------------------------------------------------------------
-
   describe("Anthropic prompt caching (cache_control breakpoints)", () => {
-    // Captures the outbound body for a single Anthropic generate call with a
-    // caller-provided cacheControl option. Returns the parsed body so each test
-    // can assert what landed on the wire.
     function createCachingCaptureRuntime() {
       let capturedBody: Record<string, unknown> | null = null;
       const runtime = createAnthropicModelRuntime({
@@ -1102,7 +1081,6 @@ describe("anthropic-provider", () => {
         prompt: [systemPrompt, userPrompt],
       });
       const body = getBody() as { system: unknown };
-      // Backward-compat path: without a breakpoint, system stays as a raw string.
       assertEquals(body.system, "You are a helpful assistant.");
     });
 
@@ -1143,13 +1121,11 @@ describe("anthropic-provider", () => {
       });
       const body = getBody() as { tools: Array<Record<string, unknown>> };
       assertEquals(body.tools.length, 2);
-      // First tool is unmodified
       assertEquals(body.tools[0], {
         name: "weather",
         description: "Get weather",
         input_schema: weatherTool.inputSchema,
       });
-      // Last tool carries the breakpoint
       assertEquals(body.tools[1], {
         name: "search",
         description: "Search the web",
@@ -1214,7 +1190,6 @@ describe("anthropic-provider", () => {
         cacheControl: { system: true },
       });
       const body = getBody() as Record<string, unknown>;
-      // No system field at all — nothing to attach the breakpoint to.
       assertEquals("system" in body, false);
     });
 
@@ -1228,10 +1203,6 @@ describe("anthropic-provider", () => {
       assertEquals("tools" in body, false);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // Anthropic provider tool version aliasing
-  // ---------------------------------------------------------------------------
 
   describe("Anthropic provider tool version aliasing", () => {
     const userPrompt = {
@@ -1322,10 +1293,6 @@ describe("anthropic-provider", () => {
       assertEquals(toolType(getBody()), "future_tool");
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // Anthropic native MCP server pass-through
-  // ---------------------------------------------------------------------------
 
   describe("Anthropic native MCP server pass-through", () => {
     const userPrompt = {
@@ -1418,6 +1385,607 @@ describe("anthropic-provider", () => {
       const { runtime, getBody } = captureRuntime();
       await runtime.doGenerate({ prompt: [userPrompt] });
       assertEquals("container" in (getBody() ?? {}), false);
+    });
+  });
+
+  describe("Anthropic thinking request options", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Solve this" }],
+    } as const;
+
+    function createCaptureRuntime(modelId = "claude-sonnet-4-6") {
+      let capturedBody: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "test-anthropic-key",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          capturedBody = raw ? (JSON.parse(raw) as Record<string, unknown>) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, modelId);
+      return { runtime, getBody: () => capturedBody };
+    }
+
+    it("emits thinking config when reasoning is enabled with effort", async () => {
+      const { runtime, getBody } = createCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "high" },
+      });
+      const body = getBody() as { thinking: { type: string; budget_tokens: number } };
+      assertEquals(body.thinking, {
+        type: "enabled",
+        budget_tokens: 16_384,
+      });
+    });
+
+    it("maps effort 'max' to budget_tokens 32768", async () => {
+      const { runtime, getBody } = createCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "max" },
+      });
+      const body = getBody() as { thinking: { budget_tokens: number } };
+      assertEquals(body.thinking.budget_tokens, 32_768);
+    });
+
+    it("honours explicit budgetTokens over effort", async () => {
+      const { runtime, getBody } = createCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "low", budgetTokens: 4096 },
+      });
+      const body = getBody() as { thinking: { budget_tokens: number } };
+      assertEquals(body.thinking.budget_tokens, 4096);
+    });
+
+    it("omits thinking config when reasoning is disabled", async () => {
+      const { runtime, getBody } = createCaptureRuntime();
+      await runtime.doGenerate({ prompt: [userPrompt] });
+      const body = getBody() as { thinking?: unknown };
+      assertEquals(body.thinking, undefined);
+    });
+
+    it("drops temperature and topP when thinking is enabled", async () => {
+      const { runtime, getBody } = createCaptureRuntime();
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "medium" },
+        temperature: 0.7,
+        topP: 0.9,
+      });
+      const body = getBody() as Record<string, unknown>;
+      assertEquals("temperature" in body, false);
+      assertEquals("top_p" in body, false);
+    });
+  });
+
+  describe("Anthropic provider warnings (unsupported-setting drops)", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    function okResponse() {
+      return new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+
+    function settings(result: { warnings?: unknown[] }): string[] {
+      return (result.warnings ?? []).flatMap((w) => {
+        const r = w as { setting?: string };
+        return r.setting ? [r.setting] : [];
+      });
+    }
+
+    it("warns on presencePenalty / frequencyPenalty / seed / topK drops", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-20250514");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        presencePenalty: 0.1,
+        frequencyPenalty: 0.2,
+        seed: 42,
+        topK: 10,
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, ["frequencyPenalty", "presencePenalty", "seed", "topK"]);
+    });
+
+    it("warns when stopSequences exceeds 4", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-20250514");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        stopSequences: ["a", "b", "c", "d", "e"],
+      });
+      const dropped = settings(result);
+      assertEquals(dropped, ["stopSequences"]);
+    });
+
+    it("warns on temperature and topP when thinking is enabled", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-20250514");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        reasoning: { enabled: true, effort: "medium" },
+        temperature: 0.5,
+        topP: 0.8,
+      });
+      const dropped = settings(result).sort();
+      assertEquals(dropped, ["temperature", "topP"]);
+    });
+
+    it("warns on non-text responseFormat", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () => Promise.resolve(okResponse()),
+      }, "claude-sonnet-4-20250514");
+      const result = await runtime.doGenerate({
+        prompt: [userPrompt],
+        responseFormat: { type: "json" },
+      });
+      const dropped = settings(result);
+      assertEquals(dropped, ["responseFormat"]);
+    });
+  });
+
+  describe("Anthropic cache usage reporting", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    it("surfaces cache_creation_input_tokens and cache_read_input_tokens", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: {
+                  input_tokens: 100,
+                  output_tokens: 10,
+                  cache_creation_input_tokens: 50,
+                  cache_read_input_tokens: 30,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 100,
+        outputTokens: 10,
+        totalTokens: 110,
+        cacheCreationInputTokens: 50,
+        cacheReadInputTokens: 30,
+      });
+    });
+
+    it("omits cache fields when not present", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: {
+                  input_tokens: 8,
+                  output_tokens: 2,
+                },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals(result.usage, {
+        inputTokens: 8,
+        outputTokens: 2,
+        totalTokens: 10,
+      });
+    });
+  });
+
+  describe("Anthropic thinking blocks in generate (non-streaming)", () => {
+    it("parses cleartext thinking blocks with signature", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [
+                  {
+                    type: "thinking",
+                    thinking: "Let me consider this carefully.",
+                    signature: "sig_abc123",
+                  },
+                  { type: "text", text: "The answer is 42." },
+                ],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 10, output_tokens: 5 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "What is the meaning?" }] }],
+      });
+      assertEquals(result.content, [
+        {
+          type: "reasoning",
+          text: "Let me consider this carefully.",
+          signature: "sig_abc123",
+        },
+        { type: "text", text: "The answer is 42." },
+      ]);
+    });
+
+    it("parses redacted thinking blocks", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [
+                  {
+                    type: "redacted_thinking",
+                    data: "encrypted_blob_xyz",
+                  },
+                  { type: "text", text: "I can help with that." },
+                ],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 10, output_tokens: 5 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Help me" }] }],
+      });
+      assertEquals(result.content, [
+        { type: "reasoning", redactedData: "encrypted_blob_xyz" },
+        { type: "text", text: "I can help with that." },
+      ]);
+    });
+  });
+
+  describe("Anthropic thinking multi-turn replay", () => {
+    it("replays cleartext thinking with signature in assistant messages", async () => {
+      let requestedInit: RequestInit | undefined;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          requestedInit = init;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "continued" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 20, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-sonnet-4-20250514");
+
+      await runtime.doGenerate({
+        prompt: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                text: "I need to think about this.",
+                signature: "sig_replay",
+              },
+              { type: "text", text: "Here is my answer." },
+            ],
+          },
+          {
+            role: "user",
+            content: [{ type: "text", text: "Continue" }],
+          },
+        ],
+      });
+
+      const body = typeof requestedInit?.body === "string"
+        ? JSON.parse(requestedInit.body)
+        : undefined;
+      assertEquals(body?.messages[0], {
+        role: "assistant",
+        content: [
+          {
+            type: "thinking",
+            thinking: "I need to think about this.",
+            signature: "sig_replay",
+          },
+          { type: "text", text: "Here is my answer." },
+        ],
+      });
+    });
+
+    it("replays redacted thinking blocks as redacted_thinking", async () => {
+      let requestedInit: RequestInit | undefined;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          requestedInit = init;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "continued" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 20, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-sonnet-4-20250514");
+
+      await runtime.doGenerate({
+        prompt: [
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "reasoning",
+                redactedData: "encrypted_blob_abc",
+              },
+              { type: "text", text: "My answer." },
+            ],
+          },
+          {
+            role: "user",
+            content: [{ type: "text", text: "Continue" }],
+          },
+        ],
+      });
+
+      const body = typeof requestedInit?.body === "string"
+        ? JSON.parse(requestedInit.body)
+        : undefined;
+      assertEquals(body?.messages[0], {
+        role: "assistant",
+        content: [
+          {
+            type: "redacted_thinking",
+            data: "encrypted_blob_abc",
+          },
+          { type: "text", text: "My answer." },
+        ],
+      });
+    });
+  });
+
+  describe("Anthropic redacted thinking in stream", () => {
+    it("emits reasoning-start and reasoning-end for redacted_thinking blocks", async () => {
+      const encoder = new TextEncoder();
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              ReadableStream.from([
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"encrypted"}}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
+                ),
+                encoder.encode(
+                  'event: content_block_start\ndata: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":"Answer."}}\n\n',
+                ),
+                encoder.encode(
+                  'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":5,"output_tokens":2}}\n\n',
+                ),
+              ]),
+              { status: 200, headers: { "content-type": "text/event-stream" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doStream({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+      });
+
+      const parts = await collectAsync(result.stream);
+      assertEquals(parts, [
+        { type: "reasoning-start", id: "thinking-0" },
+        { type: "reasoning-end", id: "thinking-0" },
+        { type: "text-delta", delta: "Answer." },
+        {
+          type: "finish",
+          finishReason: { unified: "stop", raw: "end_turn" },
+          usage: { inputTokens: 5, outputTokens: 2, totalTokens: 7 },
+        },
+      ]);
+    });
+  });
+
+  describe("Anthropic citation parsing", () => {
+    it("parses citations on text blocks in generate response", async () => {
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{
+                  type: "text",
+                  text: "According to the docs, Veryfront is a full-stack framework.",
+                  citations: [{
+                    type: "web_search_result_location",
+                    cited_text: "Veryfront is a full-stack framework",
+                    url: "https://veryfront.com",
+                    title: "Veryfront",
+                    start_char_index: 25,
+                    end_char_index: 60,
+                  }],
+                }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 10, output_tokens: 5 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          ),
+      }, "claude-sonnet-4-20250514");
+
+      const result = await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "What is Veryfront?" }] }],
+      });
+      assertEquals(result.content, [{
+        type: "text",
+        text: "According to the docs, Veryfront is a full-stack framework.",
+        citations: [{
+          type: "web_search_result_location",
+          citedText: "Veryfront is a full-stack framework",
+          url: "https://veryfront.com",
+          title: "Veryfront",
+          startCharIndex: 25,
+          endCharIndex: 60,
+        }],
+      }]);
+    });
+  });
+
+  describe("Anthropic userId and metadata", () => {
+    const userPrompt = {
+      role: "user",
+      content: [{ type: "text", text: "Hi" }],
+    } as const;
+
+    it("emits metadata.user_id when userId is set", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-sonnet-4-20250514");
+      await runtime.doGenerate({
+        prompt: [userPrompt],
+        userId: "user_42",
+      });
+      const body = captured as { metadata?: { user_id?: string } } | null;
+      assertEquals(body?.metadata, { user_id: "user_42" });
+    });
+
+    it("omits metadata when userId is unset", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-sonnet-4-20250514");
+      await runtime.doGenerate({ prompt: [userPrompt] });
+      assertEquals("metadata" in (captured ?? {}), false);
+    });
+  });
+
+  describe("Anthropic stop_sequences truncation", () => {
+    it("truncates stop_sequences to 4 entries", async () => {
+      let captured: Record<string, unknown> | null = null;
+      const runtime = createAnthropicModelRuntime({
+        apiKey: "k",
+        baseURL: "https://example.anthropic.test/v1",
+        fetch: (_input, init) => {
+          const raw = readRequestBody(init);
+          captured = raw ? JSON.parse(raw) : null;
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                content: [{ type: "text", text: "ok" }],
+                stop_reason: "end_turn",
+                usage: { input_tokens: 1, output_tokens: 1 },
+              }),
+              { status: 200, headers: { "content-type": "application/json" } },
+            ),
+          );
+        },
+      }, "claude-sonnet-4-20250514");
+      await runtime.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "Hi" }] }],
+        stopSequences: ["a", "b", "c", "d", "e", "f"],
+      });
+      const body = captured as { stop_sequences?: string[] } | null;
+      assertEquals(body?.stop_sequences, ["a", "b", "c", "d"]);
     });
   });
 });

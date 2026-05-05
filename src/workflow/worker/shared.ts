@@ -1,7 +1,7 @@
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { mergeInjectedWorkflowEnv } from "../../jobs/runtime-env.ts";
+import { mergeInjectedWorkflowEnv } from "#veryfront/jobs/runtime-env.ts";
 import type { WorkflowBackend } from "../backends/types.ts";
 import type { CapturedTenantContext, WorkflowRun } from "../types.ts";
 

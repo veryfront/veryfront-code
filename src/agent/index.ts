@@ -130,6 +130,11 @@ export {
   type RuntimeClientType,
   runtimeClientTypeSchema,
 } from "./runtime-client-profile.ts";
+export {
+  buildStudioMcpHeaders,
+  createLiveStudioMcpTools,
+  type LiveStudioMcpToolsOptions,
+} from "./live-studio-mcp-tools.ts";
 
 export {
   parseRuntimeAgentMarkdownDefinition,
@@ -395,6 +400,11 @@ export {
   type StartAgentRuntimeForkWithHostToolsInput,
 } from "./fork-runtime-stream.ts";
 export {
+  buildHostedChildForkInstructions,
+  HOSTED_CHILD_FORK_INSTRUCTIONS_BASE,
+  type HostedChildForkInstructionsContext,
+} from "./hosted-child-fork-instructions.ts";
+export {
   executeHostedChildForkStream,
   type ExecuteHostedChildForkStreamInput,
   finalizeHostedChildForkCompletion,
@@ -509,6 +519,21 @@ export {
   getAgentRuntimeToolResultPart,
 } from "./agent-runtime-message-adapter.ts";
 export {
+  resolveRuntimeMessageFileUrls,
+  type RuntimeFileUrlResolver,
+  type RuntimeFileUrlResolverInput,
+} from "./runtime-message-file-url-refresh.ts";
+export {
+  prepareAgentRuntimeMessagesFromUiMessages,
+  type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
+} from "./runtime-message-preparation.ts";
+export {
+  getRuntimeUploadUrl,
+  type RuntimeUploadUrlClientOptions,
+  type RuntimeUploadUrlFetch,
+  type RuntimeUploadUrlOptions,
+} from "./runtime-upload-url-client.ts";
+export {
   type ChildRunExecutionBufferCleanupInput,
   type ChildRunExecutionResourceFinalizeInput,
   closeChildRunExecutionBuffers,
@@ -584,6 +609,34 @@ export {
   type SlashCommandArtifactPolicy,
   type SlashCommandArtifactPolicyInput,
 } from "./slash-command-artifact-policy.ts";
+export {
+  listRuntimeBuiltinSkillReferenceFiles,
+  listRuntimeBuiltinSkillReferences,
+  readRuntimeBuiltinDirectorySkill,
+  readRuntimeBuiltinFlatSkill,
+  readRuntimeBuiltinSkill,
+  readRuntimeBuiltinSkillEntries,
+  readRuntimeBuiltinSkillReferenceFile,
+  resolveRuntimeBuiltinSkillReferenceFilePath,
+  resolveRuntimeBuiltinSkillsDir,
+  type RuntimeBuiltinSkillEntriesResult,
+} from "./runtime-builtin-skill-files.ts";
+export {
+  createRuntimeProjectFilesClient,
+  getRuntimeProjectFile,
+  getRuntimeProjectFiles,
+  type RuntimeGetProjectFileOptions,
+  type RuntimeProjectFile,
+  type RuntimeProjectFileListItem,
+  runtimeProjectFileListItemSchema,
+  RuntimeProjectFilesApiAuthError,
+  type RuntimeProjectFilesApiOptions,
+  runtimeProjectFileSchema,
+  type RuntimeProjectFilesClient,
+  type RuntimeProjectFilesClientOptions,
+  type RuntimeProjectFilesFetch,
+  type RuntimeProjectFilesTrace,
+} from "./runtime-project-files-client.ts";
 export {
   buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,

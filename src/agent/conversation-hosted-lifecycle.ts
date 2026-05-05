@@ -10,7 +10,7 @@ import {
   type InvokeAgentChildRunProgressInput,
   publishInvokeAgentChildRunProgress,
 } from "./invoke-agent-child-runs.ts";
-import type { ChatStreamEvent } from "../chat/protocol.ts";
+import type { ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import type {
   HostedChildLifecycleAdapter,
   HostedChildLifecycleTerminalState,

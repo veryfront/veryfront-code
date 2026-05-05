@@ -30,3 +30,23 @@ export {
   runWithVeryfrontCloudContextAsync,
 } from "./veryfront-cloud/context.ts";
 export type { VeryfrontCloudContext } from "./veryfront-cloud/context.ts";
+export type { VeryfrontCloudProviderId } from "./veryfront-cloud/shared.ts";
+export {
+  DEFAULT_VERYFRONT_CLOUD_MODEL_ID,
+  findVeryfrontCloudModel,
+  findVeryfrontCloudModelByModelId,
+  getVeryfrontCloudProviderFromModelId,
+  groupVeryfrontCloudModelsByProvider,
+  normalizeVeryfrontCloudModelId,
+  resolveHostedVeryfrontCloudModelId,
+  resolveVeryfrontCloudModelId,
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudThinkingProviderOptions,
+  tryGetVeryfrontCloudProviderFromModelId,
+  VERYFRONT_CLOUD_CHAT_MODELS,
+  VERYFRONT_CLOUD_MODEL_PREFIX,
+} from "./veryfront-cloud/model-catalog.ts";
+export type {
+  VeryfrontCloudChatModel,
+  VeryfrontCloudModelThinkingConfig,
+} from "./veryfront-cloud/model-catalog.ts";

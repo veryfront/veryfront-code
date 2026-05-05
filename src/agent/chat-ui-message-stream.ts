@@ -1,4 +1,4 @@
-import type { ChatFinishReason, ChatStreamEvent } from "../chat/protocol.ts";
+import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import type {
   ChatDynamicToolUiPart,
   ChatUiMessage,

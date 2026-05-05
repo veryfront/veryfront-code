@@ -1,5 +1,5 @@
-import type { ChatRuntimeOverrides, DurableRootRunDescriptor } from "../chat/types.ts";
-import { chatRequestContextSchema, chatUiMessagesSchema } from "../chat/types.ts";
+import type { ChatRuntimeOverrides, DurableRootRunDescriptor } from "#veryfront/chat/types.ts";
+import { chatRequestContextSchema, chatUiMessagesSchema } from "#veryfront/chat/types.ts";
 import { z } from "zod";
 import type { RuntimeAgentRunInvocation } from "./runtime-agent-invocation-contract.ts";
 

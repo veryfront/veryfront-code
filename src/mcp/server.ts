@@ -8,7 +8,7 @@ import type { MCPServerConfig, ToolListEntry } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { VERSION } from "#veryfront/utils/version.ts";
-import type { IntegrationRuntimeConfig } from "../integrations/types.ts";
+import type { IntegrationRuntimeConfig } from "#veryfront/integrations/types.ts";
 import { logger as baseLogger } from "#veryfront/utils";
 import { createMCPHTTPHandler } from "./http-transport.ts";
 import { SessionManager } from "./session.ts";

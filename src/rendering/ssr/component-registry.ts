@@ -2,6 +2,7 @@ import { dirname, join } from "#veryfront/compat/path";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger as logger } from "#veryfront/utils";
 import * as React from "react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { VirtualModuleSystem } from "../virtual-module-system.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
 
@@ -23,7 +24,7 @@ function createErrorFallbackComponent(
   error: string,
 ): React.ComponentType<Record<string, unknown>> {
   const ErrorFallback: React.FC<Record<string, unknown>> = () => {
-    const isDev = typeof process !== "undefined" && process.env?.NODE_ENV === "development";
+    const isDev = getEnv("NODE_ENV") === "development";
     if (!isDev) return React.createElement(React.Fragment);
 
     return React.createElement(

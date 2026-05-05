@@ -1,4 +1,5 @@
 import { getSsrMaxConcurrentTransformsEnv } from "#veryfront/config/env.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
   DISTRIBUTED_SSR_MODULE_TTL_PREVIEW_SEC,
   DISTRIBUTED_SSR_MODULE_TTL_PRODUCTION_SEC,
@@ -43,8 +44,7 @@ export function getMaxConcurrentTransforms(): number {
 let _transformPerProjectLimit: number | undefined;
 export function getTransformPerProjectLimit(): number {
   if (_transformPerProjectLimit !== undefined) return _transformPerProjectLimit;
-  const envLimit = globalThis.Deno?.env?.get("SSR_TRANSFORM_PER_PROJECT_LIMIT") ??
-    globalThis.process?.env?.SSR_TRANSFORM_PER_PROJECT_LIMIT;
+  const envLimit = getHostEnv("SSR_TRANSFORM_PER_PROJECT_LIMIT");
   _transformPerProjectLimit = envLimit !== undefined
     ? Number.parseInt(String(envLimit), 10)
     : Math.ceil(getMaxConcurrentTransforms() / 3);

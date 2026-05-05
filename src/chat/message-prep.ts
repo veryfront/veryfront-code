@@ -7,6 +7,7 @@ import {
 } from "./conversation.ts";
 import {
   buildDataFileAnnotation,
+  type ChatAssistantContentPart,
   type ChatToolResultOutput,
   type ChatToolResultPart,
   type ChatUiMessage,
@@ -38,6 +39,8 @@ export function compressTurn(
 
   for (let i = startIdx; i <= endIdx; i++) {
     const msg = messages[i];
+    if (!msg) continue;
+
     if (msg.role === "user") {
       const text = typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content);
       userQuery = truncate(text, 100);
@@ -76,15 +79,18 @@ function collectTurns(messages: ProviderModelMessage[]): TurnWindow[] {
   let currentTurn: TurnWindow | null = null;
 
   for (let i = 0; i < messages.length; i++) {
-    if (messages[i].role === "user") {
+    const message = messages[i];
+    if (!message) continue;
+
+    if (message.role === "user") {
       if (currentTurn) {
         currentTurn.endIdx = i - 1;
         turns.push(currentTurn);
       }
-      currentTurn = { startIdx: i, endIdx: i, tokens: estimateTokens(messages[i].content) };
+      currentTurn = { startIdx: i, endIdx: i, tokens: estimateTokens(message.content) };
     } else if (currentTurn) {
       currentTurn.endIdx = i;
-      currentTurn.tokens += estimateTokens(messages[i].content);
+      currentTurn.tokens += estimateTokens(message.content);
     }
   }
 
@@ -112,6 +118,8 @@ export function enforceTokenBudgetWithTurnCompression(
   let compressCount = 0;
   while (totalTokens > effectiveBudget && compressCount < turns.length - minKeep) {
     const turn = turns[compressCount];
+    if (!turn) break;
+
     if (turn.compressed) {
       compressCount++;
       continue;
@@ -132,8 +140,10 @@ export function enforceTokenBudgetWithTurnCompression(
     result.splice(turn.startIdx, turnLength, ...compressed);
     const indexShift = compressed.length - turnLength;
     for (let j = compressCount + 1; j < turns.length; j++) {
-      turns[j].startIdx += indexShift;
-      turns[j].endIdx += indexShift;
+      const laterTurn = turns[j];
+      if (!laterTurn) continue;
+      laterTurn.startIdx += indexShift;
+      laterTurn.endIdx += indexShift;
     }
     turn.endIdx = turn.startIdx + compressed.length - 1;
     turn.tokens = compressedTokens;
@@ -148,13 +158,18 @@ export function enforceTokenBudgetWithTurnCompression(
   const finalMinKeep = Math.min(2, finalTurns.length);
   let dropCount = 0;
   while (totalTokens > effectiveBudget && dropCount < finalTurns.length - finalMinKeep) {
-    totalTokens -= finalTurns[dropCount].tokens;
+    const turn = finalTurns[dropCount];
+    if (!turn) break;
+    totalTokens -= turn.tokens;
     dropCount++;
   }
 
   if (dropCount === 0) return result;
 
-  const firstKeepIdx = finalTurns[dropCount].startIdx;
+  const firstKeptTurn = finalTurns[dropCount];
+  if (!firstKeptTurn) return result;
+
+  const firstKeepIdx = firstKeptTurn.startIdx;
   return result.slice(firstKeepIdx);
 }
 
@@ -262,7 +277,7 @@ export function rewriteUnsupportedFilePartsAsAnnotations(
 
     if (lastTextIndex >= 0) {
       const textPart = kept[lastTextIndex];
-      if (textPart.type === "text") {
+      if (textPart?.type === "text") {
         kept[lastTextIndex] = { type: "text", text: textPart.text + annotation };
       }
     } else {
@@ -504,7 +519,8 @@ function wrapToolResultOutput(
 export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].role === "user") {
+    const message = messages[i];
+    if (message?.role === "user") {
       lastUserIdx = i;
       break;
     }
@@ -587,6 +603,8 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
 
   for (let index = 0; index < result.length; index++) {
     const message = result[index];
+    if (!message) continue;
+
     if (message.role !== "assistant" || !Array.isArray(message.content)) {
       continue;
     }
@@ -598,7 +616,7 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
       }
     }
 
-    const repairedContent: typeof message.content = [];
+    const repairedContent: ChatAssistantContentPart[] = [];
     const regularToolCalls: Array<{ id: string; toolName: string }> = [];
 
     for (const part of message.content) {
@@ -768,7 +786,7 @@ export function compactForStep(
   );
 
   let end = compacted.length;
-  while (end > 1 && compacted[end - 1].role === "assistant") {
+  while (end > 1 && compacted[end - 1]?.role === "assistant") {
     end--;
   }
 

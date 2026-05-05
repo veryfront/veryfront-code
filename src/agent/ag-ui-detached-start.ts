@@ -10,7 +10,7 @@ import {
   type RunResumeSessionManager,
 } from "./runtime/index.ts";
 import type { Agent } from "./types.ts";
-import type { ChatUiMessage, MessageMetadata } from "../chat/types.ts";
+import type { ChatUiMessage, MessageMetadata } from "#veryfront/chat/types.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const AG_UI_DETACHED_RUN_ID_SCHEMA = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);

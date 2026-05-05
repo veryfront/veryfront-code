@@ -298,7 +298,7 @@ deno task test src/modules/react-loader/
 - [`rendering/`](../rendering/README.md) - Uses modules for component loading
 - [`build/`](../build/README.md) - Bundles modules for production
 - [`platform/`](../platform/README.md) - File system access
-- [`core/config/`](../core/README.md) - Configuration management
+- [`config/`](../config/README.md) - Configuration management
 
 ## Troubleshooting
 
