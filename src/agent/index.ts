@@ -567,10 +567,15 @@ export {
 
 export {
   buildHostedChildToolDescription,
+  DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
+  DEFAULT_HOSTED_CHILD_REQUESTED_TOOL_COMPANIONS,
+  DEFAULT_HOSTED_CHILD_SANDBOX_REQUIRED_CUE_PATTERN,
   expandHostedChildRequestedTools,
   type HostedChildForkRuntimeToolSelectionResult,
   type HostedChildRequestedToolsInput,
+  sanitizeDefaultHostedChildRequestedTools,
   sanitizeHostedChildRequestedTools,
+  selectDefaultHostedChildForkRuntimeTools,
   selectHostedChildForkRuntimeTools,
   shouldPruneSandboxToolsFromHostedChildRequest,
 } from "./hosted-child-requested-tools.ts";
