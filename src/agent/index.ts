@@ -585,6 +585,18 @@ export {
   type SlashCommandArtifactPolicyInput,
 } from "./slash-command-artifact-policy.ts";
 export {
+  listRuntimeBuiltinSkillReferenceFiles,
+  listRuntimeBuiltinSkillReferences,
+  readRuntimeBuiltinDirectorySkill,
+  readRuntimeBuiltinFlatSkill,
+  readRuntimeBuiltinSkill,
+  readRuntimeBuiltinSkillEntries,
+  readRuntimeBuiltinSkillReferenceFile,
+  resolveRuntimeBuiltinSkillReferenceFilePath,
+  resolveRuntimeBuiltinSkillsDir,
+  type RuntimeBuiltinSkillEntriesResult,
+} from "./runtime-builtin-skill-files.ts";
+export {
   buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
