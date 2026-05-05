@@ -16,7 +16,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
 import { writeTextFile } from "#veryfront/testing/deno-compat";
-import * as esbuild from "esbuild";
+import * as esbuild from "npm:esbuild@0.27.4";
 import { bundleScript } from "../../../../../src/build/renderer/services/script-bundler.ts";
 import type {
   BundleResult,

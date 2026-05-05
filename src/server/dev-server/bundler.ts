@@ -1,5 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
-import type { Plugin } from "esbuild";
+import type { Plugin } from "veryfront/extensions/bundler";
 import { dirname, join, resolve as pathResolve } from "#veryfront/compat/path/index.ts";
 import type { ShellAdapter } from "#veryfront/platform/adapters/base.ts";
 
@@ -17,7 +17,7 @@ export class Bundler {
     resolveDirectory: string,
   ): Promise<string> {
     try {
-      const { build } = await import("esbuild");
+      const { build } = await import("veryfront/extensions/bundler");
       const loader = this.determineFileLoader(content, filePath);
 
       const result = await build({

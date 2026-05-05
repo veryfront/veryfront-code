@@ -1,4 +1,4 @@
-import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "esbuild";
+import type { OnLoadArgs, OnResolveArgs, Plugin, PluginBuild } from "veryfront/extensions/bundler";
 import { NETWORK_ERROR } from "#veryfront/errors";
 // Direct import from base.ts to avoid circular dependency through barrel
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";

@@ -8,7 +8,7 @@ import type { HandlerContext } from "../../types.ts";
 import { ensureProjectDiscovery } from "./project-discovery.ts";
 import { agentRegistry } from "#veryfront/agent/composition/composition.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
-import { stop as stopEsbuild } from "esbuild";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 function createHandlerContext(
   projectDir: string,

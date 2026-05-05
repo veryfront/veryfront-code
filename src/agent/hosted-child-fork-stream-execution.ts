@@ -6,8 +6,8 @@ import {
   extractFinalStepToolResults,
   getStreamSteps,
 } from "../chat/final-step-fallback.ts";
-import { mapHostedStreamPartToChatUiChunks } from "../chat/hosted-ui-chunk-mapping.ts";
-import type { ChatMessageMetadata, ChatUiMessageChunk } from "../chat/protocol.ts";
+import { mapHostedStreamPartToChatUiChunks } from "#veryfront/chat/hosted-ui-chunk-mapping.ts";
+import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import {
   appendMissingChildRunToolCalls,
   appendMissingChildRunToolResults,

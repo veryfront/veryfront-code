@@ -1,4 +1,4 @@
-import { mergeToolInputDelta, parseToolInputObject } from "../agent/data-stream.ts";
+import { mergeToolInputDelta, parseToolInputObject } from "#veryfront/agent/data-stream.ts";
 import {
   formatToolErrorText,
   isCommentOnlySseFrame,

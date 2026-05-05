@@ -10,7 +10,7 @@ import {
   buildMissingFallbackToolChunks,
   buildMissingFallbackToolChunksFromParts,
 } from "../chat/final-step-fallback.ts";
-import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../chat/types.ts";
+import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "#veryfront/chat/types.ts";
 import {
   cloneMirroredToolChunkState,
   type MirroredToolChunkState,

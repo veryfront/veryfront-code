@@ -1,31 +1,29 @@
-import type { Root as HastRoot } from "hast";
-import type { Root as MdastRoot } from "mdast";
-import type { Pluggable } from "unified";
-import rehypeHighlight from "rehype-highlight";
-import rehypeSlug from "rehype-slug";
-import remarkFrontmatter from "remark-frontmatter";
-import remarkGfm from "remark-gfm";
-import { remarkMdxHeadings } from "./remark-headings.ts";
-import { remarkCodeBlocks, remarkMdxRemoveParagraphs } from "./remark-mdx-utils.ts";
+/**
+ * Shim that routes MDX plugin lookups through the `ContentTransformer`
+ * extension contract (default implementation: `@veryfront/ext-mdx`).
+ *
+ * Build-time MDX compilers (`src/build/compiler/mdx-compiler/mdx-processor.ts`,
+ * `src/build/renderer/services/mdx-bundler.ts`, `layout-applicator.ts`)
+ * historically imported `getRemarkPlugins` / `getRehypePlugins` directly.
+ * Now those callers get the canonical plugin list from whichever
+ * `ContentTransformer` implementation is registered.
+ *
+ * When no implementation is registered, the lookup throws with an
+ * actionable install message pointing at `@veryfront/ext-mdx`.
+ *
+ * @module transforms/plugins/plugin-loader
+ */
 
-type PluginFunction = (
-  tree: MdastRoot | HastRoot,
-  file?: unknown,
-) =>
-  | void
-  | Promise<void>
-  | ((tree: MdastRoot | HastRoot, file?: unknown) => void);
+import type { Pluggable } from "unified";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ContentTransformer } from "#veryfront/extensions/interfaces/index.ts";
 
 export function getRemarkPlugins(): Pluggable[] {
-  return [
-    remarkGfm,
-    remarkFrontmatter,
-    remarkMdxHeadings,
-    remarkMdxRemoveParagraphs,
-    remarkCodeBlocks,
-  ];
+  const transformer = resolveContract<ContentTransformer>("ContentTransformer");
+  return transformer.getRemarkPlugins() as unknown as Pluggable[];
 }
 
 export function getRehypePlugins(): Pluggable[] {
-  return [rehypeHighlight, rehypeSlug];
+  const transformer = resolveContract<ContentTransformer>("ContentTransformer");
+  return transformer.getRehypePlugins() as unknown as Pluggable[];
 }

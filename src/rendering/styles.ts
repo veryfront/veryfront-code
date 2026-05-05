@@ -12,4 +12,4 @@ export {
   createStyleScopeProfile,
   type StyleScopeProfile,
 } from "../html/styles-builder/style-scope-profile.ts";
-export { resolveStyleContentVersion } from "../html/styles-builder/content-version.ts";
+export { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";

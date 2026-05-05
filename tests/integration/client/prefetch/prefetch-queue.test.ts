@@ -3,6 +3,7 @@
  * Tests queue management, concurrent prefetching, and resource callback handling
  */
 
+import "../../../_helpers/contract-init.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { PrefetchQueue } from "#veryfront/rendering/client/prefetch/prefetch-queue.ts";

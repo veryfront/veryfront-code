@@ -1,1 +1,1 @@
-export type { ChatFinishReason, ChatStreamEvent } from "../../../chat/protocol.ts";
+export type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";

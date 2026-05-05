@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createCompileArgs } from "../../../scripts/build/compile-binary.ts";

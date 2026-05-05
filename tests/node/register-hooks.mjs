@@ -5,8 +5,8 @@
  * Usage: node --import ./tests/node/register-hooks.mjs your-script.ts
  */
 
-import { register } from 'node:module';
+import { register } from "node:module";
 
 // Register our resolver hooks
 // The second argument must be a URL string, not a URL object
-register('./resolver-hooks.mjs', import.meta.url);
+register("./resolver-hooks.mjs", import.meta.url);

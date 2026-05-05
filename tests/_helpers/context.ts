@@ -21,6 +21,7 @@
  * ```
  */
 
+import "./contract-init.ts";
 import { join } from "#veryfront/compat/path";
 import {
   isAlreadyExistsError,
@@ -52,7 +53,7 @@ import { getFreePort } from "./utils.ts";
 // This is done globally so all tests share the same esbuild instance
 let esbuildInitialized = false;
 try {
-  const { initialize } = await import("esbuild");
+  const { initialize } = await import("npm:esbuild@0.27.4");
   await initialize({ worker: false });
   esbuildInitialized = true;
 
@@ -135,6 +136,20 @@ export async function registerExtOpenAIForTests(): Promise<void> {
   }
 }
 
+// Register the ext-mdx ContentTransformer contract. Delegates to the same
+// helper used by unit-test side-effect imports — must run again after
+// resetAllTestState() or teardownAll().
+export async function registerExtMdxForTests(): Promise<void> {
+  try {
+    const { registerExtMdx } = await import(
+      "../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts"
+    );
+    await registerExtMdx();
+  } catch {
+    // Ignore if ext-mdx cannot be loaded
+  }
+}
+
 export async function registerExtAnthropicForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
@@ -172,9 +187,47 @@ export async function registerExtAnthropicForTests(): Promise<void> {
   }
 }
 
+export async function registerExtGoogleForTests(): Promise<void> {
+  try {
+    const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
+    const { createAIProviderRegistry } = await import(
+      "../../src/extensions/registries/ai-provider-registry.ts"
+    );
+    const { AIProviderRegistryName } = await import(
+      "../../src/extensions/interfaces/index.ts"
+    );
+    const extGoogleFactory = (await import("../../extensions/ext-google/src/index.ts")).default;
+    const ext = extGoogleFactory();
+    const registry = tryResolve<ReturnType<typeof createAIProviderRegistry>>(
+      AIProviderRegistryName,
+    ) ?? createAIProviderRegistry();
+    register(AIProviderRegistryName, registry);
+    const noopLogger = {
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    };
+    await ext.setup?.({
+      config: {},
+      logger: noopLogger,
+      provide: (name: string, impl: unknown) => register(name, impl),
+      get: (name: string) => (name === AIProviderRegistryName ? registry : undefined),
+      require: (name: string) => {
+        if (name === AIProviderRegistryName) return registry;
+        throw new Error(`require not supported for "${name}" in test setup`);
+      },
+    } as never);
+  } catch {
+    // Ignore if ext-google cannot be loaded — provider is optional
+  }
+}
+
 await registerExtBabelForTests();
 await registerExtOpenAIForTests();
+await registerExtMdxForTests();
 await registerExtAnthropicForTests();
+await registerExtGoogleForTests();
 
 export { esbuildInitialized };
 
@@ -603,6 +656,21 @@ export class TestContext {
       // Ignore — ext-openai is optional; tests that don't need it will still pass.
     }
 
+    // Materialize ext-mdx into the project's extensions/ dir so that
+    // `discoverProjectExtensions` re-registers ContentTransformer after
+    // bootstrap's teardownAll() wipes the contract registry.
+    try {
+      const extMdxDir = join(this.projectDir, "extensions", "ext-mdx");
+      await mkdir(extMdxDir, { recursive: true });
+      const extMdxReal = resolvePath("extensions/ext-mdx/src/index.ts");
+      await writeTextFile(
+        join(extMdxDir, "index.ts"),
+        `export { default } from "${"file://" + extMdxReal}";\n`,
+      );
+    } catch {
+      // Ignore — graceful fallback via tryResolve in the shim covers it.
+    }
+
     // Materialize ext-anthropic for tests that exercise anthropic/* model paths.
     try {
       const extAnthropicDir = join(this.projectDir, "extensions", "ext-anthropic");
@@ -614,6 +682,19 @@ export class TestContext {
       );
     } catch {
       // Ignore — ext-anthropic is optional; tests that don't need it will still pass.
+    }
+
+    // Materialize ext-google for tests that exercise google/* model paths.
+    try {
+      const extGoogleDir = join(this.projectDir, "extensions", "ext-google");
+      await mkdir(extGoogleDir, { recursive: true });
+      const extGoogleReal = resolvePath("extensions/ext-google/src/index.ts");
+      await writeTextFile(
+        join(extGoogleDir, "index.ts"),
+        `export { default } from "${"file://" + extGoogleReal}";\n`,
+      );
+    } catch {
+      // Ignore — ext-google is optional; tests that don't need it will still pass.
     }
 
     await writeTextFile(
@@ -681,17 +762,16 @@ export async function withTestContext<T>(
       // Reset ALL state before test to ensure clean isolation
       await resetAllTestState();
 
-      // Re-register ext-babel for unit tests that import via #veryfront
-      // rather than going through `startProductionServer`'s bootstrap.
+      // Re-register all extension contracts after resetAllTestState()
+      // wipes the registry via teardownAll().
       await registerExtBabelForTests();
-
-      // Re-register ext-openai so openai/* model paths resolve after
-      // teardownAll() clears the registry between tests.
+      await registerExtMdxForTests();
       await registerExtOpenAIForTests();
-
-      // Re-register ext-anthropic so anthropic/* model paths resolve after
-      // teardownAll() clears the registry between tests.
       await registerExtAnthropicForTests();
+
+      // Re-register ext-google so google/* model paths resolve after
+      // teardownAll() clears the registry between tests.
+      await registerExtGoogleForTests();
 
       // Clear MDX renderer cache at the START of each test to ensure
       // the singleton picks up this test's cache dir (via AsyncLocalStorage),

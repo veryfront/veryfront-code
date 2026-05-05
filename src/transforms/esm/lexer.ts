@@ -1,5 +1,11 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import { init, parse } from "es-module-lexer";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type {
+  ImportSpecifier,
+  ModuleLexer,
+} from "#veryfront/extensions/interfaces/module-lexer.ts";
+
+export type { ImportSpecifier };
 
 const logger = baseLogger.component("es-module-lexer");
 
@@ -37,31 +43,20 @@ function unmaskHttpUrls(code: string, urlMap: Map<string, string>): string {
   return result;
 }
 
+function getLexer(): ModuleLexer {
+  return resolveContract<ModuleLexer>("ModuleLexer");
+}
+
 export async function initLexer(): Promise<void> {
   if (initPromise) {
     await initPromise;
     return;
   }
 
-  // es-module-lexer@1.5 exports init as a Promise (not a function) in ESM build
-  // but some typings expect a function. Handle both to avoid type errors.
-  const anyInit = init as unknown;
-  initPromise = typeof anyInit === "function"
-    ? (anyInit as () => Promise<void>)()
-    : (anyInit as Promise<void>);
-
+  const lexer = getLexer();
+  initPromise = lexer.init ? lexer.init() : Promise.resolve();
   await initPromise;
 }
-
-export type ImportSpecifier = {
-  n: string | undefined; // The module specifier (e.g., "react")
-  s: number; // Start of module specifier
-  e: number; // End of module specifier
-  ss: number; // Start of import statement
-  se: number; // End of import statement
-  d: number; // > -1 if dynamic import
-  a: number; // import attribute index
-};
 
 function logParseError(error: unknown, code: string): void {
   const errorMsg = error instanceof Error ? error.message : String(error);
@@ -93,7 +88,7 @@ export async function parseImports(code: string): Promise<readonly ImportSpecifi
 
   let imports: readonly ImportSpecifier[];
   try {
-    [imports] = parse(masked);
+    imports = getLexer().parse(masked);
   } catch (error) {
     logParseError(error, masked);
     throw error;
@@ -120,7 +115,7 @@ export async function replaceSpecifiers(
   await initLexer();
 
   const { masked, urlMap } = maskHttpUrls(code);
-  const [imports] = parse(masked);
+  const imports = getLexer().parse(masked);
 
   let result = masked;
 
@@ -165,7 +160,7 @@ export async function rewriteImports(
   await initLexer();
 
   const { masked, urlMap } = maskHttpUrls(code);
-  const [imports] = parse(masked);
+  const imports = getLexer().parse(masked);
 
   let result = masked;
 

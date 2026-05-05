@@ -286,8 +286,8 @@ export const MY_ERROR = defineError({
 
 ## Related Modules
 
-- [`observability/`](../../observability/README.md) - Error logging and tracing
-- [`server/`](../../server/README.md) - HTTP error responses
+- [`observability/`](../observability/README.md) - Error logging and tracing
+- [`server/`](../server/README.md) - HTTP error responses
 
 ## References
 

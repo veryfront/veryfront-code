@@ -88,7 +88,7 @@ async function transformImport(
   imp: AliasImport,
   fs: FSAdapter,
   esmCacheDir: string,
-  transform: typeof import("esbuild").transform,
+  transform: typeof import("veryfront/extensions/bundler").transform,
 ): Promise<{ original: string; replacement: string } | null> {
   const readFile = createFileReader(fs);
   const resolved = await resolveFileWithExtension(imp.relativePath, readFile);
@@ -152,7 +152,7 @@ async function transformAliasImports(
   const label = type === "project-alias" ? "@/ imports" : "/_vf_modules/ imports";
   logger.debug(`${LOG_PREFIX_MDX_LOADER} Found ${imports.length} ${label} to transform`);
 
-  const { transform } = await import("esbuild");
+  const { transform } = await import("veryfront/extensions/bundler");
   let result = code;
 
   for (const imp of imports) {

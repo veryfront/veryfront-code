@@ -26,7 +26,7 @@ import { generateId, parseDuration } from "../types.ts";
 import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
-import { mergeInjectedWorkflowEnv } from "../../jobs/runtime-env.ts";
+import { mergeInjectedWorkflowEnv } from "#veryfront/jobs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";

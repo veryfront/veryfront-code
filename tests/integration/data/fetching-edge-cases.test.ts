@@ -3,6 +3,7 @@
  * Tests network failures, timeout scenarios, invalid responses, and error handling
  **************************/
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { type DataContext, DataFetcher, type PageWithData } from "#veryfront/data/index.ts";

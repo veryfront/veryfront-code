@@ -63,17 +63,39 @@ jobs:
 
   tests-e2e-rsc-browser:
     runs-on: veryfront-k8s-runners
-    timeout-minutes: 15
+    timeout-minutes: 25
     name: tests (rsc browser e2e)
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
-      - name: Force apt to IPv4
-        run: echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+      - name: Configure apt retries and mirrors
+        run: |
+          sudo sed -i \
+            -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          {
+            echo 'Acquire::ForceIPv4 "true";'
+            echo 'Acquire::Retries "5";'
+            echo 'Acquire::http::Timeout "30";'
+            echo 'Acquire::https::Timeout "30";'
+          } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
       - name: Install Chromium
-        run: deno run -A npm:playwright install --with-deps chromium
+        run: |
+          for attempt in 1 2 3; do
+            deno run -A npm:playwright install --with-deps chromium && exit 0
+            status=$?
+
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+
+            sudo apt-get clean
+            sudo rm -rf /var/lib/apt/lists/*
+            sleep $((attempt * 20))
+          done
       - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: 10
@@ -87,17 +109,39 @@ jobs:
 
   tests-binary-e2e:
     runs-on: veryfront-k8s-runners
-    timeout-minutes: 20
+    timeout-minutes: 35
     name: tests (binary e2e)
     steps:
       - uses: actions/checkout@v5
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
-      - name: Force apt to IPv4
-        run: echo 'Acquire::ForceIPv4 "true";' | sudo tee /etc/apt/apt.conf.d/99force-ipv4
+      - name: Configure apt retries and mirrors
+        run: |
+          sudo sed -i \
+            -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+            /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          {
+            echo 'Acquire::ForceIPv4 "true";'
+            echo 'Acquire::Retries "5";'
+            echo 'Acquire::http::Timeout "30";'
+            echo 'Acquire::https::Timeout "30";'
+          } | sudo tee /etc/apt/apt.conf.d/99veryfront-ci-retries
       - name: Install Chromium
-        run: deno run -A npm:playwright install --with-deps chromium
+        run: |
+          for attempt in 1 2 3; do
+            deno run -A npm:playwright install --with-deps chromium && exit 0
+            status=$?
+
+            if [ "$attempt" -eq 3 ]; then
+              exit "$status"
+            fi
+
+            sudo apt-get clean
+            sudo rm -rf /var/lib/apt/lists/*
+            sleep $((attempt * 20))
+          done
       - uses: nick-fields/retry@v4.0.0
         with:
           timeout_minutes: 15

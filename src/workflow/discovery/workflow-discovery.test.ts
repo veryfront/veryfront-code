@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter, RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import { stop as stopEsbuild } from "esbuild";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { discoverWorkflows, findWorkflowById } from "./workflow-discovery.ts";
 

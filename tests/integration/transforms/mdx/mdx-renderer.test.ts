@@ -1,3 +1,4 @@
+import "../../../_helpers/contract-init.ts";
 import * as React from "react";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";

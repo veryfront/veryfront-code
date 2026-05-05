@@ -1,5 +1,5 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals, assertExists } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import type { Code, Paragraph, Root } from "mdast";
 import { VFile } from "vfile";
 import {

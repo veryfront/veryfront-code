@@ -4,7 +4,7 @@ import {
   stripLeadingEmptyObjectPlaceholder,
 } from "./data-stream.ts";
 import type { AgUiRuntimeStreamEvent } from "./ag-ui-browser-encoder.ts";
-import type { ChatFinishReason, ChatStreamEvent } from "../chat/protocol.ts";
+import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 
 export interface AgUiRuntimeChatStreamEncoderState {
   isStepOpen: boolean;

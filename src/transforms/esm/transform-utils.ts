@@ -1,4 +1,4 @@
-import type { Loader } from "esbuild";
+import type { Loader } from "veryfront/extensions/bundler";
 import { shortHash } from "#veryfront/utils/hash-utils.ts";
 
 /**

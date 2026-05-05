@@ -1,4 +1,4 @@
-import type * as esbuild from "esbuild";
+import type * as esbuild from "veryfront/extensions/bundler";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
 
 type FileType = "mdx" | "tsx" | "ts" | "jsx" | "js" | "css" | "json";

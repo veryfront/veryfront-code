@@ -8,6 +8,7 @@
  * @module
  */
 
+import "./init.ts";
 import { isBun, isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { getEnvOverlayStorage } from "#veryfront/platform/compat/process.ts";
 

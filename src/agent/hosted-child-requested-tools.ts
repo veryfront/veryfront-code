@@ -1,3 +1,7 @@
+import type { HostToolSet } from "#veryfront/tool";
+
+import { getForkRuntimeAllowedToolNames } from "./provider-native-tool-inventory.ts";
+
 export interface HostedChildRequestedToolsInput {
   prompt: string;
   requestedTools?: readonly string[];
@@ -107,6 +111,62 @@ export function shouldPruneSandboxToolsFromHostedChildRequest(input: {
   }
 
   return !matchesSandboxRequiredCue(input.sandboxRequiredCuePattern, input.prompt);
+}
+
+export type HostedChildForkRuntimeToolSelectionResult =
+  | {
+    ok: true;
+    forkTools: HostToolSet;
+  }
+  | {
+    ok: false;
+    errorMessage: string;
+  };
+
+export function selectHostedChildForkRuntimeTools(input: {
+  provider: string;
+  forkModel?: string;
+  forkTools: HostToolSet;
+  requestedTools?: readonly string[];
+}): HostedChildForkRuntimeToolSelectionResult {
+  if (!input.requestedTools?.length) {
+    return {
+      ok: true,
+      forkTools: input.forkTools,
+    };
+  }
+
+  const availableNames = new Set(
+    getForkRuntimeAllowedToolNames({
+      provider: input.provider,
+      forkModel: input.forkModel,
+      forkTools: input.forkTools,
+    }),
+  );
+  const unavailableRequested = input.requestedTools.filter((toolName) =>
+    !availableNames.has(toolName)
+  );
+  if (unavailableRequested.length > 0) {
+    return {
+      ok: false,
+      errorMessage: `Requested fork tools not available in runtime: ${
+        unavailableRequested.join(", ")
+      }. Available: ${[...availableNames].sort().join(", ")}.`,
+    };
+  }
+
+  const allowedSet = new Set(input.requestedTools);
+  const forkTools: HostToolSet = {};
+  for (const [toolName, toolDefinition] of Object.entries(input.forkTools)) {
+    if (allowedSet.has(toolName)) {
+      forkTools[toolName] = toolDefinition;
+    }
+  }
+
+  return {
+    ok: true,
+    forkTools,
+  };
 }
 
 export function buildHostedChildToolDescription(): string {

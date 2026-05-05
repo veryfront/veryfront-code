@@ -5,6 +5,7 @@
  * Focus: Ensuring veryfront module paths are NOT converted to esm.sh URLs.
  */
 
+import "../../_helpers/contract-init.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import { bundleHttpImports, hasHttpImports } from "../../../src/transforms/esm/http-bundler.ts";

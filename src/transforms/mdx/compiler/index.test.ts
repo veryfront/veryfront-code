@@ -1,3 +1,4 @@
+import "./__tests__/content-transformer-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { compileContent } from "./index.ts";

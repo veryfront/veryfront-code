@@ -1,0 +1,129 @@
+import { assertEquals } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
+  buildHostedChatRequestFromRuntimeAgentInvocation,
+  hostedChatRequestSchema,
+  hostedChatRuntimeOverridesSchema,
+  RuntimeAgentRunInvocationSchema,
+} from "./index.ts";
+
+const conversationId = "10000000-1000-4000-8000-100000000001";
+const messageId = "10000000-1000-4000-8000-100000000002";
+const inputAnchorMessageId = "10000000-1000-4000-8000-100000000003";
+const userId = "10000000-1000-4000-8000-100000000004";
+const projectId = "10000000-1000-4000-8000-100000000005";
+const branchId = "10000000-1000-4000-8000-100000000006";
+
+function createRuntimeInvocation() {
+  return RuntimeAgentRunInvocationSchema.parse({
+    run: {
+      agentServiceId: "runtime-provider",
+      agentId: "builder",
+      conversationId,
+      runId: "run_root_1",
+      messageId,
+      inputAnchorMessageId,
+      requestedByUserId: userId,
+      project: {
+        projectId,
+        projectSlug: "demo-project",
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: branchId,
+      },
+      parentConversationId: "10000000-1000-4000-8000-100000000007",
+      parentRunId: "run_parent_1",
+      spawnedFromToolCallId: "tool_1",
+    },
+    messages: [{ id: "user-message-1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+    tools: [{
+      name: "studio_focus_component",
+      inputSchema: {
+        type: "object",
+        properties: {
+          componentId: { type: "string" },
+        },
+      },
+    }],
+    context: [{ type: "text", text: "Current file: app.tsx" }],
+    forwardedProps: { activeChatId: "chat_123" },
+  });
+}
+
+describe("agent/hosted-chat-request", () => {
+  it("validates hosted chat request runtime overrides", () => {
+    const parsed = hostedChatRuntimeOverridesSchema.parse({
+      allowedTools: ["read_file"],
+      thinking: 2048,
+      maxSteps: 10,
+      ignored: true,
+    });
+
+    assertEquals(parsed, {
+      allowedTools: ["read_file"],
+      thinking: 2048,
+      maxSteps: 10,
+    });
+    assertEquals(hostedChatRuntimeOverridesSchema.safeParse({ thinking: 0 }).success, false);
+  });
+
+  it("validates hosted chat requests with durable root run descriptors", () => {
+    const parsed = hostedChatRequestSchema.parse({
+      messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+      context: {
+        conversationId,
+        projectId,
+        branchId,
+      },
+      model: "opus",
+      allowDelegation: true,
+      runtimeOverrides: {
+        thinking: false,
+      },
+      durableRootRun: {
+        runId: "run_root_1",
+        messageId,
+        latestEventId: 2,
+        latestExternalEventSequence: 3,
+        parentConversationId: "10000000-1000-4000-8000-100000000007",
+        parentRunId: "run_parent_1",
+        spawnedFromToolCallId: "tool_1",
+      },
+    });
+
+    assertEquals(parsed.durableRootRun?.runId, "run_root_1");
+    assertEquals(parsed.context.branchId, branchId);
+    assertEquals(
+      hostedChatRequestSchema.safeParse({
+        messages: [],
+        context: { projectId: null, branchId: null },
+        durableRootRun: { runId: "run 1", messageId },
+      }).success,
+      false,
+    );
+  });
+
+  it("builds a hosted chat request from a runtime agent invocation", () => {
+    const invocation = createRuntimeInvocation();
+    const forwardedProps = buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
+      invocation,
+    );
+    const request = buildHostedChatRequestFromRuntimeAgentInvocation(invocation);
+
+    assertEquals(forwardedProps?.activeChatId, "chat_123");
+    assertEquals(forwardedProps?.runtimeContext, invocation.context);
+    assertEquals(forwardedProps?.runtimeTools, invocation.tools);
+    assertEquals(request.context, {
+      conversationId,
+      projectId,
+      branchId,
+    });
+    assertEquals(request.durableRootRun, {
+      runId: "run_root_1",
+      messageId,
+      parentConversationId: "10000000-1000-4000-8000-100000000007",
+      parentRunId: "run_parent_1",
+      spawnedFromToolCallId: "tool_1",
+    });
+  });
+});

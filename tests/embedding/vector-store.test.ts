@@ -4,6 +4,7 @@
  * Uses a deterministic mock embedder that maps known texts to fixed vectors,
  * so cosine similarity produces predictable, testable results.
  */
+import "../_helpers/contract-init.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 

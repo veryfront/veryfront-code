@@ -6,7 +6,7 @@
  */
 
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
-import { rewriteNpmImports } from "../transforms/npm-import-rewrites.ts";
+import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { RENDER_ERROR } from "#veryfront/errors/error-registry.ts";
@@ -314,7 +314,7 @@ async function transpileWithEsbuild(
   modulePath: string,
   resolveDir: string,
 ): Promise<string> {
-  const { build } = await import("esbuild");
+  const { build } = await import("veryfront/extensions/bundler");
   const loader = getEsbuildLoader(modulePath);
 
   const result = await build({

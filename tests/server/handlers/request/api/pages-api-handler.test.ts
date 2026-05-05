@@ -1,27 +1,36 @@
+import "../../../../_helpers/contract-init.ts";
 import { assertEquals } from "#std/assert";
 import { afterEach, beforeEach, describe, it } from "#std/testing/bdd";
 import type { APIRouteHandler } from "../../../../../src/routing/api/handler.ts";
 import {
-  type HandlerCache,
   __injectCacheForTests,
+  type HandlerCache,
   resetApiHandler,
   resetApiHandlerForProject,
 } from "../../../../../src/server/handlers/request/api/pages-api-handler.ts";
 
 function createMockHandler(destroyed = { value: false }): APIRouteHandler {
-  return { destroy: () => { destroyed.value = true; } } as unknown as APIRouteHandler;
+  return {
+    destroy: () => {
+      destroyed.value = true;
+    },
+  } as unknown as APIRouteHandler;
 }
 
 function createTestCache(): HandlerCache<Promise<APIRouteHandler>> & { size: number } {
   const map = new Map<string, Promise<APIRouteHandler>>();
   return {
     get: (k) => map.get(k),
-    set: (k, v) => { map.set(k, v); },
+    set: (k, v) => {
+      map.set(k, v);
+    },
     delete: (k) => map.delete(k),
     clear: () => map.clear(),
     entries: () => map.entries(),
     values: () => map.values(),
-    get size() { return map.size; },
+    get size() {
+      return map.size;
+    },
   };
 }
 

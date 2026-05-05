@@ -11,7 +11,7 @@
  */
 
 import { dirname, fromFileUrl, join } from "#std/path.ts";
-import * as esbuild from "esbuild";
+import * as esbuild from "npm:esbuild@0.27.4";
 
 const scriptDir = dirname(fromFileUrl(import.meta.url));
 const projectRoot = join(scriptDir, "..", "..");

@@ -1,4 +1,4 @@
-import type { ChatSystemMessage } from "../chat/types.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 
 const RUNTIME_TOOL_INVENTORY_HEADER = "Current run tool inventory:";
 

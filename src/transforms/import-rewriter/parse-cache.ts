@@ -5,21 +5,24 @@
  * This eliminates redundant parsing that happened with the fragmented system.
  */
 
-import { init, parse } from "es-module-lexer";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ModuleLexer } from "#veryfront/extensions/interfaces/module-lexer.ts";
 import type { ImportSpecifierInfo } from "./types.ts";
 import type { ImportSpecifier } from "../esm/lexer.ts";
 
 let initPromise: Promise<void> | null = null;
 
+function getLexer(): ModuleLexer {
+  return resolveContract<ModuleLexer>("ModuleLexer");
+}
+
 /**
- * Initialize es-module-lexer (must be called before parsing).
+ * Initialize the ModuleLexer (must be called before parsing).
  */
 export async function initLexer(): Promise<void> {
   if (!initPromise) {
-    const anyInit = init as unknown;
-    initPromise = typeof anyInit === "function"
-      ? (anyInit as () => Promise<void>)()
-      : (anyInit as Promise<void>);
+    const lexer = getLexer();
+    initPromise = lexer.init ? lexer.init() : Promise.resolve();
   }
 
   await initPromise;
@@ -81,7 +84,7 @@ export async function parseAllImports(code: string): Promise<ParsedImports> {
   await initLexer();
 
   const { masked, urlMap } = maskHttpUrls(code);
-  const [rawImports] = parse(masked);
+  const rawImports = getLexer().parse(masked);
 
   const imports: ImportSpecifierInfo[] = rawImports
     .filter((imp) => imp.n !== undefined)

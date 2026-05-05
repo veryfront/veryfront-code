@@ -15,7 +15,7 @@ import type { VeryfrontConfig as BaseVeryfrontConfig } from "./config.schema.ts"
 // Type-only reference — keeps the config layer free of a runtime dependency
 // on the extensions module. The schema stores `extensions` as `unknown[]`
 // at runtime; this type assertion tightens it at the TS layer.
-import type { ExtensionConfigEntry } from "../../extensions/types.ts";
+import type { ExtensionConfigEntry } from "#veryfront/extensions/types.ts";
 
 /**
  * Project configuration. The underlying zod schema stores `extensions` as

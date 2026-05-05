@@ -5,6 +5,7 @@
  * which can be tested without mocking the full adapter.
  */
 
+import "../../../_helpers/contract-init.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import {

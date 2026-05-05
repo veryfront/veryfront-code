@@ -13,7 +13,7 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 export type Environment = "development" | "production" | "test";
 
 function resolveEnvironment(): Environment {
-  const raw = getEnv("VERYFRONT_ENV") || getEnv("NODE_ENV");
+  const raw = getEnv("VERYFRONT_ENV") || getEnv("NODE_ENV") || getEnv("DENO_ENV");
   if (raw === "production" || raw === "test") return raw;
   return "development";
 }

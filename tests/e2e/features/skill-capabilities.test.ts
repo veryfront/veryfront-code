@@ -10,6 +10,7 @@
  * - the 3-minute AI chatbot pattern works with agents/, app/api/chat/route.ts,
  *   and a Chat/useChat UI page
  */
+import "../../_helpers/contract-init.ts";
 
 import { dirname, join } from "#veryfront/compat/path/index.ts";
 import {

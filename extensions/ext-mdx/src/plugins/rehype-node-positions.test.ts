@@ -1,5 +1,5 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { assertEquals } from "@std/assert";
+import { describe, it } from "@std/testing/bdd";
 import { rehypeNodePositions } from "./rehype-node-positions.ts";
 
 // deno-lint-ignore no-explicit-any

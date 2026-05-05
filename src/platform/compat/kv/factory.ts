@@ -4,7 +4,7 @@ import { isDeno } from "../runtime.ts";
 import { MemoryKv } from "./memory-adapter.ts";
 import { SqliteKv } from "./sqlite-adapter.ts";
 import type { Kv, SqliteDatabase } from "./types.ts";
-import type { NodeCompat } from "../../../extensions/interfaces/node-compat.ts";
+import type { NodeCompat } from "#veryfront/extensions/interfaces/node-compat.ts";
 
 interface GlobalWithDenoKv {
   Deno?: {

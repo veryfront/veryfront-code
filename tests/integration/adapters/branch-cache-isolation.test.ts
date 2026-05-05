@@ -8,6 +8,7 @@
  * serve stale SSR data due to incorrect adapter context.
  */
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { buildFileCacheKeyPrefix, buildProxyManagerCacheKey } from "#veryfront/cache";

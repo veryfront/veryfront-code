@@ -12,7 +12,7 @@ import {
   resolve,
 } from "#veryfront/compat/path/index.ts";
 import { serverLogger as logger } from "#veryfront/utils";
-import type { OnResolveArgs, Plugin } from "esbuild";
+import type { OnResolveArgs, Plugin } from "veryfront/extensions/bundler";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -303,7 +303,7 @@ function createFsLoaderPlugin(): Plugin {
 }
 
 async function bundleClientEntry(entryRelative: string): Promise<string> {
-  const { build, stop } = await import("esbuild");
+  const { build, stop } = await import("veryfront/extensions/bundler");
   const entryUrl = new URL(entryRelative, import.meta.url);
   const shimUrl = new URL("../../rendering/client/browser-stubs/logger.ts", import.meta.url);
 

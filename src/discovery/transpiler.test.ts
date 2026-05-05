@@ -3,7 +3,7 @@ import { afterAll, afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearTranspileCache, importModule } from "./transpiler.ts";
 import type { FileDiscoveryContext } from "./types.ts";
-import { stop as stopEsbuild } from "esbuild";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
 
 /**

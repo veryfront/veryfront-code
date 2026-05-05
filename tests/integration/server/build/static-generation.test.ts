@@ -4,6 +4,7 @@
  * Tests getStaticPaths generation, dynamic route handling, and build output
  */
 
+import "../../../_helpers/contract-init.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterAll, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { DataFetcher, type PageWithData } from "#veryfront/data";

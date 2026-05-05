@@ -1,3 +1,4 @@
+import "../_helpers/contract-init.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";

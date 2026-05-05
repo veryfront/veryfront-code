@@ -32,7 +32,8 @@ function getApiBaseUrlEnv(): string {
   const getter = (globalThis as Record<string, unknown>).__vfGetApiBaseUrlEnv as
     | (() => string)
     | undefined;
-  return getter?.() ?? getEnv("VERYFRONT_API_BASE_URL") ?? DEFAULT_API_BASE_URL;
+  return getter?.() ?? getEnv("VERYFRONT_API_BASE_URL") ??
+    getEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ?? DEFAULT_API_BASE_URL;
 }
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/anthropic/claude-sonnet-4-6";
