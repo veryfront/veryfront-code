@@ -665,8 +665,11 @@ export {
   buildHostedChildCompletedLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
+  createHostedChildExecutionLogWriter,
   type HostedChildExecutionLogEntry,
   type HostedChildExecutionLogLevel,
+  type HostedChildExecutionLogWriter,
+  writeHostedChildExecutionLogEntry,
 } from "./hosted-child-execution-logging.ts";
 export {
   buildChildRunResultSummary,

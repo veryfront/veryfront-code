@@ -3,6 +3,8 @@ import {
   buildHostedChildCompletedLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
+  createHostedChildExecutionLogWriter,
+  writeHostedChildExecutionLogEntry,
 } from "./hosted-child-execution-logging.ts";
 import { HostedChildStreamIdleTimeoutError } from "./hosted-child-stream-watchdog.ts";
 
@@ -92,4 +94,96 @@ Deno.test("buildHostedChildErrorLog returns failure error for generic errors", (
       error,
     },
   });
+});
+
+Deno.test("writeHostedChildExecutionLogEntry dispatches entries by level", () => {
+  const calls: Array<{
+    level: "error" | "info" | "warn";
+    message: string;
+    context: Record<string, unknown>;
+  }> = [];
+  const writer = {
+    error: (message: string, context: Record<string, unknown>) => {
+      calls.push({ level: "error", message, context });
+    },
+    info: (message: string, context: Record<string, unknown>) => {
+      calls.push({ level: "info", message, context });
+    },
+    warn: (message: string, context: Record<string, unknown>) => {
+      calls.push({ level: "warn", message, context });
+    },
+  };
+
+  const errorContext = { error: "boom" };
+  const infoContext = { resultLength: 7 };
+  const warnContext = { stepCount: 10 };
+
+  writeHostedChildExecutionLogEntry(
+    {
+      level: "error",
+      message: "Child fork failed",
+      context: errorContext,
+    },
+    writer,
+  );
+  writeHostedChildExecutionLogEntry(
+    {
+      level: "info",
+      message: "Child fork completed",
+      context: infoContext,
+    },
+    writer,
+  );
+  writeHostedChildExecutionLogEntry(
+    {
+      level: "warn",
+      message: "Child fork exhausted step budget",
+      context: warnContext,
+    },
+    writer,
+  );
+
+  assertEquals(calls, [
+    { level: "error", message: "Child fork failed", context: errorContext },
+    { level: "info", message: "Child fork completed", context: infoContext },
+    {
+      level: "warn",
+      message: "Child fork exhausted step budget",
+      context: warnContext,
+    },
+  ]);
+});
+
+Deno.test("createHostedChildExecutionLogWriter adapts a logger to an entry writer", () => {
+  const calls: Array<{
+    level: "error" | "info" | "warn";
+    message: string;
+    context: Record<string, unknown>;
+  }> = [];
+  const writeLog = createHostedChildExecutionLogWriter({
+    error: (message: string, context: Record<string, unknown>) => {
+      calls.push({ level: "error", message, context });
+    },
+    info: (message: string, context: Record<string, unknown>) => {
+      calls.push({ level: "info", message, context });
+    },
+    warn: (message: string, context: Record<string, unknown>) => {
+      calls.push({ level: "warn", message, context });
+    },
+  });
+  const context = { phase: "generic_idle" };
+
+  writeLog({
+    level: "warn",
+    message: "Child fork stream stalled",
+    context,
+  });
+
+  assertEquals(calls, [
+    {
+      level: "warn",
+      message: "Child fork stream stalled",
+      context,
+    },
+  ]);
 });
