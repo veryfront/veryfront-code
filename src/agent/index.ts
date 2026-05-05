@@ -541,12 +541,15 @@ export {
 } from "./child-run-execution-cleanup.ts";
 export {
   createHostedChildPendingToolLifecycle,
+  createHostedChildPendingToolLifecycleLogger,
   type HostedChildPendingToolCallPhase,
   type HostedChildPendingToolCallState,
   type HostedChildPendingToolLifecycleCloseLog,
   type HostedChildPendingToolLifecycleCloseReason,
   type HostedChildPendingToolLifecycleInput,
+  type HostedChildPendingToolLifecycleLogContext,
   type HostedChildPendingToolLifecycleLogger,
+  type HostedChildPendingToolLifecycleLogWriter,
   type HostedChildPendingToolLifecycleUnknownToolLog,
 } from "./hosted-child-pending-tool-lifecycle.ts";
 export {
