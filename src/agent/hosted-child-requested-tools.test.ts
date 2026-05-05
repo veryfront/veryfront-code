@@ -1,5 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import {
+  buildDefaultHostedChildForkToolSet,
   buildHostedChildToolDescription,
   DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
   expandHostedChildRequestedTools,
@@ -159,5 +160,32 @@ Deno.test("selectDefaultHostedChildForkRuntimeTools filters requested tools afte
       create_file: forkTools.create_file,
       update_file: forkTools.update_file,
     },
+  });
+});
+
+Deno.test("buildDefaultHostedChildForkToolSet merges tool sets deterministically and removes default exclusions", () => {
+  const bashTool = { description: "Run shell commands" };
+  const createFileTool = { description: "Create a file" };
+  const updateFileTool = { description: "Update a file" };
+  const replacementCreateFileTool = { description: "Create a replacement file" };
+
+  const result = buildDefaultHostedChildForkToolSet(
+    {
+      studio_suggestions: { description: "Suggest UI actions" },
+      update_file: updateFileTool,
+      create_file: createFileTool,
+    },
+    {
+      studio_panel_control: { description: "Control panels" },
+      bash: bashTool,
+      create_file: replacementCreateFileTool,
+    },
+  );
+
+  assertEquals(Object.keys(result), ["bash", "create_file", "update_file"]);
+  assertEquals(result, {
+    bash: bashTool,
+    create_file: replacementCreateFileTool,
+    update_file: updateFileTool,
   });
 });
