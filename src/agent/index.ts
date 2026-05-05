@@ -513,6 +513,12 @@ export {
   withHostedChildStreamIdleTimeout,
 } from "./hosted-child-stream-watchdog.ts";
 export {
+  DEFAULT_HOSTED_CHILD_AGENT_ID,
+  type HostedChildForkToolInput,
+  hostedChildForkToolInputSchema,
+} from "./hosted-child-tool-input.ts";
+
+export {
   buildHostedChildToolDescription,
   expandHostedChildRequestedTools,
   type HostedChildForkRuntimeToolSelectionResult,
