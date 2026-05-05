@@ -260,6 +260,16 @@ export {
   hostedDurableRootRunDescriptorSchema,
 } from "./hosted-chat-request.ts";
 export {
+  getForwardedHostedModelId,
+  getForwardedHostedRuntimeOverrides,
+  type HostedRuntimeRequestConfigAgent,
+  type HostedRuntimeRequestConfigRequest,
+  type ResolvedHostedRuntimeRequestConfig,
+  resolveHostedRuntimeRequestConfig,
+  type ResolveHostedRuntimeRequestConfigInput,
+  resolveHostedRuntimeThinkingOverride,
+} from "./hosted-runtime-request-config.ts";
+export {
   parseRuntimeAgentRunInvocation,
   parseRuntimeAgentRunInvocationOrError,
   type RuntimeAgentContextItem,
