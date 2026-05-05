@@ -220,6 +220,30 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
   });
 }
 
+export function buildDefaultHostedChildForkToolSet(
+  ...toolSets: readonly HostToolSet[]
+): HostToolSet {
+  const allTools: HostToolSet = {};
+  for (const toolSet of toolSets) {
+    Object.assign(allTools, toolSet);
+  }
+
+  const forkTools: HostToolSet = {};
+  for (
+    const [toolName, toolDefinition] of Object.entries(allTools).sort(([left], [right]) =>
+      left.localeCompare(right)
+    )
+  ) {
+    if (DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has(toolName)) {
+      continue;
+    }
+
+    forkTools[toolName] = toolDefinition;
+  }
+
+  return forkTools;
+}
+
 export function buildHostedChildToolDescription(): string {
   return `Invoke a focused child agent on an isolated subtask.
 Call multiple times in one response to run child agents in parallel.

@@ -566,6 +566,7 @@ export {
 } from "./hosted-child-tool-input.ts";
 
 export {
+  buildDefaultHostedChildForkToolSet,
   buildHostedChildToolDescription,
   DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
   DEFAULT_HOSTED_CHILD_REQUESTED_TOOL_COMPANIONS,
