@@ -105,6 +105,37 @@ export interface OpenToolCalls {
   needsOutputClose: Array<{ toolCallId: string; toolName: string }>;
 }
 
+export interface HostedMirroredOpenToolCallLogger {
+  warn: (message: string, metadata?: Record<string, unknown>) => void;
+}
+
+export interface CloseHostedMirroredOpenToolCallsInput {
+  mirroredToolChunkState: MirroredToolChunkState;
+  errorText: string;
+  appendChunk: (
+    chunk: ChatUiMessageChunk<ChatMessageMetadata>,
+  ) => Promise<void> | void;
+  logger?: HostedMirroredOpenToolCallLogger;
+}
+
+function isAbortErrorLike(error: unknown): boolean {
+  if (error instanceof DOMException && error.name === "AbortError") {
+    return true;
+  }
+
+  return error instanceof Error && error.name === "AbortError";
+}
+
+export function getHostedMirroredAbortErrorText(streamError: unknown): string {
+  if (isAbortErrorLike(streamError)) {
+    return "Chat stream aborted before tool call completed";
+  }
+
+  return `Chat stream errored before tool call completed: ${
+    streamError instanceof Error ? streamError.message : String(streamError)
+  }`;
+}
+
 export function computeOpenToolCalls(
   state: MirroredToolChunkState,
 ): OpenToolCalls {
@@ -132,4 +163,50 @@ export function computeOpenToolCalls(
     needsInputClose,
     needsOutputClose,
   };
+}
+
+export async function closeHostedMirroredOpenToolCalls(
+  input: CloseHostedMirroredOpenToolCallsInput,
+): Promise<void> {
+  const openToolCalls = computeOpenToolCalls(input.mirroredToolChunkState);
+  if (
+    openToolCalls.needsInputClose.length === 0 &&
+    openToolCalls.needsOutputClose.length === 0
+  ) {
+    return;
+  }
+
+  input.logger?.warn("Closing open tool calls after stream abort", {
+    needsInputClose: openToolCalls.needsInputClose.map(({ toolCallId }) => toolCallId),
+    needsOutputClose: openToolCalls.needsOutputClose.map(({ toolCallId }) => toolCallId),
+    errorText: input.errorText,
+  });
+
+  const unknownToolNames = openToolCalls.needsInputClose.filter(
+    ({ toolName }) => toolName === "unknown",
+  );
+  if (unknownToolNames.length > 0) {
+    input.logger?.warn("Closing aborted tool calls without recoverable tool names", {
+      toolCallIds: unknownToolNames.map(({ toolCallId }) => toolCallId),
+      errorText: input.errorText,
+    });
+  }
+
+  for (const { toolCallId, toolName } of openToolCalls.needsInputClose) {
+    await input.appendChunk({
+      type: "tool-input-error",
+      toolCallId,
+      toolName,
+      input: {},
+      errorText: input.errorText,
+    });
+  }
+
+  for (const { toolCallId } of openToolCalls.needsOutputClose) {
+    await input.appendChunk({
+      type: "tool-output-error",
+      toolCallId,
+      errorText: input.errorText,
+    });
+  }
 }
