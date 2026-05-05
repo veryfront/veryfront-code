@@ -84,6 +84,8 @@ const ALLOWED_FILES = new Set([
   "src/utils/runtime-guards.ts",
   // Workspace sync — heavy Deno FS usage for local file operations
   "src/workflow/claude-code/workspace-sync.ts",
+  // Agent runtime skill loader — uses node:fs/node:path for file discovery
+  "src/agent/runtime-builtin-skill-files.ts",
 ]);
 
 // File patterns to skip

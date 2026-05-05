@@ -8,7 +8,7 @@
  */
 
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 const LOCAL_AI_DISABLED_MESSAGE =
   "Local AI disabled via VERYFRONT_DISABLE_LOCAL_AI environment variable.";
@@ -18,7 +18,7 @@ const LOCAL_AI_DISABLED_MESSAGE =
  * Works in Deno, Node, and compiled binaries.
  */
 export function isLocalAIDisabled(): boolean {
-  return getEnv("VERYFRONT_DISABLE_LOCAL_AI") === "1";
+  return getHostEnv("VERYFRONT_DISABLE_LOCAL_AI") === "1";
 }
 
 export function createLocalAIDisabledError(): Error {
