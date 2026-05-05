@@ -24,6 +24,7 @@ import {
   type StartProductionServerOptions,
 } from "./production-server.ts";
 import { runtime } from "#veryfront/platform/adapters/detect.ts";
+import { cwd } from "#veryfront/platform/compat/process.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { addClient, getClient, removeClient } from "./handlers/preview/hmr-client-manager.ts";
@@ -173,7 +174,7 @@ function getWebSocketMessageSize(data: unknown): number {
 export async function createHandler(
   options: { projectDir?: string; mode?: "development" | "production"; port?: number } = {},
 ): Promise<VeryfrontHandler> {
-  const projectDir = options.projectDir ?? process.cwd();
+  const projectDir = options.projectDir ?? cwd();
 
   if (options.mode === "production") {
     const adapter = await runtime.get();
@@ -369,7 +370,7 @@ export function toNodeHandler(
 export async function startServer(
   options: StartServerOptions = {},
 ): Promise<VeryfrontServer> {
-  const projectDir = options.projectDir ?? process.cwd();
+  const projectDir = options.projectDir ?? cwd();
   const port = options.port ?? DEFAULT_SERVER_PORT;
   const bindAddress = options.bindAddress ?? "localhost";
 
