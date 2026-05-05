@@ -33,21 +33,25 @@ import type {
 // Module-level singletons to avoid per-call allocation churn
 const encoder = new TextEncoder();
 
-// Pre-import React at worker startup to avoid cold-start penalty on first SSR request.
-// These are resolved from the project's import map. The dynamic imports are cached
-// by the runtime, so subsequent calls are essentially free.
+// Load React lazily for SSR requests. API-only workers and health checks should
+// start without resolving React, and the runtime caches dynamic imports after
+// the first SSR request.
 let _React: typeof import("react") | null = null;
 let _ReactDOMServer: typeof import("react-dom/server") | null = null;
+let _reactReady: Promise<void> | null = null;
 
-const _reactReady = (async () => {
-  try {
-    _React = await import("react");
-    _ReactDOMServer = await import("react-dom/server");
-  } catch {
-    // React may not be available in all worker contexts (e.g., API-only workers).
-    // SSR handler will throw a clear error if React is needed but not loaded.
-  }
-})();
+function ensureReactReady(): Promise<void> {
+  _reactReady ??= (async () => {
+    try {
+      _React = await import("react");
+      _ReactDOMServer = await import("react-dom/server");
+    } catch {
+      // React may not be available in all worker contexts (e.g., API-only workers).
+      // SSR handler will throw a clear error if React is needed but not loaded.
+    }
+  })();
+  return _reactReady;
+}
 
 // ---------------------------------------------------------------------------
 // Serialization Helpers
@@ -329,8 +333,9 @@ async function handlePagesRoute(req: ExecutePagesRouteRequest): Promise<Serializ
 async function handleRenderSSR(
   req: RenderSSRRequest,
 ): Promise<{ html: string } | "streaming"> {
-  // Wait for pre-imported React modules (loaded at worker startup)
-  await _reactReady;
+  // Load React only for SSR workers. API-only workers and health checks should
+  // not pay the React import cost or contend on it under parallel worker tests.
+  await ensureReactReady();
 
   if (!_React || !_ReactDOMServer) {
     throw new Error("React modules not available in this worker");

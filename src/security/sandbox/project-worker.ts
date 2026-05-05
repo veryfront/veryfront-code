@@ -33,6 +33,7 @@ export interface ProjectWorkerOptions {
   projectId: string;
   permissions: WorkerPermissions;
   requestTimeoutMs: number;
+  workerScriptUrl?: string;
 }
 
 interface PendingRequest {
@@ -60,6 +61,7 @@ export class ProjectWorker {
   private streamHandlers = new Map<string, StreamHandler>();
   private requestTimeoutMs: number;
   private permissions: WorkerPermissions;
+  private workerScriptUrl?: string;
   private _requestCount = 0;
   private _lastActivityAt = Date.now();
   private _status: WorkerStatus = "idle";
@@ -68,6 +70,7 @@ export class ProjectWorker {
     this.projectId = options.projectId;
     this.permissions = options.permissions;
     this.requestTimeoutMs = options.requestTimeoutMs;
+    this.workerScriptUrl = options.workerScriptUrl;
   }
 
   get status(): WorkerStatus {
@@ -332,6 +335,8 @@ export class ProjectWorker {
   // -----------------------------------------------------------------------
 
   private getWorkerScriptUrl(): string {
+    if (this.workerScriptUrl) return this.workerScriptUrl;
+
     // In compiled binary mode, use a data URL because blob URLs don't work
     // See: deno-sandbox.ts for the same pattern
     if (isCompiledBinary()) {
