@@ -326,6 +326,15 @@ export {
   type CreateAgUiBrowserChunkEncoderOptions,
 } from "./ag-ui-browser-chunk-encoder.ts";
 export {
+  type AgUiChatUiChunkBrowserEncoder,
+  createAgUiChatUiChunkBrowserEncoder,
+  type CreateAgUiChatUiChunkBrowserEncoderOptions,
+  getAgUiChatUiMessageChunkMetadata,
+  getAgUiChatUiMessageMetadataFromChunk,
+  getAgUiChatUiMessageUsageMetadata,
+  normalizeChatUiMessageChunkToAgUiRuntimeEvent,
+} from "./ag-ui-chat-ui-chunk-browser-encoder.ts";
+export {
   type AgUiRuntimeEventEncoder,
   createAgUiRuntimeEventEncoder,
   type CreateAgUiRuntimeEventEncoderOptions,
