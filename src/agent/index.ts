@@ -597,6 +597,22 @@ export {
   type RuntimeBuiltinSkillEntriesResult,
 } from "./runtime-builtin-skill-files.ts";
 export {
+  createRuntimeProjectFilesClient,
+  getRuntimeProjectFile,
+  getRuntimeProjectFiles,
+  type RuntimeGetProjectFileOptions,
+  type RuntimeProjectFile,
+  type RuntimeProjectFileListItem,
+  runtimeProjectFileListItemSchema,
+  RuntimeProjectFilesApiAuthError,
+  type RuntimeProjectFilesApiOptions,
+  runtimeProjectFileSchema,
+  type RuntimeProjectFilesClient,
+  type RuntimeProjectFilesClientOptions,
+  type RuntimeProjectFilesFetch,
+  type RuntimeProjectFilesTrace,
+} from "./runtime-project-files-client.ts";
+export {
   buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
