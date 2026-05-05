@@ -1,5 +1,6 @@
 import type { HostToolSet } from "#veryfront/tool";
 
+import { isHostedChildTextProjectArtifactPrompt } from "./hosted-child-artifact-support.ts";
 import { getForkRuntimeAllowedToolNames } from "./provider-native-tool-inventory.ts";
 
 export interface HostedChildRequestedToolsInput {
@@ -15,6 +16,22 @@ export interface HostedChildRequestedToolsInput {
 
 const DEFAULT_SANDBOX_TOOL_NAMES = ["bash", "readFile", "writeFile"];
 const DEFAULT_ARTIFACT_TOOL_NAMES = ["create_file", "update_file"];
+
+export const DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "studio_panel_control",
+  "studio_suggestions",
+  "form_input",
+]);
+
+export const DEFAULT_HOSTED_CHILD_REQUESTED_TOOL_COMPANIONS: Readonly<
+  Record<string, readonly string[]>
+> = {
+  create_file: ["update_file"],
+  update_file: ["create_file"],
+};
+
+export const DEFAULT_HOSTED_CHILD_SANDBOX_REQUIRED_CUE_PATTERN =
+  /\b(bash|shell|terminal|command line|cli|\/workspace|workspace\/|python|node|npm|pnpm|yarn|curl|jq|csv|json|pdf|zip|unzip|archive|repo|git|test|build|script)\b/i;
 
 export function sanitizeHostedChildRequestedTools(
   input: HostedChildRequestedToolsInput,
@@ -167,6 +184,40 @@ export function selectHostedChildForkRuntimeTools(input: {
     ok: true,
     forkTools,
   };
+}
+
+export function sanitizeDefaultHostedChildRequestedTools(input: {
+  prompt: string;
+  requestedTools?: readonly string[];
+}): string[] | undefined {
+  return sanitizeHostedChildRequestedTools({
+    prompt: input.prompt,
+    requestedTools: input.requestedTools,
+    excludedTools: DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
+    companionTools: DEFAULT_HOSTED_CHILD_REQUESTED_TOOL_COMPANIONS,
+    sandboxRequiredCuePattern: DEFAULT_HOSTED_CHILD_SANDBOX_REQUIRED_CUE_PATTERN,
+    isTextArtifactPrompt: isHostedChildTextProjectArtifactPrompt,
+  });
+}
+
+export function selectDefaultHostedChildForkRuntimeTools(input: {
+  provider: string;
+  forkModel?: string;
+  forkTools: HostToolSet;
+  effectivePrompt: string;
+  requestedTools?: readonly string[];
+}): HostedChildForkRuntimeToolSelectionResult {
+  const effectiveRequestedTools = sanitizeDefaultHostedChildRequestedTools({
+    prompt: input.effectivePrompt,
+    requestedTools: input.requestedTools,
+  });
+
+  return selectHostedChildForkRuntimeTools({
+    provider: input.provider,
+    forkModel: input.forkModel,
+    forkTools: input.forkTools,
+    requestedTools: effectiveRequestedTools,
+  });
 }
 
 export function buildHostedChildToolDescription(): string {
