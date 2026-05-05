@@ -32,6 +32,10 @@ export interface OrchestrateOptions {
   logger: ExtensionLogger;
   /** Contracts to seed into the registry after teardown, before setup(). */
   primeContracts?: Record<string, unknown>;
+  /** Built-in extensions shipped with the framework. Lowest priority — any
+   *  project, package, or config extension with the same name overrides them.
+   *  Users can disable them via `{ name: "ext-anthropic", enabled: false }`. */
+  builtinExtensions?: ResolvedExtension[];
   /** @internal Override discovery functions in tests. */
   discovery?: {
     discoverPackageExtensions: typeof defaultDiscovery.discoverPackageExtensions;
@@ -166,6 +170,7 @@ export async function orchestrateExtensions(
     projectResolved,
     localResolved,
     disables,
+    options.builtinExtensions,
   );
 
   const loader = new ExtensionLoader(logger);

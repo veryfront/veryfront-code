@@ -23,6 +23,7 @@ export const SOURCE_PRIORITY: Record<ExtensionSource, number> = {
   package: 1,
   project: 2,
   "local-file": 3,
+  builtin: 4,
 };
 
 /**
