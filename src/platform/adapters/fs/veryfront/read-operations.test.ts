@@ -662,17 +662,21 @@ describe("ReadOperations", () => {
       assertEquals(content, "ts content");
     });
 
-    it("should resolve parallel fallback faster than sequential with simulated latency", async () => {
-      const SIMULATED_LATENCY_MS = 50;
+    it("should start fallback extension fetches in parallel", async () => {
+      const deferred = new Map<
+        string,
+        {
+          resolve: (content: string) => void;
+          reject: (error: Error) => void;
+        }
+      >();
+      const requestedPaths: string[] = [];
 
       const client = createMockClient({
         getPublishedFileContent: (path: string) => {
-          return new Promise((resolve, reject) => {
-            setTimeout(() => {
-              if (path === "pages/slow.tsx") reject(new Error("404 Not Found"));
-              else if (path === "pages/slow.mdx") resolve("found via mdx");
-              else reject(new Error("404 Not Found"));
-            }, SIMULATED_LATENCY_MS);
+          requestedPaths.push(path);
+          return new Promise<string>((resolve, reject) => {
+            deferred.set(path, { resolve, reject });
           });
         },
         resolveFileWithExtension: () => Promise.reject(new Error("unavailable")),
@@ -681,20 +685,35 @@ describe("ReadOperations", () => {
       const readOps = createReadOps(client, false, createReleaseContext("rel-perf"));
       readOps.setFileListReadyPromise(Promise.resolve());
 
-      const start = performance.now();
-      const content = await readOps.readTextFile("pages/slow.tsx");
-      const elapsed = performance.now() - start;
+      const readPromise = readOps.readTextFile("pages/slow.tsx");
+
+      for (let i = 0; i < 10 && !deferred.has("pages/slow.tsx"); i++) {
+        await Promise.resolve();
+      }
+      deferred.get("pages/slow.tsx")?.reject(new Error("404 Not Found"));
+
+      for (let i = 0; i < 10 && !deferred.has("pages/slow.md"); i++) {
+        await Promise.resolve();
+      }
+
+      assertEquals(requestedPaths, [
+        "pages/slow.tsx",
+        "pages/slow.ts",
+        "pages/slow.jsx",
+        "pages/slow.js",
+        "pages/slow.mdx",
+        "pages/slow.md",
+      ]);
+
+      deferred.get("pages/slow.ts")?.reject(new Error("404 Not Found"));
+      deferred.get("pages/slow.jsx")?.reject(new Error("404 Not Found"));
+      deferred.get("pages/slow.js")?.reject(new Error("404 Not Found"));
+      deferred.get("pages/slow.mdx")?.resolve("found via mdx");
+      deferred.get("pages/slow.md")?.reject(new Error("404 Not Found"));
+
+      const content = await readPromise;
 
       assertEquals(content, "found via mdx");
-      // Parallel: all fallback extensions fire at once (~50ms total).
-      // Sequential would be roughly 250ms (5 * 50ms), but CI noise can add jitter.
-      // Keep a margin that still asserts meaningful parallel speedup.
-      assert(
-        elapsed < SIMULATED_LATENCY_MS * 4,
-        `Parallel fallback took ${Math.round(elapsed)}ms, expected < ${
-          SIMULATED_LATENCY_MS * 4
-        }ms (sequential would be ~${SIMULATED_LATENCY_MS * 5}ms)`,
-      );
     });
 
     it("should not wait for slow lower-priority extensions when higher-priority succeeds", async () => {

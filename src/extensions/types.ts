@@ -48,7 +48,8 @@ export type ExtensionSource =
   | "config"
   | "package"
   | "project"
-  | "local-file";
+  | "local-file"
+  | "builtin";
 
 export interface ResolvedExtension {
   extension: Extension;

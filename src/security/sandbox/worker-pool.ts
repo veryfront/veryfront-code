@@ -135,11 +135,18 @@ export class WorkerPool {
           // old worker from being terminated while it still has pending work.
           const result = worker.execute(request);
 
-          void result.finally(() => {
-            this.evictWorker(projectId);
-            this.getOrCreateWorker(projectId, readPaths);
-            this.recycling.delete(projectId);
-          });
+          void result.then(
+            () => {
+              this.evictWorker(projectId);
+              this.getOrCreateWorker(projectId, readPaths);
+              this.recycling.delete(projectId);
+            },
+            () => {
+              this.evictWorker(projectId);
+              this.getOrCreateWorker(projectId, readPaths);
+              this.recycling.delete(projectId);
+            },
+          );
 
           return result;
         }

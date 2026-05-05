@@ -43,14 +43,13 @@ describe("AIProviderRegistry", () => {
     );
   });
 
-  it("register throws on duplicate id (no silent overwrite)", () => {
+  it("register is first-write-wins (duplicate id silently skipped)", () => {
     const reg = createAIProviderRegistry();
-    reg.register(fakeProvider("openai"));
-    assertThrows(
-      () => reg.register(fakeProvider("openai")),
-      Error,
-      'AIProvider "openai" is already registered',
-    );
+    const p1 = fakeProvider("openai");
+    const p2 = fakeProvider("openai");
+    reg.register(p1);
+    reg.register(p2);
+    assertEquals(reg.get("openai"), p1);
   });
 
   it("unregister allows re-registration", () => {

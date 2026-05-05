@@ -71,6 +71,7 @@ export function mergeExtensions(
   project: ResolvedExtension[],
   local: ResolvedExtension[],
   disableDirectives?: Array<{ name: string; enabled: false }>,
+  builtin?: ResolvedExtension[],
 ): ResolvedExtension[] {
   const disabledNames = new Set(
     (disableDirectives ?? []).map((d) => d.name),
@@ -79,11 +80,14 @@ export function mergeExtensions(
   const seen = new Map<string, ResolvedExtension>();
 
   // Process sources in priority order -- first write wins.
+  // Builtin extensions have the lowest priority so project/package/config
+  // extensions can override them.
   const ordered: ResolvedExtension[] = [
     ...config,
     ...packages,
     ...project,
     ...local,
+    ...(builtin ?? []),
   ];
 
   for (const resolved of ordered) {

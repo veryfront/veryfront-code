@@ -1,8 +1,8 @@
 /**
  * Default Map-backed implementation of the AIProviderRegistry contract.
  *
- * Preserves insertion order via Map (used by `list()`). Throws on
- * duplicate id to surface silent collisions between extensions.
+ * Preserves insertion order via Map (used by `list()`). Duplicate ids are
+ * first-write-wins so higher-priority extensions keep their provider binding.
  *
  * @module extensions/registries/ai-provider-registry
  */
@@ -14,10 +14,7 @@ class AIProviderRegistryImpl implements AIProviderRegistry {
 
   register(provider: AIProvider): void {
     if (this.providers.has(provider.id)) {
-      throw new Error(
-        `AIProvider "${provider.id}" is already registered. ` +
-          `Call unregister("${provider.id}") first if you intend to replace it.`,
-      );
+      return;
     }
     this.providers.set(provider.id, provider);
   }

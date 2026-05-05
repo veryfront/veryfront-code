@@ -19,6 +19,7 @@ import {
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
+import { ensureBuiltinAIProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
 import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
@@ -90,8 +91,8 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
-      const provider = registry?.get("openai");
+      const registry = ensureBuiltinAIProviders();
+      const provider = registry.get("openai");
       if (provider) {
         return provider.createModel(id, {
           credential: config.apiKey,
@@ -117,8 +118,8 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
-      const provider = registry?.get("anthropic");
+      const registry = ensureBuiltinAIProviders();
+      const provider = registry.get("anthropic");
       if (provider) {
         return provider.createModel(id, {
           credential: config.apiKey,
@@ -145,8 +146,8 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
-      const provider = registry?.get("google");
+      const registry = ensureBuiltinAIProviders();
+      const provider = registry.get("google");
       if (provider) {
         return provider.createModel(id, {
           credential: config.apiKey,

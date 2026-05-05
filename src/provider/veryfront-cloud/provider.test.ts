@@ -9,6 +9,8 @@ const CLOUD_ENV_KEYS = [
   "VERYFRONT_PROJECT_SLUG",
   "VERYFRONT_DEFAULT_MODEL",
   "VERYFRONT_SERVICE_LAYER",
+  "ANTHROPIC_API_KEY",
+  "GOOGLE_API_KEY",
 ] as const;
 
 function clearCloudEnv(): void {
@@ -46,6 +48,48 @@ describe("provider/veryfront-cloud", () => {
     setCloudBootstrap();
 
     const model = resolveModel("veryfront-cloud/moonshotai/kimi-k2") as Record<string, unknown>;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
+  });
+
+  it("resolves veryfront-cloud anthropic models without project ext-anthropic installed", () => {
+    setCloudBootstrap();
+
+    const model = resolveModel("veryfront-cloud/anthropic/claude-sonnet-4-6") as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
+  });
+
+  it("resolves veryfront-cloud google models without project ext-google installed", () => {
+    setCloudBootstrap();
+
+    const model = resolveModel("veryfront-cloud/google-ai-studio/gemini-2.5-flash") as Record<
+      string,
+      unknown
+    >;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
+  });
+
+  it("resolves direct anthropic models through the built-in provider", () => {
+    setEnv("ANTHROPIC_API_KEY", "anthropic_test_provider");
+
+    const model = resolveModel("anthropic/claude-sonnet-4-6") as Record<string, unknown>;
+
+    assertEquals(typeof model.doGenerate, "function");
+    assertEquals(typeof model.doStream, "function");
+  });
+
+  it("resolves direct google models through the built-in provider", () => {
+    setEnv("GOOGLE_API_KEY", "google_test_provider");
+
+    const model = resolveModel("google/gemini-2.5-flash") as Record<string, unknown>;
 
     assertEquals(typeof model.doGenerate, "function");
     assertEquals(typeof model.doStream, "function");

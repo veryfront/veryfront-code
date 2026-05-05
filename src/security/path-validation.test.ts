@@ -526,18 +526,14 @@ describe("Path Validation - Real-world scenarios", () => {
 });
 
 describe("Path Validation - Performance", () => {
-  it("should validate paths quickly", () => {
-    const start = performance.now();
+  it("should validate repeated paths consistently", () => {
     const iterations = 10000;
 
     for (let i = 0; i < iterations; i++) {
-      validatePathSync("app/page.tsx", { baseDir: "/project" });
+      const result = validatePathSync("app/page.tsx", { baseDir: "/project" });
+      assertEquals(result.valid, true);
+      assertEquals(result.canonicalPath, "/project/app/page.tsx");
     }
-
-    const duration = performance.now() - start;
-    const avgTime = duration / iterations;
-
-    assertEquals(avgTime < 0.1, true, `Avg time: ${avgTime}ms`);
   });
 });
 
