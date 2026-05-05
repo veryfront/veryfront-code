@@ -130,6 +130,11 @@ export {
   type RuntimeClientType,
   runtimeClientTypeSchema,
 } from "./runtime-client-profile.ts";
+export {
+  buildStudioMcpHeaders,
+  createLiveStudioMcpTools,
+  type LiveStudioMcpToolsOptions,
+} from "./live-studio-mcp-tools.ts";
 
 export {
   parseRuntimeAgentMarkdownDefinition,
