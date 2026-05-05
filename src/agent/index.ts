@@ -514,6 +514,10 @@ export {
   type RuntimeFileUrlResolverInput,
 } from "./runtime-message-file-url-refresh.ts";
 export {
+  prepareAgentRuntimeMessagesFromUiMessages,
+  type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
+} from "./runtime-message-preparation.ts";
+export {
   getRuntimeUploadUrl,
   type RuntimeUploadUrlClientOptions,
   type RuntimeUploadUrlFetch,
