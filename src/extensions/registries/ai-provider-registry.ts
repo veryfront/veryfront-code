@@ -14,10 +14,7 @@ class AIProviderRegistryImpl implements AIProviderRegistry {
 
   register(provider: AIProvider): void {
     if (this.providers.has(provider.id)) {
-      throw new Error(
-        `AIProvider "${provider.id}" is already registered. ` +
-          `Call unregister("${provider.id}") first if you intend to replace it.`,
-      );
+      return;
     }
     this.providers.set(provider.id, provider);
   }
