@@ -8,7 +8,7 @@ order: 21
 
 Build custom extensions to add capabilities, integrate third-party services, and share reusable functionality.
 
-Veryfront's extension system uses a **contract-based architecture** — core defines interfaces (contracts), and extensions provide implementations. This keeps the core lightweight while enabling an open ecosystem of pluggable functionality.
+Veryfront's extension system uses a **contract-based architecture**: core defines interfaces (contracts), and extensions provide implementations. This keeps the core lightweight while enabling an open ecosystem of pluggable functionality.
 
 ## Concepts
 
@@ -44,7 +44,7 @@ veryfront extension validate extensions/my-cache
 
 ## Writing an extension
 
-An extension is a module that `export default`s an `ExtensionFactory` — a function returning an `Extension` object:
+An extension is a module that `export default`s an `ExtensionFactory` (a function returning an `Extension` object):
 
 ```ts
 import type { ExtensionFactory } from "veryfront/extensions";
@@ -78,8 +78,8 @@ interface Extension {
 | `version` | Yes | Semver string. |
 | `capabilities` | Yes | System resources the extension needs (can be empty `[]`). |
 | `provides` | No | Static contract implementations (registered before `setup` runs). |
-| `setup` | No | Async initialization — connect to services, register dynamic contracts. |
-| `teardown` | No | Cleanup — close connections, flush buffers. Runs in reverse load order. |
+| `setup` | No | Async initialization. Connect to services, register dynamic contracts. |
+| `teardown` | No | Cleanup. Close connections, flush buffers. Runs in reverse load order. |
 | `extends` | No | Compose other extensions as a preset. |
 
 ## Providing contracts
@@ -133,7 +133,7 @@ const extRedis: ExtensionFactory = () => {
     async setup(ctx) {
       const url = ctx.config.redisUrl as string | undefined;
       if (!url) {
-        ctx.logger.info("[ext-redis] No REDIS_URL — skipping");
+        ctx.logger.info("[ext-redis] No REDIS_URL, skipping");
         return;
       }
 
@@ -185,7 +185,7 @@ const extMyProvider: ExtensionFactory = () => {
 export default extMyProvider;
 ```
 
-The `capabilities: [{ type: "contract", name: "..." }]` declaration ensures the extension system loads providers before consumers (topological sort).
+The `capabilities: [{ type: "contract", name: "..." }]` declaration tells the topological sort that this extension consumes a contract. When the provider uses a static `provides` field, the sort guarantees providers load before consumers. For contracts registered dynamically via `ctx.provide()`, ensure the provider is listed earlier in the config or has higher source priority.
 
 ### ExtensionContext API
 
@@ -221,7 +221,7 @@ capabilities: [
 | `net:listen` | `ports: number[]` | `--allow-net=localhost:<port>` |
 | `env:read` | `keys: string[]` | `--allow-env=<keys>` |
 | `process:spawn` | `commands: string[]` | `--allow-run=<commands>` |
-| `native:ffi` | — | `--allow-ffi` |
+| `native:ffi` | (none) | `--allow-ffi` |
 | `contract` | `name: string` | (ordering hint, not a permission) |
 
 ## Available contracts
@@ -269,7 +269,7 @@ For published extensions (npm/JSR), declare extension metadata in `deno.json` or
 }
 ```
 
-The `veryfront.extension: true` flag enables auto-discovery — installed packages with this metadata are loaded automatically without explicit config.
+The `veryfront.extension: true` flag enables auto-discovery. Installed packages with this metadata are loaded automatically without explicit config.
 
 ## Discovery and priority
 
@@ -282,7 +282,7 @@ Extensions are discovered from four sources, in priority order:
 | 3 | Project | `extensions/<name>/src/index.ts` in your project |
 | 4 (lowest) | Local file | `*.extension.ts` files in project root |
 
-When multiple extensions provide the same contract, the higher-priority source wins. You can explicitly disable a discovered extension:
+When multiple extensions provide the same contract via static `provides`, the higher-priority source wins. Contracts registered dynamically via `ctx.provide()` in `setup()` are not subject to priority arbitration, so prefer static `provides` when possible. You can explicitly disable a discovered extension:
 
 ```ts
 // veryfront.config.ts
@@ -318,7 +318,7 @@ const presetWeb: ExtensionFactory = (config?) => ({
 export default presetWeb;
 ```
 
-Presets are flattened before load — their children are treated as independent extensions for the purposes of topological sort and conflict resolution.
+Presets are flattened before load. Their children are treated as independent extensions for the purposes of topological sort and conflict resolution.
 
 ## Configuration
 
@@ -509,18 +509,18 @@ export default {
 Extensions load in a deterministic order:
 
 ```
-discover → flatten presets → topological sort → setup() → [runtime] → teardown()
+discover -> flatten presets -> topological sort -> setup() -> [runtime] -> teardown()
 ```
 
-1. **Discovery** — Scans all four sources for extensions.
-2. **Flatten** — Presets expand into their constituent extensions.
-3. **Sort** — Providers load before consumers (Kahn's algorithm on the dependency graph).
-4. **Setup** — Each extension's `setup()` runs in sorted order. If one throws, all previously-loaded extensions are torn down.
-5. **Teardown** — On shutdown, `teardown()` runs in reverse load order.
+1. **Discovery** - Scans all four sources for extensions.
+2. **Flatten** - Presets expand into their constituent extensions.
+3. **Sort** - Providers load before consumers (Kahn's algorithm on the dependency graph).
+4. **Setup** - Each extension's `setup()` runs in sorted order. If one throws, all previously-loaded extensions are torn down.
+5. **Teardown** - On shutdown, `teardown()` runs in reverse load order.
 
 ### HMR behavior
 
-During development, changes to `veryfront.config.ts` trigger a full teardown → re-discovery → setup cycle. Extensions should release all resources in `teardown()` to support this.
+During development, changes to `veryfront.config.ts` trigger a full teardown, re-discovery, and setup cycle. Extensions should release all resources in `teardown()` to support this.
 
 ## Error handling
 
@@ -549,7 +549,7 @@ To publish an extension as a package:
 3. Export your factory as the default export
 4. Publish to npm or JSR
 
-Users install your package and it's auto-discovered — no config changes needed:
+Users install your package and it's auto-discovered, no config changes needed:
 
 ```bash
 deno add @myorg/ext-custom-cache
@@ -557,10 +557,10 @@ deno add @myorg/ext-custom-cache
 
 ## Best practices
 
-- **One contract per extension** — Keep extensions focused. Implement a single contract per package.
-- **Declare all capabilities** — Be explicit about filesystem, network, and env var access.
-- **Handle missing config gracefully** — Log a warning and skip registration instead of throwing when optional config is absent.
-- **Clean up in teardown** — Close connections, cancel timers, flush buffers.
-- **Use `ctx.logger`** — Structured logging integrates with the project's log pipeline.
-- **Test with `ExtensionLoader`** — Integration-test the full lifecycle (setup → resolve → use → teardown).
-- **Version your contracts** — When publishing, pin your contract interface version to avoid breakage.
+- **One contract per extension** - Keep extensions focused. Implement a single contract per package.
+- **Declare all capabilities** - Be explicit about filesystem, network, and env var access.
+- **Handle missing config gracefully** - Log a warning and skip registration instead of throwing when optional config is absent.
+- **Clean up in teardown** - Close connections, cancel timers, flush buffers.
+- **Use `ctx.logger`** - Structured logging integrates with the project's log pipeline.
+- **Test with `ExtensionLoader`** - Integration-test the full lifecycle (setup, resolve, use, teardown).
+- **Version your contracts** - When publishing, pin your contract interface version to avoid breakage.
