@@ -1,8 +1,8 @@
 /**
  * Default Map-backed implementation of the AIProviderRegistry contract.
  *
- * Preserves insertion order via Map (used by `list()`). Throws on
- * duplicate id to surface silent collisions between extensions.
+ * Preserves insertion order via Map (used by `list()`). Duplicate ids are
+ * first-write-wins so higher-priority extensions keep their provider binding.
  *
  * @module extensions/registries/ai-provider-registry
  */

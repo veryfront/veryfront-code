@@ -1,7 +1,5 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
-import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import { ensureBuiltinAIProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import type { ModelRuntime } from "../types.ts";
 import {
   createVeryfrontCloudFetch,
@@ -16,11 +14,11 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, projectSlug);
+  const registry = ensureBuiltinAIProviders();
 
   switch (provider) {
     case "anthropic": {
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
-      const anthropic = registry?.get("anthropic");
+      const anthropic = registry.get("anthropic");
       if (anthropic) {
         return anthropic.createModel(upstreamModelId, {
           credential: apiToken,
@@ -30,14 +28,11 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           fetch,
         });
       }
-      throw new Error(
-        "Anthropic provider not installed. Add @veryfront/ext-anthropic to use anthropic/* models via veryfront-cloud.",
-      );
+      break;
     }
 
     case "google": {
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
-      const google = registry?.get("google");
+      const google = registry.get("google");
       if (google) {
         return google.createModel(upstreamModelId, {
           credential: apiToken,
@@ -46,15 +41,12 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
           fetch,
         });
       }
-      throw new Error(
-        "Google provider not installed. Add @veryfront/ext-google to use google/* models via veryfront-cloud.",
-      );
+      break;
     }
 
     case "openai":
     case "moonshotai": {
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
-      const openai = registry?.get("openai");
+      const openai = registry.get("openai");
       if (openai) {
         return openai.createModel(upstreamModelId, {
           credential: apiToken,
@@ -80,4 +72,11 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
       );
     }
   }
+
+  throw toError(
+    createError({
+      type: "config",
+      message: `Language provider "${provider}" is not available for veryfront-cloud.`,
+    }),
+  );
 }

@@ -10,6 +10,10 @@ import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
+import type { AIProvider, AIProviderRegistry } from "./interfaces/index.ts";
+import { AIProviderRegistryName } from "./interfaces/index.ts";
+import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
+import { createBuiltinExtensions } from "./builtin-extensions.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -363,6 +367,40 @@ describe("orchestrateExtensions()", () => {
       primeContracts: { Seeded: marker },
     });
     assertEquals(resolveContract("Seeded"), marker);
+    await loader.teardownAll();
+  });
+
+  it("lets higher-priority provider extensions override builtin provider ids", async () => {
+    const customProvider: AIProvider = {
+      id: "anthropic",
+      createModel(modelId: string) {
+        return {
+          provider: "custom-anthropic",
+          modelId,
+          specificationVersion: "v3",
+          doGenerate: () => Promise.resolve({}),
+          doStream: () => Promise.resolve({ stream: new ReadableStream() }),
+        };
+      },
+    };
+    const custom = stubExt("custom-anthropic", {
+      capabilities: [{ type: "contract", name: "AIProvider:anthropic" }],
+      setup(ctx) {
+        ctx.require<AIProviderRegistry>(AIProviderRegistryName).register(customProvider);
+      },
+    });
+    const registry = createAIProviderRegistry();
+
+    const loader = await orchestrateExtensions({
+      projectDir: "/fake",
+      config: { extensions: [custom] },
+      logger: noopLogger,
+      discovery: emptyDiscovery(),
+      primeContracts: { [AIProviderRegistryName]: registry },
+      builtinExtensions: createBuiltinExtensions(),
+    });
+
+    assertEquals(registry.get("anthropic"), customProvider);
     await loader.teardownAll();
   });
 });
