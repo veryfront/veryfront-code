@@ -85,11 +85,9 @@ jobs:
       - name: Install Chromium
         run: |
           for attempt in 1 2 3; do
-            if deno run -A npm:playwright install --with-deps chromium; then
-              exit 0
-            fi
-
+            deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
+
             if [ "$attempt" -eq 3 ]; then
               exit "$status"
             fi
@@ -133,11 +131,9 @@ jobs:
       - name: Install Chromium
         run: |
           for attempt in 1 2 3; do
-            if deno run -A npm:playwright install --with-deps chromium; then
-              exit 0
-            fi
-
+            deno run -A npm:playwright install --with-deps chromium && exit 0
             status=$?
+
             if [ "$attempt" -eq 3 ]; then
               exit "$status"
             fi

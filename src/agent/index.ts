@@ -237,6 +237,18 @@ export {
   buildFinalizedAgentRunTraceAttributes,
   buildInvokeAgentTraceAttributes,
 } from "./agent-trace-attributes.ts";
+export type {
+  HostedChatRuntimeAgent,
+  HostedChatRuntimeCreationOptions,
+  HostedChatRuntimeCreationResult,
+  HostedChatRuntimeFinishPart,
+  HostedChatRuntimeOnFinishEvent,
+  HostedChatRuntimeProjectSteering,
+  HostedChatRuntimeStreamInput,
+  HostedChatRuntimeStreamResult,
+  HostedChatRuntimeToUiMessageStreamOptions,
+} from "./hosted-chat-runtime-contract.ts";
+
 export {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
   buildHostedChatRequestFromRuntimeAgentInvocation,
