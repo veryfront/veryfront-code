@@ -509,6 +509,17 @@ export {
   getAgentRuntimeToolResultPart,
 } from "./agent-runtime-message-adapter.ts";
 export {
+  resolveRuntimeMessageFileUrls,
+  type RuntimeFileUrlResolver,
+  type RuntimeFileUrlResolverInput,
+} from "./runtime-message-file-url-refresh.ts";
+export {
+  getRuntimeUploadUrl,
+  type RuntimeUploadUrlClientOptions,
+  type RuntimeUploadUrlFetch,
+  type RuntimeUploadUrlOptions,
+} from "./runtime-upload-url-client.ts";
+export {
   type ChildRunExecutionBufferCleanupInput,
   type ChildRunExecutionResourceFinalizeInput,
   closeChildRunExecutionBuffers,
