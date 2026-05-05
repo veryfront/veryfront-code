@@ -3,6 +3,7 @@
  * Tests invalid configs, missing files, malformed input, and error scenarios
  */
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";

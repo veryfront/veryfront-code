@@ -31,7 +31,7 @@ export class HydratorHandler {
   }
 
   private async bundleHydrator(filePath: string): Promise<string> {
-    const { build, stop } = await import("esbuild");
+    const { build, stop } = await import("veryfront/extensions/bundler");
 
     try {
       const source = await this.readHydratorFile(filePath);

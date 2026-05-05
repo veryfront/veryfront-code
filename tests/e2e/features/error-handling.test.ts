@@ -8,6 +8,7 @@
  * - Server errors in API routes
  * - Component render errors
  */
+import "../../_helpers/contract-init.ts";
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {

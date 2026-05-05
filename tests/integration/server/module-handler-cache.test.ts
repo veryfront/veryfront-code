@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertMatch } from "#veryfront/testing/assert";
 import { join } from "#veryfront/compat/path";
 import { afterAll, describe, it } from "#veryfront/testing/bdd";
@@ -7,6 +8,7 @@ import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { getConfig } from "#veryfront/config";
+import { registerExtMdx } from "../../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 
 async function setupProject(): Promise<string> {
   const dir = await makeTempDir({ prefix: "vf_module_cache_" });
@@ -35,6 +37,7 @@ function getErrorMessage(error: unknown): string {
 async function createHandlerContext(projectDir: string): Promise<HandlerContext> {
   const adapter = await getAdapter();
   const config = await getConfig(projectDir, adapter);
+  await registerExtMdx();
 
   return {
     projectDir,

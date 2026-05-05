@@ -8,6 +8,7 @@
  * Run:
  *   deno test --allow-all tests/integration/vfs-proxy-mode-e2e.test.ts
  */
+import "../_helpers/contract-init.ts";
 
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { afterAll, beforeAll, describe, it } from "#veryfront/testing/bdd.ts";

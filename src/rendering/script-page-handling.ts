@@ -314,7 +314,7 @@ async function transpileWithEsbuild(
   modulePath: string,
   resolveDir: string,
 ): Promise<string> {
-  const { build } = await import("esbuild");
+  const { build } = await import("veryfront/extensions/bundler");
   const loader = getEsbuildLoader(modulePath);
 
   const result = await build({

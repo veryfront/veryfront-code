@@ -1,3 +1,4 @@
+import "../../_helpers/contract-init.ts";
 import { dirname, join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat";
 import { getAdapter } from "#veryfront/platform/adapters/detect.ts";

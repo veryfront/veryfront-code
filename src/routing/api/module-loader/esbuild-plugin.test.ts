@@ -1,8 +1,8 @@
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHTTPPlugin } from "./esbuild-plugin.ts";
-import * as esbuild from "esbuild";
-import type { OnResolveArgs, PluginBuild, ResolveResult } from "esbuild";
+import * as esbuild from "veryfront/extensions/bundler";
+import type { OnResolveArgs, PluginBuild, ResolveResult } from "veryfront/extensions/bundler";
 
 function createMockBuild(
   onResolve: PluginBuild["onResolve"],

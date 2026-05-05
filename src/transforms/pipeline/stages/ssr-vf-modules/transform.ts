@@ -107,7 +107,7 @@ export async function transformFrameworkCode(
       depth,
     });
     // Return minimally transformed code - it will fail at runtime but won't hang
-    const { transform } = await import("esbuild");
+    const { transform } = await import("veryfront/extensions/bundler");
     const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
     let loader: "tsx" | "ts" | "jsx" | "js" = "js";
     if (ext === "tsx") loader = "tsx";
@@ -151,7 +151,7 @@ export async function transformFrameworkCode(
   transformingFiles.add(sourcePath);
 
   try {
-    const { transform } = await import("esbuild");
+    const { transform } = await import("veryfront/extensions/bundler");
 
     const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
     let loader: "tsx" | "ts" | "jsx" | "js" = "js";

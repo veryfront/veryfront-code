@@ -14,6 +14,7 @@
  * @see plans/architecture-audit/009.2-fetch-calls-without-timeout.md
  */
 
+import "../../_helpers/contract-init.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import {

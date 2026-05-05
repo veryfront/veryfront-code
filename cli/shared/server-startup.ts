@@ -7,6 +7,7 @@ import {
   type StartProductionServerOptions,
 } from "veryfront/server";
 import type { RuntimeAdapter } from "veryfront/platform";
+import { ensureBuiltinContentTransformer } from "./ensure-content-transformer.ts";
 
 export interface StartCliProxyModeServerOptions {
   port: number;
@@ -43,7 +44,7 @@ export async function startCliProxyModeServer(
     setEnv("NODE_ENV", "development");
   }
 
-  return await startProductionServer({
+  const result = await startProductionServer({
     port: options.port,
     projectDir: options.projectDir,
     signal: options.signal,
@@ -52,6 +53,8 @@ export async function startCliProxyModeServer(
     defaultProjectId: options.defaultProjectId,
     discoveryConfig: buildDiscoveryConfig(options),
   });
+  ensureBuiltinContentTransformer();
+  return result;
 }
 
 export interface StartCliDevServerOptions {
@@ -72,7 +75,9 @@ export async function startCliDevServer(
     enableFastRefresh: options.enableFastRefresh,
     signal: options.signal,
   };
-  return await startDevServer(devOptions);
+  const result = await startDevServer(devOptions);
+  ensureBuiltinContentTransformer();
+  return result;
 }
 
 export interface StartCliProductionServerOptions {
@@ -108,5 +113,7 @@ export async function startCliProductionServer(
     // through `/_veryfront/rsc/module?` for non-local deployments, so no
     // `localProjects` entry is required for the compiled binary to work.
   };
-  return await startProductionServer(serverOptions);
+  const result = await startProductionServer(serverOptions);
+  ensureBuiltinContentTransformer();
+  return result;
 }

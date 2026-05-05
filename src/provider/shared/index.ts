@@ -40,6 +40,7 @@ export {
   isNumberArray,
   mergeUsage,
   parseRetryAfterMs,
+  parseSseChunk,
   ProviderError,
   ProviderOverloadedError,
   ProviderQuotaError,
@@ -53,10 +54,13 @@ export {
   stringifyJsonValue,
   toOpenAICompatibleMessages,
   toOpenAICompatibleTools,
+  unwrapToolInputSchema,
 } from "../runtime-loader.ts";
 
 export type {
   OpenAICompatibleChatMessage,
   OpenAICompatibleChatRequest,
+  ProviderWarning,
   RuntimePromptMessage,
+  RuntimeUsage,
 } from "../runtime-loader.ts";

@@ -23,7 +23,7 @@ export function bundleBrowserModule(
   return withSpan(
     "server.browser-module.bundle",
     async () => {
-      const { build } = await import("esbuild");
+      const { build } = await import("veryfront/extensions/bundler");
       const src = await options.adapter.fs.readFile(absPath);
       const importMapJson = await buildImportMapJson({
         projectDir: options.projectDir,

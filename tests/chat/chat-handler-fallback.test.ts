@@ -2,6 +2,7 @@
  * Tests for the chat handler's 503 fallback response and
  * the structured no_ai_available error flow.
  */
+import "../_helpers/contract-init.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";

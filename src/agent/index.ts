@@ -110,6 +110,42 @@ export type {
   ToolResultPart,
 } from "./types.ts";
 
+export {
+  DEFAULT_PROJECT_STEERING_PATHS,
+  getProjectSteeringMutation,
+  isSuccessfulProjectSteeringMutationResult,
+  PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES,
+  type ProjectSteeringMutationInput,
+  type ProjectSteeringMutationResult,
+  type ProjectSteeringPaths,
+} from "./project-steering-mutation.ts";
+
+export {
+  clientAllowsStudioMcp,
+  resolveRuntimeClientProfile,
+  type RuntimeClientCapability,
+  runtimeClientCapabilitySchema,
+  type RuntimeClientProfile,
+  runtimeClientProfileSchema,
+  type RuntimeClientType,
+  runtimeClientTypeSchema,
+} from "./runtime-client-profile.ts";
+
+export {
+  parseRuntimeAgentMarkdownDefinition,
+  type ParseRuntimeAgentMarkdownDefinitionInput,
+  parseRuntimeAgentMarkdownDefinitionInputSchema,
+  type RuntimeAgentMarkdownDefinition,
+  runtimeAgentMarkdownDefinitionSchema,
+  type RuntimeAgentThinkingConfig,
+  runtimeAgentThinkingConfigSchema,
+} from "./runtime-agent-definition.ts";
+
+export {
+  applyAgentProjectContextChange,
+  getConfirmedProjectContextSwitchId,
+  type MutableAgentProjectContext,
+} from "./project-context.ts";
 export { getTextFromParts, getToolArguments, hasArgs, hasInput } from "./types.ts";
 
 export {
@@ -192,6 +228,37 @@ export {
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
 } from "./runtime-ag-ui-contract.ts";
+export {
+  type AgentTraceAttributes,
+  type AgentTraceAttributeValue,
+  type AgentTraceUsage,
+  buildAgentRunTraceAttributes,
+  buildExecuteToolTraceAttributes,
+  buildFinalizedAgentRunTraceAttributes,
+  buildInvokeAgentTraceAttributes,
+} from "./agent-trace-attributes.ts";
+export type {
+  HostedChatRuntimeAgent,
+  HostedChatRuntimeCreationOptions,
+  HostedChatRuntimeCreationResult,
+  HostedChatRuntimeFinishPart,
+  HostedChatRuntimeOnFinishEvent,
+  HostedChatRuntimeProjectSteering,
+  HostedChatRuntimeStreamInput,
+  HostedChatRuntimeStreamResult,
+  HostedChatRuntimeToUiMessageStreamOptions,
+} from "./hosted-chat-runtime-contract.ts";
+
+export {
+  buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
+  buildHostedChatRequestFromRuntimeAgentInvocation,
+  buildHostedChatRequestInputFromRuntimeAgentInvocation,
+  type HostedChatRequest,
+  type HostedChatRequestInput,
+  hostedChatRequestSchema,
+  hostedChatRuntimeOverridesSchema,
+  hostedDurableRootRunDescriptorSchema,
+} from "./hosted-chat-request.ts";
 export {
   parseRuntimeAgentRunInvocation,
   parseRuntimeAgentRunInvocationOrError,
@@ -314,6 +381,8 @@ export {
   shouldContinueForkRuntimeStep,
   startAgentRuntimeFork,
   type StartAgentRuntimeForkInput,
+  startAgentRuntimeForkWithHostTools,
+  type StartAgentRuntimeForkWithHostToolsInput,
 } from "./fork-runtime-stream.ts";
 export {
   executeHostedChildForkStream,
@@ -456,10 +525,18 @@ export {
   withHostedChildStreamIdleTimeout,
 } from "./hosted-child-stream-watchdog.ts";
 export {
+  DEFAULT_HOSTED_CHILD_AGENT_ID,
+  type HostedChildForkToolInput,
+  hostedChildForkToolInputSchema,
+} from "./hosted-child-tool-input.ts";
+
+export {
   buildHostedChildToolDescription,
   expandHostedChildRequestedTools,
+  type HostedChildForkRuntimeToolSelectionResult,
   type HostedChildRequestedToolsInput,
   sanitizeHostedChildRequestedTools,
+  selectHostedChildForkRuntimeTools,
   shouldPruneSandboxToolsFromHostedChildRequest,
 } from "./hosted-child-requested-tools.ts";
 export {
@@ -654,6 +731,12 @@ export {
   toMirroredHostedStreamPart,
 } from "./hosted-child-mirror.ts";
 export {
+  type HostedChildRunStatusMonitor,
+  type StartedHostedChildForkRuntime,
+  startHostedChildForkRuntimeWithHostTools,
+  type StartHostedChildForkRuntimeWithHostToolsInput,
+} from "./hosted-child-fork-runtime-start.ts";
+export {
   type HostedChildRunIdentifiers,
   type HostedChildTerminalErrorCode,
   hostedChildTerminalErrorCodes,
@@ -661,6 +744,7 @@ export {
   type HostedChildTerminalStatus,
   isHostedChildTerminalErrorCode,
   monitorHostedChildRunStatus,
+  type MonitorHostedChildRunStatusInput,
   resolveHostedChildTerminalErrorCode,
 } from "./hosted-child-status.ts";
 export {

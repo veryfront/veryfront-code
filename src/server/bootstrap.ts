@@ -5,6 +5,8 @@ import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
 import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import { createAIProviderRegistry } from "#veryfront/extensions/registries/ai-provider-registry.ts";
+import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
+import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/interfaces/tracing-exporter.ts";
 import {
   setGlobalActiveSpanAccessor,
@@ -68,6 +70,30 @@ export interface BootstrapResult {
  * Wire the `TracingExporter` contract (if registered) into the core shim.
  * Must be called after `orchestrateExtensions()` completes.
  */
+/**
+ * Fail-fast: ensure the `Bundler` contract has been registered. Core depends
+ * on it for every JS/TS transform path. `ModuleLexer` is checked too, but
+ * only as a warning (dev-only paths can degrade).
+ */
+function assertRequiredContracts(): void {
+  if (!tryResolve("Bundler")) {
+    const recommendation = getRecommendation("Bundler");
+    throw MISSING_EXTENSION_ERROR.create({
+      message: `Missing extension for contract "Bundler"${
+        recommendation ? `. Recommended: ${recommendation}` : ""
+      }`,
+      detail: recommendation ? `Install it with: deno add ${recommendation}` : undefined,
+    });
+  }
+  if (!tryResolve("ModuleLexer")) {
+    bootstrapLog.warn(
+      `[bootstrap] no ModuleLexer extension registered — dev-server import rewriting will fail. Recommended: ${
+        getRecommendation("ModuleLexer") ?? "@veryfront/ext-esbuild"
+      }`,
+    );
+  }
+}
+
 function wireTracingShim(): void {
   const tracing = tryResolve<TracingExporter>("TracingExporter");
   if (tracing) {
@@ -203,6 +229,7 @@ export async function bootstrap(
       primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
     });
     wireTracingShim();
+    assertRequiredContracts();
     return {
       adapter,
       config,
@@ -245,6 +272,7 @@ export async function bootstrap(
       primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
     });
     wireTracingShim();
+    assertRequiredContracts();
     return {
       adapter,
       config,
@@ -311,6 +339,7 @@ export async function bootstrap(
     fsDispose,
   );
   wireTracingShim();
+  assertRequiredContracts();
 
   return {
     adapter: enhancedAdapter,

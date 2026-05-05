@@ -82,7 +82,7 @@ const adapter: RuntimeAdapter = {
 
 describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, () => {
   afterAll(async () => {
-    const { stop } = await import("esbuild");
+    const { stop } = await import("veryfront/extensions/bundler");
     await stop();
   });
 

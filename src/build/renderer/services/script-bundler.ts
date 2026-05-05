@@ -3,8 +3,8 @@
  */
 
 import { bundlerLogger as logger } from "#veryfront/utils";
-import type * as esbuild from "esbuild";
-import type { Plugin } from "esbuild";
+import type * as esbuild from "veryfront/extensions/bundler";
+import type { Plugin } from "veryfront/extensions/bundler";
 import type { BundleResult, BundlerOptions } from "../types/bundler-types.ts";
 import { extractImports } from "../utils/import-utils.ts";
 import { getEsbuildLoader } from "../../utils/file-types.ts";

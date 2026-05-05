@@ -1,6 +1,8 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { createGoogleEmbeddingRuntime } from "#veryfront/provider/runtime-loader.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
+import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,
@@ -23,13 +25,25 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
         fetch,
       });
 
-    case "google":
-      return createGoogleEmbeddingRuntime({
-        apiKey: apiToken,
-        baseURL,
-        name: "veryfront-cloud",
-        fetch,
-      }, upstreamModelId);
+    case "google": {
+      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const google = registry?.get("google");
+      if (google?.createEmbedding) {
+        return google.createEmbedding(upstreamModelId, {
+          credential: apiToken,
+          baseURL,
+          name: "veryfront-cloud",
+          fetch,
+        });
+      }
+      throw toError(
+        createError({
+          type: "config",
+          message:
+            "Google provider not installed. Add @veryfront/ext-google to use google/* embedding models via veryfront-cloud.",
+        }),
+      );
+    }
   }
 
   throw toError(

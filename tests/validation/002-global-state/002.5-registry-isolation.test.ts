@@ -9,6 +9,7 @@
  * @see plans/architecture-audit/002.5-ai-registry-leakage.md
  */
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { z } from "zod";

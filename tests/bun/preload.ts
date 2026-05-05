@@ -86,8 +86,8 @@ function resolveImport(specifier: string): string | null {
   const stdNormalized = specifier.startsWith("@std/")
     ? `#std/${specifier.slice("@std/".length)}`
     : specifier.startsWith("std/")
-      ? `#std/${specifier.slice("std/".length)}`
-      : specifier;
+    ? `#std/${specifier.slice("std/".length)}`
+    : specifier;
 
   const mapped = importMap[specifier] ?? importMap[stdNormalized];
   if (mapped) {
@@ -124,16 +124,15 @@ plugin({
       url.hash = "";
       const filePath = fileURLToPath(url);
       const extension = extname(filePath).toLowerCase();
-      const loader =
-        extension === ".ts"
-          ? "ts"
-          : extension === ".tsx"
-            ? "tsx"
-            : extension === ".jsx"
-              ? "jsx"
-              : extension === ".json"
-                ? "json"
-                : "js";
+      const loader = extension === ".ts"
+        ? "ts"
+        : extension === ".tsx"
+        ? "tsx"
+        : extension === ".jsx"
+        ? "jsx"
+        : extension === ".json"
+        ? "json"
+        : "js";
 
       return {
         contents: readFileSync(filePath, "utf-8"),
@@ -150,7 +149,10 @@ plugin({
       return { path: packageName };
     });
 
-    build.onResolve({ filter: /^(#deno-config|@std\/|#std\/|std\/|#veryfront(?:\/|$)|veryfront(?:\/|$)|react(?:$|\/jsx-runtime$|\/jsx-dev-runtime$)|react-dom(?:$|\/client$|\/server$|\/static$))/ }, (args) => {
+    build.onResolve({
+      filter:
+        /^(#deno-config|@std\/|#std\/|std\/|#veryfront(?:\/|$)|veryfront(?:\/|$)|react(?:$|\/jsx-runtime$|\/jsx-dev-runtime$)|react-dom(?:$|\/client$|\/server$|\/static$))/,
+    }, (args) => {
       const resolved = resolveImport(args.path);
       if (resolved) {
         return { path: resolved };

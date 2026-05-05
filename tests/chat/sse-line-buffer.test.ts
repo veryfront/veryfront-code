@@ -4,6 +4,7 @@
  * Validates that `handleStreamingResponse` correctly reassembles SSE
  * events when `reader.read()` splits them mid-line — the fix from #477.
  */
+import "../_helpers/contract-init.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 

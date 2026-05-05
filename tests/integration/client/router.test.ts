@@ -3,6 +3,7 @@
  * Tests client-side routing, navigation, history management, and DOM interactions
  */
 
+import "../../_helpers/contract-init.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import type { RouterOptions } from "#veryfront/rendering/client/router.ts";

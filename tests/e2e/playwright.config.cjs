@@ -24,7 +24,9 @@ const projects = selectedProject
 
 if (selectedProject && projects.length === 0) {
   throw new Error(
-    `Unknown PLAYWRIGHT_PROJECT: ${selectedProject}. Expected one of ${runtimeProjects.map((project) => project.name).join(", ")}.`,
+    `Unknown PLAYWRIGHT_PROJECT: ${selectedProject}. Expected one of ${
+      runtimeProjects.map((project) => project.name).join(", ")
+    }.`,
   );
 }
 

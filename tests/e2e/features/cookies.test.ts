@@ -8,6 +8,7 @@
  * - Cookie options (httpOnly, secure, path, etc.)
  * - Multiple cookies
  */
+import "../../_helpers/contract-init.ts";
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {

@@ -90,14 +90,18 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-export async function monitorHostedChildRunStatus(input: {
+export interface MonitorHostedChildRunStatusInput {
   authToken: string;
   apiUrl: string;
   identifiers: HostedChildRunIdentifiers;
   abortSignal?: AbortSignal;
   pollIntervalMs: number;
   onTerminal: (error: HostedChildTerminalStateError) => void;
-}): Promise<void> {
+}
+
+export async function monitorHostedChildRunStatus(
+  input: MonitorHostedChildRunStatusInput,
+): Promise<void> {
   while (!input.abortSignal?.aborted) {
     await waitForHostedChildStatusPoll(input.pollIntervalMs, input.abortSignal);
     if (input.abortSignal?.aborted) {

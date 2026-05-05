@@ -18,18 +18,18 @@ async function buildOrServeScript(
   adapter: RuntimeAdapter,
   path: string,
   fallbackBundle: string,
-  esbuildOptions: Omit<import("esbuild").BuildOptions, "stdin"> & {
-    stdin: import("esbuild").StdinOptions;
+  esbuildOptions: Omit<import("veryfront/extensions/bundler").BuildOptions, "stdin"> & {
+    stdin: import("veryfront/extensions/bundler").StdinOptions;
   },
 ): Promise<Response> {
   // If a pre-built bundle was injected at compile time, serve it directly
   if (fallbackBundle) return jsResponse(fallbackBundle);
 
-  let esbuild: typeof import("esbuild") | null = null;
+  let esbuild: typeof import("veryfront/extensions/bundler") | null = null;
 
   try {
     const src = await adapter.fs.readFile(path);
-    esbuild = await import("esbuild");
+    esbuild = await import("veryfront/extensions/bundler");
     const result = await esbuild.build({
       ...esbuildOptions,
       stdin: { ...esbuildOptions.stdin, contents: src },

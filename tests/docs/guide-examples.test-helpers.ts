@@ -1,3 +1,4 @@
+import "../_helpers/contract-init.ts";
 import { agent } from "../../src/agent/factory.ts";
 
 export function jsonResponse(body: unknown, status = 200): Response {

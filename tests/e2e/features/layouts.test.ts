@@ -8,6 +8,7 @@
  * - Nested layouts (root + dashboard layouts)
  * - Layout + App provider combination
  */
+import "../../_helpers/contract-init.ts";
 
 import { beforeAll, describe, it } from "#veryfront/testing/bdd.ts";
 import {

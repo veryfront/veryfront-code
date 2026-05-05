@@ -1,3 +1,4 @@
+import "../../../transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { bundleMdx, bundleMDXWithOptions } from "./mdx-bundler.ts";

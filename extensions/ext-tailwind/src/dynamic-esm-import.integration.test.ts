@@ -12,6 +12,7 @@
  *   /tmp/test-dynamic-esm
  */
 
+import "../_helpers/contract-init.ts";
 import plugin from "tailwindcss/plugin";
 
 // Set up global shim for tailwindcss/plugin - same as in tailwind-compiler.ts
