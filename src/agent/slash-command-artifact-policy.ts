@@ -1,4 +1,4 @@
-import { isRecord } from "../chat/conversation.ts";
+import { isRecord } from "#veryfront/chat/conversation.ts";
 
 const SLASH_COMMAND_PATTERN = /(?:^|<span\s+data-command="[^"]+">)\s*\/[a-z0-9_-]+/i;
 const EXACT_ARTIFACT_PATH_PATTERN = /(?:^|[\s`"'(])\/?[\w./-]+\.(?:md|mdx|txt|json|ya?ml)\b/i;

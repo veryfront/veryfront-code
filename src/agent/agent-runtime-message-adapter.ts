@@ -1,4 +1,4 @@
-import { isRecord } from "../chat/conversation.ts";
+import { isRecord } from "#veryfront/chat/conversation.ts";
 import {
   buildDataFileAnnotation,
   type ChatToolResultPart,

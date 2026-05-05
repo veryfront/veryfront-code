@@ -18,7 +18,7 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { isDeno } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
-import type { NodeCompat } from "../../extensions/interfaces/node-compat.ts";
+import type { NodeCompat } from "#veryfront/extensions/interfaces/node-compat.ts";
 
 function resolve(pkg: string, version: string): string {
   return isDeno ? `npm:${pkg}@${version}` : pkg;

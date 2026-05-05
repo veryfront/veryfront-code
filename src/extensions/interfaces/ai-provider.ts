@@ -10,7 +10,7 @@
  * @module extensions/interfaces/ai-provider
  */
 
-import type { EmbeddingRuntime, ModelRuntime } from "../../provider/types.ts";
+import type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.ts";
 
 /** Config passed to any provider's create* method. */
 export interface AIProviderConfig {

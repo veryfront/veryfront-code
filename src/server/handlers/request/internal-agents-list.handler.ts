@@ -8,7 +8,7 @@ import {
   listRuntimeAgents,
   type RuntimeAgentDiscoveryDeps,
 } from "../../../channels/control-plane.ts";
-import { defaultChannelInvokeDeps } from "../../../channels/invoke.ts";
+import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,

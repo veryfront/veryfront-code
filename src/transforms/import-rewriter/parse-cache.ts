@@ -5,8 +5,8 @@
  * This eliminates redundant parsing that happened with the fragmented system.
  */
 
-import { resolve as resolveContract } from "../../extensions/contracts.ts";
-import type { ModuleLexer } from "../../extensions/interfaces/module-lexer.ts";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ModuleLexer } from "#veryfront/extensions/interfaces/module-lexer.ts";
 import type { ImportSpecifierInfo } from "./types.ts";
 import type { ImportSpecifier } from "../esm/lexer.ts";
 

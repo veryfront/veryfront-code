@@ -1,4 +1,4 @@
-import type { ChatSystemMessage } from "../chat/types.ts";
+import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { isHostedChildCreateFileAlreadyExistsResult } from "./hosted-child-artifact-support.ts";
 import {
   buildDefaultResearchArtifactPathReminder,

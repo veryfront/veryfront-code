@@ -4,7 +4,7 @@ import { getAgent } from "./composition/index.ts";
 import type { Message } from "./types.ts";
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-import { DEFAULT_LOCAL_MODEL } from "../provider/local/model-catalog.ts";
+import { DEFAULT_LOCAL_MODEL } from "#veryfront/provider/local/model-catalog.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 
 /** Maximum character length for a single text part */
@@ -369,7 +369,7 @@ function extractRequest(requestOrCtx: unknown): Request {
  * export const POST = createChatHandler("assistant");
  *
  * // By agent instance (no registry needed)
- * import { myAgent } from "../../agents/my-agent";
+ * import { myAgent } from "agents/my-agent";
  * export const POST = createChatHandler({ agent: myAgent, beforeStream: ... });
  * ```
  */

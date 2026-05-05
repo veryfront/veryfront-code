@@ -11,7 +11,7 @@
  */
 
 import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-esbuild";
-import { register as registerContract } from "../extensions/contracts.ts";
+import { register as registerContract } from "#veryfront/extensions/contracts.ts";
 
 const g = globalThis as Record<string, unknown>;
 

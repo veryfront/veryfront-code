@@ -1,4 +1,4 @@
-import { type ChatStreamEvent } from "../chat/protocol.ts";
+import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import {
   type ConversationRunEvent,
   ConversationRunEventEncoder,

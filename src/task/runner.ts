@@ -7,7 +7,7 @@
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
-import { buildTaskContextEnv } from "../jobs/runtime-env.ts";
+import { buildTaskContextEnv } from "#veryfront/jobs/runtime-env.ts";
 import type { DiscoveredTask } from "./discovery.ts";
 import type { TaskContext } from "./types.ts";
 

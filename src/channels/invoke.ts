@@ -8,7 +8,7 @@ import {
   getAllAgentIds as getRegisteredAgentIds,
 } from "../agent/composition/composition.ts";
 import { listRuntimeAgents, type RuntimeAgentDiscoveryDeps } from "./control-plane.ts";
-import { ensureProjectDiscovery as ensureProjectDiscoveryForProject } from "../server/handlers/request/api/project-discovery.ts";
+import { ensureProjectDiscovery as ensureProjectDiscoveryForProject } from "#veryfront/server/handlers/request/api/project-discovery.ts";
 
 const logger = serverLogger.component("channels-invoke");
 

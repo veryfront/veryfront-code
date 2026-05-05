@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { isUuid, toConversationPartsFromUiMessage } from "../chat/conversation.ts";
-import type { ChatUiMessage } from "../chat/types.ts";
+import { isUuid, toConversationPartsFromUiMessage } from "#veryfront/chat/conversation.ts";
+import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
 
 const CONVERSATION_API_TIMEOUT_MS = 15_000;

@@ -1,5 +1,5 @@
-import type { ChatMessageMetadata, ChatUiMessageChunk } from "../chat/protocol.ts";
-import type { HostedStreamPartForUiChunkMapping } from "../chat/hosted-ui-chunk-mapping.ts";
+import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
+import type { HostedStreamPartForUiChunkMapping } from "#veryfront/chat/hosted-ui-chunk-mapping.ts";
 
 export interface HostedChildChunkMirror {
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void> | void;
