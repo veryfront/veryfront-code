@@ -1,6 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "../chat/protocol.ts";
-import { createHostedChildPendingToolLifecycle } from "./hosted-child-pending-tool-lifecycle.ts";
+import {
+  createHostedChildPendingToolLifecycle,
+  createHostedChildPendingToolLifecycleLogger,
+} from "./hosted-child-pending-tool-lifecycle.ts";
 
 Deno.test("createHostedChildPendingToolLifecycle closes incomplete streaming input", async () => {
   const chunks: ChatUiMessageChunk<ChatMessageMetadata>[] = [];
@@ -115,4 +118,58 @@ Deno.test("createHostedChildPendingToolLifecycle deletes settled pending tool ca
   await lifecycle.closePendingToolCalls({ kind: "ended" });
 
   assertEquals(chunks, []);
+});
+
+Deno.test("createHostedChildPendingToolLifecycleLogger writes host context for pending lifecycle warnings", () => {
+  const warnings: Array<{ message: string; context: Record<string, unknown> }> = [];
+  const logger = createHostedChildPendingToolLifecycleLogger(
+    {
+      conversationId: "conv-1",
+      parentRunId: "run-1",
+      description: "Summarize docs",
+    },
+    {
+      warn: (message: string, context: Record<string, unknown>) => {
+        warnings.push({ message, context });
+      },
+    },
+  );
+
+  logger.warnIncompleteToolLifecycles?.({
+    reason: "error",
+    toolCallIds: ["tool-1", "tool-2"],
+    errorMessage: "stream failed",
+  });
+  logger.warnUnknownToolIdentity?.({
+    toolCallId: "tool-1",
+    phase: "input_streaming",
+    reason: "error",
+    hasInputSnapshot: true,
+  });
+
+  assertEquals(warnings, [
+    {
+      message: "Closing incomplete child fork tool lifecycles",
+      context: {
+        conversationId: "conv-1",
+        runId: "run-1",
+        description: "Summarize docs",
+        reason: "error",
+        toolCallIds: ["tool-1", "tool-2"],
+        errorMessage: "stream failed",
+      },
+    },
+    {
+      message: "Closing child fork tool lifecycle without recoverable tool identity",
+      context: {
+        conversationId: "conv-1",
+        runId: "run-1",
+        description: "Summarize docs",
+        toolCallId: "tool-1",
+        phase: "input_streaming",
+        reason: "error",
+        hasInputSnapshot: true,
+      },
+    },
+  ]);
 });

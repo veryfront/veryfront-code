@@ -32,6 +32,45 @@ export interface HostedChildPendingToolLifecycleLogger {
   warnUnknownToolIdentity?: (input: HostedChildPendingToolLifecycleUnknownToolLog) => void;
 }
 
+export interface HostedChildPendingToolLifecycleLogContext {
+  conversationId?: string;
+  parentRunId?: string;
+  description: string;
+}
+
+export interface HostedChildPendingToolLifecycleLogWriter {
+  warn: (message: string, context: Record<string, unknown>) => void;
+}
+
+export function createHostedChildPendingToolLifecycleLogger(
+  context: HostedChildPendingToolLifecycleLogContext,
+  writer: HostedChildPendingToolLifecycleLogWriter,
+): HostedChildPendingToolLifecycleLogger {
+  return {
+    warnIncompleteToolLifecycles: (log) => {
+      writer.warn("Closing incomplete child fork tool lifecycles", {
+        conversationId: context.conversationId,
+        runId: context.parentRunId,
+        description: context.description,
+        reason: log.reason,
+        toolCallIds: log.toolCallIds,
+        errorMessage: log.errorMessage,
+      });
+    },
+    warnUnknownToolIdentity: (log) => {
+      writer.warn("Closing child fork tool lifecycle without recoverable tool identity", {
+        conversationId: context.conversationId,
+        runId: context.parentRunId,
+        description: context.description,
+        toolCallId: log.toolCallId,
+        phase: log.phase,
+        reason: log.reason,
+        hasInputSnapshot: log.hasInputSnapshot,
+      });
+    },
+  };
+}
+
 export interface HostedChildPendingToolLifecycleInput {
   appendMirrorChunk: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => Promise<void> | void;
   logger?: HostedChildPendingToolLifecycleLogger;
