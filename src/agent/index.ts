@@ -561,8 +561,12 @@ export {
 } from "./hosted-child-stream-watchdog.ts";
 export {
   DEFAULT_HOSTED_CHILD_AGENT_ID,
+  type HostedChildForkRuntimeConfig,
   type HostedChildForkToolInput,
   hostedChildForkToolInputSchema,
+  resolveHostedChildForkRuntimeConfig,
+  type ResolveHostedChildForkRuntimeConfigInput,
+  resolveHostedChildForkThinkingOverride,
 } from "./hosted-child-tool-input.ts";
 
 export {
