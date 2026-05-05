@@ -111,6 +111,15 @@ export type {
 } from "./types.ts";
 
 export {
+  type HostedChildProjectSwitchHandler,
+  type HostedChildSteeringMutationHandler,
+  wrapHostedChildProjectSwitchTool,
+  type WrapHostedChildProjectSwitchToolInput,
+  wrapHostedChildSteeringMutationTool,
+  type WrapHostedChildSteeringMutationToolInput,
+} from "./hosted-child-steering-tools.ts";
+
+export {
   DEFAULT_PROJECT_STEERING_PATHS,
   getProjectSteeringMutation,
   isSuccessfulProjectSteeringMutationResult,
