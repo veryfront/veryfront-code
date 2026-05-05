@@ -66,6 +66,24 @@ export async function* withToolInputStatusTransitions(
   const buffered: unknown[] = [];
   let nextPartPromise: Promise<IteratorResult<unknown>> | null = null;
 
+  const readPartIfReady = async (): Promise<IteratorResult<unknown> | null> => {
+    if (!nextPartPromise) {
+      return null;
+    }
+
+    const ready = await Promise.race([
+      nextPartPromise.then((result) => ({ kind: "part" as const, result })),
+      Promise.resolve({ kind: "pending" as const }),
+    ]);
+
+    if (ready.kind === "pending") {
+      return null;
+    }
+
+    nextPartPromise = null;
+    return ready.result;
+  };
+
   const closeTool = (toolCallId: string | null) => {
     if (!toolCallId) {
       return;
@@ -181,6 +199,20 @@ export async function* withToolInputStatusTransitions(
       }
 
       if (timeoutResult.kind === "timeout") {
+        const readyResult = await readPartIfReady();
+        if (readyResult) {
+          if (readyResult.done) {
+            buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
+            while (buffered.length > 0) {
+              yield buffered.shift();
+            }
+            return;
+          }
+
+          processPart(readyResult.value);
+          continue;
+        }
+
         buffered.push(...collectDueToolStatuses(toolStates, Date.now(), thresholdMs));
         continue;
       }

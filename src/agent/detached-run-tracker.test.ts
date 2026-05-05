@@ -28,12 +28,14 @@ describe("agent/detached-run-tracker", () => {
     tracker.registerExecution("run_1", execution.promise);
 
     assertEquals(tracker.cancelAllRuns(), ["run_1"]);
-    const draining = tracker.waitForDrain({ timeoutMs: 50, pollIntervalMs: 1 });
     const beforeResolve = await tracker.waitForDrain({ timeoutMs: 1, pollIntervalMs: 1 });
     assertEquals(beforeResolve, { drained: false, pendingRunIds: ["run_1"] });
 
     await execution.resolve();
-    assertEquals(await draining, { drained: true, pendingRunIds: [] });
+    assertEquals(await tracker.waitForDrain({ timeoutMs: 50, pollIntervalMs: 1 }), {
+      drained: true,
+      pendingRunIds: [],
+    });
   });
 
   it("keeps newer executions registered when an older execution settles", async () => {
