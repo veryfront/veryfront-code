@@ -742,6 +742,12 @@ export {
   type HostedTerminalError,
 } from "./hosted-stream-finalization.ts";
 export {
+  getEmptyHostedFinalizedMessageTerminalError,
+  getHostedStreamErrorText,
+  type HostedStreamTerminalError,
+  shouldFailEmptyHostedFinalizedMessage,
+} from "./hosted-stream-terminal-error.ts";
+export {
   type ActiveConversationRunStatus,
   appendConversationRunEvents,
   AppendConversationRunEventsError,
