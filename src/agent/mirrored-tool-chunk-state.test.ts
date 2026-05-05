@@ -3,8 +3,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "../chat/protocol.ts";
 import {
   cloneMirroredToolChunkState,
+  closeHostedMirroredOpenToolCalls,
   computeOpenToolCalls,
   createMirroredToolChunkState,
+  getHostedMirroredAbortErrorText,
   isDurableMirroredOutputChunk,
   recordMirroredToolChunkState,
 } from "./mirrored-tool-chunk-state.ts";
@@ -150,5 +152,104 @@ describe("mirrored-tool-chunk-state", () => {
       needsInputClose: [],
       needsOutputClose: [{ toolCallId: "tc-1", toolName: "edit_file" }],
     });
+  });
+
+  it("builds stream abort error text from abort and non-abort errors", () => {
+    assertEquals(
+      getHostedMirroredAbortErrorText(new DOMException("cancelled", "AbortError")),
+      "Chat stream aborted before tool call completed",
+    );
+    assertEquals(
+      getHostedMirroredAbortErrorText(new Error("provider stopped")),
+      "Chat stream errored before tool call completed: provider stopped",
+    );
+  });
+
+  it("closes mirrored open tool calls with terminal error chunks", async () => {
+    const state = createMirroredToolChunkState();
+    recordMirroredToolChunkState(state, {
+      type: "tool-input-start",
+      toolCallId: "tc-1",
+      toolName: "bash",
+    });
+    recordMirroredToolChunkState(state, {
+      type: "tool-input-available",
+      toolCallId: "tc-2",
+      toolName: "edit_file",
+      input: { path: "AGENTS.md" },
+    });
+
+    const chunks: Chunk[] = [];
+    const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+
+    await closeHostedMirroredOpenToolCalls({
+      mirroredToolChunkState: state,
+      errorText: "stream stopped",
+      appendChunk: (chunk) => {
+        chunks.push(chunk);
+      },
+      logger: {
+        warn: (message, metadata) => {
+          warnings.push({ message, metadata });
+        },
+      },
+    });
+
+    assertEquals(chunks, [
+      {
+        type: "tool-input-error",
+        toolCallId: "tc-1",
+        toolName: "bash",
+        input: {},
+        errorText: "stream stopped",
+      },
+      {
+        type: "tool-output-error",
+        toolCallId: "tc-2",
+        errorText: "stream stopped",
+      },
+    ]);
+    assertEquals(warnings.length, 1);
+    assertEquals(warnings[0]?.message, "Closing open tool calls after stream abort");
+  });
+
+  it("does not append chunks when no mirrored tool calls are open", async () => {
+    const chunks: Chunk[] = [];
+
+    await closeHostedMirroredOpenToolCalls({
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      errorText: "stream stopped",
+      appendChunk: (chunk) => {
+        chunks.push(chunk);
+      },
+    });
+
+    assertEquals(chunks, []);
+  });
+
+  it("logs tool calls without recoverable tool names", async () => {
+    const state = createMirroredToolChunkState();
+    state.startedToolCallIds.add("tc-1");
+
+    const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+
+    await closeHostedMirroredOpenToolCalls({
+      mirroredToolChunkState: state,
+      errorText: "stream stopped",
+      appendChunk: () => undefined,
+      logger: {
+        warn: (message, metadata) => {
+          warnings.push({ message, metadata });
+        },
+      },
+    });
+
+    assertEquals(
+      warnings.map(({ message }) => message),
+      [
+        "Closing open tool calls after stream abort",
+        "Closing aborted tool calls without recoverable tool names",
+      ],
+    );
   });
 });

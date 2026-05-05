@@ -876,8 +876,12 @@ export {
 } from "../chat/chat-ui-message-helpers.ts";
 export {
   cloneMirroredToolChunkState,
+  closeHostedMirroredOpenToolCalls,
+  type CloseHostedMirroredOpenToolCallsInput,
   computeOpenToolCalls,
   createMirroredToolChunkState,
+  getHostedMirroredAbortErrorText,
+  type HostedMirroredOpenToolCallLogger,
   isDurableMirroredOutputChunk,
   type MirroredToolChunkState,
   type OpenToolCalls,
