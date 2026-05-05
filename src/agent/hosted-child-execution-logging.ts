@@ -8,6 +8,37 @@ export interface HostedChildExecutionLogEntry {
   context: Record<string, unknown>;
 }
 
+export interface HostedChildExecutionLogWriter {
+  error: (message: string, context: Record<string, unknown>) => void;
+  info: (message: string, context: Record<string, unknown>) => void;
+  warn: (message: string, context: Record<string, unknown>) => void;
+}
+
+export function writeHostedChildExecutionLogEntry(
+  entry: HostedChildExecutionLogEntry,
+  writer: HostedChildExecutionLogWriter,
+): void {
+  if (entry.level === "error") {
+    writer.error(entry.message, entry.context);
+    return;
+  }
+
+  if (entry.level === "info") {
+    writer.info(entry.message, entry.context);
+    return;
+  }
+
+  writer.warn(entry.message, entry.context);
+}
+
+export function createHostedChildExecutionLogWriter(
+  writer: HostedChildExecutionLogWriter,
+): (entry: HostedChildExecutionLogEntry) => void {
+  return (entry) => {
+    writeHostedChildExecutionLogEntry(entry, writer);
+  };
+}
+
 export function buildHostedChildExhaustedStepBudgetLog(input: {
   description: string;
   kind: string;
