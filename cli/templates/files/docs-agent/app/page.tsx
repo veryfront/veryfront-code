@@ -99,19 +99,16 @@ export default function DocsChat() {
       models={{
         options: [
           {
-            value: 'veryfront-cloud/anthropic/claude-sonnet-4-6',
+            value: 'anthropic/claude-sonnet-4-6',
             label: 'Claude Sonnet',
-            provider: 'Veryfront Cloud',
           },
           {
-            value: 'veryfront-cloud/openai/gpt-5.2',
-            label: 'GPT-5.2',
-            provider: 'Veryfront Cloud',
+            value: 'openai/gpt-4.1-mini',
+            label: 'GPT-4.1 Mini',
           },
           {
-            value: 'veryfront-cloud/google/gemini-2.5-flash',
+            value: 'google/gemini-2.5-flash',
             label: 'Gemini 2.5 Flash',
-            provider: 'Veryfront Cloud',
             badge: 'Fast',
           },
         ],
