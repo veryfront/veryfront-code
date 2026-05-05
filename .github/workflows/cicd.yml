@@ -70,11 +70,11 @@ jobs:
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
-      - name: Configure apt retries
+      - name: Configure apt retries and mirrors
         run: |
           sudo sed -i \
-            -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
-            -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
             /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
           {
             echo 'Acquire::ForceIPv4 "true";'
@@ -116,11 +116,11 @@ jobs:
       - uses: ./.github/actions/setup-deno
         with:
           warm-cache: "true"
-      - name: Configure apt retries
+      - name: Configure apt retries and mirrors
         run: |
           sudo sed -i \
-            -e 's|http://archive.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
-            -e 's|http://security.ubuntu.com/ubuntu|http://azure.archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://azure.archive.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
+            -e 's|http://security.ubuntu.com/ubuntu|http://archive.ubuntu.com/ubuntu|g' \
             /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
           {
             echo 'Acquire::ForceIPv4 "true";'
