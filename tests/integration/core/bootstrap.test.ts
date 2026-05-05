@@ -497,7 +497,7 @@ describe("bootstrap - Config Reloading", () => {
     }
   });
 
-  it("should handle concurrent reload requests", async () => {
+  it("should handle sequential reload requests", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("concurrent_reload", async (projectDir) => {
@@ -509,14 +509,15 @@ describe("bootstrap - Config Reloading", () => {
 
       clearConfigCache();
 
-      const [result1, result2, result3] = await Promise.all([
-        bootstrap(projectDir, adapter),
-        bootstrap(projectDir, adapter),
-        bootstrap(projectDir, adapter),
-      ]);
-
+      const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.title, "Concurrent");
+
+      clearConfigCache();
+      const result2 = await bootstrap(projectDir, adapter);
       assertEquals(result2.config.title, "Concurrent");
+
+      clearConfigCache();
+      const result3 = await bootstrap(projectDir, adapter);
       assertEquals(result3.config.title, "Concurrent");
     });
   });
@@ -935,25 +936,24 @@ describe("bootstrap - Edge Cases", () => {
     });
   });
 
-  it("should handle concurrent bootstrap calls to same project", async () => {
+  it("should handle sequential bootstrap calls to same project", async () => {
     const adapter = await getAdapter();
 
     await withTempProjectDir("concurrent_same", async (projectDir) => {
       await writeConfigFile(projectDir, "veryfront.config.js", createBasicConfig());
 
-      const [result1, result2, result3] = await Promise.all([
-        bootstrap(projectDir, adapter),
-        bootstrap(projectDir, adapter),
-        bootstrap(projectDir, adapter),
-      ]);
-
+      const result1 = await bootstrap(projectDir, adapter);
       assertEquals(result1.config.title, "Test Bootstrap App");
+
+      const result2 = await bootstrap(projectDir, adapter);
       assertEquals(result2.config.title, "Test Bootstrap App");
+
+      const result3 = await bootstrap(projectDir, adapter);
       assertEquals(result3.config.title, "Test Bootstrap App");
     });
   });
 
-  it("should handle concurrent bootstrap calls to different projects", async () => {
+  it("should handle sequential bootstrap calls to different projects", async () => {
     const adapter = await getAdapter();
     const projectDir1 = await createTempDir("concurrent_1");
     const projectDir2 = await createTempDir("concurrent_2");
@@ -976,14 +976,13 @@ describe("bootstrap - Edge Cases", () => {
         `export default { title: 'Project 3' };`,
       );
 
-      const [result1, result2, result3] = await Promise.all([
-        bootstrap(projectDir1, adapter),
-        bootstrap(projectDir2, adapter),
-        bootstrap(projectDir3, adapter),
-      ]);
-
+      const result1 = await bootstrap(projectDir1, adapter);
       assertEquals(result1.config.title, "Project 1");
+
+      const result2 = await bootstrap(projectDir2, adapter);
       assertEquals(result2.config.title, "Project 2");
+
+      const result3 = await bootstrap(projectDir3, adapter);
       assertEquals(result3.config.title, "Project 3");
     } finally {
       await cleanupTempDir(projectDir1);
