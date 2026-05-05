@@ -5,7 +5,7 @@ import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
 import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import { createAIProviderRegistry } from "#veryfront/extensions/registries/ai-provider-registry.ts";
-import { builtinProviderExtensions } from "#veryfront/extensions/builtin-extensions.ts";
+import { createBuiltinProviderExtensions } from "#veryfront/extensions/builtin-extensions.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/interfaces/tracing-exporter.ts";
@@ -228,7 +228,7 @@ export async function bootstrap(
       config,
       logger: bootstrapLog,
       primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
-      builtinExtensions: builtinProviderExtensions,
+      builtinExtensions: createBuiltinProviderExtensions(),
     });
     wireTracingShim();
     assertRequiredContracts();
@@ -272,7 +272,7 @@ export async function bootstrap(
       config,
       logger: bootstrapLog,
       primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
-      builtinExtensions: builtinProviderExtensions,
+      builtinExtensions: createBuiltinProviderExtensions(),
     });
     wireTracingShim();
     assertRequiredContracts();
@@ -338,6 +338,7 @@ export async function bootstrap(
         config,
         logger: bootstrapLog,
         primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
+        builtinExtensions: createBuiltinProviderExtensions(),
       }),
     fsDispose,
   );
