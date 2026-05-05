@@ -400,6 +400,11 @@ export {
   type StartAgentRuntimeForkWithHostToolsInput,
 } from "./fork-runtime-stream.ts";
 export {
+  buildHostedChildForkInstructions,
+  HOSTED_CHILD_FORK_INSTRUCTIONS_BASE,
+  type HostedChildForkInstructionsContext,
+} from "./hosted-child-fork-instructions.ts";
+export {
   executeHostedChildForkStream,
   type ExecuteHostedChildForkStreamInput,
   finalizeHostedChildForkCompletion,
