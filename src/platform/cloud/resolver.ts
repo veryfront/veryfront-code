@@ -1,8 +1,40 @@
-import { getRuntimeConfig, isRuntimeConfigInitialized } from "#veryfront/config";
-import { getApiBaseUrlEnv } from "#veryfront/config/env.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { getCurrentVeryfrontCloudContext } from "#veryfront/provider/veryfront-cloud/context.ts";
+
+// ---------------------------------------------------------------------------
+// GlobalThis bridges — config/ is a middle layer, platform/ is bottom layer.
+// config/runtime-config.ts and config/env.ts register these at init time.
+// ---------------------------------------------------------------------------
+
+interface RuntimeConfigLike {
+  fs?: { veryfront?: { apiToken?: string; projectSlug?: string }; type?: string };
+  projectSlug?: string;
+}
+
+function getRuntimeConfig(): RuntimeConfigLike {
+  const getter = (globalThis as Record<string, unknown>).__vfGetRuntimeConfig as
+    | (() => RuntimeConfigLike)
+    | undefined;
+  return getter?.() ?? {};
+}
+
+function isRuntimeConfigInitialized(): boolean {
+  const checker = (globalThis as Record<string, unknown>).__vfIsRuntimeConfigInitialized as
+    | (() => boolean)
+    | undefined;
+  return checker?.() ?? false;
+}
+
+const DEFAULT_API_BASE_URL = "https://api.veryfront.com";
+
+function getApiBaseUrlEnv(): string {
+  const getter = (globalThis as Record<string, unknown>).__vfGetApiBaseUrlEnv as
+    | (() => string)
+    | undefined;
+  return getter?.() ?? getEnv("VERYFRONT_API_BASE_URL") ??
+    getEnv("VERYFRONT_API_URL")?.replace("/graphql", "/api") ?? DEFAULT_API_BASE_URL;
+}
 
 export const DEFAULT_VERYFRONT_CLOUD_MODEL = "veryfront-cloud/anthropic/claude-sonnet-4-6";
 export const DEFAULT_VERYFRONT_CLOUD_EMBEDDING_MODEL =

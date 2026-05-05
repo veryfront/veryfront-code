@@ -45,7 +45,8 @@ export function getProjectEnvSnapshot(): Record<string, string> | undefined {
   return projectEnvStorage.getStore();
 }
 
-// Register on globalThis so process.ts can access without circular imports.
+// Register on globalThis so lower-layer code can access without upward imports.
 // process.ts is low-level (platform/compat), project-env is high-level (server/).
 (globalThis as Record<string, unknown>).__vfProjectEnvGetter = getProjectEnv;
 (globalThis as Record<string, unknown>).__vfProjectEnvActiveChecker = isProjectEnvActive;
+(globalThis as Record<string, unknown>).__vfProjectEnvSnapshotGetter = getProjectEnvSnapshot;

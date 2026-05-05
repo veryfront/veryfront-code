@@ -5,7 +5,7 @@
  * fields for metrics/tracing integration, and environment-aware formatting.
  */
 
-import { isProduction } from "#veryfront/build/config/environment.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import { VeryfrontError } from "./types.ts";
 

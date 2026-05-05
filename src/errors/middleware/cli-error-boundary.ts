@@ -13,7 +13,7 @@ import { UNKNOWN_ERROR } from "../error-registry.ts";
 import { getErrorMessage } from "../veryfront-error.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";
 import { attachErrorToActiveSpan } from "../tracing.ts";
-import { isProduction } from "#veryfront/build/config/environment.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 
 /**
  * Color formatting functions (compatible with CLI colors)
