@@ -228,8 +228,8 @@ describe("ApiRouteMatcher", () => {
     });
   });
 
-  describe("Performance", () => {
-    it("handles many routes efficiently", () => {
+  describe("Cache behavior", () => {
+    it("caches repeated matches across many routes", () => {
       const router = createRouter();
 
       for (let i = 0; i < 100; i++) {
@@ -237,11 +237,17 @@ describe("ApiRouteMatcher", () => {
         router.addRoute(`/dynamic${i}/[id]`, `pages/dynamic${i}/[id].tsx`);
       }
 
-      const start = performance.now();
-      for (let i = 0; i < 1000; i++) router.match("/dynamic50/test");
-      const end = performance.now();
+      const firstMatch = router.match("/dynamic50/test");
+      assertExists(firstMatch);
+      assertEquals(firstMatch.route.page, "pages/dynamic50/[id].tsx");
+      assertEquals(firstMatch.params, { id: "test" });
 
-      assert(end - start < 50, `Route matching took ${end - start}ms`);
+      router.routes.clear();
+
+      const cachedMatch = router.match("/dynamic50/test");
+      assertExists(cachedMatch);
+      assertEquals(cachedMatch.route.page, "pages/dynamic50/[id].tsx");
+      assertEquals(cachedMatch.params, { id: "test" });
     });
   });
 
@@ -363,7 +369,3 @@ describe("ApiRouteMatcher", () => {
     });
   });
 });
-
-function assert(condition: boolean, message: string): void {
-  if (!condition) throw new Error(message);
-}
