@@ -109,6 +109,26 @@ export interface HostedMirroredOpenToolCallLogger {
   warn: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
+export interface HostedMirroredUiStreamLogger extends HostedMirroredOpenToolCallLogger {
+  error: (message: string, metadata?: Record<string, unknown>) => void;
+}
+
+export interface HostedMirroredUiStreamWatchdog {
+  observe: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => void;
+  dispose: () => void;
+}
+
+export interface CreateHostedMirroredUiStreamInput {
+  sourceStream: AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>>;
+  rootStreamWatchdog: HostedMirroredUiStreamWatchdog;
+  mirroredToolChunkState: MirroredToolChunkState;
+  appendChunk?: (
+    chunk: ChatUiMessageChunk<ChatMessageMetadata>,
+  ) => Promise<void> | void;
+  setMirroredOutput?: (value: boolean) => void;
+  logger?: HostedMirroredUiStreamLogger;
+}
+
 export interface CloseHostedMirroredOpenToolCallsInput {
   mirroredToolChunkState: MirroredToolChunkState;
   errorText: string;
@@ -208,5 +228,49 @@ export async function closeHostedMirroredOpenToolCalls(
       toolCallId,
       errorText: input.errorText,
     });
+  }
+}
+
+export async function* createHostedMirroredUiStream(
+  input: CreateHostedMirroredUiStreamInput,
+): AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>> {
+  let streamError: unknown = null;
+
+  try {
+    for await (const chunk of input.sourceStream) {
+      input.rootStreamWatchdog.observe(chunk);
+      if (isDurableMirroredOutputChunk(chunk)) {
+        input.setMirroredOutput?.(true);
+      }
+      recordMirroredToolChunkState(input.mirroredToolChunkState, chunk);
+      if (input.appendChunk) {
+        await Promise.resolve(input.appendChunk(chunk)).catch((error: unknown) => {
+          input.logger?.error("Durable run mirror failed to handle chunk", {
+            chunkType: chunk.type,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
+      yield chunk;
+    }
+  } catch (error) {
+    streamError = error;
+    throw error;
+  } finally {
+    if (streamError && input.appendChunk) {
+      const errorText = getHostedMirroredAbortErrorText(streamError);
+
+      await closeHostedMirroredOpenToolCalls({
+        mirroredToolChunkState: input.mirroredToolChunkState,
+        errorText,
+        appendChunk: input.appendChunk,
+        logger: input.logger,
+      }).catch((error: unknown) => {
+        input.logger?.error("Failed to close open tool calls after stream abort", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
+    input.rootStreamWatchdog.dispose();
   }
 }
