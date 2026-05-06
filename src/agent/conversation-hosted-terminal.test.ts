@@ -1,7 +1,13 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  type ConversationHostedTerminalRuntimeAdapter,
+  type ConversationHostedTerminalStateInput,
   createConversationHostedTerminalAdapter,
+  dispatchConversationHostedStreamErrorState,
+  dispatchConversationHostedTerminalState,
+  resolveConversationHostedStreamErrorState,
+  resolveConversationHostedTerminalState,
   toConversationHostedTerminalState,
 } from "./conversation-hosted-terminal.ts";
 
@@ -177,5 +183,129 @@ describe("agent/conversation-hosted-terminal", () => {
     } finally {
       restoreFetch();
     }
+  });
+
+  it("resolves reusable terminal states from stream conditions", () => {
+    assertEquals(
+      resolveConversationHostedTerminalState({
+        isAborted: true,
+        hasIncompleteToolParts: true,
+      }),
+      {
+        status: "cancelled",
+        terminalErrorCode: "ABORTED",
+        terminalErrorMessage: "Chat stream aborted",
+      },
+    );
+
+    assertEquals(
+      resolveConversationHostedTerminalState({
+        isAborted: false,
+        hasIncompleteToolParts: true,
+      }),
+      {
+        status: "failed",
+        terminalErrorCode: "INCOMPLETE_TOOL_CALLS",
+        terminalErrorMessage: "Assistant completed before tool execution completed",
+      },
+    );
+
+    assertEquals(
+      resolveConversationHostedTerminalState({
+        isAborted: false,
+        hasIncompleteToolParts: false,
+      }),
+      { status: "completed" },
+    );
+  });
+
+  it("resolves reusable stream error terminal states", () => {
+    assertEquals(resolveConversationHostedStreamErrorState(new Error("boom")), {
+      status: "failed",
+      terminalErrorCode: "STREAM_ERROR",
+      terminalErrorMessage: "boom",
+    });
+    assertEquals(resolveConversationHostedStreamErrorState("raw"), {
+      status: "failed",
+      terminalErrorCode: "STREAM_ERROR",
+      terminalErrorMessage: "raw",
+    });
+  });
+
+  it("dispatches reusable terminal runtime adapters", async () => {
+    const calls: string[] = [];
+    const adapter: ConversationHostedTerminalRuntimeAdapter = {
+      terminal: {
+        toTerminalState: (state: ConversationHostedTerminalStateInput) => ({
+          status: state.status,
+          ...(state.terminalErrorCode !== undefined
+            ? { terminalErrorCode: state.terminalErrorCode }
+            : {}),
+          ...(state.terminalErrorMessage !== undefined
+            ? { terminalErrorMessage: state.terminalErrorMessage }
+            : {}),
+        }),
+        finalizeRun: async (state) => {
+          calls.push(`finalize:${state.status}`);
+        },
+        cancelRun: async (state) => {
+          calls.push(`cancel:${state.status}`);
+        },
+        onTerminalState: async (state) => {
+          calls.push(`observed:${state.status}`);
+        },
+      },
+    };
+
+    await dispatchConversationHostedTerminalState(adapter, { status: "completed" });
+    await dispatchConversationHostedTerminalState(adapter, { status: "cancelled" });
+
+    assertEquals(calls, [
+      "finalize:completed",
+      "observed:completed",
+      "cancel:cancelled",
+      "observed:cancelled",
+    ]);
+  });
+
+  it("dispatches reusable stream error states", async () => {
+    const seen: unknown[] = [];
+    const adapter: ConversationHostedTerminalRuntimeAdapter = {
+      terminal: {
+        toTerminalState: (state: ConversationHostedTerminalStateInput) => ({
+          status: state.status,
+          ...(state.terminalErrorCode !== undefined
+            ? { terminalErrorCode: state.terminalErrorCode }
+            : {}),
+          ...(state.terminalErrorMessage !== undefined
+            ? { terminalErrorMessage: state.terminalErrorMessage }
+            : {}),
+        }),
+        finalizeRun: async (state) => {
+          seen.push(["finalize", state]);
+        },
+        cancelRun: async (state) => {
+          seen.push(["cancel", state]);
+        },
+        onTerminalState: async (state) => {
+          seen.push(["observed", state]);
+        },
+      },
+    };
+
+    const terminalState = await dispatchConversationHostedStreamErrorState(
+      adapter,
+      new Error("boom"),
+    );
+
+    assertEquals(terminalState, {
+      status: "failed",
+      terminalErrorCode: "STREAM_ERROR",
+      terminalErrorMessage: "boom",
+    });
+    assertEquals(seen, [
+      ["finalize", terminalState],
+      ["observed", terminalState],
+    ]);
   });
 });

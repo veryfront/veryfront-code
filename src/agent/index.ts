@@ -493,10 +493,20 @@ export {
   createConversationHostedStreamLifecycleAdapter,
 } from "./conversation-hosted-lifecycle.ts";
 export {
+  CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_CODE,
+  CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_CODE,
+  CONVERSATION_HOSTED_STREAM_ERROR_TERMINAL_ERROR_CODE,
   type ConversationHostedTerminalAdapter,
+  type ConversationHostedTerminalRuntimeAdapter,
   type ConversationHostedTerminalStateInput,
+  type ConversationHostedTerminalStateResolution,
   createConversationHostedTerminalAdapter,
   type CreateConversationHostedTerminalAdapterOptions,
+  dispatchConversationHostedStreamErrorState,
+  dispatchConversationHostedTerminalState,
+  resolveConversationHostedStreamErrorState,
+  resolveConversationHostedTerminalState,
+  type ResolveConversationHostedTerminalStateInput,
   toConversationHostedTerminalState,
 } from "./conversation-hosted-terminal.ts";
 export {
