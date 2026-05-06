@@ -379,8 +379,9 @@ describe("Proxy Handler", () => {
         return createNotFoundResponse();
       });
 
+      let handler: ReturnType<typeof createHandler> | undefined;
       try {
-        const handler = createHandler(port);
+        handler = createHandler(port);
 
         const req = new Request("http://studio.veryfront.com/", {
           headers: { host: "studio.veryfront.com" },
@@ -394,9 +395,8 @@ describe("Proxy Handler", () => {
           ctx.error?.message,
           "No project configured for domain: studio.veryfront.com",
         );
-
-        await handler.close();
       } finally {
+        await handler?.close();
         await server.shutdown();
       }
     });
