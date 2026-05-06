@@ -472,6 +472,7 @@ export {
   type HostedDurableChildBootstrapCallbacks,
   type HostedDurableChildBootstrapContext,
   type HostedDurableChildExecutionOptions,
+  type HostedDurableChildRuntimeDependencies,
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
   type HostedDurableChildTerminalFailure,

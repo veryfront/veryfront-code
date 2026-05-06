@@ -68,6 +68,13 @@ export type HostedDurableChildBootstrapCallbacks = {
   }) => Promise<void> | void;
 };
 
+export type HostedDurableChildRuntimeDependencies = {
+  bootstrapChildRun?: typeof bootstrapHostedChildRun;
+  createLifecycleAdapter?: typeof createConversationChildLifecycleAdapter;
+  runLifecycle?: typeof runHostedChildExecutionLifecycle;
+  shouldSkipTerminalPersistence?: typeof shouldSkipHostedChildTerminalPersistence;
+};
+
 export type ExecuteHostedDurableChildForkInput<
   TResult,
   TLocalResult extends ChildRunExecutionResult,
@@ -109,6 +116,7 @@ export type ExecuteHostedDurableChildForkInput<
     status: "completed";
   }) => Promise<void> | void;
   bootstrap?: HostedDurableChildBootstrapCallbacks;
+  runtime?: HostedDurableChildRuntimeDependencies;
 };
 
 function getBranchId(input: {
@@ -172,7 +180,8 @@ async function bootstrapHostedDurableChildFork<
   return runBootstrap(async () => {
     await input.bootstrap?.onBootstrapStart?.(input.bootstrapContext);
 
-    const run = await bootstrapHostedChildRun({
+    const bootstrapChildRun = input.runtime?.bootstrapChildRun ?? bootstrapHostedChildRun;
+    const run = await bootstrapChildRun({
       authToken: input.authToken,
       apiUrl: input.apiUrl,
       ensureProjectId: input.getProjectId() ?? undefined,
@@ -214,7 +223,9 @@ async function executeHostedDurableChildLifecycle<
 ): Promise<TResult> {
   const { bootstrapContext, identifiers } = input;
   const { targets } = bootstrapContext;
-  const lifecycleAdapter = createConversationChildLifecycleAdapter({
+  const createLifecycleAdapter = input.runtime?.createLifecycleAdapter ??
+    createConversationChildLifecycleAdapter;
+  const lifecycleAdapter = createLifecycleAdapter({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     parentConversationId: bootstrapContext.parentConversationId,
@@ -236,7 +247,10 @@ async function executeHostedDurableChildLifecycle<
     provider: bootstrapContext.provider,
   });
 
-  const lifecycleResult = await runHostedChildExecutionLifecycle({
+  const runLifecycle = input.runtime?.runLifecycle ?? runHostedChildExecutionLifecycle;
+  const skipTerminalPersistence = input.runtime?.shouldSkipTerminalPersistence ??
+    shouldSkipHostedChildTerminalPersistence;
+  const lifecycleResult = await runLifecycle({
     adapter: lifecycleAdapter,
     executionFailedCode: input.executionFailedCode,
     abortSignal: input.executionOptions.abortSignal,
@@ -246,7 +260,7 @@ async function executeHostedDurableChildLifecycle<
       }),
     getExecutionSnapshot: input.getExecutionSnapshot,
     onLifecycleError: input.onLifecycleError,
-    skipTerminalPersistence: shouldSkipHostedChildTerminalPersistence,
+    skipTerminalPersistence,
   });
 
   if (lifecycleResult.status !== "completed") {
