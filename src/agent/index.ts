@@ -467,6 +467,16 @@ export {
   type PersistConversationUserMessageFailure,
 } from "./conversation-bootstrap.ts";
 export {
+  executeHostedDurableChildFork,
+  type ExecuteHostedDurableChildForkInput,
+  type HostedDurableChildBootstrapCallbacks,
+  type HostedDurableChildBootstrapContext,
+  type HostedDurableChildExecutionOptions,
+  type HostedDurableChildSetupFailure,
+  type HostedDurableChildSuccess,
+  type HostedDurableChildTerminalFailure,
+} from "./hosted-durable-child-fork-execution.ts";
+export {
   bootstrapHostedChildRun,
   type BootstrapHostedChildRunInput,
   type BootstrapHostedChildRunResult,
