@@ -11,8 +11,14 @@ import { getCommandTips } from "./tips.ts";
 import { showMainHelp } from "./main-help.ts";
 import { error, muted } from "../ui/colors.ts";
 
+const COMMAND_ALIASES: Record<string, string> = {
+  preview: "serve",
+  g: "generate",
+};
+
 export function showCommandHelp(command: string): void {
-  const cmd = COMMANDS[command];
+  const resolved = COMMAND_ALIASES[command] ?? command;
+  const cmd = COMMANDS[resolved];
 
   if (!cmd) {
     console.log();
