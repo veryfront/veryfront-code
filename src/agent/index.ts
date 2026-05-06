@@ -834,6 +834,13 @@ export {
   toMirroredHostedStreamPart,
 } from "./hosted-child-mirror.ts";
 export {
+  convertCompactedProviderMessagesToChildForkRuntimeMessages,
+  type HostedChildForkRuntimeStepMessages,
+  type HostedChildForkRuntimeStepSystemResolver,
+  prepareHostedChildForkRuntimeStepMessages,
+  type PrepareHostedChildForkRuntimeStepMessagesInput,
+} from "./hosted-child-fork-step-message-preparation.ts";
+export {
   type HostedChildRunStatusMonitor,
   type StartedHostedChildForkRuntime,
   startHostedChildForkRuntimeWithHostTools,
