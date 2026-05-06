@@ -261,6 +261,22 @@ export const veryfrontConfigSchema = z
           })
           .partial()
           .optional(),
+        logging: z
+          .object({
+            file: z
+              .object({
+                enabled: z.boolean().optional(),
+                path: z.string().optional(),
+                maxSize: z.union([z.number().int().positive(), z.string()]).optional(),
+                maxFiles: z.number().int().positive().optional(),
+                level: z.enum(["debug", "info", "warn", "error"]).optional(),
+                format: z.enum(["json", "text"]).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .partial()
+          .optional(),
       })
       .partial()
       .optional(),

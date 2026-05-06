@@ -33,6 +33,12 @@ import {
   markEnvLoaded,
   supportsEnvFiles,
 } from "#veryfront/utils/env-loader.ts";
+import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
+import {
+  createFileLogSubscriber,
+  type FileLogConfig,
+  type FileLogSubscriber,
+} from "#veryfront/observability/file-log-subscriber.ts";
 import { ReloadNotifier } from "./reload-notifier.ts";
 import { clearDomainCache } from "./utils/domain-lookup.ts";
 
@@ -119,15 +125,49 @@ function wireTracingShim(): void {
   }
 }
 
+const DEFAULT_FILE_LOG_PATH = ".veryfront/logs/server.log";
+const DEFAULT_FILE_LOG_MAX_SIZE = "10mb";
+const DEFAULT_FILE_LOG_MAX_FILES = 5;
+const DEFAULT_FILE_LOG_LEVEL = "warn" as const;
+const DEFAULT_FILE_LOG_FORMAT = "json" as const;
+
+function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogSubscriber | null {
+  const fileConfig = config.observability?.logging?.file;
+  if (!fileConfig?.enabled) return null;
+
+  const resolved: FileLogConfig = {
+    enabled: true,
+    path: fileConfig.path ?? DEFAULT_FILE_LOG_PATH,
+    maxSize: fileConfig.maxSize ?? DEFAULT_FILE_LOG_MAX_SIZE,
+    maxFiles: fileConfig.maxFiles ?? DEFAULT_FILE_LOG_MAX_FILES,
+    level: fileConfig.level ?? DEFAULT_FILE_LOG_LEVEL,
+    format: fileConfig.format ?? DEFAULT_FILE_LOG_FORMAT,
+  };
+
+  const subscriber = createFileLogSubscriber(resolved);
+  getLogBuffer().subscribe(subscriber.getSubscriber());
+  bootstrapLog.debug("[bootstrap] File log subscriber attached", {
+    path: resolved.path,
+    level: resolved.level,
+    format: resolved.format,
+  });
+  return subscriber;
+}
+
 function combineDispose(
   extensionLoader: ExtensionLoader,
   fsDispose?: () => void,
+  fileLogSubscriber?: FileLogSubscriber | null,
 ): () => Promise<void> {
   return async () => {
     try {
       await extensionLoader.teardownAll();
     } finally {
-      if (fsDispose) fsDispose();
+      try {
+        if (fileLogSubscriber) await fileLogSubscriber.close();
+      } finally {
+        if (fsDispose) fsDispose();
+      }
     }
   };
 }
@@ -218,6 +258,8 @@ export async function bootstrap(
   bootstrapLog.debug("Loading config with base adapter");
   let config = await getConfig(projectDir, adapter);
 
+  const fileLog = maybeAttachFileLogSubscriber(config);
+
   const fsType = config.fs?.type;
   const needsFSAdapter = fsType != null && fsType !== "local";
 
@@ -237,7 +279,7 @@ export async function bootstrap(
       config,
       usingFSAdapter: false,
       extensionLoader,
-      dispose: combineDispose(extensionLoader),
+      dispose: combineDispose(extensionLoader, undefined, fileLog),
     };
   }
 
@@ -281,7 +323,7 @@ export async function bootstrap(
       config,
       usingFSAdapter: false,
       extensionLoader,
-      dispose: combineDispose(extensionLoader),
+      dispose: combineDispose(extensionLoader, undefined, fileLog),
     };
   }
 
@@ -351,7 +393,7 @@ export async function bootstrap(
     usingFSAdapter: true,
     fsAdapterType: fsType,
     extensionLoader,
-    dispose: combineDispose(extensionLoader, fsDispose),
+    dispose: combineDispose(extensionLoader, fsDispose, fileLog),
   };
 }
 

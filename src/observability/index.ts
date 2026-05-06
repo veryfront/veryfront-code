@@ -92,3 +92,10 @@ export {
   type LogSubscriber,
   resetLogBuffer,
 } from "./log-buffer.ts";
+
+export {
+  createFileLogSubscriber,
+  type FileLogConfig,
+  FileLogSubscriber,
+  parseMaxSize,
+} from "./file-log-subscriber.ts";
