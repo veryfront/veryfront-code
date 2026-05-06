@@ -131,7 +131,12 @@ const DEFAULT_FILE_LOG_MAX_FILES = 5;
 const DEFAULT_FILE_LOG_LEVEL = "warn" as const;
 const DEFAULT_FILE_LOG_FORMAT = "json" as const;
 
-function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogSubscriber | null {
+interface FileLogHandle {
+  subscriber: FileLogSubscriber;
+  unsubscribe: () => void;
+}
+
+function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogHandle | null {
   const fileConfig = config.observability?.logging?.file;
   if (!fileConfig?.enabled) return null;
 
@@ -145,26 +150,32 @@ function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogSubscribe
   };
 
   const subscriber = createFileLogSubscriber(resolved);
-  getLogBuffer().subscribe(subscriber.getSubscriber());
+  const unsubscribe = getLogBuffer().subscribe(subscriber.getSubscriber());
   bootstrapLog.debug("[bootstrap] File log subscriber attached", {
     path: resolved.path,
     level: resolved.level,
     format: resolved.format,
   });
-  return subscriber;
+  return { subscriber, unsubscribe };
+}
+
+async function teardownFileLog(handle: FileLogHandle | null): Promise<void> {
+  if (!handle) return;
+  handle.unsubscribe();
+  await handle.subscriber.close();
 }
 
 function combineDispose(
   extensionLoader: ExtensionLoader,
   fsDispose?: () => void,
-  fileLogSubscriber?: FileLogSubscriber | null,
+  fileLogHandle?: FileLogHandle | null,
 ): () => Promise<void> {
   return async () => {
     try {
       await extensionLoader.teardownAll();
     } finally {
       try {
-        if (fileLogSubscriber) await fileLogSubscriber.close();
+        await teardownFileLog(fileLogHandle ?? null);
       } finally {
         if (fsDispose) fsDispose();
       }
@@ -258,143 +269,155 @@ export async function bootstrap(
   bootstrapLog.debug("Loading config with base adapter");
   let config = await getConfig(projectDir, adapter);
 
-  const fileLog = maybeAttachFileLogSubscriber(config);
+  let fileLog = maybeAttachFileLogSubscriber(config);
 
-  const fsType = config.fs?.type;
-  const needsFSAdapter = fsType != null && fsType !== "local";
+  try {
+    const fsType = config.fs?.type;
+    const needsFSAdapter = fsType != null && fsType !== "local";
 
-  if (!needsFSAdapter) {
-    bootstrapLog.debug("Using local filesystem (no FSAdapter needed)");
-    const extensionLoader = await orchestrateExtensions({
-      projectDir,
-      config,
-      logger: bootstrapLog,
-      primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
-      builtinExtensions: createBuiltinExtensions(),
-    });
-    wireTracingShim();
-    assertRequiredContracts();
-    return {
-      adapter,
-      config,
-      usingFSAdapter: false,
-      extensionLoader,
-      dispose: combineDispose(extensionLoader, undefined, fileLog),
-    };
-  }
-
-  bootstrapLog.debug("Initializing FSAdapter", { type: fsType });
-
-  // Inject server-layer callbacks into FS config so the platform layer
-  // doesn't need to import from the server layer
-  const fsWithCallbacks = {
-    ...config.fs,
-    invalidationCallbacks: {
-      triggerReload: (changedPaths?: string[], project?: InvalidationProjectContext) =>
-        ReloadNotifier.triggerReload(changedPaths, project),
-      clearDomainCache,
-    },
-  };
-
-  const enhancedAdapter = await enhanceAdapterWithFS(
-    adapter,
-    { ...config, fs: fsWithCallbacks },
-    projectDir,
-  );
-
-  if (enhancedAdapter === adapter) {
-    bootstrapLog.debug("Framework initialized successfully", {
-      projectDir,
-      runtime: adapter.id,
-      fsAdapter: "local",
-    });
-
-    const extensionLoader = await orchestrateExtensions({
-      projectDir,
-      config,
-      logger: bootstrapLog,
-      primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
-      builtinExtensions: createBuiltinExtensions(),
-    });
-    wireTracingShim();
-    assertRequiredContracts();
-    return {
-      adapter,
-      config,
-      usingFSAdapter: false,
-      extensionLoader,
-      dispose: combineDispose(extensionLoader, undefined, fileLog),
-    };
-  }
-
-  const isProxyMode = config.fs?.veryfront?.proxyMode === true;
-  const isProductionMode = config.fs?.veryfront?.productionMode === true;
-
-  if (isProxyMode) {
-    bootstrapLog.debug("Skipping config reload in proxy mode (using local config)");
-  } else if (isProductionMode) {
-    bootstrapLog.debug("Skipping config reload in production mode (using local config)");
-  } else {
-    bootstrapLog.debug("Reloading config with FSAdapter");
-    clearConfigCache();
-
-    const originalConfig = config;
-    const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
-
-    const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
-      reloadedConfig.dev?.host === "localhost" &&
-      !reloadedConfig.dev?.hmr;
-
-    if (usesDefaultDevConfig && originalConfig.dev) {
-      bootstrapLog.debug("Keeping original config (FSAdapter returned defaults)");
-      config = originalConfig;
-    } else {
-      config = reloadedConfig;
-    }
-  }
-
-  bootstrapLog.debug("Framework initialized successfully", {
-    projectDir,
-    runtime: adapter.id,
-    fsAdapter: fsType,
-  });
-
-  let fsDispose: (() => void) | undefined;
-  if (isExtendedFSAdapter(enhancedAdapter.fs)) {
-    const underlying = enhancedAdapter.fs.getUnderlyingAdapter();
-    if (
-      "dispose" in underlying &&
-      typeof (underlying as { dispose?: () => void }).dispose === "function"
-    ) {
-      fsDispose = () => (underlying as { dispose: () => void }).dispose();
-    }
-  }
-
-  // If extension orchestration fails after the FS adapter has been wired up,
-  // release the FS resources (WebSocket connections, caches) before
-  // propagating the error — otherwise the adapter would leak.
-  const extensionLoader = await orchestrateOrDisposeFS(
-    () =>
-      orchestrateExtensions({
+    if (!needsFSAdapter) {
+      bootstrapLog.debug("Using local filesystem (no FSAdapter needed)");
+      const extensionLoader = await orchestrateExtensions({
         projectDir,
         config,
         logger: bootstrapLog,
         primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
         builtinExtensions: createBuiltinExtensions(),
-      }),
-    fsDispose,
-  );
-  wireTracingShim();
-  assertRequiredContracts();
+      });
+      wireTracingShim();
+      assertRequiredContracts();
+      return {
+        adapter,
+        config,
+        usingFSAdapter: false,
+        extensionLoader,
+        dispose: combineDispose(extensionLoader, undefined, fileLog),
+      };
+    }
 
-  return {
-    adapter: enhancedAdapter,
-    config,
-    usingFSAdapter: true,
-    fsAdapterType: fsType,
-    extensionLoader,
-    dispose: combineDispose(extensionLoader, fsDispose, fileLog),
-  };
+    bootstrapLog.debug("Initializing FSAdapter", { type: fsType });
+
+    // Inject server-layer callbacks into FS config so the platform layer
+    // doesn't need to import from the server layer
+    const fsWithCallbacks = {
+      ...config.fs,
+      invalidationCallbacks: {
+        triggerReload: (changedPaths?: string[], project?: InvalidationProjectContext) =>
+          ReloadNotifier.triggerReload(changedPaths, project),
+        clearDomainCache,
+      },
+    };
+
+    const enhancedAdapter = await enhanceAdapterWithFS(
+      adapter,
+      { ...config, fs: fsWithCallbacks },
+      projectDir,
+    );
+
+    if (enhancedAdapter === adapter) {
+      bootstrapLog.debug("Framework initialized successfully", {
+        projectDir,
+        runtime: adapter.id,
+        fsAdapter: "local",
+      });
+
+      const extensionLoader = await orchestrateExtensions({
+        projectDir,
+        config,
+        logger: bootstrapLog,
+        primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
+        builtinExtensions: createBuiltinExtensions(),
+      });
+      wireTracingShim();
+      assertRequiredContracts();
+      return {
+        adapter,
+        config,
+        usingFSAdapter: false,
+        extensionLoader,
+        dispose: combineDispose(extensionLoader, undefined, fileLog),
+      };
+    }
+
+    const isProxyMode = config.fs?.veryfront?.proxyMode === true;
+    const isProductionMode = config.fs?.veryfront?.productionMode === true;
+
+    if (isProxyMode) {
+      bootstrapLog.debug("Skipping config reload in proxy mode (using local config)");
+    } else if (isProductionMode) {
+      bootstrapLog.debug("Skipping config reload in production mode (using local config)");
+    } else {
+      bootstrapLog.debug("Reloading config with FSAdapter");
+      clearConfigCache();
+
+      const originalConfig = config;
+      const reloadedConfig = await getConfig(projectDir, enhancedAdapter);
+
+      const usesDefaultDevConfig = reloadedConfig.dev?.port === 3000 &&
+        reloadedConfig.dev?.host === "localhost" &&
+        !reloadedConfig.dev?.hmr;
+
+      if (usesDefaultDevConfig && originalConfig.dev) {
+        bootstrapLog.debug("Keeping original config (FSAdapter returned defaults)");
+        config = originalConfig;
+      } else {
+        config = reloadedConfig;
+      }
+
+      // Re-attach file log subscriber if config was reloaded with different settings
+      const newFileLog = maybeAttachFileLogSubscriber(config);
+      if (newFileLog) {
+        await teardownFileLog(fileLog);
+        fileLog = newFileLog;
+      }
+    }
+
+    bootstrapLog.debug("Framework initialized successfully", {
+      projectDir,
+      runtime: adapter.id,
+      fsAdapter: fsType,
+    });
+
+    let fsDispose: (() => void) | undefined;
+    if (isExtendedFSAdapter(enhancedAdapter.fs)) {
+      const underlying = enhancedAdapter.fs.getUnderlyingAdapter();
+      if (
+        "dispose" in underlying &&
+        typeof (underlying as { dispose?: () => void }).dispose === "function"
+      ) {
+        fsDispose = () => (underlying as { dispose: () => void }).dispose();
+      }
+    }
+
+    // If extension orchestration fails after the FS adapter has been wired up,
+    // release the FS resources (WebSocket connections, caches) before
+    // propagating the error — otherwise the adapter would leak.
+    const extensionLoader = await orchestrateOrDisposeFS(
+      () =>
+        orchestrateExtensions({
+          projectDir,
+          config,
+          logger: bootstrapLog,
+          primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
+          builtinExtensions: createBuiltinExtensions(),
+        }),
+      fsDispose,
+    );
+    wireTracingShim();
+    assertRequiredContracts();
+
+    return {
+      adapter: enhancedAdapter,
+      config,
+      usingFSAdapter: true,
+      fsAdapterType: fsType,
+      extensionLoader,
+      dispose: combineDispose(extensionLoader, fsDispose, fileLog),
+    };
+  } catch (err) {
+    await teardownFileLog(fileLog);
+    throw err;
+  }
 }
 
 export async function bootstrapDev(
