@@ -37,6 +37,7 @@ import { mcpHelp } from "../commands/mcp/command-help.ts";
 import { issuesHelp } from "../commands/issues/command-help.ts";
 import { startHelp } from "../commands/start/command-help.ts";
 import { taskHelp } from "../commands/task/command-help.ts";
+import { workerHelp } from "../commands/worker/command-help.ts";
 import { workflowHelp } from "../commands/workflow/command-help.ts";
 import { schemaHelp } from "../commands/schema/command-help.ts";
 import { testHelp } from "../commands/test/command-help.ts";
@@ -82,6 +83,7 @@ export const COMMANDS: CommandRegistry = {
   issues: issuesHelp,
   start: startHelp,
   task: taskHelp,
+  worker: workerHelp,
   workflow: workflowHelp,
   schema: schemaHelp,
   test: testHelp,
