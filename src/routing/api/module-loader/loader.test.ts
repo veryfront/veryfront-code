@@ -663,7 +663,10 @@ describe("generateCompiledBinaryRequireShim - static checks (VULN-FS-5)", () => 
   });
 });
 
-describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", () => {
+describe("generateCompiledBinaryRequireShim - symlink resistance (VULN-FS-5)", {
+  sanitizeResources: false,
+  sanitizeOps: false,
+}, () => {
   it("re-canonicalisation via realPathSync catches a node_modules symlink escape", async () => {
     // Create a project root, a decoy "evil" package whose entry file is a
     // symlink pointing at a file outside the project root. If the shim only
