@@ -362,6 +362,45 @@ describe("Proxy Handler", () => {
       }
     });
 
+    // Regression: studio.veryfront.com is an infra subdomain that doesn't map to a
+    // project. The token mint returns 400 "Project not found for domain" — the proxy
+    // must return a clean 404, not a misleading 502. (#1110)
+    it("returns 404 for studio.veryfront.com when token mint rejects the domain", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") {
+          return new Response('{"error":"Project not found for domain"}', {
+            status: 400,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      let handler: ReturnType<typeof createHandler> | undefined;
+      try {
+        handler = createHandler(port);
+
+        const req = new Request("http://studio.veryfront.com/", {
+          headers: { host: "studio.veryfront.com" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.projectSlug, undefined);
+        assertEquals(ctx.error?.status, 404);
+        assertEquals(
+          ctx.error?.message,
+          "No project configured for domain: studio.veryfront.com",
+        );
+      } finally {
+        await handler?.close();
+        await server.shutdown();
+      }
+    });
+
     it("logs expected custom domain token-mint misses below error level", async () => {
       const { entries, logger } = createRecordingLogger();
       const { server, port } = createMockServer((req: Request) => {
