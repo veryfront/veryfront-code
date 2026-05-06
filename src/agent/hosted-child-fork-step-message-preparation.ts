@@ -1,10 +1,11 @@
 import { compactForStep, estimateOverhead } from "../chat/message-prep.ts";
 import type { ProviderModelMessage } from "../chat/types.ts";
 import {
-  type AgentRuntimeMessage,
+  type AgentRuntimeMessagePart,
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
 } from "./agent-runtime-message-adapter.ts";
+import type { Message as AgentMessage, MessagePart } from "./schemas/index.ts";
 
 export type HostedChildForkRuntimeStepSystemResolver = (input: {
   system: string;
@@ -12,32 +13,52 @@ export type HostedChildForkRuntimeStepSystemResolver = (input: {
 }) => string | null | undefined;
 
 export type PrepareHostedChildForkRuntimeStepMessagesInput = {
-  messages: AgentRuntimeMessage[];
+  messages: AgentMessage[];
   buildInstructions: () => string;
   forkToolNames: readonly string[];
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
 };
 
 export type HostedChildForkRuntimeStepMessages = {
-  messages: AgentRuntimeMessage[];
+  messages: AgentMessage[];
   system: string;
 };
 
+function convertAgentRuntimePartToChildForkMessagePart(
+  part: AgentRuntimeMessagePart,
+): MessagePart {
+  if ("text" in part) {
+    return {
+      type: "text",
+      text: part.text,
+    };
+  }
+
+  if ("result" in part) {
+    return {
+      type: "tool-result",
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      result: part.result,
+    };
+  }
+
+  return {
+    type: `tool-${part.toolName}`,
+    toolCallId: part.toolCallId,
+    toolName: part.toolName,
+    args: part.args,
+  };
+}
+
 export function convertCompactedProviderMessagesToChildForkRuntimeMessages(
   compactedMessages: readonly ProviderModelMessage[],
-): AgentRuntimeMessage[] {
+): AgentMessage[] {
   return convertProviderMessagesToAgentRuntimeMessages(compactedMessages).map((message) => ({
-    ...message,
-    parts: message.parts.map((part) => {
-      if (part.type !== "tool-call") {
-        return part;
-      }
-
-      return {
-        ...part,
-        type: `tool-${part.toolName}`,
-      };
-    }),
+    id: message.id,
+    role: message.role,
+    parts: message.parts.map(convertAgentRuntimePartToChildForkMessagePart),
+    timestamp: message.timestamp,
   }));
 }
 
