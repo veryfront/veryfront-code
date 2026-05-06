@@ -5,6 +5,7 @@ import {
   cloneMirroredToolChunkState,
   closeHostedMirroredOpenToolCalls,
   computeOpenToolCalls,
+  createHostedMirroredUiStream,
   createMirroredToolChunkState,
   getHostedMirroredAbortErrorText,
   isDurableMirroredOutputChunk,
@@ -25,6 +26,27 @@ function expectMirrored(chunk: Chunk): void {
 
 function expectNotMirrored(chunk: Chunk): void {
   assertEquals(isDurableMirroredOutputChunk(chunk), false);
+}
+
+async function* streamChunks(
+  chunks: readonly Chunk[],
+  error?: Error,
+): AsyncIterable<Chunk> {
+  for (const chunk of chunks) {
+    yield chunk;
+  }
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function collectChunks(stream: AsyncIterable<Chunk>): Promise<Chunk[]> {
+  const chunks: Chunk[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return chunks;
 }
 
 describe("mirrored-tool-chunk-state", () => {
@@ -251,5 +273,99 @@ describe("mirrored-tool-chunk-state", () => {
         "Closing aborted tool calls without recoverable tool names",
       ],
     );
+  });
+
+  it("mirrors stream chunks, records tool state, observes the stream, and disposes the watchdog", async () => {
+    const sourceChunks: Chunk[] = [
+      { type: "start" },
+      { type: "tool-input-start", toolCallId: "tc-1", toolName: "bash" },
+      { type: "tool-output-available", toolCallId: "tc-1", output: "ok" },
+    ];
+    const observedChunks: Chunk[] = [];
+    const appendedChunks: Chunk[] = [];
+    let disposed = false;
+    let mirroredOutput = false;
+    const state = createMirroredToolChunkState();
+
+    const outputChunks = await collectChunks(
+      createHostedMirroredUiStream({
+        sourceStream: streamChunks(sourceChunks),
+        rootStreamWatchdog: {
+          observe: (chunk) => {
+            observedChunks.push(chunk);
+          },
+          dispose: () => {
+            disposed = true;
+          },
+        },
+        mirroredToolChunkState: state,
+        appendChunk: (chunk) => {
+          appendedChunks.push(chunk);
+        },
+        setMirroredOutput: (value) => {
+          mirroredOutput = value;
+        },
+      }),
+    );
+
+    assertEquals(outputChunks, sourceChunks);
+    assertEquals(observedChunks, sourceChunks);
+    assertEquals(appendedChunks, sourceChunks);
+    assertEquals(state.startedToolCallIds.has("tc-1"), true);
+    assertEquals(state.outputAvailableToolCallIds.has("tc-1"), true);
+    assertEquals(disposed, true);
+    assertEquals(mirroredOutput, true);
+  });
+
+  it("closes open mirrored tool calls when the source stream aborts", async () => {
+    const sourceChunks: Chunk[] = [
+      { type: "tool-input-available", toolCallId: "tc-1", toolName: "edit_file", input: {} },
+    ];
+    const appendedChunks: Chunk[] = [];
+    const errors: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+    let disposed = false;
+    let didThrow = false;
+
+    try {
+      await collectChunks(
+        createHostedMirroredUiStream({
+          sourceStream: streamChunks(sourceChunks, new Error("provider stopped")),
+          rootStreamWatchdog: {
+            observe: () => undefined,
+            dispose: () => {
+              disposed = true;
+            },
+          },
+          mirroredToolChunkState: createMirroredToolChunkState(),
+          appendChunk: (chunk) => {
+            appendedChunks.push(chunk);
+          },
+          logger: {
+            warn: () => undefined,
+            error: (message, metadata) => {
+              errors.push({ message, metadata });
+            },
+          },
+        }),
+      );
+    } catch (error) {
+      didThrow = true;
+      if (!(error instanceof Error)) {
+        throw new Error("Expected source stream to throw an Error");
+      }
+      assertEquals(error.message, "provider stopped");
+    }
+
+    assertEquals(didThrow, true);
+    assertEquals(appendedChunks, [
+      ...sourceChunks,
+      {
+        type: "tool-output-error",
+        toolCallId: "tc-1",
+        errorText: "Chat stream errored before tool call completed: provider stopped",
+      },
+    ]);
+    assertEquals(errors, []);
+    assertEquals(disposed, true);
   });
 });
