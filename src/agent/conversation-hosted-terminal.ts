@@ -12,6 +12,92 @@ export interface ConversationHostedTerminalStateInput {
   terminalErrorMessage?: string | null;
 }
 
+export const CONVERSATION_HOSTED_STREAM_ERROR_TERMINAL_ERROR_CODE = "STREAM_ERROR";
+export const CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_CODE = "ABORTED";
+export const CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_CODE =
+  "INCOMPLETE_TOOL_CALLS";
+
+const DEFAULT_CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_MESSAGE = "Chat stream aborted";
+const DEFAULT_CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_MESSAGE =
+  "Assistant completed before tool execution completed";
+
+export interface ResolveConversationHostedTerminalStateInput {
+  isAborted: boolean;
+  hasIncompleteToolParts: boolean;
+  abortedTerminalErrorMessage?: string;
+  incompleteToolCallsTerminalErrorMessage?: string;
+}
+
+export type ConversationHostedTerminalStateResolution = Pick<
+  ConversationHostedTerminalStateInput,
+  "status" | "terminalErrorCode" | "terminalErrorMessage"
+>;
+
+export function resolveConversationHostedTerminalState(
+  input: ResolveConversationHostedTerminalStateInput,
+): ConversationHostedTerminalStateResolution {
+  if (input.isAborted) {
+    return {
+      status: "cancelled",
+      terminalErrorCode: CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_CODE,
+      terminalErrorMessage: input.abortedTerminalErrorMessage ??
+        DEFAULT_CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_MESSAGE,
+    };
+  }
+
+  if (input.hasIncompleteToolParts) {
+    return {
+      status: "failed",
+      terminalErrorCode: CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_CODE,
+      terminalErrorMessage: input.incompleteToolCallsTerminalErrorMessage ??
+        DEFAULT_CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_MESSAGE,
+    };
+  }
+
+  return { status: "completed" };
+}
+
+export function resolveConversationHostedStreamErrorState(
+  error: unknown,
+): ConversationHostedTerminalStateResolution {
+  return {
+    status: "failed",
+    terminalErrorCode: CONVERSATION_HOSTED_STREAM_ERROR_TERMINAL_ERROR_CODE,
+    terminalErrorMessage: error instanceof Error ? error.message : String(error),
+  };
+}
+
+export interface ConversationHostedTerminalRuntimeAdapter {
+  terminal: Pick<
+    ConversationHostedTerminalAdapter,
+    "toTerminalState" | "finalizeRun" | "cancelRun" | "onTerminalState"
+  >;
+}
+
+export async function dispatchConversationHostedTerminalState(
+  adapter: ConversationHostedTerminalRuntimeAdapter,
+  state: ConversationHostedTerminalStateInput,
+): Promise<HostedLifecycleTerminalState> {
+  const terminalState = adapter.terminal.toTerminalState(state);
+  if (terminalState.status === "cancelled") {
+    await adapter.terminal.cancelRun(terminalState);
+  } else {
+    await adapter.terminal.finalizeRun(terminalState);
+  }
+  await adapter.terminal.onTerminalState(terminalState);
+  return terminalState;
+}
+
+export async function dispatchConversationHostedStreamErrorState(
+  adapter: ConversationHostedTerminalRuntimeAdapter,
+  error: unknown,
+): Promise<HostedLifecycleTerminalState> {
+  return dispatchConversationHostedTerminalState(
+    adapter,
+    resolveConversationHostedStreamErrorState(error),
+  );
+}
+
 export interface CreateConversationHostedTerminalAdapterOptions {
   authToken: string;
   apiUrl: string;
