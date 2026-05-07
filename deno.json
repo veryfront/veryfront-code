@@ -15,7 +15,8 @@
     "./extensions/ext-node-compatibility",
     "./extensions/ext-parser-babel",
     "./extensions/ext-tracing-opentelemetry",
-    "./extensions/ext-transform-mdx"
+    "./extensions/ext-transform-mdx",
+    "./extensions/ext-zod"
   ],
   "exclude": [
     "npm/",
