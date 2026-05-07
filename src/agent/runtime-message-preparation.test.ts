@@ -44,11 +44,29 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages refreshes upload file URLs 
   assertEquals(resolvedUploadIds, ["upload-1"]);
   assertEquals(messages[0]?.parts, [
     { type: "text", text: "Use these files." },
-    {
-      type: "text",
-      text: "Attached files from earlier conversation context:\n\n<uploaded_files>\n" +
-        '<file name="notes.txt" upload_id="upload-1" url="https://signed.example.com/file.txt" type="text/plain" />\n' +
-        "</uploaded_files>",
-    },
+    { type: "file", url: "https://signed.example.com/file.txt", mediaType: "text/plain" },
+  ]);
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages keeps original URL when resolver returns undefined", async () => {
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      userMessage([
+        { type: "text", text: "Check this image." },
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "photo.png",
+          uploadId: "upload-2",
+          url: "https://files.example.com/photo.png",
+        },
+      ]),
+    ],
+    resolveFileUrl: async () => undefined,
+  });
+
+  assertEquals(messages[0]?.parts, [
+    { type: "text", text: "Check this image." },
+    { type: "file", url: "https://files.example.com/photo.png", mediaType: "image/png" },
   ]);
 });
