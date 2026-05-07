@@ -6,6 +6,7 @@ import {
   isHostedChildTerminalErrorCode,
   monitorHostedChildRunStatus,
   resolveHostedChildTerminalErrorCode,
+  shouldBlockHostedChildSameTurnRetry,
 } from "./hosted-child-status.ts";
 
 describe("agent/hosted-child-status", () => {
@@ -33,6 +34,36 @@ describe("agent/hosted-child-status", () => {
     );
     assertEquals(isHostedChildTerminalErrorCode("OTHER"), false);
     assertEquals(isHostedChildTerminalErrorCode(null), false);
+  });
+
+  it("detects child cancellation results that should block same-turn retries", () => {
+    assertEquals(
+      shouldBlockHostedChildSameTurnRetry({
+        terminalErrorCode: "CANCELLED",
+        terminalErrorMessage: "Run cancelled by host",
+      }),
+      true,
+    );
+    assertEquals(
+      shouldBlockHostedChildSameTurnRetry({
+        terminalErrorCode: hostedChildTerminalErrorCodes.cancelled,
+      }),
+      true,
+    );
+    assertEquals(
+      shouldBlockHostedChildSameTurnRetry({
+        terminalErrorMessage: "Child run cancelled",
+      }),
+      true,
+    );
+    assertEquals(
+      shouldBlockHostedChildSameTurnRetry({
+        terminalErrorCode: "INVOKE_AGENT_FAILED",
+        terminalErrorMessage: "Child run failed",
+      }),
+      false,
+    );
+    assertEquals(shouldBlockHostedChildSameTurnRetry(null), false);
   });
 
   it("stores status and identifiers on HostedChildTerminalStateError", () => {
