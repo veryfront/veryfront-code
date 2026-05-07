@@ -96,6 +96,14 @@ async function generateManifest(): Promise<TemplateManifest> {
 		manifest.templates[`integration:${integrationName}`] = { files };
 	}
 
+	// Process ai-rules templates (used by `veryfront install`)
+	const aiRulesDir = "./cli/templates/ai-rules";
+	for await (const entry of Deno.readDir(aiRulesDir)) {
+		if (!entry.isFile || !entry.name.endsWith(".md")) continue;
+		const content = await Deno.readTextFile(`${aiRulesDir}/${entry.name}`);
+		manifest.templates[`ai-rules:${entry.name}`] = { files: { [entry.name]: content } };
+	}
+
 	return manifest;
 }
 
