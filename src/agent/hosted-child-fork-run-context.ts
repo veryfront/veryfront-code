@@ -10,7 +10,11 @@ import {
   type HostedChildPendingToolLifecycleLogContext,
   type HostedChildPendingToolLifecycleLogWriter,
 } from "./hosted-child-pending-tool-lifecycle.ts";
-import type { HostedChildForkPendingToolLifecycle } from "./hosted-child-fork-stream-execution.ts";
+import {
+  executeHostedChildForkStream,
+  type ExecuteHostedChildForkStreamInput,
+  type HostedChildForkPendingToolLifecycle,
+} from "./hosted-child-fork-stream-execution.ts";
 
 export interface HostedChildForkToolCallSnapshot {
   toolName: string;
@@ -96,4 +100,71 @@ export function createHostedChildForkRunContext(
     toolResults: [],
     streamState: { finalText: "" },
   };
+}
+
+export type ExecuteHostedChildForkRunContextStreamInput =
+  & Pick<
+    ExecuteHostedChildForkStreamInput,
+    | "streamResult"
+    | "abortSignal"
+    | "abortForkStream"
+    | "conversationId"
+    | "parentRunId"
+    | "description"
+    | "kind"
+    | "usage"
+    | "maxSteps"
+    | "startTime"
+    | "finalizationTimeoutMs"
+    | "onSettled"
+    | "idleTimeoutMs"
+    | "activeToolTimeoutMs"
+    | "postToolIdleTimeoutMs"
+    | "logger"
+    | "writeLog"
+    | "tracePart"
+  >
+  & {
+    runContext: HostedChildForkRunContext;
+  };
+
+export function executeHostedChildForkRunContextStream(
+  input: ExecuteHostedChildForkRunContextStreamInput,
+) {
+  const { streamMirrorContext, pendingToolLifecycle, toolCalls, toolResults, streamState } =
+    input.runContext;
+
+  return executeHostedChildForkStream({
+    streamResult: input.streamResult,
+    abortSignal: input.abortSignal,
+    abortForkStream: input.abortForkStream,
+    conversationId: input.conversationId,
+    parentRunId: input.parentRunId,
+    description: input.description,
+    kind: input.kind,
+    durableRunMirror: streamMirrorContext.durableRunMirror,
+    durableMessageId: streamMirrorContext.durableMessageId,
+    durableReasoningMessageId: streamMirrorContext.durableReasoningMessageId,
+    durableMirrorState: streamMirrorContext.durableMirrorState,
+    appendDurableMirrorChunk: streamMirrorContext.appendDurableMirrorChunk,
+    closeDurableMirrorReasoning: streamMirrorContext.closeDurableMirrorReasoning,
+    closeDurableMirrorText: streamMirrorContext.closeDurableMirrorText,
+    markDurableStepStarted: streamMirrorContext.markDurableStepStarted,
+    durableMirrorHasEmittedProgress: streamMirrorContext.hasEmittedProgress,
+    pendingToolLifecycle,
+    toolCalls,
+    toolResults,
+    streamState,
+    usage: input.usage,
+    maxSteps: input.maxSteps,
+    startTime: input.startTime,
+    finalizationTimeoutMs: input.finalizationTimeoutMs,
+    onSettled: input.onSettled,
+    idleTimeoutMs: input.idleTimeoutMs,
+    activeToolTimeoutMs: input.activeToolTimeoutMs,
+    postToolIdleTimeoutMs: input.postToolIdleTimeoutMs,
+    logger: input.logger,
+    writeLog: input.writeLog,
+    tracePart: input.tracePart,
+  });
 }
