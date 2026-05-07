@@ -1,6 +1,26 @@
 import { assertEquals } from "@std/assert";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
-import { createHostedChildForkRunContext } from "./hosted-child-fork-run-context.ts";
+import {
+  createHostedChildForkRunContext,
+  executeHostedChildForkRunContextStream,
+} from "./hosted-child-fork-run-context.ts";
+import type { ForkPart, ForkRuntimeStep } from "./fork-runtime-stream.ts";
+
+async function* forkParts(parts: ForkPart[]): AsyncGenerator<ForkPart, void, void> {
+  for (const part of parts) {
+    yield part;
+  }
+}
+
+function createStep(text: string): ForkRuntimeStep {
+  return {
+    text,
+    finishReason: "stop",
+    messages: [],
+    toolCalls: [],
+    toolResults: [],
+  };
+}
 
 Deno.test("createHostedChildForkRunContext wires stream mirror state and buffers", async () => {
   const chunks: ChatUiMessageChunk<ChatMessageMetadata>[] = [];
@@ -75,4 +95,60 @@ Deno.test("createHostedChildForkRunContext closes pending tool calls with host l
     toolCallIds: ["tool-call-1"],
     errorMessage: null,
   });
+});
+
+Deno.test("executeHostedChildForkRunContextStream executes with run-context buffers", async () => {
+  const chunks: ChatUiMessageChunk<ChatMessageMetadata>[] = [];
+  const traces: string[] = [];
+  const context = createHostedChildForkRunContext({
+    mirror: {
+      handleChunk: (chunk) => {
+        chunks.push(chunk);
+      },
+    },
+    messageId: "message-1",
+    pendingToolLogContext: {
+      conversationId: "conversation-1",
+      parentRunId: "run-1",
+      description: "Check the app",
+    },
+  });
+
+  const result = await executeHostedChildForkRunContextStream({
+    runContext: context,
+    streamResult: {
+      fullStream: forkParts([
+        { type: "text-delta", text: "Done" },
+      ]),
+      steps: Promise.resolve([createStep("Done")]),
+      totalUsage: Promise.resolve({ inputTokens: 1, outputTokens: 1 }),
+    },
+    abortForkStream: () => undefined,
+    conversationId: "conversation-1",
+    parentRunId: "run-1",
+    description: "Check the app",
+    kind: "invoke_agent",
+    maxSteps: 10,
+    startTime: Date.now(),
+    finalizationTimeoutMs: 100,
+    idleTimeoutMs: 1_000,
+    activeToolTimeoutMs: 1_000,
+    postToolIdleTimeoutMs: 1_000,
+    tracePart: ({ partType }) => {
+      traces.push(partType);
+    },
+  });
+
+  assertEquals(result.success, true);
+  assertEquals(context.streamState.finalText, "Done");
+  assertEquals(context.toolCalls, []);
+  assertEquals(context.toolResults, []);
+  assertEquals(context.streamMirrorContext.hasStartedStep(), true);
+  assertEquals(chunks.map((chunk) => chunk.type), [
+    "start-step",
+    "text-start",
+    "text-delta",
+    "text-end",
+  ]);
+  assertEquals(traces, ["text-delta"]);
 });

@@ -424,6 +424,8 @@ export {
 } from "./hosted-child-fork-instructions.ts";
 export {
   createHostedChildForkRunContext,
+  executeHostedChildForkRunContextStream,
+  type ExecuteHostedChildForkRunContextStreamInput,
   type HostedChildForkRunContext,
   type HostedChildForkRunContextInput,
   type HostedChildForkStreamMirrorContext,
