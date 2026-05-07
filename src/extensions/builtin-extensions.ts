@@ -10,6 +10,7 @@ import extBabel from "../../extensions/ext-parser-babel/src/index.ts";
 import extMdx from "../../extensions/ext-transform-mdx/src/index.ts";
 import extTailwind from "../../extensions/ext-css-tailwind/src/index.ts";
 import extNodeCompat from "../../extensions/ext-node-compatibility/src/index.ts";
+import extZod from "../../extensions/ext-zod/src/index.ts";
 
 type BuiltinLLMProviderDefinition = {
   extensionName: string;
@@ -94,6 +95,14 @@ function createBuiltinLLMProviderExtension(
 
 export function createBuiltinExtensions(): ResolvedExtension[] {
   return [
+    // ext-zod registers SchemaValidator. Listed FIRST so any subsequent
+    // builtin whose setup() builds schemas via defineSchema() finds the
+    // contract resolved.
+    {
+      source: "builtin",
+      origin: "veryfront/ext-zod",
+      extension: extZod(),
+    },
     {
       source: "builtin",
       origin: "veryfront/ext-bundler-esbuild",
