@@ -29,6 +29,33 @@ export function isHostedChildTerminalErrorCode(
   );
 }
 
+export interface HostedChildSameTurnRetryBlockSignal {
+  terminalErrorCode?: string | null;
+  terminalErrorMessage?: string | null;
+}
+
+function getOptionalStringProperty(value: object, property: string): string | null {
+  const descriptor = Object.getOwnPropertyDescriptor(value, property);
+  return typeof descriptor?.value === "string" ? descriptor.value : null;
+}
+
+export function shouldBlockHostedChildSameTurnRetry(
+  result: unknown,
+): result is HostedChildSameTurnRetryBlockSignal {
+  if (typeof result !== "object" || result === null) {
+    return false;
+  }
+
+  const terminalErrorCode = getOptionalStringProperty(result, "terminalErrorCode");
+  const terminalErrorMessage = getOptionalStringProperty(result, "terminalErrorMessage");
+
+  return (
+    terminalErrorCode === "CANCELLED" ||
+    terminalErrorCode === hostedChildTerminalErrorCodes.cancelled ||
+    terminalErrorMessage === "Child run cancelled"
+  );
+}
+
 export type HostedChildTerminalStatus = Extract<
   HostedConversationRunStatus,
   "completed" | "failed" | "cancelled"
