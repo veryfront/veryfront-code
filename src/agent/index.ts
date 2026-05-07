@@ -423,6 +423,15 @@ export {
   type HostedChildForkInstructionsContext,
 } from "./hosted-child-fork-instructions.ts";
 export {
+  createHostedChildForkRunContext,
+  type HostedChildForkRunContext,
+  type HostedChildForkRunContextInput,
+  type HostedChildForkStreamMirrorContext,
+  type HostedChildForkStreamState,
+  type HostedChildForkToolCallSnapshot,
+  type HostedChildForkToolResultSnapshot,
+} from "./hosted-child-fork-run-context.ts";
+export {
   executeHostedChildForkStream,
   type ExecuteHostedChildForkStreamInput,
   finalizeHostedChildForkCompletion,
