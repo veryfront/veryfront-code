@@ -52,6 +52,12 @@ export interface Schema<T = unknown> {
   uuid(message?: string): Schema<T>;
   datetime(message?: string): Schema<T>;
 
+  /**
+   * Feed parsed output into another schema for further validation/refinement.
+   * Mirrors zod's `.pipe(otherSchema)`.
+   */
+  pipe<U>(next: Schema<U>): Schema<U>;
+
   // Validation
   parse(data: unknown): T;
   safeParse(data: unknown): ValidationResult<T>;
@@ -59,6 +65,17 @@ export interface Schema<T = unknown> {
 
 /** Extracts the inferred output type `T` from a `Schema<T>`. */
 export type InferSchema<S> = S extends Schema<infer T> ? T : never;
+
+/**
+ * Extracts the inferred *input* type from a `Schema<T>`.
+ *
+ * Today the contract DSL does not formally model input/output divergence
+ * (zod's `.transform()` is the canonical case where they differ), so this
+ * is an alias of `InferSchema`. Reserved as a separate type for forward
+ * compatibility — callers migrating from `z.input<typeof S>` should use
+ * this name.
+ */
+export type InferInput<S> = InferSchema<S>;
 
 /** Maps a raw object shape to its inferred object type. */
 export type InferShape<S extends Record<string, Schema<unknown>>> = {
@@ -120,12 +137,18 @@ export interface SchemaValidator {
   date(): Schema<Date>;
   null(): Schema<null>;
   unknown(): Schema<unknown>;
+  bigint(): Schema<bigint>;
   // deno-lint-ignore no-explicit-any -- `any` constructor intentionally mirrors zod
   any(): Schema<any>;
+  // deno-lint-ignore ban-types -- intentionally accepts any callable; mirrors zod
+  function(): Schema<(...args: unknown[]) => unknown>;
 
   // Composite constructors
   object<S extends Record<string, Schema<unknown>>>(shape: S): Schema<InferShape<S>>;
   array<T>(element: Schema<T>): Schema<T[]>;
+  tuple<T extends readonly Schema<unknown>[]>(
+    items: T,
+  ): Schema<{ [K in keyof T]: T[K] extends Schema<infer U> ? U : never }>;
   record<K extends string | number | symbol, V>(
     keys: Schema<K>,
     values: Schema<V>,
@@ -142,6 +165,18 @@ export interface SchemaValidator {
   ): Schema<InferSchema<T[number]>>;
   literal<T extends string | number | boolean | null>(value: T): Schema<T>;
   enum<T extends readonly [string, ...string[]]>(values: T): Schema<T[number]>;
+
+  /**
+   * Defer schema construction — used for recursive shapes. The thunk is
+   * called on first access; the result is cached. Mirrors `z.lazy`.
+   */
+  lazy<T>(factory: () => Schema<T>): Schema<T>;
+
+  /**
+   * Validates that input is an instance of the given constructor. Mirrors
+   * `z.instanceof`.
+   */
+  instanceof<T>(ctor: new (...args: never[]) => T): Schema<T>;
 
   /** Coercing constructors — accept any input and coerce to the target. */
   coerce: SchemaValidatorCoerce;

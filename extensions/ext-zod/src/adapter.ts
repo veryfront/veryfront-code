@@ -67,6 +67,7 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
     url: (message?: string) => wrap<T>(anyZs.url(message)),
     uuid: (message?: string) => wrap<T>(anyZs.uuid(message)),
     datetime: (message?: string) => wrap<T>(anyZs.datetime(message)),
+    pipe: <U>(next: Schema<U>): Schema<U> => wrap<U>(zs.pipe(toZod(next))),
     parse: (data: unknown): T => zs.parse(data) as T,
     safeParse: (data: unknown): ValidationResult<T> => {
       const res = zs.safeParse(data);
@@ -118,13 +119,30 @@ export function createZodAdapter(): SchemaValidator {
     date: (): Schema<Date> => wrap(z.date()),
     null: (): Schema<null> => wrap(z.null()),
     unknown: (): Schema<unknown> => wrap(z.unknown()),
+    bigint: (): Schema<bigint> => wrap(z.bigint()),
     // deno-lint-ignore no-explicit-any -- contract mirrors zod's `any` constructor
     any: (): Schema<any> => wrap(z.any()),
+    // deno-lint-ignore ban-types -- contract mirrors zod's loosely-typed `function`
+    function: (): Schema<(...args: unknown[]) => unknown> =>
+      // zod 4's z.function() is callable without args/returns and produces a
+      // schema accepting any function. We wrap it as Schema<AnyFunction>.
+      // deno-lint-ignore no-explicit-any -- z.function in v4 carries no arg/return types
+      wrap(z.function() as unknown as AnyZodSchema),
 
     object: <S extends Record<string, Schema<unknown>>>(shape: S): Schema<InferShape<S>> =>
       wrap(z.object(toZodShape(shape))),
 
     array: <T>(element: Schema<T>): Schema<T[]> => wrap(z.array(toZod(element))),
+
+    tuple: <T extends readonly Schema<unknown>[]>(
+      items: T,
+    ): Schema<{ [K in keyof T]: T[K] extends Schema<infer U> ? U : never }> => {
+      const zodItems = items.map((s) => toZod(s)) as unknown as [
+        AnyZodSchema,
+        ...AnyZodSchema[],
+      ];
+      return wrap(z.tuple(zodItems));
+    },
 
     record: <K extends string | number | symbol, V>(
       keys: Schema<K>,
@@ -167,6 +185,16 @@ export function createZodAdapter(): SchemaValidator {
     enum: <T extends readonly [string, ...string[]]>(values: T): Schema<T[number]> =>
       wrap(
         (z.enum as unknown as (v: readonly [string, ...string[]]) => AnyZodSchema)(values),
+      ),
+
+    lazy: <T>(factory: () => Schema<T>): Schema<T> => wrap<T>(z.lazy(() => toZod(factory()))),
+
+    instanceof: <T>(ctor: new (...args: never[]) => T): Schema<T> =>
+      // zod 4's z.instanceof expects `typeof Class` (z.core.util.Class). Our
+      // contract uses a slimmer `new`-able shape; bridge with a single cast
+      // through unknown.
+      wrap<T>(
+        (z.instanceof as unknown as (c: unknown) => AnyZodSchema)(ctor),
       ),
 
     coerce,
