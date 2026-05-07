@@ -8,6 +8,7 @@ import {
   resolveHostedChildTerminalErrorCode,
   shouldBlockHostedChildSameTurnRetry,
 } from "./hosted-child-status.ts";
+import { shouldBlockHostedChildSameTurnRetry as shouldBlockHostedChildSameTurnRetryFromIndex } from "./index.ts";
 
 describe("agent/hosted-child-status", () => {
   it("maps terminal statuses to durable child error codes", () => {
@@ -103,5 +104,16 @@ describe("agent/hosted-child-status", () => {
     });
 
     assertEquals(calls, 0);
+  });
+});
+
+describe("agent/hosted-child-status public contract", () => {
+  it("exports same-turn retry block detection from veryfront/agent", () => {
+    assertEquals(
+      shouldBlockHostedChildSameTurnRetryFromIndex({
+        terminalErrorCode: hostedChildTerminalErrorCodes.cancelled,
+      }),
+      true,
+    );
   });
 });
