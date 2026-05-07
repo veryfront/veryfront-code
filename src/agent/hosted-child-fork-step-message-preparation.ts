@@ -43,12 +43,24 @@ function convertAgentRuntimePartToChildForkMessagePart(
     };
   }
 
-  return {
-    type: `tool-${part.toolName}`,
-    toolCallId: part.toolCallId,
-    toolName: part.toolName,
-    args: part.args,
-  };
+  if ("toolCallId" in part) {
+    return {
+      type: `tool-${part.toolName}`,
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      args: part.args,
+    };
+  }
+
+  // image/file parts have no equivalent in the child-fork AgentMessage schema — render as a placeholder
+  if (part.type === "image" || part.type === "file") {
+    return { type: "text", text: `[file: ${part.mediaType}]` };
+  }
+
+  const _exhaustive: never = part;
+  throw new Error(
+    `Unhandled AgentRuntimeMessagePart type: ${String((_exhaustive as { type: unknown }).type)}`,
+  );
 }
 
 export function convertCompactedProviderMessagesToChildForkRuntimeMessages(

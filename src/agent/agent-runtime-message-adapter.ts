@@ -1,7 +1,9 @@
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import {
   buildDataFileAnnotation,
+  type ChatModelFilePart,
   type ChatToolResultPart,
+  type ChatUserContentPart,
   type ProviderModelMessage,
   type UploadedFileReference,
 } from "../chat/types.ts";
@@ -36,7 +38,9 @@ type AgentRuntimeMessageLikePart =
     toolCallId: string;
     toolName: string;
     output: unknown;
-  };
+  }
+  | { type: "image"; url: string; mediaType: string }
+  | { type: "file"; url: string; mediaType: string };
 
 export type AgentRuntimeMessagePart =
   | { type: "text"; text: string }
@@ -51,7 +55,9 @@ export type AgentRuntimeMessagePart =
     toolCallId: string;
     toolName: string;
     result: unknown;
-  };
+  }
+  | { type: "image"; url: string; mediaType: string }
+  | { type: "file"; url: string; mediaType: string };
 
 export interface AgentRuntimeMessage {
   id: string;
@@ -64,6 +70,7 @@ interface AgentRuntimeProviderContentParts {
   textParts: ProviderTextPart[];
   toolCallParts: ProviderToolCallPart[];
   toolResultParts: ChatToolResultPart[];
+  fileParts: ChatModelFilePart[];
 }
 
 type ProviderTextPart = { type: "text"; text: string };
@@ -103,6 +110,24 @@ function createTextAgentRuntimePart(text: string): AgentRuntimeMessagePart | nul
   return hasTextContent(text) ? { type: "text", text } : null;
 }
 
+function toNativeFilePart(
+  type: "image" | "file",
+  part: unknown,
+): { type: "image"; url: string; mediaType: string } | {
+  type: "file";
+  url: string;
+  mediaType: string;
+} | null {
+  const url = getOptionalStringField(part, "url");
+  const mediaType = getOptionalStringField(part, "mediaType");
+  if (!url || url.startsWith("data:") || !mediaType) {
+    return null;
+  }
+  return type === "file"
+    ? { type: "file" as const, url, mediaType }
+    : { type: "image" as const, url, mediaType };
+}
+
 function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessagePart | null {
   switch (part.type) {
     case "text":
@@ -129,7 +154,7 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
 
     case "image":
     case "file":
-      return null;
+      return toNativeFilePart(part.type, part);
 
     default: {
       const exhaustiveCheck: never = part;
@@ -189,17 +214,18 @@ function convertContentToAgentRuntimeParts(
   const attachmentReferences: UploadedFileReference[] = [];
 
   for (const part of message.content) {
+    const convertedPart = convertStructuredPart(part);
+    if (convertedPart) {
+      parts.push(convertedPart);
+      continue;
+    }
+
     if (part.type === "image" || part.type === "file") {
       const attachmentReference = createAttachmentReference(part);
       if (attachmentReference) {
         attachmentReferences.push(attachmentReference);
       }
       continue;
-    }
-
-    const convertedPart = convertStructuredPart(part);
-    if (convertedPart) {
-      parts.push(convertedPart);
     }
   }
 
@@ -313,12 +339,21 @@ function collectAgentRuntimeProviderContentParts(
   const textParts: ProviderTextPart[] = [];
   const toolCallParts: ProviderToolCallPart[] = [];
   const toolResultParts: ChatToolResultPart[] = [];
+  const fileParts: ChatModelFilePart[] = [];
 
   for (const part of parts) {
     const textPart = getAgentRuntimeTextPart(part);
     if (textPart) {
       textParts.push(textPart);
       continue;
+    }
+
+    if (part.type === "image" || part.type === "file") {
+      const nativePart = toNativeFilePart(part.type, part);
+      if (nativePart) {
+        fileParts.push(nativePart);
+        continue;
+      }
     }
 
     const toolResultPart = getAgentRuntimeToolResultPart(part);
@@ -338,7 +373,7 @@ function collectAgentRuntimeProviderContentParts(
     }
   }
 
-  return { textParts, toolCallParts, toolResultParts };
+  return { textParts, toolCallParts, toolResultParts, fileParts };
 }
 
 function createProviderMessageFromAgentRuntimeMessage(
@@ -346,9 +381,8 @@ function createProviderMessageFromAgentRuntimeMessage(
     parts: ReadonlyArray<AgentRuntimeMessageLikePart>;
   },
 ): ProviderModelMessage | null {
-  const { textParts, toolCallParts, toolResultParts } = collectAgentRuntimeProviderContentParts(
-    message.parts,
-  );
+  const { textParts, toolCallParts, toolResultParts, fileParts } =
+    collectAgentRuntimeProviderContentParts(message.parts);
 
   switch (message.role) {
     case "assistant":
@@ -372,13 +406,21 @@ function createProviderMessageFromAgentRuntimeMessage(
       };
 
     case "user": {
-      if (textParts.length === 0) {
+      if (textParts.length === 0 && fileParts.length === 0) {
         return null;
       }
 
+      if (fileParts.length === 0) {
+        return {
+          role: "user",
+          content: joinTextParts(textParts),
+        };
+      }
+
+      const content: ChatUserContentPart[] = [...textParts, ...fileParts];
       return {
         role: "user",
-        content: joinTextParts(textParts),
+        content,
       };
     }
 

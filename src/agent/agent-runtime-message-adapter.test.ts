@@ -130,23 +130,43 @@ describe("agent runtime message adapter", () => {
     assertEquals(agentRuntimeMessages[0]?.parts, [agentRuntimeTextPart("Visible answer")]);
   });
 
-  it("converts multimodal parts into uploaded-file context annotations", () => {
+  it("passes image and file parts with URLs as native AgentRuntimeMessage parts", () => {
     const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
       providerMessage({
         role: "user",
         content: [
           {
             type: "image",
-            data: "ignored",
             mediaType: "image/png",
             filename: "diagram.png",
+            url: "https://uploads.example.com/diagram.png",
           },
           {
             type: "file",
-            data: "ignored",
             mediaType: "application/pdf",
             filename: "spec.pdf",
-            url: "https://example.com/spec.pdf",
+            url: "https://uploads.example.com/spec.pdf",
+          },
+        ],
+      }),
+    ]);
+
+    assertEquals(agentRuntimeMessages[0]?.parts, [
+      { type: "image", url: "https://uploads.example.com/diagram.png", mediaType: "image/png" },
+      { type: "file", url: "https://uploads.example.com/spec.pdf", mediaType: "application/pdf" },
+    ]);
+  });
+
+  it("falls back to annotation for multimodal parts without a URL", () => {
+    const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
+      providerMessage({
+        role: "user",
+        content: [
+          {
+            type: "image",
+            data: "base64data",
+            mediaType: "image/png",
+            filename: "diagram.png",
           },
         ],
       }),
@@ -158,7 +178,6 @@ describe("agent runtime message adapter", () => {
     if (firstPart && "text" in firstPart) {
       assertStringIncludes(firstPart.text, "<uploaded_files>");
       assertStringIncludes(firstPart.text, "diagram.png");
-      assertStringIncludes(firstPart.text, "spec.pdf");
     }
   });
 
@@ -188,6 +207,79 @@ describe("agent runtime message adapter", () => {
           providerToolResultPart(jsonOutput({ matches: 2 })),
         ],
       },
+    ]);
+  });
+
+  it("converts native image AgentRuntimeMessage part back to structured user content", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      agentRuntimeMessage(
+        "user",
+        [
+          agentRuntimeTextPart("What is in this image?"),
+          { type: "image", url: "https://uploads.example.com/photo.jpg", mediaType: "image/jpeg" },
+        ],
+        0,
+      ),
+    ]);
+
+    assertEquals(providerMessages, [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "What is in this image?" },
+          { type: "image", url: "https://uploads.example.com/photo.jpg", mediaType: "image/jpeg" },
+        ],
+      },
+    ]);
+  });
+
+  it("does not drop a file-only user message — emits structured content with the file part", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      agentRuntimeMessage(
+        "user",
+        [
+          {
+            type: "image",
+            url: "https://uploads.example.com/screenshot.png",
+            mediaType: "image/png",
+          },
+        ],
+        0,
+      ),
+    ]);
+
+    assertEquals(providerMessages, [
+      {
+        role: "user",
+        content: [
+          {
+            type: "image",
+            url: "https://uploads.example.com/screenshot.png",
+            mediaType: "image/png",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("drops a data: URL image part when converting back to provider messages", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      agentRuntimeMessage(
+        "user",
+        [
+          agentRuntimeTextPart("Here is my image."),
+          {
+            type: "image",
+            url: "data:image/png;base64,abc123==",
+            mediaType: "image/png",
+          },
+        ],
+        0,
+      ),
+    ]);
+
+    assertEquals(providerMessages, [
+      { role: "user", content: "Here is my image." },
     ]);
   });
 

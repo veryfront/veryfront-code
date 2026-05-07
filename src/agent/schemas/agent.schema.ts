@@ -65,6 +65,16 @@ export const MessagePartSchema = z.union([
     args: z.record(z.string(), z.unknown()),
   }),
   ToolResultPartSchema,
+  z.object({
+    type: z.literal("image"),
+    url: z.string(),
+    mediaType: z.string(),
+  }),
+  z.object({
+    type: z.literal("file"),
+    url: z.string(),
+    mediaType: z.string(),
+  }),
 ]);
 
 export const MessageSchema = z.object({
