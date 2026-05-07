@@ -20,6 +20,47 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages returns an empty-conversati
   assertEquals(messages[0]?.parts, [{ type: "text", text: "Suggest next steps." }]);
 });
 
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages treats file-only message as empty conversation", async () => {
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      userMessage([
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "screenshot.png",
+          uploadId: "upload-1",
+          url: "https://files.example.com/screenshot.png",
+        },
+      ]),
+    ],
+    emptyConversationPrompt: "Suggest next steps.",
+  });
+
+  assertEquals(messages[0]?.role, "user");
+  assertEquals(messages[0]?.parts, [{ type: "text", text: "Suggest next steps." }]);
+});
+
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages treats text-empty-plus-file message as empty conversation", async () => {
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      userMessage([
+        { type: "text", text: "   " },
+        {
+          type: "file",
+          mediaType: "image/png",
+          filename: "screenshot.png",
+          uploadId: "upload-1",
+          url: "https://files.example.com/screenshot.png",
+        },
+      ]),
+    ],
+    emptyConversationPrompt: "Suggest next steps.",
+  });
+
+  assertEquals(messages[0]?.role, "user");
+  assertEquals(messages[0]?.parts, [{ type: "text", text: "Suggest next steps." }]);
+});
+
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages refreshes upload file URLs before conversion", async () => {
   const resolvedUploadIds: string[] = [];
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({

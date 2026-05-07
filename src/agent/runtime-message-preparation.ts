@@ -50,7 +50,7 @@ function isEmptyConversation(messages: readonly ChatUiMessage[]): boolean {
       if (part.type === "text") {
         return !part.text || part.text.trim() === "";
       }
-      return false;
+      return true;
     });
   }
 
