@@ -3,19 +3,20 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "./define.ts";
-import { registerZodAdapter, zodAdapter } from "./zod-adapter.ts";
+import { createZodAdapter } from "../../extensions/ext-zod/src/adapter.ts";
 
 /**
- * The bootstrap side-effect import in `src/schemas/index.ts` registers the
- * zod adapter globally. These tests reset the registry between cases to
- * exercise both the "registered" and "unresolved" paths, then restore the
- * default state afterwards so downstream tests keep their invariants.
+ * `defineSchema` resolves the SchemaValidator contract on first call. App
+ * bootstrap registers the zod adapter via ext-zod; these tests reset the
+ * registry between cases to exercise both the "registered" and "unresolved"
+ * paths, then restore a fresh adapter afterwards so downstream tests keep
+ * their invariants.
  */
 describe("defineSchema", () => {
   afterEach(() => {
     // Restore default state for any subsequent tests in the same process.
     reset();
-    registerZodAdapter();
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
   });
 
   it(
@@ -33,7 +34,7 @@ describe("defineSchema", () => {
 
   it("materializes the schema lazily via the registered adapter", () => {
     reset();
-    register<SchemaValidator>("SchemaValidator", zodAdapter);
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
 
     const getSchema = defineSchema((v) =>
       v.object({ id: v.string().min(1), count: v.number().int() })
@@ -46,7 +47,7 @@ describe("defineSchema", () => {
 
   it("caches the built schema across repeated calls", () => {
     reset();
-    register<SchemaValidator>("SchemaValidator", zodAdapter);
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
 
     const getSchema = defineSchema((v) => v.string());
     const first = getSchema();
@@ -61,7 +62,7 @@ describe("defineSchema", () => {
     // No contract yet — construction alone must not throw.
     assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
 
-    register<SchemaValidator>("SchemaValidator", zodAdapter);
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
     const schema = getSchema();
     assertEquals(schema.parse(true), true);
   });

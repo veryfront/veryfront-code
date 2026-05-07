@@ -3,16 +3,14 @@
  * pagination) and primitives (file paths, hex colors, semver, timestamps),
  * plus the `defineSchema` lazy-factory helper.
  *
- * Importing this module also registers the default zod-backed
- * `SchemaValidator` adapter so that `defineSchema(...)` works out of the box.
+ * `defineSchema` resolves the `SchemaValidator` contract on first use. The
+ * default zod-backed implementation lives in `@veryfront/ext-zod` and is
+ * registered at app bootstrap by `createBuiltinExtensions()`. Tests that
+ * exercise schemas without going through full bootstrap import
+ * `./_test-setup.ts` to register the adapter directly.
  *
  * @module schemas
  */
-
-import { registerZodAdapter } from "./zod-adapter.ts";
-
-// Register the default SchemaValidator implementation once at module load.
-registerZodAdapter();
 
 export { defineSchema } from "./define.ts";
 
