@@ -869,6 +869,7 @@ export {
 } from "./hosted-child-fork-runtime-start.ts";
 export {
   type HostedChildRunIdentifiers,
+  type HostedChildSameTurnRetryBlockSignal,
   type HostedChildTerminalErrorCode,
   hostedChildTerminalErrorCodes,
   HostedChildTerminalStateError,
@@ -877,6 +878,7 @@ export {
   monitorHostedChildRunStatus,
   type MonitorHostedChildRunStatusInput,
   resolveHostedChildTerminalErrorCode,
+  shouldBlockHostedChildSameTurnRetry,
 } from "./hosted-child-status.ts";
 export {
   type HostedLifecycleAdapter,
