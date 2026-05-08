@@ -6,7 +6,9 @@ import {
   createConversationRecord,
   ensureConversationProjectLink,
   fetchConversationRecord,
+  findLatestUserConversationMessageContext,
   persistConversationUserMessage,
+  persistLatestConversationUserMessage,
 } from "./conversation-bootstrap.ts";
 
 const API_URL = "https://api.example.com";
@@ -16,6 +18,7 @@ const CHILD_CONVERSATION_ID = "22222222-2222-4222-a222-222222222222";
 const MESSAGE_ID = "33333333-3333-4333-a333-333333333333";
 const USER_MESSAGE_ID = "33333333-3333-4333-a333-333333333334";
 const PARENT_MESSAGE_ID = "33333333-3333-4333-a333-333333333335";
+const SYSTEM_MESSAGE_ID = "33333333-3333-4333-a333-333333333336";
 const PROJECT_ID = "44444444-4444-4444-8444-444444444444";
 const BRANCH_ID = "55555555-5555-4555-8555-555555555555";
 const originalFetch = globalThis.fetch;
@@ -175,6 +178,88 @@ describe("agent/conversation-bootstrap", () => {
         }),
       Error,
       "CONVERSATION_USER_MESSAGE_REQUIRES_PERSISTABLE_PARTS",
+    );
+  });
+
+  it("finds the latest user message and visible non-system parent", () => {
+    const result = findLatestUserConversationMessageContext([
+      { id: SYSTEM_MESSAGE_ID, role: "system", parts: [{ type: "text", text: "system" }] },
+      { id: PARENT_MESSAGE_ID, role: "assistant", parts: [{ type: "text", text: "reply" }] },
+      { id: USER_MESSAGE_ID, role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ]);
+
+    assertEquals(result.latestUserMessage?.id, USER_MESSAGE_ID);
+    assertEquals(result.visibleParentMessageId, PARENT_MESSAGE_ID);
+  });
+
+  it("does not use a system message as latest user message parent", () => {
+    const result = findLatestUserConversationMessageContext([
+      { id: SYSTEM_MESSAGE_ID, role: "system", parts: [{ type: "text", text: "system" }] },
+      { id: USER_MESSAGE_ID, role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ]);
+
+    assertEquals(result.latestUserMessage?.id, USER_MESSAGE_ID);
+    assertEquals(result.visibleParentMessageId, undefined);
+  });
+
+  it("persists the latest conversation user message with a visible UUID parent", async () => {
+    let capturedInit: RequestInit | undefined;
+    stubFetchWithRecorder((_input, init) => {
+      capturedInit = init;
+      return jsonResponse({ id: MESSAGE_ID }, 201);
+    });
+
+    await persistLatestConversationUserMessage({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      enabled: true,
+      messages: [
+        { id: PARENT_MESSAGE_ID, role: "assistant", parts: [{ type: "text", text: "reply" }] },
+        { id: USER_MESSAGE_ID, role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ],
+      operation: "Persist latest user message",
+    });
+
+    assertEquals(JSON.parse(String(capturedInit?.body)), {
+      role: "user",
+      parts: [{ type: "text", text: "Hello" }],
+      idempotency_key: USER_MESSAGE_ID,
+      parent_id: PARENT_MESSAGE_ID,
+    });
+  });
+
+  it("skips latest user message persistence when disabled", async () => {
+    globalThis.fetch = () => {
+      throw new Error("Unexpected fetch call");
+    };
+
+    await persistLatestConversationUserMessage({
+      authToken: AUTH_TOKEN,
+      apiUrl: API_URL,
+      conversationId: CONVERSATION_ID,
+      enabled: false,
+      messages: [{ id: USER_MESSAGE_ID, role: "user", parts: [{ type: "text", text: "Hello" }] }],
+    });
+  });
+
+  it("rejects latest user message persistence when no user message exists", async () => {
+    await assertRejects(
+      () =>
+        persistLatestConversationUserMessage({
+          authToken: AUTH_TOKEN,
+          apiUrl: API_URL,
+          conversationId: CONVERSATION_ID,
+          enabled: true,
+          messages: [{
+            id: SYSTEM_MESSAGE_ID,
+            role: "system",
+            parts: [{ type: "text", text: "system" }],
+          }],
+          missingUserMessageErrorMessage: "DURABLE_CHAT_ROOT_REQUIRES_USER_MESSAGE",
+        }),
+      Error,
+      "DURABLE_CHAT_ROOT_REQUIRES_USER_MESSAGE",
     );
   });
 

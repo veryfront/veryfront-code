@@ -481,8 +481,10 @@ export {
   createConversationRecord,
   ensureConversationProjectLink,
   fetchConversationRecord,
+  findLatestUserConversationMessageContext,
   persistConversationUserMessage,
   type PersistConversationUserMessageFailure,
+  persistLatestConversationUserMessage,
 } from "./conversation-bootstrap.ts";
 export {
   executeHostedDurableChildFork,
