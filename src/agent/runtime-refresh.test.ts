@@ -4,7 +4,7 @@ import { type ModelRuntime } from "#veryfront/provider";
 import { tool } from "#veryfront/tool";
 import { z } from "zod";
 import { agent } from "./index.ts";
-import type { RuntimeStateRequest } from "./types.ts";
+import type { RuntimeStateRequest, ToolExecutionResultRequest } from "./types.ts";
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -30,6 +30,146 @@ function extractSystemPrompt(options: unknown): string {
 }
 
 describe("agent runtime refresh hooks", () => {
+  it("notifies configured hooks after generate() executes a tool", async () => {
+    const toolResults: ToolExecutionResultRequest[] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/tool-result-generate",
+      async doGenerate() {
+        return {
+          content: [{
+            type: "tool-call",
+            toolCallId: "write-1",
+            toolName: "write_report",
+            input: '{"path":"research/report.md"}',
+          }],
+          finishReason: "tool-calls",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+
+    const writeReport = tool({
+      id: "write_report",
+      description: "Write a report",
+      inputSchema: z.object({ path: z.string() }),
+      execute: async ({ path }, context) => ({
+        path: `canonical/${path}`,
+        projectId: context?.projectId,
+      }),
+    });
+
+    const assistant = agent({
+      model: "hosted/tool-result-generate",
+      system: "Generate tool result hook test",
+      tools: { write_report: writeReport },
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+      onToolResult: (request) => {
+        toolResults.push(request);
+      },
+    });
+
+    await assistant.generate({
+      input: "Write a report",
+      context: { projectId: "project-generate" },
+    });
+
+    assertEquals(toolResults.length, 1);
+    assertEquals(toolResults[0]?.toolName, "write_report");
+    assertEquals(toolResults[0]?.toolCallId, "write-1");
+    assertEquals(toolResults[0]?.input, { path: "research/report.md" });
+    assertEquals(toolResults[0]?.result, {
+      path: "canonical/research/report.md",
+      projectId: "project-generate",
+    });
+    assertEquals(toolResults[0]?.context?.projectId, "project-generate");
+  });
+
+  it("notifies configured hooks after stream() executes a tool", async () => {
+    const toolResults: ToolExecutionResultRequest[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/tool-result-stream",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "write-stream-1",
+                toolName: "write_report",
+                input: '{"path":"research/stream-report.md"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "stream complete" },
+            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+          ]),
+        };
+      },
+    };
+
+    const writeReport = tool({
+      id: "write_report",
+      description: "Write a report",
+      inputSchema: z.object({ path: z.string() }),
+      execute: async ({ path }, context) => ({
+        path: `canonical/${path}`,
+        projectId: context?.projectId,
+      }),
+    });
+
+    const assistant = agent({
+      model: "hosted/tool-result-stream",
+      system: "Stream tool result hook test",
+      tools: { write_report: writeReport },
+      resolveModelTransport: async () => ({ model }),
+      onToolResult: (request) => {
+        toolResults.push(request);
+      },
+    });
+
+    const response = (await assistant.stream({
+      input: "Write a report",
+      context: { projectId: "project-stream" },
+    })).toDataStreamResponse();
+
+    await response.text();
+
+    assertEquals(toolResults.length, 1);
+    assertEquals(toolResults[0]?.toolName, "write_report");
+    assertEquals(toolResults[0]?.toolCallId, "write-stream-1");
+    assertEquals(toolResults[0]?.input, { path: "research/stream-report.md" });
+    assertEquals(toolResults[0]?.result, {
+      path: "canonical/research/stream-report.md",
+      projectId: "project-stream",
+    });
+    assertEquals(toolResults[0]?.context?.projectId, "project-stream");
+  });
+
   it("refreshes system and context at step boundaries for generate()", async () => {
     const runtimeRequests: RuntimeStateRequest[] = [];
     const observedSystems: string[] = [];

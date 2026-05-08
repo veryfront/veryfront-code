@@ -3,7 +3,7 @@
  **************************/
 
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
-import type { RemoteToolSource, Tool } from "#veryfront/tool";
+import type { RemoteToolSource, Tool, ToolExecutionContext } from "#veryfront/tool";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 import type { Memory } from "./memory/memory-interface.ts";
 
@@ -106,6 +106,12 @@ export interface AgentConfig {
    */
   resolveRuntimeState?: RuntimeStateResolver;
   /**
+   * Optional hook invoked after the runtime executes a configured local,
+   * registry, integration, or remote tool and before the tool result is
+   * persisted or streamed back to callers.
+   */
+  onToolResult?: ToolExecutionResultHandler;
+  /**
    * Enable skills for this agent.
    * - true: include all discovered skills from skills/ directory
    * - string[]: include only specific skill IDs
@@ -157,6 +163,20 @@ export interface ResolvedRuntimeState {
 export type RuntimeStateResolver = (
   request: RuntimeStateRequest,
 ) => ResolvedRuntimeState | undefined | Promise<ResolvedRuntimeState | undefined>;
+
+export interface ToolExecutionResultRequest {
+  agentId: string;
+  mode: "generate" | "stream";
+  toolName: string;
+  toolCallId: string;
+  input: Record<string, unknown>;
+  result: unknown;
+  context?: ToolExecutionContext;
+}
+
+export type ToolExecutionResultHandler = (
+  request: ToolExecutionResultRequest,
+) => void | Promise<void>;
 
 // Import for use in AgentMiddleware
 import type { AgentContext, AgentResponse } from "./schemas/index.ts";
