@@ -3,6 +3,24 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ToolDefinition } from "#veryfront/tool";
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 
+function containsKey(value: unknown, key: string): boolean {
+  if (!value || typeof value !== "object") return false;
+  if (Object.hasOwn(value, key)) return true;
+  if (Array.isArray(value)) {
+    return value.some((item) => containsKey(item, key));
+  }
+  return Object.values(value).some((item) => containsKey(item, key));
+}
+
+function getRuntimeToolSchema(tool: unknown): unknown {
+  if (!tool || typeof tool !== "object" || !("inputSchema" in tool)) return undefined;
+  const inputSchema = (tool as { inputSchema?: unknown }).inputSchema;
+  if (!inputSchema || typeof inputSchema !== "object" || !("jsonSchema" in inputSchema)) {
+    return undefined;
+  }
+  return (inputSchema as { jsonSchema?: unknown }).jsonSchema;
+}
+
 describe("model-tool-converter", () => {
   it("returns undefined for empty tools array", () => {
     assertEquals(convertToolsToRuntimeTools([]), undefined);
@@ -167,5 +185,52 @@ describe("model-tool-converter", () => {
 
     assertEquals(result !== undefined, true);
     assertEquals(Object.keys(result!).filter((name) => name === "web_search").length, 1);
+  });
+
+  it("caps OpenAI-compatible runtime tools to the provider limit", () => {
+    const tools: ToolDefinition[] = Array.from({ length: 150 }, (_, index) => ({
+      name: `tool_${index}`,
+      description: `Tool ${index}`,
+      parameters: { type: "object", properties: {} },
+    }));
+
+    const result = convertToolsToRuntimeTools(tools, {
+      model: "veryfront-cloud/openai/gpt-5.2",
+    });
+
+    assertEquals(Object.keys(result ?? {}).length, 128);
+    assertEquals("tool_0" in result!, true);
+    assertEquals("tool_127" in result!, true);
+    assertEquals("tool_128" in result!, false);
+  });
+
+  it("sanitizes Google-compatible runtime tool schemas", () => {
+    const result = convertToolsToRuntimeTools([
+      {
+        name: "choose_kind",
+        description: "Choose a kind",
+        parameters: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            kind: { type: "string", const: "file", default: "file" },
+          },
+        },
+      },
+    ] as never, {
+      model: "veryfront-cloud/google-ai-studio/gemini-2.5-flash",
+    });
+
+    const schema = getRuntimeToolSchema(result?.choose_kind);
+
+    assertEquals(containsKey(schema, "const"), false);
+    assertEquals(containsKey(schema, "default"), false);
+    assertEquals(containsKey(schema, "additionalProperties"), false);
+    assertEquals(
+      (schema as { properties?: { kind?: { enum?: unknown[] } } }).properties?.kind?.enum,
+      [
+        "file",
+      ],
+    );
   });
 });
