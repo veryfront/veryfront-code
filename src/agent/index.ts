@@ -291,6 +291,16 @@ export {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
 } from "./hosted-chat-request-parser.ts";
 export {
+  buildParsedHostedAgUiRequest,
+  type BuildParsedHostedAgUiRequestOptions,
+  createHostedAgUiValidationErrorResponse,
+  type DerivedHostedAgUiChatContext,
+  deriveHostedAgUiChatContext,
+  type HostedAgUiChatForwardedConfig,
+  hostedAgUiChatForwardedConfigSchema,
+  type ParsedHostedAgUiRequest,
+} from "./hosted-ag-ui-chat-request.ts";
+export {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
   buildHostedChatRequestFromRuntimeAgentInvocation,
   buildHostedChatRequestInputFromRuntimeAgentInvocation,
