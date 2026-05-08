@@ -2,6 +2,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "./child-run-execution-snapshot.ts";
+import { buildChildRunResultSummary } from "./child-run-result-summary.ts";
 import { type ConversationRunTargets, resolveConversationRunTargets } from "./durable.ts";
 import { createConversationChildLifecycleAdapter } from "./conversation-hosted-lifecycle.ts";
 import type { InvokeAgentChildRunProgressEvent } from "./invoke-agent-child-runs.ts";
@@ -20,6 +21,35 @@ import { throwIfChildRunAborted } from "./child-run-execution-support.ts";
 
 export type HostedDurableChildExecutionOptions = {
   durableChildRun?: HostedChildRunIdentifiers;
+};
+
+export type HostedDurableChildInvokeResult = {
+  ok: boolean;
+  status: "completed" | "failed";
+  text?: string;
+  error?: string;
+  summary?: { text: string };
+  steps?: number;
+  toolCalls?: ChildRunExecutionSnapshot["toolCalls"];
+  toolResults?: ChildRunExecutionSnapshot["toolResults"];
+  usage?: ChildRunExecutionSnapshot["usage"];
+  durationMs?: ChildRunExecutionSnapshot["durationMs"];
+  childConversationId?: string | null;
+  childRunId?: string | null;
+  childMessageId?: string | null;
+  sourceTargetKind?: ConversationRunTargets["sourceTargetKind"];
+  runtimeTargetKind?: ConversationRunTargets["runtimeTargetKind"];
+  terminalErrorCode: string | null;
+  terminalErrorMessage: string | null;
+};
+
+export type BuildHostedDurableChildInvokeFailureResultInput = {
+  terminalErrorCode: string;
+  terminalErrorMessage: string;
+  targets?: ConversationRunTargets;
+  childConversationId?: string | null;
+  childRunId?: string | null;
+  childMessageId?: string | null;
 };
 
 export type HostedDurableChildSuccess<TLocalResult extends ChildRunExecutionResult> = {
@@ -45,6 +75,70 @@ export type HostedDurableChildSetupFailure = {
   terminalErrorCode: string;
   terminalErrorMessage: string;
 };
+
+export function buildHostedDurableChildInvokeFailureResult(
+  input: BuildHostedDurableChildInvokeFailureResultInput,
+): HostedDurableChildInvokeResult {
+  return {
+    ok: false,
+    status: "failed",
+    ...(input.childConversationId ? { childConversationId: input.childConversationId } : {}),
+    ...(input.childRunId ? { childRunId: input.childRunId } : {}),
+    ...(input.childMessageId ? { childMessageId: input.childMessageId } : {}),
+    ...(input.targets
+      ? {
+        sourceTargetKind: input.targets.sourceTargetKind,
+        runtimeTargetKind: input.targets.runtimeTargetKind,
+      }
+      : {}),
+    terminalErrorCode: input.terminalErrorCode,
+    terminalErrorMessage: input.terminalErrorMessage,
+  };
+}
+
+export function buildHostedDurableChildInvokeTerminalFailureResult(
+  input: HostedDurableChildTerminalFailure,
+): HostedDurableChildInvokeResult {
+  return buildHostedDurableChildInvokeFailureResult({
+    terminalErrorCode: input.terminalErrorCode,
+    terminalErrorMessage: input.terminalErrorMessage,
+    targets: input.targets,
+    childConversationId: input.identifiers.childConversationId,
+    childRunId: input.identifiers.childRunId,
+    childMessageId: input.identifiers.childMessageId,
+  });
+}
+
+export function buildHostedDurableChildInvokeSuccessResult<
+  TLocalResult extends ChildRunExecutionResult,
+>(input: HostedDurableChildSuccess<TLocalResult>): HostedDurableChildInvokeResult {
+  const summaryText = input.snapshot.fullResultText ??
+    (input.result.success ? input.result.summary.text : input.result.error);
+
+  return {
+    ok: input.snapshot.success,
+    status: input.snapshot.success ? "completed" : "failed",
+    ...(summaryText
+      ? {
+        text: summaryText,
+        summary: buildChildRunResultSummary(summaryText),
+      }
+      : {}),
+    ...(input.snapshot.success ? {} : { error: input.snapshot.error ?? "invoke_agent failed" }),
+    steps: input.snapshot.steps,
+    toolCalls: input.snapshot.toolCalls,
+    toolResults: input.snapshot.toolResults,
+    usage: input.snapshot.usage,
+    durationMs: input.snapshot.durationMs,
+    childConversationId: input.identifiers.childConversationId,
+    childRunId: input.identifiers.childRunId,
+    childMessageId: input.identifiers.childMessageId,
+    sourceTargetKind: input.targets.sourceTargetKind,
+    runtimeTargetKind: input.targets.runtimeTargetKind,
+    terminalErrorCode: input.snapshot.success ? null : "INVOKE_AGENT_FAILED",
+    terminalErrorMessage: input.snapshot.success ? null : input.snapshot.error,
+  };
+}
 
 export type HostedDurableChildBootstrapContext = {
   parentConversationId: string;

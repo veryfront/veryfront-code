@@ -1,7 +1,14 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import type { ChildRunExecutionResult } from "./child-run-execution-snapshot.ts";
 import {
+  buildChildRunExecutionSnapshot,
+  type ChildRunExecutionResult,
+} from "./child-run-execution-snapshot.ts";
+import type { ConversationRunTargets } from "./durable.ts";
+import {
+  buildHostedDurableChildInvokeFailureResult,
+  buildHostedDurableChildInvokeSuccessResult,
+  buildHostedDurableChildInvokeTerminalFailureResult,
   executeHostedDurableChildFork,
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
@@ -94,6 +101,87 @@ function baseSuccessResult(): ChildRunExecutionResult {
 describe("agent/hosted-durable-child-fork-execution", () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
+  });
+
+  it("builds standard hosted invoke failure, terminal failure, and success results", () => {
+    const identifiers = {
+      childConversationId: CHILD_CONVERSATION_ID,
+      childRunId: "run_child_1",
+      childMessageId: CHILD_MESSAGE_ID,
+      latestEventId: 7,
+      latestExternalEventSequence: 3,
+    };
+    const targets = {
+      sourceTargetKind: "preview_branch",
+      runtimeTargetKind: "preview_branch",
+      targetBranchId: BRANCH_ID,
+    } satisfies ConversationRunTargets;
+
+    assertEquals(
+      buildHostedDurableChildInvokeFailureResult({
+        terminalErrorCode: "SETUP_FAILED",
+        terminalErrorMessage: "setup failed",
+        targets,
+        childConversationId: CHILD_CONVERSATION_ID,
+      }),
+      {
+        ok: false,
+        status: "failed",
+        childConversationId: CHILD_CONVERSATION_ID,
+        sourceTargetKind: "preview_branch",
+        runtimeTargetKind: "preview_branch",
+        terminalErrorCode: "SETUP_FAILED",
+        terminalErrorMessage: "setup failed",
+      },
+    );
+
+    assertEquals(
+      buildHostedDurableChildInvokeTerminalFailureResult({
+        status: "failed",
+        identifiers,
+        targets,
+        terminalErrorCode: "INVOKE_AGENT_FAILED",
+        terminalErrorMessage: "child failed",
+      }),
+      {
+        ok: false,
+        status: "failed",
+        childConversationId: CHILD_CONVERSATION_ID,
+        childRunId: "run_child_1",
+        childMessageId: CHILD_MESSAGE_ID,
+        sourceTargetKind: "preview_branch",
+        runtimeTargetKind: "preview_branch",
+        terminalErrorCode: "INVOKE_AGENT_FAILED",
+        terminalErrorMessage: "child failed",
+      },
+    );
+
+    assertEquals(
+      buildHostedDurableChildInvokeSuccessResult({
+        result: baseSuccessResult(),
+        snapshot: buildChildRunExecutionSnapshot(baseSuccessResult()),
+        identifiers,
+        targets,
+      }),
+      {
+        ok: true,
+        status: "completed",
+        text: "Found logs",
+        summary: { text: "Found logs" },
+        steps: 2,
+        toolCalls: [],
+        toolResults: [],
+        usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+        durationMs: 12,
+        childConversationId: CHILD_CONVERSATION_ID,
+        childRunId: "run_child_1",
+        childMessageId: CHILD_MESSAGE_ID,
+        sourceTargetKind: "preview_branch",
+        runtimeTargetKind: "preview_branch",
+        terminalErrorCode: null,
+        terminalErrorMessage: null,
+      },
+    );
   });
 
   it("returns a host-shaped context-unavailable result without bootstrapping", async () => {

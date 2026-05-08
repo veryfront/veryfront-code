@@ -487,11 +487,16 @@ export {
   persistLatestConversationUserMessage,
 } from "./conversation-bootstrap.ts";
 export {
+  buildHostedDurableChildInvokeFailureResult,
+  type BuildHostedDurableChildInvokeFailureResultInput,
+  buildHostedDurableChildInvokeSuccessResult,
+  buildHostedDurableChildInvokeTerminalFailureResult,
   executeHostedDurableChildFork,
   type ExecuteHostedDurableChildForkInput,
   type HostedDurableChildBootstrapCallbacks,
   type HostedDurableChildBootstrapContext,
   type HostedDurableChildExecutionOptions,
+  type HostedDurableChildInvokeResult,
   type HostedDurableChildRuntimeDependencies,
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
