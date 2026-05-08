@@ -75,6 +75,50 @@ describe("agent/hosted-stream-finalization", () => {
     assertEquals(calls, ["flush", "dispatch:failed:EMPTY_RESPONSE", "cleanup"]);
   });
 
+  it("fails hosted responses with content when the stream recorded an error", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedResponse({
+      isAborted: false,
+      streamError: new Error("insufficient credits"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        persistedMessage: { id: "msg-1" },
+        finalizedMessage: { id: "msg-1", parts: ["tool-result"] },
+        fallbackChunks: ["chunk-1"],
+        hasIncompleteToolParts: false,
+        metadata: { modelId: "openai/gpt-5.4" },
+      }),
+      shouldFailEmptyMessage: () => false,
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(
+          `dispatch:${state.status}:${state.terminalErrorCode}:${state.metadata?.modelId}`,
+        );
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "append:chunk-1",
+      "flush",
+      "dispatch:failed:STREAM_ERROR:openai/gpt-5.4",
+      "cleanup",
+    ]);
+  });
+
   it("finalizes hosted detached streams through detached fallback state", async () => {
     const calls: string[] = [];
 
@@ -106,6 +150,48 @@ describe("agent/hosted-stream-finalization", () => {
     });
 
     assertEquals(calls, ["append:tool-1", "flush", "dispatch:failed", "cleanup"]);
+  });
+
+  it("fails hosted detached streams with content when the stream recorded an error", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedDetached({
+      isAborted: false,
+      mirroredDurableOutput: true,
+      streamError: new Error("insufficient credits"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        hasContent: true,
+        fallbackChunks: ["tool-1"],
+        hasIncompleteToolParts: false,
+      }),
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(
+          `dispatch:${state.status}:${state.terminalErrorCode}:${state.terminalErrorMessage}`,
+        );
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "append:tool-1",
+      "flush",
+      "dispatch:failed:STREAM_ERROR:insufficient credits",
+      "cleanup",
+    ]);
   });
 
   it("propagates cleanup errors after dispatching terminal state", async () => {
