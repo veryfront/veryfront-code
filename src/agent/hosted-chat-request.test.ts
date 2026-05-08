@@ -5,6 +5,8 @@ import {
   buildHostedChatRequestFromRuntimeAgentInvocation,
   hostedChatRequestSchema,
   hostedChatRuntimeOverridesSchema,
+  parseHostedChatRequestFromRequest,
+  parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
   RuntimeAgentRunInvocationSchema,
 } from "./index.ts";
 
@@ -125,5 +127,115 @@ describe("agent/hosted-chat-request", () => {
       parentRunId: "run_parent_1",
       spawnedFromToolCallId: "tool_1",
     });
+  });
+
+  it("parses hosted chat requests with auth and project-access callbacks", async () => {
+    const parsed = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/ag-ui/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            conversationId,
+            projectId,
+            branchId,
+          },
+          model: "opus",
+          allowDelegation: true,
+          forwardedProps: { activeChatId: "chat_123" },
+          durableRootRun: {
+            runId: "run_root_1",
+            messageId,
+            parentConversationId: "10000000-1000-4000-8000-100000000007",
+            parentRunId: "run_parent_1",
+            spawnedFromToolCallId: "tool_1",
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: ({ projectId: checkedProjectId, authToken }) => {
+          assertEquals(checkedProjectId, projectId);
+          assertEquals(authToken, "token_1");
+          return Promise.resolve({ success: true });
+        },
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.userId, userId);
+    assertEquals(parsed.authToken, "token_1");
+    assertEquals(parsed.projectId, projectId);
+    assertEquals(parsed.conversationId, conversationId);
+    assertEquals(parsed.parentRunId, "run_root_1");
+    assertEquals(parsed.upstreamParentConversationId, "10000000-1000-4000-8000-100000000007");
+    assertEquals(parsed.upstreamParentRunId, "run_parent_1");
+    assertEquals(parsed.spawnedFromToolCallId, "tool_1");
+    assertEquals(parsed.persistLatestUserMessageBeforeDurableRun, false);
+  });
+
+  it("returns hosted chat project-access errors as stable JSON responses", async () => {
+    const response = await parseHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/ag-ui/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
+          context: {
+            projectId,
+            branchId,
+          },
+        }),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () =>
+          Promise.resolve({
+            success: false,
+            error: {
+              errorCode: "PROJECT_ACCESS_DENIED",
+              message: "Project access denied",
+              statusCode: 401,
+            },
+          }),
+      },
+    );
+
+    if (!(response instanceof Response)) {
+      throw new Error("Expected error response");
+    }
+
+    assertEquals(response.status, 403);
+    assertEquals(await response.json(), {
+      errorCode: "PROJECT_ACCESS_DENIED",
+      message: "Project access denied",
+    });
+  });
+
+  it("parses runtime agent invocations into hosted chat requests", async () => {
+    const invocation = createRuntimeInvocation();
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/internal/agents/stream", {
+        method: "POST",
+        body: JSON.stringify(invocation),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed runtime invocation");
+    }
+
+    assertEquals(parsed.messages, invocation.messages);
+    assertEquals(parsed.projectId, projectId);
+    assertEquals(parsed.conversationId, conversationId);
+    assertEquals(parsed.forwardedProps?.runtimeContext, invocation.context);
+    assertEquals(parsed.forwardedProps?.runtimeTools, invocation.tools);
+    assertEquals(parsed.durableRootRun?.runId, "run_root_1");
   });
 });
