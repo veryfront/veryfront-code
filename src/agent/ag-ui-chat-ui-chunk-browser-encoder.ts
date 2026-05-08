@@ -1,11 +1,16 @@
 import { tryGetVeryfrontCloudProviderFromModelId } from "#veryfront/provider";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import type { AgUiBrowserChunkEncoder } from "./ag-ui-browser-chunk-encoder.ts";
+import { createAgUiBrowserFinalizeTracker } from "./ag-ui-browser-finalize-tracker.ts";
 import {
   type AgUiBrowserRunFinishedMetadata,
   type AgUiRuntimeStreamEvent,
 } from "./ag-ui-browser-encoder.ts";
 import { createAgUiBrowserChunkEncoder } from "./ag-ui-browser-chunk-encoder.ts";
+import {
+  createAgUiTrackedBrowserResponse,
+  type CreateAgUiTrackedBrowserResponseInput,
+} from "./ag-ui-tracked-browser-response.ts";
 
 export type AgUiChatUiChunkBrowserEncoder = Pick<
   AgUiBrowserChunkEncoder<ChatUiMessageChunk<ChatMessageMetadata>>,
@@ -15,6 +20,15 @@ export type AgUiChatUiChunkBrowserEncoder = Pick<
 export interface CreateAgUiChatUiChunkBrowserEncoderOptions {
   modelId?: string;
   resolveProvider?: (modelId: string) => string | undefined;
+}
+
+export interface CreateAgUiChatUiTrackedBrowserResponseInput extends
+  Omit<
+    CreateAgUiTrackedBrowserResponseInput<ChatUiMessageChunk<ChatMessageMetadata>>,
+    "chunkEncoder" | "finalizeTracker"
+  > {
+  modelId: string;
+  resolveProvider?: CreateAgUiChatUiChunkBrowserEncoderOptions["resolveProvider"];
 }
 
 export function getAgUiChatUiMessageMetadataFromChunk(
@@ -132,5 +146,27 @@ export function createAgUiChatUiChunkBrowserEncoder(
     },
     getMetadataFromChunk: (chunk) => getAgUiChatUiMessageChunkMetadata(chunk, options),
     getRuntimeEvents: (chunk) => [normalizeChatUiMessageChunkToAgUiRuntimeEvent(chunk)],
+  });
+}
+
+export function createAgUiChatUiTrackedBrowserResponse(
+  input: CreateAgUiChatUiTrackedBrowserResponseInput,
+): Response {
+  const finalizeTracker = createAgUiBrowserFinalizeTracker<
+    ChatUiMessageChunk<ChatMessageMetadata>
+  >({
+    getMetadataFromChunk: (chunk) =>
+      getAgUiChatUiMessageChunkMetadata(chunk, {
+        resolveProvider: input.resolveProvider,
+      }),
+  });
+
+  return createAgUiTrackedBrowserResponse({
+    ...input,
+    chunkEncoder: createAgUiChatUiChunkBrowserEncoder({
+      modelId: input.modelId,
+      resolveProvider: input.resolveProvider,
+    }),
+    finalizeTracker,
   });
 }

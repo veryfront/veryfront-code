@@ -1,8 +1,9 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import {
   createAgUiChatUiChunkBrowserEncoder,
+  createAgUiChatUiTrackedBrowserResponse,
   getAgUiChatUiMessageChunkMetadata,
   getAgUiChatUiMessageUsageMetadata,
   normalizeChatUiMessageChunkToAgUiRuntimeEvent,
@@ -175,5 +176,59 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
         },
       ],
     );
+  });
+
+  it("creates a tracked browser response for chat UI chunks", async () => {
+    const response = createAgUiChatUiTrackedBrowserResponse({
+      agUiInput: {
+        threadId: crypto.randomUUID(),
+        runId: "run_1",
+        messages: [],
+        tools: [],
+        context: [],
+      },
+      agentId: "agent-1",
+      modelId: "custom/model",
+      resolveProvider: (modelId) => modelId === "custom/model" ? "custom-provider" : undefined,
+      execution: {
+        agentUIStream: {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: "start",
+              messageId: "msg-1",
+              messageMetadata: { modelId: "custom/model" },
+            };
+            yield {
+              type: "text-delta",
+              id: "msg-1",
+              delta: "hello",
+            };
+            yield {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                modelId: "custom/model",
+                usage: {
+                  inputTokens: 2,
+                  outputTokens: 3,
+                },
+              },
+            };
+          },
+        },
+        fail: async () => {},
+        waitForFinish: async () => {},
+      },
+    });
+
+    const text = await response.text();
+    assertStringIncludes(text, "event: RunStarted");
+    assertStringIncludes(text, "event: TextMessageContent");
+    assertStringIncludes(text, '"model":"custom/model"');
+    assertStringIncludes(text, '"provider":"custom-provider"');
+    assertStringIncludes(text, '"inputTokens":2');
+    assertStringIncludes(text, '"outputTokens":3');
+    assertStringIncludes(text, '"totalTokens":5');
+    assertStringIncludes(text, '"finishReason":"stop"');
   });
 });
