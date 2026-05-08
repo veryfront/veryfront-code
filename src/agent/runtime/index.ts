@@ -21,6 +21,7 @@ import {
   type MessagePart,
   type ResolvedRuntimeState,
   type ToolCall,
+  type ToolExecutionResultRequest,
   type ToolResultPart,
 } from "../types.ts";
 import { ensureModelReady, type ModelRuntime, resolveModel } from "#veryfront/provider";
@@ -530,6 +531,15 @@ export class AgentRuntime {
     };
   }
 
+  private async notifyToolResult(
+    request: Omit<ToolExecutionResultRequest, "agentId">,
+  ): Promise<void> {
+    await this.config.onToolResult?.({
+      agentId: this.id,
+      ...request,
+    });
+  }
+
   /**
    * Generate a response (non-streaming)
    */
@@ -932,18 +942,27 @@ export class AgentRuntime {
               const startTime = Date.now();
 
               const cacheCtx = tryGetCacheKeyContext();
+              const executionContext = {
+                toolCallId: tc.toolCallId,
+                ...toolContext,
+                projectId: cacheCtx?.projectId ?? toolContext?.projectId,
+              };
               const result = await executeConfiguredTool(
                 tc.toolName,
                 toolCall.args,
                 this.config.tools,
-                {
-                  toolCallId: tc.toolCallId,
-                  ...toolContext,
-                  projectId: cacheCtx?.projectId ?? toolContext?.projectId,
-                },
+                executionContext,
                 allowedRemoteToolNames,
                 this.config.remoteTools,
               );
+              await this.notifyToolResult({
+                mode: "generate",
+                toolName: tc.toolName,
+                toolCallId: tc.toolCallId,
+                input: toolCall.args,
+                result,
+                context: executionContext,
+              });
 
               toolCall.status = "completed";
               toolCall.result = result;
@@ -1280,18 +1299,27 @@ export class AgentRuntime {
 
           callbacks?.onToolCall?.(toolCall);
 
+          const executionContext = {
+            toolCallId: tc.id,
+            ...toolContext,
+          };
           const result = await executeConfiguredTool(
             tc.name,
             toolCall.args,
             this.config.tools,
-            {
-              toolCallId: tc.id,
-              ...toolContext,
-            },
+            executionContext,
             allowedRemoteToolNames,
             this.config.remoteTools,
           );
           throwIfAborted(abortSignal);
+          await this.notifyToolResult({
+            mode: "stream",
+            toolName: tc.name,
+            toolCallId: tc.id,
+            input: toolCall.args,
+            result,
+            context: executionContext,
+          });
 
           toolCall.status = "completed";
           toolCall.result = result;
