@@ -1,6 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { prepareConversationRootRunLifecycle } from "./conversation-root-run-lifecycle.ts";
+import {
+  prepareConversationRootRunLifecycle,
+  prepareHostedConversationRootRunContext,
+} from "./conversation-root-run-lifecycle.ts";
 
 describe("agent/conversation-root-run-lifecycle", () => {
   it("starts a run and derives root-run lineage plus a mirror in one helper", async () => {
@@ -80,5 +83,61 @@ describe("agent/conversation-root-run-lifecycle", () => {
 
     await lifecycle.publishParentRunEvents?.([{ type: "child-started" }]);
     assertEquals(recorded, [[{ type: "child-started" }]]);
+  });
+
+  it("prepares a hosted root-run context with durable mirroring", async () => {
+    const debugMessages: string[] = [];
+    const context = await prepareHostedConversationRootRunContext(
+      {
+        authToken: "token",
+        apiUrl: "https://api.example.test",
+        conversationId: "conv-1",
+        projectId: "project-1",
+        branchId: "branch-1",
+        agentId: "agent-1",
+        messages: [],
+        providedRun: {
+          runId: "run-1",
+          messageId: "msg-1",
+          latestEventId: 5,
+          latestExternalEventSequence: 6,
+        },
+        persistLatestUserMessageBeforeRun: true,
+        parentRunId: "parent-run",
+        parentMessageId: "parent-message",
+        instrumentation: {
+          debug: (message) => {
+            debugMessages.push(message);
+          },
+        },
+      },
+      { abortSignal: new AbortController().signal },
+    );
+
+    try {
+      assertEquals(context.durableRootRun, {
+        runId: "run-1",
+        conversationId: "conv-1",
+        messageId: "msg-1",
+        latestEventId: 5,
+        latestExternalEventSequence: 6,
+      });
+      assertEquals(context.effectiveParentRunId, "run-1");
+      assertEquals(context.effectiveParentMessageId, "msg-1");
+
+      await context.publishParentRunEvents?.([{
+        type: "CUSTOM",
+        name: "child-run",
+        value: { runId: "child-run-1" },
+      }]);
+
+      assertEquals(
+        debugMessages.includes("Durable run mirror queued external events"),
+        true,
+      );
+      assertEquals(context.durableRunMirror?.getSnapshot().pendingEventCount, 1);
+    } finally {
+      context.durableRunMirror?.dispose();
+    }
   });
 });

@@ -466,8 +466,12 @@ export {
 } from "./conversation-root-run-context.ts";
 export {
   type ConversationRootRunLifecycle,
+  type HostedConversationRootRunContext,
+  type HostedConversationRootRunState,
   prepareConversationRootRunLifecycle,
   type PrepareConversationRootRunLifecycleOptions,
+  prepareHostedConversationRootRunContext,
+  type PrepareHostedConversationRootRunContextInput,
 } from "./conversation-root-run-lifecycle.ts";
 export {
   bootstrapConversationAgentRun,
