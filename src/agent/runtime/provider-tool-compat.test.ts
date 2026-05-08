@@ -93,4 +93,19 @@ describe("provider-tool-compat", () => {
     assertEquals(sanitized.properties?.kind?.enum, ["file"]);
     assertEquals(sanitized.properties?.nested?.enum, ["a", "b"]);
   });
+
+  it("does not assign a schema type when collapsed anyOf literals are mixed types", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        anyOf: [
+          { const: "file" },
+          { const: 1 },
+        ],
+      } as never,
+      { model: "google-ai-studio/gemini-2.5-pro" },
+    );
+
+    assertEquals(sanitized.enum, ["file", 1]);
+    assertEquals(sanitized.type, undefined);
+  });
 });

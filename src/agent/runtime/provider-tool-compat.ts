@@ -164,6 +164,17 @@ function uniqueUnknownValues(values: unknown[]): unknown[] {
   return result;
 }
 
+function getSharedLiteralType(values: readonly unknown[]): JsonSchema["type"] | undefined {
+  const literalTypes = values.map((value) => getLiteralType(value));
+  const firstType = literalTypes[0];
+
+  if (!firstType || literalTypes.some((literalType) => literalType !== firstType)) {
+    return undefined;
+  }
+
+  return firstType;
+}
+
 function sanitizeGoogleSchemaValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeGoogleSchemaValue(item));
@@ -203,8 +214,8 @@ function sanitizeGoogleSchemaValue(value: unknown): unknown {
   if (enumFromAnyOf) {
     sanitized.enum = enumFromAnyOf;
     if (!sanitized.type) {
-      const firstType = getLiteralType(enumFromAnyOf[0]);
-      if (firstType) sanitized.type = firstType;
+      const sharedType = getSharedLiteralType(enumFromAnyOf);
+      if (sharedType) sanitized.type = sharedType;
     }
   } else if ("const" in value) {
     sanitized.enum = [constValue];
