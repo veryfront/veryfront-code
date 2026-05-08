@@ -11,6 +11,8 @@ import {
   buildFinalizedMessageState,
 } from "./hosted-finalized-message.ts";
 import type {
+  HostedChatRuntimeAgent,
+  HostedChatRuntimeStreamInput,
   HostedChatRuntimeStreamResult,
   HostedChatRuntimeToUiMessageStreamOptions,
 } from "./hosted-chat-runtime-contract.ts";
@@ -25,6 +27,7 @@ import {
 } from "./conversation-hosted-terminal.ts";
 import {
   createHostedMirroredUiStream,
+  createMirroredToolChunkState,
   type MirroredToolChunkState,
 } from "./mirrored-tool-chunk-state.ts";
 import {
@@ -41,7 +44,7 @@ import {
 } from "./hosted-stream-terminal-error.ts";
 import type { ConversationRunChunkMirror } from "./conversation-run-chunk-mirror.ts";
 import type { BuildChatStreamChunkMessageMetadataInput } from "../chat/chat-ui-message-helpers.ts";
-import type { createChatStreamWatchdog } from "../chat/stream-watchdog.ts";
+import { createChatStreamWatchdog } from "../chat/stream-watchdog.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
 
@@ -85,6 +88,17 @@ export interface HostedChatExecutionRuntimeBootstrap {
   mirroredToolChunkState: MirroredToolChunkState;
 }
 
+export interface CreateHostedChatExecutionRuntimeBootstrapInput {
+  agent: HostedChatRuntimeAgent;
+  cleanup: () => Promise<void>;
+  lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
+  finalMessages: HostedChatRuntimeStreamInput["messages"];
+  conversationId?: string;
+  abortSignal: AbortSignal;
+  traceStream?: <T>(operation: () => Promise<T>) => Promise<T>;
+  createRootStreamWatchdog?: () => HostedChatExecutionRootStreamWatchdog;
+}
+
 export interface CreateHostedChatExecutionRuntimeInput {
   agentId: string;
   modelId: string;
@@ -126,6 +140,72 @@ export async function cleanupAfterHostedChatExecutionFinalization(input: {
       error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
     });
   });
+}
+
+function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => Promise<void> {
+  let cleanedUp = false;
+
+  return async () => {
+    if (cleanedUp) {
+      return;
+    }
+
+    cleanedUp = true;
+    await cleanup();
+  };
+}
+
+function createDefaultHostedChatExecutionRootStreamWatchdog(): HostedChatExecutionRootStreamWatchdog {
+  return createChatStreamWatchdog({
+    setTimeoutFn: globalThis.setTimeout,
+    clearTimeoutFn: globalThis.clearTimeout,
+  });
+}
+
+function traceHostedChatRuntimeStream<T>(
+  traceStream: CreateHostedChatExecutionRuntimeBootstrapInput["traceStream"],
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (!traceStream) {
+    return operation();
+  }
+
+  return traceStream(operation);
+}
+
+export async function createHostedChatExecutionRuntimeBootstrap(
+  input: CreateHostedChatExecutionRuntimeBootstrapInput,
+): Promise<HostedChatExecutionRuntimeBootstrap> {
+  const cleanup = createHostedChatExecutionCleanup(input.cleanup);
+  const streamingMessageId = input.lifecycleAdapter.durableRootRun?.messageId ?? null;
+  if (input.conversationId && !streamingMessageId) {
+    throw new Error("DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION");
+  }
+
+  const rootStreamWatchdog = input.createRootStreamWatchdog
+    ? input.createRootStreamWatchdog()
+    : createDefaultHostedChatExecutionRootStreamWatchdog();
+  const streamAbortSignal = AbortSignal.any([input.abortSignal, rootStreamWatchdog.signal]);
+
+  const streamResult = await traceHostedChatRuntimeStream(
+    input.traceStream,
+    () =>
+      input.agent.stream({
+        messages: input.finalMessages,
+        abortSignal: streamAbortSignal,
+      }),
+  );
+
+  return {
+    cleanup,
+    lifecycleAdapter: input.lifecycleAdapter,
+    rootStreamWatchdog,
+    streamResult,
+    streamingMessageId,
+    capturedMessageId: streamingMessageId,
+    ...(input.conversationId ? { capturedConversationId: input.conversationId } : {}),
+    mirroredToolChunkState: createMirroredToolChunkState(),
+  };
 }
 
 export function createHostedChatStreamFinalizationHooks(input: {
