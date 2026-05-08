@@ -151,10 +151,88 @@ describe("agent runtime message adapter", () => {
       }),
     ]);
 
-    assertEquals(agentRuntimeMessages[0]?.parts, [
-      { type: "image", url: "https://uploads.example.com/diagram.png", mediaType: "image/png" },
-      { type: "file", url: "https://uploads.example.com/spec.pdf", mediaType: "application/pdf" },
+    const parts = agentRuntimeMessages[0]?.parts ?? [];
+    assertEquals(
+      parts.some((part) =>
+        part.type === "image" &&
+        "url" in part &&
+        part.url === "https://uploads.example.com/diagram.png" &&
+        part.mediaType === "image/png"
+      ),
+      true,
+    );
+    assertEquals(
+      parts.some((part) =>
+        part.type === "file" &&
+        "url" in part &&
+        part.url === "https://uploads.example.com/spec.pdf" &&
+        part.mediaType === "application/pdf"
+      ),
+      true,
+    );
+  });
+
+  it("keeps user attachments visible as text context when native file parts are emitted", () => {
+    const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
+      providerMessage({
+        role: "user",
+        content: [
+          { type: "text", text: "Sent with attachments" },
+          {
+            type: "file",
+            data: "https://signed.example.com/invoice.pdf",
+            url: "https://signed.example.com/invoice.pdf",
+            mediaType: "application/pdf",
+            filename: "sample-attachment.pdf",
+            uploadId: "test-upload-id",
+            uploadPath: "_chat/test-user-id/test-upload-sample-attachment.pdf",
+          },
+        ],
+      }),
     ]);
+
+    const parts = agentRuntimeMessages[0]?.parts ?? [];
+    assertEquals(parts.some((part) => part.type === "file"), true);
+
+    const text = parts
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : [])
+      .join("\n");
+
+    assertStringIncludes(text, "Sent with attachments");
+    assertStringIncludes(text, "<uploaded_files>");
+    assertStringIncludes(text, "sample-attachment.pdf");
+    assertStringIncludes(text, "test-upload-id");
+    assertStringIncludes(text, "application/pdf");
+  });
+
+  it("does not append a second uploaded files annotation during provider round trips", () => {
+    const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
+      providerMessage({
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              'Sent with attachments\n<uploaded_files>[{"name":"sample-attachment.pdf","mediaType":"application/pdf","uploadId":"test-upload-id"}]</uploaded_files>',
+          },
+          {
+            type: "file",
+            data: "https://signed.example.com/invoice.pdf",
+            url: "https://signed.example.com/invoice.pdf",
+            mediaType: "application/pdf",
+            filename: "sample-attachment.pdf",
+            uploadId: "test-upload-id",
+            uploadPath: "_chat/test-user-id/test-upload-sample-attachment.pdf",
+          },
+        ],
+      }),
+    ]);
+
+    const textParts = (agentRuntimeMessages[0]?.parts ?? [])
+      .flatMap((part) => part.type === "text" && "text" in part ? [part.text] : []);
+
+    assertEquals(textParts.length, 1);
+    assertEquals(textParts.join("\n").split("<uploaded_files>").length - 1, 1);
   });
 
   it("falls back to annotation for multimodal parts without a URL", () => {

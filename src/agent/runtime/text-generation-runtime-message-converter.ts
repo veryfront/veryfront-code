@@ -14,6 +14,7 @@ import type {
   TextGenerationRuntimeToolCallPart,
   TextGenerationRuntimeToolMessage,
 } from "./text-generation-runtime-message-types.ts";
+import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import {
   getTextFromParts,
   getToolArguments,
@@ -21,6 +22,58 @@ import {
   type ToolCallPart,
   type ToolResultPart,
 } from "../types.ts";
+
+function getStringPartField(part: unknown, key: string): string | undefined {
+  if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
+
+  const value = (part as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function buildAttachmentContextFromParts(parts: Message["parts"]): string {
+  const refs = parts.flatMap((part) => {
+    const type = getStringPartField(part, "type");
+    if (type !== "file" && type !== "image") return [];
+
+    const mediaType = getStringPartField(part, "mediaType");
+    if (!mediaType) return [];
+
+    const uploadId = getStringPartField(part, "uploadId");
+    const uploadPath = getStringPartField(part, "uploadPath");
+    const url = getStringPartField(part, "url");
+
+    return [{
+      name: getStringPartField(part, "filename") ?? (type === "image" ? "image" : "file"),
+      mediaType,
+      ...(uploadId ? { uploadId } : {}),
+      ...(uploadPath ? { path: uploadPath } : {}),
+      ...(url ? { url } : {}),
+    }];
+  });
+
+  return refs.length > 0 ? buildDataFileAnnotation(refs) : "";
+}
+
+function appendReadableAttachmentContext(text: string, attachmentContext: string): string {
+  const normalizedContext = attachmentContext.trimStart();
+  if (!normalizedContext) {
+    return text;
+  }
+
+  if (text.length === 0) {
+    return normalizedContext;
+  }
+
+  const separator = text.endsWith("\n\n") ? "" : text.endsWith("\n") ? "\n" : "\n\n";
+  return `${text}${separator}${normalizedContext}`;
+}
+
+function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
+  const text = getTextFromParts(parts);
+  return text.includes("<uploaded_files>")
+    ? text
+    : appendReadableAttachmentContext(text, buildAttachmentContextFromParts(parts));
+}
 
 /**
  * Convert a veryfront Message to the current text-generation runtime message format.
@@ -33,7 +86,7 @@ export function convertToTextGenerationRuntimeMessage(msg: Message): TextGenerat
     }
 
     case "user": {
-      const text = getTextFromParts(msg.parts);
+      const text = getUserTextWithAttachmentContext(msg.parts);
       return { role: "user", content: text };
     }
 
