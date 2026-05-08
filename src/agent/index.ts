@@ -814,6 +814,8 @@ export {
 export {
   cleanupAfterHostedChatExecutionFinalization,
   createHostedChatExecutionRuntime,
+  createHostedChatExecutionRuntimeBootstrap,
+  type CreateHostedChatExecutionRuntimeBootstrapInput,
   type CreateHostedChatExecutionRuntimeInput,
   createHostedChatFinalizeDetachedBuildState,
   createHostedChatFinalizeResponseBuildState,

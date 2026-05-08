@@ -2,12 +2,17 @@ import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../chat/types.ts";
 import type { ConversationRunChunkMirror } from "./conversation-run-chunk-mirror.ts";
-import type { HostedChatRuntimeToUiMessageStreamOptions } from "./hosted-chat-runtime-contract.ts";
+import type {
+  HostedChatRuntimeAgent,
+  HostedChatRuntimeStreamInput,
+  HostedChatRuntimeToUiMessageStreamOptions,
+} from "./hosted-chat-runtime-contract.ts";
 import type { HostedLifecycleTerminalState } from "./hosted-lifecycle.ts";
 import { createMirroredToolChunkState } from "./mirrored-tool-chunk-state.ts";
 import {
   cleanupAfterHostedChatExecutionFinalization,
   createHostedChatExecutionRuntime,
+  createHostedChatExecutionRuntimeBootstrap,
   createHostedChatFinalizeDetachedBuildState,
   createHostedChatFinalizeResponseBuildState,
   createHostedChatStreamFinalizationHooks,
@@ -18,9 +23,10 @@ import {
 
 function createRootStreamWatchdog(input?: {
   disposed?: () => void;
+  signal?: AbortSignal;
 }): HostedChatExecutionRootStreamWatchdog {
   return {
-    signal: new AbortController().signal,
+    signal: input?.signal ?? new AbortController().signal,
     get lastTimeoutState() {
       return null;
     },
@@ -199,6 +205,92 @@ describe("agent/hosted-chat-execution-runtime", () => {
       terminalErrorCode: "ABORTED",
       terminalErrorMessage: "Chat stream aborted",
     });
+  });
+
+  it("creates a traced runtime bootstrap with merged abort signal and idempotent cleanup", async () => {
+    const requestAbortController = new AbortController();
+    const watchdogAbortController = new AbortController();
+    const finalMessages: HostedChatRuntimeStreamInput["messages"] = [];
+    let cleanupCount = 0;
+    let traceCount = 0;
+    let capturedMessages: HostedChatRuntimeStreamInput["messages"] | undefined;
+    let capturedAbortSignal: AbortSignal | undefined;
+    const agent: HostedChatRuntimeAgent = {
+      stream: async (input) => {
+        capturedMessages = input.messages;
+        capturedAbortSignal = input.abortSignal;
+        return createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        });
+      },
+    };
+
+    const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+      agent,
+      cleanup: async () => {
+        cleanupCount += 1;
+      },
+      lifecycleAdapter: createLifecycleAdapter(),
+      finalMessages,
+      conversationId: "conversation-1",
+      abortSignal: requestAbortController.signal,
+      traceStream: async (operation) => {
+        traceCount += 1;
+        return await operation();
+      },
+      createRootStreamWatchdog: () =>
+        createRootStreamWatchdog({
+          signal: watchdogAbortController.signal,
+        }),
+    });
+
+    assertEquals(traceCount, 1);
+    assertEquals(capturedMessages, finalMessages);
+    if (!capturedAbortSignal) {
+      throw new Error("stream abort signal was not captured");
+    }
+    assertEquals(capturedAbortSignal.aborted, false);
+    watchdogAbortController.abort();
+    assertEquals(capturedAbortSignal.aborted, true);
+    assertEquals(bootstrap.streamingMessageId, "stream-message-1");
+    assertEquals(bootstrap.capturedMessageId, "stream-message-1");
+    assertEquals(bootstrap.capturedConversationId, "conversation-1");
+
+    await bootstrap.cleanup();
+    await bootstrap.cleanup();
+
+    assertEquals(cleanupCount, 1);
+  });
+
+  it("rejects a conversation runtime bootstrap without a durable stream message id", async () => {
+    let streamCalls = 0;
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => {
+        streamCalls += 1;
+        return createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        });
+      },
+    };
+
+    await assertRejects(
+      async () => {
+        await createHostedChatExecutionRuntimeBootstrap({
+          agent,
+          cleanup: async () => {},
+          lifecycleAdapter: createLifecycleAdapter({ messageId: null }),
+          finalMessages: [],
+          conversationId: "conversation-1",
+          abortSignal: new AbortController().signal,
+          createRootStreamWatchdog,
+        });
+      },
+      Error,
+      "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION",
+    );
+    assertEquals(streamCalls, 0);
   });
 
   it("appends fallback chunks and flushes through the mirror", async () => {
