@@ -118,6 +118,14 @@ export {
   wrapHostedChildSteeringMutationTool,
   type WrapHostedChildSteeringMutationToolInput,
 } from "./hosted-child-steering-tools.ts";
+export {
+  createHostedProjectRemoteToolSource,
+  type CreateHostedProjectRemoteToolSourceInput,
+  type HostedProjectRemoteToolSourceMutationHandler,
+  type HostedProjectRemoteToolSourcePrepareToolInput,
+  type HostedProjectRemoteToolSourceProjectSwitchHandler,
+  type HostedProjectRemoteToolSourceRetryPolicy,
+} from "./hosted-project-remote-tool-source.ts";
 
 export {
   DEFAULT_PROJECT_STEERING_PATHS,
