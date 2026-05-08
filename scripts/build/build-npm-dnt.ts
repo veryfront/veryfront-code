@@ -17,6 +17,7 @@ import {
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
 } from "./browser-safe-exports.mjs";
+import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -168,6 +169,11 @@ await build({
 
 	// Post-build steps
 	async postBuild() {
+		const pkgPath = "./npm/package.json";
+		const initialPkg = JSON.parse(await Deno.readTextFile(pkgPath));
+		normalizeNpmPackageMetadata(initialPkg);
+		await Deno.writeTextFile(pkgPath, JSON.stringify(initialPkg, null, 2));
+
 		// Run npm install with --legacy-peer-deps to avoid peer dep conflicts
 		// (e.g., @ai-sdk/react requires react ~19.1.2 but framework uses 19.1.1)
 		const npmInstall = new Deno.Command("npm", {
@@ -258,8 +264,8 @@ await build({
 		}, null, 2));
 
 		// Update package.json with bin entry and type
-		const pkgPath = "./npm/package.json";
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
+		normalizeNpmPackageMetadata(pkg);
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.types = "./esm/src/index.d.ts";
 		pkg.bin = { veryfront: "bin/veryfront.js" };
