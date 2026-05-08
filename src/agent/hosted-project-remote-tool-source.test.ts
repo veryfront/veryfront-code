@@ -1,6 +1,14 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
-import { createHostedProjectRemoteToolSource } from "./hosted-project-remote-tool-source.ts";
+import type {
+  RemoteMCPToolSourceConfig,
+  RemoteToolSource,
+  ToolDefinition,
+  ToolExecutionContext,
+} from "#veryfront/tool";
+import {
+  createHostedProjectRemoteToolSource,
+  createHostedProjectRemoteToolSources,
+} from "./hosted-project-remote-tool-source.ts";
 
 function projectFileTool(name: string): ToolDefinition {
   return {
@@ -32,6 +40,7 @@ function navigationTool(name: string): ToolDefinition {
 }
 
 function createRemoteSource(input: {
+  id?: string;
   tools: ToolDefinition[];
   execute?: (
     toolName: string,
@@ -40,11 +49,17 @@ function createRemoteSource(input: {
   ) => Promise<unknown> | unknown;
 }): RemoteToolSource {
   return {
-    id: "source-1",
+    id: input.id ?? "source-1",
     listTools: () => Promise.resolve(input.tools),
     executeTool: (toolName, args, context) =>
       input.execute?.(toolName, args, context) ?? { ok: true },
   };
+}
+
+async function resolveTestHeaders(
+  headers: RemoteMCPToolSourceConfig["headers"],
+): Promise<HeadersInit | undefined> {
+  return typeof headers === "function" ? await headers() : headers;
 }
 
 Deno.test("createHostedProjectRemoteToolSource scopes tool listings and hydrates project inputs", async () => {
@@ -220,4 +235,122 @@ Deno.test("createHostedProjectRemoteToolSource skips mutation callbacks for fail
 
   assertEquals(await source.executeTool("update_file", { path: "AGENTS.md" }), { isError: true });
   assertEquals(mutationCount, 0);
+});
+
+Deno.test("createHostedProjectRemoteToolSources builds API and gated Studio MCP sources", async () => {
+  const configs: RemoteMCPToolSourceConfig[] = [];
+  let activeProjectId = "project-1";
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => activeProjectId,
+    conversationId: "conversation-1",
+    createRemoteToolSource: (config) => {
+      configs.push(config);
+      return createRemoteSource({ id: config.id, tools: [projectFileTool("update_file")] });
+    },
+  });
+
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp"]);
+  assertEquals(configs.map((config) => config.endpoint), [
+    "https://api.example/mcp",
+    "https://studio.example/mcp",
+  ]);
+  assertEquals(configs[0]?.headers, { Authorization: "Bearer token-1" });
+
+  activeProjectId = "project-2";
+  assertEquals(await resolveTestHeaders(configs[1]?.headers), {
+    Authorization: "Bearer token-1",
+    "x-conversation-id": "conversation-1",
+    "x-project-id": "project-2",
+  });
+
+  const blockedSources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: {
+      id: "veryfront-cli",
+      type: "cli",
+      trusted: true,
+      capabilities: [],
+    },
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) =>
+      createRemoteSource({ id: config.id, tools: [projectFileTool(config.id ?? "tool")] }),
+  });
+
+  assertEquals(blockedSources.map((source) => source.id), ["veryfront-mcp"]);
+});
+
+Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy to created sources", async () => {
+  const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
+  const switchedProjects: string[] = [];
+  const mutations: Array<{ instructionsChanged: boolean; skillsChanged: boolean }> = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    defaultProjectId: () => "project-1",
+    getProjectId: () => "project-1",
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: ["studio_open_project"],
+    },
+    prepareToolInput: ({ toolInput }) => ({
+      ...toolInput,
+      prepared: true,
+    }),
+    onSteeringMutation: (mutation) => {
+      mutations.push({
+        instructionsChanged: mutation.instructionsChanged,
+        skillsChanged: mutation.skillsChanged,
+      });
+    },
+    onStudioProjectSwitch: (projectId) => {
+      switchedProjects.push(projectId);
+    },
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [projectFileTool("update_file"), navigationTool("studio_open_project")],
+        execute: (toolName, args, context) => {
+          executed.push({ toolName, args, context });
+          if (config.id === "studio-mcp" && toolName === "studio_open_project") {
+            return { success: true, project_id: "project-2" };
+          }
+          return { success: true };
+        },
+      }),
+  });
+
+  await sources[0]?.executeTool("update_file", { path: "AGENTS.md" });
+  await sources[1]?.executeTool("studio_open_project", { project_id: "project-2" });
+
+  assertEquals(executed, [
+    {
+      toolName: "update_file",
+      args: { path: "AGENTS.md", prepared: true, project_reference: "project-1" },
+      context: { projectId: "project-1" },
+    },
+    {
+      toolName: "studio_open_project",
+      args: { prepared: true, project_id: "project-2" },
+      context: { projectId: "project-1" },
+    },
+  ]);
+  assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
+  assertEquals(switchedProjects, ["project-2"]);
 });

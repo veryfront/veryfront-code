@@ -121,6 +121,8 @@ export {
 export {
   createHostedProjectRemoteToolSource,
   type CreateHostedProjectRemoteToolSourceInput,
+  createHostedProjectRemoteToolSources,
+  type CreateHostedProjectRemoteToolSourcesInput,
   type HostedProjectRemoteToolSourceMutationHandler,
   type HostedProjectRemoteToolSourcePrepareToolInput,
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
