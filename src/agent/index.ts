@@ -344,6 +344,8 @@ export {
   type AgUiChatUiChunkBrowserEncoder,
   createAgUiChatUiChunkBrowserEncoder,
   type CreateAgUiChatUiChunkBrowserEncoderOptions,
+  createAgUiChatUiTrackedBrowserResponse,
+  type CreateAgUiChatUiTrackedBrowserResponseInput,
   getAgUiChatUiMessageChunkMetadata,
   getAgUiChatUiMessageMetadataFromChunk,
   getAgUiChatUiMessageUsageMetadata,
