@@ -22,6 +22,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function extractToolResultPath(result: unknown): string | null {
+  if (!isRecord(result) || typeof result.path !== "string") {
+    return null;
+  }
+
+  return result.path.replace(/^\/+/, "");
+}
+
 export function extractLatestUserText(messages: readonly unknown[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -243,6 +251,7 @@ export function shouldRetryCreateResearchArtifactAsUpdate(input: {
 export async function mirrorDefaultResearchRunArtifact(input: {
   toolName: string;
   toolInput: Record<string, unknown>;
+  toolResult?: unknown;
   taskContext: DefaultResearchArtifactContext;
   activeProjectId: string | null;
   executeContext: Record<string, unknown> | undefined;
@@ -261,10 +270,11 @@ export async function mirrorDefaultResearchRunArtifact(input: {
   const path = typeof input.toolInput.path === "string"
     ? input.toolInput.path.replace(/^\/+/, "")
     : null;
+  const resultPath = extractToolResultPath(input.toolResult);
   const canonicalCurrentPath = defaultArtifacts.currentReportPath.replace(/^\/+/, "");
   const canonicalRunPath = defaultArtifacts.runReportPath.replace(/^\/+/, "");
 
-  if (!content || path !== canonicalCurrentPath) {
+  if (!content || (path !== canonicalCurrentPath && resultPath !== canonicalCurrentPath)) {
     return;
   }
 
