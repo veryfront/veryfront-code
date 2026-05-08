@@ -52,7 +52,7 @@ try {
   // .env file doesn't exist - that's fine
 }
 
-describe("Compiled Binary E2E", { sanitizeOps: false, sanitizeResources: false }, () => {
+describe("Compiled Binary E2E", { sanitizeOps: false, sanitizeResources: false, timeout: 600_000 }, () => {
   beforeAll(async () => {
     await ensureBinaryCompiled();
   });
