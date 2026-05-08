@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   convertToTextGenerationRuntimeMessage,
@@ -43,6 +43,81 @@ describe("text-generation-runtime-message-converter", () => {
       };
       const result = convertToTextGenerationRuntimeMessage(msg);
       assertEquals(result, { role: "user", content: "Hello world" });
+    });
+
+    it("preserves user file parts as provider-visible attachment context", () => {
+      const msg = {
+        id: "u-file",
+        role: "user",
+        parts: [
+          { type: "text", text: "Sent with attachments" },
+          {
+            type: "file",
+            url: "https://signed.example.com/invoice.pdf",
+            mediaType: "application/pdf",
+            filename: "sample-attachment.pdf",
+            uploadId: "test-upload-id",
+            uploadPath: "_chat/test-user-id/test-upload-sample-attachment.pdf",
+          },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg);
+
+      assertEquals(result.role, "user");
+      if (typeof result.content !== "string") {
+        throw new Error("Expected user content to be text fallback for current runtime");
+      }
+      assertStringIncludes(result.content, "Sent with attachments");
+      assertStringIncludes(result.content, "<uploaded_files>");
+      assertStringIncludes(result.content, "sample-attachment.pdf");
+      assertStringIncludes(result.content, "test-upload-id");
+      assertStringIncludes(result.content, "application/pdf");
+    });
+
+    it("separates user text from attachment context with a readable blank line", () => {
+      const msg = {
+        id: "u-file-spacing",
+        role: "user",
+        parts: [
+          { type: "text", text: "Sent with attachments" },
+          {
+            type: "file",
+            url: "https://signed.example.com/invoice.pdf",
+            mediaType: "application/pdf",
+            filename: "sample-attachment.pdf",
+          },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg);
+
+      if (typeof result.content !== "string") {
+        throw new Error("Expected user content to be text fallback for current runtime");
+      }
+      assertStringIncludes(result.content, "Sent with attachments\n\n<uploaded_files>");
+    });
+
+    it("does not start file-only user attachment context with blank lines", () => {
+      const msg = {
+        id: "u-file-only",
+        role: "user",
+        parts: [
+          {
+            type: "file",
+            url: "https://signed.example.com/invoice.pdf",
+            mediaType: "application/pdf",
+            filename: "sample-attachment.pdf",
+          },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg);
+
+      if (typeof result.content !== "string") {
+        throw new Error("Expected user content to be text fallback for current runtime");
+      }
+      assertEquals(result.content.startsWith("<uploaded_files>"), true);
     });
 
     it("converts an assistant message with text", () => {

@@ -202,6 +202,10 @@ function buildAttachmentContextPart(
   };
 }
 
+function hasUploadedFilesAnnotation(parts: StructuredProviderPart[]): boolean {
+  return parts.some((part) => part.type === "text" && part.text.includes("<uploaded_files>"));
+}
+
 function convertContentToAgentRuntimeParts(
   message: ProviderModelMessage,
 ): AgentRuntimeMessage["parts"] {
@@ -217,7 +221,6 @@ function convertContentToAgentRuntimeParts(
     const convertedPart = convertStructuredPart(part);
     if (convertedPart) {
       parts.push(convertedPart);
-      continue;
     }
 
     if (part.type === "image" || part.type === "file") {
@@ -229,7 +232,9 @@ function convertContentToAgentRuntimeParts(
     }
   }
 
-  const attachmentContextPart = buildAttachmentContextPart(attachmentReferences);
+  const attachmentContextPart = hasUploadedFilesAnnotation(message.content)
+    ? null
+    : buildAttachmentContextPart(attachmentReferences);
   if (attachmentContextPart) {
     parts.push(attachmentContextPart);
   }
