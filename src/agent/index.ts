@@ -872,6 +872,24 @@ export {
   type TerminalConversationRunStatus,
 } from "./durable.ts";
 export {
+  type AppendExternalAgentWorkerRunEventsInput,
+  type ClaimExternalAgentWorkerRunInput,
+  type CompleteExternalAgentWorkerRunInput,
+  createExternalAgentWorkerClient,
+  type ExternalAgentWorker,
+  type ExternalAgentWorkerClient,
+  type ExternalAgentWorkerClientOptions,
+  type ExternalAgentWorkerRequestSnapshot,
+  ExternalAgentWorkerRequestSnapshotSchema,
+  type ExternalAgentWorkerRun,
+  ExternalAgentWorkerRunSchema,
+  ExternalAgentWorkerSchema,
+  type ExternalAgentWorkerSession,
+  ExternalAgentWorkerSessionSchema,
+  type RecordExternalAgentWorkerSessionInput,
+  type RegisterExternalAgentWorkerInput,
+} from "./external-agent-worker-client.ts";
+export {
   buildInvokeAgentChildRunLifecycleCustomEvent,
   buildInvokeAgentChildRunProgressEvents,
   buildInvokeAgentChildRunStateDelta,
