@@ -3,6 +3,8 @@ import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/pr
 import {
   createHostedChildForkRunContext,
   executeHostedChildForkRunContextStream,
+  finalizeHostedChildForkRunContextResources,
+  handleHostedChildForkRunContextError,
 } from "./hosted-child-fork-run-context.ts";
 import type { ForkPart, ForkRuntimeStep } from "./fork-runtime-stream.ts";
 
@@ -151,4 +153,84 @@ Deno.test("executeHostedChildForkRunContextStream executes with run-context buff
     "text-end",
   ]);
   assertEquals(traces, ["text-delta"]);
+});
+
+Deno.test("handleHostedChildForkRunContextError closes buffers and pending tool calls before returning failure", async () => {
+  const chunks: ChatUiMessageChunk<ChatMessageMetadata>[] = [];
+  const context = createHostedChildForkRunContext({
+    mirror: {
+      handleChunk: (chunk) => {
+        chunks.push(chunk);
+      },
+    },
+    pendingToolLogContext: {
+      conversationId: "conversation-1",
+      parentRunId: "run-1",
+      description: "Check the app",
+    },
+  });
+  context.streamState.finalText = "Partial answer";
+  context.toolCalls.push({
+    toolName: "read_file",
+    toolCallId: "tool-call-1",
+    input: { path: "README.md" },
+  });
+  context.pendingToolLifecycle.upsertPendingToolCall("tool-call-1", {
+    phase: "awaiting_result",
+    toolName: "read_file",
+    input: { path: "README.md" },
+  });
+
+  const result = await handleHostedChildForkRunContextError({
+    error: new Error("stream failed"),
+    description: "Check the app",
+    kind: "invoke_agent",
+    runContext: context,
+    startTime: Date.now(),
+  });
+
+  assertEquals(result.success, false);
+  if (result.success) {
+    throw new Error("Expected child fork failure");
+  }
+  assertEquals(result.error, "stream failed");
+  assertEquals(chunks.map((chunk) => chunk.type), ["tool-input-start", "tool-output-error"]);
+});
+
+Deno.test("finalizeHostedChildForkRunContextResources closes buffers, aborts monitor, flushes mirror, and appends finish-step", async () => {
+  const chunks: ChatUiMessageChunk<ChatMessageMetadata>[] = [];
+  const calls: string[] = [];
+  const monitorAbortController = new AbortController();
+  const monitorPromise = new Promise<void>((resolve) => {
+    monitorAbortController.signal.addEventListener("abort", () => {
+      calls.push("monitor-aborted");
+      resolve();
+    });
+  });
+  const context = createHostedChildForkRunContext({
+    mirror: {
+      handleChunk: (chunk) => {
+        chunks.push(chunk);
+      },
+    },
+    pendingToolLogContext: {
+      conversationId: "conversation-1",
+      parentRunId: "run-1",
+      description: "Check the app",
+    },
+  });
+  context.streamMirrorContext.markDurableStepStarted();
+
+  await finalizeHostedChildForkRunContextResources({
+    runContext: context,
+    monitorAbortController,
+    monitorPromise,
+    flushMirror: () => {
+      calls.push("flush");
+      return Promise.resolve();
+    },
+  });
+
+  assertEquals(chunks, [{ type: "finish-step" }]);
+  assertEquals(calls, ["monitor-aborted", "flush"]);
 });
