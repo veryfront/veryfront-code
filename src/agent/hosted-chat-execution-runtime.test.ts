@@ -1,0 +1,489 @@
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../chat/types.ts";
+import type { ConversationRunChunkMirror } from "./conversation-run-chunk-mirror.ts";
+import type { HostedChatRuntimeToUiMessageStreamOptions } from "./hosted-chat-runtime-contract.ts";
+import type { HostedLifecycleTerminalState } from "./hosted-lifecycle.ts";
+import { createMirroredToolChunkState } from "./mirrored-tool-chunk-state.ts";
+import {
+  cleanupAfterHostedChatExecutionFinalization,
+  createHostedChatExecutionRuntime,
+  createHostedChatFinalizeDetachedBuildState,
+  createHostedChatFinalizeResponseBuildState,
+  createHostedChatStreamFinalizationHooks,
+  type HostedChatExecutionLifecycleAdapter,
+  type HostedChatExecutionRootStreamWatchdog,
+  toHostedChatExecutionFinalState,
+} from "./hosted-chat-execution-runtime.ts";
+
+function createRootStreamWatchdog(input?: {
+  disposed?: () => void;
+}): HostedChatExecutionRootStreamWatchdog {
+  return {
+    signal: new AbortController().signal,
+    get lastTimeoutState() {
+      return null;
+    },
+    observe: () => {},
+    dispose: () => {
+      input?.disposed?.();
+    },
+  };
+}
+
+function createDurableRunMirror(input: {
+  chunks: ChatUiMessageChunk<MessageMetadata>[];
+  flushes: string[];
+}): ConversationRunChunkMirror {
+  return {
+    handleChunk: async (chunk) => {
+      input.chunks.push(chunk);
+    },
+    appendEvents: async () => {},
+    flush: async () => {
+      input.flushes.push("flush");
+    },
+    getSnapshot: () => ({
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      pendingEventCount: 0,
+      consecutiveFailures: 0,
+      disabled: false,
+      hasFlushTimer: false,
+      hasRetryTimer: false,
+      inFlight: false,
+    }),
+    dispose: () => {},
+  };
+}
+
+function createLifecycleAdapter(input?: {
+  durableRunMirror?: ConversationRunChunkMirror | null;
+  messageId?: string | null;
+  terminalStates?: HostedLifecycleTerminalState[];
+}): HostedChatExecutionLifecycleAdapter {
+  const terminalStates = input?.terminalStates ?? [];
+  return {
+    durableRootRun: {
+      runId: "root-run-1",
+      messageId: input && "messageId" in input ? input.messageId : "stream-message-1",
+    },
+    durableRunMirror: input?.durableRunMirror ?? null,
+    terminal: {
+      toTerminalState: (state) => ({
+        status: state.status,
+        ...(state.metadata ? { metadata: state.metadata } : {}),
+        ...(state.terminalErrorCode !== undefined
+          ? { terminalErrorCode: state.terminalErrorCode }
+          : {}),
+        ...(state.terminalErrorMessage !== undefined
+          ? { terminalErrorMessage: state.terminalErrorMessage }
+          : {}),
+      }),
+      finalizeRun: async (state) => {
+        terminalStates.push(state);
+      },
+      cancelRun: async (state) => {
+        terminalStates.push(state);
+      },
+      onTerminalState: async () => {},
+    },
+  };
+}
+
+function createResponseMessage(input: {
+  parts: ChatUiMessage["parts"];
+  metadata?: MessageMetadata;
+}): ChatUiMessage {
+  return {
+    id: "assistant-message-1",
+    role: "assistant",
+    parts: input.parts,
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  };
+}
+
+function createStreamResult(input: {
+  finalStep: unknown;
+  captureOptions: (options?: HostedChatRuntimeToUiMessageStreamOptions) => void;
+}) {
+  return {
+    steps: Promise.resolve([input.finalStep]),
+    toUIMessageStream: (options?: HostedChatRuntimeToUiMessageStreamOptions) => {
+      input.captureOptions(options);
+      return emptyStream();
+    },
+  };
+}
+
+async function* emptyStream(): AsyncIterable<ChatUiMessageChunk<MessageMetadata>> {}
+
+function createLogger() {
+  const errors: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+  const warnings: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
+  return {
+    errors,
+    warnings,
+    logger: {
+      error: (message: string, metadata?: Record<string, unknown>) => {
+        errors.push({ message, ...(metadata ? { metadata } : {}) });
+      },
+      warn: (message: string, metadata?: Record<string, unknown>) => {
+        warnings.push({ message, ...(metadata ? { metadata } : {}) });
+      },
+    },
+  };
+}
+
+describe("agent/hosted-chat-execution-runtime", () => {
+  it("does not inject fallback model metadata for finalization-only states", () => {
+    assertEquals(toHostedChatExecutionFinalState({ status: "completed" }), {
+      status: "completed",
+    });
+  });
+
+  it("keeps only present metadata and terminal error fields", () => {
+    assertEquals(
+      toHostedChatExecutionFinalState({
+        status: "failed",
+        metadata: {
+          modelId: "gpt-5.4",
+          usage: {
+            inputTokens: 10,
+            cachedInputTokens: 4,
+          },
+        },
+        terminalErrorCode: "STREAM_ERROR",
+      }),
+      {
+        status: "failed",
+        metadata: {
+          modelId: "gpt-5.4",
+          usage: {
+            inputTokens: 10,
+            cachedInputTokens: 4,
+          },
+        },
+        terminalErrorCode: "STREAM_ERROR",
+      },
+    );
+  });
+
+  it("logs cleanup failures during finalization without rethrowing", async () => {
+    const { logger, errors } = createLogger();
+
+    await cleanupAfterHostedChatExecutionFinalization({
+      cleanup: async () => {
+        throw new Error("cleanup failed");
+      },
+      logger,
+    });
+
+    assertEquals(errors, [
+      {
+        message: "Runtime cleanup failed during finalization",
+        metadata: { error: "cleanup failed" },
+      },
+    ]);
+  });
+
+  it("resolves aborted terminal state before incomplete tool state", () => {
+    const hooks = createHostedChatStreamFinalizationHooks({
+      lifecycleAdapter: createLifecycleAdapter(),
+      cleanup: async () => {},
+      streamError: null,
+    });
+
+    assertEquals(hooks.resolveTerminalState({ isAborted: true, hasIncompleteToolParts: true }), {
+      status: "cancelled",
+      terminalErrorCode: "ABORTED",
+      terminalErrorMessage: "Chat stream aborted",
+    });
+  });
+
+  it("appends fallback chunks and flushes through the mirror", async () => {
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const flushes: string[] = [];
+    const hooks = createHostedChatStreamFinalizationHooks({
+      lifecycleAdapter: createLifecycleAdapter({
+        durableRunMirror: createDurableRunMirror({ chunks, flushes }),
+      }),
+      cleanup: async () => {},
+      streamError: null,
+    });
+    const chunk: ChatUiMessageChunk<MessageMetadata> = {
+      type: "text-delta",
+      id: "assistant-message-1",
+      delta: "hello",
+    };
+
+    await hooks.appendFallbackChunk(chunk);
+    await hooks.flushMirror();
+
+    assertEquals(chunks, [chunk]);
+    assertEquals(flushes, ["flush"]);
+  });
+
+  it("builds finalized response state and metadata without mirror fallback chunks", async () => {
+    const buildState = createHostedChatFinalizeResponseBuildState({
+      responseMessage: createResponseMessage({
+        parts: [],
+        metadata: {
+          modelId: "gpt-test",
+          usage: { inputTokens: 2, outputTokens: 3 },
+        },
+      }),
+      isAborted: false,
+      lifecycleAdapter: createLifecycleAdapter(),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      capturedMessageId: "assistant-message-1",
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+    });
+
+    const state = await buildState({ text: "fallback text" });
+
+    assertEquals(state.persistedMessage.parts, []);
+    assertEquals(state.finalizedMessage.parts, [{ type: "text", text: "fallback text" }]);
+    assertEquals(state.fallbackChunks, []);
+    assertEquals(state.hasIncompleteToolParts, false);
+    assertEquals(state.metadata, {
+      modelId: "gpt-test",
+      usage: { inputTokens: 2, outputTokens: 3 },
+    });
+  });
+
+  it("builds detached fallback chunks only with content, mirror, and captured message id", async () => {
+    const chunks: ChatUiMessageChunk<MessageMetadata>[] = [];
+    const flushes: string[] = [];
+    const buildState = createHostedChatFinalizeDetachedBuildState({
+      capturedMessageId: "assistant-message-1",
+      isAborted: false,
+      lifecycleAdapter: createLifecycleAdapter({
+        durableRunMirror: createDurableRunMirror({ chunks, flushes }),
+      }),
+      mirroredToolChunkState: createMirroredToolChunkState(),
+      mirroredDurableOutput: false,
+      incompleteToolCallsPartErrorText: "Tool call did not complete",
+    });
+
+    const state = await buildState({ text: "detached fallback" });
+
+    assertEquals(state, {
+      hasContent: true,
+      fallbackChunks: [
+        { type: "text-start", id: "assistant-message-1" },
+        { type: "text-delta", id: "assistant-message-1", delta: "detached fallback" },
+        { type: "text-end", id: "assistant-message-1" },
+      ],
+      hasIncompleteToolParts: false,
+    });
+  });
+
+  it("requires a durable stream message id when a conversation id is present", async () => {
+    await assertRejects(
+      async () => {
+        const streamResult = createStreamResult({
+          finalStep: {},
+          captureOptions: () => {},
+        });
+        createHostedChatExecutionRuntime({
+          agentId: "agent-1",
+          modelId: "openai/gpt-5.4",
+          originalMessages: [],
+          runContext: { withContext: (fn) => fn() },
+          abortSignal: new AbortController().signal,
+          bootstrap: {
+            cleanup: async () => {},
+            lifecycleAdapter: createLifecycleAdapter({ messageId: null }),
+            rootStreamWatchdog: createRootStreamWatchdog(),
+            streamResult,
+            streamingMessageId: null,
+            capturedMessageId: null,
+            capturedConversationId: "conversation-1",
+            mirroredToolChunkState: createMirroredToolChunkState(),
+          },
+        });
+      },
+      Error,
+      "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION",
+    );
+  });
+
+  it("wires stream metadata and response message ids into runtime stream options", () => {
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const messageIds: string[] = [];
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      responseMessageId: "response-message-1",
+      runContext: {
+        withContext: (fn) => fn(),
+        setMessageId: (messageId) => {
+          messageIds.push(messageId);
+        },
+      },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter(),
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    assertEquals(runtime.agentUIStream !== undefined, true);
+    assertEquals(messageIds, ["stream-message-1"]);
+    if (!streamOptions) {
+      throw new Error("stream options were not captured");
+    }
+    assertEquals(streamOptions.generateMessageId?.(), "response-message-1");
+    assertEquals(
+      streamOptions.messageMetadata?.({
+        part: {
+          type: "finish",
+          finishReason: "stop",
+          totalUsage: {
+            inputTokens: 5,
+            outputTokens: 7,
+          },
+        },
+      }),
+      {
+        agentId: "agent-1",
+        modelId: "openai/gpt-5.4",
+        runId: "root-run-1",
+        streamingMessageId: "stream-message-1",
+        usage: {
+          inputTokens: 5,
+          outputTokens: 7,
+        },
+      },
+    );
+  });
+
+  it("finalizes detached streams when the finish handler never runs", async () => {
+    let disposed = 0;
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog({
+          disposed: () => {
+            disposed += 1;
+          },
+        }),
+        streamResult: createStreamResult({
+          finalStep: { text: "detached fallback" },
+          captureOptions: () => {},
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, [{ status: "completed" }]);
+    assertEquals(disposed, 1);
+  });
+
+  it("uses response finish events instead of detached fallback when present", async () => {
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: {},
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    if (!streamOptions) {
+      throw new Error("stream options were not captured");
+    }
+
+    await streamOptions.onFinish?.({
+      messages: [],
+      isContinuation: false,
+      responseMessage: createResponseMessage({ parts: [{ type: "text", text: "done" }] }),
+      isAborted: false,
+      finishReason: "stop",
+    });
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, [{ status: "completed" }]);
+  });
+
+  it("records stream errors before detached finalization fallback", async () => {
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const terminalStates: HostedLifecycleTerminalState[] = [];
+    const runtime = createHostedChatExecutionRuntime({
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      originalMessages: [],
+      runContext: { withContext: (fn) => fn() },
+      abortSignal: new AbortController().signal,
+      bootstrap: {
+        cleanup: async () => {},
+        lifecycleAdapter: createLifecycleAdapter({ terminalStates }),
+        rootStreamWatchdog: createRootStreamWatchdog(),
+        streamResult: createStreamResult({
+          finalStep: { text: "detached fallback" },
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        }),
+        streamingMessageId: "stream-message-1",
+        capturedMessageId: "stream-message-1",
+        capturedConversationId: "conversation-1",
+        mirroredToolChunkState: createMirroredToolChunkState(),
+      },
+    });
+    if (!streamOptions) {
+      throw new Error("stream options were not captured");
+    }
+
+    assertEquals(streamOptions.onError?.(new Error("stream failed")), "stream failed");
+    await runtime.waitForFinish();
+
+    assertEquals(terminalStates, [
+      {
+        status: "failed",
+        terminalErrorCode: "STREAM_ERROR",
+        terminalErrorMessage: "stream failed",
+      },
+    ]);
+  });
+});
