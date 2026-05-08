@@ -757,6 +757,14 @@ export {
   type RuntimeProjectFilesTrace,
 } from "./runtime-project-files-client.ts";
 export {
+  createRuntimeProjectSkillLoader,
+  type RuntimeLoadedProjectSkill,
+  type RuntimeProjectSkillContext,
+  type RuntimeProjectSkillLoader,
+  type RuntimeProjectSkillLoaderLogger,
+  type RuntimeProjectSkillLoaderOptions,
+} from "./runtime-project-skill-loader.ts";
+export {
   buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
