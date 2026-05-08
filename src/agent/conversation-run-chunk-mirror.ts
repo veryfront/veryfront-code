@@ -20,6 +20,7 @@ import {
 
 const DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT = 24;
 const DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH = 3;
+const DEFAULT_HOSTED_CHUNK_MIRROR_BATCH_SIZE = 24;
 
 export interface ConversationRunChunkMirror {
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
@@ -87,6 +88,30 @@ export interface ConversationRunChunkMirrorApiOptions
 export type ConversationRunChunkMirrorOptions =
   | ConversationRunChunkMirrorQueueOptions
   | ConversationRunChunkMirrorApiOptions;
+
+export type HostedConversationRunChunkMirrorTraceAttributes = Record<
+  string,
+  string | number | boolean | null | undefined
+>;
+
+export interface HostedConversationRunChunkMirrorInstrumentation {
+  trace?: <T>(operationName: string, operation: () => Promise<T>) => Promise<T>;
+  setTraceAttributes?: (attributes: HostedConversationRunChunkMirrorTraceAttributes) => void;
+  debug?: (message: string, metadata: Record<string, unknown>) => void;
+  warn?: (message: string, metadata: Record<string, unknown>) => void;
+  error?: (message: string, metadata: Record<string, unknown>) => void;
+}
+
+export interface HostedConversationRunChunkMirrorOptions {
+  authToken: string;
+  apiUrl: string;
+  conversationId: string;
+  runId: string;
+  latestEventId: number;
+  latestExternalEventSequence?: number;
+  batchSize?: number;
+  instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
+}
 
 function resolveQueueController(
   input: ConversationRunChunkMirrorOptions,
@@ -167,4 +192,162 @@ export function createConversationRunChunkMirror(
       mirror.dispose();
     },
   };
+}
+
+function createHostedChunkMirrorRetryMetadata(input: {
+  conversationId: string;
+  runId: string;
+  errorMessage: string;
+  retryDelayMs: number;
+  pendingEventCount: number;
+  consecutiveFailures: number;
+}): Record<string, unknown> {
+  return {
+    conversationId: input.conversationId,
+    runId: input.runId,
+    error: input.errorMessage,
+    retryDelayMs: input.retryDelayMs,
+    pendingEventCount: input.pendingEventCount,
+    consecutiveFailures: input.consecutiveFailures,
+  };
+}
+
+async function runHostedChunkMirrorTrace<T>(
+  instrumentation: HostedConversationRunChunkMirrorInstrumentation | undefined,
+  operationName: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  if (instrumentation?.trace) {
+    return await instrumentation.trace(operationName, operation);
+  }
+
+  return await operation();
+}
+
+function recordHostedChunkMirrorRetryScheduled(input: {
+  instrumentation: HostedConversationRunChunkMirrorInstrumentation | undefined;
+  conversationId: string;
+  runId: string;
+  flushAttempt: ConversationRunMirrorRetryScheduledState;
+}): void {
+  input.instrumentation?.error?.(
+    "Durable run mirror flush failed; queued for retry",
+    createHostedChunkMirrorRetryMetadata({
+      conversationId: input.conversationId,
+      runId: input.runId,
+      errorMessage: input.flushAttempt.errorMessage ?? "Conversation run append failed",
+      retryDelayMs: input.flushAttempt.retryDelayMs,
+      pendingEventCount: input.flushAttempt.pendingEventCount,
+      consecutiveFailures: input.flushAttempt.consecutiveFailures,
+    }),
+  );
+}
+
+function recordHostedChunkMirrorStopped(input: {
+  instrumentation: HostedConversationRunChunkMirrorInstrumentation | undefined;
+  conversationId: string;
+  runId: string;
+  flushAttempt: ConversationRunMirrorStoppedState;
+}): void {
+  if (input.flushAttempt.disableReason === "cursor_resyncs_exhausted") {
+    input.instrumentation?.error?.(
+      "Disabling durable run mirroring after repeated cursor resync failures",
+      {
+        conversationId: input.conversationId,
+        runId: input.runId,
+      },
+    );
+    return;
+  }
+
+  if (input.flushAttempt.disableReason === "ignorable_append_rejection") {
+    input.instrumentation?.warn?.(
+      "Disabling durable run mirroring after external append rejection",
+      {
+        conversationId: input.conversationId,
+        runId: input.runId,
+      },
+    );
+    return;
+  }
+
+  if (input.flushAttempt.disableReason === "non_appendable") {
+    input.instrumentation?.warn?.(
+      "Disabling durable run mirroring after cursor mismatch reached a non-appendable run state",
+      {
+        conversationId: input.conversationId,
+        runId: input.runId,
+        latestEventId: input.flushAttempt.latestEventId,
+        latestExternalEventSequence: input.flushAttempt.latestExternalEventSequence,
+      },
+    );
+  }
+}
+
+export function createHostedConversationRunChunkMirror(
+  input: HostedConversationRunChunkMirrorOptions,
+): ConversationRunChunkMirror {
+  const batchSize = input.batchSize ?? DEFAULT_HOSTED_CHUNK_MIRROR_BATCH_SIZE;
+
+  return createConversationRunChunkMirror({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: input.conversationId,
+    runId: input.runId,
+    latestEventId: input.latestEventId,
+    latestExternalEventSequence: input.latestExternalEventSequence,
+    maxEventsPerBatch: batchSize,
+    maxCursorResyncsPerFlush: DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
+    immediateFlushEventCount: batchSize,
+    prepareChunkEvents: ({ chunk, defaultPrepare }) =>
+      runHostedChunkMirrorTrace(input.instrumentation, "durable.mirrorChunk", async () => {
+        const events = defaultPrepare();
+        input.instrumentation?.setTraceAttributes?.({
+          "conversation.id": input.conversationId,
+          "run.id": input.runId,
+          "stream.ui_chunk.type": chunk.type,
+          "durable.event_count": events.length,
+        });
+        input.instrumentation?.debug?.("Durable run mirror processed UI chunk", {
+          conversationId: input.conversationId,
+          runId: input.runId,
+          chunkType: chunk.type,
+          durableEventTypes: events.map((event) => event.type),
+          durableEventCount: events.length,
+        });
+        return events;
+      }),
+    prepareExternalEvents: ({ defaultPrepare }) =>
+      runHostedChunkMirrorTrace(input.instrumentation, "durable.mirrorAppendEvents", async () => {
+        const events = defaultPrepare();
+        input.instrumentation?.setTraceAttributes?.({
+          "conversation.id": input.conversationId,
+          "run.id": input.runId,
+          "durable.event_count": events.length,
+        });
+        input.instrumentation?.debug?.("Durable run mirror queued external events", {
+          conversationId: input.conversationId,
+          runId: input.runId,
+          durableEventTypes: events.map((event) => event.type),
+          durableEventCount: events.length,
+        });
+        return events;
+      }),
+    onRetryScheduled: (flushAttempt) => {
+      recordHostedChunkMirrorRetryScheduled({
+        instrumentation: input.instrumentation,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        flushAttempt,
+      });
+    },
+    onStopped: (flushAttempt) => {
+      recordHostedChunkMirrorStopped({
+        instrumentation: input.instrumentation,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        flushAttempt,
+      });
+    },
+  });
 }

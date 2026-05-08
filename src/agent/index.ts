@@ -772,6 +772,10 @@ export {
   type ConversationRunChunkMirrorPrepareExternalEventsInput,
   type ConversationRunChunkMirrorQueueOptions,
   createConversationRunChunkMirror,
+  createHostedConversationRunChunkMirror,
+  type HostedConversationRunChunkMirrorInstrumentation,
+  type HostedConversationRunChunkMirrorOptions,
+  type HostedConversationRunChunkMirrorTraceAttributes,
 } from "./conversation-run-chunk-mirror.ts";
 export {
   type ConversationRunStreamMirror,

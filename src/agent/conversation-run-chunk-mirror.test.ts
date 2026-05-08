@@ -7,7 +7,11 @@ import type {
   ConversationRunEventQueueSnapshot,
 } from "./durable.ts";
 import type { ConversationRunEvent } from "./conversation-run-events.ts";
-import { createConversationRunChunkMirror } from "./conversation-run-chunk-mirror.ts";
+import {
+  createConversationRunChunkMirror,
+  createHostedConversationRunChunkMirror,
+  type HostedConversationRunChunkMirrorTraceAttributes,
+} from "./conversation-run-chunk-mirror.ts";
 
 function createQueueController(): ConversationRunEventQueueController & {
   enqueued: unknown[];
@@ -128,5 +132,71 @@ describe("agent/conversation-run-chunk-mirror", () => {
     await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "ignored" }]);
 
     assertEquals(queueController.enqueued, []);
+  });
+
+  it("creates an API-backed hosted mirror with standard trace and debug instrumentation", async () => {
+    const traceOperations: string[] = [];
+    const traceAttributes: HostedConversationRunChunkMirrorTraceAttributes[] = [];
+    const debugMessages: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    const mirror = createHostedConversationRunChunkMirror({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      conversationId: "conversation-1",
+      runId: "run-1",
+      latestEventId: 10,
+      latestExternalEventSequence: 20,
+      instrumentation: {
+        trace: async (operationName, operation) => {
+          traceOperations.push(operationName);
+          return await operation();
+        },
+        setTraceAttributes: (attributes) => {
+          traceAttributes.push(attributes);
+        },
+        debug: (message, metadata) => {
+          debugMessages.push({ message, metadata });
+        },
+      },
+    });
+
+    await mirror.handleChunk({ type: "text-delta", id: "m1", delta: "hello" });
+    await mirror.appendEvents([{ type: "TEXT_MESSAGE_CONTENT", delta: "persisted" }]);
+    mirror.dispose();
+
+    assertEquals(traceOperations, ["durable.mirrorChunk", "durable.mirrorAppendEvents"]);
+    assertEquals(traceAttributes, [
+      {
+        "conversation.id": "conversation-1",
+        "run.id": "run-1",
+        "stream.ui_chunk.type": "text-delta",
+        "durable.event_count": 1,
+      },
+      {
+        "conversation.id": "conversation-1",
+        "run.id": "run-1",
+        "durable.event_count": 1,
+      },
+    ]);
+    assertEquals(debugMessages, [
+      {
+        message: "Durable run mirror processed UI chunk",
+        metadata: {
+          conversationId: "conversation-1",
+          runId: "run-1",
+          chunkType: "text-delta",
+          durableEventTypes: ["TEXT_MESSAGE_CONTENT"],
+          durableEventCount: 1,
+        },
+      },
+      {
+        message: "Durable run mirror queued external events",
+        metadata: {
+          conversationId: "conversation-1",
+          runId: "run-1",
+          durableEventTypes: ["TEXT_MESSAGE_CONTENT"],
+          durableEventCount: 1,
+        },
+      },
+    ]);
   });
 });
