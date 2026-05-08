@@ -199,4 +199,50 @@ describe("default research artifact support", () => {
       },
     ]);
   });
+
+  it("derives the run-scoped mirror path from an effective research report result", async () => {
+    const calls: Array<
+      {
+        toolName: string;
+        args: Record<string, unknown>;
+        context: Record<string, unknown> | undefined;
+      }
+    > = [];
+
+    await mirrorDefaultResearchRunArtifact({
+      toolName: "create_file",
+      toolInput: {
+        path: "research/durable-run-staging-canary/report.md",
+        content: "# report",
+      },
+      toolResult: {
+        path: "research/durable-run-staging-canary-behavior/report.md",
+      },
+      taskContext: {
+        parentRunId: "run_192c702c-9070-4aad-acac-db7f3158af3e",
+      },
+      activeProjectId: "project-1",
+      executeContext: { projectId: "project-1" },
+      executeTool: (toolName, args, context) => {
+        calls.push({ toolName, args, context });
+        return Promise.resolve({
+          path:
+            "research/durable-run-staging-canary-behavior/runs/run_192c702c-9070-4aad-acac-db7f3158af3e.report.md",
+        });
+      },
+    });
+
+    assertEquals(calls, [
+      {
+        toolName: "create_file",
+        args: {
+          path:
+            "research/durable-run-staging-canary-behavior/runs/run_192c702c-9070-4aad-acac-db7f3158af3e.report.md",
+          content: "# report",
+          project_reference: "project-1",
+        },
+        context: { projectId: "project-1" },
+      },
+    ]);
+  });
 });

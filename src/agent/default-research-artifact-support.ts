@@ -3,6 +3,7 @@ import { isHostedChildCreateFileAlreadyExistsResult } from "./hosted-child-artif
 import {
   buildDefaultResearchArtifactPathReminder,
   buildDefaultResearchArtifactPaths,
+  buildDefaultResearchArtifactPathsFromCurrentReportPath,
   type DefaultResearchArtifactPaths,
 } from "./default-research-artifact-policy.ts";
 
@@ -261,8 +262,7 @@ export async function mirrorDefaultResearchRunArtifact(input: {
     context: Record<string, unknown> | undefined,
   ) => Promise<unknown>;
 }): Promise<void> {
-  const defaultArtifacts = input.taskContext.defaultResearchArtifacts;
-  if (!defaultArtifacts || (input.toolName !== "create_file" && input.toolName !== "update_file")) {
+  if (input.toolName !== "create_file" && input.toolName !== "update_file") {
     return;
   }
 
@@ -271,6 +271,17 @@ export async function mirrorDefaultResearchRunArtifact(input: {
     ? input.toolInput.path.replace(/^\/+/, "")
     : null;
   const resultPath = extractToolResultPath(input.toolResult);
+  const defaultArtifacts = input.taskContext.defaultResearchArtifacts ??
+    (resultPath
+      ? buildDefaultResearchArtifactPathsFromCurrentReportPath({
+        currentReportPath: resultPath,
+        runId: input.taskContext.parentRunId,
+      })
+      : null);
+  if (!defaultArtifacts) {
+    return;
+  }
+
   const canonicalCurrentPath = defaultArtifacts.currentReportPath.replace(/^\/+/, "");
   const canonicalRunPath = defaultArtifacts.runReportPath.replace(/^\/+/, "");
 

@@ -132,6 +132,31 @@ export function buildDefaultResearchArtifactPaths(input: {
   };
 }
 
+export function buildDefaultResearchArtifactPathsFromCurrentReportPath(input: {
+  currentReportPath: string;
+  runId?: string;
+}): DefaultResearchArtifactPaths | null {
+  const currentReportPath = input.currentReportPath.replace(/^\/+/, "");
+  const reportPathMatch = currentReportPath.match(/^research\/(.+)\/report\.md$/);
+  if (!reportPathMatch?.[1]) {
+    return null;
+  }
+
+  const topicSlug = reportPathMatch[1];
+  const sanitizedRunId = slugifyRunArtifactSegment(input.runId ?? "");
+  const effectiveRunId = sanitizedRunId.length > 0 ? sanitizedRunId : "latest";
+  const topicRootPath = `/research/${topicSlug}`;
+
+  return {
+    topicSlug,
+    topicRootPath,
+    currentReportPath: `/${currentReportPath}`,
+    runReportPath: `${topicRootPath}/runs/${effectiveRunId}.report.md`,
+    findingsPath: `${topicRootPath}/findings.md`,
+    sourcesPath: `${topicRootPath}/sources.md`,
+  };
+}
+
 export function withDefaultResearchArtifactPath(input: {
   description: string;
   prompt: string;
