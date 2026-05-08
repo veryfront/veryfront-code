@@ -245,4 +245,51 @@ describe("default research artifact support", () => {
       },
     ]);
   });
+
+  it("prefers the returned canonical report path over stale injected defaults", async () => {
+    const calls: Array<
+      {
+        toolName: string;
+        args: Record<string, unknown>;
+        context: Record<string, unknown> | undefined;
+      }
+    > = [];
+
+    await mirrorDefaultResearchRunArtifact({
+      toolName: "create_file",
+      toolInput: {
+        path: "research/durable-run-staging-canary/report.md",
+        content: "# report",
+      },
+      toolResult: {
+        path: "research/durable-run-staging-canary-behavior/report.md",
+      },
+      taskContext: {
+        parentRunId: "run_4fee8a83-cb68-4075-bef8-ca16eca50770",
+        defaultResearchArtifacts: defaultArtifacts(),
+      },
+      activeProjectId: "project-1",
+      executeContext: { projectId: "project-1" },
+      executeTool: (toolName, args, context) => {
+        calls.push({ toolName, args, context });
+        return Promise.resolve({
+          path:
+            "research/durable-run-staging-canary-behavior/runs/run_4fee8a83-cb68-4075-bef8-ca16eca50770.report.md",
+        });
+      },
+    });
+
+    assertEquals(calls, [
+      {
+        toolName: "create_file",
+        args: {
+          path:
+            "research/durable-run-staging-canary-behavior/runs/run_4fee8a83-cb68-4075-bef8-ca16eca50770.report.md",
+          content: "# report",
+          project_reference: "project-1",
+        },
+        context: { projectId: "project-1" },
+      },
+    ]);
+  });
 });
