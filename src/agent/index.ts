@@ -765,6 +765,14 @@ export {
   type RuntimeProjectSkillLoaderOptions,
 } from "./runtime-project-skill-loader.ts";
 export {
+  getRuntimeProjectInstructions,
+  getRuntimeProjectSkillCatalog,
+  loadRuntimeBuiltinSkillCatalog,
+  type RuntimeProjectInstructionsOptions,
+  type RuntimeProjectSkillCatalogOptions,
+  type RuntimeProjectSteeringLookup,
+} from "./runtime-project-skill-catalog.ts";
+export {
   buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
