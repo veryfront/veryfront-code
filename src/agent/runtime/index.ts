@@ -74,6 +74,15 @@ export {
   parseToolArgs,
 } from "./tool-helpers.ts";
 export type { ParsedToolArgs, ToolConfigEntry } from "./tool-helpers.ts";
+export {
+  getProviderToolProfile,
+  type ProviderToolCompatOptions,
+  type ProviderToolCompatProvider,
+  type ProviderToolProfile,
+  sanitizeProviderToolSchema,
+  selectProviderCompatibleToolNames,
+  selectProviderCompatibleTools,
+} from "./provider-tool-compat.ts";
 export { accumulateUsage, getMaxSteps, normalizeInput } from "./input-utils.ts";
 export { createStreamState, processStream } from "./chat-stream-handler.ts";
 export type {

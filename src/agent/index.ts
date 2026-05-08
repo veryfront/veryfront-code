@@ -844,8 +844,6 @@ export {
 export {
   cleanupAfterHostedChatExecutionFinalization,
   createHostedChatExecutionRuntime,
-  createHostedChatExecutionRuntimeBootstrap,
-  type CreateHostedChatExecutionRuntimeBootstrapInput,
   type CreateHostedChatExecutionRuntimeInput,
   createHostedChatFinalizeDetachedBuildState,
   createHostedChatFinalizeResponseBuildState,
@@ -1159,12 +1157,19 @@ export {
 } from "./chat-handler.ts";
 export {
   AgentRuntime,
+  getProviderToolProfile,
+  type ProviderToolCompatOptions,
+  type ProviderToolCompatProvider,
+  type ProviderToolProfile,
   RunAlreadyExistsError,
   RunCancelledError,
   RunNotActiveError,
   RunResumeSessionManager,
   type RunResumeSessionManagerOptions,
   type RunSessionStatus,
+  sanitizeProviderToolSchema,
+  selectProviderCompatibleToolNames,
+  selectProviderCompatibleTools,
   type SubmitResumeValueOutcome,
   WaitConflictError,
   WaitNotPendingError,

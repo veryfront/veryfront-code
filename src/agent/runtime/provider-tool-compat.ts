@@ -1,0 +1,228 @@
+import type { ToolDefinition } from "#veryfront/tool";
+import type { JsonSchema } from "#veryfront/tool/schema";
+
+export type ProviderToolCompatProvider =
+  | "anthropic"
+  | "google"
+  | "moonshot"
+  | "openai"
+  | "unknown";
+
+export interface ProviderToolProfile {
+  provider: ProviderToolCompatProvider;
+  maxTools?: number;
+  sanitizeSchema: boolean;
+}
+
+export interface ProviderToolCompatOptions {
+  model?: string;
+  requiredToolNames?: readonly string[];
+}
+
+const OPENAI_MAX_TOOLS = 128;
+const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
+  "$id",
+  "$ref",
+  "$schema",
+  "additionalProperties",
+  "allOf",
+  "default",
+  "oneOf",
+  "prefixItems",
+]);
+
+function normalizeModel(model?: string): string {
+  return model?.trim().toLowerCase() ?? "";
+}
+
+export function getProviderToolProfile(model?: string): ProviderToolProfile {
+  const normalized = normalizeModel(model);
+  const parts = normalized.split("/").filter(Boolean);
+  const provider = parts[0] === "veryfront-cloud" ? parts[1] : parts[0];
+
+  if (provider === "openai") {
+    return { provider: "openai", maxTools: OPENAI_MAX_TOOLS, sanitizeSchema: false };
+  }
+
+  if (provider === "google" || provider === "google-ai-studio") {
+    return { provider: "google", sanitizeSchema: true };
+  }
+
+  if (provider === "anthropic") {
+    return { provider: "anthropic", sanitizeSchema: false };
+  }
+
+  if (provider === "moonshot") {
+    return { provider: "moonshot", sanitizeSchema: false };
+  }
+
+  return { provider: "unknown", sanitizeSchema: false };
+}
+
+function uniqueInOrder(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+
+  return result;
+}
+
+export function selectProviderCompatibleToolNames(
+  toolNames: readonly string[],
+  options: ProviderToolCompatOptions = {},
+): string[] {
+  const profile = getProviderToolProfile(options.model);
+  const orderedToolNames = uniqueInOrder(toolNames);
+
+  if (profile.maxTools === undefined || orderedToolNames.length <= profile.maxTools) {
+    return orderedToolNames;
+  }
+
+  const available = new Set(orderedToolNames);
+  const requiredToolNames = uniqueInOrder(options.requiredToolNames ?? [])
+    .filter((toolName) => available.has(toolName));
+  const selected = [...requiredToolNames];
+  const selectedSet = new Set(selected);
+
+  for (const toolName of orderedToolNames) {
+    if (selected.length >= profile.maxTools) break;
+    if (selectedSet.has(toolName)) continue;
+    selected.push(toolName);
+    selectedSet.add(toolName);
+  }
+
+  return selected.slice(0, profile.maxTools);
+}
+
+export function selectProviderCompatibleTools(
+  tools: readonly ToolDefinition[],
+  options: ProviderToolCompatOptions = {},
+): ToolDefinition[] {
+  const toolsByName = new Map<string, ToolDefinition>();
+  for (const tool of tools) {
+    if (!toolsByName.has(tool.name)) toolsByName.set(tool.name, tool);
+  }
+
+  const selectedToolNames = selectProviderCompatibleToolNames(
+    [...toolsByName.keys()],
+    options,
+  );
+
+  return selectedToolNames
+    .map((toolName) => toolsByName.get(toolName))
+    .filter((tool): tool is ToolDefinition => tool !== undefined);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function getLiteralType(value: unknown): JsonSchema["type"] | undefined {
+  switch (typeof value) {
+    case "string":
+      return "string";
+    case "number":
+      return Number.isInteger(value) ? "integer" : "number";
+    case "boolean":
+      return "boolean";
+    default:
+      return value === null ? "null" : undefined;
+  }
+}
+
+function getEnumValuesFromAnyOf(anyOf: unknown): unknown[] | undefined {
+  if (!Array.isArray(anyOf)) return undefined;
+
+  const values: unknown[] = [];
+  for (const option of anyOf) {
+    if (!isPlainRecord(option)) return undefined;
+    if ("const" in option) {
+      values.push(option.const);
+      continue;
+    }
+    if (Array.isArray(option.enum) && option.enum.length > 0) {
+      values.push(...option.enum);
+      continue;
+    }
+    return undefined;
+  }
+
+  return values.length > 0 ? uniqueUnknownValues(values) : undefined;
+}
+
+function uniqueUnknownValues(values: unknown[]): unknown[] {
+  const result: unknown[] = [];
+  for (const value of values) {
+    if (result.some((existing) => Object.is(existing, value))) continue;
+    result.push(value);
+  }
+  return result;
+}
+
+function sanitizeGoogleSchemaValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeGoogleSchemaValue(item));
+  }
+
+  if (!isPlainRecord(value)) {
+    return value;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  const enumFromAnyOf = getEnumValuesFromAnyOf(value.anyOf);
+  const constValue = value.const;
+
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "const" || key === "anyOf" || GOOGLE_UNSUPPORTED_SCHEMA_KEYS.has(key)) {
+      continue;
+    }
+
+    if (key === "properties" && isPlainRecord(child)) {
+      sanitized.properties = Object.fromEntries(
+        Object.entries(child).map(([propertyName, propertySchema]) => [
+          propertyName,
+          sanitizeGoogleSchemaValue(propertySchema),
+        ]),
+      );
+      continue;
+    }
+
+    if (key === "items") {
+      sanitized.items = sanitizeGoogleSchemaValue(child);
+      continue;
+    }
+
+    sanitized[key] = sanitizeGoogleSchemaValue(child);
+  }
+
+  if (enumFromAnyOf) {
+    sanitized.enum = enumFromAnyOf;
+    if (!sanitized.type) {
+      const firstType = getLiteralType(enumFromAnyOf[0]);
+      if (firstType) sanitized.type = firstType;
+    }
+  } else if ("const" in value) {
+    sanitized.enum = [constValue];
+    if (!sanitized.type) {
+      const literalType = getLiteralType(constValue);
+      if (literalType) sanitized.type = literalType;
+    }
+  }
+
+  return sanitized;
+}
+
+export function sanitizeProviderToolSchema(
+  schema: JsonSchema,
+  options: Pick<ProviderToolCompatOptions, "model"> = {},
+): JsonSchema {
+  const profile = getProviderToolProfile(options.model);
+  if (!profile.sanitizeSchema) return schema;
+
+  return sanitizeGoogleSchemaValue(schema) as JsonSchema;
+}

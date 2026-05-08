@@ -18,6 +18,10 @@ import {
   createAnthropicWebFetchToolSet,
   createAnthropicWebSearchToolSet,
 } from "./provider-native-tools.ts";
+import {
+  sanitizeProviderToolSchema,
+  selectProviderCompatibleTools,
+} from "./provider-tool-compat.ts";
 
 export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
@@ -63,14 +67,19 @@ export function convertToolsToRuntimeTools(
   options?: ConvertToolsToRuntimeToolsOptions,
 ): RuntimeToolSet | undefined {
   const toolSet: RuntimeToolSet = {};
+  const compatibleTools = selectProviderCompatibleTools(tools, {
+    model: options?.model,
+  });
 
-  for (const def of tools) {
+  for (const def of compatibleTools) {
     addRuntimeTool(
       toolSet,
       def.name,
       createRuntimeTool({
         description: def.description,
-        inputSchema: createRuntimeJsonSchema(def.parameters),
+        inputSchema: createRuntimeJsonSchema(
+          sanitizeProviderToolSchema(def.parameters, { model: options?.model }),
+        ),
       }),
     );
   }
