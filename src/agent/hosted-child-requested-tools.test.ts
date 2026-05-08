@@ -1,9 +1,11 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
+import type { HostToolSet } from "#veryfront/tool";
 import {
   buildDefaultHostedChildForkToolSet,
   buildHostedChildToolDescription,
   DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
   expandHostedChildRequestedTools,
+  prepareDefaultHostedChildForkRuntimeTools,
   sanitizeDefaultHostedChildRequestedTools,
   sanitizeHostedChildRequestedTools,
   selectDefaultHostedChildForkRuntimeTools,
@@ -161,6 +163,71 @@ Deno.test("selectDefaultHostedChildForkRuntimeTools filters requested tools afte
       update_file: forkTools.update_file,
     },
   });
+});
+
+Deno.test("prepareDefaultHostedChildForkRuntimeTools selects, decorates, and reports tool names", async () => {
+  const fallbackCalls: unknown[] = [];
+  const mutations: unknown[] = [];
+  const logMessages: string[] = [];
+  const forkTools: HostToolSet = {
+    bash: { description: "Run shell commands" },
+    create_file: {
+      description: "Create a file",
+      execute: () => ({ content: [{ type: "text", text: "file already exists" }], isError: true }),
+    },
+    update_file: {
+      description: "Update a file",
+      execute: (toolInput) => {
+        fallbackCalls.push(toolInput);
+        return { structuredContent: { success: true } };
+      },
+    },
+  };
+
+  const prepared = prepareDefaultHostedChildForkRuntimeTools({
+    provider: "anthropic",
+    forkModel: "claude-sonnet-4-5-20250929",
+    forkTools,
+    effectivePrompt: "Create the requested project artifact",
+    requestedTools: ["create_file"],
+    activeProjectId: "project-1",
+    logger: {
+      info: (message) => {
+        logMessages.push(message);
+      },
+    },
+    onSteeringMutation: (mutation) => {
+      mutations.push(mutation);
+    },
+  });
+  if (!prepared.ok) {
+    throw new Error(prepared.errorMessage);
+  }
+
+  assertEquals(prepared.availableToolNames, ["create_file", "update_file"]);
+  assertEquals(Object.keys(prepared.forkTools), ["create_file", "update_file"]);
+
+  const createFileTool = prepared.forkTools.create_file;
+  if (!createFileTool?.execute) {
+    throw new Error("expected decorated create_file tool");
+  }
+
+  const result = await createFileTool.execute({
+    project_reference: "project-1",
+    path: "AGENTS.md",
+    content: "updated instructions",
+  });
+
+  assertEquals(result, { structuredContent: { success: true } });
+  assertEquals(fallbackCalls, [{
+    project_reference: "project-1",
+    path: "AGENTS.md",
+    content: "updated instructions",
+  }]);
+  assertEquals(logMessages, [
+    "Falling back from create_file to update_file for existing project artifact",
+  ]);
+  assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
 });
 
 Deno.test("buildDefaultHostedChildForkToolSet merges tool sets deterministically and removes default exclusions", () => {

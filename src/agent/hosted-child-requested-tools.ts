@@ -1,7 +1,19 @@
 import type { HostToolSet } from "#veryfront/tool";
 
-import { isHostedChildTextProjectArtifactPrompt } from "./hosted-child-artifact-support.ts";
+import {
+  type HostedChildFileWriteFallbackLogger,
+  isHostedChildTextProjectArtifactPrompt,
+  withHostedChildRerunnableFileWriteFallbacks,
+} from "./hosted-child-artifact-support.ts";
+import {
+  type HostedChildSteeringMutationHandler,
+  wrapHostedChildSteeringMutationTool,
+} from "./hosted-child-steering-tools.ts";
 import { getForkRuntimeAllowedToolNames } from "./provider-native-tool-inventory.ts";
+import {
+  PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES,
+  type ProjectSteeringPaths,
+} from "./project-steering-mutation.ts";
 
 export interface HostedChildRequestedToolsInput {
   prompt: string;
@@ -140,6 +152,17 @@ export type HostedChildForkRuntimeToolSelectionResult =
     errorMessage: string;
   };
 
+export type DefaultHostedChildForkRuntimeToolPreparationResult =
+  | {
+    ok: true;
+    forkTools: HostToolSet;
+    availableToolNames: string[];
+  }
+  | {
+    ok: false;
+    errorMessage: string;
+  };
+
 export function selectHostedChildForkRuntimeTools(input: {
   provider: string;
   forkModel?: string;
@@ -218,6 +241,59 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
     forkTools: input.forkTools,
     requestedTools: effectiveRequestedTools,
   });
+}
+
+export function prepareDefaultHostedChildForkRuntimeTools(input: {
+  provider: string;
+  forkModel?: string;
+  forkTools: HostToolSet;
+  effectivePrompt: string;
+  requestedTools?: readonly string[];
+  activeProjectId?: string | null;
+  activeBranchId?: string | null;
+  steeringPaths?: ProjectSteeringPaths;
+  onSteeringMutation?: HostedChildSteeringMutationHandler;
+  logger?: HostedChildFileWriteFallbackLogger;
+}): DefaultHostedChildForkRuntimeToolPreparationResult {
+  const selectedTools = selectDefaultHostedChildForkRuntimeTools({
+    provider: input.provider,
+    forkModel: input.forkModel,
+    forkTools: input.forkTools,
+    effectivePrompt: input.effectivePrompt,
+    requestedTools: input.requestedTools,
+  });
+  if (!selectedTools.ok) {
+    return selectedTools;
+  }
+
+  let forkTools = selectedTools.forkTools;
+  const availableToolNames = Object.keys(forkTools);
+  forkTools = withHostedChildRerunnableFileWriteFallbacks({
+    tools: forkTools,
+    logger: input.logger,
+  });
+
+  for (const toolName of PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES) {
+    const toolDefinition = forkTools[toolName];
+    if (!toolDefinition) {
+      continue;
+    }
+
+    forkTools[toolName] = wrapHostedChildSteeringMutationTool({
+      toolName,
+      toolDefinition,
+      activeProjectId: input.activeProjectId,
+      activeBranchId: input.activeBranchId,
+      steeringPaths: input.steeringPaths,
+      onMutation: input.onSteeringMutation,
+    });
+  }
+
+  return {
+    ok: true,
+    forkTools,
+    availableToolNames,
+  };
 }
 
 export function buildDefaultHostedChildForkToolSet(
