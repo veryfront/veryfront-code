@@ -157,8 +157,8 @@ function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => P
 
 function createDefaultHostedChatExecutionRootStreamWatchdog(): HostedChatExecutionRootStreamWatchdog {
   return createChatStreamWatchdog({
-    setTimeoutFn: globalThis.setTimeout,
-    clearTimeoutFn: globalThis.clearTimeout,
+    setTimeoutFn: globalThis["setTimeout"],
+    clearTimeoutFn: globalThis["clearTimeout"],
   });
 }
 
