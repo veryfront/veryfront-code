@@ -285,7 +285,7 @@ function applyRuntimeToolResultMessage(
 ): void {
   for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const currentMessage = messages[messageIndex];
-    if (currentMessage.role !== "assistant") {
+    if (!currentMessage || currentMessage.role !== "assistant") {
       continue;
     }
 
@@ -301,7 +301,7 @@ function applyRuntimeToolResultMessage(
     }
 
     const part = currentMessage.parts[partIndex];
-    if (part.type !== "dynamic-tool") {
+    if (!part || part.type !== "dynamic-tool") {
       continue;
     }
 
