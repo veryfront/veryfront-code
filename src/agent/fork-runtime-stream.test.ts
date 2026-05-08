@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "#veryfront/testing/assert";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { z } from "zod";
 import type { AgentResponse, Message as AgentMessage } from "./schemas/index.ts";
@@ -326,6 +326,56 @@ describe("agent/fork-runtime-stream", () => {
       inputTokens: 3,
       outputTokens: 4,
     });
+  });
+
+  it("does not leak unhandled rejections from side promises when the fork stream fails", async () => {
+    const unhandledRejections: unknown[] = [];
+    const handler = (event: PromiseRejectionEvent) => {
+      unhandledRejections.push(event.reason);
+      event.preventDefault();
+    };
+
+    globalThis.addEventListener("unhandledrejection", handler);
+    try {
+      const streamError = new Error("provider failed");
+      const streamResult = startAgentRuntimeFork({
+        apiUrl: "https://api.example.com",
+        authToken: "auth-token",
+        projectId: "project-1",
+        model: "model-1",
+        maxSteps: 1,
+        prompt: "Do the work.",
+        forkToolNames: [],
+        runtimeTools: {},
+        buildInstructions: () => "Base instructions.",
+        runStep: async () => ({
+          stream: new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.error(streamError);
+            },
+          }),
+          responsePromise: new Promise<AgentResponse>(() => {}),
+        }),
+      });
+
+      let thrown: unknown;
+      try {
+        for await (const _part of streamResult.fullStream) {
+          // The stream errors before yielding parts.
+        }
+      } catch (error) {
+        thrown = error;
+      }
+
+      assertEquals(thrown, streamError);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      assertEquals(unhandledRejections, []);
+      await assertRejects(() => Promise.resolve(streamResult.steps), Error, "provider failed");
+      await assertRejects(() => Promise.resolve(streamResult.totalUsage), Error, "provider failed");
+    } finally {
+      globalThis.removeEventListener("unhandledrejection", handler);
+    }
   });
 
   it("starts a high-level agent runtime fork from host tool definitions", async () => {

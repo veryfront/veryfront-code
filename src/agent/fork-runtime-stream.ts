@@ -276,6 +276,10 @@ function createForkRuntimeDeferred<T>(): {
     resolve = nextResolve;
     reject = nextReject;
   });
+  // These deferreds are side-channel results for consumers that need final
+  // steps/usage. The fork stream itself may fail before callers await them; keep
+  // their original rejection semantics while marking the rejection as observed.
+  promise.catch(() => {});
 
   return { promise, resolve, reject };
 }
