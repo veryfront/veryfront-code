@@ -281,6 +281,16 @@ export type {
 } from "./hosted-chat-runtime-contract.ts";
 
 export {
+  buildParsedHostedChatRequest,
+  type HostedChatProjectAccessError,
+  type HostedChatProjectAccessResult,
+  type HostedChatRequestPrincipal,
+  type ParsedHostedChatRequest,
+  parseHostedChatRequestFromRequest,
+  type ParseHostedChatRequestOptions,
+  parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
+} from "./hosted-chat-request-parser.ts";
+export {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
   buildHostedChatRequestFromRuntimeAgentInvocation,
   buildHostedChatRequestInputFromRuntimeAgentInvocation,
