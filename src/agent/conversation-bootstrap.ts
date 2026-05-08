@@ -199,6 +199,64 @@ export async function persistConversationUserMessage(input: {
   });
 }
 
+export function findLatestUserConversationMessageContext(messages: ChatUiMessage[]): {
+  latestUserMessage: ChatUiMessage | undefined;
+  visibleParentMessageId?: string;
+} {
+  const latestUserMessageIndex = messages.findLastIndex((message) => message.role === "user");
+  const latestUserMessage = latestUserMessageIndex >= 0
+    ? messages[latestUserMessageIndex]
+    : undefined;
+
+  if (latestUserMessageIndex >= 0) {
+    for (let index = latestUserMessageIndex - 1; index >= 0; index -= 1) {
+      const message = messages[index];
+      if (message && message.role !== "system") {
+        return {
+          latestUserMessage,
+          visibleParentMessageId: message.id,
+        };
+      }
+    }
+  }
+
+  return {
+    latestUserMessage,
+  };
+}
+
+export async function persistLatestConversationUserMessage(input: {
+  authToken: string;
+  apiUrl: string;
+  conversationId?: string;
+  messages: ChatUiMessage[];
+  enabled: boolean;
+  operation?: string;
+  missingUserMessageErrorMessage?: string;
+  onFailure?: (failure: PersistConversationUserMessageFailure) => void;
+}): Promise<void> {
+  if (!input.enabled || !input.conversationId) {
+    return;
+  }
+
+  const { latestUserMessage, visibleParentMessageId } = findLatestUserConversationMessageContext(
+    input.messages,
+  );
+  if (!latestUserMessage) {
+    throw new Error(input.missingUserMessageErrorMessage ?? "CONVERSATION_REQUIRES_USER_MESSAGE");
+  }
+
+  await persistConversationUserMessage({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    conversationId: input.conversationId,
+    message: latestUserMessage,
+    operation: input.operation,
+    ...(isUuid(visibleParentMessageId) ? { parentMessageId: visibleParentMessageId } : {}),
+    ...(input.onFailure ? { onFailure: input.onFailure } : {}),
+  });
+}
+
 export interface BootstrapConversationAgentRunResult {
   conversation: ConversationRecord;
   message: ConversationMessageRecord;
