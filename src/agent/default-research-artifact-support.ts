@@ -31,6 +31,33 @@ function extractToolResultPath(result: unknown): string | null {
   return result.path.replace(/^\/+/, "");
 }
 
+function isReportPath(path: string | null): path is string {
+  return path !== null && (path === "report.md" || path.endsWith("/report.md"));
+}
+
+function currentReportPathMatches(
+  artifacts: DefaultResearchArtifacts | null | undefined,
+  path: string | null,
+): boolean {
+  if (!artifacts || !path) {
+    return false;
+  }
+
+  return artifacts.currentReportPath.replace(/^\/+/, "") === path;
+}
+
+function buildDefaultArtifactsFromResultPath(input: {
+  resultPath: string | null;
+  parentRunId?: string;
+}): DefaultResearchArtifacts | null {
+  return input.resultPath && isReportPath(input.resultPath)
+    ? buildDefaultResearchArtifactPathsFromCurrentReportPath({
+      currentReportPath: input.resultPath,
+      runId: input.parentRunId,
+    })
+    : null;
+}
+
 export function extractLatestUserText(messages: readonly unknown[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -271,13 +298,15 @@ export async function mirrorDefaultResearchRunArtifact(input: {
     ? input.toolInput.path.replace(/^\/+/, "")
     : null;
   const resultPath = extractToolResultPath(input.toolResult);
-  const defaultArtifacts = input.taskContext.defaultResearchArtifacts ??
-    (resultPath
-      ? buildDefaultResearchArtifactPathsFromCurrentReportPath({
-        currentReportPath: resultPath,
-        runId: input.taskContext.parentRunId,
-      })
-      : null);
+  const contextArtifacts = input.taskContext.defaultResearchArtifacts;
+  const resultArtifacts = buildDefaultArtifactsFromResultPath({
+    resultPath,
+    parentRunId: input.taskContext.parentRunId,
+  });
+  const defaultArtifacts = resultArtifacts &&
+      !currentReportPathMatches(contextArtifacts, resultPath)
+    ? resultArtifacts
+    : contextArtifacts ?? resultArtifacts;
   if (!defaultArtifacts) {
     return;
   }
