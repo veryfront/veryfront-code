@@ -13,8 +13,20 @@ import {
 import {
   executeHostedChildForkStream,
   type ExecuteHostedChildForkStreamInput,
+  handleHostedChildForkFailure,
+  type HandleHostedChildForkFailureInput,
   type HostedChildForkPendingToolLifecycle,
 } from "./hosted-child-fork-stream-execution.ts";
+import {
+  closeChildRunExecutionBuffers,
+  finalizeChildRunExecutionResources,
+} from "./child-run-execution-cleanup.ts";
+import type {
+  ChildRunExecutionResult,
+  ChildRunExecutionSnapshot,
+} from "./child-run-execution-snapshot.ts";
+import { isChildRunAbortError } from "./child-run-execution-support.ts";
+import { HostedChildTerminalStateError } from "./hosted-child-status.ts";
 
 export interface HostedChildForkToolCallSnapshot {
   toolName: string;
@@ -61,6 +73,28 @@ export interface HostedChildForkRunContextInput {
   reasoningMessageId?: string | null;
   pendingToolLogContext: HostedChildPendingToolLifecycleLogContext;
   pendingToolLogWriter?: HostedChildPendingToolLifecycleLogWriter;
+}
+
+export interface HandleHostedChildForkRunContextErrorInput {
+  error: unknown;
+  abortSignal?: AbortSignal;
+  description: string;
+  kind: string;
+  runContext: HostedChildForkRunContext;
+  usage?: ChildRunExecutionSnapshot["usage"];
+  startTime: number;
+  onSettled?: (snapshot: ChildRunExecutionSnapshot) => void | Promise<void>;
+  shouldRethrowError?: (error: unknown) => boolean;
+  writeLog?: HandleHostedChildForkFailureInput["writeLog"];
+}
+
+export interface FinalizeHostedChildForkRunContextResourcesInput {
+  runContext: HostedChildForkRunContext;
+  monitorAbortController?: AbortController | null;
+  monitorPromise?: Promise<void>;
+  flushMirror?: () => Promise<void>;
+  closeTooling?: () => Promise<void>;
+  closeRuntime?: () => Promise<void>;
 }
 
 export function createHostedChildForkRunContext(
@@ -166,5 +200,66 @@ export function executeHostedChildForkRunContextStream(
     logger: input.logger,
     writeLog: input.writeLog,
     tracePart: input.tracePart,
+  });
+}
+
+export async function handleHostedChildForkRunContextError(
+  input: HandleHostedChildForkRunContextErrorInput,
+): Promise<ChildRunExecutionResult> {
+  const { streamMirrorContext, pendingToolLifecycle, toolCalls, toolResults, streamState } =
+    input.runContext;
+
+  await closeChildRunExecutionBuffers({
+    closeReasoningBuffer: streamMirrorContext.closeDurableMirrorReasoning,
+    closeTextBuffer: streamMirrorContext.closeDurableMirrorText,
+  });
+  await pendingToolLifecycle.closePendingToolCalls(
+    isChildRunAbortError(input.error) || input.abortSignal?.aborted
+      ? { kind: "aborted" }
+      : { kind: "error", error: input.error },
+  );
+  if (input.abortSignal?.aborted || isChildRunAbortError(input.error)) {
+    throw input.error;
+  }
+
+  if (input.error instanceof HostedChildTerminalStateError) {
+    throw input.error;
+  }
+
+  return handleHostedChildForkFailure({
+    error: input.error,
+    description: input.description,
+    kind: input.kind,
+    finalText: streamState.finalText,
+    toolCalls,
+    toolResults,
+    usage: input.usage,
+    startTime: input.startTime,
+    onSettled: input.onSettled,
+    shouldRethrowError: input.shouldRethrowError,
+    writeLog: input.writeLog,
+  });
+}
+
+export async function finalizeHostedChildForkRunContextResources(
+  input: FinalizeHostedChildForkRunContextResourcesInput,
+): Promise<void> {
+  const { streamMirrorContext } = input.runContext;
+
+  await finalizeChildRunExecutionResources({
+    closeReasoningBuffer: streamMirrorContext.closeDurableMirrorReasoning,
+    closeTextBuffer: streamMirrorContext.closeDurableMirrorText,
+    durableStepStarted: streamMirrorContext.hasStartedStep(),
+    flushMirror: async () => {
+      input.monitorAbortController?.abort();
+      await input.monitorPromise;
+      await input.flushMirror?.();
+    },
+    appendFinishStepChunk: () =>
+      streamMirrorContext.appendDurableMirrorChunk({
+        type: "finish-step",
+      }),
+    closeTooling: input.closeTooling,
+    closeRuntime: input.closeRuntime,
   });
 }
