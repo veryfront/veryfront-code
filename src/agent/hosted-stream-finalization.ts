@@ -76,6 +76,12 @@ async function cleanupAfterFinalization(cleanup: () => Promise<void> | void): Pr
   await cleanup();
 }
 
+function shouldFailStreamError(
+  input: { isAborted: boolean; streamError?: unknown | null },
+): boolean {
+  return !input.isAborted && input.streamError != null;
+}
+
 export async function finalizeHostedResponse<TMessage, TChunk>(
   options: FinalizeHostedResponseOptions<TMessage, TChunk>,
 ): Promise<void> {
@@ -106,6 +112,22 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
 
   await appendFallbackChunks(state.fallbackChunks, options.appendFallbackChunk);
   await options.flushMirror();
+  if (shouldFailStreamError({ isAborted: options.isAborted, streamError: options.streamError })) {
+    const terminalError = await options.resolveEmptyTerminalError({
+      finalStep,
+      streamError: options.streamError,
+    });
+
+    await options.dispatchTerminalState({
+      status: "failed",
+      metadata: state.metadata,
+      terminalErrorCode: terminalError.code,
+      terminalErrorMessage: terminalError.message,
+    });
+    await cleanupAfterFinalization(options.cleanup);
+    return;
+  }
+
   const terminalState = options.resolveTerminalState({
     isAborted: options.isAborted,
     hasIncompleteToolParts: state.hasIncompleteToolParts,
@@ -141,6 +163,21 @@ export async function finalizeHostedDetached<TChunk>(
 
   await appendFallbackChunks(state.fallbackChunks, options.appendFallbackChunk);
   await options.flushMirror();
+  if (shouldFailStreamError({ isAborted: options.isAborted, streamError: options.streamError })) {
+    const terminalError = await options.resolveEmptyTerminalError({
+      finalStep,
+      streamError: options.streamError,
+    });
+
+    await options.dispatchTerminalState({
+      status: "failed",
+      terminalErrorCode: terminalError.code,
+      terminalErrorMessage: terminalError.message,
+    });
+    await cleanupAfterFinalization(options.cleanup);
+    return;
+  }
+
   await options.dispatchTerminalState(
     options.resolveTerminalState({
       isAborted: options.isAborted,
