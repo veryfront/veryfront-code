@@ -157,4 +157,46 @@ describe("default research artifact support", () => {
       },
     ]);
   });
+
+  it("mirrors when the tool result reports the canonical current report path", async () => {
+    const calls: Array<
+      {
+        toolName: string;
+        args: Record<string, unknown>;
+        context: Record<string, unknown> | undefined;
+      }
+    > = [];
+
+    await mirrorDefaultResearchRunArtifact({
+      toolName: "create_file",
+      toolInput: {
+        path: "research/ai-coding-agents-draft/report.md",
+        content: "# report",
+      },
+      toolResult: {
+        path: "research/ai-coding-agents/report.md",
+      },
+      taskContext: {
+        defaultResearchArtifacts: defaultArtifacts(),
+      },
+      activeProjectId: "project-1",
+      executeContext: { projectId: "project-1" },
+      executeTool: (toolName, args, context) => {
+        calls.push({ toolName, args, context });
+        return Promise.resolve({ path: "research/ai-coding-agents/runs/run-1.report.md" });
+      },
+    });
+
+    assertEquals(calls, [
+      {
+        toolName: "create_file",
+        args: {
+          path: "research/ai-coding-agents/runs/run-1.report.md",
+          content: "# report",
+          project_reference: "project-1",
+        },
+        context: { projectId: "project-1" },
+      },
+    ]);
+  });
 });
