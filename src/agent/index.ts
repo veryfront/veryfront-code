@@ -798,6 +798,21 @@ export {
   type FinalizedMessageState,
 } from "./hosted-finalized-message.ts";
 export {
+  cleanupAfterHostedChatExecutionFinalization,
+  createHostedChatExecutionRuntime,
+  type CreateHostedChatExecutionRuntimeInput,
+  createHostedChatFinalizeDetachedBuildState,
+  createHostedChatFinalizeResponseBuildState,
+  createHostedChatStreamFinalizationHooks,
+  type HostedChatExecutionLifecycleAdapter,
+  type HostedChatExecutionRootStreamWatchdog,
+  type HostedChatExecutionRunContext,
+  type HostedChatExecutionRuntime,
+  type HostedChatExecutionRuntimeBootstrap,
+  type HostedChatExecutionRuntimeLogger,
+  toHostedChatExecutionFinalState,
+} from "./hosted-chat-execution-runtime.ts";
+export {
   finalizeHostedDetached,
   type FinalizeHostedDetachedOptions,
   finalizeHostedResponse,
