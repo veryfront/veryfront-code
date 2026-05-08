@@ -53,6 +53,7 @@ export const ExternalAgentWorkerRunSchema = z.object({
   source_target_kind: z.string().nullable().optional(),
   source_target_environment_id: z.string().uuid().nullable().optional(),
   source_target_branch_id: z.string().uuid().nullable().optional(),
+  source_target_release_version: z.string().nullable().optional(),
   runtime_target_kind: z.string().nullable().optional(),
   runtime_target_environment_id: z.string().uuid().nullable().optional(),
   runtime_target_branch_id: z.string().uuid().nullable().optional(),
