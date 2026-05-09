@@ -474,6 +474,7 @@ export {
 } from "./hosted-child-fork-instructions.ts";
 export {
   createHostedChildForkRunContext,
+  createHostedDurableChildForkRunContext,
   executeHostedChildForkRunContextStream,
   type ExecuteHostedChildForkRunContextStreamInput,
   finalizeHostedChildForkRunContextResources,
@@ -486,6 +487,8 @@ export {
   type HostedChildForkStreamState,
   type HostedChildForkToolCallSnapshot,
   type HostedChildForkToolResultSnapshot,
+  type HostedDurableChildForkRunContext,
+  type HostedDurableChildForkRunContextInput,
 } from "./hosted-child-fork-run-context.ts";
 export {
   executeHostedChildForkStream,
