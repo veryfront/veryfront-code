@@ -9,6 +9,7 @@ import {
   buildHostedDurableChildInvokeFailureResult,
   buildHostedDurableChildInvokeSuccessResult,
   buildHostedDurableChildInvokeTerminalFailureResult,
+  createHostedDurableChildInvokeTraceRecorder,
   executeHostedDurableChildFork,
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
@@ -182,6 +183,155 @@ describe("agent/hosted-durable-child-fork-execution", () => {
         terminalErrorMessage: null,
       },
     );
+  });
+
+  it("records standard hosted invoke trace attributes while building results", () => {
+    const recordedAttributes: unknown[] = [];
+    const identifiers = {
+      childConversationId: CHILD_CONVERSATION_ID,
+      childRunId: "run_child_1",
+      childMessageId: CHILD_MESSAGE_ID,
+      latestEventId: 7,
+      latestExternalEventSequence: 3,
+    };
+    const targets = {
+      sourceTargetKind: "preview_branch",
+      runtimeTargetKind: "preview_branch",
+      targetBranchId: BRANCH_ID,
+    } satisfies ConversationRunTargets;
+    const recorder = createHostedDurableChildInvokeTraceRecorder({
+      traceBase: {
+        conversationId: PARENT_CONVERSATION_ID,
+        projectId: PROJECT_ID,
+        runId: "run_parent_1",
+        toolCallId: "tool-call-1",
+        childAgentId: "invoke-agent-child",
+      },
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      setTraceAttributes: (attributes) => {
+        recordedAttributes.push(attributes);
+      },
+    });
+
+    recorder.annotate();
+    assertEquals(recordedAttributes.at(-1), {
+      "conversation.id": PARENT_CONVERSATION_ID,
+      "project.id": PROJECT_ID,
+      "run.id": "run_parent_1",
+      "child.agent.id": "invoke-agent-child",
+      "tool.name": "invoke_agent",
+      "tool.call.id": "tool-call-1",
+      "gen_ai.operation.name": "execute_tool",
+      "gen_ai.tool.name": "invoke_agent",
+      "gen_ai.tool.type": "function",
+      "gen_ai.tool.call.id": "tool-call-1",
+    });
+
+    const localFailure: ChildRunExecutionResult = {
+      success: false,
+      description: "Inspect logs",
+      error: "local failed",
+      steps: 2,
+      toolCalls: [],
+      toolResults: [],
+      usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+      durationMs: 12,
+    };
+    assertEquals(recorder.recordLocalResult(localFailure), localFailure);
+    assertEquals(recordedAttributes.at(-1), {
+      "conversation.id": PARENT_CONVERSATION_ID,
+      "project.id": PROJECT_ID,
+      "run.id": "run_parent_1",
+      "child.agent.id": "invoke-agent-child",
+      "agent.run.final_status": "failed",
+      "tool.name": "invoke_agent",
+      "tool.call.id": "tool-call-1",
+      "gen_ai.operation.name": "execute_tool",
+      "gen_ai.tool.name": "invoke_agent",
+      "gen_ai.tool.type": "function",
+      "gen_ai.tool.call.id": "tool-call-1",
+      "error.type": "INVOKE_AGENT_FAILED",
+      "error.message": "local failed",
+      "gen_ai.usage.input_tokens": 3,
+      "gen_ai.usage.output_tokens": 4,
+    });
+
+    assertEquals(
+      recorder.recordSetupFailure({
+        targets,
+        childConversationId: CHILD_CONVERSATION_ID,
+        childRunId: "run_child_1",
+        childMessageId: CHILD_MESSAGE_ID,
+        terminalErrorCode: "SETUP_FAILED",
+        terminalErrorMessage: "setup failed",
+      }),
+      {
+        ok: false,
+        status: "failed",
+        childConversationId: CHILD_CONVERSATION_ID,
+        childRunId: "run_child_1",
+        childMessageId: CHILD_MESSAGE_ID,
+        sourceTargetKind: "preview_branch",
+        runtimeTargetKind: "preview_branch",
+        terminalErrorCode: "SETUP_FAILED",
+        terminalErrorMessage: "setup failed",
+      },
+    );
+    assertEquals(recordedAttributes.at(-1), {
+      "conversation.id": PARENT_CONVERSATION_ID,
+      "project.id": PROJECT_ID,
+      "run.id": "run_parent_1",
+      "child.agent.id": "invoke-agent-child",
+      "child.conversation.id": CHILD_CONVERSATION_ID,
+      "child.run.id": "run_child_1",
+      "child.message.id": CHILD_MESSAGE_ID,
+      "source.target.kind": "preview_branch",
+      "runtime.target.kind": "preview_branch",
+      "agent.run.final_status": "failed",
+      "tool.name": "invoke_agent",
+      "tool.call.id": "tool-call-1",
+      "gen_ai.operation.name": "execute_tool",
+      "gen_ai.tool.name": "invoke_agent",
+      "gen_ai.tool.type": "function",
+      "gen_ai.tool.call.id": "tool-call-1",
+      "error.type": "SETUP_FAILED",
+      "error.message": "setup failed",
+    });
+
+    assertEquals(
+      recorder.recordSuccess({
+        result: baseSuccessResult(),
+        snapshot: buildChildRunExecutionSnapshot(baseSuccessResult()),
+        identifiers,
+        targets,
+      }),
+      buildHostedDurableChildInvokeSuccessResult({
+        result: baseSuccessResult(),
+        snapshot: buildChildRunExecutionSnapshot(baseSuccessResult()),
+        identifiers,
+        targets,
+      }),
+    );
+    assertEquals(recordedAttributes.at(-1), {
+      "conversation.id": PARENT_CONVERSATION_ID,
+      "project.id": PROJECT_ID,
+      "run.id": "run_parent_1",
+      "child.agent.id": "invoke-agent-child",
+      "child.conversation.id": CHILD_CONVERSATION_ID,
+      "child.run.id": "run_child_1",
+      "child.message.id": CHILD_MESSAGE_ID,
+      "source.target.kind": "preview_branch",
+      "runtime.target.kind": "preview_branch",
+      "agent.run.final_status": "completed",
+      "tool.name": "invoke_agent",
+      "tool.call.id": "tool-call-1",
+      "gen_ai.operation.name": "execute_tool",
+      "gen_ai.tool.name": "invoke_agent",
+      "gen_ai.tool.type": "function",
+      "gen_ai.tool.call.id": "tool-call-1",
+      "gen_ai.usage.input_tokens": 3,
+      "gen_ai.usage.output_tokens": 4,
+    });
   });
 
   it("returns a host-shaped context-unavailable result without bootstrapping", async () => {
