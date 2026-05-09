@@ -154,6 +154,12 @@ export {
   createLiveStudioMcpTools,
   type LiveStudioMcpToolsOptions,
 } from "./live-studio-mcp-tools.ts";
+export {
+  type DefaultHostedChildForkToolSourcesResult,
+  type HostedChildForkToolSourcesLogger,
+  prepareDefaultHostedChildForkToolSources,
+  type PrepareDefaultHostedChildForkToolSourcesInput,
+} from "./hosted-child-fork-tool-sources.ts";
 
 export {
   parseRuntimeAgentMarkdownDefinition,
