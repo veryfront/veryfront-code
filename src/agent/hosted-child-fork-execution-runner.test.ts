@@ -8,6 +8,7 @@ import {
   DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
   executeHostedChildForkWithPreparedTools,
 } from "./hosted-child-fork-execution-runner.ts";
+import { createHostedDurableChildForkRunContext } from "./hosted-child-fork-run-context.ts";
 import type { AgentResponse } from "./schemas/index.ts";
 
 function createRuntimeEventStream(
@@ -197,6 +198,69 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the runtime 
   assertEquals(result.success, true);
   if (result.success) {
     assertEquals(result.summary.text, "Injected.");
+  }
+});
+
+Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run context factory", async () => {
+  let createRunContextCalls = 0;
+  const result = await executeHostedChildForkWithPreparedTools({
+    authToken: "token",
+    apiUrl: "https://api.example.com",
+    description: "Check the app",
+    kind: "invoke_agent",
+    provider: "anthropic",
+    forkModel: "anthropic/claude-sonnet-4",
+    maxSteps: 4,
+    effectivePrompt: "Do the work.",
+    toolAssembly: {
+      ok: true,
+      forkTools: {},
+      availableToolNames: [],
+    },
+    createRunContext: (input) => {
+      createRunContextCalls += 1;
+      assertEquals(input.authToken, "token");
+      assertEquals(input.apiUrl, "https://api.example.com");
+      return createHostedDurableChildForkRunContext({
+        authToken: input.authToken,
+        apiUrl: input.apiUrl,
+        durableChildRun: input.durableChildRun,
+        instrumentation: input.instrumentation,
+        pendingToolLogContext: {
+          conversationId: input.conversationId,
+          parentRunId: input.parentRunId,
+          description: input.description,
+        },
+        pendingToolLogWriter: input.pendingToolLogWriter,
+      });
+    },
+    startRuntime: () => ({
+      forkStreamAbortController: new AbortController(),
+      childRunMonitorAbortController: null,
+      childRunMonitorPromise: Promise.resolve(),
+      forkToolNames: [],
+      streamResult: {
+        fullStream: (async function* () {
+          yield { type: "text-delta", text: "Injected context." } as const;
+        })(),
+        steps: Promise.resolve([
+          {
+            text: "Injected context.",
+            finishReason: "stop",
+            messages: [],
+            toolCalls: [],
+            toolResults: [],
+          },
+        ]),
+        totalUsage: Promise.resolve(undefined),
+      },
+    }),
+  });
+
+  assertEquals(createRunContextCalls, 1);
+  assertEquals(result.success, true);
+  if (result.success) {
+    assertEquals(result.summary.text, "Injected context.");
   }
 });
 

@@ -60,6 +60,17 @@ export type HostedChildForkExecutionInstrumentation<
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+export type HostedChildForkExecutionRunContextFactoryInput = {
+  authToken: string;
+  apiUrl: string;
+  durableChildRun?: HostedChildRunIdentifiers;
+  conversationId?: string;
+  parentRunId?: string;
+  description: string;
+  instrumentation?: HostedChildForkExecutionInstrumentation;
+  pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
+};
+
 export type ExecuteHostedChildForkWithPreparedToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
@@ -87,6 +98,9 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   buildInstructions?: () => string;
   onBeforeStop?: StartHostedChildForkRuntimeWithHostToolsInput<TAttributes>["onBeforeStop"];
   runStep?: AgentRuntimeForkStepRunner;
+  createRunContext?: (
+    input: HostedChildForkExecutionRunContextFactoryInput,
+  ) => HostedDurableChildForkRunContext;
   startRuntime?: (
     input: StartHostedChildForkRuntimeWithHostToolsInput<TAttributes>,
   ) => StartedHostedChildForkRuntime | Promise<StartedHostedChildForkRuntime>;
@@ -101,16 +115,9 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   shouldRethrowError?: (error: unknown) => boolean;
 };
 
-function createForkRunContext(input: {
-  authToken: string;
-  apiUrl: string;
-  durableChildRun?: HostedChildRunIdentifiers;
-  conversationId?: string;
-  parentRunId?: string;
-  description: string;
-  instrumentation?: HostedChildForkExecutionInstrumentation;
-  pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
-}): HostedDurableChildForkRunContext {
+function createForkRunContext(
+  input: HostedChildForkExecutionRunContextFactoryInput,
+): HostedDurableChildForkRunContext {
   const sourceInstrumentation = input.instrumentation;
   const sourceTrace = sourceInstrumentation?.trace;
   const instrumentation: HostedConversationRunChunkMirrorInstrumentation | undefined =
@@ -159,7 +166,8 @@ export async function executeHostedChildForkWithPreparedTools<
   input: ExecuteHostedChildForkWithPreparedToolsInput<TAttributes>,
 ): Promise<ChildRunExecutionResult> {
   const startTime = input.startTime ?? Date.now();
-  const runContext = createForkRunContext({
+  const createRunContext = input.createRunContext ?? createForkRunContext;
+  const runContext = createRunContext({
     authToken: input.authToken,
     apiUrl: input.apiUrl,
     durableChildRun: input.durableChildRun,
