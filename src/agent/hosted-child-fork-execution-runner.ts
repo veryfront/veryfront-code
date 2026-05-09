@@ -60,14 +60,16 @@ export type HostedChildForkExecutionInstrumentation<
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
-export type HostedChildForkExecutionRunContextFactoryInput = {
+export type HostedChildForkExecutionRunContextFactoryInput<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+> = {
   authToken: string;
   apiUrl: string;
   durableChildRun?: HostedChildRunIdentifiers;
   conversationId?: string;
   parentRunId?: string;
   description: string;
-  instrumentation?: HostedChildForkExecutionInstrumentation;
+  instrumentation?: HostedChildForkExecutionInstrumentation<TAttributes>;
   pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
 };
 
@@ -99,7 +101,7 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   onBeforeStop?: StartHostedChildForkRuntimeWithHostToolsInput<TAttributes>["onBeforeStop"];
   runStep?: AgentRuntimeForkStepRunner;
   createRunContext?: (
-    input: HostedChildForkExecutionRunContextFactoryInput,
+    input: HostedChildForkExecutionRunContextFactoryInput<TAttributes>,
   ) => HostedDurableChildForkRunContext;
   startRuntime?: (
     input: StartHostedChildForkRuntimeWithHostToolsInput<TAttributes>,
@@ -115,8 +117,10 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   shouldRethrowError?: (error: unknown) => boolean;
 };
 
-function createForkRunContext(
-  input: HostedChildForkExecutionRunContextFactoryInput,
+function createForkRunContext<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: HostedChildForkExecutionRunContextFactoryInput<TAttributes>,
 ): HostedDurableChildForkRunContext {
   const sourceInstrumentation = input.instrumentation;
   const sourceTrace = sourceInstrumentation?.trace;
