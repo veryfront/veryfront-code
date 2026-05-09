@@ -27,7 +27,6 @@ import {
   ProviderRequestError,
   readProviderOptions,
   readRecord,
-  readTextParts,
   requestJson,
   requestStream,
   stringifyJsonValue,
@@ -751,7 +750,7 @@ function toOpenAIResponsesInput(
       case "user":
         input.push({
           role: "user",
-          content: [{ type: "input_text", text: readTextParts(message.content) }],
+          content: toOpenAIResponsesUserContent(message.content),
         });
         break;
       case "assistant": {
@@ -814,6 +813,34 @@ function toOpenAIResponsesInput(
     ...(instructionsParts.length > 0 ? { instructions: instructionsParts.join("\n\n") } : {}),
     input,
   };
+}
+
+function toOpenAIResponsesUserContent(
+  parts: Extract<RuntimePromptMessage, { role: "user" }>["content"],
+): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [];
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      if (part.text.length > 0) {
+        content.push({ type: "input_text", text: part.text });
+      }
+      continue;
+    }
+
+    if (part.type === "image" || part.mediaType.startsWith("image/")) {
+      content.push({ type: "input_image", image_url: part.url, detail: "auto" });
+      continue;
+    }
+
+    content.push({
+      type: "input_file",
+      file_url: part.url,
+      ...(part.filename ? { filename: part.filename } : {}),
+    });
+  }
+
+  return content;
 }
 
 /**

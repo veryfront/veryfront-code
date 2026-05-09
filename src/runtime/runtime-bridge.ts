@@ -73,7 +73,13 @@ type EmbedManyOptions = {
 
 type RuntimePromptMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: Array<{ type: "text"; text: string }> }
+  | {
+    role: "user";
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "image" | "file"; mediaType: string; url: string; filename?: string }
+    >;
+  }
   | {
     role: "assistant";
     content: Array<
@@ -181,7 +187,9 @@ function toRuntimePrompt(
       case "user":
         prompt.push({
           role: "user",
-          content: [{ type: "text", text: message.content }],
+          content: typeof message.content === "string"
+            ? [{ type: "text", text: message.content }]
+            : message.content,
         });
         break;
       case "assistant":

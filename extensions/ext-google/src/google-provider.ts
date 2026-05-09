@@ -27,7 +27,6 @@ import {
   ProviderRequestError,
   readProviderOptions,
   readRecord,
-  readTextParts,
   requestJson,
   requestStream,
   stringifyJsonValue,
@@ -249,7 +248,7 @@ function toGoogleContents(
       case "user":
         contents.push({
           role: "user",
-          parts: [{ text: readTextParts(message.content) }],
+          parts: toGoogleUserParts(message.content),
         });
         break;
       case "assistant": {
@@ -298,6 +297,32 @@ function toGoogleContents(
       : {}),
     contents,
   };
+}
+
+function toGoogleUserParts(
+  parts: Extract<RuntimePromptMessage, { role: "user" }>["content"],
+): Array<Record<string, unknown>> {
+  const content: Array<Record<string, unknown>> = [];
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      if (part.text.length > 0) {
+        content.push({ text: part.text });
+      }
+      continue;
+    }
+
+    if (part.type === "image" || part.mediaType.startsWith("image/")) {
+      content.push({
+        fileData: {
+          mimeType: part.mediaType,
+          fileUri: part.url,
+        },
+      });
+    }
+  }
+
+  return content;
 }
 
 function toGoogleTools(

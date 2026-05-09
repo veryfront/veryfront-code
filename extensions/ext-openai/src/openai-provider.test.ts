@@ -165,6 +165,53 @@ describe("openai-provider", () => {
     });
   });
 
+  it("sends image URL user parts as OpenAI Chat Completions image_url content", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createOpenAIModelRuntime({
+      apiKey: "test-openai-key",
+      baseURL: "https://example.openai.test/v1",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              choices: [{
+                finish_reason: "stop",
+                message: { role: "assistant", content: "web app screenshot" },
+              }],
+              usage: { prompt_tokens: 8, completion_tokens: 2, total_tokens: 10 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "gpt-4o-mini");
+
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [
+          { type: "text", text: "What is this?" },
+          {
+            type: "image",
+            mediaType: "image/jpeg",
+            url: "https://signed.example.com/web-app-screenshot.jpg",
+          },
+        ],
+      }],
+    });
+
+    const requestBody = JSON.parse(readRequestBody(requestedInit) ?? "{}");
+    assertEquals(requestBody.messages[0].content, [
+      { type: "text", text: "What is this?" },
+      {
+        type: "image_url",
+        image_url: { url: "https://signed.example.com/web-app-screenshot.jpg" },
+      },
+    ]);
+  });
+
   it("creates an OpenAI-compatible language runtime without SDK helpers for stream", async () => {
     const encoder = new TextEncoder();
     const runtime = createOpenAIModelRuntime({
@@ -1149,6 +1196,35 @@ describe("openai-provider", () => {
       assertEquals(body!.input, [{
         role: "user",
         content: [{ type: "input_text", text: "Hi" }],
+      }]);
+    });
+
+    it("converts image URL user parts to Responses input_image content", async () => {
+      const { runtime, getBody } = captureResponsesRuntime();
+      await runtime.doGenerate({
+        prompt: [{
+          role: "user",
+          content: [
+            { type: "text", text: "What is this?" },
+            {
+              type: "image",
+              mediaType: "image/jpeg",
+              url: "https://signed.example.com/web-app-screenshot.jpg",
+            },
+          ],
+        }],
+      });
+      const body = getBody() as { input: Array<Record<string, unknown>> } | null;
+      assertEquals(body!.input, [{
+        role: "user",
+        content: [
+          { type: "input_text", text: "What is this?" },
+          {
+            type: "input_image",
+            image_url: "https://signed.example.com/web-app-screenshot.jpg",
+            detail: "auto",
+          },
+        ],
       }]);
     });
 

@@ -34,7 +34,13 @@ export type { RuntimeUsage };
 
 export type RuntimePromptMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: Array<{ type: "text"; text: string }> }
+  | {
+    role: "user";
+    content: Array<
+      | { type: "text"; text: string }
+      | { type: "image" | "file"; mediaType: string; url: string; filename?: string }
+    >;
+  }
   | {
     role: "assistant";
     content: Array<
@@ -261,7 +267,15 @@ type OpenAICompatibleLanguageOptions = {
 };
 export type OpenAICompatibleChatMessage =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
+  | {
+    role: "user";
+    content:
+      | string
+      | Array<
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+      >;
+  }
   | {
     role: "assistant";
     content: string | null;
@@ -279,6 +293,11 @@ export type OpenAICompatibleChatMessage =
     tool_call_id: string;
     content: string;
   };
+type RuntimePromptUserContent = Extract<RuntimePromptMessage, { role: "user" }>["content"];
+type OpenAICompatibleUserContent = Extract<
+  OpenAICompatibleChatMessage,
+  { role: "user" }
+>["content"];
 export type OpenAICompatibleChatRequest = {
   model: string;
   messages: OpenAICompatibleChatMessage[];
@@ -359,6 +378,30 @@ export function readTextParts(parts: Array<{ type: string; text?: string }>): st
   return text;
 }
 
+function toOpenAICompatibleUserContent(
+  parts: RuntimePromptUserContent,
+): OpenAICompatibleUserContent {
+  if (!parts.some((part) => part.type !== "text" && part.mediaType.startsWith("image/"))) {
+    return readTextParts(parts);
+  }
+
+  const content: Exclude<OpenAICompatibleUserContent, string> = [];
+
+  for (const part of parts) {
+    if (part.type === "text") {
+      if (part.text.length > 0) {
+        content.push({ type: "text", text: part.text });
+      }
+      continue;
+    }
+    if (part.type === "image" || part.mediaType.startsWith("image/")) {
+      content.push({ type: "image_url", image_url: { url: part.url } });
+    }
+  }
+
+  return content.length > 0 ? content : readTextParts(parts);
+}
+
 export function toOpenAICompatibleMessages(
   prompt: RuntimePromptMessage[],
 ): OpenAICompatibleChatMessage[] {
@@ -370,7 +413,7 @@ export function toOpenAICompatibleMessages(
         messages.push({ role: "system", content: message.content });
         break;
       case "user":
-        messages.push({ role: "user", content: readTextParts(message.content) });
+        messages.push({ role: "user", content: toOpenAICompatibleUserContent(message.content) });
         break;
       case "assistant": {
         let text = "";

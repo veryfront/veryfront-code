@@ -69,6 +69,63 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages refreshes upload file URLs 
   assertStringIncludes(text, "https://signed.example.com/file.txt");
 });
 
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages preserves persisted uploaded image parts for vision models", async () => {
+  const resolvedUploadIds: string[] = [];
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      userMessage(
+        [
+          { type: "text", text: "What is this?" },
+          {
+            type: "image",
+            upload_id: "upload-image-1",
+            media_type: "image/jpeg",
+            url: "/api/projects/project-1/uploads/upload-image-1",
+          },
+        ] as unknown as ChatUiMessage["parts"],
+      ),
+    ],
+    resolveFileUrl: async ({ uploadId }) => {
+      resolvedUploadIds.push(uploadId);
+      return "https://signed.example.com/web-app-screenshot.jpg";
+    },
+  });
+
+  assertEquals(resolvedUploadIds, ["upload-image-1"]);
+  assertEquals(messages[0]?.parts, [
+    { type: "text", text: "What is this?" },
+    {
+      type: "image",
+      url: "https://signed.example.com/web-app-screenshot.jpg",
+      mediaType: "image/jpeg",
+    },
+    {
+      type: "text",
+      text: "Attached files from earlier conversation context:\n\n<uploaded_files>\n" +
+        '<file name="image" upload_id="upload-image-1" url="https://signed.example.com/web-app-screenshot.jpg" type="image/jpeg" />\n' +
+        "</uploaded_files>",
+    },
+  ]);
+
+  const runtimeMessages = convertToTextGenerationRuntimeMessages(messages);
+  const content = runtimeMessages[0]?.role === "user" ? runtimeMessages[0].content : null;
+  if (!Array.isArray(content)) {
+    throw new Error("Expected text-generation runtime to keep multimodal user content");
+  }
+
+  const text = content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+  assertStringIncludes(text, "What is this?");
+  assertStringIncludes(text, "<uploaded_files>");
+  assertEquals(
+    content.some((part) =>
+      part.type === "image" &&
+      part.url === "https://signed.example.com/web-app-screenshot.jpg" &&
+      part.mediaType === "image/jpeg"
+    ),
+    true,
+  );
+});
+
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages keeps original URL when resolver returns undefined", async () => {
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({
     messages: [
@@ -127,17 +184,24 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages keeps a synthetic PDF visib
 
   assertEquals(runtimeMessages[0]?.role, "user");
   const content = runtimeMessages[0]?.content;
-  if (typeof content !== "string") {
-    throw new Error("Expected text-generation runtime user content to be a string");
+  if (!Array.isArray(content)) {
+    throw new Error("Expected text-generation runtime user content to preserve native file parts");
   }
 
-  assertStringIncludes(content, "Sent with attachments");
-  assertStringIncludes(content, "<uploaded_files>");
-  assertStringIncludes(content, "sample-attachment.pdf");
-  assertStringIncludes(content, "test-upload-id");
-  assertStringIncludes(content, "application/pdf");
-  assertStringIncludes(content, "https://signed.example.com/invoice.pdf");
-  assertEquals(countOccurrences(content, "<uploaded_files>"), 1);
+  const text = content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+  assertStringIncludes(text, "Sent with attachments");
+  assertStringIncludes(text, "<uploaded_files>");
+  assertStringIncludes(text, "sample-attachment.pdf");
+  assertStringIncludes(text, "test-upload-id");
+  assertStringIncludes(text, "application/pdf");
+  assertStringIncludes(text, "https://signed.example.com/invoice.pdf");
+  assertEquals(countOccurrences(text, "<uploaded_files>"), 1);
+  assertEquals(
+    content.some((part) =>
+      part.type === "file" && part.url === "https://signed.example.com/invoice.pdf"
+    ),
+    true,
+  );
 });
 
 Deno.test("chat attachment preparation keeps a synthetic PDF visible in the model prompt", async () => {
