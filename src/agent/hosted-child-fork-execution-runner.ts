@@ -21,6 +21,7 @@ import {
   prepareHostedChildForkRuntimeStepMessages,
 } from "./hosted-child-fork-step-message-preparation.ts";
 import {
+  type StartedHostedChildForkRuntime,
   startHostedChildForkRuntimeWithHostTools,
   type StartHostedChildForkRuntimeWithHostToolsInput,
 } from "./hosted-child-fork-runtime-start.ts";
@@ -86,6 +87,9 @@ export type ExecuteHostedChildForkWithPreparedToolsInput<
   buildInstructions?: () => string;
   onBeforeStop?: StartHostedChildForkRuntimeWithHostToolsInput<TAttributes>["onBeforeStop"];
   runStep?: AgentRuntimeForkStepRunner;
+  startRuntime?: (
+    input: StartHostedChildForkRuntimeWithHostToolsInput<TAttributes>,
+  ) => StartedHostedChildForkRuntime | Promise<StartedHostedChildForkRuntime>;
   childRunMonitorPollIntervalMs?: number;
   idleTimeoutMs?: number;
   activeToolTimeoutMs?: number;
@@ -200,7 +204,8 @@ export async function executeHostedChildForkWithPreparedTools<
         setAttributes: sourceInstrumentation.setTraceAttributes,
       }
       : undefined;
-    const started = await startHostedChildForkRuntimeWithHostTools({
+    const startRuntime = input.startRuntime ?? startHostedChildForkRuntimeWithHostTools;
+    const started = await startRuntime({
       apiUrl: input.apiUrl,
       authToken: input.authToken,
       projectId: input.projectId ?? null,

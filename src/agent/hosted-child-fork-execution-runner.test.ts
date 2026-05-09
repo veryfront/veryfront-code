@@ -150,6 +150,56 @@ Deno.test("executeHostedChildForkWithPreparedTools executes a prepared child for
   assertEquals(closeRuntimeCalls, 1);
 });
 
+Deno.test("executeHostedChildForkWithPreparedTools allows injecting the runtime starter", async () => {
+  let startRuntimeCalls = 0;
+  const result = await executeHostedChildForkWithPreparedTools({
+    authToken: "token",
+    apiUrl: "https://api.example.com",
+    description: "Check the app",
+    kind: "invoke_agent",
+    provider: "anthropic",
+    forkModel: "anthropic/claude-sonnet-4",
+    maxSteps: 4,
+    effectivePrompt: "Do the work.",
+    toolAssembly: {
+      ok: true,
+      forkTools: {},
+      availableToolNames: [],
+    },
+    startRuntime: (input) => {
+      startRuntimeCalls += 1;
+      assertEquals(input.forkModel, "anthropic/claude-sonnet-4");
+      return {
+        forkStreamAbortController: new AbortController(),
+        childRunMonitorAbortController: null,
+        childRunMonitorPromise: Promise.resolve(),
+        forkToolNames: [],
+        streamResult: {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "Injected." } as const;
+          })(),
+          steps: Promise.resolve([
+            {
+              text: "Injected.",
+              finishReason: "stop",
+              messages: [],
+              toolCalls: [],
+              toolResults: [],
+            },
+          ]),
+          totalUsage: Promise.resolve(undefined),
+        },
+      };
+    },
+  });
+
+  assertEquals(startRuntimeCalls, 1);
+  assertEquals(result.success, true);
+  if (result.success) {
+    assertEquals(result.summary.text, "Injected.");
+  }
+});
+
 Deno.test("executeHostedChildForkWithPreparedTools exports stable default timeout constants", () => {
   assertEquals(DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS, 2_000);
   assertEquals(DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS, 45_000);
