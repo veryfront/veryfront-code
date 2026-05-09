@@ -27,6 +27,8 @@ const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
   "additionalProperties",
   "allOf",
   "default",
+  "exclusiveMaximum",
+  "exclusiveMinimum",
   "oneOf",
   "prefixItems",
 ]);
@@ -175,6 +177,13 @@ function getSharedLiteralType(values: readonly unknown[]): JsonSchema["type"] | 
   return firstType;
 }
 
+function getGoogleCompatibleSchemaType(type: unknown): unknown {
+  if (!Array.isArray(type)) return type;
+
+  const nonNullTypes = type.filter((value) => value !== "null");
+  return nonNullTypes.length === 1 ? nonNullTypes[0] : undefined;
+}
+
 function sanitizeGoogleSchemaValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeGoogleSchemaValue(item));
@@ -190,6 +199,12 @@ function sanitizeGoogleSchemaValue(value: unknown): unknown {
 
   for (const [key, child] of Object.entries(value)) {
     if (key === "const" || key === "anyOf" || GOOGLE_UNSUPPORTED_SCHEMA_KEYS.has(key)) {
+      continue;
+    }
+
+    if (key === "type") {
+      const compatibleType = getGoogleCompatibleSchemaType(child);
+      if (compatibleType !== undefined) sanitized.type = compatibleType;
       continue;
     }
 

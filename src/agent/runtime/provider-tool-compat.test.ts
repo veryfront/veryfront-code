@@ -108,4 +108,31 @@ describe("provider-tool-compat", () => {
     assertEquals(sanitized.enum, ["file", 1]);
     assertEquals(sanitized.type, undefined);
   });
+
+  it("normalizes Google schemas that use JSON Schema type arrays and numeric exclusive bounds", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          maybeText: {
+            type: ["string", "null"],
+          },
+          flexible: {
+            type: ["string", "number"],
+          },
+          count: {
+            type: "number",
+            exclusiveMinimum: 0,
+            exclusiveMaximum: 10,
+          },
+        },
+      } as never,
+      { model: "google-ai-studio/gemini-2.5-pro" },
+    );
+
+    assertEquals(sanitized.properties?.maybeText?.type, "string");
+    assertEquals(sanitized.properties?.flexible?.type, undefined);
+    assertEquals(containsKey(sanitized, "exclusiveMinimum"), false);
+    assertEquals(containsKey(sanitized, "exclusiveMaximum"), false);
+  });
 });
