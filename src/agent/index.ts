@@ -741,6 +741,7 @@ export {
 } from "./default-research-artifact-policy.ts";
 export {
   applyDefaultResearchArtifactPath,
+  createDefaultResearchRunArtifactMirrorHandler,
   type DefaultResearchArtifactContext,
   type DefaultResearchArtifactLogger,
   type DefaultResearchArtifacts,
