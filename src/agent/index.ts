@@ -494,6 +494,8 @@ export {
   DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS,
   DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
+  executeHostedChildForkToolInput,
+  type ExecuteHostedChildForkToolInputOptions,
   executeHostedChildForkWithPreparedTools,
   type ExecuteHostedChildForkWithPreparedToolsInput,
   type HostedChildForkExecutionInstrumentation,

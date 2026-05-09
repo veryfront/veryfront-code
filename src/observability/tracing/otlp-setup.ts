@@ -12,7 +12,8 @@
  * - OTEL_EXPORTER_OTLP_HEADERS: Auth headers
  **************************/
 
-import { getOtelTracingConfig } from "#veryfront/config/env.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
 import { serverLogger } from "#veryfront/utils";
 import {
   type Context,
@@ -55,13 +56,15 @@ function parseHeaders(headerString: string | undefined): Record<string, string> 
 }
 
 function getConfig(): OTLPConfig {
-  const tracingConfig = getOtelTracingConfig();
-
+  // Span helpers can run during module initialization and test setup, before
+  // bootstrap has loaded .env files. Read tracing env directly here so no-op
+  // spans do not force early EnvironmentConfig initialization.
   return {
-    enabled: tracingConfig.enabledFlag === "true",
-    serviceName: tracingConfig.serviceName || "veryfront",
-    endpoint: tracingConfig.endpoint || "",
-    headers: parseHeaders(tracingConfig.headers),
+    enabled: isTruthyEnvValue(getEnv("VERYFRONT_OTEL")) ||
+      isTruthyEnvValue(getEnv("OTEL_TRACES_ENABLED")),
+    serviceName: getEnv("OTEL_SERVICE_NAME") || "veryfront",
+    endpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT") || "",
+    headers: parseHeaders(getEnv("OTEL_EXPORTER_OTLP_HEADERS")),
   };
 }
 

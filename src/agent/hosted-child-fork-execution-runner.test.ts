@@ -6,6 +6,7 @@ import {
   DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
   DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS,
   DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
+  executeHostedChildForkToolInput,
   executeHostedChildForkWithPreparedTools,
 } from "./hosted-child-fork-execution-runner.ts";
 import { createHostedDurableChildForkRunContext } from "./hosted-child-fork-run-context.ts";
@@ -261,6 +262,97 @@ Deno.test("executeHostedChildForkWithPreparedTools allows injecting the run cont
   assertEquals(result.success, true);
   if (result.success) {
     assertEquals(result.summary.text, "Injected context.");
+  }
+});
+
+Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares tools", async () => {
+  const callbacks: string[] = [];
+
+  const result = await executeHostedChildForkToolInput({
+    authToken: "token",
+    apiUrl: "https://api.example.com",
+    projectId: "project-1",
+    kind: "invoke_agent",
+    forkInput: {
+      description: "Review checkout",
+      prompt: "Review the checkout flow.",
+      project_id: "project-2",
+      tools: ["noop"],
+      model: "sonnet",
+      thinking: 256,
+      max_steps: 7,
+    },
+    toolCallId: "tool-call-1",
+    defaultModel: "haiku",
+    defaultMaxSteps: 80,
+    contextModel: "opus",
+    onRequestedProjectId: (projectId) => {
+      callbacks.push(`project:${projectId}`);
+    },
+    resolveModelId: (modelId) => `resolved-${modelId}`,
+    resolveProvider: (modelId) => `provider-${modelId}`,
+    resolveProviderOptions: (forkModel, thinkingConfig) => ({
+      forkModel,
+      thinkingConfig,
+    }),
+    onRuntimeConfig: (runtimeConfig) => {
+      callbacks.push(`runtime:${runtimeConfig.forkModel}`);
+    },
+    prepareToolAssembly: ({ runtimeConfig, requestedTools }) => {
+      callbacks.push(`tools:${requestedTools?.join(",") ?? "all"}`);
+      assertEquals(runtimeConfig.description, "Review checkout");
+      assertEquals(runtimeConfig.forkModel, "resolved-sonnet");
+      assertEquals(runtimeConfig.provider, "provider-resolved-sonnet");
+      assertEquals(runtimeConfig.maxSteps, 7);
+      assertEquals(runtimeConfig.thinkingConfig, { enabled: true, budgetTokens: 256 });
+      assertEquals(runtimeConfig.effectivePrompt.includes("Review the checkout flow."), true);
+      return {
+        ok: true,
+        forkTools: {},
+        availableToolNames: [],
+      };
+    },
+    startRuntime: (input) => {
+      callbacks.push(`start:${input.forkModel}`);
+      assertEquals(input.provider, "provider-resolved-sonnet");
+      assertEquals(input.maxSteps, 7);
+      assertEquals(input.providerOptions, {
+        forkModel: "resolved-sonnet",
+        thinkingConfig: { enabled: true, budgetTokens: 256 },
+      });
+      return {
+        forkStreamAbortController: new AbortController(),
+        childRunMonitorAbortController: null,
+        childRunMonitorPromise: Promise.resolve(),
+        forkToolNames: [],
+        streamResult: {
+          fullStream: (async function* () {
+            yield { type: "text-delta", text: "Resolved." } as const;
+          })(),
+          steps: Promise.resolve([
+            {
+              text: "Resolved.",
+              finishReason: "stop",
+              messages: [],
+              toolCalls: [],
+              toolResults: [],
+            },
+          ]),
+          totalUsage: Promise.resolve(undefined),
+        },
+      };
+    },
+  });
+
+  assertEquals(callbacks, [
+    "project:project-2",
+    "runtime:resolved-sonnet",
+    "tools:noop",
+    "start:resolved-sonnet",
+  ]);
+  assertEquals(result.success, true);
+  if (result.success) {
+    assertEquals(result.summary.text, "Resolved.");
   }
 });
 

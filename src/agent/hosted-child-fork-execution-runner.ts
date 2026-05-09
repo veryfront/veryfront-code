@@ -41,6 +41,12 @@ import type {
 } from "./hosted-child-fork-stream-execution.ts";
 import type { HostedChildRunIdentifiers } from "./hosted-child-status.ts";
 import { throwIfChildRunAborted } from "./child-run-execution-support.ts";
+import {
+  type HostedChildForkRuntimeConfig,
+  type HostedChildForkToolInput,
+  resolveHostedChildForkRuntimeConfig,
+  type ResolveHostedChildForkRuntimeConfigInput,
+} from "./hosted-child-tool-input.ts";
 
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS = 5 * 60_000;
@@ -167,6 +173,84 @@ function defaultResolveSystem(input: {
 
   const remindedSystem = addLoadSkillContinuationReminder(input.system);
   return typeof remindedSystem === "string" ? remindedSystem : input.system;
+}
+
+export type ExecuteHostedChildForkToolInputOptions<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+> =
+  & Omit<
+    ExecuteHostedChildForkWithPreparedToolsInput<TAttributes>,
+    | "description"
+    | "provider"
+    | "forkModel"
+    | "maxSteps"
+    | "effectivePrompt"
+    | "toolAssembly"
+    | "providerOptions"
+  >
+  & {
+    forkInput: HostedChildForkToolInput;
+    toolCallId: string;
+    defaultModel: string;
+    defaultMaxSteps: number;
+    contextModel?: string;
+    onRequestedProjectId?: (projectId: string) => void | Promise<void>;
+    prepareToolAssembly: (input: {
+      runtimeConfig: HostedChildForkRuntimeConfig;
+      requestedTools?: HostedChildForkToolInput["tools"];
+      abortSignal?: AbortSignal;
+    }) =>
+      | DefaultHostedChildForkToolAssemblyResult
+      | Promise<DefaultHostedChildForkToolAssemblyResult>;
+    resolveModelId: ResolveHostedChildForkRuntimeConfigInput["resolveModelId"];
+    resolveProvider: ResolveHostedChildForkRuntimeConfigInput["resolveProvider"];
+    resolveProviderOptions?: (
+      forkModel: string,
+      thinkingConfig: HostedChildForkRuntimeConfig["thinkingConfig"],
+    ) => Record<string, unknown> | undefined;
+    onRuntimeConfig?: (runtimeConfig: HostedChildForkRuntimeConfig) => void | Promise<void>;
+  };
+
+export async function executeHostedChildForkToolInput<
+  TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: ExecuteHostedChildForkToolInputOptions<TAttributes>,
+): Promise<ChildRunExecutionResult> {
+  if (input.forkInput.project_id) {
+    await input.onRequestedProjectId?.(input.forkInput.project_id);
+  }
+
+  const runtimeConfig = resolveHostedChildForkRuntimeConfig({
+    forkInput: input.forkInput,
+    contextModel: input.contextModel,
+    defaultModel: input.defaultModel,
+    defaultMaxSteps: input.defaultMaxSteps,
+    runId: input.durableChildRun?.childRunId ?? input.toolCallId,
+    resolveModelId: input.resolveModelId,
+    resolveProvider: input.resolveProvider,
+  });
+
+  await input.onRuntimeConfig?.(runtimeConfig);
+
+  const toolAssembly = await input.prepareToolAssembly({
+    runtimeConfig,
+    requestedTools: runtimeConfig.requestedTools,
+    abortSignal: input.abortSignal,
+  });
+
+  return executeHostedChildForkWithPreparedTools({
+    ...input,
+    description: runtimeConfig.description,
+    provider: runtimeConfig.provider,
+    forkModel: runtimeConfig.forkModel,
+    maxSteps: runtimeConfig.maxSteps,
+    effectivePrompt: runtimeConfig.effectivePrompt,
+    toolAssembly,
+    providerOptions: input.resolveProviderOptions?.(
+      runtimeConfig.forkModel,
+      runtimeConfig.thinkingConfig,
+    ),
+  });
 }
 
 export async function executeHostedChildForkWithPreparedTools<
