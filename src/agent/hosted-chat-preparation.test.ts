@@ -3,6 +3,7 @@ import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
 import {
   normalizeParsedHostedChatRequest,
+  prepareHostedChatExecution,
   prepareHostedChatRuntimeCreationOptions,
   prepareHostedChatRuntimeMessages,
 } from "./hosted-chat-preparation.ts";
@@ -216,6 +217,74 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
 
   await result.creationOptions.publishParentRunEvents?.([{ type: "state_delta" }]);
   assertEquals(parentEvents, [{ type: "state_delta" }]);
+});
+
+Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {
+  const result = await prepareHostedChatExecution({
+    request: createParsedHostedChatRequest({
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      durableRootRun: {
+        runId: "run-1",
+        messageId: "message-1",
+        latestEventId: 3,
+        latestExternalEventSequence: 2,
+      },
+      parentRunId: "parent-run-1",
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "configured-model",
+      maxSteps: 25,
+    },
+    apiUrl: "https://api.example.com",
+    abortSignal: new AbortController().signal,
+    resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "Project instructions",
+        skills: [],
+      }),
+    buildInstructions: (input) => [
+      {
+        role: "system",
+        content: `${input.agentConfig.id}:${input.instructions}`,
+      },
+    ],
+    createRuntime: (options) =>
+      Promise.resolve({
+        runtimeKind: "framework",
+        modelId: options.model ?? "resolved:configured-model",
+        cleanup: () => Promise.resolve(),
+        agent: {
+          stream: () =>
+            Promise.resolve({
+              steps: Promise.resolve([]),
+              toUIMessageStream: async function* () {},
+            }),
+        },
+      }),
+  });
+
+  assertEquals(result.parentMessageId, "user-message-1");
+  assertEquals(result.rootRunContext.durableRootRun, {
+    runId: "run-1",
+    conversationId: "conversation-1",
+    messageId: "message-1",
+    latestEventId: 3,
+    latestExternalEventSequence: 2,
+  });
+  assertEquals(result.rootRunContext.effectiveParentRunId, "run-1");
+  assertEquals(result.rootRunContext.effectiveParentMessageId, "message-1");
+  assertEquals(result.runtime.runtimeKind, "framework");
+  assertEquals(result.runtime.modelId, "resolved:configured-model");
+  assertEquals(result.finalMessages.length, 1);
+  assertEquals(result.steering.agentInstructions, [
+    {
+      role: "system",
+      content: "agent-1:Project instructions",
+    },
+  ]);
 });
 
 Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through the hosted API", async () => {
