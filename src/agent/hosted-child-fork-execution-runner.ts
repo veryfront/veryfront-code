@@ -30,7 +30,10 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "./child-run-execution-snapshot.ts";
-import type { HostedConversationRunChunkMirrorInstrumentation } from "./conversation-run-chunk-mirror.ts";
+import type {
+  HostedConversationRunChunkMirrorInstrumentation,
+  HostedConversationRunChunkMirrorTraceAttributes,
+} from "./conversation-run-chunk-mirror.ts";
 import type { HostedChildExecutionLogEntry } from "./hosted-child-execution-logging.ts";
 import type {
   HostedChildForkStreamLogger,
@@ -49,7 +52,9 @@ export type HostedChildForkExecutionInstrumentation<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
   trace?: <TResult>(operationName: string, operation: () => TResult) => TResult;
-  setTraceAttributes?: (attributes: Record<string, unknown>) => void;
+  setTraceAttributes?: (
+    attributes: TAttributes | HostedConversationRunChunkMirrorTraceAttributes,
+  ) => void;
   buildToolTraceAttributes?: (input: {
     toolName: string;
     toolCallId: string | undefined;
