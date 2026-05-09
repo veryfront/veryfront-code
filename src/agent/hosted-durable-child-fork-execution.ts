@@ -4,6 +4,10 @@ import type {
 } from "./child-run-execution-snapshot.ts";
 import { buildChildRunResultSummary } from "./child-run-result-summary.ts";
 import { type ConversationRunTargets, resolveConversationRunTargets } from "./durable.ts";
+import {
+  type AgentTraceAttributes,
+  buildInvokeAgentTraceAttributes,
+} from "./agent-trace-attributes.ts";
 import { createConversationChildLifecycleAdapter } from "./conversation-hosted-lifecycle.ts";
 import type { InvokeAgentChildRunProgressEvent } from "./invoke-agent-child-runs.ts";
 import { bootstrapHostedChildRun } from "./hosted-child-bootstrap.ts";
@@ -76,6 +80,23 @@ export type HostedDurableChildSetupFailure = {
   terminalErrorMessage: string;
 };
 
+export type HostedDurableChildInvokeTraceInput = Parameters<
+  typeof buildInvokeAgentTraceAttributes
+>[0];
+
+export type HostedDurableChildInvokeTraceBase = Pick<
+  HostedDurableChildInvokeTraceInput,
+  "conversationId" | "projectId" | "runId" | "toolCallId" | "childAgentId"
+>;
+
+export type HostedDurableChildInvokeTraceOverrides = Partial<
+  Omit<HostedDurableChildInvokeTraceInput, keyof HostedDurableChildInvokeTraceBase>
+>;
+
+export type HostedDurableChildInvokeTraceRecorder = ReturnType<
+  typeof createHostedDurableChildInvokeTraceRecorder
+>;
+
 export function buildHostedDurableChildInvokeFailureResult(
   input: BuildHostedDurableChildInvokeFailureResultInput,
 ): HostedDurableChildInvokeResult {
@@ -137,6 +158,100 @@ export function buildHostedDurableChildInvokeSuccessResult<
     runtimeTargetKind: input.targets.runtimeTargetKind,
     terminalErrorCode: input.snapshot.success ? null : "INVOKE_AGENT_FAILED",
     terminalErrorMessage: input.snapshot.success ? null : input.snapshot.error,
+  };
+}
+
+export function createHostedDurableChildInvokeTraceRecorder(input: {
+  traceBase: HostedDurableChildInvokeTraceBase;
+  setTraceAttributes: (attributes: AgentTraceAttributes) => void;
+  executionFailedCode: string;
+}) {
+  function annotate(overrides: HostedDurableChildInvokeTraceOverrides = {}): void {
+    input.setTraceAttributes(
+      buildInvokeAgentTraceAttributes({
+        ...input.traceBase,
+        ...overrides,
+      }),
+    );
+  }
+
+  return {
+    annotate,
+    recordLocalResult<TLocalResult extends ChildRunExecutionResult>(
+      result: TLocalResult,
+    ): TLocalResult {
+      annotate({
+        status: result.success ? "completed" : "failed",
+        usage: result.usage,
+        terminalErrorCode: result.success ? null : input.executionFailedCode,
+        terminalErrorMessage: result.success ? null : result.error,
+      });
+
+      return result;
+    },
+    recordLocalFailure(errorMessage: string): void {
+      annotate({
+        status: "failed",
+        terminalErrorCode: input.executionFailedCode,
+        terminalErrorMessage: errorMessage,
+      });
+    },
+    recordSetupFailure(
+      failure: HostedDurableChildSetupFailure,
+    ): HostedDurableChildInvokeResult {
+      annotate({
+        childConversationId: failure.childConversationId,
+        childRunId: failure.childRunId,
+        childMessageId: failure.childMessageId,
+        sourceTargetKind: failure.targets.sourceTargetKind,
+        runtimeTargetKind: failure.targets.runtimeTargetKind,
+        status: "failed",
+        terminalErrorCode: failure.terminalErrorCode,
+        terminalErrorMessage: failure.terminalErrorMessage,
+      });
+
+      return buildHostedDurableChildInvokeFailureResult({
+        terminalErrorCode: failure.terminalErrorCode,
+        terminalErrorMessage: failure.terminalErrorMessage,
+        targets: failure.targets,
+        childConversationId: failure.childConversationId,
+        childRunId: failure.childRunId,
+        childMessageId: failure.childMessageId,
+      });
+    },
+    recordTerminalFailure(
+      failure: HostedDurableChildTerminalFailure,
+    ): HostedDurableChildInvokeResult {
+      annotate({
+        childConversationId: failure.identifiers.childConversationId,
+        childRunId: failure.identifiers.childRunId,
+        childMessageId: failure.identifiers.childMessageId,
+        sourceTargetKind: failure.targets.sourceTargetKind,
+        runtimeTargetKind: failure.targets.runtimeTargetKind,
+        status: "failed",
+        terminalErrorCode: failure.terminalErrorCode,
+        terminalErrorMessage: failure.terminalErrorMessage,
+      });
+
+      return buildHostedDurableChildInvokeTerminalFailureResult(failure);
+    },
+    recordSuccess<TLocalResult extends ChildRunExecutionResult>(
+      success: HostedDurableChildSuccess<TLocalResult>,
+    ): HostedDurableChildInvokeResult {
+      annotate({
+        childConversationId: success.identifiers.childConversationId,
+        childRunId: success.identifiers.childRunId,
+        childMessageId: success.identifiers.childMessageId,
+        sourceTargetKind: success.targets.sourceTargetKind,
+        runtimeTargetKind: success.targets.runtimeTargetKind,
+        status: success.snapshot.success ? "completed" : "failed",
+        usage: success.snapshot.usage,
+        terminalErrorCode: success.snapshot.success ? null : input.executionFailedCode,
+        terminalErrorMessage: success.snapshot.success ? null : success.snapshot.error,
+      });
+
+      return buildHostedDurableChildInvokeSuccessResult(success);
+    },
   };
 }
 
