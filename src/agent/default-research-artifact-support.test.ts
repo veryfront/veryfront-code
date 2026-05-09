@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createDefaultResearchRunArtifactMirrorHandler,
   type DefaultResearchArtifactContext,
   extractLatestUserText,
   mirrorDefaultResearchRunArtifact,
@@ -291,5 +292,79 @@ describe("default research artifact support", () => {
         context: { projectId: "project-1" },
       },
     ]);
+  });
+
+  it("creates a mirror handler from the API remote tool source", async () => {
+    const calls: Array<
+      {
+        toolName: string;
+        args: Record<string, unknown>;
+        context: Record<string, unknown> | undefined;
+      }
+    > = [];
+    const handler = createDefaultResearchRunArtifactMirrorHandler({
+      taskContext: {
+        projectId: "fallback-project",
+        defaultResearchArtifacts: defaultArtifacts(),
+      },
+      remoteToolSource: {
+        executeTool: (toolName, args, context) => {
+          calls.push({ toolName, args, context });
+          return Promise.resolve({
+            path: "research/ai-coding-agents/runs/run-1.report.md",
+          });
+        },
+      },
+    });
+
+    await handler({
+      toolName: "create_file",
+      input: {
+        path: "research/ai-coding-agents/report.md",
+        content: "# report",
+      },
+      result: {
+        path: "research/ai-coding-agents/report.md",
+      },
+      context: {},
+    });
+
+    assertEquals(calls, [
+      {
+        toolName: "create_file",
+        args: {
+          path: "research/ai-coding-agents/runs/run-1.report.md",
+          content: "# report",
+          project_reference: "fallback-project",
+        },
+        context: {},
+      },
+    ]);
+  });
+
+  it("skips mirror handler writes for errored tool results", async () => {
+    const calls: string[] = [];
+    const handler = createDefaultResearchRunArtifactMirrorHandler({
+      taskContext: {
+        defaultResearchArtifacts: defaultArtifacts(),
+      },
+      remoteToolSource: {
+        executeTool: (toolName) => {
+          calls.push(toolName);
+          return Promise.resolve(undefined);
+        },
+      },
+    });
+
+    await handler({
+      toolName: "create_file",
+      input: {
+        path: "research/ai-coding-agents/report.md",
+        content: "# report",
+      },
+      result: { isError: true },
+    });
+
+    assertEquals(calls, []);
   });
 });

@@ -1,4 +1,6 @@
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
+import { isErroredToolExecutionResult, type RemoteToolSource } from "#veryfront/tool";
+import { toChildRunToolInputRecord } from "./child-run-execution-support.ts";
 import { isHostedChildCreateFileAlreadyExistsResult } from "./hosted-child-artifact-support.ts";
 import {
   buildDefaultResearchArtifactPathReminder,
@@ -11,6 +13,7 @@ export type DefaultResearchArtifacts = DefaultResearchArtifactPaths;
 
 export interface DefaultResearchArtifactContext {
   availableToolNames?: string[];
+  projectId?: string | null;
   parentRunId?: string;
   defaultResearchArtifacts?: DefaultResearchArtifacts | null;
 }
@@ -336,4 +339,36 @@ export async function mirrorDefaultResearchRunArtifact(input: {
     }
     throw error;
   }
+}
+
+export function createDefaultResearchRunArtifactMirrorHandler(input: {
+  taskContext: DefaultResearchArtifactContext;
+  remoteToolSource?: Pick<RemoteToolSource, "executeTool"> | null;
+}) {
+  return async (request: {
+    toolName: string;
+    input: Record<string, unknown>;
+    result: unknown;
+    context?: Record<string, unknown>;
+  }): Promise<void> => {
+    const remoteToolSource = input.remoteToolSource;
+    if (!remoteToolSource || isErroredToolExecutionResult(request.result)) {
+      return;
+    }
+
+    const activeProjectId = typeof request.context?.projectId === "string"
+      ? request.context.projectId
+      : input.taskContext.projectId || null;
+
+    await mirrorDefaultResearchRunArtifact({
+      toolName: request.toolName,
+      toolInput: toChildRunToolInputRecord(request.input),
+      taskContext: input.taskContext,
+      activeProjectId,
+      executeContext: request.context,
+      toolResult: request.result,
+      executeTool: (nextToolName, nextArgs, nextContext) =>
+        remoteToolSource.executeTool(nextToolName, nextArgs, nextContext),
+    });
+  };
 }
