@@ -1,11 +1,21 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import type {
+  CommandJob,
+  CommandJobOutput,
+  CreateSandboxBashTool,
+  HostedSandboxToolsOptions,
+  HostedSandboxToolsResult,
+} from "#veryfront/sandbox";
+import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool";
-import { prepareDefaultHostedChildForkToolSources } from "./hosted-child-fork-tool-sources.ts";
+import {
+  prepareDefaultHostedChildForkSandboxToolSources,
+  prepareDefaultHostedChildForkToolSources,
+} from "./hosted-child-fork-tool-sources.ts";
 import type { RuntimeClientProfile } from "./runtime-client-profile.ts";
 
 const trustedStudioProfile: RuntimeClientProfile = {
@@ -52,6 +62,55 @@ function createRemoteSourceFixtures() {
   };
 
   return { createdConfigs, executeCalls, createRemoteToolSource };
+}
+
+function commandJob(status: CommandJob["status"]): CommandJob {
+  return {
+    id: "job-1",
+    status,
+    exitCode: null,
+    signal: null,
+    startedAt: "2026-01-01T00:00:00.000Z",
+    finishedAt: null,
+    heartbeatStatus: "healthy",
+    lastHeartbeatAt: null,
+    lastHeartbeatError: null,
+    heartbeatFailureCount: 0,
+  };
+}
+
+function commandJobOutput(): CommandJobOutput {
+  return {
+    ...commandJob("completed"),
+    exitCode: 0,
+    finishedAt: "2026-01-01T00:00:01.000Z",
+    stdout: "",
+    stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  };
+}
+
+function createSandboxToolsResult(input: {
+  tools?: HostedSandboxToolsResult["tools"];
+  closeSandbox: () => Promise<void>;
+}): HostedSandboxToolsResult {
+  return {
+    tools: input.tools ?? {},
+    sandbox: {
+      ensure: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+      executeCommand: () => Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
+      startCommandJob: () => Promise.resolve(commandJob("running")),
+      getCommandJob: () => Promise.resolve(commandJob("completed")),
+      getCommandJobOutput: () => Promise.resolve(commandJobOutput()),
+      cancelCommandJob: () => Promise.resolve(commandJob("canceled")),
+      isActive: true,
+      id: "sandbox-1",
+      url: "https://sandbox.example",
+    },
+    closeSandbox: input.closeSandbox,
+  };
 }
 
 Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and global tools", async () => {
@@ -150,4 +209,96 @@ Deno.test("prepareDefaultHostedChildForkToolSources rethrows abort errors", asyn
     Error,
     "fork aborted",
   );
+});
+
+Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools and returns runtime cleanup", async () => {
+  const fixtures = createRemoteSourceFixtures();
+  const sandboxToolInputs: HostedSandboxToolsOptions[] = [];
+  let sandboxClosed = false;
+  const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
+
+  const result = await prepareDefaultHostedChildForkSandboxToolSources({
+    authToken: "token-1",
+    apiUrl: "https://api.example",
+    apiMcpUrl: "https://api.example/mcp",
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: trustedStudioProfile,
+    getProjectId: () => "project-1",
+    conversationId: "conversation-1",
+    globalTools: {
+      sleep: {
+        description: "sleep",
+        execute: () => ({ ok: true }),
+      },
+    },
+    createBashTool,
+    createRemoteToolSource: fixtures.createRemoteToolSource,
+    createHostedSandboxTools: (sandboxInput) => {
+      sandboxToolInputs.push(sandboxInput);
+      return Promise.resolve(
+        createSandboxToolsResult({
+          tools: {
+            bash: {
+              description: "bash",
+              execute: () => ({ ok: true }),
+            },
+          },
+          closeSandbox: () => {
+            sandboxClosed = true;
+            return Promise.resolve();
+          },
+        }),
+      );
+    },
+  });
+
+  assertEquals(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assertEquals(Object.keys(result.forkTools), [
+    "bash",
+    "sleep",
+    "studio_open_project",
+    "update_file",
+  ]);
+  assertEquals(sandboxToolInputs.map((input) => [input.apiUrl, input.getProjectId?.()]), [
+    ["https://api.example", "project-1"],
+  ]);
+
+  await result.closeRuntime?.();
+  assertEquals(sandboxClosed, true);
+  await result.closeTooling?.();
+});
+
+Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when source setup fails", async () => {
+  let sandboxClosed = false;
+  const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
+
+  const result = await prepareDefaultHostedChildForkSandboxToolSources({
+    authToken: "token-1",
+    apiUrl: "https://api.example",
+    apiMcpUrl: "https://api.example/mcp",
+    getProjectId: () => "project-1",
+    createBashTool,
+    createLiveStudioTools: () => {
+      throw new Error("studio unavailable");
+    },
+    createHostedSandboxTools: () =>
+      Promise.resolve(
+        createSandboxToolsResult({
+          closeSandbox: () => {
+            sandboxClosed = true;
+            return Promise.resolve();
+          },
+        }),
+      ),
+  });
+
+  assertEquals(result, {
+    ok: false,
+    errorMessage: "MCP tool setup failed: studio unavailable",
+  });
+  assertEquals(sandboxClosed, true);
 });

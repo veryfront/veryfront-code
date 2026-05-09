@@ -6,6 +6,11 @@ import {
   type RemoteToolSource,
 } from "#veryfront/tool";
 import {
+  createHostedSandboxTools,
+  type HostedSandboxToolsOptions,
+  type HostedSandboxToolsResult,
+} from "#veryfront/sandbox";
+import {
   createLiveStudioMcpTools,
   type LiveStudioMcpToolsOptions,
 } from "./live-studio-mcp-tools.ts";
@@ -14,7 +19,10 @@ import {
   type HostedChildProjectSwitchHandler,
   wrapHostedChildProjectSwitchTool,
 } from "./hosted-child-steering-tools.ts";
-import { buildDefaultHostedChildForkToolSet } from "./hosted-child-requested-tools.ts";
+import {
+  buildDefaultHostedChildForkToolSet,
+  type DefaultHostedChildForkToolAssemblySourceResult,
+} from "./hosted-child-requested-tools.ts";
 
 export type HostedChildForkToolSourcesLogger = {
   error: (message: string, metadata?: Record<string, unknown>) => void;
@@ -50,6 +58,16 @@ export type DefaultHostedChildForkToolSourcesResult =
   | {
     ok: false;
     errorMessage: string;
+  };
+
+export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
+  & PrepareDefaultHostedChildForkToolSourcesInput
+  & {
+    apiUrl: string;
+    createBashTool: HostedSandboxToolsOptions["createBashTool"];
+    createHostedSandboxTools?: (
+      input: HostedSandboxToolsOptions,
+    ) => Promise<HostedSandboxToolsResult>;
   };
 
 export async function prepareDefaultHostedChildForkToolSources(
@@ -121,6 +139,50 @@ export async function prepareDefaultHostedChildForkToolSources(
     ),
     closeStudioMcpTools,
   };
+}
+
+export async function prepareDefaultHostedChildForkSandboxToolSources(
+  input: PrepareDefaultHostedChildForkSandboxToolSourcesInput,
+): Promise<DefaultHostedChildForkToolAssemblySourceResult> {
+  const {
+    apiUrl,
+    createBashTool,
+    createHostedSandboxTools: createHostedSandboxToolsOverride,
+    globalTools,
+    ...toolSourceInput
+  } = input;
+  const createSandboxTools = createHostedSandboxToolsOverride ?? createHostedSandboxTools;
+  const sandboxResult = await createSandboxTools({
+    authToken: input.authToken,
+    apiUrl,
+    getProjectId: input.getProjectId,
+    createBashTool,
+  });
+  const mergedGlobalTools = {
+    ...(globalTools ?? {}),
+    ...sandboxResult.tools,
+  };
+
+  try {
+    const toolSources = await prepareDefaultHostedChildForkToolSources({
+      ...toolSourceInput,
+      globalTools: mergedGlobalTools,
+    });
+    if (!toolSources.ok) {
+      await sandboxResult.closeSandbox();
+      return toolSources;
+    }
+
+    return {
+      ok: true,
+      forkTools: toolSources.forkTools,
+      closeRuntime: sandboxResult.closeSandbox,
+      closeTooling: toolSources.closeStudioMcpTools,
+    };
+  } catch (error) {
+    await sandboxResult.closeSandbox();
+    throw error;
+  }
 }
 
 function throwIfAborted(abortSignal: AbortSignal | undefined): void {

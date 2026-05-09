@@ -165,6 +165,8 @@ export {
 export {
   type DefaultHostedChildForkToolSourcesResult,
   type HostedChildForkToolSourcesLogger,
+  prepareDefaultHostedChildForkSandboxToolSources,
+  type PrepareDefaultHostedChildForkSandboxToolSourcesInput,
   prepareDefaultHostedChildForkToolSources,
   type PrepareDefaultHostedChildForkToolSourcesInput,
 } from "./hosted-child-fork-tool-sources.ts";
