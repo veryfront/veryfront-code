@@ -163,6 +163,31 @@ export type DefaultHostedChildForkRuntimeToolPreparationResult =
     errorMessage: string;
   };
 
+export type DefaultHostedChildForkToolAssemblySourceResult =
+  | {
+    ok: true;
+    forkTools: HostToolSet;
+    closeTooling?: () => Promise<void>;
+    closeRuntime?: () => Promise<void>;
+  }
+  | {
+    ok: false;
+    errorMessage: string;
+  };
+
+export type DefaultHostedChildForkToolAssemblyResult =
+  | {
+    ok: true;
+    forkTools: HostToolSet;
+    availableToolNames: string[];
+    closeTooling?: () => Promise<void>;
+    closeRuntime?: () => Promise<void>;
+  }
+  | {
+    ok: false;
+    errorMessage: string;
+  };
+
 export function selectHostedChildForkRuntimeTools(input: {
   provider: string;
   forkModel?: string;
@@ -293,6 +318,50 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
     ok: true,
     forkTools,
     availableToolNames,
+  };
+}
+
+export async function prepareDefaultHostedChildForkToolAssembly(input: {
+  prepareToolSources: () => Promise<DefaultHostedChildForkToolAssemblySourceResult>;
+  provider: string;
+  forkModel?: string;
+  effectivePrompt: string;
+  requestedTools?: readonly string[];
+  activeProjectId?: string | null;
+  activeBranchId?: string | null;
+  steeringPaths?: ProjectSteeringPaths;
+  onSteeringMutation?: HostedChildSteeringMutationHandler;
+  logger?: HostedChildFileWriteFallbackLogger;
+}): Promise<DefaultHostedChildForkToolAssemblyResult> {
+  const toolSources = await input.prepareToolSources();
+  if (!toolSources.ok) {
+    return toolSources;
+  }
+
+  const preparedTools = prepareDefaultHostedChildForkRuntimeTools({
+    provider: input.provider,
+    forkModel: input.forkModel,
+    forkTools: toolSources.forkTools,
+    effectivePrompt: input.effectivePrompt,
+    requestedTools: input.requestedTools,
+    activeProjectId: input.activeProjectId,
+    activeBranchId: input.activeBranchId,
+    steeringPaths: input.steeringPaths,
+    onSteeringMutation: input.onSteeringMutation,
+    logger: input.logger,
+  });
+  if (!preparedTools.ok) {
+    await toolSources.closeTooling?.();
+    await toolSources.closeRuntime?.();
+    return preparedTools;
+  }
+
+  return {
+    ok: true,
+    forkTools: preparedTools.forkTools,
+    availableToolNames: preparedTools.availableToolNames,
+    closeTooling: toolSources.closeTooling,
+    closeRuntime: toolSources.closeRuntime,
   };
 }
 

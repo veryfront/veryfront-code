@@ -6,6 +6,7 @@ import {
   DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
   expandHostedChildRequestedTools,
   prepareDefaultHostedChildForkRuntimeTools,
+  prepareDefaultHostedChildForkToolAssembly,
   sanitizeDefaultHostedChildRequestedTools,
   sanitizeHostedChildRequestedTools,
   selectDefaultHostedChildForkRuntimeTools,
@@ -177,7 +178,7 @@ Deno.test("prepareDefaultHostedChildForkRuntimeTools selects, decorates, and rep
     },
     update_file: {
       description: "Update a file",
-      execute: (toolInput) => {
+      execute: (toolInput: unknown) => {
         fallbackCalls.push(toolInput);
         return { structuredContent: { success: true } };
       },
@@ -228,6 +229,79 @@ Deno.test("prepareDefaultHostedChildForkRuntimeTools selects, decorates, and rep
     "Falling back from create_file to update_file for existing project artifact",
   ]);
   assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
+});
+
+Deno.test("prepareDefaultHostedChildForkToolAssembly prepares sources and returns cleanup handles", async () => {
+  const closeCalls: string[] = [];
+  const sourceTools: HostToolSet = {
+    create_file: { description: "Create file" },
+    update_file: { description: "Update file" },
+  };
+
+  const result = await prepareDefaultHostedChildForkToolAssembly({
+    prepareToolSources: () =>
+      Promise.resolve({
+        ok: true,
+        forkTools: sourceTools,
+        closeTooling: () => {
+          closeCalls.push("tooling");
+          return Promise.resolve();
+        },
+        closeRuntime: () => {
+          closeCalls.push("runtime");
+          return Promise.resolve();
+        },
+      }),
+    provider: "anthropic",
+    forkModel: "claude-sonnet-4-5-20250929",
+    effectivePrompt: "Create the requested project artifact",
+    requestedTools: ["create_file"],
+  });
+
+  if (!result.ok) {
+    throw new Error(result.errorMessage);
+  }
+
+  assertEquals(Object.keys(result.forkTools), ["create_file", "update_file"]);
+  assertEquals(result.availableToolNames, ["create_file", "update_file"]);
+
+  await result.closeTooling?.();
+  await result.closeRuntime?.();
+
+  assertEquals(closeCalls, ["tooling", "runtime"]);
+});
+
+Deno.test("prepareDefaultHostedChildForkToolAssembly closes sources when tool selection fails", async () => {
+  const closeCalls: string[] = [];
+
+  const result = await prepareDefaultHostedChildForkToolAssembly({
+    prepareToolSources: () =>
+      Promise.resolve({
+        ok: true,
+        forkTools: {
+          create_file: { description: "Create file" },
+        },
+        closeTooling: () => {
+          closeCalls.push("tooling");
+          return Promise.resolve();
+        },
+        closeRuntime: () => {
+          closeCalls.push("runtime");
+          return Promise.resolve();
+        },
+      }),
+    provider: "anthropic",
+    forkModel: "claude-sonnet-4-5-20250929",
+    effectivePrompt: "Create the requested project artifact",
+    requestedTools: ["not_a_real_tool"],
+  });
+
+  assertEquals(result, {
+    ok: false,
+    errorMessage:
+      "Requested fork tools not available in runtime: not_a_real_tool. Available: create_file, web_fetch, web_search.",
+  });
+  assertEquals(closeCalls, ["tooling", "runtime"]);
 });
 
 Deno.test("buildDefaultHostedChildForkToolSet merges tool sets deterministically and removes default exclusions", () => {
