@@ -2,6 +2,7 @@ import { assertEquals } from "@std/assert";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import {
   createHostedChildForkRunContext,
+  createHostedDurableChildForkRunContext,
   executeHostedChildForkRunContextStream,
   finalizeHostedChildForkRunContextResources,
   handleHostedChildForkRunContextError,
@@ -55,6 +56,50 @@ Deno.test("createHostedChildForkRunContext wires stream mirror state and buffers
   assertEquals(context.streamMirrorContext.hasStartedStep(), true);
   assertEquals(context.streamMirrorContext.hasEmittedProgress(), true);
   assertEquals(chunks, [{ type: "start-step" }]);
+});
+
+Deno.test("createHostedDurableChildForkRunContext wires conversation mirror and child identifiers", () => {
+  const traces: string[] = [];
+  const context = createHostedDurableChildForkRunContext({
+    authToken: "token",
+    apiUrl: "https://api.example.com",
+    durableChildRun: {
+      childConversationId: "child-conversation-1",
+      childRunId: "child-run-1",
+      childMessageId: "child-message-1",
+      latestEventId: 5,
+      latestExternalEventSequence: 7,
+    },
+    instrumentation: {
+      trace: (operationName, operation) => {
+        traces.push(operationName);
+        return operation();
+      },
+    },
+    pendingToolLogContext: {
+      conversationId: "conversation-1",
+      parentRunId: "run-1",
+      description: "Check the app",
+    },
+  });
+
+  assertEquals(context.durableRunMirror?.getSnapshot(), {
+    latestEventId: 5,
+    latestExternalEventSequence: 7,
+    consecutiveFailures: 0,
+    disabled: false,
+    pendingEventCount: 0,
+    inFlight: false,
+    hasFlushTimer: false,
+    hasRetryTimer: false,
+  });
+  assertEquals(context.streamMirrorContext.durableRunMirror, true);
+  assertEquals(context.streamMirrorContext.durableMessageId, "child-message-1");
+  assertEquals(
+    context.streamMirrorContext.durableReasoningMessageId,
+    "child-message-1:reasoning",
+  );
+  assertEquals(traces, []);
 });
 
 Deno.test("createHostedChildForkRunContext closes pending tool calls with host logger", async () => {

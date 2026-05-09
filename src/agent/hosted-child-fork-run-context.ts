@@ -5,6 +5,11 @@ import {
   type HostedChildMirrorContext,
 } from "./hosted-child-mirror.ts";
 import {
+  type ConversationRunChunkMirror,
+  createHostedConversationRunChunkMirror,
+  type HostedConversationRunChunkMirrorInstrumentation,
+} from "./conversation-run-chunk-mirror.ts";
+import {
   createHostedChildPendingToolLifecycle,
   createHostedChildPendingToolLifecycleLogger,
   type HostedChildPendingToolLifecycleLogContext,
@@ -26,7 +31,10 @@ import type {
   ChildRunExecutionSnapshot,
 } from "./child-run-execution-snapshot.ts";
 import { isChildRunAbortError } from "./child-run-execution-support.ts";
-import { HostedChildTerminalStateError } from "./hosted-child-status.ts";
+import {
+  type HostedChildRunIdentifiers,
+  HostedChildTerminalStateError,
+} from "./hosted-child-status.ts";
 
 export interface HostedChildForkToolCallSnapshot {
   toolName: string;
@@ -67,10 +75,23 @@ export interface HostedChildForkRunContext {
   streamState: HostedChildForkStreamState;
 }
 
+export type HostedDurableChildForkRunContext = HostedChildForkRunContext & {
+  durableRunMirror: ConversationRunChunkMirror | null;
+};
+
 export interface HostedChildForkRunContextInput {
   mirror: HostedChildChunkMirror | null;
   messageId?: string | null;
   reasoningMessageId?: string | null;
+  pendingToolLogContext: HostedChildPendingToolLifecycleLogContext;
+  pendingToolLogWriter?: HostedChildPendingToolLifecycleLogWriter;
+}
+
+export interface HostedDurableChildForkRunContextInput {
+  authToken: string;
+  apiUrl: string;
+  durableChildRun?: HostedChildRunIdentifiers;
+  instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
   pendingToolLogContext: HostedChildPendingToolLifecycleLogContext;
   pendingToolLogWriter?: HostedChildPendingToolLifecycleLogWriter;
 }
@@ -133,6 +154,32 @@ export function createHostedChildForkRunContext(
     toolCalls: [],
     toolResults: [],
     streamState: { finalText: "" },
+  };
+}
+
+export function createHostedDurableChildForkRunContext(
+  input: HostedDurableChildForkRunContextInput,
+): HostedDurableChildForkRunContext {
+  const durableRunMirror = input.durableChildRun
+    ? createHostedConversationRunChunkMirror({
+      authToken: input.authToken,
+      apiUrl: input.apiUrl,
+      conversationId: input.durableChildRun.childConversationId,
+      runId: input.durableChildRun.childRunId,
+      latestEventId: input.durableChildRun.latestEventId,
+      latestExternalEventSequence: input.durableChildRun.latestExternalEventSequence,
+      instrumentation: input.instrumentation,
+    })
+    : null;
+
+  return {
+    durableRunMirror,
+    ...createHostedChildForkRunContext({
+      mirror: durableRunMirror,
+      messageId: input.durableChildRun?.childMessageId ?? null,
+      pendingToolLogContext: input.pendingToolLogContext,
+      pendingToolLogWriter: input.pendingToolLogWriter,
+    }),
   };
 }
 
