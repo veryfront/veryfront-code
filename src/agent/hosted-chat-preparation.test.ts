@@ -3,6 +3,7 @@ import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
 import {
   normalizeParsedHostedChatRequest,
+  prepareHostedChatRuntimeCreationOptions,
   prepareHostedChatRuntimeMessages,
 } from "./hosted-chat-preparation.ts";
 
@@ -101,6 +102,120 @@ Deno.test("normalizeParsedHostedChatRequest falls back to top-level context valu
     conversationId: "conversation-top-level",
     branchId: null,
   });
+});
+
+Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from request, steering, and root context", async () => {
+  const skill = {
+    id: "debug",
+    name: "Debug",
+    description: "Debug failures",
+    instructions: "Use a systematic debugging workflow.",
+    allowedTools: ["bash"],
+  };
+  const fetchInputs: Array<{
+    projectId: string | null;
+    authToken: string;
+    branchId?: string | null;
+  }> = [];
+  const parentEvents: unknown[] = [];
+
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest({
+      allowDelegation: false,
+      model: "requested-model",
+      runtimeOverrides: {
+        allowedTools: ["load_skill"],
+        thinking: false,
+        maxSteps: 7,
+      },
+    }),
+    agentConfig: {
+      id: "agent-1",
+      model: "configured-model",
+      thinking: { enabled: true, budgetTokens: 1000 },
+      maxSteps: 50,
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    conversationId: "conversation-1",
+    branchId: "branch-1",
+    environmentContext: "Browser workspace",
+    rootRunContext: {
+      effectiveParentRunId: "run-1",
+      effectiveParentMessageId: "message-1",
+      publishParentRunEvents: (events) => {
+        parentEvents.push(...events);
+        return Promise.resolve();
+      },
+    },
+    resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+    resolveModelThinking: (modelId) => modelId ? { enabled: true, budgetTokens: 1234 } : undefined,
+    fetchSteering: (input) => {
+      fetchInputs.push(input);
+      return Promise.resolve({
+        instructions: "Project instructions",
+        skills: [skill],
+      });
+    },
+    buildInstructions: (input) => [
+      {
+        role: "system",
+        content: [
+          input.agentConfig.id,
+          input.instructions,
+          input.skills.map((entry) => entry.id).join(","),
+          input.projectId,
+          input.branchId,
+          input.environmentContext,
+        ].filter((value): value is string => typeof value === "string").join("|"),
+      },
+    ],
+  });
+
+  assertEquals(fetchInputs, [
+    {
+      projectId: "project-1",
+      authToken: "token-1",
+      branchId: "branch-1",
+    },
+  ]);
+  assertEquals(result.runtimeConfig.requestedModel, "resolved:requested-model");
+  assertEquals(result.creationOptions, {
+    projectId: "project-1",
+    authToken: "token-1",
+    instructions: [
+      {
+        role: "system",
+        content: "agent-1|Project instructions|debug|project-1|branch-1|Browser workspace",
+      },
+    ],
+    branchId: "branch-1",
+    model: "resolved:requested-model",
+    thinking: { enabled: false },
+    maxSteps: 7,
+    allowedTools: ["load_skill"],
+    allowDelegation: false,
+    conversationId: "conversation-1",
+    parentRunId: "run-1",
+    parentMessageId: "message-1",
+    availableSkillIds: ["debug"],
+    publishParentRunEvents: result.creationOptions.publishParentRunEvents,
+    clientProfile: null,
+    liveProjectSteering: {
+      agent: {
+        id: "agent-1",
+        model: "configured-model",
+        thinking: { enabled: true, budgetTokens: 1000 },
+        maxSteps: 50,
+      },
+      environmentContext: "Browser workspace",
+      initialProjectInstructions: "Project instructions",
+      initialSkills: [skill],
+    },
+  });
+
+  await result.creationOptions.publishParentRunEvents?.([{ type: "state_delta" }]);
+  assertEquals(parentEvents, [{ type: "state_delta" }]);
 });
 
 Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through the hosted API", async () => {

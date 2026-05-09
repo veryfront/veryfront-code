@@ -679,8 +679,14 @@ export {
   type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
 } from "./runtime-message-preparation.ts";
 export {
+  type HostedChatRuntimeCreationPreparationInput,
+  type HostedChatRuntimeCreationPreparationResult,
+  type HostedChatRuntimeInstructionsInput,
+  type HostedChatRuntimePreparationRootRunContext,
+  type HostedChatRuntimePreparationSteering,
   type NormalizedHostedChatRequest,
   normalizeParsedHostedChatRequest,
+  prepareHostedChatRuntimeCreationOptions,
   prepareHostedChatRuntimeMessages,
   type PrepareHostedChatRuntimeMessagesOptions,
 } from "./hosted-chat-preparation.ts";
