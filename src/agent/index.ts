@@ -489,6 +489,16 @@ export {
   type HostedChildForkInstructionsContext,
 } from "./hosted-child-fork-instructions.ts";
 export {
+  DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS,
+  DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS,
+  DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS,
+  DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS,
+  DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS,
+  executeHostedChildForkWithPreparedTools,
+  type ExecuteHostedChildForkWithPreparedToolsInput,
+  type HostedChildForkExecutionInstrumentation,
+} from "./hosted-child-fork-execution-runner.ts";
+export {
   createHostedChildForkRunContext,
   createHostedDurableChildForkRunContext,
   executeHostedChildForkRunContextStream,
