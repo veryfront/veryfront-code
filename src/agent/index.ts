@@ -837,6 +837,19 @@ export {
   type RuntimeSkillMetadataLogger,
 } from "./runtime-skill-metadata.ts";
 export {
+  createRuntimeLoadSkillTool,
+  RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
+  RUNTIME_LOAD_SKILL_DESCRIPTION,
+  type RuntimeLoadSkillBuiltinStore,
+  type RuntimeLoadSkillErrorOutput,
+  type RuntimeLoadSkillReferenceFileOutput,
+  type RuntimeLoadSkillToolContext,
+  type RuntimeLoadSkillToolInput,
+  type RuntimeLoadSkillToolMessages,
+  type RuntimeLoadSkillToolOptions,
+  type RuntimeLoadSkillToolOutput,
+} from "./runtime-load-skill-tool.ts";
+export {
   buildHostedChildCompletedLog,
   buildHostedChildErrorLog,
   buildHostedChildExhaustedStepBudgetLog,
