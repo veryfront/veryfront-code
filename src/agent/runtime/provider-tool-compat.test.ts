@@ -135,4 +135,22 @@ describe("provider-tool-compat", () => {
     assertEquals(containsKey(sanitized, "exclusiveMinimum"), false);
     assertEquals(containsKey(sanitized, "exclusiveMaximum"), false);
   });
+
+  it("keeps Google array schemas valid when upstream tools omit item schemas", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          labelIds: {
+            type: "array",
+            description: "Label IDs to apply.",
+          },
+        },
+      } as never,
+      { model: "google-ai-studio/gemini-2.5-pro" },
+    );
+
+    assertEquals(sanitized.properties?.labelIds?.type, "array");
+    assertEquals(sanitized.properties?.labelIds?.items, {});
+  });
 });

@@ -240,6 +240,10 @@ function sanitizeGoogleSchemaValue(value: unknown): unknown {
     }
   }
 
+  if (sanitized.type === "array" && !Object.hasOwn(sanitized, "items")) {
+    sanitized.items = {};
+  }
+
   return sanitized;
 }
 
