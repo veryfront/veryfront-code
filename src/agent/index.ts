@@ -281,6 +281,17 @@ export type {
 } from "./hosted-chat-runtime-contract.ts";
 
 export {
+  executeHostedDurableChatRun,
+  type ExecuteHostedDurableChatRunInput,
+  type HostedDurableRunAccepted,
+  type HostedDurableRunAuthErrorResponse,
+  type HostedDurableRunLogger,
+  type HostedDurableRunSetupErrorStatusCode,
+  type HostedDurableRunStartCleanupInput,
+  type HostedDurableRunStartExecutionInput,
+  resolveHostedDurableRunSetupErrorResponse,
+} from "./hosted-durable-chat-run-start.ts";
+export {
   buildParsedHostedChatRequest,
   type HostedChatProjectAccessError,
   type HostedChatProjectAccessResult,
@@ -1080,6 +1091,7 @@ export {
   executeAgUiDetachedStart,
   type ExecuteAgUiDetachedStartInput,
 } from "./ag-ui-detached-start.ts";
+export type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
 export {
   createDetachedRunTracker,
   type DetachedRunDrainResult,
