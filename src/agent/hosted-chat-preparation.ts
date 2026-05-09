@@ -7,9 +7,15 @@ import type { AgentRuntimeMessage } from "./agent-runtime-message-adapter.ts";
 import type { ConversationRunEvent } from "./conversation-run-events.ts";
 import type {
   HostedChatRuntimeCreationOptions,
+  HostedChatRuntimeCreationResult,
   HostedChatRuntimeProjectSteering,
 } from "./hosted-chat-runtime-contract.ts";
 import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
+import {
+  type HostedConversationRootRunContext,
+  prepareHostedConversationRootRunContext,
+  type PrepareHostedConversationRootRunContextInput,
+} from "./conversation-root-run-lifecycle.ts";
 import {
   prepareAgentRuntimeMessagesFromUiMessages,
   type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
@@ -94,6 +100,62 @@ export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> 
   steering: HostedChatRuntimePreparationSteering & {
     agentInstructions: string | ChatSystemMessage[];
   };
+  runtimeConfig: ResolvedHostedRuntimeRequestConfig;
+};
+
+export type HostedChatExecutionPreparationRootRunOptions = Pick<
+  PrepareHostedConversationRootRunContextInput,
+  | "implementationKind"
+  | "persistLatestUserMessageOperation"
+  | "missingUserMessageErrorMessage"
+  | "onPersistLatestUserMessageFailure"
+  | "instrumentation"
+>;
+
+export type HostedChatExecutionPreparationInput<
+  TRuntimeAgentDefinition extends {
+    id: string;
+    model?: string;
+    thinking?: RuntimeAgentThinkingConfig;
+    maxSteps?: number;
+  },
+  TRuntimeResult extends HostedChatRuntimeCreationResult,
+> = {
+  request: ParsedHostedChatRequest;
+  agentConfig: TRuntimeAgentDefinition;
+  apiUrl: string | URL;
+  abortSignal: AbortSignal;
+  rootRun?: HostedChatExecutionPreparationRootRunOptions;
+  resolveModelId: (modelId: string | undefined) => string | undefined;
+  resolveModelThinking?: (
+    modelId: string | undefined,
+  ) => RuntimeAgentThinkingConfig | undefined;
+  fetchSteering: (input: {
+    projectId: string | null;
+    authToken: string;
+    branchId?: string | null;
+  }) => Promise<HostedChatRuntimePreparationSteering>;
+  buildInstructions: (
+    input: HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition>,
+  ) => string | ChatSystemMessage[];
+  createRuntime: (
+    options: HostedChatRuntimeCreationOptions<
+      TRuntimeAgentDefinition,
+      RuntimeAgentThinkingConfig
+    >,
+  ) => Promise<TRuntimeResult>;
+};
+
+export type HostedChatExecutionPreparationResult<
+  TRuntimeAgentDefinition,
+  TRuntimeResult extends HostedChatRuntimeCreationResult,
+> = NormalizedHostedChatRequest & {
+  rootRunContext: HostedConversationRootRunContext;
+  runtime: TRuntimeResult;
+  finalMessages: AgentRuntimeMessage[];
+  steering: HostedChatRuntimeCreationPreparationResult<
+    TRuntimeAgentDefinition
+  >["steering"];
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 };
 
@@ -197,6 +259,74 @@ export async function prepareHostedChatRuntimeCreationOptions<
       agentInstructions,
     },
     runtimeConfig,
+  };
+}
+
+export async function prepareHostedChatExecution<
+  TRuntimeAgentDefinition extends {
+    id: string;
+    model?: string;
+    thinking?: RuntimeAgentThinkingConfig;
+    maxSteps?: number;
+  },
+  TRuntimeResult extends HostedChatRuntimeCreationResult,
+>(
+  input: HostedChatExecutionPreparationInput<
+    TRuntimeAgentDefinition,
+    TRuntimeResult
+  >,
+): Promise<
+  HostedChatExecutionPreparationResult<TRuntimeAgentDefinition, TRuntimeResult>
+> {
+  const normalized = normalizeParsedHostedChatRequest(input.request);
+  const rootRunContext = await prepareHostedConversationRootRunContext(
+    {
+      authToken: input.request.authToken,
+      apiUrl: input.apiUrl.toString(),
+      conversationId: input.request.conversationId,
+      projectId: input.request.projectId,
+      branchId: normalized.effectiveValidatedContext.branchId,
+      agentId: input.agentConfig.id,
+      messages: normalized.effectiveMessages,
+      parentRunId: input.request.parentRunId,
+      parentMessageId: normalized.parentMessageId,
+      providedRun: input.request.durableRootRun,
+      persistLatestUserMessageBeforeRun: input.request.persistLatestUserMessageBeforeDurableRun,
+      ...input.rootRun,
+    },
+    { abortSignal: input.abortSignal },
+  );
+  const runtimePreparation = await prepareHostedChatRuntimeCreationOptions({
+    request: input.request,
+    agentConfig: input.agentConfig,
+    projectId: input.request.projectId,
+    authToken: input.request.authToken,
+    conversationId: input.request.conversationId,
+    branchId: normalized.effectiveValidatedContext.branchId,
+    environmentContext: normalized.effectiveValidatedContext.environmentContext,
+    rootRunContext,
+    resolveModelId: input.resolveModelId,
+    resolveModelThinking: input.resolveModelThinking,
+    fetchSteering: input.fetchSteering,
+    buildInstructions: input.buildInstructions,
+  });
+  const runtime = await input.createRuntime(runtimePreparation.creationOptions);
+  const finalMessages = await prepareHostedChatRuntimeMessages(
+    normalized.effectiveMessages,
+    {
+      authToken: input.request.authToken,
+      apiUrl: input.apiUrl,
+      projectId: input.request.projectId,
+    },
+  );
+
+  return {
+    ...normalized,
+    rootRunContext,
+    runtime,
+    finalMessages,
+    steering: runtimePreparation.steering,
+    runtimeConfig: runtimePreparation.runtimeConfig,
   };
 }
 
