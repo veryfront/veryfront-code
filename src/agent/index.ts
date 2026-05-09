@@ -119,6 +119,14 @@ export {
   type WrapHostedChildSteeringMutationToolInput,
 } from "./hosted-child-steering-tools.ts";
 export {
+  filterHostedChatRuntimeLocalTools,
+  type HostedChatRuntimeAllowedToolNames,
+  type HostedChatRuntimeToolAssemblyContext,
+  type HostedChatRuntimeToolAssemblyResult,
+  prepareHostedChatRuntimeToolAssembly,
+  type PrepareHostedChatRuntimeToolAssemblyInput,
+} from "./hosted-chat-runtime-tool-assembly.ts";
+export {
   createHostedProjectRemoteToolSource,
   type CreateHostedProjectRemoteToolSourceInput,
   createHostedProjectRemoteToolSources,
