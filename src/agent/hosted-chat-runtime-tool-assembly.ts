@@ -3,6 +3,7 @@ import {
   createRemoteMCPToolSource,
   createToolsFromHostDefinitions,
   type HostToolSet,
+  type HostToolTraceAttributes,
   listProjectScopedRemoteToolNames,
   type ProjectScopedRemoteToolOptions,
   type RemoteMCPToolSourceConfig,
@@ -48,7 +49,9 @@ export type HostedChatRuntimeToolAssemblyResult = {
   systemInstructions: string;
 };
 
-export type PrepareHostedChatRuntimeToolAssemblyInput = {
+export type PrepareHostedChatRuntimeToolAssemblyInput<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+> = {
   taskContext: HostedChatRuntimeToolAssemblyContext;
   instructions: string | readonly ChatSystemMessage[];
   localTools: HostToolSet;
@@ -59,7 +62,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput = {
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
-  traceLocalTools?: TraceHostToolsOptions;
+  traceLocalTools?: TraceHostToolsOptions<TTraceAttributes>;
   getProjectId?: () => string | null | undefined;
   getActiveBranchId?: () => string | null | undefined;
   prepareRemoteToolInput?: HostedProjectRemoteToolSourcePrepareToolInput;
@@ -99,8 +102,10 @@ export function filterHostedChatRuntimeLocalTools(input: {
   return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
 }
 
-export async function prepareHostedChatRuntimeToolAssembly(
-  input: PrepareHostedChatRuntimeToolAssemblyInput,
+export async function prepareHostedChatRuntimeToolAssembly<
+  TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
+>(
+  input: PrepareHostedChatRuntimeToolAssemblyInput<TTraceAttributes>,
 ): Promise<HostedChatRuntimeToolAssemblyResult> {
   const allowedToolNames = normalizeAllowedToolNames(input.allowedToolNames);
   const sortedLocalTools = filterHostedChatRuntimeLocalTools({
