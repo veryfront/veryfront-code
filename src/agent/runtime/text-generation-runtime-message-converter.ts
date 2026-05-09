@@ -9,6 +9,7 @@
 
 import type {
   TextGenerationRuntimeAssistantMessage,
+  TextGenerationRuntimeFilePart,
   TextGenerationRuntimeMessage,
   TextGenerationRuntimeTextPart,
   TextGenerationRuntimeToolCallPart,
@@ -75,6 +76,26 @@ function getUserTextWithAttachmentContext(parts: Message["parts"]): string {
     : appendReadableAttachmentContext(text, buildAttachmentContextFromParts(parts));
 }
 
+function getUserFileParts(parts: Message["parts"]): TextGenerationRuntimeFilePart[] {
+  return parts.flatMap((part) => {
+    const type = getStringPartField(part, "type");
+    if (type !== "file" && type !== "image") return [];
+
+    const mediaType = getStringPartField(part, "mediaType");
+    const url = getStringPartField(part, "url");
+    if (!mediaType || !url || url.startsWith("data:")) return [];
+
+    return [{
+      type,
+      mediaType,
+      url,
+      ...(getStringPartField(part, "filename")
+        ? { filename: getStringPartField(part, "filename") }
+        : {}),
+    }];
+  });
+}
+
 /**
  * Convert a veryfront Message to the current text-generation runtime message format.
  */
@@ -86,8 +107,26 @@ export function convertToTextGenerationRuntimeMessage(msg: Message): TextGenerat
     }
 
     case "user": {
-      const text = getUserTextWithAttachmentContext(msg.parts);
-      return { role: "user", content: text };
+      const fileParts = getUserFileParts(msg.parts);
+      if (fileParts.length === 0) {
+        const text = getUserTextWithAttachmentContext(msg.parts);
+        return { role: "user", content: text };
+      }
+
+      const text = getTextFromParts(msg.parts);
+      const attachmentContext = text.includes("<uploaded_files>")
+        ? ""
+        : buildAttachmentContextFromParts(msg.parts);
+      return {
+        role: "user",
+        content: [
+          ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
+          ...fileParts,
+          ...(attachmentContext.length > 0
+            ? [{ type: "text" as const, text: attachmentContext.trimStart() }]
+            : []),
+        ],
+      };
     }
 
     case "assistant": {

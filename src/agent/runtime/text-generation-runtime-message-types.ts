@@ -11,6 +11,13 @@ export interface TextGenerationRuntimeTextPart {
   text: string;
 }
 
+export interface TextGenerationRuntimeFilePart {
+  type: "file" | "image";
+  mediaType: string;
+  url: string;
+  filename?: string;
+}
+
 export interface TextGenerationRuntimeToolCallPart {
   type: "tool-call";
   toolCallId: string;
@@ -35,7 +42,7 @@ export interface TextGenerationRuntimeSystemMessage {
 
 export interface TextGenerationRuntimeUserMessage {
   role: "user";
-  content: string;
+  content: string | Array<TextGenerationRuntimeTextPart | TextGenerationRuntimeFilePart>;
 }
 
 export interface TextGenerationRuntimeAssistantMessage {

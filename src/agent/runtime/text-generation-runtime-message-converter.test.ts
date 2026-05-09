@@ -7,6 +7,7 @@ import {
 import type {
   TextGenerationRuntimeAssistantMessage,
   TextGenerationRuntimeToolMessage,
+  TextGenerationRuntimeUserMessage,
 } from "./text-generation-runtime-message-types.ts";
 import type { Message } from "../types.ts";
 
@@ -65,14 +66,22 @@ describe("text-generation-runtime-message-converter", () => {
       const result = convertToTextGenerationRuntimeMessage(msg);
 
       assertEquals(result.role, "user");
-      if (typeof result.content !== "string") {
-        throw new Error("Expected user content to be text fallback for current runtime");
+      const content = (result as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) {
+        throw new Error("Expected user content to preserve native file parts");
       }
-      assertStringIncludes(result.content, "Sent with attachments");
-      assertStringIncludes(result.content, "<uploaded_files>");
-      assertStringIncludes(result.content, "sample-attachment.pdf");
-      assertStringIncludes(result.content, "test-upload-id");
-      assertStringIncludes(result.content, "application/pdf");
+      assertEquals(content[0], { type: "text", text: "Sent with attachments" });
+      assertEquals(content[1], {
+        type: "file",
+        mediaType: "application/pdf",
+        url: "https://signed.example.com/invoice.pdf",
+        filename: "sample-attachment.pdf",
+      });
+      const text = content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+      assertStringIncludes(text, "<uploaded_files>");
+      assertStringIncludes(text, "sample-attachment.pdf");
+      assertStringIncludes(text, "test-upload-id");
+      assertStringIncludes(text, "application/pdf");
     });
 
     it("separates user text from attachment context with a readable blank line", () => {
@@ -92,10 +101,12 @@ describe("text-generation-runtime-message-converter", () => {
 
       const result = convertToTextGenerationRuntimeMessage(msg);
 
-      if (typeof result.content !== "string") {
-        throw new Error("Expected user content to be text fallback for current runtime");
+      const content = (result as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) {
+        throw new Error("Expected user content to preserve native file parts");
       }
-      assertStringIncludes(result.content, "Sent with attachments\n\n<uploaded_files>");
+      const text = content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n\n");
+      assertStringIncludes(text, "Sent with attachments\n\n<uploaded_files>");
     });
 
     it("does not start file-only user attachment context with blank lines", () => {
@@ -114,10 +125,12 @@ describe("text-generation-runtime-message-converter", () => {
 
       const result = convertToTextGenerationRuntimeMessage(msg);
 
-      if (typeof result.content !== "string") {
-        throw new Error("Expected user content to be text fallback for current runtime");
+      const content = (result as TextGenerationRuntimeUserMessage).content;
+      if (!Array.isArray(content)) {
+        throw new Error("Expected user content to preserve native file parts");
       }
-      assertEquals(result.content.startsWith("<uploaded_files>"), true);
+      const text = content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n");
+      assertEquals(text.startsWith("<uploaded_files>"), true);
     });
 
     it("converts an assistant message with text", () => {

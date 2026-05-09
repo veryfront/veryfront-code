@@ -514,7 +514,7 @@ function toJsonValue(value: unknown): JsonValue {
 }
 
 function getFilePart(part: unknown): {
-  type: "file";
+  type: "file" | "image";
   mediaType: string;
   data: string;
   url: string;
@@ -522,22 +522,25 @@ function getFilePart(part: unknown): {
   uploadId?: string;
   uploadPath?: string;
 } | null {
-  if (!isRecord(part) || part.type !== "file") {
+  if (!isRecord(part) || (part.type !== "file" && part.type !== "image")) {
     return null;
   }
 
-  const mediaType = getNonEmptyStringField(part, "mediaType");
+  const mediaType = getNonEmptyStringField(part, "mediaType") ??
+    getNonEmptyStringField(part, "media_type");
   const data = getNonEmptyStringField(part, "url");
   if (!mediaType || !data) {
     return null;
   }
 
   const filename = getNonEmptyStringField(part, "filename");
-  const uploadId = getNonEmptyStringField(part, "uploadId");
-  const uploadPath = getNonEmptyStringField(part, "uploadPath");
+  const uploadId = getNonEmptyStringField(part, "uploadId") ??
+    getNonEmptyStringField(part, "upload_id");
+  const uploadPath = getNonEmptyStringField(part, "uploadPath") ??
+    getNonEmptyStringField(part, "upload_path");
 
   return {
-    type: "file",
+    type: part.type === "image" ? "image" : "file",
     mediaType,
     data,
     url: data,
@@ -720,10 +723,13 @@ function convertSystemMessage(message: ChatUiMessage): ProviderModelMessage[] {
 function convertUserMessage(message: ChatUiMessage): ProviderModelMessage[] {
   const content: Array<
     { type: "text"; text: string } | {
-      type: "file";
+      type: "file" | "image";
       mediaType: string;
       data: string;
+      url: string;
       filename?: string;
+      uploadId?: string;
+      uploadPath?: string;
     }
   > = [];
 
@@ -756,7 +762,7 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
   const assistantContent: Array<
     | { type: "text"; text: string }
     | { type: "reasoning"; text: string }
-    | { type: "file"; mediaType: string; data: string; filename?: string }
+    | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
     | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }
   > = [];
   const deferredAssistantContent: typeof assistantContent = [];
@@ -805,7 +811,7 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
     part:
       | { type: "text"; text: string }
       | { type: "reasoning"; text: string }
-      | { type: "file"; mediaType: string; data: string; filename?: string }
+      | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
       | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> },
   ) => {
     if (toolResults.length > 0) {

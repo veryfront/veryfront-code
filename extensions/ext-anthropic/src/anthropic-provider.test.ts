@@ -129,6 +129,55 @@ describe("anthropic-provider", () => {
     });
   });
 
+  it("sends image URL user parts as Anthropic vision content", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createAnthropicModelRuntime({
+      apiKey: "test-anthropic-key",
+      baseURL: "https://example.anthropic.test/v1",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              content: [{ type: "text", text: "web app screenshot" }],
+              stop_reason: "end_turn",
+              usage: { input_tokens: 8, output_tokens: 2 },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "claude-sonnet-4-20250514");
+
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [
+          { type: "text", text: "What is this?" },
+          {
+            type: "image",
+            mediaType: "image/jpeg",
+            url: "https://signed.example.com/web-app-screenshot.jpg",
+          },
+        ],
+      }],
+      maxOutputTokens: 64,
+    });
+
+    const requestBody = JSON.parse(readRequestBody(requestedInit) ?? "{}");
+    assertEquals(requestBody.messages[0].content, [
+      { type: "text", text: "What is this?" },
+      {
+        type: "image",
+        source: {
+          type: "url",
+          url: "https://signed.example.com/web-app-screenshot.jpg",
+        },
+      },
+    ]);
+  });
+
   it("unwraps runtime tool schemas before sending Anthropic tool definitions", async () => {
     let requestedInit: RequestInit | undefined;
 

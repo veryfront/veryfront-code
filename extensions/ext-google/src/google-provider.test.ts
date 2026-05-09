@@ -147,6 +147,59 @@ describe("ext-google/google-provider", () => {
     });
   });
 
+  it("sends image URL user parts as Google fileData content", async () => {
+    let requestedInit: RequestInit | undefined;
+
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: (_input, init) => {
+        requestedInit = init;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              candidates: [{
+                content: { role: "model", parts: [{ text: "web app screenshot" }] },
+                finishReason: "STOP",
+              }],
+              usageMetadata: {
+                promptTokenCount: 8,
+                candidatesTokenCount: 2,
+                totalTokenCount: 10,
+              },
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        );
+      },
+    }, "gemini-2.0-flash");
+
+    await runtime.doGenerate({
+      prompt: [{
+        role: "user",
+        content: [
+          { type: "text", text: "What is this?" },
+          {
+            type: "image",
+            mediaType: "image/jpeg",
+            url: "https://signed.example.com/web-app-screenshot.jpg",
+          },
+        ],
+      }],
+    });
+
+    const requestBody = JSON.parse(readRequestBody(requestedInit) ?? "{}");
+    assertEquals(requestBody.contents[0].parts, [
+      { text: "What is this?" },
+      {
+        fileData: {
+          mimeType: "image/jpeg",
+          fileUri: "https://signed.example.com/web-app-screenshot.jpg",
+        },
+      },
+    ]);
+  });
+
   it("creates a Google-compatible language runtime without SDK helpers for stream", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;
