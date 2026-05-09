@@ -135,5 +135,4 @@ describe("provider-tool-compat", () => {
     assertEquals(containsKey(sanitized, "exclusiveMinimum"), false);
     assertEquals(containsKey(sanitized, "exclusiveMaximum"), false);
   });
-
 });
