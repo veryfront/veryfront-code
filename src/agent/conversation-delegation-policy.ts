@@ -37,6 +37,51 @@ export function buildRootOwnedChildResultHint(
   });
 }
 
+export interface RootOwnedChildResultHint {
+  instruction: string;
+  suggestedText: string;
+}
+
+export interface RootOwnedChildResultHinted {
+  rootResponseHint?: RootOwnedChildResultHint;
+}
+
+function getRootOwnedChildResultText(result: unknown): string | null {
+  if (!isRecord(result)) {
+    return null;
+  }
+
+  if (
+    result.status === "completed" &&
+    typeof result.text === "string" &&
+    result.text.length > 0
+  ) {
+    return result.text;
+  }
+
+  if (!result.success || !isRecord(result.summary)) {
+    return null;
+  }
+
+  return typeof result.summary.text === "string" && result.summary.text.length > 0
+    ? result.summary.text
+    : null;
+}
+
+export function withRootOwnedChildResultHint<T extends object>(
+  result: T,
+): T & RootOwnedChildResultHinted {
+  const text = getRootOwnedChildResultText(result);
+  if (!text) {
+    return result;
+  }
+
+  return {
+    ...result,
+    rootResponseHint: buildRootOwnedChildResultHint(text),
+  };
+}
+
 export function buildInvokeAgentFollowupInstruction(): string {
   return `${SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE} ${NO_DELEGATION_NARRATION_UNLESS_ASKED}`;
 }

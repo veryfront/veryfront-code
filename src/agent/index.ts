@@ -859,9 +859,12 @@ export {
   LOAD_SKILL_USE_ALLOWED_TOOLS,
   NO_DELEGATION_NARRATION_UNLESS_ASKED,
   ROOT_OWNED_CHILD_RESULT_INSTRUCTION,
+  type RootOwnedChildResultHint,
+  type RootOwnedChildResultHinted,
   shouldReinforceLoadSkillContinuation,
   SLASH_COMMAND_ARTIFACT_REMINDER,
   SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE,
+  withRootOwnedChildResultHint,
 } from "./conversation-delegation-policy.ts";
 export {
   listRuntimeBuiltinSkillReferenceFiles,
