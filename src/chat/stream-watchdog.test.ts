@@ -121,6 +121,13 @@ describe("chat/stream-watchdog", () => {
     watchdog.dispose();
   });
 
+  it("creates a default watchdog with host timer bindings", () => {
+    const watchdog = createChatStreamWatchdog();
+
+    assertEquals(watchdog.signal.aborted, false);
+    watchdog.dispose();
+  });
+
   it("aborts with AbortError and records timeout state", () => {
     using time = new FakeTime();
     const watchdog = createChatStreamWatchdog(watchdogOptions);
