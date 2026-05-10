@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.472",
+  "version": "0.1.473",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -57,6 +57,8 @@
     "./jobs": "./src/jobs/index.ts",
     "./mcp": "./src/mcp/index.ts",
     "./middleware": "./src/middleware/index.ts",
+    "./observability": "./src/observability/index.ts",
+    "./observability/otlp-setup": "./src/observability/tracing/otlp-setup.ts",
     "./utils": "./src/utils/index.ts",
     "./oauth": "./src/oauth/index.ts",
     "./provider": "./src/provider/index.ts",
