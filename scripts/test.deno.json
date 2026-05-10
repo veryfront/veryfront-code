@@ -1,0 +1,6 @@
+{
+  "imports": {
+    "#std/assert": "jsr:@std/assert",
+    "#std/flags": "jsr:@std/cli/parse-args"
+  }
+}
