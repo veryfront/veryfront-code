@@ -34,13 +34,24 @@ import {
   HMR_CLOSE_RATE_LIMIT,
   HMR_MAX_MESSAGE_SIZE_BYTES,
   HMR_MAX_MESSAGES_PER_MINUTE,
-  serverLogger,
 } from "#veryfront/utils";
 
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
 
 export { DevServer, startDevServer, startProductionServer };
+export {
+  createVeryfrontServer,
+  type CreateVeryfrontServerOptions,
+  type NodeVeryfrontServiceServer,
+  startNodeVeryfrontServer,
+  type StartNodeVeryfrontServerOptions,
+  type VeryfrontServiceServerFetch,
+  type VeryfrontServiceServerLogger,
+  type VeryfrontServiceServerModule,
+  type VeryfrontServiceServerModuleResponse,
+  type VeryfrontServiceServerRuntime,
+} from "./service-server.ts";
 export type {
   DevServerOptions,
   DiscoveryOptions,
@@ -320,46 +331,7 @@ export async function createHandler(
  * const server = createServer(toNodeHandler(handler))
  * ```
  */
-export function toNodeHandler(
-  handler: (req: Request) => Promise<Response> | Response,
-): (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void {
-  return async (req, res) => {
-    try {
-      const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-      const headers: Record<string, string> = {};
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (typeof value === "string") headers[key] = value;
-        else if (Array.isArray(value)) headers[key] = value[0] ?? "";
-      }
-      const method = req.method ?? "GET";
-      const body = method === "GET" || method === "HEAD" ? null : req;
-      const init: RequestInit & { duplex?: string } = {
-        method,
-        headers,
-        body: body as BodyInit | null,
-      };
-      if (body) init.duplex = "half";
-
-      const response = await handler(new Request(url.toString(), init));
-
-      if (response.status === 101) return;
-      res.writeHead(response.status, Object.fromEntries(response.headers));
-      if (response.body) {
-        const reader = response.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(value);
-        }
-      }
-      res.end();
-    } catch (error) {
-      serverLogger.debug("toNodeHandler request failed", { error });
-      res.writeHead(500);
-      res.end("Internal Server Error");
-    }
-  };
-}
+export { toNodeHandler } from "./node-handler.ts";
 
 /**
  * Start a Veryfront server in development or production mode.

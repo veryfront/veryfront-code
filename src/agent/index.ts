@@ -172,6 +172,9 @@ export {
 } from "./hosted-child-fork-tool-sources.ts";
 
 export {
+  createRuntimeAgentSystemMessages,
+  type CreateRuntimeAgentSystemMessagesInput,
+  DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,
   parseRuntimeAgentMarkdownDefinition,
   type ParseRuntimeAgentMarkdownDefinitionInput,
   parseRuntimeAgentMarkdownDefinitionInputSchema,
