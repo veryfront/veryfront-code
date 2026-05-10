@@ -136,3 +136,49 @@ Use project instructions.`,
     assertEquals(result.instructions.includes("Use project instructions."), true);
   });
 });
+
+Deno.test("hosted project steering adapter accepts a custom builtin skill store", async () => {
+  await withSkillsDir(async (skillsDir) => {
+    const readSkillCalls: Array<{ skillsDir: string; skillId: string }> = [];
+    const referenceCalls: Array<{ skillsDir: string; skillId: string }> = [];
+    const adapter = createHostedProjectSteeringAdapter({
+      apiUrl: "https://api.example.test",
+      skillsDir,
+      projectFilesClient: createProjectFilesClient(),
+      builtinSkills: [
+        {
+          id: "custom",
+          name: "Custom",
+          description: "Custom builtin skill",
+          instructions: "",
+          allowedTools: [],
+        },
+      ],
+      builtinStore: {
+        readSkill: (storeSkillsDir, skillId) => {
+          readSkillCalls.push({ skillsDir: storeSkillsDir, skillId });
+          return skillId === "custom" ? "Use custom builtin instructions." : null;
+        },
+        readReferenceFile: () => null,
+        listReferences: (storeSkillsDir, skillId) => {
+          referenceCalls.push({ skillsDir: storeSkillsDir, skillId });
+          return ["references/custom.md"];
+        },
+      },
+    });
+
+    const loadSkillTool = adapter.createLoadSkillTool({
+      projectId: null,
+      authToken: "token-1",
+      branchId: null,
+      availableSkillIds: [],
+    });
+    const result = await loadSkillTool.execute({ skillId: "custom" });
+
+    assert("instructions" in result);
+    assertEquals(result.instructions, "Use custom builtin instructions.");
+    assertEquals(result.references, ["references/custom.md"]);
+    assertEquals(readSkillCalls, [{ skillsDir, skillId: "custom" }]);
+    assertEquals(referenceCalls, [{ skillsDir, skillId: "custom" }]);
+  });
+});
