@@ -7,6 +7,7 @@ import {
 } from "./runtime-builtin-skill-files.ts";
 import {
   createRuntimeLoadSkillTool,
+  type RuntimeLoadSkillBuiltinStore,
   type RuntimeLoadSkillToolContext,
   type RuntimeLoadSkillToolInput,
   type RuntimeLoadSkillToolOutput,
@@ -50,6 +51,7 @@ export type HostedProjectSteeringAdapterOptions = {
   projectFilesClient?: RuntimeProjectFilesClient;
   projectSkillLoader?: RuntimeProjectSkillLoader;
   builtinSkills?: readonly RuntimeSkillDefinition[];
+  builtinStore?: RuntimeLoadSkillBuiltinStore;
 };
 
 export type HostedProjectSkillIdsContext = MutableAgentProjectContext & {
@@ -112,6 +114,14 @@ function createDefaultProjectSkillLoader(
   });
 }
 
+function createDefaultBuiltinStore(): RuntimeLoadSkillBuiltinStore {
+  return {
+    readSkill: readRuntimeBuiltinSkill,
+    readReferenceFile: readRuntimeBuiltinSkillReferenceFile,
+    listReferences: listRuntimeBuiltinSkillReferences,
+  };
+}
+
 export function createHostedProjectSteeringAdapter(
   options: HostedProjectSteeringAdapterOptions,
 ): HostedProjectSteeringAdapter {
@@ -120,6 +130,7 @@ export function createHostedProjectSteeringAdapter(
     createDefaultProjectSkillLoader(options, projectFilesClient);
   const builtinSkills = options.builtinSkills ??
     loadRuntimeBuiltinSkillCatalog({ skillsDir: options.skillsDir, logger: options.logger });
+  const builtinStore = options.builtinStore ?? createDefaultBuiltinStore();
 
   async function getProjectInstructions(
     lookup: RuntimeProjectSteeringLookup,
@@ -157,11 +168,7 @@ export function createHostedProjectSteeringAdapter(
         skillsDir: options.skillsDir,
         projectSkillLoader,
         builtinSkillIds: builtinSkills.map((skill) => skill.id),
-        builtinStore: {
-          readSkill: readRuntimeBuiltinSkill,
-          readReferenceFile: readRuntimeBuiltinSkillReferenceFile,
-          listReferences: listRuntimeBuiltinSkillReferences,
-        },
+        builtinStore,
         logger: options.logger,
       }),
     refreshProjectSkillIds: async (context) => {
