@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.471",
+  "version": "0.1.472",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -76,7 +76,8 @@
     "./chat/final-step-fallback": "./src/chat/final-step-fallback.ts",
     "./chat/provider-errors": "./src/chat/provider-errors.ts",
     "./chat/stream-watchdog": "./src/chat/stream-watchdog.ts",
-    "./agent/request-auth-cache": "./src/agent/request-auth-cache.ts"
+    "./agent/request-auth-cache": "./src/agent/request-auth-cache.ts",
+    "./server": "./src/server/index.ts"
   },
   "imports": {
     "veryfront/head": "./src/react/runtime/core.ts",

@@ -6,6 +6,21 @@
  * For observability utilities, import from "#veryfront/observability" directly.
  *
  * @module server
+ *
+ * @example Composable service server
+ * ```ts
+ * import { createVeryfrontServer } from "veryfront/server";
+ *
+ * const server = createVeryfrontServer({
+ *   modules: [{
+ *     name: "agent",
+ *     handle: (request) => new Response(`Handled ${request.url}`),
+ *   }],
+ * });
+ *
+ * await server.fetch(new Request("https://example.com/health"));
+ * ```
+ *
  * @see docs/deployment.md
  * @see docs/security.md
  */
