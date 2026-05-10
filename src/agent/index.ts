@@ -772,6 +772,11 @@ export {
 } from "./hosted-child-tool-input.ts";
 
 export {
+  createHostedChildInvokeTool,
+  type CreateHostedChildInvokeToolOptions,
+  type HostedChildInvokeFailure,
+} from "./hosted-child-invoke-tool.ts";
+export {
   buildDefaultHostedChildForkToolSet,
   buildHostedChildToolDescription,
   DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
