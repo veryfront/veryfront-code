@@ -21,7 +21,7 @@ import {
   type HostedChildTerminalStatus,
 } from "./hosted-child-status.ts";
 import type { HostedChildForkToolInput } from "./hosted-child-tool-input.ts";
-import { throwIfChildRunAborted } from "./child-run-execution-support.ts";
+import { isChildRunAbortError, throwIfChildRunAborted } from "./child-run-execution-support.ts";
 
 export type HostedDurableChildExecutionOptions = {
   durableChildRun?: HostedChildRunIdentifiers;
@@ -96,6 +96,21 @@ export type HostedDurableChildInvokeTraceOverrides = Partial<
 export type HostedDurableChildInvokeTraceRecorder = ReturnType<
   typeof createHostedDurableChildInvokeTraceRecorder
 >;
+
+export type HostedLocalChildInvokeTraceRecorder = {
+  recordLocalResult<TLocalResult extends ChildRunExecutionResult>(
+    result: TLocalResult,
+  ): TLocalResult;
+  recordLocalFailure(errorMessage: string): void;
+};
+
+export type ExecuteHostedLocalChildInvokeInput = {
+  forkInput: Pick<HostedChildForkToolInput, "description">;
+  abortSignal?: AbortSignal;
+  traceRecorder: HostedLocalChildInvokeTraceRecorder;
+  execute: () => Promise<ChildRunExecutionResult> | ChildRunExecutionResult;
+  isAbortError?: (error: unknown) => boolean;
+};
 
 export function buildHostedDurableChildInvokeFailureResult(
   input: BuildHostedDurableChildInvokeFailureResultInput,
@@ -253,6 +268,34 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
       return buildHostedDurableChildInvokeSuccessResult(success);
     },
   };
+}
+
+export async function executeHostedLocalChildInvoke(
+  input: ExecuteHostedLocalChildInvokeInput,
+): Promise<ChildRunExecutionResult> {
+  try {
+    const result = await input.execute();
+    return input.traceRecorder.recordLocalResult(result);
+  } catch (error) {
+    const isAbortError = input.isAbortError ?? isChildRunAbortError;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    if (isAbortError(error) && (input.abortSignal?.aborted || errorMessage === "Aborted")) {
+      throw error;
+    }
+
+    input.traceRecorder.recordLocalFailure(errorMessage);
+
+    return {
+      success: false,
+      description: input.forkInput.description,
+      error: errorMessage,
+      steps: 0,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 0,
+    };
+  }
 }
 
 export type HostedDurableChildBootstrapContext = {
