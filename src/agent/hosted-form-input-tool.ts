@@ -1,4 +1,5 @@
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
+import type { Schema } from "#veryfront/extensions/interfaces/index.ts";
 import { containsExactArtifactPathValue } from "./slash-command-artifact-policy.ts";
 import {
   buildInputRequestLifecycleDataEvent,
@@ -21,10 +22,13 @@ export interface HostedFormInputToolContext {
 }
 
 export function createHostedFormInputTool(context: HostedFormInputToolContext, apiUrl: string) {
-  return tool({
+  return tool<FormInputToolInput, unknown>({
     description:
       "Display a durable structured form to collect user input. Use this when you need a concrete choice or structured values before continuing. The request is persisted as an input_request and the tool waits until the user submits or the request expires.",
-    inputSchema: formInputToolInputSchema,
+    // Phase B2 transition: raw zod schema is accepted by the tool factory's
+    // back-compat path; cast satisfies the new Schema<T> contract while the
+    // full defineSchema migration of this module is deferred to Phase B5.
+    inputSchema: formInputToolInputSchema as unknown as Schema<FormInputToolInput>,
     execute: async (input, execOptions) =>
       executeDurableFormInputFlow(context, apiUrl, input, execOptions),
   });

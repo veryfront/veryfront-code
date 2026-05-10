@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Schema } from "#veryfront/extensions/interfaces/index.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import type { Tool } from "#veryfront/tool/types.ts";
@@ -22,7 +23,10 @@ export function createInjectedAgUiTool(
     id: tool.name,
     type: "function",
     description: tool.description ?? tool.name,
-    inputSchema: z.record(z.string(), z.unknown()),
+    // Phase B2 transition: raw zod schema is accepted by the tool factory's
+    // back-compat path; cast keeps the type contract while we defer the full
+    // defineSchema migration of this module to Phase B5 (src/agent/).
+    inputSchema: z.record(z.string(), z.unknown()) as unknown as Schema<Record<string, unknown>>,
     inputSchemaJson: (tool.parameters ??
       { type: "object", properties: {}, additionalProperties: true }) as Tool["inputSchemaJson"],
     execute: async (_input, context) => {
