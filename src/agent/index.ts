@@ -242,6 +242,16 @@ export {
   type StartNodeAgentServiceServerOptions,
 } from "./agent-service-server.ts";
 export {
+  type AbortRejectionEvent,
+  type AbortRejectionEventTarget,
+  type AbortRejectionGuardLogger,
+  type AbortRejectionProcessTarget,
+  installAbortRejectionGuard,
+  type InstallAbortRejectionGuardOptions,
+  type InstalledAbortRejectionGuard,
+  isAbortRejectionReason,
+} from "./abort-rejection-guard.ts";
+export {
   type CachedRequestAuthResult,
   createRequestAuthCache,
   type CreateRequestAuthCacheOptions,
