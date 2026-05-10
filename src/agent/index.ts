@@ -1296,3 +1296,22 @@ export {
   WaitConflictError,
   WaitNotPendingError,
 } from "./runtime/index.ts";
+
+export {
+  createHostedServiceAuth,
+  getHostedServiceTokenFromRequest,
+  type HostedServiceAuth,
+  type HostedServiceAuthConfig,
+  type HostedServiceAuthenticatedRequest,
+  HostedServiceAuthError,
+  type HostedServiceAuthErrorCode,
+  type HostedServiceAuthFetch,
+  type HostedServiceAuthLogger,
+  type HostedServiceAuthOptions,
+  type HostedServiceAuthTrace,
+  type HostedServiceJwtError,
+  type HostedServiceJwtResult,
+  type HostedServiceProjectAccessError,
+  type HostedServiceProjectAccessResult,
+  isHostedServiceAuthError,
+} from "./hosted-service-auth.ts";
