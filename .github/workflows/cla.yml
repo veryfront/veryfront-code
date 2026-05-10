@@ -18,7 +18,7 @@ jobs:
       github.event.pull_request.user.login != 'aikido-autofix[bot]'
     steps:
       - name: Checkout base branch
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd  # v5
         with:
           ref: ${{ github.event.pull_request.base.ref }}
 
@@ -73,7 +73,7 @@ jobs:
 
       - name: Post CLA reminder
         if: steps.check.outputs.signed == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b  # v7
         env:
           MISSING_LOGINS: ${{ steps.check.outputs.missing_logins }}
         with:
