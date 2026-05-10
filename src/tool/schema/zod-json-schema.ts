@@ -1,221 +1,87 @@
-import type { z } from "zod";
-import type { JsonSchema } from "./json-schema.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+/**
+ * Schema → JSON Schema conversion shim.
+ *
+ * Historically this module was the in-tree zod-to-JSON-Schema converter.
+ * After Phase B2 the conversion lives behind the `SchemaValidator`
+ * contract (`toJsonSchema` / `isOptional`) and the zod-aware logic moved
+ * to `extensions/ext-zod/src/json-schema.ts`. This file is kept as a
+ * back-compat surface so existing callers (`tool/registry.ts`,
+ * `tool/factory.ts`, `workflow/registry.ts`, `routing/api/openapi/...`,
+ * `mcp/server.ts`, `cli/mcp/server.ts`) continue to compile.
+ *
+ * Inputs may be either an opaque `Schema<T>` produced by `defineSchema`
+ * (the modern path) or a raw zod schema (legacy path during the migration
+ * window). Both shapes are routed through the `SchemaValidator` contract
+ * so no zod-specific logic remains in this file.
+ *
+ * @module tool/schema/zod-json-schema
+ */
 
-/** Zod internal _def shape — covers fields from both v3 and v4. */
-interface ZodDef {
-  typeName?: string; // v3
-  type?: string; // v4
-  value?: unknown; // v3 literal
-  values?: unknown; // v3 enum / v4 literal
-  entries?: Record<string, unknown>; // v4 enum
-  shape?: (() => Record<string, z.ZodTypeAny>) | Record<string, z.ZodTypeAny>;
-  element?: z.ZodTypeAny; // v4 array/record
-  items?: z.ZodTypeAny[]; // tuple
-  options?: z.ZodTypeAny[] | Map<string, z.ZodTypeAny>; // union
-  valueType?: z.ZodTypeAny; // record
-  innerType?: z.ZodTypeAny; // optional/nullable/default (v3)
-  schema?: z.ZodTypeAny; // effects/optional/nullable (v3/v4)
-  in?: z.ZodTypeAny; // pipe input (v4)
-  getter?: () => z.ZodTypeAny; // lazy
-  defaultValue?: (() => unknown) | unknown;
+import type { JsonSchema, Schema } from "#veryfront/extensions/interfaces/index.ts";
+import {
+  isOptionalSchema as schemaIsOptional,
+  schemaToJsonSchema,
+} from "#veryfront/schemas/json-schema.ts";
+
+/** Detect contract `Schema<T>` (carries a `__zod` brand from the ext-zod adapter). */
+function isContractSchema(value: unknown): value is Schema<unknown> {
+  if (value === null || typeof value !== "object") return false;
+  if ("__zod" in value) return true;
+  // Fallback: defineSchema-produced wrappers expose `_output`, `parse`, and
+  // `safeParse`. Some test doubles may construct these directly.
+  return (
+    "_output" in value &&
+    typeof (value as { parse?: unknown }).parse === "function" &&
+    typeof (value as { safeParse?: unknown }).safeParse === "function"
+  );
 }
 
-const LITERAL_TYPE_MAP: Record<string, "string" | "number" | "boolean"> = {
-  string: "string",
-  number: "number",
-  boolean: "boolean",
-};
-
-function getLiteralType(value: unknown): "string" | "number" | "boolean" | undefined {
-  return LITERAL_TYPE_MAP[typeof value];
+/** Detect a raw zod schema: object with `_def` carrying `typeName` (v3) or `type` (v4). */
+function isRawZodSchema(value: unknown): value is { _def: { typeName?: string; type?: string } } {
+  if (value === null || typeof value !== "object") return false;
+  if (!("_def" in value)) return false;
+  const def = (value as { _def: unknown })._def as { typeName?: unknown; type?: unknown } | null;
+  if (!def || typeof def !== "object") return false;
+  return typeof def.typeName === "string" || typeof def.type === "string";
 }
 
-function getDef(schema: z.ZodTypeAny): ZodDef {
-  return schema._def as ZodDef;
+/**
+ * Adapter that wraps a raw zod schema in the contract's `Schema<unknown>`
+ * shape so the contract's `toJsonSchema` / `isOptional` can unwrap it via
+ * the `__zod` brand.
+ */
+function wrapRawZod(value: unknown): Schema<unknown> {
+  return { __zod: value } as unknown as Schema<unknown>;
 }
 
-/** Get the internal type tag from a zod schema (_def.typeName in v3, _def.type in v4). */
-function getTypeTag(schema: z.ZodTypeAny): string | undefined {
-  const def = getDef(schema);
-  return def.typeName ?? def.type;
-}
-
-export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
-  // Guard against invalid schemas (can happen with different zod instances in npm bundle)
-  if (!schema || typeof schema !== "object" || !("_def" in schema)) {
-    throw INVALID_ARGUMENT.create({ detail: "Invalid Zod schema: missing _def property" });
+/**
+ * Convert a `Schema<T>` (or, transitionally, a raw zod schema) into a
+ * JSON Schema document.
+ *
+ * Throws if the input is neither a contract schema nor a raw zod schema —
+ * matches the pre-B2 behavior of the original `zodToJsonSchema` guard.
+ */
+export function zodToJsonSchema(schema: unknown): JsonSchema {
+  if (isContractSchema(schema)) {
+    return schemaToJsonSchema(schema);
   }
-
-  const { schema: unwrapped, nullable } = unwrapSchema(schema);
-  const json = convert(unwrapped);
-
-  return nullable ? { anyOf: [json, { type: "null" }] } : json;
-}
-
-export function isOptionalSchema(schema: z.ZodTypeAny): boolean {
-  return unwrapSchema(schema).optional;
-}
-
-function convert(schema: z.ZodTypeAny): JsonSchema {
-  const tag = getTypeTag(schema);
-  const def = getDef(schema);
-
-  switch (tag) {
-    case "ZodString":
-    case "string":
-      return { type: "string" };
-
-    case "ZodNumber":
-    case "number":
-      return { type: "number" };
-
-    case "ZodBoolean":
-    case "boolean":
-      return { type: "boolean" };
-
-    case "ZodBigInt":
-    case "bigint":
-      return { type: "integer" };
-
-    case "ZodLiteral":
-    case "literal": {
-      // v3: _def.value, v4: _def.values (array of accepted values)
-      const literal = def.value ?? (Array.isArray(def.values) ? def.values[0] : def.values);
-      return { const: literal, type: getLiteralType(literal) };
-    }
-
-    case "ZodEnum":
-    case "ZodNativeEnum":
-    case "enum": {
-      // v3: _def.values (array), v4: _def.entries (object {key: value})
-      const values = def.values ?? (def.entries ? Object.values(def.entries) : []);
-      if (Array.isArray(values)) {
-        return { type: "string", enum: values };
-      }
-      // Native enum: filter out reverse-mapped numeric keys
-      return {
-        enum: Object.values(values).filter((value) => typeof value !== "number"),
-      };
-    }
-
-    case "ZodObject":
-    case "object": {
-      const shape = typeof def.shape === "function" ? def.shape() : def.shape;
-      const properties: Record<string, JsonSchema> = {};
-      const required: string[] = [];
-
-      for (const [key, value] of Object.entries(shape ?? {})) {
-        const zodSchema = value as z.ZodTypeAny;
-        properties[key] = zodToJsonSchema(zodSchema);
-        if (!isOptionalSchema(zodSchema)) required.push(key);
-      }
-
-      const json: JsonSchema = { type: "object", properties };
-      if (required.length) json.required = required;
-
-      return json;
-    }
-
-    case "ZodArray":
-    case "array": {
-      // v3: _def.type (item schema), v4: _def.element (item schema)
-      const itemType = def.element ?? (def.type as unknown as z.ZodTypeAny | undefined);
-      if (!itemType || typeof itemType === "string") return { type: "array" };
-      return { type: "array", items: zodToJsonSchema(itemType) };
-    }
-
-    case "ZodTuple":
-    case "tuple": {
-      const items = def.items ?? [];
-      return {
-        type: "array",
-        prefixItems: items.map((item: z.ZodTypeAny) => zodToJsonSchema(item)),
-        minItems: items.length,
-        maxItems: items.length,
-      };
-    }
-
-    case "ZodUnion":
-    case "ZodDiscriminatedUnion":
-    case "union": {
-      const options = def.options ?? [];
-      const optionArray = options instanceof Map ? Array.from(options.values()) : options;
-      return { anyOf: optionArray.map((option: z.ZodTypeAny) => zodToJsonSchema(option)) };
-    }
-
-    case "ZodRecord":
-    case "record": {
-      const valueSchema = def.valueType ?? def.element;
-      if (!valueSchema) return { type: "object" };
-      return { type: "object", additionalProperties: zodToJsonSchema(valueSchema) };
-    }
-
-    case "ZodDefault":
-    case "default": {
-      const innerType = def.innerType ?? def.schema;
-      if (!innerType) return { type: "object" };
-      const inner = zodToJsonSchema(innerType);
-      const defaultValue = typeof def.defaultValue === "function"
-        ? def.defaultValue()
-        : def.defaultValue;
-
-      if (typeof inner === "object" && !("anyOf" in inner) && defaultValue !== undefined) {
-        inner.default = defaultValue;
-      }
-
-      return inner;
-    }
-
-    case "ZodLazy":
-    case "lazy":
-      return def.getter ? convert(def.getter()) : { type: "object" };
-
-    case "ZodEffects":
-    case "pipe": {
-      // v3: ZodEffects wraps schema in _def.schema
-      // v4: pipe wraps in _def.in (input schema)
-      const innerSchema = def.schema ?? def.in;
-      return innerSchema ? convert(innerSchema) : { type: "object" };
-    }
-
-    default:
-      return { type: "object" };
+  if (isRawZodSchema(schema)) {
+    return schemaToJsonSchema(wrapRawZod(schema));
   }
+  throw new Error("Invalid Zod schema: missing _def property");
 }
 
-function unwrapSchema(
-  schema: z.ZodTypeAny,
-): { schema: z.ZodTypeAny; nullable: boolean; optional: boolean } {
-  let current: z.ZodTypeAny = schema;
-  let nullable = false;
-  let optional = false;
-
-  while (true) {
-    const tag = getTypeTag(current);
-    const def = getDef(current);
-
-    switch (tag) {
-      case "ZodNullable":
-      case "nullable":
-        nullable = true;
-        current = (def.innerType ?? def.schema)!;
-        break;
-
-      case "ZodOptional":
-      case "optional":
-        optional = true;
-        current = (def.innerType ?? def.schema)!;
-        break;
-
-      case "ZodEffects":
-      case "pipe":
-        current = def.schema ?? def.in ?? current;
-        if (current === schema) return { schema: current, nullable, optional };
-        break;
-
-      default:
-        return { schema: current, nullable, optional };
-    }
+/**
+ * Returns `true` when the schema permits `undefined`. Accepts both
+ * contract `Schema<T>` and raw zod schemas for the same compatibility
+ * reasons as `zodToJsonSchema` above.
+ */
+export function isOptionalSchema(schema: unknown): boolean {
+  if (isContractSchema(schema)) {
+    return schemaIsOptional(schema);
   }
+  if (isRawZodSchema(schema)) {
+    return schemaIsOptional(wrapRawZod(schema));
+  }
+  return false;
 }

@@ -2,8 +2,7 @@
  * Tool type definitions
  */
 
-import type { z } from "zod";
-import type { JsonSchema } from "./schema/json-schema.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/interfaces/index.ts";
 import type { BlobStorage } from "#veryfront/workflow/blob/types.ts";
 // type-only import — no runtime circular dependency (tool ↔ mcp)
 import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
@@ -19,12 +18,17 @@ export interface ToolConfig<TInput = any, TOutput = any> {
   /** Tool description for the AI model */
   description: string;
 
-  /** Input schema (Zod schema) */
-  inputSchema: z.ZodSchema<TInput>;
+  /**
+   * Input schema produced via `defineSchema((v) => …)` (or any
+   * `SchemaValidator`-backed builder). Validates input before `execute` runs
+   * and seeds the JSON Schema exposed to AI providers.
+   */
+  inputSchema: Schema<TInput>;
 
   /**
-   * Allow unknown/non-Zod schemas to fall back to a permissive JSON schema.
-   * Use only for truly dynamic tools; prefer z.unknown() or z.any() instead.
+   * Allow unknown/non-contract schemas to fall back to a permissive JSON
+   * schema. Use only for truly dynamic tools; prefer `v.unknown()` or
+   * `v.any()` from the SchemaValidator DSL instead.
    */
   allowUnknownSchema?: boolean;
 
@@ -117,8 +121,8 @@ export interface Tool<TInput = any, TOutput = any> {
   /** Tool description */
   description: string;
 
-  /** Input schema (Zod) */
-  inputSchema: z.ZodSchema<TInput>;
+  /** Input schema produced by `defineSchema` (or any SchemaValidator-backed builder). */
+  inputSchema: Schema<TInput>;
 
   /**
    * Pre-converted JSON Schema (for OpenAI/provider compatibility)

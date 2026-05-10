@@ -1,6 +1,5 @@
 import type { Tool, ToolConfig, ToolExecutionContext } from "./types.ts";
-import type { JsonSchema } from "./schema/json-schema.ts";
-import type { z } from "zod";
+import type { JsonSchema, Schema } from "#veryfront/extensions/interfaces/index.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";
@@ -14,8 +13,24 @@ interface ZodLikeSchema {
   parse?: (input: unknown) => void;
 }
 
+interface ContractSchemaShape {
+  __zod?: unknown;
+  _output?: unknown;
+  parse: (input: unknown) => unknown;
+  safeParse?: (input: unknown) => unknown;
+}
+
 interface SchemaWithParse {
   parse: (input: unknown) => unknown;
+}
+
+function isContractSchema(value: unknown): value is ContractSchemaShape {
+  if (value === null || typeof value !== "object") return false;
+  if ("__zod" in value) return true;
+  return (
+    "_output" in value &&
+    typeof (value as { parse?: unknown }).parse === "function"
+  );
 }
 
 function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
@@ -88,9 +103,12 @@ function convertSchemaToJson(
   logPrefix: string,
   permissive = false,
 ): JsonSchema {
-  if (hasValidZodTypeName(schema)) {
+  // Modern path: contract Schema<T> (defineSchema-produced) — route through
+  // the SchemaValidator contract via zodToJsonSchema (which detects both
+  // wrapped and raw zod shapes).
+  if (isContractSchema(schema) || hasValidZodTypeName(schema)) {
     const result = tryConvert(
-      () => zodToJsonSchema(schema as z.ZodTypeAny),
+      () => zodToJsonSchema(schema),
       toolId,
       logPrefix,
       permissive,
@@ -196,7 +214,7 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     id,
     type: "dynamic" as const,
     description: config.description,
-    inputSchema: config.inputSchema as z.ZodSchema<unknown>,
+    inputSchema: config.inputSchema as Schema<unknown>,
     inputSchemaJson,
     execute: async (input: unknown, context?: ToolExecutionContext) => {
       if (hasSchemaParse(config.inputSchema)) {
