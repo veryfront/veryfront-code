@@ -20,6 +20,7 @@ import {
   shouldReinforceLoadSkillContinuation,
   SLASH_COMMAND_ARTIFACT_REMINDER,
   SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE,
+  withRootOwnedChildResultHint,
 } from "./conversation-delegation-policy.ts";
 
 const RESEARCH_REQUEST = "make a deep research on a2a protocol";
@@ -94,6 +95,51 @@ describe("conversation delegation policy", () => {
         suggestedText: "Final report delivered.",
       },
     );
+  });
+
+  it("adds root-owned hints to successful local child results", () => {
+    assertEquals(
+      withRootOwnedChildResultHint({
+        success: true,
+        summary: { text: "child result" },
+      }),
+      {
+        success: true,
+        summary: { text: "child result" },
+        rootResponseHint: {
+          instruction: ROOT_OWNED_CHILD_RESULT_INSTRUCTION,
+          suggestedText: "child result",
+        },
+      },
+    );
+  });
+
+  it("adds root-owned hints to completed durable child results", () => {
+    assertEquals(
+      withRootOwnedChildResultHint({
+        ok: true,
+        status: "completed",
+        text: "durable child result",
+      }),
+      {
+        ok: true,
+        status: "completed",
+        text: "durable child result",
+        rootResponseHint: {
+          instruction: ROOT_OWNED_CHILD_RESULT_INSTRUCTION,
+          suggestedText: "durable child result",
+        },
+      },
+    );
+  });
+
+  it("leaves failed child results unchanged", () => {
+    const failedResult = {
+      success: false,
+      error: "failed",
+    };
+
+    assertEquals(withRootOwnedChildResultHint(failedResult), failedResult);
   });
 
   it("builds invoke_agent follow-up guidance from the shared narration guard", () => {
