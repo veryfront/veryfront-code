@@ -23,3 +23,29 @@ jobs:
 
       - name: Run dependency lint
         run: deno task lint:deps
+
+  osv-scan:
+    runs-on: ubuntu-latest
+    name: OSV-Scanner (deno.lock)
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/setup-deno
+
+      # `deno.lock` is `.gitignore`d in this repo; generate it before the scan
+      # by populating the dependency cache from `deno.json`.
+      - name: Generate deno.lock
+        run: deno cache deno.json
+
+      # Pin OSV-Scanner action to a SHA in PR 6; tag for now.
+      # Verify latest tag at execution time:
+      #   gh api repos/google/osv-scanner-action/releases/latest --jq .tag_name
+      - uses: google/osv-scanner-action@v2.3.5
+        with:
+          scan-args: |-
+            --lockfile=deno.lock
+          fail-on-vuln: true
+          # Upload SARIF for the Security tab
+          upload-sarif: true
