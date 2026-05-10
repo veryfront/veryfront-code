@@ -16,7 +16,7 @@ jobs:
   # CI: Quality Checks
   # ============================================
   ci:
-    runs-on: veryfront-k8s-runners
+    runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +37,7 @@ jobs:
   # ============================================
 
   tests:
-    runs-on: veryfront-k8s-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -62,7 +62,7 @@ jobs:
             fi
 
   tests-e2e-rsc-browser:
-    runs-on: veryfront-k8s-runners
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     name: tests (rsc browser e2e)
     steps:
@@ -108,8 +108,8 @@ jobs:
   # ============================================
 
   tests-binary-e2e:
-    runs-on: veryfront-k8s-runners
-    timeout-minutes: 35
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     name: tests (binary e2e)
     steps:
       - uses: actions/checkout@v5
@@ -144,7 +144,7 @@ jobs:
           done
       - uses: nick-fields/retry@v4.0.0
         with:
-          timeout_minutes: 15
+          timeout_minutes: 30
           max_attempts: 2
           retry_wait_seconds: 30
           command: |
