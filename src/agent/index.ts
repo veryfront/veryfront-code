@@ -309,6 +309,17 @@ export type {
 } from "./hosted-chat-runtime-contract.ts";
 
 export {
+  createHostedAgentServiceRouteSet,
+  type HostedAgentServiceActiveSpanAttributes,
+  type HostedAgentServiceDetachedCleanupInput,
+  type HostedAgentServiceDetachedExecutionInput,
+  type HostedAgentServiceRouteSet,
+  type HostedAgentServiceRouteSetOptions,
+  type HostedAgentServiceRoutesLogger,
+  type HostedAgentServiceRoutesTrace,
+  type HostedAgentServiceStreamExecutionInput,
+} from "./hosted-agent-service-routes.ts";
+export {
   executeHostedDurableChatRun,
   type ExecuteHostedDurableChatRunInput,
   type HostedDurableRunAccepted,
