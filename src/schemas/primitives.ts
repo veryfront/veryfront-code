@@ -6,7 +6,7 @@
  * @module schemas/primitives
  */
 
-import type { InferSchema, Schema } from "veryfront/extensions/interfaces";
+import type { InferSchema, Schema } from "veryfront/extensions/schema";
 import { defineSchema } from "./define.ts";
 
 export const getNonEmptyStringSchema = defineSchema((v) =>

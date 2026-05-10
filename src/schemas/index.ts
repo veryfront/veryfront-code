@@ -15,6 +15,12 @@
 export { defineSchema } from "./define.ts";
 
 export {
+  isOptionalSchema as schemaIsOptional,
+  type JsonSchema,
+  schemaToJsonSchema,
+} from "./json-schema.ts";
+
+export {
   CommonSchemas,
   type DateRange,
   type Email,

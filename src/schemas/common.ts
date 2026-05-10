@@ -9,7 +9,7 @@
  * @module schemas/common
  */
 
-import type { InferSchema, Schema } from "veryfront/extensions/interfaces";
+import type { InferSchema, Schema } from "veryfront/extensions/schema";
 import { MAX_URL_LENGTH_FOR_VALIDATION } from "#veryfront/utils/constants/index.ts";
 import { defineSchema } from "./define.ts";
 import { getTimestampSchema } from "./primitives.ts";

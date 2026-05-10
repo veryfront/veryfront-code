@@ -13,12 +13,14 @@
 import { z } from "zod";
 import type {
   InferShape,
+  JsonSchema,
   Schema,
   SchemaValidator,
   SchemaValidatorCoerce,
   ValidationIssue,
   ValidationResult,
 } from "veryfront/extensions/schema";
+import { isOptionalSchema, zodToJsonSchema } from "./json-schema.ts";
 
 // deno-lint-ignore no-explicit-any -- zod's chainable APIs return parametric types
 type AnyZodSchema = z.ZodType<any, any, any>;
@@ -200,5 +202,9 @@ export function createZodAdapter(): SchemaValidator {
     coerce,
 
     validate: <T>(schema: Schema<T>, data: unknown): ValidationResult<T> => schema.safeParse(data),
+
+    toJsonSchema: (schema: Schema<unknown>): JsonSchema => zodToJsonSchema(toZod(schema)),
+
+    isOptional: (schema: Schema<unknown>): boolean => isOptionalSchema(toZod(schema)),
   };
 }

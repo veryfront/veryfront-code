@@ -10,6 +10,7 @@ export type {
   InferShape,
   SchemaFactory,
   ValidationResult,
+  JsonSchema,
 } from "./schema-validator.ts";
 
 // Interfaces

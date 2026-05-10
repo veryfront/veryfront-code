@@ -11,6 +11,8 @@
  * @module extensions/schema/schema-validator
  */
 
+import type { JsonSchema } from "./json-schema.ts";
+
 /**
  * An opaque schema definition that validates and infers type `T`.
  *
@@ -187,7 +189,28 @@ export interface SchemaValidator {
    * earlier revisions of this contract.
    */
   validate<T>(schema: Schema<T>, data: unknown): ValidationResult<T>;
+
+  /**
+   * Convert an opaque `Schema<T>` to a JSON Schema document.
+   *
+   * Used by the tool/MCP layer to expose tool input schemas to AI providers
+   * and MCP clients. Implementations unwrap the contract `Schema<T>` back to
+   * their native validator (e.g. zod) and emit a JSON Schema representation.
+   *
+   * Returns a permissive `{type: "object"}` for kinds the implementation
+   * cannot represent.
+   */
+  toJsonSchema(schema: Schema<unknown>): JsonSchema;
+
+  /**
+   * Returns `true` when the schema permits `undefined` (i.e. was constructed
+   * via `.optional()`/`.nullish()`). Used by tool input-schema introspection
+   * to mark JSON Schema properties as not required.
+   */
+  isOptional(schema: Schema<unknown>): boolean;
 }
+
+export type { JsonSchema };
 
 /** Factory type accepted by `defineSchema`. */
 export type SchemaFactory<T> = (v: SchemaValidator) => Schema<T>;
