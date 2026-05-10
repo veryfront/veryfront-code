@@ -1020,7 +1020,10 @@ export {
   type FinalizedMessageState,
 } from "./hosted-finalized-message.ts";
 export {
+  type BootstrappedHostedChatExecutionRuntime,
   cleanupAfterHostedChatExecutionFinalization,
+  createBootstrappedHostedChatExecutionRuntime,
+  type CreateBootstrappedHostedChatExecutionRuntimeInput,
   createHostedChatExecutionRuntime,
   createHostedChatExecutionRuntimeBootstrap,
   type CreateHostedChatExecutionRuntimeBootstrapInput,

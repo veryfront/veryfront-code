@@ -202,13 +202,16 @@ export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
 }
 
 function resolveChatStreamWatchdogOptions(options?: ChatStreamWatchdogOptions) {
+  const defaultSetTimeout = globalThis.setTimeout.bind(globalThis);
+  const defaultClearTimeout = globalThis.clearTimeout.bind(globalThis);
+
   return {
     idleTimeoutMs: options?.idleTimeoutMs ?? DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS,
     toolRunningTimeoutMs: options?.toolRunningTimeoutMs ??
       DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS,
     longRunningToolNames: new Set(options?.longRunningToolNames ?? ["invoke_agent"]),
-    setTimeoutFn: options?.setTimeoutFn ?? globalThis.setTimeout,
-    clearTimeoutFn: options?.clearTimeoutFn ?? globalThis.clearTimeout,
+    setTimeoutFn: options?.setTimeoutFn ?? defaultSetTimeout,
+    clearTimeoutFn: options?.clearTimeoutFn ?? defaultClearTimeout,
   };
 }
 

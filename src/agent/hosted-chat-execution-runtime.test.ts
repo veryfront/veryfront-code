@@ -1,6 +1,7 @@
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../chat/types.ts";
+import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./hosted-agent-run-lifecycle.ts";
 import type { ConversationRunChunkMirror } from "./conversation-run-chunk-mirror.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -11,6 +12,7 @@ import type { HostedLifecycleTerminalState } from "./hosted-lifecycle.ts";
 import { createMirroredToolChunkState } from "./mirrored-tool-chunk-state.ts";
 import {
   cleanupAfterHostedChatExecutionFinalization,
+  createBootstrappedHostedChatExecutionRuntime,
   createHostedChatExecutionRuntime,
   createHostedChatExecutionRuntimeBootstrap,
   createHostedChatFinalizeDetachedBuildState,
@@ -137,6 +139,38 @@ function createLogger() {
       warn: (message: string, metadata?: Record<string, unknown>) => {
         warnings.push({ message, ...(metadata ? { metadata } : {}) });
       },
+    },
+  };
+}
+
+function createTracer() {
+  const attributes: Array<Parameters<HostedAgentRunSpan["setAttributes"]>[0]> = [];
+  let finishCount = 0;
+  let contextCount = 0;
+  const span: HostedAgentRunSpan = {
+    setAttributes: (nextAttributes) => {
+      attributes.push(nextAttributes);
+    },
+    finish: () => {
+      finishCount += 1;
+    },
+    withContext: (fn) => {
+      contextCount += 1;
+      return fn();
+    },
+  };
+  const tracer: HostedAgentRunTracer = {
+    startSpan: () => span,
+  };
+
+  return {
+    attributes,
+    tracer,
+    get finishCount() {
+      return finishCount;
+    },
+    get contextCount() {
+      return contextCount;
     },
   };
 }
@@ -291,6 +325,119 @@ describe("agent/hosted-chat-execution-runtime", () => {
       "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION",
     );
     assertEquals(streamCalls, 0);
+  });
+
+  it("creates a bootstrapped hosted chat execution runtime", async () => {
+    const tracer = createTracer();
+    const finalMessages: HostedChatRuntimeStreamInput["messages"] = [];
+    let traceStreamCount = 0;
+    let capturedMessages: HostedChatRuntimeStreamInput["messages"] | undefined;
+    let streamOptions: HostedChatRuntimeToUiMessageStreamOptions | undefined;
+    const agent: HostedChatRuntimeAgent = {
+      stream: async (input) => {
+        capturedMessages = input.messages;
+        return createStreamResult({
+          finalStep: {},
+          captureOptions: (options) => {
+            streamOptions = options;
+          },
+        });
+      },
+    };
+
+    const bootstrapped = await createBootstrappedHostedChatExecutionRuntime({
+      authToken: "token",
+      apiUrl: "https://api.example.test",
+      agent,
+      agentId: "agent-1",
+      modelId: "openai/gpt-5.4",
+      cleanup: async () => {},
+      messages: [],
+      finalMessages,
+      conversationId: "conversation-1",
+      projectId: "project-1",
+      userId: "user-1",
+      rootRunContext: {
+        durableRootRun: {
+          runId: "root-run-1",
+          conversationId: "conversation-1",
+          messageId: "stream-message-1",
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+        },
+        durableRunMirror: null,
+      },
+      abortSignal: new AbortController().signal,
+      responseMessageId: "response-message-1",
+      tracer: tracer.tracer,
+      resolveProvider: () => "openai",
+      traceStream: async (operation) => {
+        traceStreamCount += 1;
+        return await operation();
+      },
+      createRootStreamWatchdog,
+    });
+
+    assertEquals(traceStreamCount, 1);
+    assertEquals(tracer.contextCount, 1);
+    assertEquals(capturedMessages, finalMessages);
+    assertEquals(bootstrapped.execution.agentUIStream !== undefined, true);
+    assertEquals(streamOptions?.generateMessageId?.(), "response-message-1");
+    assertEquals(tracer.attributes[0], {
+      "conversation.id": "conversation-1",
+      "project.id": "project-1",
+      "user.id": "user-1",
+      "agent.id": "agent-1",
+      "run.id": "root-run-1",
+      "message.id": "stream-message-1",
+      "gen_ai.operation.name": "chat",
+      "gen_ai.conversation.id": "conversation-1",
+      "gen_ai.agent.id": "agent-1",
+    });
+  });
+
+  it("finalizes the agent run span when bootstrapping hosted chat execution fails", async () => {
+    const tracer = createTracer();
+    const agent: HostedChatRuntimeAgent = {
+      stream: async () => {
+        throw new Error("stream startup failed");
+      },
+    };
+
+    await assertRejects(
+      async () => {
+        await createBootstrappedHostedChatExecutionRuntime({
+          authToken: "token",
+          apiUrl: "https://api.example.test",
+          agent,
+          agentId: "agent-1",
+          modelId: "openai/gpt-5.4",
+          cleanup: async () => {},
+          messages: [],
+          finalMessages: [],
+          projectId: null,
+          userId: "user-1",
+          rootRunContext: {
+            durableRootRun: null,
+            durableRunMirror: null,
+          },
+          abortSignal: new AbortController().signal,
+          tracer: tracer.tracer,
+          resolveProvider: () => "openai",
+        });
+      },
+      Error,
+      "stream startup failed",
+    );
+
+    assertEquals(tracer.finishCount, 1);
+    assertEquals(tracer.attributes.at(-1), {
+      "agent.run.final_status": "failed",
+      "gen_ai.provider.name": "openai",
+      "gen_ai.response.model": "openai/gpt-5.4",
+      "error.type": "STREAM_ERROR",
+      "error.message": "stream startup failed",
+    });
   });
 
   it("appends fallback chunks and flushes through the mirror", async () => {

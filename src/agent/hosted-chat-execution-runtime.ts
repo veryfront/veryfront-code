@@ -4,6 +4,14 @@ import {
 } from "../chat/chat-ui-message-helpers.ts";
 import { getLastStreamStep } from "../chat/final-step-fallback.ts";
 import type { ChatUiMessage, ChatUiMessageChunk, MessageMetadata } from "../chat/types.ts";
+import type { HostedConversationRootRunContext } from "./conversation-root-run-lifecycle.ts";
+import {
+  createHostedAgentRunSpanController,
+  createHostedRootRunLifecycleRuntimeAdapter,
+  type CreateHostedRootRunLifecycleRuntimeAdapterInput,
+  type HostedAgentRunSpanController,
+  type HostedAgentRunTracer,
+} from "./hosted-agent-run-lifecycle.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,
@@ -111,6 +119,44 @@ export interface CreateHostedChatExecutionRuntimeInput {
   incompleteToolCallsPartErrorText?: string;
 }
 
+export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
+  authToken: string;
+  apiUrl: string;
+  agent: HostedChatRuntimeAgent;
+  agentId: string;
+  modelId: string;
+  cleanup: () => Promise<void>;
+  messages: ChatUiMessage[];
+  finalMessages: HostedChatRuntimeStreamInput["messages"];
+  conversationId?: string;
+  projectId: string | null;
+  userId: string;
+  rootRunContext: HostedConversationRootRunContext;
+  abortSignal: AbortSignal;
+  responseMessageId?: string;
+  upstreamParentConversationId?: string;
+  upstreamParentRunId?: string;
+  spawnedFromToolCallId?: string;
+  tracer: HostedAgentRunTracer;
+  resolveProvider: (modelId: string) => string;
+  traceStream?: CreateHostedChatExecutionRuntimeBootstrapInput["traceStream"];
+  logger?: HostedChatExecutionRuntimeLogger;
+  spanName?: string;
+  terminalErrorCode?: string;
+  incompleteToolCallsPartErrorText?: string;
+  createRootStreamWatchdog?: CreateHostedChatExecutionRuntimeBootstrapInput[
+    "createRootStreamWatchdog"
+  ];
+  createTerminalAdapter?: CreateHostedRootRunLifecycleRuntimeAdapterInput[
+    "createTerminalAdapter"
+  ];
+}
+
+export interface BootstrappedHostedChatExecutionRuntime {
+  agentRunSpan: HostedAgentRunSpanController;
+  execution: HostedChatExecutionRuntime;
+}
+
 type SharedFinalizationHooks = Pick<
   FinalizeHostedResponseOptions<ChatUiMessage, ChatUiMessageChunk<MessageMetadata>>,
   | "resolveEmptyTerminalError"
@@ -156,10 +202,7 @@ function createHostedChatExecutionCleanup(cleanup: () => Promise<void>): () => P
 }
 
 function createDefaultHostedChatExecutionRootStreamWatchdog(): HostedChatExecutionRootStreamWatchdog {
-  return createChatStreamWatchdog({
-    setTimeoutFn: globalThis["setTimeout"],
-    clearTimeoutFn: globalThis["clearTimeout"],
-  });
+  return createChatStreamWatchdog();
 }
 
 function traceHostedChatRuntimeStream<T>(
@@ -187,14 +230,20 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     : createDefaultHostedChatExecutionRootStreamWatchdog();
   const streamAbortSignal = AbortSignal.any([input.abortSignal, rootStreamWatchdog.signal]);
 
-  const streamResult = await traceHostedChatRuntimeStream(
-    input.traceStream,
-    () =>
-      input.agent.stream({
-        messages: input.finalMessages,
-        abortSignal: streamAbortSignal,
-      }),
-  );
+  let streamResult: HostedChatRuntimeStreamResult;
+  try {
+    streamResult = await traceHostedChatRuntimeStream(
+      input.traceStream,
+      () =>
+        input.agent.stream({
+          messages: input.finalMessages,
+          abortSignal: streamAbortSignal,
+        }),
+    );
+  } catch (error) {
+    rootStreamWatchdog.dispose();
+    throw error;
+  }
 
   return {
     cleanup,
@@ -206,6 +255,79 @@ export async function createHostedChatExecutionRuntimeBootstrap(
     ...(input.conversationId ? { capturedConversationId: input.conversationId } : {}),
     mirroredToolChunkState: createMirroredToolChunkState(),
   };
+}
+
+async function createBootstrappedHostedChatRuntime(
+  input: CreateBootstrappedHostedChatExecutionRuntimeInput,
+  agentRunSpan: HostedAgentRunSpanController,
+): Promise<HostedChatExecutionRuntime> {
+  const lifecycleAdapter = createHostedRootRunLifecycleRuntimeAdapter({
+    authToken: input.authToken,
+    apiUrl: input.apiUrl,
+    modelId: input.modelId,
+    durableRootRun: input.rootRunContext.durableRootRun,
+    durableRunMirror: input.rootRunContext.durableRunMirror,
+    agentRunSpan,
+    resolveProvider: input.resolveProvider,
+    ...(input.createTerminalAdapter ? { createTerminalAdapter: input.createTerminalAdapter } : {}),
+  });
+  const bootstrap = await createHostedChatExecutionRuntimeBootstrap({
+    agent: input.agent,
+    cleanup: input.cleanup,
+    lifecycleAdapter,
+    finalMessages: input.finalMessages,
+    conversationId: input.conversationId,
+    abortSignal: input.abortSignal,
+    traceStream: input.traceStream,
+    ...(input.createRootStreamWatchdog
+      ? { createRootStreamWatchdog: input.createRootStreamWatchdog }
+      : {}),
+  });
+
+  return createHostedChatExecutionRuntime({
+    agentId: input.agentId,
+    modelId: input.modelId,
+    originalMessages: input.messages,
+    responseMessageId: input.responseMessageId,
+    runContext: agentRunSpan,
+    abortSignal: input.abortSignal,
+    bootstrap,
+    logger: input.logger,
+    incompleteToolCallsPartErrorText: input.incompleteToolCallsPartErrorText,
+  });
+}
+
+export async function createBootstrappedHostedChatExecutionRuntime(
+  input: CreateBootstrappedHostedChatExecutionRuntimeInput,
+): Promise<BootstrappedHostedChatExecutionRuntime> {
+  const agentRunSpan = createHostedAgentRunSpanController({
+    tracer: input.tracer,
+    spanName: input.spanName,
+    operationName: "chat",
+    conversationId: input.conversationId,
+    projectId: input.projectId,
+    userId: input.userId,
+    agentId: input.agentId,
+    rootRun: input.rootRunContext.durableRootRun,
+    upstreamParentConversationId: input.upstreamParentConversationId,
+    upstreamParentRunId: input.upstreamParentRunId,
+    spawnedFromToolCallId: input.spawnedFromToolCallId,
+  });
+
+  try {
+    const execution = await agentRunSpan.withContext(() =>
+      createBootstrappedHostedChatRuntime(input, agentRunSpan)
+    );
+    return { agentRunSpan, execution };
+  } catch (error) {
+    agentRunSpan.finalize({
+      status: "failed",
+      modelId: input.modelId,
+      terminalErrorCode: input.terminalErrorCode ?? "STREAM_ERROR",
+      terminalErrorMessage: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 export function createHostedChatStreamFinalizationHooks(input: {
