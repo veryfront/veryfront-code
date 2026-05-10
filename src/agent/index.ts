@@ -234,6 +234,14 @@ export {
   type NormalizedAgentServiceContract,
 } from "./agent-service.ts";
 export {
+  type AgentServiceServerLifecycle,
+  createAgentServiceServerRuntime,
+  type CreateAgentServiceServerRuntimeOptions,
+  type NodeAgentServiceServer,
+  startNodeAgentServiceServer,
+  type StartNodeAgentServiceServerOptions,
+} from "./agent-service-server.ts";
+export {
   type CachedRequestAuthResult,
   createRequestAuthCache,
   type CreateRequestAuthCacheOptions,

@@ -1,4 +1,9 @@
-import { agent, type AgentServiceRoute, defineAgentService } from "./index.ts";
+import {
+  agent,
+  type AgentServiceRoute,
+  createAgentServiceServerRuntime,
+  defineAgentService,
+} from "./index.ts";
 
 const routes: AgentServiceRoute[] = [
   {
@@ -17,3 +22,4 @@ const service = defineAgentService({
 });
 
 service.createRuntime({ routes });
+createAgentServiceServerRuntime({ runtime: service.createRuntime({ routes }) });
