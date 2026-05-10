@@ -871,6 +871,15 @@ export {
   type RuntimeProjectSteeringLookup,
 } from "./runtime-project-skill-catalog.ts";
 export {
+  createRuntimePromptBlock,
+  type RuntimePromptBlockOptions,
+} from "./runtime-prompt-block.ts";
+export {
+  buildRuntimeAvailableSkillsPromptBlock,
+  formatRuntimeSkillMetadata,
+  MAX_RUNTIME_SKILL_PROMPT_ENTRIES,
+} from "./runtime-skill-prompt.ts";
+export {
   buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,
   normalizeRuntimeSkillReferencePath,
