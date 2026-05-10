@@ -867,6 +867,13 @@ export {
   type RuntimeProjectFilesTrace,
 } from "./runtime-project-files-client.ts";
 export {
+  createHostedProjectSteeringAdapter,
+  type HostedProjectSkillIdsContext,
+  type HostedProjectSteeringAdapter,
+  type HostedProjectSteeringAdapterOptions,
+  type HostedProjectSteeringLogger,
+} from "./hosted-project-steering-adapter.ts";
+export {
   createRuntimeProjectSkillLoader,
   type RuntimeLoadedProjectSkill,
   type RuntimeProjectSkillContext,
