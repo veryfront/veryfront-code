@@ -284,6 +284,18 @@ export {
   type HostedChatRuntimeAgentAdapterWarning,
 } from "./hosted-chat-runtime-agent-adapter.ts";
 
+export {
+  createHostedAgentRunSpanController,
+  type CreateHostedAgentRunSpanControllerInput,
+  createHostedRootRunLifecycleRuntimeAdapter,
+  type CreateHostedRootRunLifecycleRuntimeAdapterInput,
+  type HostedAgentRunSpan,
+  type HostedAgentRunSpanController,
+  type HostedAgentRunSpanFinalState,
+  type HostedAgentRunTracer,
+  type HostedRootRunLifecycleRuntimeAdapter,
+} from "./hosted-agent-run-lifecycle.ts";
+
 export type {
   HostedChatRuntimeAgent,
   HostedChatRuntimeCreationOptions,
