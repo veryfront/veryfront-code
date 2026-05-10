@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.459",
+  "version": "0.1.460",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -151,6 +151,7 @@
     "veryfront/extensions/bundler": "./src/extensions/bundler.ts",
     "veryfront/extensions/contracts": "./src/extensions/contracts.ts",
     "veryfront/extensions/interfaces": "./src/extensions/interfaces/index.ts",
+    "jose": "npm:jose@5.9.6",
     "#veryfront": "./src/index.ts",
     "#veryfront/agent": "./src/agent/index.ts",
     "#veryfront/agent/react": "./src/agent/react/index.ts",
