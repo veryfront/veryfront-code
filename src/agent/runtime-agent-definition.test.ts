@@ -1,5 +1,8 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { parseRuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
+import {
+  createRuntimeAgentSystemMessages,
+  parseRuntimeAgentMarkdownDefinition,
+} from "./runtime-agent-definition.ts";
 
 Deno.test("parseRuntimeAgentMarkdownDefinition normalizes frontmatter and instructions", () => {
   const result = parseRuntimeAgentMarkdownDefinition({
@@ -57,4 +60,42 @@ Create a plan.
     }).thinking,
     { enabled: true },
   );
+});
+
+Deno.test("createRuntimeAgentSystemMessages inserts runtime blocks at marker", () => {
+  const result = createRuntimeAgentSystemMessages({
+    agent: {
+      id: "support",
+      name: "Support",
+      description: "Helps users",
+      instructions: "Base instructions\n\n<!-- veryfront-runtime-context -->\n\nStatic policy",
+    },
+    runtimeBlocks: ['<project_context>\nproject_reference: "project-123"\n</project_context>'],
+  });
+
+  assertEquals(result.length, 1);
+  assertEquals(
+    result[0]?.content,
+    'Base instructions\n\n<project_context>\nproject_reference: "project-123"\n</project_context>\n\nStatic policy',
+  );
+});
+
+Deno.test("createRuntimeAgentSystemMessages appends runtime blocks when marker is absent", () => {
+  const result = createRuntimeAgentSystemMessages({
+    agent: {
+      id: "support",
+      name: "Support",
+      description: "Helps users",
+      instructions: "Base instructions",
+    },
+    runtimeBlocks: ["Dynamic context"],
+    environmentContext: "Browser timezone: UTC",
+  });
+
+  assertEquals(result.length, 2);
+  assertEquals(result[0]?.content, "Base instructions\n\nDynamic context");
+  assertEquals(result[1], {
+    role: "system",
+    content: "<environment_context>\nBrowser timezone: UTC\n</environment_context>",
+  });
 });
