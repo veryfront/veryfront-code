@@ -81,6 +81,24 @@ export {
 } from "./tracing/otlp-setup.ts";
 
 export {
+  createOpenTelemetryServiceTracer,
+  type CreateOpenTelemetryServiceTracerOptions,
+  type OpenTelemetryContextApi,
+  type OpenTelemetryServiceTracer,
+  type OpenTelemetrySpan,
+  type OpenTelemetrySpanContext,
+  type OpenTelemetryTraceApi,
+  type OpenTelemetryTracer,
+  type ServiceTracer,
+  type ServiceTracerAttributeInput,
+  type ServiceTracerAttributes,
+  type ServiceTracerAttributeValue,
+  type ServiceTracerSpan,
+  type ServiceTracerSpanContext,
+  type ServiceTracerStartSpanOptions,
+} from "./tracing/service-tracer.ts";
+
+export {
   type DevError,
   ErrorCollector,
   type ErrorFilter,
