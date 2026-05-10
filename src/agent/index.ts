@@ -320,6 +320,15 @@ export {
   type HostedAgentServiceStreamExecutionInput,
 } from "./hosted-agent-service-routes.ts";
 export {
+  createHostedRuntimeStateResolver,
+  type CreateHostedRuntimeStateResolverOptions,
+  type HostedRuntimeStateResolverContext,
+  type HostedRuntimeStateResolverInput,
+  type HostedRuntimeStateResolverResult,
+  type HostedRuntimeSystemRefresh,
+  type HostedRuntimeSystemRefreshInput,
+} from "./hosted-runtime-state-resolver.ts";
+export {
   executeHostedDurableChatRun,
   type ExecuteHostedDurableChatRunInput,
   type HostedDurableRunAccepted,
