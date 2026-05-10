@@ -608,6 +608,8 @@ export {
   createHostedDurableChildInvokeTraceRecorder,
   executeHostedDurableChildFork,
   type ExecuteHostedDurableChildForkInput,
+  executeHostedLocalChildInvoke,
+  type ExecuteHostedLocalChildInvokeInput,
   type HostedDurableChildBootstrapCallbacks,
   type HostedDurableChildBootstrapContext,
   type HostedDurableChildExecutionOptions,
@@ -620,6 +622,7 @@ export {
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
   type HostedDurableChildTerminalFailure,
+  type HostedLocalChildInvokeTraceRecorder,
 } from "./hosted-durable-child-fork-execution.ts";
 export {
   bootstrapHostedChildRun,

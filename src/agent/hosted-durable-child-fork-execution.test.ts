@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildChildRunExecutionSnapshot,
@@ -11,6 +11,7 @@ import {
   buildHostedDurableChildInvokeTerminalFailureResult,
   createHostedDurableChildInvokeTraceRecorder,
   executeHostedDurableChildFork,
+  executeHostedLocalChildInvoke,
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
 } from "./hosted-durable-child-fork-execution.ts";
@@ -332,6 +333,83 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       "gen_ai.usage.input_tokens": 3,
       "gen_ai.usage.output_tokens": 4,
     });
+  });
+
+  it("records successful local child invoke results", async () => {
+    const localResult: ChildRunExecutionResult = {
+      success: true,
+      description: "Inspect logs",
+      summary: { text: "done" },
+      steps: 1,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 10,
+    };
+    const recordedFailures: string[] = [];
+    const result = await executeHostedLocalChildInvoke({
+      forkInput: { description: "Inspect logs" },
+      traceRecorder: {
+        recordLocalResult: (recordedResult) => recordedResult,
+        recordLocalFailure: (errorMessage) => {
+          recordedFailures.push(errorMessage);
+        },
+      },
+      execute: () => localResult,
+    });
+
+    assertEquals(result, localResult);
+    assertEquals(recordedFailures, []);
+  });
+
+  it("normalizes non-abort local child invoke failures", async () => {
+    const recordedFailures: string[] = [];
+    const result = await executeHostedLocalChildInvoke({
+      forkInput: { description: "Inspect logs" },
+      traceRecorder: {
+        recordLocalResult: (recordedResult) => recordedResult,
+        recordLocalFailure: (errorMessage) => {
+          recordedFailures.push(errorMessage);
+        },
+      },
+      execute: () => {
+        throw new Error("provider failed");
+      },
+    });
+
+    assertEquals(recordedFailures, ["provider failed"]);
+    assertEquals(result, {
+      success: false,
+      description: "Inspect logs",
+      error: "provider failed",
+      steps: 0,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 0,
+    });
+  });
+
+  it("rethrows user-requested local child invoke aborts", async () => {
+    const abortController = new AbortController();
+    abortController.abort();
+    const abortError = new Error("Aborted");
+
+    await assertRejects(
+      () =>
+        executeHostedLocalChildInvoke({
+          forkInput: { description: "Inspect logs" },
+          abortSignal: abortController.signal,
+          traceRecorder: {
+            recordLocalResult: (recordedResult) => recordedResult,
+            recordLocalFailure: () => {},
+          },
+          execute: () => {
+            throw abortError;
+          },
+          isAbortError: (error) => error === abortError,
+        }),
+      Error,
+      "Aborted",
+    );
   });
 
   it("returns a host-shaped context-unavailable result without bootstrapping", async () => {
