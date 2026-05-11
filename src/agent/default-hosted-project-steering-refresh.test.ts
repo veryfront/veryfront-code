@@ -1,7 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DefaultHostedChatRuntimeSystemRefreshInput } from "./default-hosted-chat-runtime.ts";
-import { createDefaultHostedProjectSteeringRefresh } from "./default-hosted-project-steering-refresh.ts";
+import {
+  createDefaultHostedProjectSteeringRefresh,
+  fetchDefaultHostedProjectSteering,
+} from "./default-hosted-project-steering-refresh.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
 
@@ -52,6 +55,60 @@ function createRefreshInput(
 }
 
 describe("agent/default-hosted-project-steering-refresh", () => {
+  it("fetches project steering in parallel for an active project", async () => {
+    const lookups: Array<{ projectId: string; authToken: string; branchId?: string | null }> = [];
+    const traceOperations: string[] = [];
+
+    const steering = await fetchDefaultHostedProjectSteering({
+      projectId: "project-1",
+      authToken: "auth-token",
+      branchId: "branch-1",
+      fetchProjectInstructions: (lookup) => {
+        lookups.push(lookup);
+        return Promise.resolve("Fresh instructions");
+      },
+      fetchSkills: (lookup) => {
+        lookups.push(lookup);
+        return Promise.resolve([createSkill("build")]);
+      },
+      trace: async (operationName, operation) => {
+        traceOperations.push(operationName);
+        return await operation();
+      },
+      traceOperationName: "test.fetchProjectSteering",
+    });
+
+    assertEquals(traceOperations, ["test.fetchProjectSteering"]);
+    assertEquals(lookups, [
+      { projectId: "project-1", authToken: "auth-token", branchId: "branch-1" },
+      { projectId: "project-1", authToken: "auth-token", branchId: "branch-1" },
+    ]);
+    assertEquals(steering, {
+      instructions: "Fresh instructions",
+      skills: [createSkill("build")],
+    });
+  });
+
+  it("returns empty steering without fetching when no project is active", async () => {
+    let fetchCount = 0;
+
+    const steering = await fetchDefaultHostedProjectSteering({
+      projectId: null,
+      authToken: "auth-token",
+      fetchProjectInstructions: () => {
+        fetchCount++;
+        return Promise.resolve("Fresh instructions");
+      },
+      fetchSkills: () => {
+        fetchCount++;
+        return Promise.resolve([createSkill("build")]);
+      },
+    });
+
+    assertEquals(fetchCount, 0);
+    assertEquals(steering, { instructions: "", skills: [] });
+  });
+
   it("refreshes instructions, filters visible skills, and records available tools", async () => {
     const lookups: Array<{ projectId: string; authToken: string; branchId?: string | null }> = [];
     const refresh = createDefaultHostedProjectSteeringRefresh({

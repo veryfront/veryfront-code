@@ -7,6 +7,7 @@ import type {
   DefaultHostedChatRuntimeSystemRefreshInput,
   DefaultHostedChatRuntimeTaskContext,
 } from "./default-hosted-chat-runtime.ts";
+import type { HostedChatRuntimePreparationSteering } from "./hosted-chat-preparation.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
 import { selectProviderCompatibleToolNames } from "./runtime/provider-tool-compat.ts";
@@ -23,19 +24,76 @@ export type DefaultHostedProjectSteeringRefreshLookup = {
   branchId?: string | null;
 };
 
-export type CreateDefaultHostedProjectSteeringRefreshOptions = {
+export type DefaultHostedProjectSteeringFetchers = {
   fetchProjectInstructions: (
     lookup: DefaultHostedProjectSteeringRefreshLookup,
   ) => Promise<string>;
   fetchSkills: (
     lookup: DefaultHostedProjectSteeringRefreshLookup,
   ) => Promise<RuntimeSkillDefinition[]>;
-  buildInstructions: (
-    input: HostedChatRuntimeInstructionsInput<RuntimeAgentMarkdownDefinition>,
-  ) => string | ChatSystemMessage[];
-  projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
-  logger?: DefaultHostedProjectSteeringRefreshLogger;
 };
+
+export type CreateDefaultHostedProjectSteeringRefreshOptions =
+  & DefaultHostedProjectSteeringFetchers
+  & {
+    buildInstructions: (
+      input: HostedChatRuntimeInstructionsInput<RuntimeAgentMarkdownDefinition>,
+    ) => string | ChatSystemMessage[];
+    projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
+    logger?: DefaultHostedProjectSteeringRefreshLogger;
+  };
+
+export type FetchDefaultHostedProjectSteeringInput =
+  & DefaultHostedProjectSteeringFetchers
+  & {
+    projectId: string | null;
+    authToken: string;
+    branchId?: string | null;
+    trace?: <TResult>(
+      operationName: string,
+      operation: () => Promise<TResult>,
+    ) => Promise<TResult>;
+    traceOperationName?: string;
+  };
+
+export async function fetchDefaultHostedProjectSteering(
+  input: FetchDefaultHostedProjectSteeringInput,
+): Promise<HostedChatRuntimePreparationSteering> {
+  const projectId = input.projectId;
+
+  if (!projectId) {
+    return { instructions: "", skills: [] };
+  }
+
+  const fetchSteering = async () => {
+    const [instructions, skills] = await Promise.all([
+      input.fetchProjectInstructions({
+        projectId,
+        authToken: input.authToken,
+        branchId: input.branchId,
+      }),
+      input.fetchSkills({
+        projectId,
+        authToken: input.authToken,
+        branchId: input.branchId,
+      }),
+    ]);
+
+    return {
+      instructions,
+      skills,
+    };
+  };
+
+  if (!input.trace) {
+    return await fetchSteering();
+  }
+
+  return await input.trace(
+    input.traceOperationName ?? "agent.fetchProjectSteering",
+    fetchSteering,
+  );
+}
 
 function getActiveProjectId(taskContext: DefaultHostedChatRuntimeTaskContext): string | null {
   return taskContext.projectId || null;

@@ -194,6 +194,7 @@ export {
 } from "./runtime-agent-definition.ts";
 
 export {
+  buildVeryfrontCloudRuntimeInstructions,
   createVeryfrontCloudRuntimeSystemMessages,
   type CreateVeryfrontCloudRuntimeSystemMessagesInput,
 } from "./veryfront-cloud-runtime-system-messages.ts";
@@ -270,8 +271,11 @@ export {
 export {
   createDefaultHostedProjectSteeringRefresh,
   type CreateDefaultHostedProjectSteeringRefreshOptions,
+  type DefaultHostedProjectSteeringFetchers,
   type DefaultHostedProjectSteeringRefreshLogger,
   type DefaultHostedProjectSteeringRefreshLookup,
+  fetchDefaultHostedProjectSteering,
+  type FetchDefaultHostedProjectSteeringInput,
 } from "./default-hosted-project-steering-refresh.ts";
 
 export {
