@@ -25,10 +25,10 @@ export type {
 } from "./types.ts";
 
 export {
+  getGitHubBlobResponseSchema,
+  getGitHubContentItemSchema,
+  getGitHubContentsResponseSchema,
+  getGitHubTreeEntrySchema,
+  getGitHubTreeResponseSchema,
   GITHUB_API_ENDPOINTS,
-  GitHubBlobResponseSchema,
-  GitHubContentItemSchema,
-  GitHubContentsResponseSchema,
-  GitHubTreeEntrySchema,
-  GitHubTreeResponseSchema,
 } from "./schemas/index.ts";

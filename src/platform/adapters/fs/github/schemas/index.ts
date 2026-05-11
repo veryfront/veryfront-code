@@ -5,15 +5,15 @@
  */
 
 export {
+  getGitHubBlobResponseSchema,
+  getGitHubContentItemSchema,
+  getGitHubContentsResponseSchema,
+  getGitHubTreeEntrySchema,
+  getGitHubTreeResponseSchema,
   GITHUB_API_ENDPOINTS,
   type GitHubBlobResponse,
-  GitHubBlobResponseSchema,
   type GitHubContentItem,
-  GitHubContentItemSchema,
   type GitHubContentsResponse,
-  GitHubContentsResponseSchema,
   type GitHubTreeEntry,
-  GitHubTreeEntrySchema,
   type GitHubTreeResponse,
-  GitHubTreeResponseSchema,
 } from "./github-api.schema.ts";
