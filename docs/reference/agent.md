@@ -711,6 +711,20 @@ Veryfront Cloud. The helper wires the hosted model-provider resolver and default
 chat stream watchdog while the host supplies its API URL, tracer, logger, and
 optional trace hooks.
 
+### `prepareVeryfrontCloudHostedChatExecution(options)`
+
+Prepare hosted chat execution for services that run through Veryfront Cloud. The
+helper reuses the default hosted model normalization, hosted model thinking
+defaults, and durable root-run persistence diagnostics while the host supplies
+steering fetch/build callbacks and runtime creation policy.
+
+### `createVeryfrontCloudHostedChatExecutionRootRunOptions(options)`
+
+Create the default durable root-run preparation options used by
+`prepareVeryfrontCloudHostedChatExecution()`. Hosts may override persistence
+operation text, missing-user-message errors, instrumentation, implementation
+kind, or persistence-failure handling.
+
 ### `AgUiRuntimeRequestSchema`
 
 Validate the canonical open-source AG-UI runtime request contract for hosted
@@ -894,7 +908,9 @@ Clear all stored messages from memory.
 | `createAgUiSseErrorResponse`                                    | Create an AG-UI SSE error `Response`                                     |
 | `createAgUiResumeHandler`                                       | Create a POST handler for hosted AG-UI run resume values                 |
 | `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
+| `createVeryfrontCloudHostedChatExecutionRootRunOptions`         | Create Veryfront Cloud hosted root-run preparation defaults              |
 | `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
+| `prepareVeryfrontCloudHostedChatExecution`                      | Prepare hosted chat execution with Veryfront Cloud defaults              |
 | `normalizeAgUiRuntimeMessages`                                  | Normalize runtime AG-UI messages into package `Message[]`                |
 | `parseAgUiRuntimeRequest`                                       | Parse and validate the canonical runtime AG-UI request body              |
 | `parseAgUiRuntimeRequestOrError`                                | Parse runtime AG-UI input or return a `400` validation `Response`        |

@@ -1127,6 +1127,12 @@ export {
   type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput,
 } from "./veryfront-cloud-prepared-hosted-chat-execution-runtime.ts";
 export {
+  createVeryfrontCloudHostedChatExecutionRootRunOptions,
+  prepareVeryfrontCloudHostedChatExecution,
+  type PrepareVeryfrontCloudHostedChatExecutionInput,
+  type VeryfrontCloudHostedChatExecutionPreparationLogger,
+} from "./veryfront-cloud-hosted-chat-execution-preparation.ts";
+export {
   finalizeHostedDetached,
   type FinalizeHostedDetachedOptions,
   finalizeHostedResponse,
