@@ -165,6 +165,9 @@ stream-watchdog wiring. Hosted services can also use `loadHostedAgentServiceEnvF
 `parseHostedAgentServiceConfig()` to share the default env-file precedence and
 environment contract for API URL, hosted MCP URL, port, CORS origins, durable
 feature flags, and OpenTelemetry flags.
+Use `resolveRuntimeAgentDefinitionsDir()` and
+`loadRuntimeAgentMarkdownDefinitionFromFile()` when a separately deployed
+hosted agent stores persona/configuration in `agents/*.md` files.
 
 ## Agent configuration
 

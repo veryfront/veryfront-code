@@ -5,9 +5,35 @@ import {
   buildExecuteToolTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
   buildInvokeAgentTraceAttributes,
+  filterAgentTraceAttributes,
+  isAgentTraceAttributeValue,
 } from "./index.ts";
 
 describe("agent/agent-trace-attributes", () => {
+  it("filters unknown values to valid trace attributes", () => {
+    assertEquals(isAgentTraceAttributeValue(["a", 1, true]), true);
+    assertEquals(isAgentTraceAttributeValue(["a", { invalid: true }]), false);
+    assertEquals(
+      filterAgentTraceAttributes({
+        string: "value",
+        number: 1,
+        boolean: true,
+        array: ["a", 2, false],
+        nullValue: null,
+        undefinedValue: undefined,
+        object: { nested: true },
+      }),
+      {
+        string: "value",
+        number: 1,
+        boolean: true,
+        array: ["a", 2, false],
+        nullValue: null,
+        undefinedValue: undefined,
+      },
+    );
+  });
+
   it("builds core agent run lineage attributes", () => {
     assertEquals(
       buildAgentRunTraceAttributes({

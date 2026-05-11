@@ -718,6 +718,25 @@ The helper inserts project instructions and project context blocks at the
 runtime-context marker, includes available skills, and appends environment
 context using the same prompt-block conventions as the core runtime.
 
+### `resolveRuntimeAgentDefinitionsDir(options)`
+
+Resolve the `agents/` directory for a hosted service from a source or bundled
+module directory. The helper checks source-layout, bundled `dist/src`, and
+deeper bundled server paths for a markdown definition such as `assistant.md`.
+
+### `loadRuntimeAgentMarkdownDefinitionFromFile(options)`
+
+Read a markdown agent definition from an `agents/` directory and parse its
+frontmatter plus body with `parseRuntimeAgentMarkdownDefinition()`. This keeps
+file loading, traversal-prone file-name validation, and markdown parsing
+consistent across separately deployed hosted agents.
+
+### `filterAgentTraceAttributes(attributes)`
+
+Filter an unknown attribute record down to OpenTelemetry-safe agent trace
+attribute values: strings, numbers, booleans, arrays of those primitives,
+`null`, or `undefined`.
+
 ### `prepareVeryfrontCloudHostedChatExecution(options)`
 
 Prepare hosted chat execution for services that run through Veryfront Cloud. The
@@ -933,7 +952,9 @@ Clear all stored messages from memory.
 | `createVeryfrontCloudHostedChatExecutionRootRunOptions`         | Create Veryfront Cloud hosted root-run preparation defaults              |
 | `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
 | `createVeryfrontCloudRuntimeSystemMessages`                     | Create Veryfront Cloud runtime system messages                           |
+| `filterAgentTraceAttributes`                                    | Filter unknown records to valid agent trace attributes                   |
 | `loadHostedAgentServiceEnvFiles`                                | Load hosted service env files while preserving host process env          |
+| `loadRuntimeAgentMarkdownDefinitionFromFile`                    | Load and parse a markdown agent definition from an agents directory      |
 | `parseHostedAgentServiceConfig`                                 | Parse default hosted agent service environment config                    |
 | `prepareVeryfrontCloudHostedChatExecution`                      | Prepare hosted chat execution with Veryfront Cloud defaults              |
 | `normalizeAgUiRuntimeMessages`                                  | Normalize runtime AG-UI messages into package `Message[]`                |
@@ -941,6 +962,7 @@ Clear all stored messages from memory.
 | `parseAgUiRuntimeRequestOrError`                                | Parse runtime AG-UI input or return a `400` validation `Response`        |
 | `parseRuntimeAgentRunInvocation`                                | Parse and validate a control-plane runtime agent invocation body         |
 | `parseRuntimeAgentRunInvocationOrError`                         | Parse a runtime agent invocation or return a `400` validation `Response` |
+| `resolveRuntimeAgentDefinitionsDir`                             | Resolve a hosted service `agents/` directory from source/bundled paths   |
 | `createChatHandler`                                             | Create a POST handler for a chat API route.                              |
 | `createMemory`                                                  | Create memory (buffer, conversation, summary)                            |
 | `createRedisMemory`                                             | Create Redis-backed memory                                               |
