@@ -22,7 +22,7 @@ import type {
   SchemaValidatorCoerce,
   ValidationIssue,
   ValidationResult,
-} from "#veryfront/extensions/interfaces/index.ts";
+} from "#veryfront/extensions/schema/index.ts";
 
 // deno-lint-ignore no-explicit-any -- zod's chainable APIs return parametric types
 type AnyZodSchema = z.ZodType<any, any, any>;

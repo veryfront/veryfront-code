@@ -18,7 +18,7 @@ import {
   register as registerContract,
   tryResolve as tryResolveContract,
 } from "#veryfront/extensions/contracts.ts";
-import type { CSSCompiler, CSSProcessor } from "#veryfront/extensions/interfaces/index.ts";
+import type { CSSCompiler, CSSProcessor } from "#veryfront/extensions/css/index.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEPENDENCY_MISSING, NETWORK_ERROR } from "#veryfront/errors";
 import { getTailwindCSSUrl } from "#veryfront/utils/constants/cdn.ts";

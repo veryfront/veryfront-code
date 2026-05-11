@@ -9,7 +9,7 @@
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { CodeParser } from "#veryfront/extensions/interfaces/index.ts";
+import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
 
 interface TransformOptions {
   filePath: string;

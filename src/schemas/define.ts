@@ -16,7 +16,7 @@ import type {
   Schema,
   SchemaFactory,
   SchemaValidator,
-} from "#veryfront/extensions/interfaces/index.ts";
+} from "#veryfront/extensions/schema/index.ts";
 
 /**
  * Wrap a schema factory so that it is built lazily on first call.

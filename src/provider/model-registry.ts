@@ -21,8 +21,8 @@ import {
 } from "#veryfront/config/env.ts";
 import { ensureBuiltinAIProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
-import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import type { AIProviderRegistry } from "#veryfront/extensions/ai/index.ts";
+import { AIProviderRegistryName } from "#veryfront/extensions/ai/index.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";

@@ -22,7 +22,7 @@ export interface SqliteStatement {
  *
  * Mirrors `SqliteDatabase` in `src/platform/compat/kv/types.ts` — kept
  * separate here so extensions can import from the public
- * `veryfront/extensions/interfaces` entrypoint without taking a dependency
+ * `veryfront/extensions/compat` entrypoint without taking a dependency
  * on internal platform paths.
  */
 export interface NodeCompatSqliteDatabase {

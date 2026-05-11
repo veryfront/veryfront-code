@@ -16,7 +16,7 @@
 
 import type { Pluggable } from "unified";
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
-import type { ContentTransformer } from "#veryfront/extensions/interfaces/index.ts";
+import type { ContentTransformer } from "#veryfront/extensions/content/index.ts";
 
 export function getRemarkPlugins(): Pluggable[] {
   const transformer = resolveContract<ContentTransformer>("ContentTransformer");

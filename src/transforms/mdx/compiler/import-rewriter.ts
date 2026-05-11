@@ -1,5 +1,5 @@
 import { dirname, join, resolve as pathResolve } from "#veryfront/compat/path/index.ts";
-import type { CompilationTarget } from "#veryfront/extensions/interfaces/index.ts";
+import type { CompilationTarget } from "#veryfront/extensions/content/index.ts";
 
 export interface ImportRewriterConfig {
   filePath: string;

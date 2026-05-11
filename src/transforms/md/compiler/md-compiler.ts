@@ -5,7 +5,7 @@ import type {
   CompilationTarget,
   ContentRuntimeBundle,
   ContentTransformer,
-} from "#veryfront/extensions/interfaces/index.ts";
+} from "#veryfront/extensions/content/index.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 

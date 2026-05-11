@@ -1,8 +1,8 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
-import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import type { AIProviderRegistry } from "#veryfront/extensions/ai/index.ts";
+import { AIProviderRegistryName } from "#veryfront/extensions/ai/index.ts";
 import {
   createVeryfrontCloudFetch,
   getVeryfrontCloudGatewayBaseUrl,

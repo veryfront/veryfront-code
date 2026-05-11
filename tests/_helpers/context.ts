@@ -107,7 +107,7 @@ export async function registerExtOpenAIForTests(): Promise<void> {
       "../../src/extensions/ai/ai-provider-registry.ts"
     );
     const { AIProviderRegistryName } = await import(
-      "../../src/extensions/interfaces/index.ts"
+      "../../src/extensions/ai/index.ts"
     );
     const extOpenAIFactory = (await import("../../extensions/ext-ai-openai/src/index.ts")).default;
     const ext = extOpenAIFactory();
@@ -157,7 +157,7 @@ export async function registerExtAnthropicForTests(): Promise<void> {
       "../../src/extensions/ai/ai-provider-registry.ts"
     );
     const { AIProviderRegistryName } = await import(
-      "../../src/extensions/interfaces/index.ts"
+      "../../src/extensions/ai/index.ts"
     );
     const extAnthropicFactory =
       (await import("../../extensions/ext-ai-anthropic/src/index.ts")).default;
@@ -194,7 +194,7 @@ export async function registerExtGoogleForTests(): Promise<void> {
       "../../src/extensions/ai/ai-provider-registry.ts"
     );
     const { AIProviderRegistryName } = await import(
-      "../../src/extensions/interfaces/index.ts"
+      "../../src/extensions/ai/index.ts"
     );
     const extGoogleFactory = (await import("../../extensions/ext-ai-google/src/index.ts")).default;
     const ext = extGoogleFactory();

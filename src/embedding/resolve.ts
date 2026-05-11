@@ -3,8 +3,8 @@ import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/e
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
-import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import type { AIProviderRegistry } from "#veryfront/extensions/ai/index.ts";
+import { AIProviderRegistryName } from "#veryfront/extensions/ai/index.ts";
 import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
 
 type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
