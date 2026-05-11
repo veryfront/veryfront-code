@@ -3,7 +3,7 @@ import { CACHE_INVARIANT_VIOLATION, INVALID_ARGUMENT, VeryfrontError } from "#ve
 import { buildProxyManagerCacheKey } from "#veryfront/cache";
 import { VeryfrontFSAdapter } from "./index.ts";
 import type { CacheStats, FSAdapterConfig, ResolvedContentContext } from "./types.ts";
-import { GetAdapterParamsSchema } from "./schemas/index.ts";
+import { getGetAdapterParamsSchema } from "./schemas/index.ts";
 import { createDefaultInvalidationCallbacks } from "./default-invalidation-callbacks.ts";
 
 const logger = baseLogger.component("proxy-fs-adapter-manager");
@@ -146,7 +146,7 @@ export class ProxyFSAdapterManager {
       branch: effectiveBranch,
     });
 
-    const validationResult = GetAdapterParamsSchema.safeParse({
+    const validationResult = getGetAdapterParamsSchema().safeParse({
       projectSlug,
       token,
       projectId,
@@ -158,7 +158,7 @@ export class ProxyFSAdapterManager {
 
     if (!validationResult.success) {
       logger.error("Validation failed", {
-        errors: validationResult.error.issues,
+        errors: validationResult.issues,
         params: {
           projectSlug,
           productionMode: effectiveProductionMode,
@@ -167,9 +167,13 @@ export class ProxyFSAdapterManager {
           branch: effectiveBranch,
         },
       });
+      const detailMessage = validationResult.issues
+        .map((issue) =>
+          issue.path.length > 0 ? `${issue.path.join(".")}: ${issue.message}` : issue.message
+        )
+        .join("; ");
       throw INVALID_ARGUMENT.create({
-        detail:
-          `[ProxyFSAdapterManager] Invalid getAdapter parameters: ${validationResult.error.message}`,
+        detail: `[ProxyFSAdapterManager] Invalid getAdapter parameters: ${detailMessage}`,
       });
     }
 
