@@ -5,7 +5,7 @@
  * on the `redis` npm client and the contract-interface types; the extension's
  * tracing/logging are supplied by `ExtensionContext.logger` at setup time.
  *
- * @module extensions/ext-redis/redis-cache
+ * @module extensions/ext-cache-redis/redis-cache
  */
 
 import { createClient, type RedisClientType } from "redis";

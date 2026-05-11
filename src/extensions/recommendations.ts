@@ -9,8 +9,8 @@ const recommendations = new Map<string, string>([
   // ModuleLexer ships in the same package as Bundler (es-module-lexer +
   // esbuild are co-bundled into ext-esbuild).
   ["ModuleLexer", "@veryfront/ext-esbuild"],
-  ["CacheStore", "@veryfront/ext-redis"],
-  ["TokenCacheStore", "@veryfront/ext-redis"],
+  ["CacheStore", "@veryfront/ext-cache-redis"],
+  ["TokenCacheStore", "@veryfront/ext-cache-redis"],
   ["CSSProcessor", "@veryfront/ext-tailwind"],
   ["ContentTransformer", "@veryfront/ext-mdx"],
   ["DatabaseClient", "@veryfront/ext-postgres"],

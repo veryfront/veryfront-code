@@ -9,11 +9,11 @@
     "./extensions/ext-ai-openai",
     "./extensions/ext-auth-jwt",
     "./extensions/ext-babel",
+    "./extensions/ext-cache-redis",
+    "./extensions/ext-esbuild",
     "./extensions/ext-mdx",
     "./extensions/ext-node-compat",
     "./extensions/ext-opentelemetry",
-    "./extensions/ext-esbuild",
-    "./extensions/ext-redis",
     "./extensions/ext-tailwind"
   ],
   "exclude": [
@@ -71,6 +71,7 @@
     "./extensions/interfaces": "./src/extensions/interfaces/index.ts",
     "./extensions/ai": "./src/extensions/ai/index.ts",
     "./extensions/auth": "./src/extensions/auth/index.ts",
+    "./extensions/cache": "./src/extensions/cache/index.ts",
     "./testing": "./src/testing/index.ts",
     "./testing/assert": "./src/testing/assert.ts",
     "./testing/bdd": "./src/testing/bdd.ts",

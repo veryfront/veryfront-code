@@ -1,5 +1,5 @@
 /**
- * ext-redis — Redis-backed `TokenCacheStore` implementation for the Veryfront
+ * ext-cache-redis — Redis-backed `TokenCacheStore` implementation for the Veryfront
  * proxy's OAuth token cache.
  *
  * Reads configuration from `ctx.config` at setup time. Expected shape:
@@ -23,7 +23,7 @@
  * Falls back to the `REDIS_URL` / `REDIS_PREFIX` env vars when the config path
  * above is not populated, preserving the proxy's historical behavior.
  *
- * @module extensions/ext-redis
+ * @module extensions/ext-cache-redis
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
@@ -70,7 +70,7 @@ const extRedis: ExtensionFactory = () => {
   let store: RedisTokenCacheStore | null = null;
 
   return {
-    name: "ext-redis",
+    name: "ext-cache-redis",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "TokenCacheStore" },
@@ -83,7 +83,7 @@ const extRedis: ExtensionFactory = () => {
 
       if (!url) {
         ctx.logger.info(
-          "[ext-redis] REDIS_URL not configured — skipping TokenCacheStore registration",
+          "[ext-cache-redis] REDIS_URL not configured — skipping TokenCacheStore registration",
         );
         return;
       }
@@ -100,7 +100,7 @@ const extRedis: ExtensionFactory = () => {
       store = new RedisTokenCacheStore(options, { logger: ctx.logger });
       ctx.provide("TokenCacheStore", store);
       ctx.logger.info(
-        `[ext-redis] TokenCacheStore registered (url=${redactUrl(options.url)})`,
+        `[ext-cache-redis] TokenCacheStore registered (url=${redactUrl(options.url)})`,
       );
     },
 

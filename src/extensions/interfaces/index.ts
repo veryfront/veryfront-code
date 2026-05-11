@@ -38,11 +38,11 @@ export type {
 // Module lexer
 export type { ImportSpecifier, ModuleLexer } from "./module-lexer.ts";
 
-// Cache store
-export type { CacheStore } from "./cache-store.ts";
+// Cache store — moved to ../cache/
+export type { CacheStore } from "../cache/index.ts";
 
-// Token cache store (proxy-grade cache with scan + stats)
-export type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "./token-cache-store.ts";
+// Token cache store — moved to ../cache/
+export type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "../cache/index.ts";
 
 // CSS processor
 export type {

@@ -3,7 +3,7 @@
  *
  * Wraps a {@link TokenCache} implementation and emits an OpenTelemetry span
  * around each public method. This keeps extension-provided caches (such as
- * `@veryfront/ext-redis`) tracer-agnostic: the extension implements the
+ * `@veryfront/ext-cache-redis`) tracer-agnostic: the extension implements the
  * contract only, and the proxy applies observability at the factory boundary.
  *
  * Span names default to `cache.redis.<op>` to preserve the pre-extraction

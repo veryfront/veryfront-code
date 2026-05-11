@@ -1,5 +1,5 @@
 /**
- * Test utilities for the ext-redis extension.
+ * Test utilities for the ext-cache-redis extension.
  *
  * Exports an in-memory redis client stub sufficient for `RedisTokenCacheStore`
  * to exercise its full surface (`get`, `set`, `delete`, `scan`, `dbSize`,
@@ -7,7 +7,7 @@
  *
  * PR 5 (integration tests) will import this helper directly.
  *
- * @module extensions/ext-redis/test-utils
+ * @module extensions/ext-cache-redis/test-utils
  */
 
 // deno-lint-ignore-file no-explicit-any

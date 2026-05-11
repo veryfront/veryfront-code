@@ -1,10 +1,10 @@
 /**
- * ext-redis extension tests.
+ * ext-cache-redis extension tests.
  *
  * Exercises `RedisTokenCacheStore` round-trip via the in-memory stub, plus
  * the extension factory's `setup` / `teardown` lifecycle.
  *
- * @module extensions/ext-redis/test
+ * @module extensions/ext-cache-redis/test
  */
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
@@ -51,11 +51,11 @@ function capturingLogger(): { logger: ExtensionLogger; info: string[] } {
   };
 }
 
-describe("ext-redis extension", () => {
+describe("ext-cache-redis extension", () => {
   describe("factory metadata", () => {
     it("declares the expected name and version", () => {
       const ext = factory();
-      assertEquals(ext.name, "ext-redis");
+      assertEquals(ext.name, "ext-cache-redis");
       assertEquals(typeof ext.version, "string");
       assertEquals(ext.version.length > 0, true);
     });
