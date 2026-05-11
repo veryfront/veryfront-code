@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import { z } from "zod";

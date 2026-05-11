@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   assertEquals,
