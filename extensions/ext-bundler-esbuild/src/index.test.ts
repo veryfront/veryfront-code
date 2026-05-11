@@ -1,11 +1,11 @@
 /**
- * ext-esbuild extension scaffold tests.
+ * ext-bundler-esbuild extension scaffold tests.
  *
  * Smoke tests only — the stub Bundler / ModuleLexer methods are NOT
  * exercised here. They throw by design and will be covered by Tasks 4 and 5
  * once the real implementations land.
  *
- * @module extensions/ext-esbuild/test
+ * @module extensions/ext-bundler-esbuild/test
  */
 
 import { assertEquals } from "@std/assert";
@@ -20,10 +20,10 @@ const noopLogger = {
   error: () => {},
 };
 
-describe("ext-esbuild factory", () => {
-  it("produces an Extension with name ext-esbuild", () => {
+describe("ext-bundler-esbuild factory", () => {
+  it("produces an Extension with name ext-bundler-esbuild", () => {
     const ext = factory();
-    assertEquals(ext.name, "ext-esbuild");
+    assertEquals(ext.name, "ext-bundler-esbuild");
     assertEquals(ext.version, "0.1.0");
     assertEquals(Array.isArray(ext.capabilities), true);
     assertEquals(
@@ -37,7 +37,7 @@ describe("ext-esbuild factory", () => {
   });
 });
 
-describe("ext-esbuild setup/teardown", () => {
+describe("ext-bundler-esbuild setup/teardown", () => {
   it("registers Bundler + ModuleLexer on setup", async () => {
     const provided = new Map<string, unknown>();
 

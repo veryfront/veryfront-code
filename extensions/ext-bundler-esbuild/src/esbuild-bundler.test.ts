@@ -2,7 +2,7 @@
  * EsbuildBundler smoke tests — verifies the adapter correctly invokes
  * esbuild and maps its results into the Bundler contract shape.
  *
- * @module extensions/ext-esbuild/esbuild-bundler.test
+ * @module extensions/ext-bundler-esbuild/esbuild-bundler.test
  */
 
 import { assertEquals, assertExists } from "@std/assert";

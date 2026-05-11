@@ -5,10 +5,10 @@
  * typings expect a function. We tolerate both shapes (as the in-tree
  * src/transforms/esm/lexer.ts did).
  *
- * @module extensions/ext-esbuild/es-module-lexer
+ * @module extensions/ext-bundler-esbuild/es-module-lexer
  */
 
-import type { ImportSpecifier, ModuleLexer } from "veryfront/extensions/interfaces";
+import type { ImportSpecifier, ModuleLexer } from "veryfront/extensions/bundler";
 import { init, parse } from "es-module-lexer";
 
 /** es-module-lexer-backed {@link ModuleLexer} implementation. */

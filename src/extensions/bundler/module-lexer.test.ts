@@ -1,14 +1,14 @@
 /**
  * Type-level tests for the {@link ModuleLexer} contract.
  *
- * @module extensions/interfaces/module-lexer.test
+ * @module extensions/bundler/module-lexer.test
  */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ImportSpecifier, ModuleLexer } from "./module-lexer.ts";
 
-describe("extensions/interfaces/module-lexer", () => {
+describe("extensions/bundler/module-lexer", () => {
   it("allows a stub implementation satisfying the contract", () => {
     const stub: ModuleLexer = {
       parse(_code: string): readonly ImportSpecifier[] {

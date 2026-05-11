@@ -10,7 +10,7 @@
  * @module extensions/interfaces
  */
 
-// Bundler
+// Bundler + module lexer — moved to ../bundler/
 export type {
   BuildContext,
   BuildFailure,
@@ -33,10 +33,8 @@ export type {
   StdinOptions,
   TransformOptions,
   TransformResult,
-} from "./bundler.ts";
-
-// Module lexer
-export type { ImportSpecifier, ModuleLexer } from "./module-lexer.ts";
+} from "../bundler/index.ts";
+export type { ImportSpecifier, ModuleLexer } from "../bundler/index.ts";
 
 // Cache store — moved to ../cache/
 export type { CacheStore } from "../cache/index.ts";

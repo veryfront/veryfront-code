@@ -5,7 +5,7 @@
  * translation is near-1:1; this module exists to isolate the esbuild
  * import from the rest of the extension.
  *
- * @module extensions/ext-esbuild/plugin-adapter
+ * @module extensions/ext-bundler-esbuild/plugin-adapter
  */
 
 import type {
@@ -15,7 +15,7 @@ import type {
   OnLoadResult,
   OnResolveArgs,
   OnResolveResult,
-} from "veryfront/extensions/interfaces";
+} from "veryfront/extensions/bundler";
 // deno-lint-ignore no-explicit-any
 type EsbuildPlugin = any;
 

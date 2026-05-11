@@ -94,7 +94,7 @@ function assertRequiredContracts(): void {
   if (!tryResolve("ModuleLexer")) {
     bootstrapLog.warn(
       `[bootstrap] no ModuleLexer extension registered — dev-server import rewriting will fail. Recommended: ${
-        getRecommendation("ModuleLexer") ?? "@veryfront/ext-esbuild"
+        getRecommendation("ModuleLexer") ?? "@veryfront/ext-bundler-esbuild"
       }`,
     );
   }

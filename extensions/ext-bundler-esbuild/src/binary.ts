@@ -9,7 +9,7 @@
  * On normal Deno (not `deno compile`) or when ESBUILD_BINARY_PATH is already
  * set, `ensureEsbuildBinary()` is a no-op.
  *
- * @module extensions/ext-esbuild/binary
+ * @module extensions/ext-bundler-esbuild/binary
  */
 
 import { isDenoCompiled } from "./runtime.ts";
@@ -95,7 +95,7 @@ async function extractEsbuildBinary(): Promise<string> {
   const vfsPath = await findEsbuildInVFS();
   if (!vfsPath) {
     throw new Error(
-      `[ext-esbuild] Could not find esbuild binary in deno compile VFS. ` +
+      `[ext-bundler-esbuild] Could not find esbuild binary in deno compile VFS. ` +
         `Platform: ${getEsbuildBinaryName()}. ` +
         `Ensure esbuild is in dependencies and deno compile includes node_modules.`,
     );
@@ -137,7 +137,7 @@ export async function ensureEsbuildBinary(): Promise<void> {
         const proc = (globalThis as { process?: { env: Record<string, string> } }).process;
         if (proc?.env) proc.env.ESBUILD_BINARY_PATH = binaryPath;
       } catch (err) {
-        console.error("[ext-esbuild] Binary extraction failed:", err);
+        console.error("[ext-bundler-esbuild] Binary extraction failed:", err);
       }
     } finally {
       setupComplete = true;

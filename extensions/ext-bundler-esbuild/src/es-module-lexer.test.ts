@@ -1,7 +1,7 @@
 /**
  * EsModuleLexer smoke tests.
  *
- * @module extensions/ext-esbuild/es-module-lexer.test
+ * @module extensions/ext-bundler-esbuild/es-module-lexer.test
  */
 
 import { assertEquals } from "@std/assert";

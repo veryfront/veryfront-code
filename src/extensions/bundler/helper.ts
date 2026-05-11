@@ -2,13 +2,13 @@
  * Bundler contract resolution helper.
  *
  * Core code uses this thin wrapper instead of importing `esbuild` directly,
- * so the bundler implementation lives in `@veryfront/ext-esbuild` (or any
- * other extension that satisfies the contract).
+ * so the bundler implementation lives in `@veryfront/ext-bundler-esbuild` (or
+ * any other extension that satisfies the contract).
  *
- * @module extensions/bundler
+ * @module extensions/bundler/helper
  */
 
-import { resolve as resolveContract } from "./contracts.ts";
+import { resolve as resolveContract } from "../contracts.ts";
 import type {
   BuildContext,
   BundleOptions,
@@ -16,7 +16,7 @@ import type {
   BundleResult,
   TransformOptions,
   TransformResult,
-} from "./interfaces/bundler.ts";
+} from "./bundler.ts";
 
 /** Resolve the registered `Bundler` contract. Throws if no extension provides it. */
 export function getBundler(): Bundler {
@@ -56,30 +56,3 @@ export function context(options: BundleOptions): Promise<BuildContext> {
   }
   return b.context(options);
 }
-
-export type {
-  BuildContext,
-  BuildFailure,
-  BundleOptions,
-  BundleOptions as BuildOptions,
-  BundleOutput,
-  Bundler,
-  BundleResult,
-  BundleResult as BuildResult,
-  BundlerMessage,
-  BundlerMessage as Message,
-  BundlerPlugin,
-  BundlerPlugin as Plugin,
-  BundlerPluginBuild,
-  BundlerPluginBuild as PluginBuild,
-  Loader,
-  Metafile,
-  OnLoadArgs,
-  OnLoadResult,
-  OnResolveArgs,
-  OnResolveResult,
-  OnResolveResult as ResolveResult,
-  StdinOptions,
-  TransformOptions,
-  TransformResult,
-} from "./interfaces/bundler.ts";

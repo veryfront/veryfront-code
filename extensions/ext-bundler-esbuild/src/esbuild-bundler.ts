@@ -7,7 +7,7 @@
  * the only translation is converting {@link BundlerPlugin}s into esbuild
  * plugins via {@link toEsbuildPlugin}.
  *
- * @module extensions/ext-esbuild/esbuild-bundler
+ * @module extensions/ext-bundler-esbuild/esbuild-bundler
  */
 
 import type {
@@ -20,7 +20,7 @@ import type {
   Metafile,
   TransformOptions,
   TransformResult,
-} from "veryfront/extensions/interfaces";
+} from "veryfront/extensions/bundler";
 
 import { ensureEsbuildBinary } from "./binary.ts";
 import { toEsbuildPlugin } from "./plugin-adapter.ts";

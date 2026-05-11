@@ -8,7 +8,7 @@
  * @module
  */
 
-import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-esbuild";
+import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-bundler-esbuild";
 import { register, tryResolve } from "../../../src/extensions/contracts.ts";
 
 if (!tryResolve("Bundler")) register("Bundler", new EsbuildBundler());

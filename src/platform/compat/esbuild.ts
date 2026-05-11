@@ -1,7 +1,7 @@
 /**
  * Compatibility shim for code that previously imported esbuild via this path.
  *
- * The actual esbuild runtime now lives in the `@veryfront/ext-esbuild`
+ * The actual esbuild runtime now lives in the `@veryfront/ext-bundler-esbuild`
  * extension; this module forwards to the registered `Bundler` contract so
  * legacy callers keep working without importing `esbuild` directly.
  */
