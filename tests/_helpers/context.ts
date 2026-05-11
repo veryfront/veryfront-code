@@ -73,7 +73,7 @@ try {
 export async function registerExtBabelForTests(): Promise<void> {
   try {
     const { register } = await import("../../src/extensions/contracts.ts");
-    const extBabelFactory = (await import("../../extensions/ext-babel/src/index.ts")).default;
+    const extBabelFactory = (await import("../../extensions/ext-parser-babel/src/index.ts")).default;
     const ext = extBabelFactory();
     const noopLogger = {
       debug: () => {},
@@ -625,14 +625,14 @@ export class TestContext {
       await mkdir(join(this.projectDir, dir), { recursive: true });
     }
 
-    // Symlink ext-babel into the project's extensions/ dir so that
+    // Symlink ext-parser-babel into the project's extensions/ dir so that
     // `orchestrateExtensions` (run from bootstrapProd) discovers it and
     // registers the CodeParser contract. Without this, bootstrap's
     // internal teardownAll() would wipe the registry we seeded earlier.
     try {
-      const extBabelDir = join(this.projectDir, "extensions", "ext-babel");
+      const extBabelDir = join(this.projectDir, "extensions", "ext-parser-babel");
       await mkdir(extBabelDir, { recursive: true });
-      const extBabelReal = resolvePath("extensions/ext-babel/src/index.ts");
+      const extBabelReal = resolvePath("extensions/ext-parser-babel/src/index.ts");
       await writeTextFile(
         join(extBabelDir, "index.ts"),
         `export { default } from "${"file://" + extBabelReal}";\n`,

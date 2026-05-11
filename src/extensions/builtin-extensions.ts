@@ -6,7 +6,7 @@ import { OpenAIProvider } from "../../extensions/ext-ai-openai/src/index.ts";
 import { AnthropicProvider } from "../../extensions/ext-ai-anthropic/src/index.ts";
 import { GoogleProvider } from "../../extensions/ext-ai-google/src/index.ts";
 import extEsbuild from "../../extensions/ext-bundler-esbuild/src/index.ts";
-import extBabel from "../../extensions/ext-babel/src/index.ts";
+import extBabel from "../../extensions/ext-parser-babel/src/index.ts";
 import extMdx from "../../extensions/ext-mdx/src/index.ts";
 import extTailwind from "../../extensions/ext-tailwind/src/index.ts";
 import extNodeCompat from "../../extensions/ext-node-compat/src/index.ts";
@@ -101,7 +101,7 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-babel",
+      origin: "veryfront/ext-parser-babel",
       extension: extBabel(),
     },
     {

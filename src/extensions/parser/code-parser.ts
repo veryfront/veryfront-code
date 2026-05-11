@@ -1,9 +1,9 @@
 /**
  * Contract interface for code parsing and AST manipulation.
  *
- * Default implementation: `@veryfront/ext-babel`
+ * Default implementation: `@veryfront/ext-parser-babel`
  *
- * @module extensions/interfaces/code-parser
+ * @module extensions/parser/code-parser
  */
 
 /** A single node in an abstract syntax tree. */
