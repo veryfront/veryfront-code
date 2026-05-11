@@ -1285,8 +1285,12 @@ export {
 } from "./ag-ui-detached-start.ts";
 export type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
 export {
+  createDetachedRunShutdownLifecycle,
   createDetachedRunTracker,
   type DetachedRunDrainResult,
+  type DetachedRunShutdownLifecycle,
+  type DetachedRunShutdownLifecycleOptions,
+  type DetachedRunShutdownLogger,
   type DetachedRunTracker,
   type DetachedRunTrackerOptions,
 } from "./detached-run-tracker.ts";

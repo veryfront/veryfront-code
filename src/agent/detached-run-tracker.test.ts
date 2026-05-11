@@ -1,6 +1,9 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createDetachedRunTracker } from "./detached-run-tracker.ts";
+import {
+  createDetachedRunShutdownLifecycle,
+  createDetachedRunTracker,
+} from "./detached-run-tracker.ts";
 
 function deferred(): { promise: Promise<void>; resolve: () => Promise<void> } {
   let resolvePromise: () => void = () => undefined;
@@ -69,5 +72,71 @@ describe("agent/detached-run-tracker", () => {
       drained: true,
       pendingRunIds: [],
     });
+  });
+
+  it("creates a shutdown lifecycle that cancels and drains detached runs", async () => {
+    const tracker = createDetachedRunTracker({ pollIntervalMs: 1 });
+    const execution = deferred();
+    const infoEntries: Array<{ message: string; metadata?: unknown }> = [];
+    const errorEntries: Array<{ message: string; metadata?: unknown }> = [];
+    const lifecycle = createDetachedRunShutdownLifecycle({
+      tracker,
+      drainTimeoutMs: 50,
+      pollIntervalMs: 1,
+      logger: {
+        info: (message, metadata) => infoEntries.push({ message, metadata }),
+        error: (message, metadata) => errorEntries.push({ message, metadata }),
+      },
+    });
+
+    tracker.registerExecution("run_1", execution.promise);
+
+    lifecycle.setShuttingDown();
+    await execution.resolve();
+    await lifecycle.stop();
+
+    assertEquals(infoEntries, [
+      {
+        message: "Cancelled active detached durable runs during shutdown",
+        metadata: { runIds: ["run_1"], count: 1 },
+      },
+      {
+        message: "All connections and detached durable runs drained, exiting",
+        metadata: undefined,
+      },
+    ]);
+    assertEquals(errorEntries, []);
+  });
+
+  it("throws and logs pending detached runs when shutdown drain times out", async () => {
+    const tracker = createDetachedRunTracker({ pollIntervalMs: 1 });
+    const execution = deferred();
+    const errorEntries: Array<{ message: string; metadata?: unknown }> = [];
+    const lifecycle = createDetachedRunShutdownLifecycle({
+      tracker,
+      drainTimeoutMs: 1,
+      pollIntervalMs: 1,
+      logger: {
+        info: () => undefined,
+        error: (message, metadata) => errorEntries.push({ message, metadata }),
+      },
+    });
+
+    tracker.registerExecution("run_1", execution.promise);
+
+    await assertRejects(
+      () => lifecycle.stop(),
+      Error,
+      "Detached durable runs did not drain before shutdown timeout",
+    );
+
+    assertEquals(errorEntries, [
+      {
+        message: "Detached durable runs did not drain before shutdown timeout",
+        metadata: { pendingRunIds: ["run_1"], count: 1 },
+      },
+    ]);
+
+    await execution.resolve();
   });
 });
