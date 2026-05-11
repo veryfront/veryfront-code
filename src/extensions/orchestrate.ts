@@ -34,7 +34,7 @@ export interface OrchestrateOptions {
   primeContracts?: Record<string, unknown>;
   /** Built-in extensions shipped with the framework. Lowest priority — any
    *  project, package, or config extension with the same name overrides them.
-   *  Users can disable them via `{ name: "ext-anthropic", enabled: false }`. */
+   *  Users can disable them via `{ name: "ext-ai-anthropic", enabled: false }`. */
   builtinExtensions?: ResolvedExtension[];
   /** @internal Override discovery functions in tests. */
   discovery?: {

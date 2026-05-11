@@ -40,7 +40,7 @@ export function createVeryfrontCloudEmbeddingModel(modelId: string): EmbeddingRu
         createError({
           type: "config",
           message:
-            "Google provider not installed. Add @veryfront/ext-google to use google/* embedding models via veryfront-cloud.",
+            "Google provider not installed. Add @veryfront/ext-ai-google to use google/* embedding models via veryfront-cloud.",
         }),
       );
     }

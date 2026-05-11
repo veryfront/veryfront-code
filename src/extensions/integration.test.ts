@@ -14,9 +14,9 @@ import { register, reset } from "./contracts.ts";
 import { AIProviderRegistryName } from "./interfaces/index.ts";
 import type { AIProviderRegistry } from "./interfaces/index.ts";
 import { createAIProviderRegistry } from "./ai/ai-provider-registry.ts";
-import extOpenAI from "../../extensions/ext-openai/src/index.ts";
-import extAnthropic from "../../extensions/ext-anthropic/src/index.ts";
-import extGoogle from "../../extensions/ext-google/src/index.ts";
+import extOpenAI from "../../extensions/ext-ai-openai/src/index.ts";
+import extAnthropic from "../../extensions/ext-ai-anthropic/src/index.ts";
+import extGoogle from "../../extensions/ext-ai-google/src/index.ts";
 import {
   _resetShimForTests,
   getTracer,
@@ -171,7 +171,7 @@ describe("extensions/integration", () => {
     assertEquals(order, ["c", "b", "a"]);
   });
 
-  it("ext-openai registers into the primed AIProviderRegistry", async () => {
+  it("ext-ai-openai registers into the primed AIProviderRegistry", async () => {
     const registry = createAIProviderRegistry();
     const loader = new ExtensionLoader(noopLogger);
     loader.primeContracts({ [AIProviderRegistryName]: registry });
@@ -179,7 +179,7 @@ describe("extensions/integration", () => {
       [
         {
           source: "local-file",
-          origin: "virtual://ext-openai",
+          origin: "virtual://ext-ai-openai",
           extension: extOpenAI(),
         } satisfies ResolvedExtension,
       ],
@@ -260,7 +260,7 @@ describe("extensions/integration", () => {
     _resetShimForTests();
   });
 
-  it("ext-anthropic registers into the primed AIProviderRegistry", async () => {
+  it("ext-ai-anthropic registers into the primed AIProviderRegistry", async () => {
     const registry = createAIProviderRegistry();
     const loader = new ExtensionLoader(noopLogger);
     loader.primeContracts({ [AIProviderRegistryName]: registry });
@@ -268,7 +268,7 @@ describe("extensions/integration", () => {
       [
         {
           source: "local-file",
-          origin: "virtual://ext-anthropic",
+          origin: "virtual://ext-ai-anthropic",
           extension: extAnthropic(),
         } satisfies ResolvedExtension,
       ],
@@ -280,7 +280,7 @@ describe("extensions/integration", () => {
     await loader.teardownAll();
   });
 
-  it("ext-google registers into the primed AIProviderRegistry", async () => {
+  it("ext-ai-google registers into the primed AIProviderRegistry", async () => {
     const registry = createAIProviderRegistry();
     const loader = new ExtensionLoader(noopLogger);
     loader.primeContracts({ [AIProviderRegistryName]: registry });
@@ -288,7 +288,7 @@ describe("extensions/integration", () => {
       [
         {
           source: "local-file",
-          origin: "virtual://ext-google",
+          origin: "virtual://ext-ai-google",
           extension: extGoogle(),
         } satisfies ResolvedExtension,
       ],

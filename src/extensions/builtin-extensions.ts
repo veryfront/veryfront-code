@@ -2,9 +2,9 @@ import type { ResolvedExtension } from "./types.ts";
 import { register, tryResolve } from "./contracts.ts";
 import type { AIProvider, AIProviderRegistry } from "./ai/index.ts";
 import { AIProviderRegistryName, createAIProviderRegistry } from "./ai/index.ts";
-import { OpenAIProvider } from "../../extensions/ext-openai/src/index.ts";
-import { AnthropicProvider } from "../../extensions/ext-anthropic/src/index.ts";
-import { GoogleProvider } from "../../extensions/ext-google/src/index.ts";
+import { OpenAIProvider } from "../../extensions/ext-ai-openai/src/index.ts";
+import { AnthropicProvider } from "../../extensions/ext-ai-anthropic/src/index.ts";
+import { GoogleProvider } from "../../extensions/ext-ai-google/src/index.ts";
 import extEsbuild from "../../extensions/ext-esbuild/src/index.ts";
 import extBabel from "../../extensions/ext-babel/src/index.ts";
 import extMdx from "../../extensions/ext-mdx/src/index.ts";
@@ -19,18 +19,18 @@ type BuiltinAIProviderDefinition = {
 
 const BUILTIN_AI_PROVIDERS: BuiltinAIProviderDefinition[] = [
   {
-    extensionName: "ext-openai",
-    origin: "veryfront/ext-openai",
+    extensionName: "ext-ai-openai",
+    origin: "veryfront/ext-ai-openai",
     provider: () => new OpenAIProvider(),
   },
   {
-    extensionName: "ext-anthropic",
-    origin: "veryfront/ext-anthropic",
+    extensionName: "ext-ai-anthropic",
+    origin: "veryfront/ext-ai-anthropic",
     provider: () => new AnthropicProvider(),
   },
   {
-    extensionName: "ext-google",
-    origin: "veryfront/ext-google",
+    extensionName: "ext-ai-google",
+    origin: "veryfront/ext-ai-google",
     provider: () => new GoogleProvider(),
   },
 ];

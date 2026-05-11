@@ -5,10 +5,10 @@
  *
  * Ported from `src/provider/runtime-loader.ts` as part of PR 12.
  *
- * @module extensions/ext-anthropic/anthropic-provider
+ * @module extensions/ext-ai-anthropic/anthropic-provider
  */
 
-import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
+import type { AIProvider, AIProviderConfig } from "veryfront/extensions/ai";
 import type { ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,

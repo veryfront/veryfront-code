@@ -4,10 +4,10 @@
  *
  * Ported from `src/provider/runtime-loader.ts` as part of PR 13.
  *
- * @module extensions/ext-google/google-provider
+ * @module extensions/ext-ai-google/google-provider
  */
 
-import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
+import type { AIProvider, AIProviderConfig } from "veryfront/extensions/ai";
 import type { EmbeddingRuntime, ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,

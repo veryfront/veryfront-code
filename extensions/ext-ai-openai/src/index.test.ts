@@ -1,12 +1,12 @@
 import { describe, it } from "@std/testing/bdd";
 import { assert, assertEquals } from "@std/assert";
 import extOpenAI, { OpenAIProvider } from "./index.ts";
-import type { AIProviderRegistry } from "veryfront/extensions/interfaces";
+import type { AIProviderRegistry } from "veryfront/extensions/ai";
 
-describe("ext-openai", () => {
+describe("ext-ai-openai", () => {
   it("factory descriptor advertises the AIProvider:openai capability", () => {
     const ext = extOpenAI();
-    assertEquals(ext.name, "ext-openai");
+    assertEquals(ext.name, "ext-ai-openai");
     assertEquals(ext.capabilities?.[0], {
       type: "contract",
       name: "AIProvider:openai",

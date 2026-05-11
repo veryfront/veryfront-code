@@ -1,26 +1,26 @@
 /**
- * @veryfront/ext-openai — registers the OpenAI provider into the
+ * @veryfront/ext-ai-openai — registers the OpenAI provider into the
  * core `AIProviderRegistry`.
  *
- * @module extensions/ext-openai
+ * @module extensions/ext-ai-openai
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { AIProviderRegistry } from "veryfront/extensions/interfaces";
-import { AIProviderRegistryName } from "veryfront/extensions/interfaces";
+import type { AIProviderRegistry } from "veryfront/extensions/ai";
+import { AIProviderRegistryName } from "veryfront/extensions/ai";
 import { OpenAIProvider } from "./openai-provider.ts";
 
 const extOpenAI: ExtensionFactory = () => {
   const provider = new OpenAIProvider();
   let registry: AIProviderRegistry | undefined;
   return {
-    name: "ext-openai",
+    name: "ext-ai-openai",
     version: "0.1.0",
     capabilities: [{ type: "contract", name: "AIProvider:openai" }],
     setup(ctx) {
       registry = ctx.require<AIProviderRegistry>(AIProviderRegistryName);
       registry.register(provider);
-      ctx.logger.info("[ext-openai] OpenAI provider registered");
+      ctx.logger.info("[ext-ai-openai] OpenAI provider registered");
     },
     teardown() {
       registry?.unregister(provider.id);

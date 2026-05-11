@@ -55,7 +55,7 @@ function autoInitializeFromEnv(): void {
         createError({
           type: "config",
           message:
-            "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/* embedding models.",
+            "OpenAI provider not installed. Add @veryfront/ext-ai-openai to use openai/* embedding models.",
         }),
       );
     });
@@ -84,7 +84,7 @@ function autoInitializeFromEnv(): void {
         createError({
           type: "config",
           message:
-            "Google provider not installed. Add @veryfront/ext-google to use google/* embedding models.",
+            "Google provider not installed. Add @veryfront/ext-ai-google to use google/* embedding models.",
         }),
       );
     });
