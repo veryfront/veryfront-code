@@ -278,6 +278,11 @@ export {
   parseHostedAgentServiceConfig,
 } from "./hosted-agent-service-config.ts";
 export {
+  type HostedAgentServiceEnvFileLoadOptions,
+  type HostedAgentServiceEnvFileLoadResult,
+  loadHostedAgentServiceEnvFiles,
+} from "./hosted-agent-service-env-files.ts";
+export {
   type AgentServiceBootstrapExit,
   type AgentServiceTraceContext,
   type AgentServiceTraceContextGetter,
