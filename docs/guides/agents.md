@@ -156,9 +156,11 @@ project-scoped tool inventory from an external control plane can use
 `createDefaultHostedProjectSteeringRefresh()` from `veryfront/agent` to reuse
 the default refresh sequencing while keeping fetch and prompt-building policy
 local.
-Services that stream prepared hosted executions through Veryfront Cloud can use
+Services that prepare and stream hosted executions through Veryfront Cloud can
+use `prepareVeryfrontCloudHostedChatExecution()` and
 `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions()` to reuse the
-default hosted model-provider and stream-watchdog wiring.
+default hosted model normalization, model-provider, durable root-run, and
+stream-watchdog wiring.
 
 ## Agent configuration
 
