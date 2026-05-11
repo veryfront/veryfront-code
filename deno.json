@@ -263,8 +263,8 @@
     "@std/fs": "jsr:@std/fs",
     "@std/async": "jsr:@std/async",
     "@std/front-matter/yaml": "./src/platform/compat/std/front-matter-yaml.ts",
-    "@types/react": "https://esm.sh/@types/react@18.3.27?deps=csstype@3.2.3",
-    "@types/react-dom": "https://esm.sh/@types/react-dom@18.3.7?deps=csstype@3.2.3",
+    "@types/react": "https://esm.sh/@types/react@19.2.14?deps=csstype@3.2.3",
+    "@types/react-dom": "https://esm.sh/@types/react-dom@19.2.3?deps=csstype@3.2.3",
     "react": "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
     "react-dom": "https://esm.sh/react-dom@19.2.4?external=react&target=es2022&deps=csstype@3.2.3",
     "react-dom/server": "https://esm.sh/react-dom@19.2.4/server?external=react&target=es2022&deps=csstype@3.2.3",
@@ -295,7 +295,7 @@
     "noImplicitAny": true,
     "noUncheckedIndexedAccess": true,
     "types": [
-      "npm:@types/react@18.3.27"
+      "npm:@types/react@19.2.14"
     ],
     "lib": [
       "deno.window",
