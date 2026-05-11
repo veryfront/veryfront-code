@@ -151,6 +151,11 @@ export default agent({
 
 For step-boundary refresh during a long-lived hosted run, use
 `resolveRuntimeState` instead of relying on `system()` to re-run mid-turn.
+Hosted service runtimes that fetch project instructions, skills, and
+project-scoped tool inventory from an external control plane can use
+`createDefaultHostedProjectSteeringRefresh()` from `veryfront/agent` to reuse
+the default refresh sequencing while keeping fetch and prompt-building policy
+local.
 
 ## Agent configuration
 
