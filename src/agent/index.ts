@@ -1123,6 +1123,10 @@ export {
   streamPreparedHostedChatExecutionToAgUiResponse,
 } from "./prepared-hosted-chat-execution.ts";
 export {
+  createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions,
+  type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput,
+} from "./veryfront-cloud-prepared-hosted-chat-execution-runtime.ts";
+export {
   finalizeHostedDetached,
   type FinalizeHostedDetachedOptions,
   finalizeHostedResponse,
