@@ -242,6 +242,17 @@ export {
   type StartNodeAgentServiceServerOptions,
 } from "./agent-service-server.ts";
 export {
+  createHostedAgentServiceRuntime,
+  type CreateHostedAgentServiceRuntimeOptions,
+  type HostedAgentServiceRuntimeBundle,
+  type HostedAgentServiceRuntimeConfig,
+  type HostedAgentServiceRuntimeLogger,
+  type HostedAgentServiceRuntimeTrace,
+  startNodeHostedAgentService,
+  type StartNodeHostedAgentServiceOptions,
+  type StartNodeHostedAgentServiceResult,
+} from "./hosted-agent-service-runtime.ts";
+export {
   type AgentServiceBootstrapExit,
   type AgentServiceTraceContext,
   type AgentServiceTraceContextGetter,
