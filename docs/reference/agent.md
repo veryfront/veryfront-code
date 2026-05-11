@@ -732,6 +732,14 @@ validates API URL, node environment, port, durable feature flags, OAuth public
 key, Studio MCP URL, allowed origins, and OpenTelemetry endpoint flags, and it
 derives the hosted MCP URL from `VERYFRONT_API_URL`.
 
+### `loadHostedAgentServiceEnvFiles(options)`
+
+Load hosted agent service env files before parsing config. By default the
+helper reads `.env` and then `.env.local` from the current working directory,
+preserves variables that were already present in the host process environment,
+and lets later env files override earlier env-file values. This matches the
+recommended service bootstrap shape for separately deployed hosted agents.
+
 ### `AgUiRuntimeRequestSchema`
 
 Validate the canonical open-source AG-UI runtime request contract for hosted
@@ -917,6 +925,7 @@ Clear all stored messages from memory.
 | `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
 | `createVeryfrontCloudHostedChatExecutionRootRunOptions`         | Create Veryfront Cloud hosted root-run preparation defaults              |
 | `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
+| `loadHostedAgentServiceEnvFiles`                                | Load hosted service env files while preserving host process env          |
 | `parseHostedAgentServiceConfig`                                 | Parse default hosted agent service environment config                    |
 | `prepareVeryfrontCloudHostedChatExecution`                      | Prepare hosted chat execution with Veryfront Cloud defaults              |
 | `normalizeAgUiRuntimeMessages`                                  | Normalize runtime AG-UI messages into package `Message[]`                |
