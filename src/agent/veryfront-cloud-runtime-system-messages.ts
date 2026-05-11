@@ -3,6 +3,7 @@ import {
   createRuntimeAgentSystemMessages,
   type RuntimeAgentMarkdownDefinition,
 } from "./runtime-agent-definition.ts";
+import type { HostedChatRuntimeInstructionsInput } from "./hosted-chat-preparation.ts";
 import { createRuntimePromptBlock } from "./runtime-prompt-block.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
 
@@ -60,6 +61,19 @@ export function createVeryfrontCloudRuntimeSystemMessages(
     agent: input.agent,
     runtimeBlocks,
     skills: input.skills,
+    environmentContext: input.environmentContext,
+  });
+}
+
+export function buildVeryfrontCloudRuntimeInstructions(
+  input: HostedChatRuntimeInstructionsInput<RuntimeAgentMarkdownDefinition>,
+): ChatSystemMessage[] {
+  return createVeryfrontCloudRuntimeSystemMessages({
+    agent: input.agentConfig,
+    instructions: input.instructions || undefined,
+    skills: input.skills.length > 0 ? input.skills : undefined,
+    projectId: input.projectId,
+    branchId: input.branchId,
     environmentContext: input.environmentContext,
   });
 }

@@ -155,13 +155,15 @@ Hosted service runtimes that fetch project instructions, skills, and
 project-scoped tool inventory from an external control plane can use
 `createDefaultHostedProjectSteeringRefresh()` from `veryfront/agent` to reuse
 the default refresh sequencing while keeping fetch and prompt-building policy
-local.
+local. Use `fetchDefaultHostedProjectSteering()` for the matching initial
+execution-preparation fetch.
 Services that prepare and stream hosted executions through Veryfront Cloud can
 use `prepareVeryfrontCloudHostedChatExecution()`,
 `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions()`, and
-`createVeryfrontCloudRuntimeSystemMessages()` to reuse the default hosted model
+`buildVeryfrontCloudRuntimeInstructions()` to reuse the default hosted model
 normalization, model-provider, runtime system-message, durable root-run, and
-stream-watchdog wiring. Hosted services can also use `loadHostedAgentServiceEnvFiles()` before
+stream-watchdog wiring. Hosted services can also use
+`loadHostedAgentServiceEnvFiles()` before
 `parseHostedAgentServiceConfig()` to share the default env-file precedence and
 environment contract for API URL, hosted MCP URL, port, CORS origins, durable
 feature flags, and OpenTelemetry flags.

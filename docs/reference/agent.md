@@ -704,6 +704,12 @@ Hosts provide the control-plane fetchers and prompt builder, keeping product
 policy outside the framework while reusing the generic hosted refresh
 sequencing.
 
+### `fetchDefaultHostedProjectSteering(options)`
+
+Fetch initial hosted project steering for execution preparation. The helper
+returns empty steering when no project is active, otherwise fetches project
+instructions and skills in parallel with an optional host trace wrapper.
+
 ### `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(options)`
 
 Create the default runtime options used by prepared hosted chat execution on
@@ -717,6 +723,13 @@ Create the default runtime system messages for Veryfront Cloud hosted services.
 The helper inserts project instructions and project context blocks at the
 runtime-context marker, includes available skills, and appends environment
 context using the same prompt-block conventions as the core runtime.
+
+### `buildVeryfrontCloudRuntimeInstructions(input)`
+
+Adapt hosted chat runtime preparation input into Veryfront Cloud runtime system
+messages. This is the callback-shaped companion to
+`createVeryfrontCloudRuntimeSystemMessages()` for
+`prepareVeryfrontCloudHostedChatExecution()`.
 
 ### `resolveRuntimeAgentDefinitionsDir(options)`
 
@@ -949,9 +962,11 @@ Clear all stored messages from memory.
 | `createAgUiSseErrorResponse`                                    | Create an AG-UI SSE error `Response`                                     |
 | `createAgUiResumeHandler`                                       | Create a POST handler for hosted AG-UI run resume values                 |
 | `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
+| `buildVeryfrontCloudRuntimeInstructions`                        | Adapt hosted preparation input to Veryfront Cloud system messages        |
 | `createVeryfrontCloudHostedChatExecutionRootRunOptions`         | Create Veryfront Cloud hosted root-run preparation defaults              |
 | `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
 | `createVeryfrontCloudRuntimeSystemMessages`                     | Create Veryfront Cloud runtime system messages                           |
+| `fetchDefaultHostedProjectSteering`                             | Fetch initial hosted project instructions and skills                     |
 | `filterAgentTraceAttributes`                                    | Filter unknown records to valid agent trace attributes                   |
 | `loadHostedAgentServiceEnvFiles`                                | Load hosted service env files while preserving host process env          |
 | `loadRuntimeAgentMarkdownDefinitionFromFile`                    | Load and parse a markdown agent definition from an agents directory      |
