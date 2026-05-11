@@ -242,6 +242,19 @@ export {
   type StartNodeAgentServiceServerOptions,
 } from "./agent-service-server.ts";
 export {
+  createDefaultHostedChatRuntime,
+  type CreateDefaultHostedChatRuntimeContextInput,
+  type CreateDefaultHostedChatRuntimeOptions,
+  type DefaultHostedChatRuntimeConfig,
+  type DefaultHostedChatRuntimeCreationOptions,
+  type DefaultHostedChatRuntimeLogger,
+  type DefaultHostedChatRuntimeProjectSwitchInput,
+  type DefaultHostedChatRuntimeSteeringMutationInput,
+  type DefaultHostedChatRuntimeSystemRefreshInput,
+  type DefaultHostedChatRuntimeTaskContext,
+} from "./default-hosted-chat-runtime.ts";
+
+export {
   createHostedAgentServiceRuntime,
   type CreateHostedAgentServiceRuntimeOptions,
   type HostedAgentServiceRuntimeBundle,
