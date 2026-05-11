@@ -821,6 +821,21 @@ export {
   type HostedChildInvokeFailure,
 } from "./hosted-child-invoke-tool.ts";
 export {
+  createDefaultHostedInvokeAgentTool,
+  type DefaultHostedInvokeAgentConfig,
+  type DefaultHostedInvokeAgentContext,
+  type DefaultHostedInvokeAgentInput,
+  defaultHostedInvokeAgentInputSchema,
+  type DefaultHostedInvokeAgentLogger,
+  type DefaultHostedInvokeAgentProjectRefresh,
+  defaultHostedInvokeAgentSelectionSchema,
+  type DefaultHostedInvokeAgentToolOptions,
+  type DefaultHostedInvokeAgentToolResult,
+  type DefaultHostedInvokeAgentTrace,
+  type DefaultHostedInvokeAgentTraceAttributes,
+  executeDefaultHostedInvokeAgentTool,
+} from "./default-hosted-invoke-agent-tool.ts";
+export {
   buildDefaultHostedChildForkToolSet,
   buildHostedChildToolDescription,
   DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES,
