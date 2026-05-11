@@ -1,7 +1,11 @@
 /**
- * Barrel export for all extension contract interfaces.
+ * Back-compat barrel for extension contract interfaces.
  *
- * Every export is a pure TypeScript type -- no runtime code is emitted.
+ * Re-exports the category-folder modules under `../{ai,auth,cache,...}/`.
+ * Most entries are interface re-exports (erased at runtime); the
+ * `AIProviderRegistryName` re-export is a runtime value (a const).
+ * This file will be deleted once all consumers migrate to the
+ * `veryfront/extensions/<category>` paths.
  *
  * @module extensions/interfaces
  */
