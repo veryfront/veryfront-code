@@ -1109,6 +1109,14 @@ export {
   toHostedChatExecutionFinalState,
 } from "./hosted-chat-execution-runtime.ts";
 export {
+  type PreparedHostedChatExecution,
+  type PreparedHostedChatExecutionDetachedInput,
+  type PreparedHostedChatExecutionRuntimeOptions,
+  type PreparedHostedChatExecutionStreamInput,
+  runPreparedHostedChatExecutionDetached,
+  streamPreparedHostedChatExecutionToAgUiResponse,
+} from "./prepared-hosted-chat-execution.ts";
+export {
   finalizeHostedDetached,
   type FinalizeHostedDetachedOptions,
   finalizeHostedResponse,

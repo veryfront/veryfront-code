@@ -12,7 +12,7 @@ It gives you agents, tools, workflows, and a complete React rendering stack in a
 
 Purpose-built for TypeScript and React, Veryfront gives you everything you need to build agentic full-stack applications out-of-the-box.
 
-- [**Agents**](https://veryfront.com/docs/code/guides/agents) — Build autonomous agents with model routing, system prompts, and tool calling. Agents reason about goals and iterate until they reach a final answer.
+- [**Agents**](https://veryfront.com/docs/code/guides/agents) — Build autonomous agents with model routing, system prompts, hosted execution helpers, and tool calling. Agents reason about goals and iterate until they reach a final answer.
 
 - [**Tools**](https://veryfront.com/docs/code/guides/tools) — Define Zod-validated functions that agents can call. Tools are auto-discovered from the file system with no registration needed.
 
