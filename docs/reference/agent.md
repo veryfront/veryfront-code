@@ -779,6 +779,20 @@ preserves variables that were already present in the host process environment,
 and lets later env files override earlier env-file values. This matches the
 recommended service bootstrap shape for separately deployed hosted agents.
 
+### `resolveNodeHostedAgentServiceTelemetryConfig(options)`
+
+Resolve the default Node hosted-agent OpenTelemetry configuration from a service
+environment. The helper centralizes `OTEL_ENABLED`, service name/version,
+sampling, exporter headers, and Node auto-instrumentation flags for separately
+deployed Node agent services.
+
+### `initializeNodeHostedAgentServiceOpenTelemetry(options)`
+
+Initialize the Node OpenTelemetry SDK for a hosted agent service using the
+configuration resolved by `resolveNodeHostedAgentServiceTelemetryConfig()`. This
+helper is intentionally Node-specific; cross-runtime service shells should keep
+using the lower-level framework observability APIs.
+
 ### `AgUiRuntimeRequestSchema`
 
 Validate the canonical open-source AG-UI runtime request contract for hosted
@@ -969,8 +983,10 @@ Clear all stored messages from memory.
 | `fetchDefaultHostedProjectSteering`                             | Fetch initial hosted project instructions and skills                     |
 | `filterAgentTraceAttributes`                                    | Filter unknown records to valid agent trace attributes                   |
 | `loadHostedAgentServiceEnvFiles`                                | Load hosted service env files while preserving host process env          |
+| `initializeNodeHostedAgentServiceOpenTelemetry`                 | Initialize Node OpenTelemetry for a hosted agent service                 |
 | `loadRuntimeAgentMarkdownDefinitionFromFile`                    | Load and parse a markdown agent definition from an agents directory      |
 | `parseHostedAgentServiceConfig`                                 | Parse default hosted agent service environment config                    |
+| `resolveNodeHostedAgentServiceTelemetryConfig`                  | Resolve Node hosted service OpenTelemetry config from environment        |
 | `prepareVeryfrontCloudHostedChatExecution`                      | Prepare hosted chat execution with Veryfront Cloud defaults              |
 | `normalizeAgUiRuntimeMessages`                                  | Normalize runtime AG-UI messages into package `Message[]`                |
 | `parseAgUiRuntimeRequest`                                       | Parse and validate the canonical runtime AG-UI request body              |

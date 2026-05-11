@@ -166,7 +166,11 @@ stream-watchdog wiring. Hosted services can also use
 `loadHostedAgentServiceEnvFiles()` before
 `parseHostedAgentServiceConfig()` to share the default env-file precedence and
 environment contract for API URL, hosted MCP URL, port, CORS origins, durable
-feature flags, and OpenTelemetry flags.
+feature flags, and OpenTelemetry flags. Node-hosted services can pair that with
+`resolveNodeHostedAgentServiceTelemetryConfig()` and
+`initializeNodeHostedAgentServiceOpenTelemetry()` to reuse the default Node SDK
+telemetry setup while keeping non-Node runtimes on the lower-level
+observability APIs.
 Use `resolveRuntimeAgentDefinitionsDir()` and
 `loadRuntimeAgentMarkdownDefinitionFromFile()` when a separately deployed
 hosted agent stores persona/configuration in `agents/*.md` files.

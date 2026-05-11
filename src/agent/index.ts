@@ -301,6 +301,17 @@ export {
   loadHostedAgentServiceEnvFiles,
 } from "./hosted-agent-service-env-files.ts";
 export {
+  initializeNodeHostedAgentServiceOpenTelemetry,
+  type InitializeNodeHostedAgentServiceTelemetryOptions,
+  type NodeHostedAgentServiceInstrumentationConfig,
+  type NodeHostedAgentServiceTelemetryConfig,
+  type NodeHostedAgentServiceTelemetryEnv,
+  type NodeHostedAgentServiceTelemetryLogger,
+  type NodeHostedAgentServiceTelemetryProcessTarget,
+  resolveNodeHostedAgentServiceTelemetryConfig,
+  type ResolveNodeHostedAgentServiceTelemetryConfigOptions,
+} from "./node-hosted-agent-service-telemetry.ts";
+export {
   type AgentServiceBootstrapExit,
   type AgentServiceTraceContext,
   type AgentServiceTraceContextGetter,
