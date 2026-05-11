@@ -47,15 +47,9 @@ export type {
   CSSCompileOptions, CSSCompiler, CSSModuleSource, CSSProcessor, CSSStylesheetSource,
 } from "../css/index.ts";
 
-// Content transformer
-export type {
-  CompilationMode,
-  CompilationTarget,
-  ContentCompileOptions,
-  ContentPlugin,
-  ContentRuntimeBundle,
-  ContentTransformer,
-} from "./content-transformer.ts";
+// Content transformer — moved to ../content/
+export type { CompilationMode, CompilationTarget, ContentPlugin } from "../content/index.ts";
+export type { ContentCompileOptions, ContentRuntimeBundle, ContentTransformer } from "../content/index.ts";
 
 // Database client
 export type { DatabaseClient, QueryResult } from "./database-client.ts";

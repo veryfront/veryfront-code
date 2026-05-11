@@ -39,7 +39,7 @@ export {
   type MDXRenderOptions,
 } from "./mdx/index.ts";
 
-// Plugins — remark/rehype plugin implementations moved into @veryfront/ext-mdx.
+// Plugins — remark/rehype plugin implementations moved into @veryfront/ext-content-mdx.
 // Core still exposes the plugin list getters (backed by the extension contract).
 export { getRehypePlugins, getRemarkPlugins } from "./plugins/index.ts";
 

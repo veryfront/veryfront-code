@@ -12,7 +12,7 @@ const recommendations = new Map<string, string>([
   ["CacheStore", "@veryfront/ext-cache-redis"],
   ["TokenCacheStore", "@veryfront/ext-cache-redis"],
   ["CSSProcessor", "@veryfront/ext-css-tailwind"],
-  ["ContentTransformer", "@veryfront/ext-mdx"],
+  ["ContentTransformer", "@veryfront/ext-content-mdx"],
   ["DatabaseClient", "@veryfront/ext-postgres"],
   ["AuthProvider", "@veryfront/ext-auth-jwt"],
   ["TracingExporter", "@veryfront/ext-opentelemetry"],

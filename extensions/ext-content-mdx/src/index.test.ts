@@ -1,7 +1,7 @@
 /**
  * ext-mdx extension smoke tests.
  *
- * @module extensions/ext-mdx/test
+ * @module extensions/ext-content-mdx/test
  */
 
 import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
@@ -12,7 +12,7 @@ import factory, { MdxContentTransformer } from "./index.ts";
 describe("ext-mdx factory", () => {
   it("produces an extension whose name is ext-mdx", () => {
     const ext = factory();
-    assertEquals(ext.name, "ext-mdx");
+    assertEquals(ext.name, "ext-content-mdx");
     assertEquals(ext.version, "0.1.0");
   });
 

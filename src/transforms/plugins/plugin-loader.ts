@@ -1,6 +1,6 @@
 /**
  * Shim that routes MDX plugin lookups through the `ContentTransformer`
- * extension contract (default implementation: `@veryfront/ext-mdx`).
+ * extension contract (default implementation: `@veryfront/ext-content-mdx`).
  *
  * Build-time MDX compilers (`src/build/compiler/mdx-compiler/mdx-processor.ts`,
  * `src/build/renderer/services/mdx-bundler.ts`, `layout-applicator.ts`)
@@ -9,7 +9,7 @@
  * `ContentTransformer` implementation is registered.
  *
  * When no implementation is registered, the lookup throws with an
- * actionable install message pointing at `@veryfront/ext-mdx`.
+ * actionable install message pointing at `@veryfront/ext-content-mdx`.
  *
  * @module transforms/plugins/plugin-loader
  */

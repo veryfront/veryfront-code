@@ -14,7 +14,7 @@
  * core throws an actionable install message (see
  * `src/extensions/recommendations.ts`).
  *
- * @module extensions/ext-mdx
+ * @module extensions/ext-content-mdx
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
@@ -23,7 +23,7 @@ import type {
   ContentPlugin,
   ContentRuntimeBundle,
   ContentTransformer,
-} from "veryfront/extensions/interfaces";
+} from "veryfront/extensions/content";
 import { compileMdx } from "./compiler/mdx-compile.ts";
 import { compileMarkdown } from "./compiler/markdown-compile.ts";
 import { getRehypePlugins, getRemarkPlugins } from "./plugins/plugin-loader.ts";
@@ -46,7 +46,7 @@ class MdxContentTransformer implements ContentTransformer {
 const extMdx: ExtensionFactory = () => {
   const impl = new MdxContentTransformer();
   return {
-    name: "ext-mdx",
+    name: "ext-content-mdx",
     version: "0.1.0",
     capabilities: [{ type: "contract", name: "ContentTransformer" }],
     setup(ctx) {
