@@ -14,7 +14,7 @@ const recommendations = new Map<string, string>([
   ["CSSProcessor", "@veryfront/ext-tailwind"],
   ["ContentTransformer", "@veryfront/ext-mdx"],
   ["DatabaseClient", "@veryfront/ext-postgres"],
-  ["AuthProvider", "@veryfront/ext-jwt"],
+  ["AuthProvider", "@veryfront/ext-auth-jwt"],
   ["TracingExporter", "@veryfront/ext-opentelemetry"],
   ["AIProviderRegistry", "@veryfront/ext-ai-openai"],
   ["AIProvider:openai", "@veryfront/ext-ai-openai"],

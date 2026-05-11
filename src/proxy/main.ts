@@ -24,7 +24,7 @@ import { createProxyHandler, INTERNAL_PROXY_HEADERS, type ProxyConfig } from "./
 import { createCacheFromEnv } from "./cache/index.ts";
 import { isRetryableConnectionError } from "./retry.ts";
 import { register } from "../extensions/contracts.ts";
-import { createAuthProvider } from "../../extensions/ext-jwt/src/index.ts";
+import { createAuthProvider } from "../../extensions/ext-auth-jwt/src/index.ts";
 import {
   endSpan,
   extractContext,

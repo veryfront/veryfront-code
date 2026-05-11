@@ -66,14 +66,14 @@ export type {
 // Database client
 export type { DatabaseClient, QueryResult } from "./database-client.ts";
 
-// Auth provider
+// Auth provider — moved to ../auth/
 export type {
   AuthProvider,
   SignOptions,
   TokenHeader,
   TokenPayload,
   VerifyOptions,
-} from "./auth-provider.ts";
+} from "../auth/index.ts";
 
 // Tracing exporter
 export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";

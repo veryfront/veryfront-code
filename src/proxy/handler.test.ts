@@ -12,7 +12,7 @@ import type {
   AuthProvider,
   TokenHeader,
   TokenPayload,
-} from "../extensions/interfaces/auth-provider.ts";
+} from "../extensions/auth/index.ts";
 
 const TEST_JWT_SECRET = "test-jwt-secret-for-proxy-handler-tests";
 

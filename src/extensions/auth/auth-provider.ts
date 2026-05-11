@@ -1,9 +1,9 @@
 /**
  * Contract interface for authentication token providers.
  *
- * Default implementation: `@veryfront/ext-jwt`
+ * Default implementation: `@veryfront/ext-auth-jwt`
  *
- * @module extensions/interfaces/auth-provider
+ * @module extensions/auth/auth-provider
  */
 
 /** Payload data stored within a signed token. */

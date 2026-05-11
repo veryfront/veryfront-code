@@ -1,14 +1,14 @@
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { register, reset, resolve, tryResolve } from "../extensions/contracts.ts";
-import { createAuthProvider } from "../../extensions/ext-jwt/src/index.ts";
-import type { AuthProvider } from "../extensions/interfaces/auth-provider.ts";
+import { createAuthProvider } from "../../extensions/ext-auth-jwt/src/index.ts";
+import type { AuthProvider } from "../extensions/auth/index.ts";
 
 describe("Proxy AuthProvider contract registration", {
   sanitizeOps: false,
   sanitizeResources: false,
 }, () => {
-  it("ext-jwt registers a valid AuthProvider", () => {
+  it("ext-auth-jwt registers a valid AuthProvider", () => {
     reset();
     const provider = createAuthProvider({});
     register("AuthProvider", provider);

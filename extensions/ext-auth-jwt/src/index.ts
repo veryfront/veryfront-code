@@ -1,10 +1,10 @@
 /**
- * ext-jwt — AuthProvider implementation backed by `jose`.
+ * ext-auth-jwt — AuthProvider implementation backed by `jose`.
  *
  * Provides the `AuthProvider` contract: sign / verify (HS256 by default),
  * verify-with-remote-JWKS, and decode-header.
  *
- * @module extensions/ext-jwt
+ * @module extensions/ext-auth-jwt
  */
 
 import {
@@ -23,7 +23,7 @@ import type {
   TokenHeader,
   TokenPayload,
   VerifyOptions,
-} from "veryfront/extensions/interfaces";
+} from "veryfront/extensions/auth";
 
 /**
  * Signature used by jose's verify step to resolve a key for a given header.
@@ -42,7 +42,7 @@ export type JwksResolver = Parameters<typeof jwtVerify>[1] & object;
 export type JwksResolverFactory = (jwksUrl: string) => JwksResolver;
 
 /**
- * Optional configuration for the ext-jwt factory.
+ * Optional configuration for the ext-auth-jwt factory.
  *
  * - `secret`: HMAC secret for `sign`/`verify`. Falls back to the `JWT_SECRET`
  *   environment variable. Without one, `sign`/`verify` throw.
@@ -66,7 +66,7 @@ function getSecret(configSecret?: string | Uint8Array): Uint8Array {
   const env = typeof Deno !== "undefined" ? Deno.env.get("JWT_SECRET") : undefined;
   if (!env) {
     throw new Error(
-      "ext-jwt: no HMAC secret configured. Pass `secret` to the extension " +
+      "ext-auth-jwt: no HMAC secret configured. Pass `secret` to the extension " +
         "factory or set the JWT_SECRET environment variable.",
     );
   }
@@ -145,7 +145,7 @@ function createAuthProvider(config: ExtJwtConfig): AuthProvider {
 }
 
 /**
- * Default export — the ext-jwt extension factory.
+ * Default export — the ext-auth-jwt extension factory.
  *
  * Produces an extension that registers an `AuthProvider` contract
  * implementation backed by `jose`.
@@ -155,7 +155,7 @@ const extJwt: ExtensionFactory = (config?: unknown) => {
   const provider = createAuthProvider(cfg);
 
   return {
-    name: "ext-jwt",
+    name: "ext-auth-jwt",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "AuthProvider" },
