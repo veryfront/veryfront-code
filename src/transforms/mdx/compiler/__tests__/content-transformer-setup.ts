@@ -1,5 +1,5 @@
 /**
- * Shared test helper: activates the `@veryfront/ext-content-mdx` extension so core
+ * Shared test helper: activates the `@veryfront/ext-transform-mdx` extension so core
  * tests that exercise the MDX / Markdown compile paths can resolve the
  * `ContentTransformer` contract.
  *
@@ -14,7 +14,7 @@
  */
 
 import { register as registerContract } from "#veryfront/extensions/contracts.ts";
-import extMdxFactory from "../../../../../extensions/ext-content-mdx/src/index.ts";
+import extMdxFactory from "../../../../../extensions/ext-transform-mdx/src/index.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -24,7 +24,7 @@ const noopLogger = {
 };
 
 /**
- * Activate the `@veryfront/ext-content-mdx` extension by running its `setup` hook
+ * Activate the `@veryfront/ext-transform-mdx` extension by running its `setup` hook
  * against a minimal context that forwards `provide()` to the core contract
  * registry. Safe to call repeatedly: extension setup just re-registers
  * contracts, which overwrite any prior entry.

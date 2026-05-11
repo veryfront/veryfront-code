@@ -1,13 +1,13 @@
 /**
  * Contract interface for content transformation pipelines.
  *
- * Default implementation: `@veryfront/ext-content-mdx`
+ * Default implementation: `@veryfront/ext-transform-mdx`
  *
  * Implementations compile MDX / Markdown source into renderable JavaScript
  * modules. Core's `src/transforms/md/compiler` and
  * `src/transforms/mdx/compiler` delegate to the registered implementation;
  * when none is registered, the compile paths throw an actionable install
- * message pointing at `@veryfront/ext-content-mdx`.
+ * message pointing at `@veryfront/ext-transform-mdx`.
  *
  * The two compile methods have the same option shape on purpose so a single
  * dispatcher (see `src/transforms/mdx/compiler/index.ts::compileContent`)
@@ -16,7 +16,7 @@
  * and defaults are preserved so the extension boundary is a pure refactor,
  * not a behavior change.
  *
- * @module extensions/content/content-transformer
+ * @module extensions/transform/content-transformer
  */
 
 /** Compilation mode — dev surfaces extra diagnostics. */

@@ -1,5 +1,5 @@
 {
-  "name": "@veryfront/ext-content-mdx",
+  "name": "@veryfront/ext-transform-mdx",
   "version": "0.1.0",
   "exports": "./src/index.ts",
   "veryfront": {
@@ -32,7 +32,7 @@
     "@std/assert": "jsr:@std/assert@1",
     "@std/testing/bdd": "jsr:@std/testing@1/bdd",
     "veryfront/extensions": "../../src/extensions/index.ts",
-    "veryfront/extensions/content": "../../src/extensions/content/index.ts",
+    "veryfront/extensions/transform": "../../src/extensions/transform/index.ts",
     "veryfront/transforms/frontmatter": "../../src/transforms/mdx/compiler/frontmatter-extractor.ts",
     "veryfront/transforms/import-rewriter": "../../src/transforms/mdx/compiler/import-rewriter.ts",
     "veryfront/transforms/md-utils": "../../src/transforms/md/utils.ts"

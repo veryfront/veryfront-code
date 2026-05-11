@@ -11,7 +11,7 @@ export type {
   CompilationMode,
   CompilationTarget,
   ContentRuntimeBundle,
-} from "#veryfront/extensions/content/index.ts";
+} from "#veryfront/extensions/transform/index.ts";
 export type { FrontmatterExtractionResult } from "./frontmatter-extractor.ts";
 export type { ImportRewriterConfig } from "./import-rewriter.ts";
 
@@ -21,7 +21,7 @@ import type {
   CompilationMode,
   CompilationTarget,
   ContentRuntimeBundle,
-} from "#veryfront/extensions/content/index.ts";
+} from "#veryfront/extensions/transform/index.ts";
 
 function isMarkdownFile(filePath?: string): boolean {
   return filePath?.endsWith(".md") ?? false;

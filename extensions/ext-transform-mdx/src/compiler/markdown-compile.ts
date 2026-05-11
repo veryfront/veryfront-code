@@ -12,7 +12,7 @@ import { visit } from "unist-util-visit";
 import { toString } from "mdast-util-to-string";
 import Slugger from "github-slugger";
 import type { Heading, Root as MdastRoot } from "mdast";
-import type { ContentCompileOptions, ContentRuntimeBundle } from "veryfront/extensions/content";
+import type { ContentCompileOptions, ContentRuntimeBundle } from "veryfront/extensions/transform";
 import { extractFrontmatter } from "veryfront/transforms/frontmatter";
 import { isMarkdownPreview } from "veryfront/transforms/md-utils";
 import { rehypeNodePositions } from "../plugins/rehype-node-positions.ts";

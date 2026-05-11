@@ -660,9 +660,9 @@ export class TestContext {
     // `discoverProjectExtensions` re-registers ContentTransformer after
     // bootstrap's teardownAll() wipes the contract registry.
     try {
-      const extMdxDir = join(this.projectDir, "extensions", "ext-content-mdx");
+      const extMdxDir = join(this.projectDir, "extensions", "ext-transform-mdx");
       await mkdir(extMdxDir, { recursive: true });
-      const extMdxReal = resolvePath("extensions/ext-content-mdx/src/index.ts");
+      const extMdxReal = resolvePath("extensions/ext-transform-mdx/src/index.ts");
       await writeTextFile(
         join(extMdxDir, "index.ts"),
         `export { default } from "${"file://" + extMdxReal}";\n`,

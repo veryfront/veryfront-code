@@ -1,7 +1,7 @@
 /**
  * Content category barrel — content transformer (MDX/Markdown) contract.
  *
- * @module extensions/content
+ * @module extensions/transform
  */
 
 // Type aliases (unions / shape aliases)

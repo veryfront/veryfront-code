@@ -7,7 +7,7 @@ import { AnthropicProvider } from "../../extensions/ext-ai-anthropic/src/index.t
 import { GoogleProvider } from "../../extensions/ext-ai-google/src/index.ts";
 import extEsbuild from "../../extensions/ext-bundler-esbuild/src/index.ts";
 import extBabel from "../../extensions/ext-parser-babel/src/index.ts";
-import extMdx from "../../extensions/ext-content-mdx/src/index.ts";
+import extMdx from "../../extensions/ext-transform-mdx/src/index.ts";
 import extTailwind from "../../extensions/ext-css-tailwind/src/index.ts";
 import extNodeCompat from "../../extensions/ext-node-compatibility/src/index.ts";
 

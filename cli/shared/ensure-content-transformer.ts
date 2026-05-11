@@ -1,7 +1,7 @@
 import { tryResolve } from "veryfront/extensions";
 import { register } from "../../src/extensions/contracts.ts";
-import type { ContentTransformer } from "veryfront/extensions/content";
-import { MdxContentTransformer } from "../../extensions/ext-content-mdx/src/index.ts";
+import type { ContentTransformer } from "veryfront/extensions/transform";
+import { MdxContentTransformer } from "../../extensions/ext-transform-mdx/src/index.ts";
 
 /**
  * The CLI ships ext-mdx baked in so the compiled binary can render MDX/Markdown

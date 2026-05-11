@@ -1,6 +1,6 @@
 import { compile } from "@mdx-js/mdx";
 import type { Pluggable } from "unified";
-import type { ContentCompileOptions, ContentRuntimeBundle } from "veryfront/extensions/content";
+import type { ContentCompileOptions, ContentRuntimeBundle } from "veryfront/extensions/transform";
 import { extractFrontmatter } from "veryfront/transforms/frontmatter";
 import { rewriteBodyImports, rewriteCompiledImports } from "veryfront/transforms/import-rewriter";
 import { getRehypePlugins, getRemarkPlugins } from "../plugins/plugin-loader.ts";
