@@ -172,6 +172,15 @@ export {
 } from "./hosted-child-fork-tool-sources.ts";
 
 export {
+  loadRuntimeAgentMarkdownDefinitionFromFile,
+  type LoadRuntimeAgentMarkdownDefinitionFromFileInput,
+  loadRuntimeAgentMarkdownDefinitionFromFileInputSchema,
+  resolveRuntimeAgentDefinitionsDir,
+  type ResolveRuntimeAgentDefinitionsDirInput,
+  resolveRuntimeAgentDefinitionsDirInputSchema,
+  resolveRuntimeAgentMarkdownDefinitionFilePath,
+} from "./runtime-agent-definition-files.ts";
+export {
   createRuntimeAgentSystemMessages,
   type CreateRuntimeAgentSystemMessagesInput,
   DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,
@@ -352,6 +361,8 @@ export {
   buildExecuteToolTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
   buildInvokeAgentTraceAttributes,
+  filterAgentTraceAttributes,
+  isAgentTraceAttributeValue,
 } from "./agent-trace-attributes.ts";
 export {
   createHostedChatRuntimeAgentAdapter,

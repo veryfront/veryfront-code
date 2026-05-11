@@ -18,6 +18,32 @@ function compactTraceAttributes(attributes: AgentTraceAttributes): AgentTraceAtt
   );
 }
 
+function isAgentTraceAttributePrimitive(value: unknown): value is TracePrimitive {
+  return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+
+export function isAgentTraceAttributeValue(value: unknown): value is AgentTraceAttributeValue {
+  if (value === null || value === undefined || isAgentTraceAttributePrimitive(value)) {
+    return true;
+  }
+
+  return Array.isArray(value) && value.every(isAgentTraceAttributePrimitive);
+}
+
+export function filterAgentTraceAttributes(
+  attributes: Record<string, unknown>,
+): AgentTraceAttributes {
+  const traceAttributes: AgentTraceAttributes = {};
+
+  for (const [key, value] of Object.entries(attributes)) {
+    if (isAgentTraceAttributeValue(value)) {
+      traceAttributes[key] = value;
+    }
+  }
+
+  return traceAttributes;
+}
+
 function resolveGenAiProviderName(modelId: string | null | undefined): string | null {
   const normalizedModelId = modelId?.startsWith("veryfront-cloud/")
     ? modelId.slice("veryfront-cloud/".length)
