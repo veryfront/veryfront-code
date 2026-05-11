@@ -3,7 +3,7 @@
  *
  * Default implementation: `@veryfront/ext-postgres`
  *
- * @module extensions/interfaces/database-client
+ * @module extensions/database/database-client
  */
 
 /** Result returned from {@link DatabaseClient.query}. */

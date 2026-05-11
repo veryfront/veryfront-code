@@ -51,8 +51,8 @@ export type {
 export type { CompilationMode, CompilationTarget, ContentPlugin } from "../content/index.ts";
 export type { ContentCompileOptions, ContentRuntimeBundle, ContentTransformer } from "../content/index.ts";
 
-// Database client
-export type { DatabaseClient, QueryResult } from "./database-client.ts";
+// Database client — moved to ../database/
+export type { DatabaseClient, QueryResult } from "../database/index.ts";
 
 // Auth provider — moved to ../auth/
 export type {
