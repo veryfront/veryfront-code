@@ -10,9 +10,8 @@ import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
-import type { AIProvider, AIProviderRegistry } from "./interfaces/index.ts";
-import { AIProviderRegistryName } from "./interfaces/index.ts";
-import { createAIProviderRegistry } from "./ai/ai-provider-registry.ts";
+import { AIProviderRegistryName, createAIProviderRegistry } from "./ai/index.ts";
+import type { AIProvider, AIProviderRegistry } from "./ai/index.ts";
 import { createBuiltinExtensions } from "./builtin-extensions.ts";
 
 const noopLogger = {

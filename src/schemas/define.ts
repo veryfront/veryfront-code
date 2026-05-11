@@ -12,11 +12,7 @@
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type {
-  Schema,
-  SchemaFactory,
-  SchemaValidator,
-} from "#veryfront/extensions/schema/index.ts";
+import type { Schema, SchemaFactory, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
 /**
  * Wrap a schema factory so that it is built lazily on first call.

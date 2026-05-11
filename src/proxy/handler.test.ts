@@ -8,11 +8,7 @@ import {
   type ProxyContext,
 } from "./handler.ts";
 import { register, reset } from "../extensions/contracts.ts";
-import type {
-  AuthProvider,
-  TokenHeader,
-  TokenPayload,
-} from "../extensions/auth/index.ts";
+import type { AuthProvider, TokenHeader, TokenPayload } from "../extensions/auth/index.ts";
 
 const TEST_JWT_SECRET = "test-jwt-secret-for-proxy-handler-tests";
 

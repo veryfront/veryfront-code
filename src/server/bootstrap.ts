@@ -3,7 +3,10 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { InvalidationProjectContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
-import { AIProviderRegistryName, createAIProviderRegistry } from "#veryfront/extensions/ai/index.ts";
+import {
+  AIProviderRegistryName,
+  createAIProviderRegistry,
+} from "#veryfront/extensions/ai/index.ts";
 import { createBuiltinExtensions } from "#veryfront/extensions/builtin-extensions.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";

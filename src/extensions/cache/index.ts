@@ -5,8 +5,4 @@
  */
 
 export type { CacheStore } from "./cache-store.ts";
-export type {
-  TokenCacheEntry,
-  TokenCacheStats,
-  TokenCacheStore,
-} from "./token-cache-store.ts";
+export type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "./token-cache-store.ts";

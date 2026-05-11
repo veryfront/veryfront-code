@@ -101,7 +101,8 @@ function autoInitializeFromEnv(): void {
       }
       throw toError(createError({
         type: "config",
-        message: "OpenAI provider not installed. Add @veryfront/ext-ai-openai to use openai/* models.",
+        message:
+          "OpenAI provider not installed. Add @veryfront/ext-ai-openai to use openai/* models.",
       }));
     });
   }

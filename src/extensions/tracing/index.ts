@@ -4,8 +4,4 @@
  * @module extensions/tracing
  */
 
-export type {
-  SpanData,
-  TracerProvider,
-  TracingExporter,
-} from "./tracing-exporter.ts";
+export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";

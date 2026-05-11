@@ -5,11 +5,7 @@
  */
 
 // Type aliases (unions / shape aliases)
-export type {
-  CompilationMode,
-  CompilationTarget,
-  ContentPlugin,
-} from "./content-transformer.ts";
+export type { CompilationMode, CompilationTarget, ContentPlugin } from "./content-transformer.ts";
 
 // Interfaces
 export type {
