@@ -473,7 +473,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Exports**: `veryfront/agent`
 
 - Agent factory and runtime execution
-- Hosted chat preparation, prepared execution streaming, and detached run finalization
+- Hosted chat preparation, live steering refresh, prepared execution streaming, and detached run finalization
 - Memory management (conversation, buffer, summary)
 - Agent composition (`agentAsTool`)
 - React hooks (`useChat`, `useAgent`)

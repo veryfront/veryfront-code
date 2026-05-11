@@ -253,6 +253,12 @@ export {
   type DefaultHostedChatRuntimeSystemRefreshInput,
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-hosted-chat-runtime.ts";
+export {
+  createDefaultHostedProjectSteeringRefresh,
+  type CreateDefaultHostedProjectSteeringRefreshOptions,
+  type DefaultHostedProjectSteeringRefreshLogger,
+  type DefaultHostedProjectSteeringRefreshLookup,
+} from "./default-hosted-project-steering-refresh.ts";
 
 export {
   createHostedAgentServiceRuntime,
