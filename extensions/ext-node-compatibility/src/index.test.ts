@@ -1,11 +1,11 @@
 /**
- * ext-node-compat extension tests.
+ * ext-node-compatibility extension tests.
  *
  * Exercises the extension factory lifecycle and `NodeCompatImpl` stub
  * behaviour — does not actually load `@kreuzberg/wasm` or `better-sqlite3`
  * so the suite runs without those native deps being installed.
  *
- * @module extensions/ext-node-compat/test
+ * @module extensions/ext-node-compatibility/test
  */
 
 import { assertEquals, assertExists } from "@std/assert";
@@ -49,11 +49,11 @@ function buildCtx(
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("ext-node-compat extension", () => {
+describe("ext-node-compatibility extension", () => {
   describe("factory metadata", () => {
     it("declares the expected name and version", () => {
       const ext = factory();
-      assertEquals(ext.name, "ext-node-compat");
+      assertEquals(ext.name, "ext-node-compatibility");
       assertEquals(typeof ext.version, "string");
       assertEquals(ext.version.length > 0, true);
     });

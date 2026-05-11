@@ -1,5 +1,5 @@
 /**
- * ext-node-compat — Node.js compatibility shims for Veryfront.
+ * ext-node-compatibility — Node.js compatibility shims for Veryfront.
  *
  * Provides the `NodeCompat` contract:
  * - `importKreuzberg()` — document extraction via `@kreuzberg/wasm` (Deno)
@@ -12,7 +12,7 @@
  * Without this extension, core falls back to in-memory KV and document
  * extraction is unavailable.
  *
- * @module extensions/ext-node-compat
+ * @module extensions/ext-node-compatibility
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
@@ -20,7 +20,7 @@ import type {
   KreuzbergExtractor,
   NodeCompat,
   NodeCompatSqliteDatabase,
-} from "veryfront/extensions/interfaces";
+} from "veryfront/extensions/compat";
 import { loadKreuzberg } from "./kreuzberg.ts";
 
 // ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ const extNodeCompat: ExtensionFactory = () => {
   const impl = new NodeCompatImpl();
 
   return {
-    name: "ext-node-compat",
+    name: "ext-node-compatibility",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "NodeCompat" },
@@ -129,7 +129,7 @@ const extNodeCompat: ExtensionFactory = () => {
 
     setup(ctx) {
       ctx.provide("NodeCompat", impl);
-      ctx.logger.info("[ext-node-compat] NodeCompat registered");
+      ctx.logger.info("[ext-node-compatibility] NodeCompat registered");
     },
   };
 };

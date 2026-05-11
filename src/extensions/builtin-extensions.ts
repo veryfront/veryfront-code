@@ -9,7 +9,7 @@ import extEsbuild from "../../extensions/ext-bundler-esbuild/src/index.ts";
 import extBabel from "../../extensions/ext-parser-babel/src/index.ts";
 import extMdx from "../../extensions/ext-content-mdx/src/index.ts";
 import extTailwind from "../../extensions/ext-css-tailwind/src/index.ts";
-import extNodeCompat from "../../extensions/ext-node-compat/src/index.ts";
+import extNodeCompat from "../../extensions/ext-node-compatibility/src/index.ts";
 
 type BuiltinAIProviderDefinition = {
   extensionName: string;
@@ -116,7 +116,7 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-node-compat",
+      origin: "veryfront/ext-node-compatibility",
       extension: extNodeCompat(),
     },
     ...BUILTIN_AI_PROVIDERS.map(createBuiltinAIProviderExtension),

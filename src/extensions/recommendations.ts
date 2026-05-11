@@ -23,7 +23,7 @@ const recommendations = new Map<string, string>([
   ["EmbeddingProvider", "@veryfront/ext-embeddings"],
   ["CodeParser", "@veryfront/ext-parser-babel"],
   ["SchemaValidator", "@veryfront/ext-zod"],
-  ["NodeCompat", "@veryfront/ext-node-compat"],
+  ["NodeCompat", "@veryfront/ext-node-compatibility"],
 ]);
 
 export function getRecommendation(contractName: string): string | undefined {

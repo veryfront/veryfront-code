@@ -99,10 +99,7 @@ export type {
   ValidationSuccess,
 } from "./schema-validator.ts";
 
-// Node compatibility
+// Node compatibility — moved to ../compat/
 export type {
-  KreuzbergExtractor,
-  NodeCompat,
-  NodeCompatSqliteDatabase,
-  SqliteStatement,
-} from "./node-compat.ts";
+  KreuzbergExtractor, NodeCompat, NodeCompatSqliteDatabase, SqliteStatement,
+} from "../compat/index.ts";

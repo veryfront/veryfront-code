@@ -1,15 +1,15 @@
 /**
- * Shared kreuzberg loader for the ext-node-compat extension.
+ * Shared kreuzberg loader for the ext-node-compatibility extension.
  *
  * Used by both `NodeCompatImpl.importKreuzberg()` (direct calls from
  * Node/Bun) and the extension's upload-extraction worker (Deno isolate).
  * Centralising the loader keeps the compiled-binary WASM glue + pdfium
  * pre-import dance in one place.
  *
- * @module extensions/ext-node-compat/kreuzberg
+ * @module extensions/ext-node-compatibility/kreuzberg
  */
 
-import type { KreuzbergExtractor } from "veryfront/extensions/interfaces";
+import type { KreuzbergExtractor } from "veryfront/extensions/compat";
 
 type KreuzbergModule = {
   initWasm?: () => Promise<void>;

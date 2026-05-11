@@ -1,5 +1,5 @@
 {
-  "name": "@veryfront/ext-node-compat",
+  "name": "@veryfront/ext-node-compatibility",
   "version": "0.1.0",
   "exports": "./src/index.ts",
   "veryfront": {

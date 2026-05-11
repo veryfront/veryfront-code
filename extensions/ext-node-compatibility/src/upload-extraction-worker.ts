@@ -4,14 +4,14 @@
  * Runs `extractBytes` in an isolated Worker thread so that long-running or
  * hung WASM operations cannot block the main server event loop.
  *
- * Lives inside the ext-node-compat extension (not core) so that the
+ * Lives inside the ext-node-compatibility extension (not core) so that the
  * `@kreuzberg/wasm` import and `#kreuzberg-wasm-glue` pre-import resolve
  * through the extension's own import map. Deno worker isolates do not
  * share the main-thread NodeCompat contract registry, so the worker
  * calls into the shared `loadKreuzberg` helper directly rather than
  * round-tripping through the registry.
  *
- * @module extensions/ext-node-compat/upload-extraction-worker
+ * @module extensions/ext-node-compatibility/upload-extraction-worker
  */
 
 /// <reference lib="deno.worker" />

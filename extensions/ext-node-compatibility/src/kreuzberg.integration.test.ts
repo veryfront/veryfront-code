@@ -4,7 +4,7 @@
  * the extension's own import map, not core's. Exercises the same surface the
  * `loadUpload` worker uses in production (extension installed + registered).
  *
- * @module extensions/ext-node-compat/test
+ * @module extensions/ext-node-compatibility/test
  */
 
 import { assertStringIncludes } from "@std/assert";
@@ -15,7 +15,7 @@ function toBytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);
 }
 
-describe("ext-node-compat kreuzberg integration", () => {
+describe("ext-node-compatibility kreuzberg integration", () => {
   // Kreuzberg's WASM init holds resources Deno's sanitizer cannot track, so
   // we disable resource/op sanitization on each test (matches the old
   // upload-loader worker tests).

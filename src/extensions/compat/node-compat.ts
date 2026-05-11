@@ -1,9 +1,9 @@
 /**
  * Contract interface for Node.js compatibility shims.
  *
- * Default implementation: `@veryfront/ext-node-compat`
+ * Default implementation: `@veryfront/ext-node-compatibility`
  *
- * @module extensions/interfaces/node-compat
+ * @module extensions/compat/node-compat
  */
 
 /**
