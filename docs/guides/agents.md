@@ -157,9 +157,10 @@ project-scoped tool inventory from an external control plane can use
 the default refresh sequencing while keeping fetch and prompt-building policy
 local.
 Services that prepare and stream hosted executions through Veryfront Cloud can
-use `prepareVeryfrontCloudHostedChatExecution()` and
-`createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions()` to reuse the
-default hosted model normalization, model-provider, durable root-run, and
+use `prepareVeryfrontCloudHostedChatExecution()`,
+`createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions()`, and
+`createVeryfrontCloudRuntimeSystemMessages()` to reuse the default hosted model
+normalization, model-provider, runtime system-message, durable root-run, and
 stream-watchdog wiring. Hosted services can also use `loadHostedAgentServiceEnvFiles()` before
 `parseHostedAgentServiceConfig()` to share the default env-file precedence and
 environment contract for API URL, hosted MCP URL, port, CORS origins, durable

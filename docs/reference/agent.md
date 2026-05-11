@@ -711,6 +711,13 @@ Veryfront Cloud. The helper wires the hosted model-provider resolver and default
 chat stream watchdog while the host supplies its API URL, tracer, logger, and
 optional trace hooks.
 
+### `createVeryfrontCloudRuntimeSystemMessages(options)`
+
+Create the default runtime system messages for Veryfront Cloud hosted services.
+The helper inserts project instructions and project context blocks at the
+runtime-context marker, includes available skills, and appends environment
+context using the same prompt-block conventions as the core runtime.
+
 ### `prepareVeryfrontCloudHostedChatExecution(options)`
 
 Prepare hosted chat execution for services that run through Veryfront Cloud. The
@@ -925,6 +932,7 @@ Clear all stored messages from memory.
 | `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
 | `createVeryfrontCloudHostedChatExecutionRootRunOptions`         | Create Veryfront Cloud hosted root-run preparation defaults              |
 | `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
+| `createVeryfrontCloudRuntimeSystemMessages`                     | Create Veryfront Cloud runtime system messages                           |
 | `loadHostedAgentServiceEnvFiles`                                | Load hosted service env files while preserving host process env          |
 | `parseHostedAgentServiceConfig`                                 | Parse default hosted agent service environment config                    |
 | `prepareVeryfrontCloudHostedChatExecution`                      | Prepare hosted chat execution with Veryfront Cloud defaults              |
