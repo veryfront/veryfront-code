@@ -1,15 +1,16 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  InternalAgentStreamRequestSchema,
-  ResumeSignalSchema,
-  RuntimeRunAgentInputSchema,
+  getInternalAgentStreamRequestSchema,
+  getResumeSignalSchema,
+  getRuntimeRunAgentInputSchema,
   toRuntimeRunAgentInput,
 } from "./schema.ts";
 
 describe("internal-agents/schema", () => {
   it("applies defaults for optional runtime collections", () => {
-    const parsed = RuntimeRunAgentInputSchema.parse({
+    const parsed = getRuntimeRunAgentInputSchema().parse({
       threadId: crypto.randomUUID(),
       runId: "run_1",
       messages: [],
@@ -22,7 +23,7 @@ describe("internal-agents/schema", () => {
   it("rejects oversized injected tool parameters", () => {
     assertThrows(
       () =>
-        RuntimeRunAgentInputSchema.parse({
+        getRuntimeRunAgentInputSchema().parse({
           threadId: crypto.randomUUID(),
           runId: "run_1",
           messages: [],
@@ -39,7 +40,7 @@ describe("internal-agents/schema", () => {
   it("rejects runtime context that exceeds the total size limit", () => {
     assertThrows(
       () =>
-        RuntimeRunAgentInputSchema.parse({
+        getRuntimeRunAgentInputSchema().parse({
           threadId: crypto.randomUUID(),
           runId: "run_1",
           messages: [],
@@ -55,7 +56,7 @@ describe("internal-agents/schema", () => {
 
   it("defaults resume signals to non-error tool results", () => {
     assertEquals(
-      ResumeSignalSchema.parse({
+      getResumeSignalSchema().parse({
         type: "tool_result",
         toolCallId: "tool_1",
         result: { ok: true },
@@ -70,7 +71,7 @@ describe("internal-agents/schema", () => {
   });
 
   it("accepts a canonical AG-UI-aligned runtime payload", () => {
-    const parsed = RuntimeRunAgentInputSchema.parse({
+    const parsed = getRuntimeRunAgentInputSchema().parse({
       threadId: crypto.randomUUID(),
       runId: "run_1",
       parentRunId: "run_parent",
@@ -118,7 +119,7 @@ describe("internal-agents/schema", () => {
   });
 
   it("normalizes legacy internal stream payloads into the canonical runtime input", () => {
-    const internalRequest = InternalAgentStreamRequestSchema.parse({
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
@@ -145,7 +146,7 @@ describe("internal-agents/schema", () => {
       context: [{ type: "text", text: "Current file: src/main.ts" }],
     });
 
-    assertEquals(toRuntimeRunAgentInput(internalRequest), {
+    assertEquals(toRuntimeRunAgentInput(internalRequest) as unknown, {
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
       messages: [
@@ -174,7 +175,7 @@ describe("internal-agents/schema", () => {
   });
 
   it("prefers streamed inputText over empty fallback args when normalizing legacy assistant tool calls", () => {
-    const internalRequest = InternalAgentStreamRequestSchema.parse({
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
@@ -197,28 +198,31 @@ describe("internal-agents/schema", () => {
       context: [],
     });
 
-    assertEquals(toRuntimeRunAgentInput(internalRequest).messages, [
-      {
-        id: "assistant_1",
-        role: "assistant",
-        content: "Writing report",
-        toolCalls: [{
-          id: "tool_1",
-          type: "function",
-          function: {
-            name: "create_file",
-            arguments: JSON.stringify({
-              path: "plans/report.md",
-              content: "# Report",
-            }),
-          },
-        }],
-      },
-    ]);
+    assertEquals(
+      (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+      [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          content: "Writing report",
+          toolCalls: [{
+            id: "tool_1",
+            type: "function",
+            function: {
+              name: "create_file",
+              arguments: JSON.stringify({
+                path: "plans/report.md",
+                content: "# Report",
+              }),
+            },
+          }],
+        },
+      ],
+    );
   });
 
   it("repairs leading-quote streamed inputText before serializing legacy assistant tool calls", () => {
-    const internalRequest = InternalAgentStreamRequestSchema.parse({
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
@@ -240,27 +244,30 @@ describe("internal-agents/schema", () => {
       context: [],
     });
 
-    assertEquals(toRuntimeRunAgentInput(internalRequest).messages, [
-      {
-        id: "assistant_1",
-        role: "assistant",
-        toolCalls: [{
-          id: "tool_1",
-          type: "function",
-          function: {
-            name: "create_file",
-            arguments: JSON.stringify({
-              path: "plans/report.md",
-              content: "# Report",
-            }),
-          },
-        }],
-      },
-    ]);
+    assertEquals(
+      (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+      [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          toolCalls: [{
+            id: "tool_1",
+            type: "function",
+            function: {
+              name: "create_file",
+              arguments: JSON.stringify({
+                path: "plans/report.md",
+                content: "# Report",
+              }),
+            },
+          }],
+        },
+      ],
+    );
   });
 
   it("preserves canonical runtime messages on the compatibility route", () => {
-    const internalRequest = InternalAgentStreamRequestSchema.parse({
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
@@ -288,31 +295,34 @@ describe("internal-agents/schema", () => {
       context: [],
     });
 
-    assertEquals(toRuntimeRunAgentInput(internalRequest).messages, [
-      {
-        id: "assistant_1",
-        role: "assistant",
-        content: "Working on it",
-        toolCalls: [{
+    assertEquals(
+      (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+      [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          content: "Working on it",
+          toolCalls: [{
+            id: "tool_1",
+            type: "function",
+            function: {
+              name: "search_docs",
+              arguments: JSON.stringify({ query: "ag-ui" }),
+            },
+          }],
+        },
+        {
           id: "tool_1",
-          type: "function",
-          function: {
-            name: "search_docs",
-            arguments: JSON.stringify({ query: "ag-ui" }),
-          },
-        }],
-      },
-      {
-        id: "tool_1",
-        role: "tool",
-        toolCallId: "tool_1",
-        content: "Found docs",
-      },
-    ]);
+          role: "tool",
+          toolCallId: "tool_1",
+          content: "Found docs",
+        },
+      ],
+    );
   });
 
   it("normalizes legacy tool_call and tool_result parts", () => {
-    const internalRequest = InternalAgentStreamRequestSchema.parse({
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
@@ -340,25 +350,28 @@ describe("internal-agents/schema", () => {
       context: [],
     });
 
-    assertEquals(toRuntimeRunAgentInput(internalRequest).messages, [
-      {
-        id: "assistant_1",
-        role: "assistant",
-        toolCalls: [{
-          id: "tool_legacy",
-          type: "function",
-          function: {
-            name: "search_docs",
-            arguments: JSON.stringify({ query: "ag-ui" }),
-          },
-        }],
-      },
-      {
-        id: "tool_message_1",
-        role: "tool",
-        toolCallId: "tool_legacy",
-        content: JSON.stringify({ ok: true }),
-      },
-    ]);
+    assertEquals(
+      (toRuntimeRunAgentInput(internalRequest) as unknown as { messages: unknown }).messages,
+      [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          toolCalls: [{
+            id: "tool_legacy",
+            type: "function",
+            function: {
+              name: "search_docs",
+              arguments: JSON.stringify({ query: "ag-ui" }),
+            },
+          }],
+        },
+        {
+          id: "tool_message_1",
+          role: "tool",
+          toolCallId: "tool_legacy",
+          content: JSON.stringify({ ok: true }),
+        },
+      ],
+    );
   });
 });
