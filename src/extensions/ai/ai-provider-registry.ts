@@ -4,10 +4,10 @@
  * Preserves insertion order via Map (used by `list()`). Duplicate ids are
  * first-write-wins so higher-priority extensions keep their provider binding.
  *
- * @module extensions/registries/ai-provider-registry
+ * @module extensions/ai/ai-provider-registry
  */
 
-import type { AIProvider, AIProviderRegistry } from "../interfaces/ai-provider.ts";
+import type { AIProvider, AIProviderRegistry } from "./ai-provider.ts";
 
 class AIProviderRegistryImpl implements AIProviderRegistry {
   private readonly providers = new Map<string, AIProvider>();

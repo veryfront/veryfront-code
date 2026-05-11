@@ -104,7 +104,7 @@ export async function registerExtOpenAIForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
     const { createAIProviderRegistry } = await import(
-      "../../src/extensions/registries/ai-provider-registry.ts"
+      "../../src/extensions/ai/ai-provider-registry.ts"
     );
     const { AIProviderRegistryName } = await import(
       "../../src/extensions/interfaces/index.ts"
@@ -154,7 +154,7 @@ export async function registerExtAnthropicForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
     const { createAIProviderRegistry } = await import(
-      "../../src/extensions/registries/ai-provider-registry.ts"
+      "../../src/extensions/ai/ai-provider-registry.ts"
     );
     const { AIProviderRegistryName } = await import(
       "../../src/extensions/interfaces/index.ts"
@@ -191,7 +191,7 @@ export async function registerExtGoogleForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
     const { createAIProviderRegistry } = await import(
-      "../../src/extensions/registries/ai-provider-registry.ts"
+      "../../src/extensions/ai/ai-provider-registry.ts"
     );
     const { AIProviderRegistryName } = await import(
       "../../src/extensions/interfaces/index.ts"

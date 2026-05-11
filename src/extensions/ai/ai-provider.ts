@@ -7,7 +7,7 @@
  * Core consumers (model-registry, veryfront-cloud) resolve the registry
  * and dispatch on provider id parsed from `"provider/model"` strings.
  *
- * @module extensions/interfaces/ai-provider
+ * @module extensions/ai/ai-provider
  */
 
 import type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.ts";

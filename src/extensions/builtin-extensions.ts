@@ -1,8 +1,7 @@
 import type { ResolvedExtension } from "./types.ts";
 import { register, tryResolve } from "./contracts.ts";
-import type { AIProvider, AIProviderRegistry } from "./interfaces/index.ts";
-import { AIProviderRegistryName } from "./interfaces/index.ts";
-import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
+import type { AIProvider, AIProviderRegistry } from "./ai/index.ts";
+import { AIProviderRegistryName, createAIProviderRegistry } from "./ai/index.ts";
 import { OpenAIProvider } from "../../extensions/ext-openai/src/index.ts";
 import { AnthropicProvider } from "../../extensions/ext-anthropic/src/index.ts";
 import { GoogleProvider } from "../../extensions/ext-google/src/index.ts";

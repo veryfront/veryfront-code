@@ -13,7 +13,7 @@ import type { Extension, ResolvedExtension } from "./index.ts";
 import { register, reset } from "./contracts.ts";
 import { AIProviderRegistryName } from "./interfaces/index.ts";
 import type { AIProviderRegistry } from "./interfaces/index.ts";
-import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
+import { createAIProviderRegistry } from "./ai/ai-provider-registry.ts";
 import extOpenAI from "../../extensions/ext-openai/src/index.ts";
 import extAnthropic from "../../extensions/ext-anthropic/src/index.ts";
 import extGoogle from "../../extensions/ext-google/src/index.ts";

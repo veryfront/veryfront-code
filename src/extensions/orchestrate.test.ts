@@ -12,7 +12,7 @@ import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
 import type { AIProvider, AIProviderRegistry } from "./interfaces/index.ts";
 import { AIProviderRegistryName } from "./interfaces/index.ts";
-import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
+import { createAIProviderRegistry } from "./ai/ai-provider-registry.ts";
 import { createBuiltinExtensions } from "./builtin-extensions.ts";
 
 const noopLogger = {
