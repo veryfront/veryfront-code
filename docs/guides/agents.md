@@ -167,8 +167,8 @@ stream-watchdog wiring. Hosted services can also use
 `parseHostedAgentServiceConfig()` to share the default env-file precedence and
 environment contract for API URL, hosted MCP URL, port, CORS origins, durable
 feature flags, and OpenTelemetry flags. Node-hosted services can pair that with
-`resolveNodeHostedAgentServiceTelemetryConfig()` and
-`initializeNodeHostedAgentServiceOpenTelemetry()` to reuse the default Node SDK
+`createNodeHostedAgentServiceRuntimeInfrastructure()` to reuse the default
+config parsing, logger, service tracer, trace-context getter, and Node SDK
 telemetry setup while keeping non-Node runtimes on the lower-level
 observability APIs.
 Use `resolveRuntimeAgentDefinitionsDir()` and
