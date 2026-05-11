@@ -23,6 +23,27 @@ export interface DetachedRunTracker<TResumeValue> {
   reset(): void;
 }
 
+export interface DetachedRunShutdownLogger {
+  info(message: string, metadata?: Record<string, unknown>): void;
+  error(message: string, metadata?: Record<string, unknown>): void;
+}
+
+export interface DetachedRunShutdownLifecycle {
+  setShuttingDown(): void;
+  stop(): Promise<void>;
+}
+
+export interface DetachedRunShutdownLifecycleOptions<TResumeValue> {
+  tracker: DetachedRunTracker<TResumeValue>;
+  logger: DetachedRunShutdownLogger;
+  drainTimeoutMs?: number;
+  pollIntervalMs?: number;
+}
+
+const DEFAULT_DETACHED_RUN_DRAIN_TIMEOUT_MS = 15_000;
+const DETACHED_RUN_DRAIN_TIMEOUT_MESSAGE =
+  "Detached durable runs did not drain before shutdown timeout";
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -107,6 +128,41 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
       sessionManager.reset();
       activeRunIds.clear();
       activeExecutions.clear();
+    },
+  };
+}
+
+export function createDetachedRunShutdownLifecycle<TResumeValue = unknown>(
+  options: DetachedRunShutdownLifecycleOptions<TResumeValue>,
+): DetachedRunShutdownLifecycle {
+  const drainTimeoutMs = options.drainTimeoutMs ?? DEFAULT_DETACHED_RUN_DRAIN_TIMEOUT_MS;
+
+  return {
+    setShuttingDown() {
+      const cancelledRunIds = options.tracker.cancelAllRuns();
+      if (cancelledRunIds.length === 0) {
+        return;
+      }
+
+      options.logger.info("Cancelled active detached durable runs during shutdown", {
+        runIds: cancelledRunIds,
+        count: cancelledRunIds.length,
+      });
+    },
+    async stop() {
+      const drainResult = await options.tracker.waitForDrain({
+        timeoutMs: drainTimeoutMs,
+        pollIntervalMs: options.pollIntervalMs,
+      });
+      if (!drainResult.drained) {
+        options.logger.error(DETACHED_RUN_DRAIN_TIMEOUT_MESSAGE, {
+          pendingRunIds: drainResult.pendingRunIds,
+          count: drainResult.pendingRunIds.length,
+        });
+        throw new Error(DETACHED_RUN_DRAIN_TIMEOUT_MESSAGE);
+      }
+
+      options.logger.info("All connections and detached durable runs drained, exiting");
     },
   };
 }
