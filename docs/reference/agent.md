@@ -704,6 +704,13 @@ Hosts provide the control-plane fetchers and prompt builder, keeping product
 policy outside the framework while reusing the generic hosted refresh
 sequencing.
 
+### `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(options)`
+
+Create the default runtime options used by prepared hosted chat execution on
+Veryfront Cloud. The helper wires the hosted model-provider resolver and default
+chat stream watchdog while the host supplies its API URL, tracer, logger, and
+optional trace hooks.
+
 ### `AgUiRuntimeRequestSchema`
 
 Validate the canonical open-source AG-UI runtime request contract for hosted
@@ -874,37 +881,38 @@ Clear all stored messages from memory.
 
 ### Functions
 
-| Name                                        | Description                                                              |
-| ------------------------------------------- | ------------------------------------------------------------------------ |
-| `agent`                                     | Create an agent                                                          |
-| `agentAsTool`                               | Wrap agent as callable tool                                              |
-| `createAgUiCancelHandler`                   | Create a DELETE handler for hosted AG-UI run cancellation                |
-| `createAgUiDetachedStartHandler`            | Create a POST handler for detached hosted AG-UI run kickoff              |
-| `executeAgUiDetachedStart`                  | Run detached hosted-start lifecycle from a validated request object      |
-| `createAgUiHandler`                         | Create a POST handler for an AG-UI route                                 |
-| `createAgUiRuntimeHandler`                  | Create a POST handler for the canonical runtime AG-UI request contract   |
-| `createAgUiRunErrorEvent`                   | Create a `RunError` AG-UI SSE event                                      |
-| `createAgUiSseErrorResponse`                | Create an AG-UI SSE error `Response`                                     |
-| `createAgUiResumeHandler`                   | Create a POST handler for hosted AG-UI run resume values                 |
-| `createDefaultHostedProjectSteeringRefresh` | Create the default hosted project steering refresh callback              |
-| `normalizeAgUiRuntimeMessages`              | Normalize runtime AG-UI messages into package `Message[]`                |
-| `parseAgUiRuntimeRequest`                   | Parse and validate the canonical runtime AG-UI request body              |
-| `parseAgUiRuntimeRequestOrError`            | Parse runtime AG-UI input or return a `400` validation `Response`        |
-| `parseRuntimeAgentRunInvocation`            | Parse and validate a control-plane runtime agent invocation body         |
-| `parseRuntimeAgentRunInvocationOrError`     | Parse a runtime agent invocation or return a `400` validation `Response` |
-| `createChatHandler`                         | Create a POST handler for a chat API route.                              |
-| `createMemory`                              | Create memory (buffer, conversation, summary)                            |
-| `createRedisMemory`                         | Create Redis-backed memory                                               |
-| `createWorkflow`                            | Create sequential agent workflow                                         |
-| `getAgent`                                  | Get agent by ID                                                          |
-| `getAgentsAsTools`                          | Get agents as tools (multi-agent)                                        |
-| `getAllAgentIds`                            | List registered agent IDs                                                |
-| `getTextFromParts`                          | Extract text from multi-part message                                     |
-| `getToolArguments`                          | Extract parsed tool call args                                            |
-| `hasArgs`                                   | Check for parsed args on tool call                                       |
-| `hasInput`                                  | Check for raw input on tool call                                         |
-| `registerAgent`                             | Register agent for discovery                                             |
-| `waitForHumanInput`                         | Wait for a canonical human-input response over hosted AG-UI run control  |
+| Name                                                            | Description                                                              |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `agent`                                                         | Create an agent                                                          |
+| `agentAsTool`                                                   | Wrap agent as callable tool                                              |
+| `createAgUiCancelHandler`                                       | Create a DELETE handler for hosted AG-UI run cancellation                |
+| `createAgUiDetachedStartHandler`                                | Create a POST handler for detached hosted AG-UI run kickoff              |
+| `executeAgUiDetachedStart`                                      | Run detached hosted-start lifecycle from a validated request object      |
+| `createAgUiHandler`                                             | Create a POST handler for an AG-UI route                                 |
+| `createAgUiRuntimeHandler`                                      | Create a POST handler for the canonical runtime AG-UI request contract   |
+| `createAgUiRunErrorEvent`                                       | Create a `RunError` AG-UI SSE event                                      |
+| `createAgUiSseErrorResponse`                                    | Create an AG-UI SSE error `Response`                                     |
+| `createAgUiResumeHandler`                                       | Create a POST handler for hosted AG-UI run resume values                 |
+| `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
+| `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
+| `normalizeAgUiRuntimeMessages`                                  | Normalize runtime AG-UI messages into package `Message[]`                |
+| `parseAgUiRuntimeRequest`                                       | Parse and validate the canonical runtime AG-UI request body              |
+| `parseAgUiRuntimeRequestOrError`                                | Parse runtime AG-UI input or return a `400` validation `Response`        |
+| `parseRuntimeAgentRunInvocation`                                | Parse and validate a control-plane runtime agent invocation body         |
+| `parseRuntimeAgentRunInvocationOrError`                         | Parse a runtime agent invocation or return a `400` validation `Response` |
+| `createChatHandler`                                             | Create a POST handler for a chat API route.                              |
+| `createMemory`                                                  | Create memory (buffer, conversation, summary)                            |
+| `createRedisMemory`                                             | Create Redis-backed memory                                               |
+| `createWorkflow`                                                | Create sequential agent workflow                                         |
+| `getAgent`                                                      | Get agent by ID                                                          |
+| `getAgentsAsTools`                                              | Get agents as tools (multi-agent)                                        |
+| `getAllAgentIds`                                                | List registered agent IDs                                                |
+| `getTextFromParts`                                              | Extract text from multi-part message                                     |
+| `getToolArguments`                                              | Extract parsed tool call args                                            |
+| `hasArgs`                                                       | Check for parsed args on tool call                                       |
+| `hasInput`                                                      | Check for raw input on tool call                                         |
+| `registerAgent`                                                 | Register agent for discovery                                             |
+| `waitForHumanInput`                                             | Wait for a canonical human-input response over hosted AG-UI run control  |
 
 ### Classes
 
