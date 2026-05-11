@@ -2,7 +2,7 @@
  * Contract interface for CSS processing engines (Tailwind-style compile
  * pipelines).
  *
- * Default implementation: `@veryfront/ext-tailwind`
+ * Default implementation: `@veryfront/ext-css-tailwind`
  *
  * The contract mirrors the Tailwind v4 `compile()` surface: a stateful
  * compiler is constructed once per stylesheet and emits CSS output for the
@@ -12,7 +12,7 @@
  * project isolation is the caller's responsibility (see
  * `tailwind-compiler-cache.ts`).
  *
- * @module extensions/interfaces/css-processor
+ * @module extensions/css/css-processor
  */
 
 /** A loaded stylesheet body with the base path used to resolve relative imports. */

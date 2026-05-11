@@ -11,7 +11,7 @@ const recommendations = new Map<string, string>([
   ["ModuleLexer", "@veryfront/ext-bundler-esbuild"],
   ["CacheStore", "@veryfront/ext-cache-redis"],
   ["TokenCacheStore", "@veryfront/ext-cache-redis"],
-  ["CSSProcessor", "@veryfront/ext-tailwind"],
+  ["CSSProcessor", "@veryfront/ext-css-tailwind"],
   ["ContentTransformer", "@veryfront/ext-mdx"],
   ["DatabaseClient", "@veryfront/ext-postgres"],
   ["AuthProvider", "@veryfront/ext-auth-jwt"],

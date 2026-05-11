@@ -1,5 +1,5 @@
 /**
- * Test-environment contract registration for the ext-tailwind workspace.
+ * Test-environment contract registration for the ext-css-tailwind workspace.
  *
  * Side-effect import: registers the default Bundler and ModuleLexer
  * implementations so extension tests that exercise framework code can resolve

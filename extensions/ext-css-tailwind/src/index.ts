@@ -1,5 +1,5 @@
 /**
- * ext-tailwind — CSSProcessor implementation backed by Tailwind CSS v4.
+ * ext-css-tailwind — CSSProcessor implementation backed by Tailwind CSS v4.
  *
  * Provides the `CSSProcessor` contract:
  *  - `compile(stylesheet, options)` — delegates to tailwindcss `compile()`
@@ -13,11 +13,11 @@
  * `plugin-loader.ts` rewrites plugin bundle code to reference these shims
  * by name; without the shims installed, dynamic plugin loading fails.
  *
- * @module extensions/ext-tailwind
+ * @module extensions/ext-css-tailwind
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { CSSCompileOptions, CSSCompiler, CSSProcessor } from "veryfront/extensions/interfaces";
+import type { CSSCompileOptions, CSSCompiler, CSSProcessor } from "veryfront/extensions/css";
 
 import { compile } from "tailwindcss";
 import plugin from "tailwindcss/plugin";
@@ -55,7 +55,7 @@ class TailwindCSSProcessor implements CSSProcessor {
 const extTailwind: ExtensionFactory = () => {
   const impl = new TailwindCSSProcessor();
   return {
-    name: "ext-tailwind",
+    name: "ext-css-tailwind",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "CSSProcessor" },
@@ -64,7 +64,7 @@ const extTailwind: ExtensionFactory = () => {
     setup(ctx) {
       installTailwindPluginShims();
       ctx.provide("CSSProcessor", impl);
-      ctx.logger.info("[ext-tailwind] CSSProcessor registered");
+      ctx.logger.info("[ext-css-tailwind] CSSProcessor registered");
     },
     teardown() {
       // Shims stay installed — removing them could break in-flight plugin

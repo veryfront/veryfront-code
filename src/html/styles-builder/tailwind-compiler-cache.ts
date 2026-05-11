@@ -7,7 +7,7 @@
  *
  * The actual tailwindcss `compile()` call is routed through the
  * `CSSProcessor` extension contract (default implementation:
- * `@veryfront/ext-tailwind`). When no `CSSProcessor` is registered, the
+ * `@veryfront/ext-css-tailwind`). When no `CSSProcessor` is registered, the
  * compile path returns a no-op compiler that emits empty CSS and logs an
  * actionable install message.
  *
@@ -80,7 +80,7 @@ async function resolveCSSProcessor(): Promise<CSSProcessor | undefined> {
 
   try {
     const { default: createTailwindExtension } = await import(
-      "../../../extensions/ext-tailwind/src/index.ts"
+      "../../../extensions/ext-css-tailwind/src/index.ts"
     );
     const extension = createTailwindExtension();
     await extension.setup?.({
@@ -145,7 +145,7 @@ export async function getCompiler(
   const processor = await resolveCSSProcessor();
   if (!processor) {
     logger.warn(
-      "No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-tailwind",
+      "No CSSProcessor extension registered — CSS output will be empty. Install it with: deno add @veryfront/ext-css-tailwind",
     );
     const noopCompiler: CSSCompiler = { build: () => "" };
     compilerCache.set(hash, {

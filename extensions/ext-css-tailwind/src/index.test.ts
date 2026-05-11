@@ -1,7 +1,7 @@
 /**
- * ext-tailwind extension tests.
+ * ext-css-tailwind extension tests.
  *
- * @module extensions/ext-tailwind/test
+ * @module extensions/ext-css-tailwind/test
  */
 
 import { assertEquals } from "@std/assert";
@@ -16,10 +16,10 @@ const noopLogger = {
   error: () => {},
 };
 
-describe("ext-tailwind factory", () => {
-  it("produces an Extension with name ext-tailwind", () => {
+describe("ext-css-tailwind factory", () => {
+  it("produces an Extension with name ext-css-tailwind", () => {
     const ext = factory();
-    assertEquals(ext.name, "ext-tailwind");
+    assertEquals(ext.name, "ext-css-tailwind");
     assertEquals(ext.version, "0.1.0");
     assertEquals(
       ext.capabilities.some((c) => c.type === "contract" && c.name === "CSSProcessor"),
@@ -28,7 +28,7 @@ describe("ext-tailwind factory", () => {
   });
 });
 
-describe("ext-tailwind CSSProcessor", () => {
+describe("ext-css-tailwind CSSProcessor", () => {
   it("registers CSSProcessor on setup", async () => {
     const provided = new Map<string, unknown>();
     const ctx = {

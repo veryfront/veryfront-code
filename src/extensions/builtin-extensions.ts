@@ -8,7 +8,7 @@ import { GoogleProvider } from "../../extensions/ext-ai-google/src/index.ts";
 import extEsbuild from "../../extensions/ext-bundler-esbuild/src/index.ts";
 import extBabel from "../../extensions/ext-parser-babel/src/index.ts";
 import extMdx from "../../extensions/ext-mdx/src/index.ts";
-import extTailwind from "../../extensions/ext-tailwind/src/index.ts";
+import extTailwind from "../../extensions/ext-css-tailwind/src/index.ts";
 import extNodeCompat from "../../extensions/ext-node-compat/src/index.ts";
 
 type BuiltinAIProviderDefinition = {
@@ -111,7 +111,7 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-tailwind",
+      origin: "veryfront/ext-css-tailwind",
       extension: extTailwind(),
     },
     {

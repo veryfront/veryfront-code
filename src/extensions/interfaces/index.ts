@@ -42,14 +42,10 @@ export type { CacheStore } from "../cache/index.ts";
 // Token cache store — moved to ../cache/
 export type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "../cache/index.ts";
 
-// CSS processor
+// CSS processor — moved to ../css/
 export type {
-  CSSCompileOptions,
-  CSSCompiler,
-  CSSModuleSource,
-  CSSProcessor,
-  CSSStylesheetSource,
-} from "./css-processor.ts";
+  CSSCompileOptions, CSSCompiler, CSSModuleSource, CSSProcessor, CSSStylesheetSource,
+} from "../css/index.ts";
 
 // Content transformer
 export type {
