@@ -793,6 +793,14 @@ configuration resolved by `resolveNodeHostedAgentServiceTelemetryConfig()`. This
 helper is intentionally Node-specific; cross-runtime service shells should keep
 using the lower-level framework observability APIs.
 
+### `createNodeHostedAgentServiceRuntimeInfrastructure(options)`
+
+Create the standard Node hosted service infrastructure bundle for separately
+deployed agent services: hosted service config parsing, component logger,
+service tracer, active-span attribute setter, trace-context getter, and Node
+OpenTelemetry startup. The helper is intentionally Node-specific because it
+binds the npm OpenTelemetry API and Node SDK startup path.
+
 ### `AgUiRuntimeRequestSchema`
 
 Validate the canonical open-source AG-UI runtime request contract for hosted
@@ -982,6 +990,7 @@ Clear all stored messages from memory.
 | `createVeryfrontCloudRuntimeSystemMessages`                     | Create Veryfront Cloud runtime system messages                           |
 | `fetchDefaultHostedProjectSteering`                             | Fetch initial hosted project instructions and skills                     |
 | `filterAgentTraceAttributes`                                    | Filter unknown records to valid agent trace attributes                   |
+| `createNodeHostedAgentServiceRuntimeInfrastructure`             | Create Node hosted service config, logger, tracer, and telemetry bundle  |
 | `loadHostedAgentServiceEnvFiles`                                | Load hosted service env files while preserving host process env          |
 | `initializeNodeHostedAgentServiceOpenTelemetry`                 | Initialize Node OpenTelemetry for a hosted agent service                 |
 | `loadRuntimeAgentMarkdownDefinitionFromFile`                    | Load and parse a markdown agent definition from an agents directory      |

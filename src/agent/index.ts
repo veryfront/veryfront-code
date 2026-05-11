@@ -312,6 +312,11 @@ export {
   type ResolveNodeHostedAgentServiceTelemetryConfigOptions,
 } from "./node-hosted-agent-service-telemetry.ts";
 export {
+  createNodeHostedAgentServiceRuntimeInfrastructure,
+  type CreateNodeHostedAgentServiceRuntimeInfrastructureOptions,
+  type NodeHostedAgentServiceRuntimeInfrastructure,
+} from "./node-hosted-agent-service-runtime-infrastructure.ts";
+export {
   type AgentServiceBootstrapExit,
   type AgentServiceTraceContext,
   type AgentServiceTraceContextGetter,
