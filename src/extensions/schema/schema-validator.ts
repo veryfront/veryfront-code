@@ -8,7 +8,7 @@
  * constructed lazily via `defineSchema()` so that an extension-provided
  * implementation can be registered before any schema is materialized.
  *
- * @module extensions/interfaces/schema-validator
+ * @module extensions/schema/schema-validator
  */
 
 /**

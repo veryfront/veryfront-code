@@ -85,19 +85,12 @@ export type {
   TraverseVisitor,
 } from "../parser/index.ts";
 
-// Schema validator
+// Schema validator — moved to ../schema/
+export type { InferSchema, InferShape, SchemaFactory, ValidationResult } from "../schema/index.ts";
 export type {
-  InferSchema,
-  InferShape,
-  Schema,
-  SchemaFactory,
-  SchemaValidator,
-  SchemaValidatorCoerce,
-  ValidationFailure,
-  ValidationIssue,
-  ValidationResult,
-  ValidationSuccess,
-} from "./schema-validator.ts";
+  Schema, SchemaValidator, SchemaValidatorCoerce,
+  ValidationFailure, ValidationIssue, ValidationSuccess,
+} from "../schema/index.ts";
 
 // Node compatibility — moved to ../compat/
 export type {
