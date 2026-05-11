@@ -35,7 +35,7 @@ describe("provider/veryfront-cloud", () => {
     clearEmbeddingProviders();
   });
 
-  it("resolves veryfront-cloud openai models without project ext-openai installed", () => {
+  it("resolves veryfront-cloud openai models without project ext-ai-openai installed", () => {
     setCloudBootstrap();
 
     const model = resolveModel("veryfront-cloud/openai/gpt-5.2") as Record<string, unknown>;
@@ -44,7 +44,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
-  it("resolves veryfront-cloud moonshotai models without project ext-openai installed", () => {
+  it("resolves veryfront-cloud moonshotai models without project ext-ai-openai installed", () => {
     setCloudBootstrap();
 
     const model = resolveModel("veryfront-cloud/moonshotai/kimi-k2") as Record<string, unknown>;
@@ -53,7 +53,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
-  it("resolves veryfront-cloud anthropic models without project ext-anthropic installed", () => {
+  it("resolves veryfront-cloud anthropic models without project ext-ai-anthropic installed", () => {
     setCloudBootstrap();
 
     const model = resolveModel("veryfront-cloud/anthropic/claude-sonnet-4-6") as Record<
@@ -65,7 +65,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
-  it("resolves veryfront-cloud google models without project ext-google installed", () => {
+  it("resolves veryfront-cloud google models without project ext-ai-google installed", () => {
     setCloudBootstrap();
 
     const model = resolveModel("veryfront-cloud/google-ai-studio/gemini-2.5-flash") as Record<
@@ -95,7 +95,7 @@ describe("provider/veryfront-cloud", () => {
     assertEquals(typeof model.doStream, "function");
   });
 
-  it("resolves veryfront-cloud openai embedding models without project ext-openai installed", () => {
+  it("resolves veryfront-cloud openai embedding models without project ext-ai-openai installed", () => {
     setCloudBootstrap();
 
     const model = resolveEmbeddingModel("veryfront-cloud/openai/text-embedding-3-small") as Record<

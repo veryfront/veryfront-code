@@ -1,5 +1,5 @@
 {
-  "name": "@veryfront/ext-google",
+  "name": "@veryfront/ext-ai-google",
   "version": "0.1.0",
   "exports": "./src/index.ts",
   "veryfront": {
@@ -12,7 +12,7 @@
     "@std/assert": "jsr:@std/assert@1",
     "@std/testing/bdd": "jsr:@std/testing@1/bdd",
     "veryfront/extensions": "../../src/extensions/index.ts",
-    "veryfront/extensions/interfaces": "../../src/extensions/interfaces/index.ts",
+    "veryfront/extensions/ai": "../../src/extensions/ai/index.ts",
     "veryfront/provider/shared": "../../src/provider/shared/index.ts",
     "veryfront/provider/types": "../../src/provider/types.ts"
   },

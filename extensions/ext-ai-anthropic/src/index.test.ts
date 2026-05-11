@@ -1,20 +1,20 @@
 import { describe, it } from "@std/testing/bdd";
 import { assert, assertEquals } from "@std/assert";
-import extGoogle, { GoogleProvider } from "./index.ts";
-import type { AIProviderRegistry } from "veryfront/extensions/interfaces";
+import extAnthropic, { AnthropicProvider } from "./index.ts";
+import type { AIProviderRegistry } from "veryfront/extensions/ai";
 
-describe("ext-google", () => {
-  it("factory descriptor advertises the AIProvider:google capability", () => {
-    const ext = extGoogle();
-    assertEquals(ext.name, "ext-google");
+describe("ext-ai-anthropic", () => {
+  it("factory descriptor advertises the AIProvider:anthropic capability", () => {
+    const ext = extAnthropic();
+    assertEquals(ext.name, "ext-ai-anthropic");
     assertEquals(ext.capabilities?.[0], {
       type: "contract",
-      name: "AIProvider:google",
+      name: "AIProvider:anthropic",
     });
   });
 
   it("setup registers the provider in the AIProviderRegistry", () => {
-    const ext = extGoogle();
+    const ext = extAnthropic();
     const registered: Record<string, unknown> = {};
     const fakeRegistry: AIProviderRegistry = {
       register: (p) => {
@@ -39,12 +39,6 @@ describe("ext-google", () => {
       },
     };
     ext.setup?.(ctx as never);
-    assert(registered.google instanceof GoogleProvider);
-  });
-
-  it("GoogleProvider exposes both createModel and createEmbedding", () => {
-    const provider = new GoogleProvider();
-    assertEquals(typeof provider.createModel, "function");
-    assertEquals(typeof provider.createEmbedding, "function");
+    assert(registered.anthropic instanceof AnthropicProvider);
   });
 });

@@ -101,7 +101,8 @@ function autoInitializeFromEnv(): void {
       }
       throw toError(createError({
         type: "config",
-        message: "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/* models.",
+        message:
+          "OpenAI provider not installed. Add @veryfront/ext-ai-openai to use openai/* models.",
       }));
     });
   }
@@ -129,7 +130,7 @@ function autoInitializeFromEnv(): void {
       throw toError(createError({
         type: "config",
         message:
-          "Anthropic provider not installed. Add @veryfront/ext-anthropic to use anthropic/* models.",
+          "Anthropic provider not installed. Add @veryfront/ext-ai-anthropic to use anthropic/* models.",
       }));
     });
   }
@@ -157,7 +158,7 @@ function autoInitializeFromEnv(): void {
         createError({
           type: "config",
           message:
-            "Google provider not installed. Add @veryfront/ext-google to use google/* models.",
+            "Google provider not installed. Add @veryfront/ext-ai-google to use google/* models.",
         }),
       );
     });

@@ -3,7 +3,7 @@
  *
  * This barrel is the stable public surface: implementations currently live
  * in `runtime-loader.ts` and `runtime-loader/` subdirectory. Future PRs
- * (post ext-anthropic / ext-google extraction) may move the implementations
+ * (post ext-ai-anthropic / ext-ai-google extraction) may move the implementations
  * into this directory; extensions keep importing from here unchanged.
  *
  * @module provider/shared

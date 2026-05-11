@@ -5,10 +5,10 @@
  *
  * Ported from `src/provider/runtime-loader.ts` as part of PR 11.
  *
- * @module extensions/ext-openai/openai-provider
+ * @module extensions/ext-ai-openai/openai-provider
  */
 
-import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
+import type { AIProvider, AIProviderConfig } from "veryfront/extensions/ai";
 import type { EmbeddingRuntime, ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,
