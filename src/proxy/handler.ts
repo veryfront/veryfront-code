@@ -7,13 +7,13 @@ import { join } from "#veryfront/compat/path/index.ts";
 import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
-import type { AuthProvider } from "../extensions/interfaces/auth-provider.ts";
+import type { AuthProvider } from "../extensions/auth/index.ts";
 
 /**
  * Cache the resolved AuthProvider at module scope so the proxy does not pay
  * the registry lookup on every request. The cache is cleared implicitly when
  * `ExtensionLoader.teardownAll()` clears the registry — the next call
- * re-resolves (or surfaces the "install ext-jwt" hint if the extension was
+ * re-resolves (or surfaces the "install ext-auth-jwt" hint if the extension was
  * removed).
  */
 let cachedAuthProvider: AuthProvider | undefined;
@@ -25,15 +25,15 @@ function getAuthProvider(): AuthProvider {
     cachedAuthProvider = resolveContract<AuthProvider>("AuthProvider");
     return cachedAuthProvider;
   } catch (err) {
-    // resolve() already throws with a helpful "Recommended: @veryfront/ext-jwt"
+    // resolve() already throws with a helpful "Recommended: @veryfront/ext-auth-jwt"
     // message, but the proxy is a load-bearing code path — append a concrete
     // remediation hint that names the project-root extension directory so
     // the user knows exactly what's missing.
     const base = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `${base}\nTo enable JWT verification in the proxy, install ext-jwt ` +
-        `(scaffold with \`deno task cli extension init ext-jwt\` or add the ` +
-        `npm package @veryfront/ext-jwt).`,
+      `${base}\nTo enable JWT verification in the proxy, install ext-auth-jwt ` +
+        `(scaffold with \`deno task cli extension init ext-auth-jwt\` or add the ` +
+        `npm package @veryfront/ext-auth-jwt).`,
       { cause: err },
     );
   }
@@ -297,7 +297,7 @@ async function extractUserIdFromToken(
   }
 
   try {
-    // ext-jwt reads JWT_SECRET from the environment when no `secret` was
+    // ext-auth-jwt reads JWT_SECRET from the environment when no `secret` was
     // passed to the extension factory; the explicit env check above is kept
     // so callers can warn once before we attempt verification.
     const payload = await auth.verify(token, { algorithms: ["HS256"] });

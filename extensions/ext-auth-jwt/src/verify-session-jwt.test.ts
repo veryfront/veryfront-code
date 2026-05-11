@@ -30,7 +30,7 @@ function reqWithCookie(cookie: string): Request {
   return new Request("http://localhost/", { headers: { cookie } });
 }
 
-describe("ext-jwt/verify-session-jwt", () => {
+describe("ext-auth-jwt/verify-session-jwt", () => {
   describe("verifySessionJwt", () => {
     it("returns claims for a valid HS256 token", async () => {
       const token = await signHS256({ sub: "user123", role: "user" }, {
