@@ -1,182 +1,263 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, SchemaValidator } from "veryfront/extensions/interfaces";
 
-const FileTypeEnum = z.enum(["page", "function", "component", "file"]);
+// ---------------------------------------------------------------------------
+// Shape-fragment helpers
+//
+// These take a `SchemaValidator` and return either a `Schema<T>` or a plain
+// shape object whose values are `Schema<T>` instances. They exist because the
+// SchemaValidator contract is only available inside a `defineSchema` factory
+// — fragments cannot be materialized at module scope.
+// ---------------------------------------------------------------------------
 
-const LinkValueSchema = z.union([
-  z.string(),
-  z.object({
-    href: z.string(),
-    method: z.string().optional(),
-  }),
-]);
+const fileTypeEnum = (v: SchemaValidator) =>
+  v.enum(["page", "function", "component", "file"] as const);
 
-const LinksSchema = z
-  .object({
-    self: LinkValueSchema.optional(),
-    content: LinkValueSchema.optional(),
-    project: LinkValueSchema.optional(),
-    files: LinkValueSchema.optional(),
+const linkValueSchema = (v: SchemaValidator) =>
+  v.union([
+    v.string(),
+    v.object({
+      href: v.string(),
+      method: v.string().optional(),
+    }),
+  ]);
+
+const linksSchema = (v: SchemaValidator) =>
+  v
+    .object({
+      self: linkValueSchema(v).optional(),
+      content: linkValueSchema(v).optional(),
+      project: linkValueSchema(v).optional(),
+      files: linkValueSchema(v).optional(),
+    })
+    .passthrough();
+
+const baseFileFields = (v: SchemaValidator) => ({
+  path: v.string(),
+  type: fileTypeEnum(v),
+  size: v.number(),
+  updated_at: v.string(),
+  _links: linksSchema(v).optional(),
+});
+
+const versionedFileFields = (v: SchemaValidator) => ({
+  id: v.string(),
+  version_id: v.string(),
+});
+
+const releaseMetaFields = (v: SchemaValidator) => ({
+  release_id: v.string(),
+  release_version: v.string().nullable(),
+});
+
+const environmentMetaFields = (v: SchemaValidator) => ({
+  environment_id: v.string(),
+  environment_name: v.string(),
+  ...releaseMetaFields(v),
+});
+
+const branchFileFields = (v: SchemaValidator) => ({
+  id: v.string().optional(),
+  version_id: v.string().optional(),
+  content: v.string(),
+  ...baseFileFields(v),
+});
+
+const versionedFileWithContentFields = (v: SchemaValidator) => ({
+  ...versionedFileFields(v),
+  content: v.string(),
+  ...baseFileFields(v),
+});
+
+// ---------------------------------------------------------------------------
+// Exported schema getters
+// ---------------------------------------------------------------------------
+
+export const getProjectSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().uuid(),
+    name: v.string(),
+    slug: v.string(),
+    description: v.string().optional(),
+    created_at: v.string().optional(),
+    updated_at: v.string().optional(),
+    provider: v.string().nullish(),
+    provider_id: v.string().nullish(),
+    layout: v.string().nullish(),
+    layout_id: v.string().nullish(),
+    config: v.union([v.string(), v.record(v.string(), v.unknown())]).optional(),
   })
-  .passthrough();
+);
 
-const BaseFileFields = {
-  path: z.string(),
-  type: FileTypeEnum,
-  size: z.number(),
-  updated_at: z.string(),
-  _links: LinksSchema.optional(),
-};
-
-const VersionedFileFields = {
-  id: z.string(),
-  version_id: z.string(),
-};
-
-const ReleaseMetaFields = {
-  release_id: z.string(),
-  release_version: z.string().nullable(),
-};
-
-const EnvironmentMetaFields = {
-  environment_id: z.string(),
-  environment_name: z.string(),
-  ...ReleaseMetaFields,
-};
-
-export const ProjectSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string(),
-  slug: z.string(),
-  description: z.string().optional(),
-  created_at: z.string().optional(),
-  updated_at: z.string().optional(),
-  provider: z.string().nullish(),
-  provider_id: z.string().nullish(),
-  layout: z.string().nullish(),
-  layout_id: z.string().nullish(),
-  config: z.union([z.string(), z.record(z.string(), z.unknown())]).optional(),
-});
-
-export const ProjectFileSchema = z.object({
-  id: z.string().optional(),
-  version_id: z.string().optional(),
-  path: z.string(),
-  content: z.string().optional(),
-  size: z.number(),
-  type: FileTypeEnum,
-  updated_at: z.string(),
-});
+export const getProjectFileSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().optional(),
+    version_id: v.string().optional(),
+    path: v.string(),
+    content: v.string().optional(),
+    size: v.number(),
+    type: fileTypeEnum(v),
+    updated_at: v.string(),
+  })
+);
 
 /**
  * PageInfo for paginated responses.
  * Follows Zalando RESTful API Guidelines #248 with cursor-based pagination.
  * @see https://opensource.zalando.com/restful-api-guidelines/#248
  */
-export const PageInfoSchema = z.object({
-  self: z.string().nullable(),
-  first: z.literal(null),
-  next: z.string().nullable(),
-  prev: z.string().nullable(),
-});
+export const getPageInfoSchema = defineSchema((v) =>
+  v.object({
+    self: v.string().nullable(),
+    first: v.literal(null),
+    next: v.string().nullable(),
+    prev: v.string().nullable(),
+  })
+);
 
-export const EnvironmentSchema = z.object({
-  id: z.string().uuid(),
-  name: z.string(),
-});
+export const getEnvironmentSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().uuid(),
+    name: v.string(),
+  })
+);
 
-const BranchFileFields = {
-  id: z.string().optional(),
-  version_id: z.string().optional(),
-  content: z.string(),
-  ...BaseFileFields,
-};
+export const getBranchFileListItemSchema = defineSchema((v) => v.object(branchFileFields(v)));
 
-export const BranchFileListItemSchema = z.object(BranchFileFields);
+export const getListBranchFilesResponseSchema = defineSchema((v) =>
+  v.object({
+    data: v.array(getBranchFileListItemSchema()),
+    page_info: getPageInfoSchema(),
+    _links: linksSchema(v).optional(),
+  })
+);
 
-export const ListBranchFilesResponseSchema = z.object({
-  data: z.array(BranchFileListItemSchema),
-  page_info: PageInfoSchema,
-  _links: LinksSchema.optional(),
-});
+export const getBranchFileDetailSchema = defineSchema((v) => v.object(branchFileFields(v)));
 
-export const BranchFileDetailSchema = z.object(BranchFileFields);
+export const getEnvironmentFileListItemSchema = defineSchema((v) =>
+  v.object(versionedFileWithContentFields(v))
+);
 
-const VersionedFileWithContentFields = {
-  ...VersionedFileFields,
-  content: z.string(),
-  ...BaseFileFields,
-};
+export const getListEnvironmentFilesResponseSchema = defineSchema((v) =>
+  v.object({
+    data: v.array(getEnvironmentFileListItemSchema()),
+    page_info: getPageInfoSchema(),
+    ...environmentMetaFields(v),
+    _links: linksSchema(v).optional(),
+  })
+);
 
-export const EnvironmentFileListItemSchema = z.object(VersionedFileWithContentFields);
+export const getEnvironmentFileDetailSchema = defineSchema((v) =>
+  v.object({
+    ...versionedFileWithContentFields(v),
+    ...environmentMetaFields(v),
+  })
+);
 
-export const ListEnvironmentFilesResponseSchema = z.object({
-  data: z.array(EnvironmentFileListItemSchema),
-  page_info: PageInfoSchema,
-  ...EnvironmentMetaFields,
-  _links: LinksSchema.optional(),
-});
+export const getReleaseFileListItemSchema = defineSchema((v) =>
+  v.object(versionedFileWithContentFields(v))
+);
 
-export const EnvironmentFileDetailSchema = z.object({
-  ...VersionedFileWithContentFields,
-  ...EnvironmentMetaFields,
-});
+export const getListReleaseFilesResponseSchema = defineSchema((v) =>
+  v.object({
+    data: v.array(getReleaseFileListItemSchema()),
+    page_info: getPageInfoSchema(),
+    ...releaseMetaFields(v),
+    _links: linksSchema(v).optional(),
+  })
+);
 
-export const ReleaseFileListItemSchema = z.object(VersionedFileWithContentFields);
+export const getReleaseFileDetailSchema = defineSchema((v) =>
+  v.object({
+    ...versionedFileWithContentFields(v),
+    ...releaseMetaFields(v),
+  })
+);
 
-export const ListReleaseFilesResponseSchema = z.object({
-  data: z.array(ReleaseFileListItemSchema),
-  page_info: PageInfoSchema,
-  ...ReleaseMetaFields,
-  _links: LinksSchema.optional(),
-});
+export const getListProjectsResponseSchema = defineSchema((v) =>
+  v.object({
+    data: v.array(getProjectSchema()),
+  })
+);
 
-export const ReleaseFileDetailSchema = z.object({
-  ...VersionedFileWithContentFields,
-  ...ReleaseMetaFields,
-});
+export const getLookupDomainResponseSchema = defineSchema((v) =>
+  v.object({
+    project_id: v.string().uuid(),
+    project_slug: v.string(),
+    project_name: v.string(),
+    environment: getEnvironmentSchema().nullable(),
+    release_id: v.string().uuid().nullable(),
+  })
+);
 
-export const ListProjectsResponseSchema = z.object({
-  data: z.array(ProjectSchema),
-});
+export const getStyleArtifactResolveResponseSchema = defineSchema((v) =>
+  v.object({
+    status: v.enum(["ready", "missing", "building", "failed"] as const),
+    artifact_hash: v.string().optional(),
+    asset_path: v.string().optional(),
+    etag: v.string().optional(),
+    content_type: v.string().optional(),
+    build_job_id: v.string().uuid().optional(),
+    failure_reason: v.string().optional(),
+    updated_at: v.string().optional(),
+  })
+);
 
-export const LookupDomainResponseSchema = z.object({
-  project_id: z.string().uuid(),
-  project_slug: z.string(),
-  project_name: z.string(),
-  environment: EnvironmentSchema.nullable(),
-  release_id: z.string().uuid().nullable(),
-});
+/**
+ * Project schema extended with the `environments` array — used by the
+ * domain-lookup endpoint which returns a project plus its environments.
+ *
+ * Lifted out of `operations.ts` so the inline `extend()` no longer needs to
+ * import the SchemaValidator at the callsite.
+ */
+export const getProjectWithEnvironmentsSchema = defineSchema((v) =>
+  getProjectSchema().extend({
+    environments: v
+      .array(
+        v.object({
+          id: v.string().uuid(),
+          name: v.string(),
+          domains: v.array(v.string()).optional(),
+          active_release_id: v.string().uuid().nullable().optional(),
+        }),
+      )
+      .optional(),
+  })
+);
 
-export const StyleArtifactResolveResponseSchema = z.object({
-  status: z.enum(["ready", "missing", "building", "failed"]),
-  artifact_hash: z.string().optional(),
-  asset_path: z.string().optional(),
-  etag: z.string().optional(),
-  content_type: z.string().optional(),
-  build_job_id: z.string().uuid().optional(),
-  failure_reason: z.string().optional(),
-  updated_at: z.string().optional(),
-});
+// ---------------------------------------------------------------------------
+// Inferred types
+// ---------------------------------------------------------------------------
 
-export type Project = z.infer<typeof ProjectSchema>;
-export type ProjectFile = z.infer<typeof ProjectFileSchema>;
-export type PageInfo = z.infer<typeof PageInfoSchema>;
-export type Environment = z.infer<typeof EnvironmentSchema>;
+export type Project = InferSchema<ReturnType<typeof getProjectSchema>>;
+export type ProjectFile = InferSchema<ReturnType<typeof getProjectFileSchema>>;
+export type PageInfo = InferSchema<ReturnType<typeof getPageInfoSchema>>;
+export type Environment = InferSchema<ReturnType<typeof getEnvironmentSchema>>;
 
-export type BranchFileListItem = z.infer<typeof BranchFileListItemSchema>;
-export type ListBranchFilesResponse = z.infer<typeof ListBranchFilesResponseSchema>;
-export type BranchFileDetail = z.infer<typeof BranchFileDetailSchema>;
+export type BranchFileListItem = InferSchema<ReturnType<typeof getBranchFileListItemSchema>>;
+export type ListBranchFilesResponse = InferSchema<
+  ReturnType<typeof getListBranchFilesResponseSchema>
+>;
+export type BranchFileDetail = InferSchema<ReturnType<typeof getBranchFileDetailSchema>>;
 
-export type EnvironmentFileListItem = z.infer<typeof EnvironmentFileListItemSchema>;
-export type ListEnvironmentFilesResponse = z.infer<typeof ListEnvironmentFilesResponseSchema>;
-export type EnvironmentFileDetail = z.infer<typeof EnvironmentFileDetailSchema>;
+export type EnvironmentFileListItem = InferSchema<
+  ReturnType<typeof getEnvironmentFileListItemSchema>
+>;
+export type ListEnvironmentFilesResponse = InferSchema<
+  ReturnType<typeof getListEnvironmentFilesResponseSchema>
+>;
+export type EnvironmentFileDetail = InferSchema<ReturnType<typeof getEnvironmentFileDetailSchema>>;
 
-export type ReleaseFileListItem = z.infer<typeof ReleaseFileListItemSchema>;
-export type ListReleaseFilesResponse = z.infer<typeof ListReleaseFilesResponseSchema>;
-export type ReleaseFileDetail = z.infer<typeof ReleaseFileDetailSchema>;
+export type ReleaseFileListItem = InferSchema<ReturnType<typeof getReleaseFileListItemSchema>>;
+export type ListReleaseFilesResponse = InferSchema<
+  ReturnType<typeof getListReleaseFilesResponseSchema>
+>;
+export type ReleaseFileDetail = InferSchema<ReturnType<typeof getReleaseFileDetailSchema>>;
 
-export type LookupDomainResponse = z.infer<typeof LookupDomainResponseSchema>;
-export type StyleArtifactResolveResponse = z.infer<typeof StyleArtifactResolveResponseSchema>;
+export type LookupDomainResponse = InferSchema<ReturnType<typeof getLookupDomainResponseSchema>>;
+export type StyleArtifactResolveResponse = InferSchema<
+  ReturnType<typeof getStyleArtifactResolveResponseSchema>
+>;
 
 export const API_ENDPOINTS = {
   listProjects: {
