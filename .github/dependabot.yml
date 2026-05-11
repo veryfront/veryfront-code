@@ -1,0 +1,23 @@
+# .github/dependabot.yml
+#
+# Dependabot does not natively understand `deno.json` / `deno.lock`, and this
+# repo currently has no checked-in npm `package.json` (the `npm/` workspace and
+# `deno.lock` are generated artifacts and `.gitignore`d). For now, only the
+# GitHub Actions ecosystem is covered here. OSV-Scanner (see
+# `.github/workflows/security-audit.yml`) handles `deno.lock`. When Dependabot
+# adds Deno support, or if a tracked `package.json` lands, add a corresponding
+# `updates:` entry below.
+version: 2
+
+updates:
+  # GitHub Actions used in workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "ci"
