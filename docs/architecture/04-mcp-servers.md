@@ -80,6 +80,7 @@ The App MCP server implements the MCP protocol (versions 2025-11-25 and 2024-11-
 4. **Async Tasks:** For long-running tools, the caller opts into task mode by including a `task` object. The server creates a task and returns a task ID. The client polls `tasks/get` for status and `tasks/result` for output until the task reaches a terminal state (`completed`, `failed`, `cancelled`). Tasks have a max capacity of 1000, with TTL-based cleanup of terminal tasks.
 
 Key features:
+
 - **Auth:** Bearer token validation on every request
 - **CORS:** Origin allowlisting with configurable headers
 - **Session Management:** UUID-based sessions with capability tracking
@@ -214,7 +215,7 @@ The internal AG-UI transport bridges AI agents with the Studio UI:
 2. **Injected Tool Pattern:** The Studio passes tool definitions (name, schema) that the agent can call. The system creates wrapper tools that, when called by the agent, block execution and wait for the Studio to submit tool results. This enables human-in-the-loop tool execution where the UI handles the actual tool interaction.
 3. **Tool Result Submission:** When the agent calls an injected tool, the run pauses (up to 5 minutes). The Studio submits the tool result via `/internal/agents/runs/:runId/resume`. The wrapper tool unblocks and returns the result to the agent.
 4. **AG-UI Streaming:** All events are streamed as SSE in the AG-UI wire format (`RunStarted`, `TextMessageContent`, `ToolCallStart`, `ToolCallArgs`, `ToolCallEnd`, `ToolCallResult`, `RunFinished`).
-5. **Contract Boundary:** The internal `/internal/agents/*` routes are compatibility/control-plane wrappers. The canonical package-level AG-UI handlers live under `veryfront/agent` and are designed around host-configurable endpoints such as `/api/ag-ui`.
+5. **Contract Boundary:** The internal `/internal/agents/*` routes are compatibility/control-plane wrappers. The canonical package-level AG-UI handlers live under `veryfront/agent` and are designed around host-configurable endpoints such as `/api/ag-ui`. Hosted services should use the framework prepared-execution helpers to stream prepared chat runs to AG-UI responses or finish detached durable runs instead of reimplementing that lifecycle locally.
 
 Session states: `active` → `waiting` (for tool result) → `completed` / `failed` / `cancelled`. Default session TTL is 15 minutes.
 
