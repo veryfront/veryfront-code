@@ -1,7 +1,7 @@
 import { describe, it } from "@std/testing/bdd";
 import { assert, assertEquals, assertThrows } from "@std/assert";
 import { createAIProviderRegistry } from "./ai-provider-registry.ts";
-import type { AIProvider } from "../interfaces/ai-provider.ts";
+import type { AIProvider } from "./ai-provider.ts";
 
 function fakeProvider(id: string): AIProvider {
   return {

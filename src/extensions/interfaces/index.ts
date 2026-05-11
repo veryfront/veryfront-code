@@ -74,12 +74,12 @@ export type {
 // Tracing exporter
 export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
 
-// AI provider (registry + per-provider contract)
-export type { AIProvider, AIProviderConfig, AIProviderRegistry } from "./ai-provider.ts";
-export { AIProviderRegistryName } from "./ai-provider.ts";
+// AI provider (registry + per-provider contract) — moved to ../ai/
+export type { AIProvider, AIProviderConfig, AIProviderRegistry } from "../ai/index.ts";
+export { AIProviderRegistryName } from "../ai/index.ts";
 
-// Embedding provider
-export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "./embedding-provider.ts";
+// Embedding provider — moved to ../ai/
+export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "../ai/index.ts";
 
 // Code parser
 export type {

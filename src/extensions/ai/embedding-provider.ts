@@ -3,7 +3,7 @@
  *
  * Default implementation: `@veryfront/ext-embeddings`
  *
- * @module extensions/interfaces/embedding-provider
+ * @module extensions/ai/embedding-provider
  */
 
 /** Options passed to {@link EmbeddingProvider.embed}. */
