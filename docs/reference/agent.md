@@ -725,6 +725,13 @@ Create the default durable root-run preparation options used by
 operation text, missing-user-message errors, instrumentation, implementation
 kind, or persistence-failure handling.
 
+### `parseHostedAgentServiceConfig(env)`
+
+Parse the default hosted agent service environment contract. The helper
+validates API URL, node environment, port, durable feature flags, OAuth public
+key, Studio MCP URL, allowed origins, and OpenTelemetry endpoint flags, and it
+derives the hosted MCP URL from `VERYFRONT_API_URL`.
+
 ### `AgUiRuntimeRequestSchema`
 
 Validate the canonical open-source AG-UI runtime request contract for hosted
@@ -910,6 +917,7 @@ Clear all stored messages from memory.
 | `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
 | `createVeryfrontCloudHostedChatExecutionRootRunOptions`         | Create Veryfront Cloud hosted root-run preparation defaults              |
 | `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
+| `parseHostedAgentServiceConfig`                                 | Parse default hosted agent service environment config                    |
 | `prepareVeryfrontCloudHostedChatExecution`                      | Prepare hosted chat execution with Veryfront Cloud defaults              |
 | `normalizeAgUiRuntimeMessages`                                  | Normalize runtime AG-UI messages into package `Message[]`                |
 | `parseAgUiRuntimeRequest`                                       | Parse and validate the canonical runtime AG-UI request body              |

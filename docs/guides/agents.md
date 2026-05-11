@@ -160,7 +160,10 @@ Services that prepare and stream hosted executions through Veryfront Cloud can
 use `prepareVeryfrontCloudHostedChatExecution()` and
 `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions()` to reuse the
 default hosted model normalization, model-provider, durable root-run, and
-stream-watchdog wiring.
+stream-watchdog wiring. Hosted services can also use
+`parseHostedAgentServiceConfig()` to share the default environment contract for
+API URL, hosted MCP URL, port, CORS origins, durable feature flags, and
+OpenTelemetry flags.
 
 ## Agent configuration
 
