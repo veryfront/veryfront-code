@@ -242,6 +242,15 @@ export {
   type StartNodeAgentServiceServerOptions,
 } from "./agent-service-server.ts";
 export {
+  type AgentServiceBootstrapExit,
+  type AgentServiceTraceContext,
+  type AgentServiceTraceContextGetter,
+  bootstrapAgentService,
+  type BootstrapAgentServiceOptions,
+  runAgentServiceMain,
+  type RunAgentServiceMainOptions,
+} from "./agent-service-bootstrap.ts";
+export {
   type AbortRejectionEvent,
   type AbortRejectionEventTarget,
   type AbortRejectionGuardLogger,
