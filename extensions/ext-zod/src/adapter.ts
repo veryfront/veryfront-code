@@ -124,11 +124,9 @@ export function createZodAdapter(): SchemaValidator {
     bigint: (): Schema<bigint> => wrap(z.bigint()),
     // deno-lint-ignore no-explicit-any -- contract mirrors zod's `any` constructor
     any: (): Schema<any> => wrap(z.any()),
-    // deno-lint-ignore ban-types -- contract mirrors zod's loosely-typed `function`
     function: (): Schema<(...args: unknown[]) => unknown> =>
       // zod 4's z.function() is callable without args/returns and produces a
       // schema accepting any function. We wrap it as Schema<AnyFunction>.
-      // deno-lint-ignore no-explicit-any -- z.function in v4 carries no arg/return types
       wrap(z.function() as unknown as AnyZodSchema),
 
     object: <S extends Record<string, Schema<unknown>>>(shape: S): Schema<InferShape<S>> =>

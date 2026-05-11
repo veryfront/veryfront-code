@@ -142,7 +142,6 @@ export interface SchemaValidator {
   bigint(): Schema<bigint>;
   // deno-lint-ignore no-explicit-any -- `any` constructor intentionally mirrors zod
   any(): Schema<any>;
-  // deno-lint-ignore ban-types -- intentionally accepts any callable; mirrors zod
   function(): Schema<(...args: unknown[]) => unknown>;
 
   // Composite constructors
