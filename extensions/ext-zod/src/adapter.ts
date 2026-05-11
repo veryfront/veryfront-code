@@ -149,8 +149,7 @@ export function createZodAdapter(): SchemaValidator {
     record: <K extends string | number | symbol, V>(
       keys: Schema<K>,
       values: Schema<V>,
-    ): Schema<Record<K, V>> =>
-      wrap(z.record(toZod(keys) as unknown as z.ZodString, toZod(values))),
+    ): Schema<Record<K, V>> => wrap(z.record(toZod(keys) as unknown as z.ZodString, toZod(values))),
 
     union: <T extends readonly [Schema<unknown>, ...Schema<unknown>[]]>(
       schemas: T,

@@ -19,11 +19,13 @@ const E164_PHONE_NUMBER_PATTERN = /^\+?[1-9]\d{1,14}$/;
 
 export const getEmailSchema = defineSchema((v) => v.string().email().max(255));
 export const getUuidSchema = defineSchema((v) => v.string().uuid());
-export const getSlugSchema = defineSchema((v) =>
-  v.string().regex(SLUG_PATTERN).min(1).max(100),
+export const getSlugSchema = defineSchema((v) => v.string().regex(SLUG_PATTERN).min(1).max(100));
+export const getUrlSchema = defineSchema((v) =>
+  v.string().url().max(MAX_URL_LENGTH_FOR_VALIDATION)
 );
-export const getUrlSchema = defineSchema((v) => v.string().url().max(MAX_URL_LENGTH_FOR_VALIDATION));
-export const getPhoneNumberSchema = defineSchema((v) => v.string().regex(E164_PHONE_NUMBER_PATTERN));
+export const getPhoneNumberSchema = defineSchema((v) =>
+  v.string().regex(E164_PHONE_NUMBER_PATTERN)
+);
 
 export const getPaginationSchema = defineSchema((v) =>
   v.object({

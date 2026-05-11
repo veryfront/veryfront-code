@@ -45,6 +45,6 @@ export {
   getProjectWithEnvironmentsSchema,
   getReleaseFileDetailSchema,
   getReleaseFileListItemSchema,
-  type StyleArtifactResolveResponse,
   getStyleArtifactResolveResponseSchema,
+  type StyleArtifactResolveResponse,
 } from "./schemas/index.ts";
