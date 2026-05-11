@@ -1,0 +1,23 @@
+{
+  "name": "@veryfront/cli",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./main.ts"
+  },
+  "imports": {
+    "#cli/shared/args": "./shared/args.ts",
+    "#cli/shared/json-output": "./shared/json-output.ts",
+    "#cli/shared/interactive": "./shared/interactive.ts",
+    "#cli/shared/types": "./shared/types.ts",
+    "#cli/shared/constants": "./shared/constants.ts",
+    "#cli/shared/config": "./shared/config.ts",
+    "#cli/shared/project-source-context": "./shared/project-source-context.ts",
+    "#cli/shared/slug": "./shared/slug.ts",
+    "#cli/shared/reserve-slug": "./shared/reserve-slug.ts",
+    "#cli/shared/server-startup": "./shared/server-startup.ts",
+    "#cli/ui": "./ui/index.ts",
+    "#cli/ui/box": "./ui/box.ts",
+    "#cli/utils": "./utils/index.ts"
+  }
+}
