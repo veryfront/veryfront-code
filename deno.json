@@ -162,7 +162,6 @@
     "#veryfront/chat/protocol": "./src/chat/protocol.ts",
     "#veryfront/build": "./src/build/index.ts",
     "#veryfront/cache": "./src/cache/index.ts",
-    "#veryfront/cli/ui": "./cli/ui/index.ts",
     "#veryfront/config": "./src/config/index.ts",
     "#veryfront/discovery": "./src/discovery/index.ts",
     "#veryfront/data": "./src/data/index.ts",

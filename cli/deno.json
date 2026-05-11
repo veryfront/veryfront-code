@@ -7,8 +7,6 @@
   },
   "imports": {
     "#cli/shared/args": "./shared/args.ts",
-    "#cli/shared/json-output": "./shared/json-output.ts",
-    "#cli/shared/interactive": "./shared/interactive.ts",
     "#cli/shared/types": "./shared/types.ts",
     "#cli/shared/constants": "./shared/constants.ts",
     "#cli/shared/config": "./shared/config.ts",
