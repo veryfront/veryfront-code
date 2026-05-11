@@ -63,8 +63,8 @@ export type {
   VerifyOptions,
 } from "../auth/index.ts";
 
-// Tracing exporter
-export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
+// Tracing exporter — moved to ../tracing/
+export type { SpanData, TracerProvider, TracingExporter } from "../tracing/index.ts";
 
 // AI provider (registry + per-provider contract) — moved to ../ai/
 export type { AIProvider, AIProviderConfig, AIProviderRegistry } from "../ai/index.ts";

@@ -13,8 +13,8 @@
     "./extensions/ext-content-mdx",
     "./extensions/ext-css-tailwind",
     "./extensions/ext-node-compatibility",
-    "./extensions/ext-opentelemetry",
-    "./extensions/ext-parser-babel"
+    "./extensions/ext-parser-babel",
+    "./extensions/ext-tracing-opentelemetry"
   ],
   "exclude": [
     "npm/",
@@ -77,6 +77,7 @@
     "./extensions/content": "./src/extensions/content/index.ts",
     "./extensions/css": "./src/extensions/css/index.ts",
     "./extensions/parser": "./src/extensions/parser/index.ts",
+    "./extensions/tracing": "./src/extensions/tracing/index.ts",
     "./testing": "./src/testing/index.ts",
     "./testing/assert": "./src/testing/assert.ts",
     "./testing/bdd": "./src/testing/bdd.ts",
@@ -166,6 +167,7 @@
     "veryfront/extensions/css": "./src/extensions/css/index.ts",
     "veryfront/extensions/interfaces": "./src/extensions/interfaces/index.ts",
     "veryfront/extensions/parser": "./src/extensions/parser/index.ts",
+    "veryfront/extensions/tracing": "./src/extensions/tracing/index.ts",
     "jose": "npm:jose@5.9.6",
     "#veryfront": "./src/index.ts",
     "#veryfront/agent": "./src/agent/index.ts",

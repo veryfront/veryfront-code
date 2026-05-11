@@ -1,9 +1,9 @@
 /**
  * Contract interface for tracing/telemetry exporters.
  *
- * Default implementation: `@veryfront/ext-opentelemetry`
+ * Default implementation: `@veryfront/ext-tracing-opentelemetry`
  *
- * @module extensions/interfaces/tracing-exporter
+ * @module extensions/tracing/tracing-exporter
  */
 
 /**

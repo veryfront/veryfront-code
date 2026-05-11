@@ -2,7 +2,7 @@
  * Thin in-process shim for `@opentelemetry/api`.
  *
  * Core files that previously imported directly from `@opentelemetry/api` now
- * import from this module.  When the `ext-opentelemetry` extension is present
+ * import from this module.  When the `ext-tracing-opentelemetry` extension is present
  * the real SDK provider is wired in via `setGlobalTracerProvider`; otherwise
  * every call falls back to a no-op implementation so the core boots without the
  * extension installed.
@@ -172,7 +172,7 @@ export interface MetricsAPI {
 }
 
 // ---------------------------------------------------------------------------
-// No-op provider (default when ext-opentelemetry is not installed)
+// No-op provider (default when ext-tracing-opentelemetry is not installed)
 // ---------------------------------------------------------------------------
 
 function createNoopContext(): Context {
@@ -254,7 +254,7 @@ let _propagator: TextMapPropagator | null = null;
 
 /**
  * Optional accessor for the currently active span. Wired by
- * ext-opentelemetry (via `setGlobalActiveSpanAccessor`) so `trace.getActiveSpan()`
+ * ext-tracing-opentelemetry (via `setGlobalActiveSpanAccessor`) so `trace.getActiveSpan()`
  * and `trace.getSpan()` return the real SDK span once the extension is active.
  */
 let _activeSpanAccessor: {
@@ -264,7 +264,7 @@ let _activeSpanAccessor: {
 
 /**
  * Register the real OTel trace API's span accessors. Called by the
- * ext-opentelemetry extension after it wires the SDK so that the shim's
+ * ext-tracing-opentelemetry extension after it wires the SDK so that the shim's
  * `trace.getActiveSpan()` / `trace.getSpan()` can return real spans.
  */
 export function setGlobalActiveSpanAccessor(
@@ -287,7 +287,7 @@ export function getGlobalTracerProvider(): TracerProvider {
 
 /**
  * Get a tracer from the active provider.
- * Returns the no-op tracer when ext-opentelemetry is not installed.
+ * Returns the no-op tracer when ext-tracing-opentelemetry is not installed.
  */
 export function getTracer(name: string, version?: string): Tracer {
   return _provider.getTracer(name, version);
@@ -378,14 +378,14 @@ export const defaultTextMapSetter: TextMapSetter<Record<string, string>> = {
 };
 
 // ---------------------------------------------------------------------------
-// Metrics API registry (injected by ext-opentelemetry when active)
+// Metrics API registry (injected by ext-tracing-opentelemetry when active)
 // ---------------------------------------------------------------------------
 
 let _metricsApi: MetricsAPI | null = null;
 
 /**
  * Register the OTel Metrics API (from the SDK).
- * Called by ext-opentelemetry in its setup hook so the metrics subsystem
+ * Called by ext-tracing-opentelemetry in its setup hook so the metrics subsystem
  * can use `getMeter()` when available.
  */
 export function setGlobalMetricsAPI(api: MetricsAPI): void {

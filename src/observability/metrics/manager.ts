@@ -80,7 +80,7 @@ export class MetricsManager {
     }
 
     try {
-      // The metrics API is injected by ext-opentelemetry via setGlobalMetricsAPI().
+      // The metrics API is injected by ext-tracing-opentelemetry via setGlobalMetricsAPI().
       // When the extension is not active, metrics collection is disabled.
       const metricsApi = getGlobalMetricsAPI();
       if (!metricsApi) {

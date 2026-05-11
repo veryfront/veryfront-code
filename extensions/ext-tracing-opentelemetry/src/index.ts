@@ -1,5 +1,5 @@
 /**
- * ext-opentelemetry — TracingExporter implementation backed by the
+ * ext-tracing-opentelemetry — TracingExporter implementation backed by the
  * official OpenTelemetry JS SDK.
  *
  * Provides the `TracingExporter` contract:
@@ -11,11 +11,11 @@
  * Configuration is read from `ctx.config` (see `OtlpExtConfig`) and falls
  * back to standard OTEL environment variables.
  *
- * @module extensions/ext-opentelemetry
+ * @module extensions/ext-tracing-opentelemetry
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { SpanData, TracingExporter } from "veryfront/extensions/interfaces";
+import type { SpanData, TracingExporter } from "veryfront/extensions/tracing";
 
 import { metrics, trace } from "@opentelemetry/api";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
@@ -177,7 +177,7 @@ class OtlpTracingExporter implements TracingExporter {
 }
 
 /**
- * Default export — the ext-opentelemetry extension factory.
+ * Default export — the ext-tracing-opentelemetry extension factory.
  *
  * Produces an extension that registers a `TracingExporter` contract
  * implementation backed by the OpenTelemetry JS SDK.
@@ -186,7 +186,7 @@ const extOpenTelemetry: ExtensionFactory = () => {
   const exporterImpl = new OtlpTracingExporter();
 
   return {
-    name: "ext-opentelemetry",
+    name: "ext-tracing-opentelemetry",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "TracingExporter" },
@@ -195,7 +195,7 @@ const extOpenTelemetry: ExtensionFactory = () => {
     async setup(ctx) {
       await exporterImpl.start(ctx.config);
       ctx.provide("TracingExporter", exporterImpl);
-      ctx.logger.info("[ext-opentelemetry] TracingExporter registered");
+      ctx.logger.info("[ext-tracing-opentelemetry] TracingExporter registered");
     },
     async teardown() {
       await exporterImpl.shutdown();
