@@ -379,8 +379,7 @@
     "start-split": "deno task generate && deno run --allow-all cli/main.ts serve --split",
     "start-split:binary": "deno task generate && deno run --allow-all cli/main.ts serve --split --binary",
     "sbom": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts",
-    "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts",
-    "audit:osv": "osv-scanner --lockfile=deno.lock"
+    "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts"
   },
   "lint": {
     "include": [
