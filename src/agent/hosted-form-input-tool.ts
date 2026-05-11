@@ -1,5 +1,5 @@
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
-import type { Schema } from "#veryfront/extensions/interfaces/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { containsExactArtifactPathValue } from "./slash-command-artifact-policy.ts";
 import {
   buildInputRequestLifecycleDataEvent,

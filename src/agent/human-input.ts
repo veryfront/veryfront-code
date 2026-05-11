@@ -1,102 +1,139 @@
-import { z } from "zod";
-import { AgUiRuntimeRunIdSchema } from "./runtime-ag-ui-contract.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type {
+  InferInput,
+  InferSchema,
+  SchemaValidator,
+  ValidationIssue,
+} from "#veryfront/extensions/schema/index.ts";
+import { getAgUiRuntimeRunIdSchema } from "./runtime-ag-ui-contract.ts";
 import { RunResumeSessionManager } from "./runtime/index.ts";
 
-const TOOL_CALL_ID_SCHEMA = z.string().min(1).max(128);
+const TOOL_CALL_ID_SCHEMA = (v: SchemaValidator) => v.string().min(1).max(128);
 
-export const HumanInputOptionSchema = z.object({
-  value: z.string(),
-  label: z.string(),
-  description: z.string().optional(),
-  recommended: z.boolean().optional(),
-});
-
-const BaseHumanInputFieldSchema = z.object({
-  name: z.string().min(1).max(128),
-  label: z.string().min(1).max(256),
-  description: z.string().max(1024).optional(),
-  required: z.boolean().optional().default(false),
-  secret: z.boolean().optional().default(false),
-});
-
-export const HumanInputFieldSchema = z.discriminatedUnion("type", [
-  BaseHumanInputFieldSchema.extend({
-    type: z.enum(["text", "email", "url", "password", "number"]),
-    placeholder: z.string().max(512).optional(),
-    defaultValue: z.string().optional(),
-    pattern: z.string().max(512).optional(),
-    minLength: z.number().int().nonnegative().optional(),
-    maxLength: z.number().int().positive().optional(),
-    min: z.number().optional(),
-    max: z.number().optional(),
-  }),
-  BaseHumanInputFieldSchema.extend({
-    type: z.literal("textarea"),
-    placeholder: z.string().max(512).optional(),
-    defaultValue: z.string().optional(),
-    minLength: z.number().int().nonnegative().optional(),
-    maxLength: z.number().int().positive().optional(),
-    rows: z.number().int().positive().optional().default(3),
-  }),
-  BaseHumanInputFieldSchema.extend({
-    type: z.literal("select"),
-    options: z.array(HumanInputOptionSchema).min(1),
-    defaultValue: z.string().optional(),
-    placeholder: z.string().max(512).optional(),
-  }),
-  BaseHumanInputFieldSchema.extend({
-    type: z.literal("checkbox"),
-    defaultValue: z.boolean().optional().default(false),
-  }),
-  BaseHumanInputFieldSchema.extend({
-    type: z.literal("radio"),
-    options: z.array(HumanInputOptionSchema).min(1),
-    defaultValue: z.string().optional(),
-  }),
-  BaseHumanInputFieldSchema.extend({
-    type: z.literal("confirm"),
-    confirmLabel: z.string().max(64).optional().default("Yes"),
-    denyLabel: z.string().max(64).optional().default("No"),
-  }),
-]);
-
-export const HumanInputRequestSchema = z.object({
-  title: z.string().min(1).max(256),
-  description: z.string().max(2048).optional(),
-  fields: z.array(HumanInputFieldSchema).min(1),
-  submitLabel: z.string().max(64).optional().default("Submit"),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
-
-export const HumanInputResponseValuesSchema = z.record(
-  z.string(),
-  z.union([z.string(), z.boolean(), z.number(), z.null()]),
+export const getHumanInputOptionSchema = defineSchema((v) =>
+  v.object({
+    value: v.string(),
+    label: v.string(),
+    description: v.string().optional(),
+    recommended: v.boolean().optional(),
+  })
 );
 
-export const HumanInputResultSchema = z.discriminatedUnion("submitted", [
-  z.object({
-    submitted: z.literal(true),
-    values: HumanInputResponseValuesSchema,
-  }),
-  z.object({
-    submitted: z.literal(false),
-    values: HumanInputResponseValuesSchema.default({}),
-  }),
-]);
-
-export const HumanInputPendingRequestSchema = z.object({
-  runId: AgUiRuntimeRunIdSchema,
-  toolCallId: TOOL_CALL_ID_SCHEMA,
-  request: HumanInputRequestSchema,
+// Common base fields shared by every human-input field variant. Factored as a
+// shape-helper because the contract DSL doesn't expose `Schema.shape` access
+// nor a way to share field defaults across discriminated-union members other
+// than constructing the shape repeatedly.
+const baseHumanInputFieldFields = (v: SchemaValidator) => ({
+  name: v.string().min(1).max(128),
+  label: v.string().min(1).max(256),
+  description: v.string().max(1024).optional(),
+  required: v.boolean().optional().default(false),
+  secret: v.boolean().optional().default(false),
 });
 
-export type HumanInputOption = z.infer<typeof HumanInputOptionSchema>;
-export type HumanInputField = z.infer<typeof HumanInputFieldSchema>;
-export type HumanInputFieldInput = z.input<typeof HumanInputFieldSchema>;
-export type HumanInputRequest = z.infer<typeof HumanInputRequestSchema>;
-export type HumanInputRequestInput = z.input<typeof HumanInputRequestSchema>;
-export type HumanInputResult = z.infer<typeof HumanInputResultSchema>;
-export type HumanInputPendingRequest = z.infer<typeof HumanInputPendingRequestSchema>;
+export const getHumanInputFieldSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      ...baseHumanInputFieldFields(v),
+      type: v.enum(["text", "email", "url", "password", "number"] as const),
+      placeholder: v.string().max(512).optional(),
+      defaultValue: v.string().optional(),
+      pattern: v.string().max(512).optional(),
+      minLength: v.number().int().nonnegative().optional(),
+      maxLength: v.number().int().positive().optional(),
+      min: v.number().optional(),
+      max: v.number().optional(),
+    }),
+    v.object({
+      ...baseHumanInputFieldFields(v),
+      type: v.literal("textarea"),
+      placeholder: v.string().max(512).optional(),
+      defaultValue: v.string().optional(),
+      minLength: v.number().int().nonnegative().optional(),
+      maxLength: v.number().int().positive().optional(),
+      rows: v.number().int().positive().optional().default(3),
+    }),
+    v.object({
+      ...baseHumanInputFieldFields(v),
+      type: v.literal("select"),
+      options: v.array(getHumanInputOptionSchema()).min(1),
+      defaultValue: v.string().optional(),
+      placeholder: v.string().max(512).optional(),
+    }),
+    v.object({
+      ...baseHumanInputFieldFields(v),
+      type: v.literal("checkbox"),
+      defaultValue: v.boolean().optional().default(false),
+    }),
+    v.object({
+      ...baseHumanInputFieldFields(v),
+      type: v.literal("radio"),
+      options: v.array(getHumanInputOptionSchema()).min(1),
+      defaultValue: v.string().optional(),
+    }),
+    v.object({
+      ...baseHumanInputFieldFields(v),
+      type: v.literal("confirm"),
+      confirmLabel: v.string().max(64).optional().default("Yes"),
+      denyLabel: v.string().max(64).optional().default("No"),
+    }),
+  ])
+);
+
+// Base shape for HumanInputRequest so the same fields can be reused without
+// `metadata` to derive `formInputToolInputSchema` (the contract DSL doesn't
+// expose `.omit`).
+export const humanInputRequestBaseFields = (v: SchemaValidator) => ({
+  title: v.string().min(1).max(256),
+  description: v.string().max(2048).optional(),
+  fields: v.array(getHumanInputFieldSchema()).min(1),
+  submitLabel: v.string().max(64).optional().default("Submit"),
+});
+
+export const getHumanInputRequestSchema = defineSchema((v) =>
+  v.object({
+    ...humanInputRequestBaseFields(v),
+    metadata: v.record(v.string(), v.unknown()).optional(),
+  })
+);
+
+export const getHumanInputResponseValuesSchema = defineSchema((v) =>
+  v.record(
+    v.string(),
+    v.union([v.string(), v.boolean(), v.number(), v.null()]),
+  )
+);
+
+export const getHumanInputResultSchema = defineSchema((v) =>
+  v.discriminatedUnion("submitted", [
+    v.object({
+      submitted: v.literal(true),
+      values: getHumanInputResponseValuesSchema(),
+    }),
+    v.object({
+      submitted: v.literal(false),
+      values: getHumanInputResponseValuesSchema().default({}),
+    }),
+  ])
+);
+
+export const getHumanInputPendingRequestSchema = defineSchema((v) =>
+  v.object({
+    runId: getAgUiRuntimeRunIdSchema(),
+    toolCallId: TOOL_CALL_ID_SCHEMA(v),
+    request: getHumanInputRequestSchema(),
+  })
+);
+
+export type HumanInputOption = InferSchema<ReturnType<typeof getHumanInputOptionSchema>>;
+export type HumanInputField = InferSchema<ReturnType<typeof getHumanInputFieldSchema>>;
+export type HumanInputFieldInput = InferInput<ReturnType<typeof getHumanInputFieldSchema>>;
+export type HumanInputRequest = InferSchema<ReturnType<typeof getHumanInputRequestSchema>>;
+export type HumanInputRequestInput = InferInput<ReturnType<typeof getHumanInputRequestSchema>>;
+export type HumanInputResult = InferSchema<ReturnType<typeof getHumanInputResultSchema>>;
+export type HumanInputPendingRequest = InferSchema<
+  ReturnType<typeof getHumanInputPendingRequestSchema>
+>;
 
 export type HumanInputResumeValue = {
   result: unknown;
@@ -152,7 +189,7 @@ export class HumanInputResumeError extends Error {
 }
 
 export class InvalidHumanInputResultError extends Error {
-  constructor(readonly detail: z.ZodIssue[]) {
+  constructor(readonly detail: ValidationIssue[]) {
     super("Invalid human input resume payload");
     this.name = "InvalidHumanInputResultError";
   }
@@ -220,7 +257,7 @@ export async function waitForHumanInput(
   options: WaitForHumanInputOptions,
 ): Promise<HumanInputResult> {
   options.sessionManager.prepareForSignal(options.runId, options.toolCallId);
-  const pendingRequest = HumanInputPendingRequestSchema.parse({
+  const pendingRequest = getHumanInputPendingRequestSchema().parse({
     runId: options.runId,
     toolCallId: options.toolCallId,
     request: options.request,
@@ -233,9 +270,9 @@ export async function waitForHumanInput(
     throw new HumanInputResumeError(resumed.result);
   }
 
-  const parsed = HumanInputResultSchema.safeParse(resumed.result);
+  const parsed = getHumanInputResultSchema().safeParse(resumed.result);
   if (!parsed.success) {
-    throw new InvalidHumanInputResultError(parsed.error.issues);
+    throw new InvalidHumanInputResultError(parsed.issues);
   }
 
   return parsed.data;

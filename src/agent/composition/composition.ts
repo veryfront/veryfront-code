@@ -9,7 +9,7 @@
 
 import type { Agent } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
-import type { Schema } from "#veryfront/extensions/interfaces/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";

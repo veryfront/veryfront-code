@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Schema } from "#veryfront/extensions/interfaces/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { toolRegistry } from "#veryfront/tool/registry.ts";
 import type { Tool } from "#veryfront/tool/types.ts";

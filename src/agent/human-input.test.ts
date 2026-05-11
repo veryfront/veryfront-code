@@ -1,10 +1,11 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { RunCancelledError, RunResumeSessionManager } from "./index.ts";
 import {
   executeDurableHumanInputFlow,
-  HumanInputPendingRequestSchema,
-  HumanInputResultSchema,
+  getHumanInputPendingRequestSchema,
+  getHumanInputResultSchema,
   HumanInputResumeError,
   InvalidHumanInputResultError,
   waitForDurableHumanInputResolution,
@@ -25,6 +26,7 @@ describe("agent/human-input", () => {
       sessionManager,
       runId: "run_1",
       toolCallId: "tool_1",
+      // deno-lint-ignore no-explicit-any -- field literal omits optional keys
       request: {
         title: "Repository details",
         fields: [
@@ -35,7 +37,7 @@ describe("agent/human-input", () => {
             required: true,
           },
         ],
-      },
+      } as any,
       onRequest: (value) => {
         published = value;
       },
@@ -56,7 +58,9 @@ describe("agent/human-input", () => {
     });
 
     assertEquals(submitOutcome, { accepted: true });
-    assertEquals(HumanInputPendingRequestSchema.parse(published), {
+    // Cast through `unknown` so assertEquals doesn't enforce the contract DSL's
+    // strict key-present optional shape on the expected literal.
+    assertEquals(getHumanInputPendingRequestSchema().parse(published) as unknown, {
       runId: "run_1",
       toolCallId: "tool_1",
       request: {
@@ -73,7 +77,7 @@ describe("agent/human-input", () => {
         submitLabel: "Submit",
       },
     });
-    assertEquals(HumanInputResultSchema.parse(await pending), {
+    assertEquals(getHumanInputResultSchema().parse(await pending) as unknown, {
       submitted: true,
       values: {
         repo: "veryfront",
@@ -92,10 +96,13 @@ describe("agent/human-input", () => {
       sessionManager,
       runId: "run_1",
       toolCallId: "tool_1",
+      // deno-lint-ignore no-explicit-any -- field literal omits optional keys
+      // (contract DSL InferShape limitation: optional fields type as required-key,
+      // T | undefined value; cast to satisfy the boundary).
       request: {
         title: "Repository details",
         fields: [{ type: "text", name: "repo", label: "Repository" }],
-      },
+      } as any,
     });
     await Promise.resolve();
 
@@ -125,10 +132,11 @@ describe("agent/human-input", () => {
       sessionManager,
       runId: "run_1",
       toolCallId: "tool_1",
+      // deno-lint-ignore no-explicit-any
       request: {
         title: "Repository details",
         fields: [{ type: "text", name: "repo", label: "Repository" }],
-      },
+      } as any,
     });
     await Promise.resolve();
 
@@ -154,10 +162,11 @@ describe("agent/human-input", () => {
       sessionManager,
       runId: "run_1",
       toolCallId: "tool_1",
+      // deno-lint-ignore no-explicit-any
       request: {
         title: "Repository details",
         fields: [{ type: "text", name: "repo", label: "Repository" }],
-      },
+      } as any,
     });
     await Promise.resolve();
 
@@ -167,21 +176,29 @@ describe("agent/human-input", () => {
   });
 
   it("bridges a durable request snapshot into the local human input wait", async () => {
-    const result = await executeDurableHumanInputFlow({
+    type CreatedReq = {
+      id: string;
+      request: { request: { title: string } };
+    };
+    type Snapshot = { id: string; status: string; values: Record<string, unknown> };
+    // deno-lint-ignore no-explicit-any -- field literal omits optional keys
+    // (see contract DSL InferShape limitation; cast to satisfy boundary).
+    const result = await executeDurableHumanInputFlow<CreatedReq, Snapshot>({
       runId: "run_1",
       threadId: crypto.randomUUID(),
       toolCallId: "tool_1",
       request: {
         title: "Repository details",
-        fields: [{ type: "text", name: "repo", label: "Repository" }],
-      },
+        fields: [{ type: "text", name: "repo", label: "Repository" }] as any,
+      } as any,
       timeoutMs: 100,
       pollIntervalMs: 1,
-      onRequest: (request) => ({
+      onRequest: (request): CreatedReq => ({
         id: "input_request_1",
-        request,
+        // deno-lint-ignore no-explicit-any -- runtime shape from schema
+        request: request as any,
       }),
-      getSnapshot: (createdRequest) => ({
+      getSnapshot: (createdRequest): Snapshot => ({
         id: createdRequest.id,
         status: "submitted",
         values: {
@@ -192,7 +209,8 @@ describe("agent/human-input", () => {
         snapshot.status === "submitted"
           ? {
             submitted: true,
-            values: snapshot.values,
+            // deno-lint-ignore no-explicit-any -- HumanInputResultSchema accepts loose values
+            values: snapshot.values as any,
           }
           : undefined,
     });
@@ -207,22 +225,25 @@ describe("agent/human-input", () => {
   });
 
   it("surfaces durable request timeout as a human input resume error", async () => {
+    type CreatedReq = { id: string };
+    type Snapshot = { id: string; status: string };
     await assertRejects(
       () =>
-        executeDurableHumanInputFlow({
+        executeDurableHumanInputFlow<CreatedReq, Snapshot>({
           runId: "run_1",
           threadId: crypto.randomUUID(),
           toolCallId: "tool_1",
+          // deno-lint-ignore no-explicit-any -- field literal omits optional keys
           request: {
             title: "Repository details",
-            fields: [{ type: "text", name: "repo", label: "Repository" }],
-          },
+            fields: [{ type: "text", name: "repo", label: "Repository" }] as any,
+          } as any,
           timeoutMs: 0,
           pollIntervalMs: 1,
-          onRequest: () => ({
+          onRequest: (): CreatedReq => ({
             id: "input_request_1",
           }),
-          getSnapshot: (createdRequest) => ({
+          getSnapshot: (createdRequest): Snapshot => ({
             id: createdRequest.id,
             status: "open",
           }),
@@ -245,11 +266,11 @@ describe("agent/human-input", () => {
     const result = await waitForDurableHumanInputResolution({
       deadline: Date.now() + 100,
       pollIntervalMs: 1,
-      getSnapshot: () => snapshots.shift() ?? { status: "expired", values: {} },
+      getSnapshot: () => snapshots.shift() ?? { status: "expired" as const, values: {} },
       resolveSnapshot: (snapshot) =>
         snapshot.status === "submitted"
           ? {
-            submitted: true,
+            submitted: true as const,
             values: snapshot.values,
           }
           : undefined,

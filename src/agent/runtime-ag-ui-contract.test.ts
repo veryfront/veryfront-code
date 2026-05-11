@@ -1,7 +1,8 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  AgUiRuntimeRequestSchema,
+  getAgUiRuntimeRequestSchema,
   normalizeAgUiBrowserRuntimeRequest,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
@@ -9,7 +10,7 @@ import {
 
 describe("agent/runtime-ag-ui-contract", () => {
   it("exports the canonical runtime AG-UI request schema from veryfront/agent", () => {
-    const parsed = AgUiRuntimeRequestSchema.parse({
+    const parsed = getAgUiRuntimeRequestSchema().parse({
       threadId: crypto.randomUUID(),
       runId: "run_1",
       parentRunId: "run_parent",
@@ -78,7 +79,7 @@ describe("agent/runtime-ag-ui-contract", () => {
 
   it("normalizes runtime browser request defaults without leaking non-object state", () => {
     const normalized = normalizeAgUiBrowserRuntimeRequest(
-      AgUiRuntimeRequestSchema.parse({
+      getAgUiRuntimeRequestSchema().parse({
         threadId: crypto.randomUUID(),
         runId: "run_1",
         state: "not-an-object",

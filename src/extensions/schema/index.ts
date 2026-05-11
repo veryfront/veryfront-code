@@ -7,6 +7,7 @@
 // Type aliases (generic helpers + unions)
 export type {
   InferSchema,
+  InferInput,
   InferShape,
   SchemaFactory,
   ValidationResult,
