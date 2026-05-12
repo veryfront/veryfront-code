@@ -27,6 +27,7 @@ export type HostedChatProjectAccessResult =
   | { success: false; error: HostedChatProjectAccessError };
 
 export type ParsedHostedChatRequest = {
+  agentId: string | undefined;
   userId: string;
   authToken: string;
   messages: ChatUiMessage[];
@@ -99,6 +100,7 @@ async function verifyHostedChatProjectAccess(input: {
 
 export async function buildParsedHostedChatRequest(input: {
   chatRequest: HostedChatRequest;
+  agentId?: string;
   authToken: string;
   userId: string;
   verifyProjectAccess?: ParseHostedChatRequestOptions["verifyProjectAccess"];
@@ -125,6 +127,7 @@ export async function buildParsedHostedChatRequest(input: {
   }
 
   return {
+    agentId: input.agentId,
     userId: input.userId,
     authToken: input.authToken,
     messages: messages as ChatUiMessage[],
@@ -200,6 +203,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     authToken: authenticatedRequest.authToken,
     userId: authenticatedRequest.userId,
     chatRequest: chatRequest.data,
+    agentId: invocation.data.run.agentId,
     verifyProjectAccess: options.verifyProjectAccess,
   });
 }

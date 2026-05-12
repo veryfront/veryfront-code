@@ -189,7 +189,7 @@ import { startAgentService } from "veryfront/agent";
 await startAgentService({
   serviceName: "support-agent",
   agentId: "support",
-  entryUrl: import.meta.url,
+  entrypointUrl: import.meta.url,
 });
 ```
 
@@ -201,6 +201,12 @@ Veryfront projects: `agents/`, `tools/`, `skills/`, `resources/`, `prompts/`,
 `workflows/`, and `tasks/`. When a project needs non-standard paths, configure
 them in `veryfront.config.ts` under `ai.<primitive>.discovery.paths` instead of
 adding service-specific discovery configuration.
+
+The `agentId` option selects the default agent for direct `/api/runs` requests.
+Control-plane runtime invocations can target any discovered code or markdown
+agent by setting `run.agentId` in the `/api/control-plane/agents/stream`
+payload. This lets one deployed service expose multiple project agents while
+keeping direct chat integrations on a predictable default.
 
 ## Agent configuration
 

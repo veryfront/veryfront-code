@@ -175,6 +175,7 @@ export async function buildParsedHostedAgUiRequest(
   }
 
   return {
+    agentId: undefined,
     agUiInput: input.agUiInput,
     userId: input.userId,
     authToken: input.authToken,
