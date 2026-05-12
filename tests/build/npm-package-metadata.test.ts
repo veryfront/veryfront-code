@@ -20,4 +20,7 @@ Deno.test("keeps native sqlite support optional for npm consumers", () => {
   assertEquals(pkg.peerDependenciesMeta, {
     "better-sqlite3": { optional: true },
   });
+  assertEquals(pkg.overrides, {
+    protobufjs: "8.2.0",
+  });
 });
