@@ -51,17 +51,21 @@ Create a lazily-provisioned sandbox client that only claims a session on first u
 
 **Returns:** <code>LazySandbox</code>
 
-### `createHostedSandboxClient(options?)`
+### `createAgentServiceSandboxClient(options?)`
 
-Create a lazily-provisioned sandbox client for hosted agent runtimes. The client applies the current project as the default `projectReference` for command execution and async command jobs.
+Create a lazily-provisioned sandbox client for agent-service runtimes. The client applies the current project as the default `projectReference` for command execution and async command jobs.
 
-**Returns:** <code>HostedSandboxClient</code>
+`createHostedSandboxClient()` remains available as a compatibility alias.
 
-### `createHostedSandboxTools(options)`
+**Returns:** <code>AgentServiceSandboxClient</code>
 
-Create sandbox shell tools plus async command job tools for hosted agent runtimes. Pass an injected `createBashTool` factory to keep the framework independent of a concrete bash-tool package.
+### `createAgentServiceSandboxTools(options)`
 
-**Returns:** <code>Promise&lt;HostedSandboxToolsResult&gt;</code>
+Create sandbox shell tools plus async command job tools for agent-service runtimes. Pass an injected `createBashTool` factory to keep the framework independent of a concrete bash-tool package.
+
+`createHostedSandboxTools()` remains available as a compatibility alias.
+
+**Returns:** <code>Promise&lt;AgentServiceSandboxToolsResult&gt;</code>
 
 ### `sandbox.executeCommand(command, options?)`
 
@@ -251,18 +255,21 @@ Command job with captured stdout/stderr.
 
 ### Types
 
-| Name                        | Description                                                     |
-| --------------------------- | --------------------------------------------------------------- |
-| `CommandJob`                | Status of an async command job.                                 |
-| `CommandJobOutput`          | Async command job with captured output.                         |
-| `ExecResult`                | Result of a command execution: stdout, stderr, and exit code.   |
-| `ExecStreamEvent`           | Streaming event emitted during command execution.               |
-| `HostedSandboxClient`       | Hosted sandbox client with shell and async command job methods. |
-| `HostedSandboxToolsOptions` | Options for creating hosted sandbox tools.                      |
-| `HostedSandboxToolsResult`  | Hosted sandbox tool set plus close helper.                      |
-| `LazySandboxOptions`        | Options for lazily-provisioned sandbox sessions.                |
-| `SandboxOptions`            | Options for creating a sandbox session.                         |
-| `SandboxAttachment`         | Known sandbox session details used for `Sandbox.attach(...)`.   |
+| Name                              | Description                                                            |
+| --------------------------------- | ---------------------------------------------------------------------- |
+| `CommandJob`                      | Status of an async command job.                                        |
+| `CommandJobOutput`                | Async command job with captured output.                                |
+| `ExecResult`                      | Result of a command execution: stdout, stderr, and exit code.          |
+| `ExecStreamEvent`                 | Streaming event emitted during command execution.                      |
+| `AgentServiceSandboxClient`       | Agent-service sandbox client with shell and async command job methods. |
+| `AgentServiceSandboxToolsOptions` | Options for creating agent-service sandbox tools.                      |
+| `AgentServiceSandboxToolsResult`  | Agent-service sandbox tool set plus close helper.                      |
+| `HostedSandboxClient`             | Compatibility alias for `AgentServiceSandboxClient`.                   |
+| `HostedSandboxToolsOptions`       | Compatibility alias for `AgentServiceSandboxToolsOptions`.             |
+| `HostedSandboxToolsResult`        | Compatibility alias for `AgentServiceSandboxToolsResult`.              |
+| `LazySandboxOptions`              | Options for lazily-provisioned sandbox sessions.                       |
+| `SandboxOptions`                  | Options for creating a sandbox session.                                |
+| `SandboxAttachment`               | Known sandbox session details used for `Sandbox.attach(...)`.          |
 
 ## Related
 
