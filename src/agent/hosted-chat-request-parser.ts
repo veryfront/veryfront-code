@@ -70,6 +70,10 @@ function createValidationErrorResponse(input: {
   );
 }
 
+function getValidationErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "validation failed";
+}
+
 async function verifyHostedChatProjectAccess(input: {
   projectId: string | null;
   authToken: string;
@@ -123,7 +127,7 @@ export async function buildParsedHostedChatRequest(input: {
   return {
     userId: input.userId,
     authToken: input.authToken,
-    messages,
+    messages: messages as ChatUiMessage[],
     validatedContext: chatContext,
     projectId,
     conversationId,
@@ -153,7 +157,7 @@ export async function parseHostedChatRequestFromRequest(
   if (!parsed.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid request",
-      validationMessage: parsed.error.message,
+      validationMessage: getValidationErrorMessage(parsed.error),
     });
   }
 
@@ -178,7 +182,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
-      validationMessage: invocation.error.message,
+      validationMessage: getValidationErrorMessage(invocation.error),
     });
   }
 
@@ -188,7 +192,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
   if (!chatRequest.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
-      validationMessage: chatRequest.error.message,
+      validationMessage: getValidationErrorMessage(chatRequest.error),
     });
   }
 

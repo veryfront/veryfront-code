@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { tool } from "#veryfront/tool";
 import type { Tool } from "#veryfront/tool/types.ts";
 import {
@@ -69,17 +70,23 @@ export type RuntimeLoadSkillToolOptions = {
   logger?: RuntimeSkillMetadataLogger;
 };
 
-const runtimeLoadSkillToolInputSchema = z.object({
-  skillId: z
-    .string()
-    .regex(/^[a-zA-Z0-9_-]+$/, 'skillId must contain only letters, numbers, "_" or "-"')
-    .describe('The skill ID to load (e.g., "react-components", "api-design")'),
-  file: z.string().optional().describe(
-    'Optional reference file to load (e.g. "references/quickstart.md")',
-  ),
-});
+export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
+  v.object({
+    skillId: v.string()
+      .regex(/^[a-zA-Z0-9_-]+$/, 'skillId must contain only letters, numbers, "_" or "-"')
+      .describe('The skill ID to load (e.g., "react-components", "api-design")'),
+    file: v.string().optional().describe(
+      'Optional reference file to load (e.g. "references/quickstart.md")',
+    ),
+  })
+);
 
-export type RuntimeLoadSkillToolInput = z.infer<typeof runtimeLoadSkillToolInputSchema>;
+/** @deprecated Use getRuntimeLoadSkillToolInputSchema() */
+const runtimeLoadSkillToolInputSchema = getRuntimeLoadSkillToolInputSchema();
+
+export type RuntimeLoadSkillToolInput = InferSchema<
+  ReturnType<typeof getRuntimeLoadSkillToolInputSchema>
+>;
 
 export type RuntimeLoadSkillReferenceFileOutput = {
   skillId: string;
