@@ -1,69 +1,68 @@
 import type { ResolvedExtension } from "./types.ts";
 import { register, tryResolve } from "./contracts.ts";
-import type { AIProvider, AIProviderRegistry } from "./interfaces/index.ts";
-import { AIProviderRegistryName } from "./interfaces/index.ts";
-import { createAIProviderRegistry } from "./registries/ai-provider-registry.ts";
-import { OpenAIProvider } from "../../extensions/ext-openai/src/index.ts";
-import { AnthropicProvider } from "../../extensions/ext-anthropic/src/index.ts";
-import { GoogleProvider } from "../../extensions/ext-google/src/index.ts";
+import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
+import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
+import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
+import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.ts";
+import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
 import extEsbuild from "../../extensions/ext-esbuild/src/index.ts";
 import extBabel from "../../extensions/ext-babel/src/index.ts";
 import extMdx from "../../extensions/ext-mdx/src/index.ts";
 import extTailwind from "../../extensions/ext-tailwind/src/index.ts";
 import extNodeCompat from "../../extensions/ext-node-compat/src/index.ts";
 
-type BuiltinAIProviderDefinition = {
+type BuiltinLLMProviderDefinition = {
   extensionName: string;
   origin: string;
-  provider: () => AIProvider;
+  provider: () => LLMProvider;
 };
 
-const BUILTIN_AI_PROVIDERS: BuiltinAIProviderDefinition[] = [
+const BUILTIN_LLM_PROVIDERS: BuiltinLLMProviderDefinition[] = [
   {
-    extensionName: "ext-openai",
-    origin: "veryfront/ext-openai",
+    extensionName: "ext-llm-openai",
+    origin: "veryfront/ext-llm-openai",
     provider: () => new OpenAIProvider(),
   },
   {
-    extensionName: "ext-anthropic",
-    origin: "veryfront/ext-anthropic",
+    extensionName: "ext-llm-anthropic",
+    origin: "veryfront/ext-llm-anthropic",
     provider: () => new AnthropicProvider(),
   },
   {
-    extensionName: "ext-google",
-    origin: "veryfront/ext-google",
+    extensionName: "ext-llm-google",
+    origin: "veryfront/ext-llm-google",
     provider: () => new GoogleProvider(),
   },
 ];
 
-function getOrCreateAIProviderRegistry(): AIProviderRegistry {
-  const existing = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+function getOrCreateLLMProviderRegistry(): LLMProviderRegistry {
+  const existing = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
   if (existing) return existing;
 
-  const registry = createAIProviderRegistry();
-  register(AIProviderRegistryName, registry);
+  const registry = createLLMProviderRegistry();
+  register(LLMProviderRegistryName, registry);
   return registry;
 }
 
-function registerBuiltinAIProvider(
-  registry: AIProviderRegistry,
-  provider: AIProvider,
+function registerBuiltinLLMProvider(
+  registry: LLMProviderRegistry,
+  provider: LLMProvider,
 ): boolean {
   if (registry.has(provider.id)) return false;
   registry.register(provider);
   return true;
 }
 
-export function ensureBuiltinAIProviders(): AIProviderRegistry {
-  const registry = getOrCreateAIProviderRegistry();
-  for (const definition of BUILTIN_AI_PROVIDERS) {
-    registerBuiltinAIProvider(registry, definition.provider());
+export function ensureBuiltinLLMProviders(): LLMProviderRegistry {
+  const registry = getOrCreateLLMProviderRegistry();
+  for (const definition of BUILTIN_LLM_PROVIDERS) {
+    registerBuiltinLLMProvider(registry, definition.provider());
   }
   return registry;
 }
 
-function createBuiltinAIProviderExtension(
-  definition: BuiltinAIProviderDefinition,
+function createBuiltinLLMProviderExtension(
+  definition: BuiltinLLMProviderDefinition,
 ): ResolvedExtension {
   const provider = definition.provider();
   let didRegister = false;
@@ -74,17 +73,17 @@ function createBuiltinAIProviderExtension(
     extension: {
       name: definition.extensionName,
       version: "0.1.0",
-      capabilities: [{ type: "contract", name: `AIProvider:${provider.id}` }],
+      capabilities: [{ type: "contract", name: `LLMProvider:${provider.id}` }],
       setup(ctx) {
-        const registry = ctx.require<AIProviderRegistry>(AIProviderRegistryName);
-        didRegister = registerBuiltinAIProvider(registry, provider);
+        const registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
+        didRegister = registerBuiltinLLMProvider(registry, provider);
         if (didRegister) {
           ctx.logger.info(`[${definition.extensionName}] ${provider.id} provider registered`);
         }
       },
       teardown() {
         if (didRegister) {
-          const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+          const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
           registry?.unregister(provider.id);
           didRegister = false;
         }
@@ -120,6 +119,6 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
       origin: "veryfront/ext-node-compat",
       extension: extNodeCompat(),
     },
-    ...BUILTIN_AI_PROVIDERS.map(createBuiltinAIProviderExtension),
+    ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
   ];
 }

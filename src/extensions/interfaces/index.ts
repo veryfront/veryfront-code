@@ -1,7 +1,11 @@
 /**
- * Barrel export for all extension contract interfaces.
+ * Back-compat barrel for extension contract interfaces.
  *
- * Every export is a pure TypeScript type -- no runtime code is emitted.
+ * Re-exports the category-folder modules under `../{ai,auth,cache,...}/`.
+ * Most entries are interface re-exports (erased at runtime); the
+ * `LLMProviderRegistryName` re-export is a runtime value (a const).
+ * This file will be deleted once all consumers migrate to the
+ * `veryfront/extensions/<category>` paths.
  *
  * @module extensions/interfaces
  */
@@ -74,12 +78,12 @@ export type {
 // Tracing exporter
 export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
 
-// AI provider (registry + per-provider contract)
-export type { AIProvider, AIProviderConfig, AIProviderRegistry } from "./ai-provider.ts";
-export { AIProviderRegistryName } from "./ai-provider.ts";
+// LLM provider (registry + per-provider contract) — moved to ../llm/
+export type { LLMProvider, LLMProviderConfig, LLMProviderRegistry } from "../llm/index.ts";
+export { LLMProviderRegistryName } from "../llm/index.ts";
 
-// Embedding provider
-export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "./embedding-provider.ts";
+// Embedding provider — moved to ../llm/
+export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "../llm/index.ts";
 
 // Code parser
 export type {

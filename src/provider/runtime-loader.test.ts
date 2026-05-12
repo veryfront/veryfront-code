@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { assertGreaterOrEqual } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withToolInputStatusTransitions } from "./runtime-loader.ts";
-import { createOpenAIModelRuntime } from "../../extensions/ext-openai/src/openai-provider.ts";
+import { createOpenAIModelRuntime } from "../../extensions/ext-llm-openai/src/openai-provider.ts";
 
 async function collectAsync<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const values: T[] = [];

@@ -1,14 +1,14 @@
 /**
- * OpenAI provider — implements the {@link AIProvider} contract for OpenAI,
+ * OpenAI provider — implements the {@link LLMProvider} contract for OpenAI,
  * OpenAI-compatible endpoints (Azure OpenAI, Moonshot AI), and OpenAI's
  * Responses API.
  *
  * Ported from `src/provider/runtime-loader.ts` as part of PR 11.
  *
- * @module extensions/ext-openai/openai-provider
+ * @module extensions/ext-llm-openai/openai-provider
  */
 
-import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
+import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
 import type { EmbeddingRuntime, ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,
@@ -1467,10 +1467,10 @@ export function createOpenAIEmbeddingRuntime(
   };
 }
 
-export class OpenAIProvider implements AIProvider {
+export class OpenAIProvider implements LLMProvider {
   readonly id = "openai";
 
-  createModel(modelId: string, config: AIProviderConfig): ModelRuntime {
+  createModel(modelId: string, config: LLMProviderConfig): ModelRuntime {
     return createOpenAIModelRuntime(
       {
         apiKey: config.credential,
@@ -1482,7 +1482,7 @@ export class OpenAIProvider implements AIProvider {
     );
   }
 
-  createEmbedding(modelId: string, config: AIProviderConfig): EmbeddingRuntime {
+  createEmbedding(modelId: string, config: LLMProviderConfig): EmbeddingRuntime {
     return createOpenAIEmbeddingRuntime(
       {
         apiKey: config.credential,
@@ -1494,7 +1494,7 @@ export class OpenAIProvider implements AIProvider {
     );
   }
 
-  createResponses(modelId: string, config: AIProviderConfig): ModelRuntime {
+  createResponses(modelId: string, config: LLMProviderConfig): ModelRuntime {
     return createOpenAIResponsesRuntime(
       {
         apiKey: config.credential,

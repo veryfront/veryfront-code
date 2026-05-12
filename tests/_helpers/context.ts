@@ -95,7 +95,7 @@ export async function registerExtBabelForTests(): Promise<void> {
   }
 }
 
-// Register the ext-openai AIProviderRegistry contract. In production this
+// Register the ext-llm-openai LLMProviderRegistry contract. In production this
 // happens via extension discovery; integration tests scaffold ephemeral
 // project directories, so we register directly against the shared contract
 // registry. Must run again after each test because production-server shutdown
@@ -103,18 +103,18 @@ export async function registerExtBabelForTests(): Promise<void> {
 export async function registerExtOpenAIForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
-    const { createAIProviderRegistry } = await import(
-      "../../src/extensions/registries/ai-provider-registry.ts"
+    const { createLLMProviderRegistry } = await import(
+      "../../src/extensions/llm/llm-provider-registry.ts"
     );
-    const { AIProviderRegistryName } = await import(
+    const { LLMProviderRegistryName } = await import(
       "../../src/extensions/interfaces/index.ts"
     );
-    const extOpenAIFactory = (await import("../../extensions/ext-openai/src/index.ts")).default;
+    const extOpenAIFactory = (await import("../../extensions/ext-llm-openai/src/index.ts")).default;
     const ext = extOpenAIFactory();
-    const registry = tryResolve<ReturnType<typeof createAIProviderRegistry>>(
-      AIProviderRegistryName,
-    ) ?? createAIProviderRegistry();
-    register(AIProviderRegistryName, registry);
+    const registry = tryResolve<ReturnType<typeof createLLMProviderRegistry>>(
+      LLMProviderRegistryName,
+    ) ?? createLLMProviderRegistry();
+    register(LLMProviderRegistryName, registry);
     const noopLogger = {
       debug: () => {},
       info: () => {},
@@ -125,14 +125,14 @@ export async function registerExtOpenAIForTests(): Promise<void> {
       config: {},
       logger: noopLogger,
       provide: (name: string, impl: unknown) => register(name, impl),
-      get: (name: string) => (name === AIProviderRegistryName ? registry : undefined),
+      get: (name: string) => (name === LLMProviderRegistryName ? registry : undefined),
       require: (name: string) => {
-        if (name === AIProviderRegistryName) return registry;
+        if (name === LLMProviderRegistryName) return registry;
         throw new Error(`require not supported for "${name}" in test setup`);
       },
     } as never);
   } catch {
-    // Ignore if ext-openai cannot be loaded — provider is optional
+    // Ignore if ext-llm-openai cannot be loaded — provider is optional
   }
 }
 
@@ -153,19 +153,19 @@ export async function registerExtMdxForTests(): Promise<void> {
 export async function registerExtAnthropicForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
-    const { createAIProviderRegistry } = await import(
-      "../../src/extensions/registries/ai-provider-registry.ts"
+    const { createLLMProviderRegistry } = await import(
+      "../../src/extensions/llm/llm-provider-registry.ts"
     );
-    const { AIProviderRegistryName } = await import(
+    const { LLMProviderRegistryName } = await import(
       "../../src/extensions/interfaces/index.ts"
     );
     const extAnthropicFactory =
-      (await import("../../extensions/ext-anthropic/src/index.ts")).default;
+      (await import("../../extensions/ext-llm-anthropic/src/index.ts")).default;
     const ext = extAnthropicFactory();
-    const registry = tryResolve<ReturnType<typeof createAIProviderRegistry>>(
-      AIProviderRegistryName,
-    ) ?? createAIProviderRegistry();
-    register(AIProviderRegistryName, registry);
+    const registry = tryResolve<ReturnType<typeof createLLMProviderRegistry>>(
+      LLMProviderRegistryName,
+    ) ?? createLLMProviderRegistry();
+    register(LLMProviderRegistryName, registry);
     const noopLogger = {
       debug: () => {},
       info: () => {},
@@ -176,32 +176,32 @@ export async function registerExtAnthropicForTests(): Promise<void> {
       config: {},
       logger: noopLogger,
       provide: (name: string, impl: unknown) => register(name, impl),
-      get: (name: string) => (name === AIProviderRegistryName ? registry : undefined),
+      get: (name: string) => (name === LLMProviderRegistryName ? registry : undefined),
       require: (name: string) => {
-        if (name === AIProviderRegistryName) return registry;
+        if (name === LLMProviderRegistryName) return registry;
         throw new Error(`require not supported for "${name}" in test setup`);
       },
     } as never);
   } catch {
-    // Ignore if ext-anthropic cannot be loaded — provider is optional
+    // Ignore if ext-llm-anthropic cannot be loaded — provider is optional
   }
 }
 
 export async function registerExtGoogleForTests(): Promise<void> {
   try {
     const { register, tryResolve } = await import("../../src/extensions/contracts.ts");
-    const { createAIProviderRegistry } = await import(
-      "../../src/extensions/registries/ai-provider-registry.ts"
+    const { createLLMProviderRegistry } = await import(
+      "../../src/extensions/llm/llm-provider-registry.ts"
     );
-    const { AIProviderRegistryName } = await import(
+    const { LLMProviderRegistryName } = await import(
       "../../src/extensions/interfaces/index.ts"
     );
-    const extGoogleFactory = (await import("../../extensions/ext-google/src/index.ts")).default;
+    const extGoogleFactory = (await import("../../extensions/ext-llm-google/src/index.ts")).default;
     const ext = extGoogleFactory();
-    const registry = tryResolve<ReturnType<typeof createAIProviderRegistry>>(
-      AIProviderRegistryName,
-    ) ?? createAIProviderRegistry();
-    register(AIProviderRegistryName, registry);
+    const registry = tryResolve<ReturnType<typeof createLLMProviderRegistry>>(
+      LLMProviderRegistryName,
+    ) ?? createLLMProviderRegistry();
+    register(LLMProviderRegistryName, registry);
     const noopLogger = {
       debug: () => {},
       info: () => {},
@@ -212,14 +212,14 @@ export async function registerExtGoogleForTests(): Promise<void> {
       config: {},
       logger: noopLogger,
       provide: (name: string, impl: unknown) => register(name, impl),
-      get: (name: string) => (name === AIProviderRegistryName ? registry : undefined),
+      get: (name: string) => (name === LLMProviderRegistryName ? registry : undefined),
       require: (name: string) => {
-        if (name === AIProviderRegistryName) return registry;
+        if (name === LLMProviderRegistryName) return registry;
         throw new Error(`require not supported for "${name}" in test setup`);
       },
     } as never);
   } catch {
-    // Ignore if ext-google cannot be loaded — provider is optional
+    // Ignore if ext-llm-google cannot be loaded — provider is optional
   }
 }
 
@@ -641,19 +641,19 @@ export class TestContext {
       // Ignore — graceful fallback via tryResolve in the shim covers it.
     }
 
-    // Materialize ext-openai into the project's extensions/ dir so that
+    // Materialize ext-llm-openai into the project's extensions/ dir so that
     // `discoverProjectExtensions` can find it during integration tests
     // that exercise openai/* model paths.
     try {
-      const extOpenAIDir = join(this.projectDir, "extensions", "ext-openai");
+      const extOpenAIDir = join(this.projectDir, "extensions", "ext-llm-openai");
       await mkdir(extOpenAIDir, { recursive: true });
-      const extOpenAIReal = resolvePath("extensions/ext-openai/src/index.ts");
+      const extOpenAIReal = resolvePath("extensions/ext-llm-openai/src/index.ts");
       await writeTextFile(
         join(extOpenAIDir, "index.ts"),
         `export { default } from "${"file://" + extOpenAIReal}";\n`,
       );
     } catch {
-      // Ignore — ext-openai is optional; tests that don't need it will still pass.
+      // Ignore — ext-llm-openai is optional; tests that don't need it will still pass.
     }
 
     // Materialize ext-mdx into the project's extensions/ dir so that
@@ -671,30 +671,30 @@ export class TestContext {
       // Ignore — graceful fallback via tryResolve in the shim covers it.
     }
 
-    // Materialize ext-anthropic for tests that exercise anthropic/* model paths.
+    // Materialize ext-llm-anthropic for tests that exercise anthropic/* model paths.
     try {
-      const extAnthropicDir = join(this.projectDir, "extensions", "ext-anthropic");
+      const extAnthropicDir = join(this.projectDir, "extensions", "ext-llm-anthropic");
       await mkdir(extAnthropicDir, { recursive: true });
-      const extAnthropicReal = resolvePath("extensions/ext-anthropic/src/index.ts");
+      const extAnthropicReal = resolvePath("extensions/ext-llm-anthropic/src/index.ts");
       await writeTextFile(
         join(extAnthropicDir, "index.ts"),
         `export { default } from "${"file://" + extAnthropicReal}";\n`,
       );
     } catch {
-      // Ignore — ext-anthropic is optional; tests that don't need it will still pass.
+      // Ignore — ext-llm-anthropic is optional; tests that don't need it will still pass.
     }
 
-    // Materialize ext-google for tests that exercise google/* model paths.
+    // Materialize ext-llm-google for tests that exercise google/* model paths.
     try {
-      const extGoogleDir = join(this.projectDir, "extensions", "ext-google");
+      const extGoogleDir = join(this.projectDir, "extensions", "ext-llm-google");
       await mkdir(extGoogleDir, { recursive: true });
-      const extGoogleReal = resolvePath("extensions/ext-google/src/index.ts");
+      const extGoogleReal = resolvePath("extensions/ext-llm-google/src/index.ts");
       await writeTextFile(
         join(extGoogleDir, "index.ts"),
         `export { default } from "${"file://" + extGoogleReal}";\n`,
       );
     } catch {
-      // Ignore — ext-google is optional; tests that don't need it will still pass.
+      // Ignore — ext-llm-google is optional; tests that don't need it will still pass.
     }
 
     await writeTextFile(
@@ -769,7 +769,7 @@ export async function withTestContext<T>(
       await registerExtOpenAIForTests();
       await registerExtAnthropicForTests();
 
-      // Re-register ext-google so google/* model paths resolve after
+      // Re-register ext-llm-google so google/* model paths resolve after
       // teardownAll() clears the registry between tests.
       await registerExtGoogleForTests();
 

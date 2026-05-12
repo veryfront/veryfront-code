@@ -1,5 +1,5 @@
 /**
- * Provider-namespaced token storage for AI provider API keys.
+ * Provider-namespaced token storage for LLM provider API keys.
  *
  * Stores API keys as plaintext with 0600 permissions in
  * ~/.config/veryfront/tokens/<provider>. Same security model

@@ -75,7 +75,7 @@ Create a new Veryfront application with proper structure and conventions.
         provider: {
           type: "string",
           default: "anthropic",
-          description: "AI provider to configure",
+          description: "LLM provider to configure",
         },
       },
     },

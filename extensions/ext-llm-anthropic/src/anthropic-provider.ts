@@ -1,14 +1,14 @@
 /**
- * Anthropic provider — implements the {@link AIProvider} contract for
+ * Anthropic provider — implements the {@link LLMProvider} contract for
  * Anthropic's Messages API (direct + via Veryfront Cloud / Bedrock-compatible
  * proxies).
  *
  * Ported from `src/provider/runtime-loader.ts` as part of PR 12.
  *
- * @module extensions/ext-anthropic/anthropic-provider
+ * @module extensions/ext-llm-anthropic/anthropic-provider
  */
 
-import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
+import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
 import type { ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,
@@ -1207,10 +1207,10 @@ export function createAnthropicModelRuntime(
   };
 }
 
-export class AnthropicProvider implements AIProvider {
+export class AnthropicProvider implements LLMProvider {
   readonly id = "anthropic";
 
-  createModel(modelId: string, config: AIProviderConfig): ModelRuntime {
+  createModel(modelId: string, config: LLMProviderConfig): ModelRuntime {
     return createAnthropicModelRuntime(
       {
         apiKey: config.credential,

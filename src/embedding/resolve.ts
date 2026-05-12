@@ -3,8 +3,8 @@ import { getGoogleGenAIEnvConfig, getOpenAIEnvConfig } from "#veryfront/config/e
 import { createLocalEmbeddingModel } from "#veryfront/provider/local/embedding-runtime-adapter.ts";
 import type { EmbeddingRuntime } from "#veryfront/provider/types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
-import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import type { LLMProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
+import { LLMProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import { createVeryfrontCloudEmbeddingModel } from "./veryfront-cloud/provider.ts";
 
 type EmbeddingProviderFactory = (modelId: string) => EmbeddingRuntime;
@@ -43,7 +43,7 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
       const provider = registry?.get("openai");
       if (provider?.createEmbedding) {
         return provider.createEmbedding(id, {
@@ -55,7 +55,7 @@ function autoInitializeFromEnv(): void {
         createError({
           type: "config",
           message:
-            "OpenAI provider not installed. Add @veryfront/ext-openai to use openai/* embedding models.",
+            "OpenAI provider not installed. Add @veryfront/ext-llm-openai to use openai/* embedding models.",
         }),
       );
     });
@@ -73,7 +73,7 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+      const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
       const provider = registry?.get("google");
       if (provider?.createEmbedding) {
         return provider.createEmbedding(id, {
@@ -84,7 +84,7 @@ function autoInitializeFromEnv(): void {
         createError({
           type: "config",
           message:
-            "Google provider not installed. Add @veryfront/ext-google to use google/* embedding models.",
+            "Google provider not installed. Add @veryfront/ext-llm-google to use google/* embedding models.",
         }),
       );
     });

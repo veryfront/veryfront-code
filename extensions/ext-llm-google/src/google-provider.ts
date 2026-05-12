@@ -1,13 +1,13 @@
 /**
- * Google provider — implements the {@link AIProvider} contract for Google's
+ * Google provider — implements the {@link LLMProvider} contract for Google's
  * Generative Language API (direct + via Veryfront Cloud).
  *
  * Ported from `src/provider/runtime-loader.ts` as part of PR 13.
  *
- * @module extensions/ext-google/google-provider
+ * @module extensions/ext-llm-google/google-provider
  */
 
-import type { AIProvider, AIProviderConfig } from "veryfront/extensions/interfaces";
+import type { LLMProvider, LLMProviderConfig } from "veryfront/extensions/llm";
 import type { EmbeddingRuntime, ModelRuntime } from "veryfront/provider/types";
 import {
   buildProviderError,
@@ -858,10 +858,10 @@ export function createGoogleEmbeddingRuntime(
   };
 }
 
-export class GoogleProvider implements AIProvider {
+export class GoogleProvider implements LLMProvider {
   readonly id = "google";
 
-  createModel(modelId: string, config: AIProviderConfig): ModelRuntime {
+  createModel(modelId: string, config: LLMProviderConfig): ModelRuntime {
     return createGoogleModelRuntime(
       {
         apiKey: config.credential,
@@ -873,7 +873,7 @@ export class GoogleProvider implements AIProvider {
     );
   }
 
-  createEmbedding(modelId: string, config: AIProviderConfig): EmbeddingRuntime {
+  createEmbedding(modelId: string, config: LLMProviderConfig): EmbeddingRuntime {
     return createGoogleEmbeddingRuntime(
       {
         apiKey: config.credential,

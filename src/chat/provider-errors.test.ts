@@ -57,7 +57,7 @@ describe("chat/provider-errors", () => {
 
     assertEquals(parseProviderError(errorA), {
       code: "EXTERNAL_SERVICE_ERROR",
-      message: "AI provider service error",
+      message: "LLM provider service error",
     });
 
     assertEquals(

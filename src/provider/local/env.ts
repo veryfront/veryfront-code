@@ -1,5 +1,5 @@
 /**
- * Cross-platform environment helpers for local AI provider.
+ * Cross-platform environment helpers for local LLM provider.
  *
  * Uses the platform compat layer so all local-AI checks go through
  * a single function — no duplicated env access patterns.

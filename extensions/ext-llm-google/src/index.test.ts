@@ -1,22 +1,22 @@
 import { describe, it } from "@std/testing/bdd";
 import { assert, assertEquals } from "@std/assert";
 import extGoogle, { GoogleProvider } from "./index.ts";
-import type { AIProviderRegistry } from "veryfront/extensions/interfaces";
+import type { LLMProviderRegistry } from "veryfront/extensions/llm";
 
-describe("ext-google", () => {
-  it("factory descriptor advertises the AIProvider:google capability", () => {
+describe("ext-llm-google", () => {
+  it("factory descriptor advertises the LLMProvider:google capability", () => {
     const ext = extGoogle();
-    assertEquals(ext.name, "ext-google");
+    assertEquals(ext.name, "ext-llm-google");
     assertEquals(ext.capabilities?.[0], {
       type: "contract",
-      name: "AIProvider:google",
+      name: "LLMProvider:google",
     });
   });
 
-  it("setup registers the provider in the AIProviderRegistry", () => {
+  it("setup registers the provider in the LLMProviderRegistry", () => {
     const ext = extGoogle();
     const registered: Record<string, unknown> = {};
-    const fakeRegistry: AIProviderRegistry = {
+    const fakeRegistry: LLMProviderRegistry = {
       register: (p) => {
         registered[p.id] = p;
       },
@@ -34,7 +34,7 @@ describe("ext-google", () => {
       provide: () => {},
       get: () => undefined,
       require: <T>(name: string): T => {
-        if (name === "AIProviderRegistry") return fakeRegistry as unknown as T;
+        if (name === "LLMProviderRegistry") return fakeRegistry as unknown as T;
         throw new Error(`unexpected require(${name})`);
       },
     };
