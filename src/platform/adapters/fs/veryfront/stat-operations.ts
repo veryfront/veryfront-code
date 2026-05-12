@@ -109,6 +109,7 @@ export class StatOperations extends VeryfrontOperationsBase {
                 // Add to index for future lookups
                 fileIdx.set(normalizedPath, {
                   id: exactMatch.id,
+                  version_id: undefined,
                   path: normalizedPath,
                   content: undefined,
                   type: "file",

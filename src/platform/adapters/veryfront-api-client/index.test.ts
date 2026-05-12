@@ -1,3 +1,5 @@
+import "#veryfront/schemas/_test-setup.ts";
+
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
@@ -20,13 +22,13 @@ describe("veryfront-api-client/index.ts exports", () => {
     }
 
     const schemas = [
-      "BranchFileDetailSchema",
-      "EnvironmentFileDetailSchema",
-      "ListBranchFilesResponseSchema",
-      "ListEnvironmentFilesResponseSchema",
-      "ListProjectsResponseSchema",
-      "ProjectFileSchema",
-      "ProjectSchema",
+      "getBranchFileDetailSchema",
+      "getEnvironmentFileDetailSchema",
+      "getListBranchFilesResponseSchema",
+      "getListEnvironmentFilesResponseSchema",
+      "getListProjectsResponseSchema",
+      "getProjectFileSchema",
+      "getProjectSchema",
     ] as const;
 
     for (const key of schemas) {

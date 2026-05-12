@@ -18,7 +18,7 @@ import {
   InternalAgentRequestBodyTooLargeError,
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
-import { ResumeSignalSchema } from "#veryfront/internal-agents/schema.ts";
+import { getResumeSignalSchema } from "#veryfront/internal-agents/schema.ts";
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -69,7 +69,7 @@ export class AgentRunResumeHandler extends BaseHandler {
           expectedSurface: "studio",
         });
 
-        const signal = ResumeSignalSchema.parse(JSON.parse(rawBody));
+        const signal = getResumeSignalSchema().parse(JSON.parse(rawBody));
         const outcome = this.sessionManager.submitToolResult(runId, {
           toolCallId: signal.toolCallId,
           result: signal.result,

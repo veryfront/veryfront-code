@@ -1,19 +1,19 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createContact, formatContactName } from "../../lib/hubspot-client.ts";
 
 export default tool({
   id: "create-contact",
   description: "Create a new contact in HubSpot CRM. Email is required, other fields are optional.",
-  inputSchema: z.object({
-    email: z.string().email().describe("Contact email address (required)"),
-    firstname: z.string().optional().describe("First name"),
-    lastname: z.string().optional().describe("Last name"),
-    phone: z.string().optional().describe("Phone number"),
-    company: z.string().optional().describe("Company name"),
-    jobtitle: z.string().optional().describe("Job title"),
-    website: z.string().optional().describe("Website URL"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    email: v.string().email().describe("Contact email address (required)"),
+    firstname: v.string().optional().describe("First name"),
+    lastname: v.string().optional().describe("Last name"),
+    phone: v.string().optional().describe("Phone number"),
+    company: v.string().optional().describe("Company name"),
+    jobtitle: v.string().optional().describe("Job title"),
+    website: v.string().optional().describe("Website URL"),
+  }))(),
   async execute({ email, firstname, lastname, phone, company, jobtitle, website }) {
     const properties: Record<string, string> = { email };
 

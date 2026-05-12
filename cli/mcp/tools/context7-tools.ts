@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import type { MCPTool } from "veryfront/mcp";
 import { createContext7ToolSource } from "veryfront/tool";
 
@@ -30,18 +30,20 @@ const c7ResolveLibrary: MCPTool<
     idempotentHint: true,
     openWorldHint: true,
   },
-  inputSchema: z.object({
-    libraryName: z
-      .string()
-      .describe(
-        "Library name to search for. Use the official name with proper punctuation — e.g., 'Next.js' not 'nextjs'.",
-      ),
-    query: z
-      .string()
-      .describe(
-        "The question or task you need help with. Used to rank results by relevance.",
-      ),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      libraryName: v
+        .string()
+        .describe(
+          "Library name to search for. Use the official name with proper punctuation — e.g., 'Next.js' not 'nextjs'.",
+        ),
+      query: v
+        .string()
+        .describe(
+          "The question or task you need help with. Used to rank results by relevance.",
+        ),
+    })
+  )(),
   execute: async (input) => {
     if (!isContext7Available()) {
       return {
@@ -76,18 +78,20 @@ const c7QueryDocs: MCPTool<
     idempotentHint: true,
     openWorldHint: true,
   },
-  inputSchema: z.object({
-    libraryId: z
-      .string()
-      .describe(
-        "Context7-compatible library ID (e.g., '/vercel/next.js', '/supabase/supabase').",
-      ),
-    query: z
-      .string()
-      .describe(
-        "The question or task you need help with. Be specific and include relevant details.",
-      ),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      libraryId: v
+        .string()
+        .describe(
+          "Context7-compatible library ID (e.g., '/vercel/next.js', '/supabase/supabase').",
+        ),
+      query: v
+        .string()
+        .describe(
+          "The question or task you need help with. Be specific and include relevant details.",
+        ),
+    })
+  )(),
   execute: async (input) => {
     if (!isContext7Available()) {
       return {

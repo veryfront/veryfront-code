@@ -1,72 +1,88 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-export const colorSchemeSchema = z.enum(["light", "dark"]);
+export const getColorSchemeSchema = defineSchema((v) => v.enum(["light", "dark"]));
 
-export const environmentSchema = z.enum(["preview", "production"]);
+export const getEnvironmentSchema = defineSchema((v) => v.enum(["preview", "production"]));
 
-export const pageTypeSchema = z.enum(["mdx", "md", "tsx", "jsx", "ts", "js"]);
-export const clientModuleStrategySchema = z.enum(["fs", "rsc-module"]);
+export const getPageTypeSchema = defineSchema((v) =>
+  v.enum(["mdx", "md", "tsx", "jsx", "ts", "js"])
+);
+export const getClientModuleStrategySchema = defineSchema((v) => v.enum(["fs", "rsc-module"]));
 
-export const HTMLGenerationOptionsSchema = z.object({
-  mode: z.enum(["development", "production"]),
-  config: z.any(), // VeryfrontConfig is complex, use any
-  importMap: z.record(z.string(), z.string()).optional(),
-  nestedLayouts: z
-    .array(
-      z.object({
-        kind: z.string(),
-        path: z.string().optional(),
-        componentPath: z.string().optional(),
+export const getHTMLGenerationOptionsSchema = defineSchema((v) =>
+  v.object({
+    mode: v.enum(["development", "production"]),
+    // deno-lint-ignore no-explicit-any -- VeryfrontConfig is complex, use any
+    config: v.any(), // VeryfrontConfig is complex, use any
+    importMap: v.record(v.string(), v.string()).optional(),
+    nestedLayouts: v
+      .array(
+        v.object({
+          kind: v.string(),
+          path: v.string().optional(),
+          componentPath: v.string().optional(),
+        }),
+      )
+      .optional(),
+    appPath: v.string().optional(),
+    pagePath: v.string().optional(),
+    pageType: getPageTypeSchema().optional(),
+    nonce: v.string().optional(),
+    projectDir: v.string().optional(),
+    globalCSS: v.string().optional(),
+    frontmatter: v.record(v.string(), v.unknown()).optional(),
+    layoutProps: v.record(v.string(), v.record(v.string(), v.unknown())).optional(),
+    studioEmbed: v.boolean().optional(),
+    projectId: v.string().optional(),
+    projectSlug: v.string().optional(),
+    pageId: v.string().optional(),
+    sourceHash: v.string().optional(),
+    colorScheme: getColorSchemeSchema().optional(),
+    colorSchemeFromParam: v.boolean().optional(),
+    colorSchemeFromHeader: v.boolean().optional(),
+    environment: getEnvironmentSchema().optional(),
+    headings: v
+      .array(
+        v.object({
+          id: v.string(),
+          text: v.string(),
+          level: v.number().int().positive(),
+        }),
+      )
+      .optional(),
+    projectClasses: v.custom<Set<string>>((val) => val instanceof Set).optional(),
+    isLocalProject: v.boolean().optional(),
+    noHmr: v.boolean().optional(),
+    forceProductionScripts: v.boolean().optional(),
+  })
+);
+
+export const getHydrationDataSchema = defineSchema((v) =>
+  v.object({
+    slug: v.string(),
+    props: v.record(v.string(), v.unknown()),
+    params: v.record(v.string(), v.union([v.string(), v.array(v.string())])),
+    layouts: v.array(
+      v.object({
+        kind: v.string(),
+        path: v.string().optional(),
       }),
-    )
-    .optional(),
-  appPath: z.string().optional(),
-  pagePath: z.string().optional(),
-  pageType: pageTypeSchema.optional(),
-  nonce: z.string().optional(),
-  projectDir: z.string().optional(),
-  globalCSS: z.string().optional(),
-  frontmatter: z.record(z.string(), z.unknown()).optional(),
-  layoutProps: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
-  studioEmbed: z.boolean().optional(),
-  projectId: z.string().optional(),
-  projectSlug: z.string().optional(),
-  pageId: z.string().optional(),
-  sourceHash: z.string().optional(),
-  colorScheme: colorSchemeSchema.optional(),
-  colorSchemeFromParam: z.boolean().optional(),
-  colorSchemeFromHeader: z.boolean().optional(),
-  environment: environmentSchema.optional(),
-  headings: z
-    .array(
-      z.object({
-        id: z.string(),
-        text: z.string(),
-        level: z.number().int().positive(),
-      }),
-    )
-    .optional(),
-  projectClasses: z.set(z.string()).optional(),
-  isLocalProject: z.boolean().optional(),
-  noHmr: z.boolean().optional(),
-  forceProductionScripts: z.boolean().optional(),
-});
-
-export const HydrationDataSchema = z.object({
-  slug: z.string(),
-  props: z.record(z.string(), z.unknown()),
-  params: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
-  layouts: z.array(
-    z.object({
-      kind: z.string(),
-      path: z.string().optional(),
-    }),
-  ),
-  appPath: z.string().optional(),
-  pagePath: z.string().optional(),
-  clientModuleStrategy: clientModuleStrategySchema.optional(),
-});
+    ),
+    appPath: v.string().optional(),
+    pagePath: v.string().optional(),
+    clientModuleStrategy: getClientModuleStrategySchema().optional(),
+  })
+);
 
 // Inferred types
-export type HTMLGenerationOptions = z.infer<typeof HTMLGenerationOptionsSchema>;
-export type HydrationData = z.infer<typeof HydrationDataSchema>;
+export type HTMLGenerationOptions = InferSchema<ReturnType<typeof getHTMLGenerationOptionsSchema>>;
+export type HydrationData = InferSchema<ReturnType<typeof getHydrationDataSchema>>;
+
+// Backward compat aliases
+export const colorSchemeSchema = getColorSchemeSchema();
+export const environmentSchema = getEnvironmentSchema();
+export const pageTypeSchema = getPageTypeSchema();
+export const clientModuleStrategySchema = getClientModuleStrategySchema();
+export const HTMLGenerationOptionsSchema = getHTMLGenerationOptionsSchema();
+export const HydrationDataSchema = getHydrationDataSchema();

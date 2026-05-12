@@ -1,20 +1,20 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatContactName, getContact } from "../../lib/hubspot-client.ts";
 
 export default tool({
   id: "get-contact",
   description:
     "Get detailed information about a specific contact in HubSpot CRM by their contact ID.",
-  inputSchema: z.object({
-    contactId: z.string().describe("The HubSpot contact ID"),
-    properties: z
-      .array(z.string())
+  inputSchema: defineSchema((v) => v.object({
+    contactId: v.string().describe("The HubSpot contact ID"),
+    properties: v
+      .array(v.string())
       .optional()
       .describe(
         "Additional properties to retrieve (e.g., website, city, state, notes)",
       ),
-  }),
+  }))(),
   async execute({ contactId, properties }) {
     const contact = await getContact(contactId, properties);
 

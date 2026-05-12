@@ -1,14 +1,16 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import {
-  AgUiRuntimeContextItemSchema,
-  AgUiRuntimeContextSchema,
-  AgUiRuntimeInjectedToolSchema,
+  type AgUiRuntimeContextItem,
   type AgUiRuntimeMessage,
-  AgUiRuntimeMessageSchema,
   type AgUiRuntimeRequest,
-  AgUiRuntimeRequestSchema,
-  AgUiRuntimeRunIdSchema,
-  AgUiRuntimeToolCallSchema,
+  getAgUiRuntimeContextItemSchema,
+  getAgUiRuntimeContextSchema,
+  getAgUiRuntimeInjectedToolSchema,
+  getAgUiRuntimeMessageSchema,
+  getAgUiRuntimeRequestSchema,
+  getAgUiRuntimeRunIdSchema,
+  getAgUiRuntimeToolCallSchema,
 } from "#veryfront/agent/runtime-ag-ui-contract.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/data-stream.ts";
 
@@ -27,63 +29,73 @@ function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   }
 }
 
-export const RunIdSchema = AgUiRuntimeRunIdSchema;
+export const getRunIdSchema = getAgUiRuntimeRunIdSchema;
 
-export const AgentIdSchema = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
+export const getAgentIdSchema = defineSchema((v) =>
+  v.string().min(1).max(128).regex(AGENT_ID_PATTERN)
+);
 
-export const RuntimeAgentSourceContextSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("branch"),
-    branch: z.string().min(1).max(255),
-  }),
-  z.object({
-    type: z.literal("environment"),
-    environmentName: z.string().min(1).max(255),
-    releaseId: z.string().min(1).max(255).optional(),
-  }),
-  z.object({
-    type: z.literal("release"),
-    releaseId: z.string().min(1).max(255),
-  }),
-]);
+export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("branch"),
+      branch: v.string().min(1).max(255),
+    }),
+    v.object({
+      type: v.literal("environment"),
+      environmentName: v.string().min(1).max(255),
+      releaseId: v.string().min(1).max(255).optional(),
+    }),
+    v.object({
+      type: v.literal("release"),
+      releaseId: v.string().min(1).max(255),
+    }),
+  ])
+);
 
-export const RuntimeInjectedToolSchema = AgUiRuntimeInjectedToolSchema;
-export const RuntimeContextItemSchema = AgUiRuntimeContextItemSchema;
-export const RuntimeMessageSchema = AgUiRuntimeMessageSchema;
-export const RuntimeContextSchema = AgUiRuntimeContextSchema;
-export const RuntimeRunAgentInputSchema = AgUiRuntimeRequestSchema;
+export const getRuntimeInjectedToolSchema = getAgUiRuntimeInjectedToolSchema;
+export const getRuntimeContextItemSchema = getAgUiRuntimeContextItemSchema;
+export const getRuntimeMessageSchema = getAgUiRuntimeMessageSchema;
+export const getRuntimeContextSchema = getAgUiRuntimeContextSchema;
+export const getRuntimeRunAgentInputSchema = getAgUiRuntimeRequestSchema;
 
-export const InternalAgentCompatibilityMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.enum(["user", "assistant", "system", "tool"]),
-  parts: z.array(z.object({ type: z.string().min(1) }).passthrough()).default([]),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-  createdAt: z.string().optional(),
-});
+export const getInternalAgentCompatibilityMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    role: v.enum(["user", "assistant", "system", "tool"] as const),
+    parts: v.array(v.object({ type: v.string().min(1) }).passthrough()).default([]),
+    metadata: v.record(v.string(), v.unknown()).optional(),
+    createdAt: v.string().optional(),
+  })
+);
 
-export const InternalAgentStreamRequestSchema = z.object({
-  agentId: AgentIdSchema,
-  threadId: z.string().uuid(),
-  runId: RunIdSchema,
-  parentRunId: RunIdSchema.optional(),
-  state: z.unknown().optional(),
-  messages: z.array(z.union([RuntimeMessageSchema, InternalAgentCompatibilityMessageSchema])).max(
-    MAX_RUNTIME_MESSAGES,
-  ),
-  tools: z.array(RuntimeInjectedToolSchema).max(50).default([]),
-  context: z.array(RuntimeContextSchema).max(10).default([]).refine(
-    (value) => isWithinJsonSizeLimit(value, 65_536),
-    { message: "context must be less than 64 KB total" },
-  ),
-  agentSource: RuntimeAgentSourceContextSchema.optional(),
-  forwardedProps: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-    { message: "forwardedProps must be less than 64 KB" },
-  ),
-});
+export const getInternalAgentStreamRequestSchema = defineSchema((v) =>
+  v.object({
+    agentId: getAgentIdSchema(),
+    threadId: v.string().uuid(),
+    runId: getRunIdSchema(),
+    parentRunId: getRunIdSchema().optional(),
+    state: v.unknown().optional(),
+    messages: v.array(
+      v.union([getRuntimeMessageSchema(), getInternalAgentCompatibilityMessageSchema()]),
+    ).max(MAX_RUNTIME_MESSAGES),
+    tools: v.array(getRuntimeInjectedToolSchema()).max(50).default([]),
+    context: v.array(getRuntimeContextSchema()).max(10).default([]).refine(
+      (value) => isWithinJsonSizeLimit(value, 65_536),
+      { message: "context must be less than 64 KB total" },
+    ),
+    agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
+      { message: "forwardedProps must be less than 64 KB" },
+    ),
+  })
+);
 
 type RuntimeMessage = AgUiRuntimeMessage;
-type InternalAgentCompatibilityMessage = z.infer<typeof InternalAgentCompatibilityMessageSchema>;
+type InternalAgentCompatibilityMessage = InferSchema<
+  ReturnType<typeof getInternalAgentCompatibilityMessageSchema>
+>;
 
 function extractToolArgs(
   part: Record<string, unknown>,
@@ -161,9 +173,11 @@ function isCanonicalToolCallPart(part: Record<string, unknown>): boolean {
       type !== "tool_result");
 }
 
+type AgUiRuntimeToolCall = InferSchema<ReturnType<typeof getAgUiRuntimeToolCallSchema>>;
+
 function getToolCallShape(
   part: Record<string, unknown>,
-): z.infer<typeof AgUiRuntimeToolCallSchema> | null {
+): AgUiRuntimeToolCall | null {
   const id = getPartString(part, "toolCallId", "tool_call_id", "id");
   const name = getPartString(part, "toolName", "tool_name", "name");
 
@@ -205,11 +219,19 @@ function toRuntimeMessage(
     return message;
   }
 
-  const textContent = message.parts
+  // The compatibility schema's parts use `passthrough()` so unknown fields
+  // (like `text`) survive parsing but the inferred TS type only exposes the
+  // explicit `{ type }` shape. Cast to a loose record to read those passthrough
+  // fields.
+  const textContent = (message.parts as ReadonlyArray<Record<string, unknown>>)
     .filter((part) => part.type === "text" && typeof part.text === "string")
-    .map((part) => part.text)
+    .map((part) => part.text as string)
     .join("\n");
 
+  // Use the conditional-spread pattern (omitting keys entirely when not
+  // present) to preserve the pre-migration runtime semantics. Cast the
+  // return literal to `RuntimeMessage` to satisfy the contract DSL's strict
+  // object shape (optional fields type as required-key, `T | undefined`).
   const sharedFields = {
     ...(message.metadata ? { metadata: message.metadata } : {}),
     ...(message.createdAt ? { createdAt: message.createdAt } : {}),
@@ -222,14 +244,14 @@ function toRuntimeMessage(
         role: "system",
         content: textContent,
         ...sharedFields,
-      };
+      } as RuntimeMessage;
     case "user":
       return {
         id: message.id,
         role: "user",
         content: textContent,
         ...sharedFields,
-      };
+      } as RuntimeMessage;
     case "assistant": {
       const toolCalls = message.parts.flatMap((part) => {
         if (!isCanonicalToolCallPart(part) && !isLegacyToolCallPart(part)) {
@@ -246,7 +268,7 @@ function toRuntimeMessage(
         ...(textContent ? { content: textContent } : {}),
         ...(toolCalls.length ? { toolCalls } : {}),
         ...sharedFields,
-      };
+      } as RuntimeMessage;
     }
     case "tool": {
       const toolResultPart = message.parts.find(
@@ -270,13 +292,13 @@ function toRuntimeMessage(
         content: toolResult !== undefined ? stringifyToolResult(toolResult) : textContent,
         ...(toolError ? { error: toolError } : {}),
         ...sharedFields,
-      };
+      } as RuntimeMessage;
     }
   }
 }
 
 export function toRuntimeRunAgentInput(
-  input: z.infer<typeof InternalAgentStreamRequestSchema>,
+  input: InferSchema<ReturnType<typeof getInternalAgentStreamRequestSchema>>,
 ): AgUiRuntimeRequest {
   return {
     threadId: input.threadId,
@@ -287,24 +309,33 @@ export function toRuntimeRunAgentInput(
     tools: input.tools,
     context: input.context,
     ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
-  };
+  } as AgUiRuntimeRequest;
 }
 
-export const ResumeSignalSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("tool_result"),
-    toolCallId: z.string().min(1).max(128),
-    result: z.unknown().refine(
-      (value) => isWithinJsonSizeLimit(value, MAX_TOOL_RESULT_BYTES),
-      { message: "Tool result must be less than 64 KB" },
-    ),
-    isError: z.boolean().optional().default(false),
-  }),
-]);
+export const getResumeSignalSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("tool_result"),
+      toolCallId: v.string().min(1).max(128),
+      result: v.unknown().refine(
+        (value) => isWithinJsonSizeLimit(value, MAX_TOOL_RESULT_BYTES),
+        { message: "Tool result must be less than 64 KB" },
+      ),
+      isError: v.boolean().optional().default(false),
+    }),
+  ])
+);
 
-export type RuntimeInjectedTool = z.infer<typeof RuntimeInjectedToolSchema>;
-export type RuntimeContextItem = z.infer<typeof RuntimeContextItemSchema>;
-export type RuntimeAgentSourceContext = z.infer<typeof RuntimeAgentSourceContextSchema>;
+export type RuntimeInjectedTool = InferSchema<ReturnType<typeof getRuntimeInjectedToolSchema>>;
+export type RuntimeContextItem = AgUiRuntimeContextItem;
+export type RuntimeAgentSourceContext = InferSchema<
+  ReturnType<typeof getRuntimeAgentSourceContextSchema>
+>;
 export type RuntimeRunAgentInput = AgUiRuntimeRequest;
-export type InternalAgentStreamRequest = z.infer<typeof InternalAgentStreamRequestSchema>;
-export type ResumeSignal = z.infer<typeof ResumeSignalSchema>;
+export type InternalAgentStreamRequest = InferSchema<
+  ReturnType<typeof getInternalAgentStreamRequestSchema>
+>;
+export type ResumeSignal = InferSchema<ReturnType<typeof getResumeSignalSchema>>;
+
+// Convenience local Schema export for downstream consumers.
+export type { Schema };

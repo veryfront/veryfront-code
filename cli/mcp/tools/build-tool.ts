@@ -2,7 +2,8 @@
  * MCP tool for production builds.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { buildProduction } from "veryfront/build";
@@ -13,34 +14,37 @@ import type { MCPTool } from "../tools.ts";
 // Tool: vf_build
 // ============================================================================
 
-const buildInput = z.object({
-  outputDir: z
-    .string()
-    .optional()
-    .describe("Output directory for the build. Defaults to '<projectDir>/dist'."),
-  splitting: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe("Enable code splitting. Defaults to true."),
-  compress: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe("Enable compression (gzip/brotli). Defaults to true."),
-  ssg: z
-    .boolean()
-    .optional()
-    .default(true)
-    .describe("Enable static site generation. Defaults to true."),
-  dryRun: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe("Preview the build without writing files to disk. Defaults to false."),
-});
+const getBuildInput = defineSchema((v) =>
+  v.object({
+    outputDir: v
+      .string()
+      .optional()
+      .describe("Output directory for the build. Defaults to '<projectDir>/dist'."),
+    splitting: v
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Enable code splitting. Defaults to true."),
+    compress: v
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Enable compression (gzip/brotli). Defaults to true."),
+    ssg: v
+      .boolean()
+      .optional()
+      .default(true)
+      .describe("Enable static site generation. Defaults to true."),
+    dryRun: v
+      .boolean()
+      .optional()
+      .default(false)
+      .describe("Preview the build without writing files to disk. Defaults to false."),
+  })
+);
+const buildInput = getBuildInput();
 
-type BuildInput = z.infer<typeof buildInput>;
+type BuildInput = InferSchema<ReturnType<typeof getBuildInput>>;
 
 interface BuildResult {
   success: boolean;

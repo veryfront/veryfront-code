@@ -1,14 +1,14 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatUsername, getAvatarUrl, getCurrentUser } from "../../lib/discord-client.ts";
 
 export default tool({
   id: "get-user",
   description:
     "Get information about the authenticated Discord user. Returns username, ID, avatar, and account details.",
-  inputSchema: z.object({
-    includeAvatar: z.boolean().default(true).describe("Whether to include the avatar URL"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    includeAvatar: v.boolean().default(true).describe("Whether to include the avatar URL"),
+  }))(),
   async execute({ includeAvatar }) {
     const user = await getCurrentUser();
 

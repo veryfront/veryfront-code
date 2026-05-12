@@ -1,21 +1,21 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listProjects } from "../../lib/gitlab-client.ts";
 
 export default tool({
   id: "list-projects",
   description:
     "List GitLab projects accessible to the authenticated user. Can search, filter by membership, and sort results.",
-  inputSchema: z.object({
-    search: z.string().optional().describe("Search query to filter projects by name or path"),
-    membership: z.boolean().default(true).describe("Only show projects where user is a member"),
-    orderBy: z
+  inputSchema: defineSchema((v) => v.object({
+    search: v.string().optional().describe("Search query to filter projects by name or path"),
+    membership: v.boolean().default(true).describe("Only show projects where user is a member"),
+    orderBy: v
       .enum(["id", "name", "created_at", "updated_at", "last_activity_at"])
       .default("last_activity_at")
       .describe("Field to order results by"),
-    sort: z.enum(["asc", "desc"]).default("desc").describe("Sort direction"),
-    limit: z.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
-  }),
+    sort: v.enum(["asc", "desc"]).default("desc").describe("Sort direction"),
+    limit: v.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
+  }))(),
   async execute({ search, membership, orderBy, sort, limit }) {
     const projects = await listProjects({
       search,

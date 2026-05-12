@@ -4,13 +4,15 @@
  */
 
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 export default tool({
   description: "Greet a user by name",
-  inputSchema: z.object({
-    name: z.string().describe("The name of the person to greet"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      name: v.string().describe("The name of the person to greet"),
+    })
+  )(),
   execute: async ({ name }) => {
     return {
       greeting: `Hello, ${name}! Welcome to Veryfront AI.`,

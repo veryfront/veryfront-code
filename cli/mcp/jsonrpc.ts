@@ -4,19 +4,23 @@
  * @module cli/mcp/jsonrpc
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 
 /**
  * JSON-RPC 2.0 request (validated at runtime for external input)
  */
-export const JSONRPCRequestSchema = z.object({
-  jsonrpc: z.literal("2.0"),
-  id: z.union([z.string(), z.number()]).optional(),
-  method: z.string(),
-  params: z.unknown().optional(),
-});
+export const getJSONRPCRequestSchema = defineSchema((v) =>
+  v.object({
+    jsonrpc: v.literal("2.0"),
+    id: v.union([v.string(), v.number()]).optional(),
+    method: v.string(),
+    params: v.unknown().optional(),
+  })
+);
+export const JSONRPCRequestSchema = getJSONRPCRequestSchema();
 
-export type JSONRPCRequest = z.infer<typeof JSONRPCRequestSchema>;
+export type JSONRPCRequest = InferSchema<ReturnType<typeof getJSONRPCRequestSchema>>;
 
 /**
  * JSON-RPC 2.0 response
@@ -153,21 +157,30 @@ export function buildInitializeResult(
 /**
  * Validate and extract tools/call params
  */
-export const ToolsCallParamsSchema = z.object({
-  name: z.string(),
-  arguments: z.record(z.string(), z.unknown()).optional(),
-});
+export const getToolsCallParamsSchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+    arguments: v.record(v.string(), v.unknown()).optional(),
+  })
+);
+export const ToolsCallParamsSchema = getToolsCallParamsSchema();
 
 /**
  * Validate and extract prompts/get params
  */
-export const PromptsGetParamsSchema = z.object({
-  name: z.string(),
-});
+export const getPromptsGetParamsSchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+  })
+);
+export const PromptsGetParamsSchema = getPromptsGetParamsSchema();
 
 /**
  * Validate and extract resources/read params
  */
-export const ResourcesReadParamsSchema = z.object({
-  uri: z.string(),
-});
+export const getResourcesReadParamsSchema = defineSchema((v) =>
+  v.object({
+    uri: v.string(),
+  })
+);
+export const ResourcesReadParamsSchema = getResourcesReadParamsSchema();

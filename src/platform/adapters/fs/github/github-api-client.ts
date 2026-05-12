@@ -2,12 +2,12 @@ import { createError, toError } from "#veryfront/errors";
 import { logger } from "#veryfront/utils";
 import type { ResolvedGitHubConfig } from "./types.ts";
 import {
+  getGitHubBlobResponseSchema,
+  getGitHubContentsResponseSchema,
+  getGitHubTreeResponseSchema,
   type GitHubBlobResponse,
-  GitHubBlobResponseSchema,
   type GitHubContentItem,
-  GitHubContentsResponseSchema,
   type GitHubTreeResponse,
-  GitHubTreeResponseSchema,
 } from "./schemas/index.ts";
 
 const LOG_PREFIX = "[GitHubApiClient]";
@@ -42,7 +42,7 @@ export class GitHubApiClient {
     logger.debug(`${LOG_PREFIX} Fetching tree`, { ref: treeRef });
 
     const raw = await this.request(endpoint);
-    const response = GitHubTreeResponseSchema.parse(raw);
+    const response = getGitHubTreeResponseSchema().parse(raw);
 
     if (response.truncated) {
       logger.warn(
@@ -65,7 +65,7 @@ export class GitHubApiClient {
     logger.debug(`${LOG_PREFIX} Fetching contents`, { path: normalizedPath });
 
     const raw = await this.request(endpoint);
-    return GitHubContentsResponseSchema.parse(raw);
+    return getGitHubContentsResponseSchema().parse(raw);
   }
 
   async getBlob(sha: string): Promise<GitHubBlobResponse> {
@@ -74,7 +74,7 @@ export class GitHubApiClient {
     logger.debug(`${LOG_PREFIX} Fetching blob`, { sha });
 
     const raw = await this.request(endpoint);
-    return GitHubBlobResponseSchema.parse(raw);
+    return getGitHubBlobResponseSchema().parse(raw);
   }
 
   getRateLimitInfo(): RateLimitInfo | null {

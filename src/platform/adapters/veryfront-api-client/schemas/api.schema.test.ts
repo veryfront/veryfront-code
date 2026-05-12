@@ -1,23 +1,25 @@
+import "#veryfront/schemas/_test-setup.ts";
+
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   API_ENDPOINTS,
-  BranchFileListItemSchema,
-  EnvironmentFileListItemSchema,
-  EnvironmentSchema,
-  ListBranchFilesResponseSchema,
-  ListEnvironmentFilesResponseSchema,
-  LookupDomainResponseSchema,
-  PageInfoSchema,
-  ProjectFileSchema,
-  ProjectSchema,
-  ReleaseFileListItemSchema,
+  getBranchFileListItemSchema,
+  getEnvironmentFileListItemSchema,
+  getEnvironmentSchema,
+  getListBranchFilesResponseSchema,
+  getListEnvironmentFilesResponseSchema,
+  getLookupDomainResponseSchema,
+  getPageInfoSchema,
+  getProjectFileSchema,
+  getProjectSchema,
+  getReleaseFileListItemSchema,
 } from "./index.ts";
 
 describe("schemas", () => {
   describe("ProjectSchema", () => {
     it("should validate a valid project", () => {
-      const result = ProjectSchema.safeParse({
+      const result = getProjectSchema().safeParse({
         id: "550e8400-e29b-41d4-a716-446655440000",
         name: "Test Project",
         slug: "test-project",
@@ -26,7 +28,7 @@ describe("schemas", () => {
     });
 
     it("should accept optional fields", () => {
-      const result = ProjectSchema.safeParse({
+      const result = getProjectSchema().safeParse({
         id: "550e8400-e29b-41d4-a716-446655440000",
         name: "Test",
         slug: "test",
@@ -43,12 +45,12 @@ describe("schemas", () => {
     });
 
     it("should reject missing required fields", () => {
-      const result = ProjectSchema.safeParse({ id: "not-a-uuid" });
+      const result = getProjectSchema().safeParse({ id: "not-a-uuid" });
       assertEquals(result.success, false);
     });
 
     it("should reject invalid UUID", () => {
-      const result = ProjectSchema.safeParse({
+      const result = getProjectSchema().safeParse({
         id: "not-a-uuid",
         name: "Test",
         slug: "test",
@@ -59,7 +61,7 @@ describe("schemas", () => {
 
   describe("ProjectFileSchema", () => {
     it("should validate a valid file", () => {
-      const result = ProjectFileSchema.safeParse({
+      const result = getProjectFileSchema().safeParse({
         path: "pages/index.tsx",
         size: 1024,
         type: "page",
@@ -72,7 +74,7 @@ describe("schemas", () => {
       const types = ["page", "function", "component", "file"] as const;
 
       for (const type of types) {
-        const result = ProjectFileSchema.safeParse({
+        const result = getProjectFileSchema().safeParse({
           path: "test.ts",
           size: 100,
           type,
@@ -83,7 +85,7 @@ describe("schemas", () => {
     });
 
     it("should reject invalid file type", () => {
-      const result = ProjectFileSchema.safeParse({
+      const result = getProjectFileSchema().safeParse({
         path: "test.ts",
         size: 100,
         type: "invalid",
@@ -95,7 +97,7 @@ describe("schemas", () => {
 
   describe("PageInfoSchema", () => {
     it("should validate valid page info", () => {
-      const result = PageInfoSchema.safeParse({
+      const result = getPageInfoSchema().safeParse({
         self: "/api/projects?cursor=abc",
         first: null,
         next: "/api/projects?cursor=def",
@@ -105,7 +107,7 @@ describe("schemas", () => {
     });
 
     it("should require first to be null", () => {
-      const result = PageInfoSchema.safeParse({
+      const result = getPageInfoSchema().safeParse({
         self: null,
         first: "some-value",
         next: null,
@@ -117,7 +119,7 @@ describe("schemas", () => {
 
   describe("EnvironmentSchema", () => {
     it("should validate a valid environment", () => {
-      const result = EnvironmentSchema.safeParse({
+      const result = getEnvironmentSchema().safeParse({
         id: "550e8400-e29b-41d4-a716-446655440000",
         name: "production",
       });
@@ -125,7 +127,7 @@ describe("schemas", () => {
     });
 
     it("should reject missing name", () => {
-      const result = EnvironmentSchema.safeParse({
+      const result = getEnvironmentSchema().safeParse({
         id: "550e8400-e29b-41d4-a716-446655440000",
       });
       assertEquals(result.success, false);
@@ -134,7 +136,7 @@ describe("schemas", () => {
 
   describe("BranchFileListItemSchema", () => {
     it("should validate a branch file list item", () => {
-      const result = BranchFileListItemSchema.safeParse({
+      const result = getBranchFileListItemSchema().safeParse({
         path: "pages/index.tsx",
         type: "page",
         size: 512,
@@ -147,7 +149,7 @@ describe("schemas", () => {
 
   describe("ListBranchFilesResponseSchema", () => {
     it("should validate a list branch files response", () => {
-      const result = ListBranchFilesResponseSchema.safeParse({
+      const result = getListBranchFilesResponseSchema().safeParse({
         data: [
           {
             path: "pages/index.tsx",
@@ -165,7 +167,7 @@ describe("schemas", () => {
 
   describe("EnvironmentFileListItemSchema", () => {
     it("should validate with versioned fields", () => {
-      const result = EnvironmentFileListItemSchema.safeParse({
+      const result = getEnvironmentFileListItemSchema().safeParse({
         id: "file-uuid",
         version_id: "version-uuid",
         path: "pages/index.tsx",
@@ -180,7 +182,7 @@ describe("schemas", () => {
 
   describe("ListEnvironmentFilesResponseSchema", () => {
     it("should validate with environment meta fields", () => {
-      const result = ListEnvironmentFilesResponseSchema.safeParse({
+      const result = getListEnvironmentFilesResponseSchema().safeParse({
         data: [],
         page_info: { self: null, first: null, next: null, prev: null },
         environment_id: "env-uuid",
@@ -194,7 +196,7 @@ describe("schemas", () => {
 
   describe("ReleaseFileListItemSchema", () => {
     it("should validate a release file item", () => {
-      const result = ReleaseFileListItemSchema.safeParse({
+      const result = getReleaseFileListItemSchema().safeParse({
         id: "file-uuid",
         version_id: "version-uuid",
         path: "functions/api.ts",
@@ -209,7 +211,7 @@ describe("schemas", () => {
 
   describe("LookupDomainResponseSchema", () => {
     it("should validate a domain lookup response", () => {
-      const result = LookupDomainResponseSchema.safeParse({
+      const result = getLookupDomainResponseSchema().safeParse({
         project_id: "550e8400-e29b-41d4-a716-446655440000",
         project_slug: "my-project",
         project_name: "My Project",
@@ -223,7 +225,7 @@ describe("schemas", () => {
     });
 
     it("should accept null environment and release_id", () => {
-      const result = LookupDomainResponseSchema.safeParse({
+      const result = getLookupDomainResponseSchema().safeParse({
         project_id: "550e8400-e29b-41d4-a716-446655440000",
         project_slug: "my-project",
         project_name: "My Project",

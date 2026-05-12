@@ -1,12 +1,12 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listFolders } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "list-folders",
   description:
     "List all mail folders in the mailbox, including inbox, sent items, drafts, and custom folders.",
-  inputSchema: z.object({}),
+  inputSchema: defineSchema((v) => v.object({}))(),
   async execute() {
     const folders = await listFolders();
 

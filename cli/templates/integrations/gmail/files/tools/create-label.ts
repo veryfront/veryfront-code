@@ -1,23 +1,23 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
-const LabelInput = z.object({
-  name: z.string().min(1).describe("Label display name"),
-  messageListVisibility: z.enum(["show", "hide"]).optional().describe("Message list visibility"),
-  labelListVisibility: z
+const getLabelInput = defineSchema((v) => v.object({
+  name: v.string().min(1).describe("Label display name"),
+  messageListVisibility: v.enum(["show", "hide"]).optional().describe("Message list visibility"),
+  labelListVisibility: v
     .enum(["labelShow", "labelShowIfUnread", "labelHide"])
     .optional()
     .describe("Label list visibility"),
-  textColor: z.string().optional().describe("Label text color hex value"),
-  backgroundColor: z.string().optional().describe("Label background color hex value"),
-});
+  textColor: v.string().optional().describe("Label text color hex value"),
+  backgroundColor: v.string().optional().describe("Label background color hex value"),
+}));
 
 export default tool({
   id: "create-label",
   description: "Create a Gmail user label.",
-  inputSchema: LabelInput,
+  inputSchema: getLabelInput(),
   execute: async ({ textColor, backgroundColor, ...input }, context) => {
     const userId = resolveUserId(context);
 

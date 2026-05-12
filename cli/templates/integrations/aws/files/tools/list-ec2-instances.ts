@@ -1,19 +1,21 @@
 import { tool } from 'veryfront/tool';
-import { z } from 'zod';
+import { defineSchema } from 'veryfront/schemas';
 import { getAWSClient } from '../../lib/aws-client';
 
 export const listEC2InstancesTool = tool({
   id: 'list-ec2-instances',
   description:
     'List all EC2 instances in your AWS account. Returns instance details including ID, type, state, and IP addresses.',
-  inputSchema: z.object({
-    region: z
-      .string()
-      .optional()
-      .describe(
-        'AWS region to list instances from (e.g., "us-east-1", "eu-west-1"). Defaults to configured region.',
-      ),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      region: v
+        .string()
+        .optional()
+        .describe(
+          'AWS region to list instances from (e.g., "us-east-1", "eu-west-1"). Defaults to configured region.',
+        ),
+    })
+  )(),
   execute: async ({ region }) => {
     try {
       const client = getAWSClient();

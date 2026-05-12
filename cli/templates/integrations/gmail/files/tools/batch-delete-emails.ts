@@ -1,14 +1,14 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "batch-delete-emails",
   description: "Permanently delete multiple Gmail messages.",
-  inputSchema: z.object({
-    messageIds: z.array(z.string().min(1)).min(1).describe("Gmail message IDs"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    messageIds: v.array(v.string().min(1)).min(1).describe("Gmail message IDs"),
+  }))(),
   execute: async ({ messageIds }, context) => {
     const userId = resolveUserId(context);
 

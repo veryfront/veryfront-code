@@ -1,3 +1,5 @@
+import "#veryfront/schemas/_test-setup.ts";
+
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
@@ -30,11 +32,11 @@ describe("fs/github/index.ts exports", () => {
   it("should export schema validators", async () => {
     const mod = await getModule();
     const schemaNames = [
-      "GitHubBlobResponseSchema",
-      "GitHubContentItemSchema",
-      "GitHubContentsResponseSchema",
-      "GitHubTreeEntrySchema",
-      "GitHubTreeResponseSchema",
+      "getGitHubBlobResponseSchema",
+      "getGitHubContentItemSchema",
+      "getGitHubContentsResponseSchema",
+      "getGitHubTreeEntrySchema",
+      "getGitHubTreeResponseSchema",
     ] as const;
 
     for (const name of schemaNames) {

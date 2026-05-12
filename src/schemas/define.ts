@@ -11,15 +11,25 @@
  * @module schemas/define
  */
 
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { Schema, SchemaFactory, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import { createZodAdapter } from "../../extensions/ext-zod/src/adapter.ts";
+
+export function resolveSchemaValidator(): SchemaValidator {
+  const existing = tryResolve<SchemaValidator>("SchemaValidator");
+  if (existing) return existing;
+
+  const fallback = createZodAdapter();
+  register<SchemaValidator>("SchemaValidator", fallback);
+  return fallback;
+}
 
 /**
  * Wrap a schema factory so that it is built lazily on first call.
  *
  * @param factory - Receives a `SchemaValidator` and returns a `Schema<T>`.
  * @returns A zero-arg getter that caches and returns the built schema.
- * @throws Error when no `SchemaValidator` contract is registered.
+ * Installs the default zod-backed validator when no contract is registered.
  *
  * @example
  * ```ts
@@ -34,10 +44,7 @@ export function defineSchema<T>(factory: SchemaFactory<T>): () => Schema<T> {
   let cached: Schema<T> | undefined;
   return () => {
     if (cached) return cached;
-    const v = tryResolve<SchemaValidator>("SchemaValidator");
-    if (!v) {
-      throw new Error("SchemaValidator contract unresolved — install ext-zod");
-    }
+    const v = resolveSchemaValidator();
     cached = factory(v);
     return cached;
   };

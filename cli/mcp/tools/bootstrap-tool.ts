@@ -5,19 +5,23 @@
  * project context, coding conventions, current errors, and server status.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { type DevError, getErrorCollector } from "veryfront/observability";
 import { vfGetProjectContext } from "./project-tools.ts";
 import { vfGetConventions } from "./scaffold-tools.ts";
 
-const bootstrapInput = z.object({
-  projectPath: z.string().optional().describe(
-    "Project directory (defaults to current working directory)",
-  ),
-});
+const getBootstrapInput = defineSchema((v) =>
+  v.object({
+    projectPath: v.string().optional().describe(
+      "Project directory (defaults to current working directory)",
+    ),
+  })
+);
+const bootstrapInput = getBootstrapInput();
 
-type BootstrapInput = z.infer<typeof bootstrapInput>;
+type BootstrapInput = InferSchema<ReturnType<typeof getBootstrapInput>>;
 
 interface BootstrapResult {
   project: Awaited<ReturnType<typeof vfGetProjectContext.execute>>;

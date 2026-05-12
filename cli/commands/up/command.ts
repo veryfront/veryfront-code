@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
@@ -13,12 +14,16 @@ import { readConfigFile, type VeryfrontConfig } from "#cli/shared/config";
 import { pushCommand } from "../push/index.ts";
 import { deployCommand } from "../deploy/index.ts";
 
-export const UpArgsSchema = z.object({
-  force: z.boolean().default(false),
-  dryRun: z.boolean().default(false),
-});
+export const getUpArgsSchema = defineSchema((v) =>
+  v.object({
+    force: v.boolean().default(false),
+    dryRun: v.boolean().default(false),
+  })
+);
 
-export type UpOptions = z.infer<typeof UpArgsSchema>;
+export const UpArgsSchema = getUpArgsSchema();
+
+export type UpOptions = InferSchema<ReturnType<typeof getUpArgsSchema>>;
 
 export const parseUpArgs = createArgParser(UpArgsSchema, {
   force: CommonArgs.force,

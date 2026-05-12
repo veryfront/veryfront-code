@@ -4,7 +4,7 @@
  * Main factory function for creating durable workflows
  **************************/
 
-import type { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type {
   RetryConfig,
   StepBuilderContext,
@@ -22,8 +22,8 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   id: string;
   description?: string;
   version?: string;
-  inputSchema?: z.ZodSchema<TInput>;
-  outputSchema?: z.ZodSchema<TOutput>;
+  inputSchema?: Schema<TInput>;
+  outputSchema?: Schema<TOutput>;
   retry?: RetryConfig;
   timeout?: string | number;
   introspect?: boolean;

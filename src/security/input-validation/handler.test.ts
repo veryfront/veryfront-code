@@ -1,6 +1,7 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createValidatedHandler } from "./handler.ts";
 
 function jsonRequest(
@@ -23,7 +24,7 @@ function jsonRequest(
 describe("security/input-validation/handler", () => {
   describe("createValidatedHandler", () => {
     it("should validate body and pass to handler", async () => {
-      const bodySchema = z.object({ name: z.string() });
+      const bodySchema = defineSchema((v) => v.object({ name: v.string() }))();
 
       const handler = createValidatedHandler(
         { body: bodySchema },
@@ -41,7 +42,7 @@ describe("security/input-validation/handler", () => {
     });
 
     it("should validate query params and pass to handler", async () => {
-      const querySchema = z.object({ page: z.string() });
+      const querySchema = defineSchema((v) => v.object({ page: v.string() }))();
 
       const handler = createValidatedHandler(
         { query: querySchema },
@@ -59,8 +60,8 @@ describe("security/input-validation/handler", () => {
     });
 
     it("should validate both body and query", async () => {
-      const bodySchema = z.object({ name: z.string() });
-      const querySchema = z.object({ format: z.string() });
+      const bodySchema = defineSchema((v) => v.object({ name: v.string() }))();
+      const querySchema = defineSchema((v) => v.object({ format: v.string() }))();
 
       const handler = createValidatedHandler(
         { body: bodySchema, query: querySchema },
@@ -83,7 +84,7 @@ describe("security/input-validation/handler", () => {
     });
 
     it("should return 400 for invalid body", async () => {
-      const bodySchema = z.object({ name: z.string() });
+      const bodySchema = defineSchema((v) => v.object({ name: v.string() }))();
 
       const handler = createValidatedHandler(
         { body: bodySchema },
@@ -98,7 +99,7 @@ describe("security/input-validation/handler", () => {
     });
 
     it("should return 400 for invalid query params", async () => {
-      const querySchema = z.object({ page: z.string().min(1) });
+      const querySchema = defineSchema((v) => v.object({ page: v.string().min(1) }))();
 
       const handler = createValidatedHandler(
         { query: querySchema },
@@ -113,7 +114,7 @@ describe("security/input-validation/handler", () => {
     });
 
     it("should return JSON error response with Content-Type header", async () => {
-      const bodySchema = z.object({ name: z.string() });
+      const bodySchema = defineSchema((v) => v.object({ name: v.string() }))();
 
       const handler = createValidatedHandler(
         { body: bodySchema },
@@ -127,10 +128,12 @@ describe("security/input-validation/handler", () => {
     });
 
     it("should include error details in response", async () => {
-      const bodySchema = z.object({
-        name: z.string(),
-        email: z.string().email(),
-      });
+      const bodySchema = defineSchema((v) =>
+        v.object({
+          name: v.string(),
+          email: v.string().email(),
+        })
+      )();
 
       const handler = createValidatedHandler(
         { body: bodySchema },
@@ -191,7 +194,7 @@ describe("security/input-validation/handler", () => {
     });
 
     it("should enforce limits from config", async () => {
-      const bodySchema = z.object({ data: z.string() });
+      const bodySchema = defineSchema((v) => v.object({ data: v.string() }))();
 
       const handler = createValidatedHandler(
         { body: bodySchema, limits: { maxBodySize: 10 } },

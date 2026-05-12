@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Unit tests for shared config
  * @module cli/shared/config.test

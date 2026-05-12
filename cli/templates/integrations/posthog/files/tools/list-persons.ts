@@ -1,23 +1,23 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatDate, listPersons } from "../../lib/posthog-client.ts";
 
 export default tool({
   id: "list-persons",
   description:
     "List persons/users tracked in PostHog. View user properties, distinct IDs, and activity.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of persons to retrieve"),
-    search: z
+    search: v
       .string()
       .optional()
       .describe("Search query to filter persons by properties or distinct ID"),
-  }),
+  }))(),
   async execute({ limit, search }) {
     const { results } = await listPersons({ limit, search });
 

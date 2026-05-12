@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Extension loader tests — topological sort and lifecycle management.
  *

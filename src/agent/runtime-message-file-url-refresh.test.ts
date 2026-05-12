@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "../testing/assert.ts";
 import type { ChatUiMessage } from "../chat/types.ts";
 import { resolveRuntimeMessageFileUrls } from "./runtime-message-file-url-refresh.ts";

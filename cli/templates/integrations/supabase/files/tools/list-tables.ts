@@ -1,16 +1,16 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getTableColumns, listTables } from "../../lib/supabase-client.ts";
 
 export default tool({
   id: "list-tables",
   description: "List all tables in your Supabase database with their schema information.",
-  inputSchema: z.object({
-    includeColumns: z
+  inputSchema: defineSchema((v) => v.object({
+    includeColumns: v
       .boolean()
       .default(false)
       .describe("Include column information for each table"),
-  }),
+  }))(),
   async execute({ includeColumns }): Promise<{
     count: number;
     tables: Array<{

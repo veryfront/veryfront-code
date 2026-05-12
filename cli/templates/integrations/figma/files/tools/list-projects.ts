@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getProjectFiles, getTeamProjects } from "../../lib/figma-client.ts";
 
 export default tool({
   id: "list-projects",
   description:
     "List all projects in a Figma team. Optionally include file counts and recent files for each project.",
-  inputSchema: z.object({
-    teamId: z.string().describe("The team ID to list projects from"),
-    includeFiles: z.boolean().default(false).describe("Include recent files for each project"),
-    filesPerProject: z
+  inputSchema: defineSchema((v) => v.object({
+    teamId: v.string().describe("The team ID to list projects from"),
+    includeFiles: v.boolean().default(false).describe("Include recent files for each project"),
+    filesPerProject: v
       .number()
       .min(1)
       .max(10)
       .default(5)
       .describe("Number of recent files to include per project (if includeFiles is true)"),
-    limit: z.number().min(1).max(50).default(20).describe("Maximum number of projects to return"),
-  }),
+    limit: v.number().min(1).max(50).default(20).describe("Maximum number of projects to return"),
+  }))(),
   async execute({ teamId, includeFiles, filesPerProject, limit }) {
     const { projects: allProjects } = await getTeamProjects(teamId);
     const projects = allProjects.slice(0, limit);

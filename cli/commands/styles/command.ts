@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { getConfig } from "veryfront/config";
 import {
   enhanceAdapterWithFS,
@@ -16,23 +17,27 @@ import { cliLogger, exitProcess } from "#cli/utils";
 import type { StylesArgs } from "./handler.ts";
 import { writeJobResultIfConfigured } from "../../utils/write-job-result.ts";
 
-const StyleArtifactBuildConfigSchema = z.object({
-  style_profile_hash: z.string().min(1).optional(),
-  branch: z.string().min(1).optional(),
-  environment_name: z.string().min(1).optional(),
-  release_id: z.string().min(1).optional(),
-}).superRefine((value, ctx) => {
-  const selectorCount = [value.branch, value.environment_name, value.release_id].filter(Boolean)
-    .length;
-  if (selectorCount !== 1) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Exactly one of branch, environment_name, or release_id is required.",
-    });
-  }
-});
+const getStyleArtifactBuildConfigSchema = defineSchema((v) =>
+  v.object({
+    style_profile_hash: v.string().min(1).optional(),
+    branch: v.string().min(1).optional(),
+    environment_name: v.string().min(1).optional(),
+    release_id: v.string().min(1).optional(),
+  }).superRefine((value, ctx) => {
+    const selectorCount = [value.branch, value.environment_name, value.release_id].filter(Boolean)
+      .length;
+    if (selectorCount !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Exactly one of branch, environment_name, or release_id is required.",
+      });
+    }
+  })
+);
 
-type StyleArtifactBuildConfig = z.infer<typeof StyleArtifactBuildConfigSchema>;
+const StyleArtifactBuildConfigSchema = getStyleArtifactBuildConfigSchema();
+
+type StyleArtifactBuildConfig = InferSchema<ReturnType<typeof getStyleArtifactBuildConfigSchema>>;
 
 interface StyleBuildContentContext {
   branch?: string;

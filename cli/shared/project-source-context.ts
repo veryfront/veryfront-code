@@ -56,7 +56,7 @@ export async function withProjectSourceContext<T>(
 ): Promise<T> {
   const baseAdapter = await runtime.get();
   const initialConfig = await getConfig(projectDir, baseAdapter);
-  const adapter = await enhanceAdapterWithFS(baseAdapter, initialConfig, projectDir);
+  const adapter = await enhanceAdapterWithFS(baseAdapter, initialConfig as any, projectDir);
   const proxyContext = getProxyProjectSourceContext();
 
   if (

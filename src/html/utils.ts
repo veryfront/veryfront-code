@@ -289,7 +289,10 @@ export async function buildImportMapJson(
   if (mode === "self-hosted") {
     imports = getSelfHostedImportMap(versions);
   } else {
-    imports = getCdnImportMap(versions, config?.client?.cdn?.provider ?? "esm.sh");
+    imports = getCdnImportMap(
+      versions,
+      (config?.client?.cdn?.provider ?? "esm.sh") as CdnProvider,
+    );
   }
 
   imports["@/"] = "/_vf_modules/";

@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 const integrationNames = [
   "gmail",
@@ -53,123 +54,151 @@ const integrationNames = [
   "aws",
 ] as const;
 
-export const IntegrationNameSchema = z.enum(integrationNames);
+export const getIntegrationNameSchema = defineSchema((v) => v.enum(integrationNames));
+export const IntegrationNameSchema = getIntegrationNameSchema();
 
-export const EnvVarSchema = z.object({
-  name: z.string(),
-  description: z.string(),
-  required: z.boolean(),
-  sensitive: z.boolean().optional(),
-  placeholder: z.string().optional(),
-  docsUrl: z.string().optional(),
-  default: z.string().optional(),
-});
+export const getEnvVarSchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+    description: v.string(),
+    required: v.boolean(),
+    sensitive: v.boolean().optional(),
+    placeholder: v.string().optional(),
+    docsUrl: v.string().optional(),
+    default: v.string().optional(),
+  })
+);
+export const EnvVarSchema = getEnvVarSchema();
 
-export const OAuthFieldSchema = z.object({
-  name: z.string(),
-  label: z.string(),
-  type: z.string(),
-  required: z.boolean(),
-  envVar: z.string(),
-  default: z.string().optional(),
-});
+export const getOAuthFieldSchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+    label: v.string(),
+    type: v.string(),
+    required: v.boolean(),
+    envVar: v.string(),
+    default: v.string().optional(),
+  })
+);
+export const OAuthFieldSchema = getOAuthFieldSchema();
 
-export const OAuthConfigSchema = z.object({
-  type: z.enum(["oauth2", "oauth1", "api-key"]),
-  provider: z.string().optional(),
-  authorizationUrl: z.string().optional(),
-  tokenUrl: z.string().optional(),
-  scopes: z.array(z.string()).optional(),
-  callbackPath: z.string().optional(),
-  tokenAuthMethod: z.string().optional(),
-  pkce: z.boolean().optional(),
-  usePKCE: z.boolean().optional(),
-  supportsRefreshToken: z.boolean().optional(),
-  requiredApis: z
-    .array(z.object({ name: z.string(), enableUrl: z.string() }))
-    .optional(),
-  additionalParams: z.record(z.string(), z.string()).optional(),
-  additionalAuthParams: z.record(z.string(), z.string()).optional(),
-  fields: z.array(OAuthFieldSchema).optional(),
-  envVars: z
-    .record(z.string(), z.object({ description: z.string(), required: z.boolean() }))
-    .optional(),
-  keyName: z.string().optional(),
-  headerName: z.string().optional(),
-  headerPrefix: z.string().optional(),
-  tokenName: z.string().optional(),
-  docsUrl: z.string().optional(),
-});
+export const getOAuthConfigSchema = defineSchema((v) =>
+  v.object({
+    type: v.enum(["oauth2", "oauth1", "api-key"]),
+    provider: v.string().optional(),
+    authorizationUrl: v.string().optional(),
+    tokenUrl: v.string().optional(),
+    scopes: v.array(v.string()).optional(),
+    callbackPath: v.string().optional(),
+    tokenAuthMethod: v.string().optional(),
+    pkce: v.boolean().optional(),
+    usePKCE: v.boolean().optional(),
+    supportsRefreshToken: v.boolean().optional(),
+    requiredApis: v
+      .array(v.object({ name: v.string(), enableUrl: v.string() }))
+      .optional(),
+    additionalParams: v.record(v.string(), v.string()).optional(),
+    additionalAuthParams: v.record(v.string(), v.string()).optional(),
+    fields: v.array(getOAuthFieldSchema()).optional(),
+    envVars: v
+      .record(v.string(), v.object({ description: v.string(), required: v.boolean() }))
+      .optional(),
+    keyName: v.string().optional(),
+    headerName: v.string().optional(),
+    headerPrefix: v.string().optional(),
+    tokenName: v.string().optional(),
+    docsUrl: v.string().optional(),
+  })
+);
+export const OAuthConfigSchema = getOAuthConfigSchema();
 
-export const IntegrationEndpointParamSchema = z.object({
-  type: z.enum(["string", "number", "boolean", "string[]", "object", "array"]),
-  in: z.enum(["path", "query", "header", "body"]),
-  description: z.string(),
-  required: z.boolean().optional(),
-  default: z.unknown().optional(),
-});
+export const getIntegrationEndpointParamSchema = defineSchema((v) =>
+  v.object({
+    type: v.enum(["string", "number", "boolean", "string[]", "object", "array"]),
+    in: v.enum(["path", "query", "header", "body"]),
+    description: v.string(),
+    required: v.boolean().optional(),
+    default: v.unknown().optional(),
+  })
+);
+export const IntegrationEndpointParamSchema = getIntegrationEndpointParamSchema();
 
-export const IntegrationEndpointBodyFieldSchema = z.object({
-  type: z.enum(["string", "number", "boolean", "object", "array"]),
-  description: z.string(),
-  required: z.boolean().optional(),
-  default: z.unknown().optional(),
-});
+export const getIntegrationEndpointBodyFieldSchema = defineSchema((v) =>
+  v.object({
+    type: v.enum(["string", "number", "boolean", "object", "array"]),
+    description: v.string(),
+    required: v.boolean().optional(),
+    default: v.unknown().optional(),
+  })
+);
+export const IntegrationEndpointBodyFieldSchema = getIntegrationEndpointBodyFieldSchema();
 
-export const IntegrationEndpointSchema = z.object({
-  type: z.enum(["rest", "graphql"]).optional(),
-  method: z.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
-  url: z.string(),
-  query: z.string().optional(),
-  params: z.record(z.string(), IntegrationEndpointParamSchema).optional(),
-  body: z.record(z.string(), IntegrationEndpointBodyFieldSchema).optional(),
-  contentType: z.string().optional(),
-  response: z.object({ transform: z.string().optional() }).optional(),
-});
+export const getIntegrationEndpointSchema = defineSchema((v) =>
+  v.object({
+    type: v.enum(["rest", "graphql"]).optional(),
+    method: v.enum(["GET", "POST", "PUT", "PATCH", "DELETE"]),
+    url: v.string(),
+    query: v.string().optional(),
+    params: v.record(v.string(), getIntegrationEndpointParamSchema()).optional(),
+    body: v.record(v.string(), getIntegrationEndpointBodyFieldSchema()).optional(),
+    contentType: v.string().optional(),
+    response: v.object({ transform: v.string().optional() }).optional(),
+  })
+);
+export const IntegrationEndpointSchema = getIntegrationEndpointSchema();
 
-export const IntegrationToolSchema = z.object({
-  id: z.string().optional(),
-  name: z.string(),
-  description: z.string(),
-  requiresWrite: z.boolean().optional(),
-  file: z.string().optional(),
-  endpoint: IntegrationEndpointSchema.optional(),
-});
+export const getIntegrationToolSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().optional(),
+    name: v.string(),
+    description: v.string(),
+    requiresWrite: v.boolean().optional(),
+    file: v.string().optional(),
+    endpoint: getIntegrationEndpointSchema().optional(),
+  })
+);
+export const IntegrationToolSchema = getIntegrationToolSchema();
 
-export const IntegrationPromptSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  prompt: z.string(),
-  category: z.string().optional(),
-  icon: z.string().optional(),
-});
+export const getIntegrationPromptSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    title: v.string(),
+    prompt: v.string(),
+    category: v.string().optional(),
+    icon: v.string().optional(),
+  })
+);
+export const IntegrationPromptSchema = getIntegrationPromptSchema();
 
-export const IntegrationConfigSchema = z.object({
-  name: IntegrationNameSchema,
-  displayName: z.string(),
-  icon: z.string().optional(),
-  description: z.string(),
-  auth: OAuthConfigSchema,
-  envVars: z.array(EnvVarSchema).optional(),
-  /**
-   * Optional map of npm packages to semver ranges. When this integration is
-   * selected during `veryfront init`, these deps are merged into the
-   * generated project's `package.json#dependencies`. Use this for templates
-   * that import packages beyond the init scaffold's defaults (react,
-   * react-dom, veryfront, zod).
-   */
-  npmDependencies: z.record(z.string(), z.string()).optional(),
-  tools: z.array(IntegrationToolSchema),
-  prompts: z.array(IntegrationPromptSchema).optional(),
-  suggestedWith: z.array(z.string()).optional(),
-  dependencies: z.record(z.string(), z.string()).optional(),
-  category: z.string().optional(),
-});
+export const getIntegrationConfigSchema = defineSchema((v) =>
+  v.object({
+    name: getIntegrationNameSchema(),
+    displayName: v.string(),
+    icon: v.string().optional(),
+    description: v.string(),
+    auth: getOAuthConfigSchema(),
+    envVars: v.array(getEnvVarSchema()).optional(),
+    /**
+     * Optional map of npm packages to semver ranges. When this integration is
+     * selected during `veryfront init`, these deps are merged into the
+     * generated project's `package.json#dependencies`. Use this for templates
+     * that import packages beyond the init scaffold's defaults (react,
+     * react-dom, veryfront, zod).
+     */
+    npmDependencies: v.record(v.string(), v.string()).optional(),
+    tools: v.array(getIntegrationToolSchema()),
+    prompts: v.array(getIntegrationPromptSchema()).optional(),
+    suggestedWith: v.array(v.string()).optional(),
+    dependencies: v.record(v.string(), v.string()).optional(),
+    category: v.string().optional(),
+  })
+);
+export const IntegrationConfigSchema = getIntegrationConfigSchema();
 
-export type IntegrationName = z.infer<typeof IntegrationNameSchema>;
-export type EnvVarConfig = z.infer<typeof EnvVarSchema>;
-export type OAuthField = z.infer<typeof OAuthFieldSchema>;
-export type OAuthConfig = z.infer<typeof OAuthConfigSchema>;
-export type IntegrationToolMeta = z.infer<typeof IntegrationToolSchema>;
-export type IntegrationPrompt = z.infer<typeof IntegrationPromptSchema>;
-export type IntegrationConfig = z.infer<typeof IntegrationConfigSchema>;
+export type IntegrationName = InferSchema<ReturnType<typeof getIntegrationNameSchema>>;
+export type EnvVarConfig = InferSchema<ReturnType<typeof getEnvVarSchema>>;
+export type OAuthField = InferSchema<ReturnType<typeof getOAuthFieldSchema>>;
+export type OAuthConfig = InferSchema<ReturnType<typeof getOAuthConfigSchema>>;
+export type IntegrationToolMeta = InferSchema<ReturnType<typeof getIntegrationToolSchema>>;
+export type IntegrationPrompt = InferSchema<ReturnType<typeof getIntegrationPromptSchema>>;
+export type IntegrationConfig = InferSchema<ReturnType<typeof getIntegrationConfigSchema>>;

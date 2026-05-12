@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getRetention } from "../../lib/mixpanel-client.ts";
 
 function formatRate(rate: number): string {
@@ -23,16 +23,16 @@ export default tool({
   id: "get-retention",
   description:
     "Analyze user retention cohorts in Mixpanel. Understand how many users return after performing an initial event.",
-  inputSchema: z.object({
-    from: z.string().describe("Start date in YYYY-MM-DD format (e.g., '2024-01-01')"),
-    to: z.string().describe("End date in YYYY-MM-DD format (e.g., '2024-01-31')"),
-    event: z.string().describe("The event to analyze retention for (e.g., 'App Opened', 'Sign Up')"),
-    retentionType: z
+  inputSchema: defineSchema((v) => v.object({
+    from: v.string().describe("Start date in YYYY-MM-DD format (e.g., '2024-01-01')"),
+    to: v.string().describe("End date in YYYY-MM-DD format (e.g., '2024-01-31')"),
+    event: v.string().describe("The event to analyze retention for (e.g., 'App Opened', 'Sign Up')"),
+    retentionType: v
       .enum(["birth", "compounded"])
       .optional()
       .default("birth")
       .describe("Retention type: 'birth' (first time users) or 'compounded' (all users who did the event)"),
-  }),
+  }))(),
   async execute({ from, to, event, retentionType }): Promise<{
     event: string;
     retentionType: "birth" | "compounded";

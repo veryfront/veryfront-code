@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * P1-2: Token Priority Cascade Tests
  *

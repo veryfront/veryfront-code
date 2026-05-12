@@ -1,7 +1,9 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 
-export const ServerModeSchema = z.enum(["combined", "proxy", "production"]);
-export type ServerMode = z.infer<typeof ServerModeSchema>;
+export const getServerModeSchema = defineSchema((v) => v.enum(["combined", "proxy", "production"]));
+export const ServerModeSchema = getServerModeSchema();
+export type ServerMode = InferSchema<ReturnType<typeof getServerModeSchema>>;
 
 export interface ParsedArgs {
   _: (string | number)[];

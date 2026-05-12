@@ -1,24 +1,24 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listProducts } from "../../lib/shopify-client.ts";
 
 export default tool({
   id: "list-products",
   description:
     "List products from your Shopify store. Can filter by status and product type.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(250)
       .default(20)
       .describe("Maximum number of products to return"),
-    status: z
+    status: v
       .enum(["active", "archived", "draft"])
       .optional()
       .describe("Filter by product status"),
-    productType: z.string().optional().describe("Filter by product type"),
-  }),
+    productType: v.string().optional().describe("Filter by product type"),
+  }))(),
   async execute({ limit, status, productType }) {
     const products = await listProducts({ limit, status, productType });
 

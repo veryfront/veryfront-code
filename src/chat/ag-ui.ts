@@ -11,7 +11,8 @@ import {
 } from "./ag-ui-helpers.ts";
 import type { ChatStreamEvent } from "./protocol.ts";
 import type { ChatUiMessage, ChatUiMessagePart } from "./types.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 type JsonPatchOperation = {
   op: "add" | "remove" | "replace" | "move" | "copy" | "test";
@@ -88,96 +89,118 @@ export type AgUiChatEventDecoderState = {
   onInvalidJson: ((details: { eventName: string | null; dataLength: number }) => void) | null;
 };
 
-export const AgUiRunFinishedMetadataSchema = z.object({
-  provider: z.string().optional(),
-  model: z.string().optional(),
-  inputTokens: z.number().int().nonnegative().optional(),
-  outputTokens: z.number().int().nonnegative().optional(),
-  totalTokens: z.number().int().nonnegative().optional(),
-  cachedInputTokens: z.number().int().nonnegative().optional(),
-  reasoningTokens: z.number().int().nonnegative().optional(),
-  finishReason: z.string().optional(),
-  providerRequestId: z.string().optional(),
-});
+export const getAgUiRunFinishedMetadataSchema = defineSchema((v) =>
+  v.object({
+    provider: v.string().optional(),
+    model: v.string().optional(),
+    inputTokens: v.number().int().nonnegative().optional(),
+    outputTokens: v.number().int().nonnegative().optional(),
+    totalTokens: v.number().int().nonnegative().optional(),
+    cachedInputTokens: v.number().int().nonnegative().optional(),
+    reasoningTokens: v.number().int().nonnegative().optional(),
+    finishReason: v.string().optional(),
+    providerRequestId: v.string().optional(),
+  })
+);
 
-export const AgUiSnapshotToolCallSchema = z.object({
-  id: z.string().min(1),
-  type: z.literal("function"),
-  function: z.object({
-    name: z.string().min(1),
-    arguments: z.string(),
-  }),
-  encryptedValue: z.string().optional(),
-});
+/** @deprecated Use getAgUiRunFinishedMetadataSchema() */
+export const AgUiRunFinishedMetadataSchema = getAgUiRunFinishedMetadataSchema();
 
-const AgUiUserInputContentSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("text"),
-    text: z.string(),
-  }),
-  z.object({
-    type: z.literal("binary"),
-    mimeType: z.string(),
-    id: z.string().optional(),
-    url: z.string().optional(),
-    data: z.string().optional(),
-    filename: z.string().optional(),
-  }),
-]);
+export const getAgUiSnapshotToolCallSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    type: v.literal("function"),
+    function: v.object({
+      name: v.string().min(1),
+      arguments: v.string(),
+    }),
+    encryptedValue: v.string().optional(),
+  })
+);
 
-export const AgUiSnapshotMessageSchema = z.discriminatedUnion("role", [
-  z.object({
-    id: z.string(),
-    role: z.literal("assistant"),
-    content: z.string().optional(),
-    name: z.string().optional(),
-    encryptedValue: z.string().optional(),
-    toolCalls: z.array(AgUiSnapshotToolCallSchema).optional(),
-  }),
-  z.object({
-    id: z.string(),
-    role: z.literal("user"),
-    content: z.union([z.string(), z.array(AgUiUserInputContentSchema)]),
-    name: z.string().optional(),
-    encryptedValue: z.string().optional(),
-  }),
-  z.object({
-    id: z.string(),
-    role: z.literal("tool"),
-    toolCallId: z.string(),
-    content: z.string(),
-    error: z.string().optional(),
-    encryptedValue: z.string().optional(),
-  }),
-  z.object({
-    id: z.string(),
-    role: z.literal("reasoning"),
-    content: z.string(),
-    name: z.string().optional(),
-    encryptedValue: z.string().optional(),
-  }),
-]);
+/** @deprecated Use getAgUiSnapshotToolCallSchema() */
+export const AgUiSnapshotToolCallSchema = getAgUiSnapshotToolCallSchema();
 
-export const AgUiWireEventNameSchema = z.enum([
-  "RunStarted",
-  "Custom",
-  "TextMessageStart",
-  "TextMessageContent",
-  "TextMessageEnd",
-  "ToolCallStart",
-  "ToolCallArgs",
-  "ToolCallChunk",
-  "ToolCallEnd",
-  "ToolCallResult",
-  "StateSnapshot",
-  "MessagesSnapshot",
-  "ReasoningMessageStart",
-  "ReasoningMessageContent",
-  "ReasoningMessageEnd",
-  "StateDelta",
-  "RunFinished",
-  "RunError",
-]);
+const getAgUiUserInputContentSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("text"),
+      text: v.string(),
+    }),
+    v.object({
+      type: v.literal("binary"),
+      mimeType: v.string(),
+      id: v.string().optional(),
+      url: v.string().optional(),
+      data: v.string().optional(),
+      filename: v.string().optional(),
+    }),
+  ])
+);
+
+export const getAgUiSnapshotMessageSchema = defineSchema((v) =>
+  v.discriminatedUnion("role", [
+    v.object({
+      id: v.string(),
+      role: v.literal("assistant"),
+      content: v.string().optional(),
+      name: v.string().optional(),
+      encryptedValue: v.string().optional(),
+      toolCalls: v.array(getAgUiSnapshotToolCallSchema()).optional(),
+    }),
+    v.object({
+      id: v.string(),
+      role: v.literal("user"),
+      content: v.union([v.string(), v.array(getAgUiUserInputContentSchema())]),
+      name: v.string().optional(),
+      encryptedValue: v.string().optional(),
+    }),
+    v.object({
+      id: v.string(),
+      role: v.literal("tool"),
+      toolCallId: v.string(),
+      content: v.string(),
+      error: v.string().optional(),
+      encryptedValue: v.string().optional(),
+    }),
+    v.object({
+      id: v.string(),
+      role: v.literal("reasoning"),
+      content: v.string(),
+      name: v.string().optional(),
+      encryptedValue: v.string().optional(),
+    }),
+  ])
+);
+
+/** @deprecated Use getAgUiSnapshotMessageSchema() */
+export const AgUiSnapshotMessageSchema = getAgUiSnapshotMessageSchema();
+
+export const getAgUiWireEventNameSchema = defineSchema((v) =>
+  v.enum([
+    "RunStarted",
+    "Custom",
+    "TextMessageStart",
+    "TextMessageContent",
+    "TextMessageEnd",
+    "ToolCallStart",
+    "ToolCallArgs",
+    "ToolCallChunk",
+    "ToolCallEnd",
+    "ToolCallResult",
+    "StateSnapshot",
+    "MessagesSnapshot",
+    "ReasoningMessageStart",
+    "ReasoningMessageContent",
+    "ReasoningMessageEnd",
+    "StateDelta",
+    "RunFinished",
+    "RunError",
+  ])
+);
+
+/** @deprecated Use getAgUiWireEventNameSchema() */
+export const AgUiWireEventNameSchema = getAgUiWireEventNameSchema();
 
 function parseRuntimeToolInput(rawArguments: string): unknown {
   try {
@@ -368,157 +391,138 @@ export function mapAgUiRuntimeMessagesToChatUiMessages(
   return mappedMessages;
 }
 
-export const AgUiWireEventSchema = z.discriminatedUnion("eventName", [
-  z.object({
-    eventName: z.literal("RunStarted"),
-    payload: z.object({
-      runId: z.string().optional(),
-      threadId: z.string().optional(),
-      agentId: z.string().optional(),
+export const getAgUiWireEventSchema = defineSchema((v) =>
+  v.discriminatedUnion("eventName", [
+    v.object({
+      eventName: v.literal("RunStarted"),
+      payload: v.object({
+        runId: v.string().optional(),
+        threadId: v.string().optional(),
+        agentId: v.string().optional(),
+      }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("Custom"),
-    payload: z.object({
-      name: z.string(),
-      value: z.unknown(),
+    v.object({
+      eventName: v.literal("Custom"),
+      payload: v.object({ name: v.string(), value: v.unknown() }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("TextMessageStart"),
-    payload: z.object({
-      messageId: z.string().min(1),
-      id: z.string().min(1).optional(),
-      contentId: z.string().min(1).optional(),
-      role: z.string().optional(),
+    v.object({
+      eventName: v.literal("TextMessageStart"),
+      payload: v.object({
+        messageId: v.string().min(1),
+        id: v.string().min(1).optional(),
+        contentId: v.string().min(1).optional(),
+        role: v.string().optional(),
+      }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("TextMessageContent"),
-    payload: z.object({
-      messageId: z.string().min(1),
-      id: z.string().min(1).optional(),
-      contentId: z.string().min(1).optional(),
-      delta: z.string(),
+    v.object({
+      eventName: v.literal("TextMessageContent"),
+      payload: v.object({
+        messageId: v.string().min(1),
+        id: v.string().min(1).optional(),
+        contentId: v.string().min(1).optional(),
+        delta: v.string(),
+      }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("TextMessageEnd"),
-    payload: z.object({
-      messageId: z.string().min(1),
-      id: z.string().min(1).optional(),
-      contentId: z.string().min(1).optional(),
+    v.object({
+      eventName: v.literal("TextMessageEnd"),
+      payload: v.object({
+        messageId: v.string().min(1),
+        id: v.string().min(1).optional(),
+        contentId: v.string().min(1).optional(),
+      }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("ToolCallStart"),
-    payload: z.object({
-      toolCallId: z.string().min(1),
-      toolCallName: z.string().min(1),
+    v.object({
+      eventName: v.literal("ToolCallStart"),
+      payload: v.object({ toolCallId: v.string().min(1), toolCallName: v.string().min(1) }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("ToolCallArgs"),
-    payload: z.object({
-      toolCallId: z.string().min(1),
-      delta: z.string(),
+    v.object({
+      eventName: v.literal("ToolCallArgs"),
+      payload: v.object({ toolCallId: v.string().min(1), delta: v.string() }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("ToolCallChunk"),
-    payload: z.object({
-      toolCallId: z.string().min(1),
-      delta: z.string(),
+    v.object({
+      eventName: v.literal("ToolCallChunk"),
+      payload: v.object({ toolCallId: v.string().min(1), delta: v.string() }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("ToolCallEnd"),
-    payload: z.object({
-      toolCallId: z.string().min(1),
+    v.object({
+      eventName: v.literal("ToolCallEnd"),
+      payload: v.object({ toolCallId: v.string().min(1) }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("ToolCallResult"),
-    payload: z.object({
-      messageId: z.string().min(1).optional(),
-      toolCallId: z.string().min(1),
-      input: z.unknown().optional(),
-      content: z.unknown().optional(),
-      result: z.unknown().optional(),
-      role: z.literal("tool").optional(),
-      isError: z.boolean().optional(),
+    v.object({
+      eventName: v.literal("ToolCallResult"),
+      payload: v.object({
+        messageId: v.string().min(1).optional(),
+        toolCallId: v.string().min(1),
+        input: v.unknown().optional(),
+        content: v.unknown().optional(),
+        result: v.unknown().optional(),
+        role: v.literal("tool").optional(),
+        isError: v.boolean().optional(),
+      }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("StateSnapshot"),
-    payload: z.object({
-      snapshot: z.record(z.string(), z.unknown()),
+    v.object({
+      eventName: v.literal("StateSnapshot"),
+      payload: v.object({ snapshot: v.record(v.string(), v.unknown()) }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("MessagesSnapshot"),
-    payload: z.object({
-      messages: z.array(AgUiSnapshotMessageSchema),
+    v.object({
+      eventName: v.literal("MessagesSnapshot"),
+      payload: v.object({ messages: v.array(getAgUiSnapshotMessageSchema()) }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("ReasoningMessageStart"),
-    payload: z.object({
-      id: z.string().optional(),
-      messageId: z.string().min(1).optional(),
-      role: z.string().optional(),
+    v.object({
+      eventName: v.literal("ReasoningMessageStart"),
+      payload: v.object({
+        id: v.string().optional(),
+        messageId: v.string().min(1).optional(),
+        role: v.string().optional(),
+      }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("ReasoningMessageContent"),
-    payload: z.object({
-      id: z.string().optional(),
-      messageId: z.string().min(1).optional(),
-      delta: z.string(),
+    v.object({
+      eventName: v.literal("ReasoningMessageContent"),
+      payload: v.object({
+        id: v.string().optional(),
+        messageId: v.string().min(1).optional(),
+        delta: v.string(),
+      }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("ReasoningMessageEnd"),
-    payload: z.object({
-      id: z.string().optional(),
-      messageId: z.string().min(1).optional(),
+    v.object({
+      eventName: v.literal("ReasoningMessageEnd"),
+      payload: v.object({ id: v.string().optional(), messageId: v.string().min(1).optional() }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("StateDelta"),
-    payload: z.object({
-      delta: z.union([
-        z.record(z.string(), z.unknown()),
-        z.array(
-          z.object({
-            op: z.enum(["add", "remove", "replace", "move", "copy", "test"]),
-            path: z.string().min(1),
-            from: z.string().min(1).optional(),
-            value: z.unknown().optional(),
-          }),
-        ),
-      ]),
+    v.object({
+      eventName: v.literal("StateDelta"),
+      payload: v.object({
+        delta: v.union([
+          v.record(v.string(), v.unknown()),
+          v.array(
+            v.object({
+              op: v.enum(["add", "remove", "replace", "move", "copy", "test"]),
+              path: v.string().min(1),
+              from: v.string().min(1).optional(),
+              value: v.unknown().optional(),
+            }),
+          ),
+        ]),
+      }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("RunFinished"),
-    payload: z.object({
-      metadata: AgUiRunFinishedMetadataSchema.optional(),
+    v.object({
+      eventName: v.literal("RunFinished"),
+      payload: v.object({ metadata: getAgUiRunFinishedMetadataSchema().optional() }),
     }),
-  }),
-  z.object({
-    eventName: z.literal("RunError"),
-    payload: z.object({
-      code: z.string().optional(),
-      message: z.string().optional(),
+    v.object({
+      eventName: v.literal("RunError"),
+      payload: v.object({ code: v.string().optional(), message: v.string().optional() }),
     }),
-  }),
-]);
+  ])
+);
 
-export type AgUiRunFinishedMetadata = z.infer<typeof AgUiRunFinishedMetadataSchema>;
-export type AgUiSnapshotMessage = z.infer<typeof AgUiSnapshotMessageSchema>;
-export type AgUiWireEventName = z.infer<typeof AgUiWireEventNameSchema>;
-export type AgUiWireEvent = z.infer<typeof AgUiWireEventSchema>;
+/** @deprecated Use getAgUiWireEventSchema() */
+export const AgUiWireEventSchema = getAgUiWireEventSchema();
+
+export type AgUiRunFinishedMetadata = InferSchema<
+  ReturnType<typeof getAgUiRunFinishedMetadataSchema>
+>;
+export type AgUiSnapshotMessage = InferSchema<ReturnType<typeof getAgUiSnapshotMessageSchema>>;
+export type AgUiWireEventName = InferSchema<ReturnType<typeof getAgUiWireEventNameSchema>>;
+export type AgUiWireEvent = InferSchema<ReturnType<typeof getAgUiWireEventSchema>>;
 
 function getReasoningPartId(
   state: AgUiChatEventDecoderState,
@@ -560,7 +564,7 @@ function parseAgUiWireEvent(
     return null;
   }
 
-  const eventName = AgUiWireEventNameSchema.safeParse(frame.event);
+  const eventName = getAgUiWireEventNameSchema().safeParse(frame.event);
   if (!eventName.success) {
     return null;
   }
@@ -580,7 +584,7 @@ function parseAgUiWireEvent(
     return null;
   }
 
-  const parsed = AgUiWireEventSchema.safeParse({
+  const parsed = getAgUiWireEventSchema().safeParse({
     eventName: eventName.data,
     payload,
   });

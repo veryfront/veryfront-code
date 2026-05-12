@@ -1,42 +1,42 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getQueryStatus, runQuery } from "../../lib/snowflake-client.ts";
 
 export default tool({
   id: "run-query",
   description:
     "Execute a SQL query against your Snowflake data warehouse. Supports SELECT, INSERT, UPDATE, DELETE, and other SQL operations.",
-  inputSchema: z.object({
-    sql: z
+  inputSchema: defineSchema((v) => v.object({
+    sql: v
       .string()
       .describe(
         "The SQL query to execute. Can be SELECT, INSERT, UPDATE, DELETE, or DDL statements.",
       ),
-    database: z
+    database: v
       .string()
       .optional()
       .describe(
         "The database to use for this query. If not specified, uses the default database.",
       ),
-    schema: z
+    schema: v
       .string()
       .optional()
       .describe(
         "The schema to use for this query. If not specified, uses the default schema.",
       ),
-    timeout: z
+    timeout: v
       .number()
       .min(1)
       .max(300)
       .default(60)
       .describe("Query timeout in seconds (1-300). Default is 60 seconds."),
-    async: z
+    async: v
       .boolean()
       .default(false)
       .describe(
         "Execute query asynchronously. If true, returns immediately with a statement handle to check status later.",
       ),
-  }),
+  }))(),
   async execute({ sql, database, schema, timeout, async: asyncExec }) {
     const result = await runQuery(sql, database, schema, {
       timeout,
@@ -69,11 +69,11 @@ export const checkQueryStatus = tool({
   id: "check-query-status",
   description:
     "Check the status and retrieve results of an asynchronously executed query.",
-  inputSchema: z.object({
-    statementHandle: z
+  inputSchema: defineSchema((v) => v.object({
+    statementHandle: v
       .string()
       .describe("The statement handle returned from an async query execution."),
-  }),
+  }))(),
   async execute({ statementHandle }) {
     const status = await getQueryStatus(statementHandle);
 

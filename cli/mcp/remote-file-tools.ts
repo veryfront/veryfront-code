@@ -9,7 +9,8 @@
  * API Base: Configurable via VERYFRONT_API_BASE_URL (default: https://api.veryfront.com)
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -165,16 +166,19 @@ async function createProjectWithRetry(
 // Tool: vf_remote_list_files
 // ============================================================================
 
-const remoteListFilesInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  branch: z.string().optional().describe("Branch name (omit for main branch)"),
-  pattern: z.string().optional().describe("File pattern filter (e.g., *.tsx, pages/*)"),
-  limit: z.number().optional().default(50).describe(
-    "Maximum number of files to return (default: 50)",
-  ),
-});
+const getRemoteListFilesInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    branch: v.string().optional().describe("Branch name (omit for main branch)"),
+    pattern: v.string().optional().describe("File pattern filter (e.g., *.tsx, pages/*)"),
+    limit: v.number().optional().default(50).describe(
+      "Maximum number of files to return (default: 50)",
+    ),
+  })
+);
+const remoteListFilesInput = getRemoteListFilesInput();
 
-type RemoteListFilesInput = z.infer<typeof remoteListFilesInput>;
+type RemoteListFilesInput = InferSchema<ReturnType<typeof getRemoteListFilesInput>>;
 
 interface RemoteListFilesOutput {
   success: boolean;
@@ -220,13 +224,16 @@ export const vfRemoteListFiles: MCPTool<RemoteListFilesInput, RemoteListFilesOut
 // Tool: vf_remote_get_file
 // ============================================================================
 
-const remoteGetFileInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  path: z.string().describe("File path (e.g., pages/index.mdx, app/page.tsx)"),
-  branch: z.string().optional().describe("Branch name (omit for main branch)"),
-});
+const getRemoteGetFileInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    path: v.string().describe("File path (e.g., pages/index.mdx, app/page.tsx)"),
+    branch: v.string().optional().describe("Branch name (omit for main branch)"),
+  })
+);
+const remoteGetFileInput = getRemoteGetFileInput();
 
-type RemoteGetFileInput = z.infer<typeof remoteGetFileInput>;
+type RemoteGetFileInput = InferSchema<ReturnType<typeof getRemoteGetFileInput>>;
 
 interface RemoteGetFileOutput {
   success: boolean;
@@ -265,14 +272,17 @@ export const vfRemoteGetFile: MCPTool<RemoteGetFileInput, RemoteGetFileOutput> =
 // Tool: vf_remote_update_file
 // ============================================================================
 
-const remoteUpdateFileInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  path: z.string().describe("File path (e.g., pages/index.mdx)"),
-  content: z.string().describe("New file content"),
-  branch: z.string().optional().describe("Branch name (omit for main branch)"),
-});
+const getRemoteUpdateFileInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    path: v.string().describe("File path (e.g., pages/index.mdx)"),
+    content: v.string().describe("New file content"),
+    branch: v.string().optional().describe("Branch name (omit for main branch)"),
+  })
+);
+const remoteUpdateFileInput = getRemoteUpdateFileInput();
 
-type RemoteUpdateFileInput = z.infer<typeof remoteUpdateFileInput>;
+type RemoteUpdateFileInput = InferSchema<ReturnType<typeof getRemoteUpdateFileInput>>;
 
 interface RemoteUpdateFileOutput {
   success: boolean;
@@ -320,13 +330,16 @@ export const vfRemoteUpdateFile: MCPTool<RemoteUpdateFileInput, RemoteUpdateFile
 // Tool: vf_remote_delete_file
 // ============================================================================
 
-const remoteDeleteFileInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  path: z.string().describe("File path to delete"),
-  branch: z.string().optional().describe("Branch name (omit for main branch)"),
-});
+const getRemoteDeleteFileInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    path: v.string().describe("File path to delete"),
+    branch: v.string().optional().describe("Branch name (omit for main branch)"),
+  })
+);
+const remoteDeleteFileInput = getRemoteDeleteFileInput();
 
-type RemoteDeleteFileInput = z.infer<typeof remoteDeleteFileInput>;
+type RemoteDeleteFileInput = InferSchema<ReturnType<typeof getRemoteDeleteFileInput>>;
 
 interface RemoteDeleteFileOutput {
   success: boolean;
@@ -358,17 +371,20 @@ export const vfRemoteDeleteFile: MCPTool<RemoteDeleteFileInput, RemoteDeleteFile
 // Tool: vf_remote_search_files
 // ============================================================================
 
-const remoteSearchFilesInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  query: z.string().describe("Search query (text or regex pattern)"),
-  pattern: z.string().optional().describe("File pattern filter (e.g., *.tsx)"),
-  is_regex: z.boolean().optional().describe("Treat query as regex (default: false)"),
-  case_sensitive: z.boolean().optional().describe("Case sensitive search (default: false)"),
-  max_results: z.number().optional().default(50).describe("Maximum results (default: 50)"),
-  branch: z.string().optional().describe("Branch name (omit for main branch)"),
-});
+const getRemoteSearchFilesInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    query: v.string().describe("Search query (text or regex pattern)"),
+    pattern: v.string().optional().describe("File pattern filter (e.g., *.tsx)"),
+    is_regex: v.boolean().optional().describe("Treat query as regex (default: false)"),
+    case_sensitive: v.boolean().optional().describe("Case sensitive search (default: false)"),
+    max_results: v.number().optional().default(50).describe("Maximum results (default: 50)"),
+    branch: v.string().optional().describe("Branch name (omit for main branch)"),
+  })
+);
+const remoteSearchFilesInput = getRemoteSearchFilesInput();
 
-type RemoteSearchFilesInput = z.infer<typeof remoteSearchFilesInput>;
+type RemoteSearchFilesInput = InferSchema<ReturnType<typeof getRemoteSearchFilesInput>>;
 
 interface RemoteSearchFilesOutput {
   success: boolean;
@@ -415,14 +431,17 @@ export const vfRemoteSearchFiles: MCPTool<RemoteSearchFilesInput, RemoteSearchFi
 // Tool: vf_remote_move_file
 // ============================================================================
 
-const remoteMoveFileInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  source_path: z.string().describe("Current file path"),
-  destination_path: z.string().describe("New file path"),
-  branch: z.string().optional().describe("Branch name (omit for main branch)"),
-});
+const getRemoteMoveFileInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    source_path: v.string().describe("Current file path"),
+    destination_path: v.string().describe("New file path"),
+    branch: v.string().optional().describe("Branch name (omit for main branch)"),
+  })
+);
+const remoteMoveFileInput = getRemoteMoveFileInput();
 
-type RemoteMoveFileInput = z.infer<typeof remoteMoveFileInput>;
+type RemoteMoveFileInput = InferSchema<ReturnType<typeof getRemoteMoveFileInput>>;
 
 interface RemoteMoveFileOutput {
   success: boolean;
@@ -468,15 +487,18 @@ export const vfRemoteMoveFile: MCPTool<RemoteMoveFileInput, RemoteMoveFileOutput
 // Tool: vf_remote_list_branches
 // ============================================================================
 
-const remoteListBranchesInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  search: z.string().optional().describe("Search filter for branch name"),
-  status: z.enum(["active", "merged", "all"]).optional().default("all").describe(
-    "Filter by branch status (default: all)",
-  ),
-});
+const getRemoteListBranchesInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    search: v.string().optional().describe("Search filter for branch name"),
+    status: v.enum(["active", "merged", "all"]).optional().default("all").describe(
+      "Filter by branch status (default: all)",
+    ),
+  })
+);
+const remoteListBranchesInput = getRemoteListBranchesInput();
 
-type RemoteListBranchesInput = z.infer<typeof remoteListBranchesInput>;
+type RemoteListBranchesInput = InferSchema<ReturnType<typeof getRemoteListBranchesInput>>;
 
 interface RemoteListBranchesOutput {
   success: boolean;
@@ -507,15 +529,18 @@ export const vfRemoteListBranches: MCPTool<RemoteListBranchesInput, RemoteListBr
 // Tool: vf_remote_create_branch
 // ============================================================================
 
-const remoteCreateBranchInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  name: z.string().describe("Branch name"),
-  base_branch_id: z.string().optional().describe(
-    "Base branch ID to create from (omit for main branch)",
-  ),
-});
+const getRemoteCreateBranchInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    name: v.string().describe("Branch name"),
+    base_branch_id: v.string().optional().describe(
+      "Base branch ID to create from (omit for main branch)",
+    ),
+  })
+);
+const remoteCreateBranchInput = getRemoteCreateBranchInput();
 
-type RemoteCreateBranchInput = z.infer<typeof remoteCreateBranchInput>;
+type RemoteCreateBranchInput = InferSchema<ReturnType<typeof getRemoteCreateBranchInput>>;
 
 interface RemoteCreateBranchOutput {
   success: boolean;
@@ -544,15 +569,18 @@ export const vfRemoteCreateBranch: MCPTool<RemoteCreateBranchInput, RemoteCreate
 // Tool: vf_remote_merge_branch
 // ============================================================================
 
-const remoteMergeBranchInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  branch_id: z.string().describe("Branch ID to merge"),
-  target_branch_id: z.string().optional().describe(
-    "Target branch ID to merge into (omit to merge into main)",
-  ),
-});
+const getRemoteMergeBranchInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    branch_id: v.string().describe("Branch ID to merge"),
+    target_branch_id: v.string().optional().describe(
+      "Target branch ID to merge into (omit to merge into main)",
+    ),
+  })
+);
+const remoteMergeBranchInput = getRemoteMergeBranchInput();
 
-type RemoteMergeBranchInput = z.infer<typeof remoteMergeBranchInput>;
+type RemoteMergeBranchInput = InferSchema<ReturnType<typeof getRemoteMergeBranchInput>>;
 
 interface RemoteMergeBranchOutput {
   success: boolean;
@@ -597,12 +625,15 @@ export const vfRemoteMergeBranch: MCPTool<RemoteMergeBranchInput, RemoteMergeBra
 // Tool: vf_remote_delete_branch
 // ============================================================================
 
-const remoteDeleteBranchInput = z.object({
-  project: z.string().describe("Project slug or ID"),
-  branch_id: z.string().describe("Branch ID to delete"),
-});
+const getRemoteDeleteBranchInput = defineSchema((v) =>
+  v.object({
+    project: v.string().describe("Project slug or ID"),
+    branch_id: v.string().describe("Branch ID to delete"),
+  })
+);
+const remoteDeleteBranchInput = getRemoteDeleteBranchInput();
 
-type RemoteDeleteBranchInput = z.infer<typeof remoteDeleteBranchInput>;
+type RemoteDeleteBranchInput = InferSchema<ReturnType<typeof getRemoteDeleteBranchInput>>;
 
 interface RemoteDeleteBranchOutput {
   success: boolean;
@@ -635,17 +666,20 @@ export const vfRemoteDeleteBranch: MCPTool<RemoteDeleteBranchInput, RemoteDelete
 // Tool: vf_remote_create_project
 // ============================================================================
 
-const remoteCreateProjectInput = z.object({
-  slug: z.string().describe(
-    "Project slug (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken.",
-  ),
-  templateSlug: z.string().optional().describe(
-    "Template project slug to fork from (e.g., 'blank', 'ai-agent', 'docs-agent')",
-  ),
-  is_public: z.boolean().optional().describe("Whether the project is public (default: false)"),
-});
+const getRemoteCreateProjectInput = defineSchema((v) =>
+  v.object({
+    slug: v.string().describe(
+      "Project slug (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken.",
+    ),
+    templateSlug: v.string().optional().describe(
+      "Template project slug to fork from (e.g., 'blank', 'ai-agent', 'docs-agent')",
+    ),
+    is_public: v.boolean().optional().describe("Whether the project is public (default: false)"),
+  })
+);
+const remoteCreateProjectInput = getRemoteCreateProjectInput();
 
-type RemoteCreateProjectInput = z.infer<typeof remoteCreateProjectInput>;
+type RemoteCreateProjectInput = InferSchema<ReturnType<typeof getRemoteCreateProjectInput>>;
 
 interface RemoteCreateProjectOutput {
   success: boolean;
@@ -674,17 +708,20 @@ export const vfRemoteCreateProject: MCPTool<RemoteCreateProjectInput, RemoteCrea
 // Tool: vf_remote_clone_project
 // ============================================================================
 
-const remoteCloneProjectInput = z.object({
-  source_project: z.string().describe("Source project slug or ID to clone from"),
-  target_slug: z.string().describe(
-    "Slug for the new project (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken.",
-  ),
-  file_pattern: z.string().optional().describe(
-    "Optional file pattern to filter which files to clone (e.g., '*.tsx')",
-  ),
-});
+const getRemoteCloneProjectInput = defineSchema((v) =>
+  v.object({
+    source_project: v.string().describe("Source project slug or ID to clone from"),
+    target_slug: v.string().describe(
+      "Slug for the new project (lowercase letters, numbers, hyphens only). A random suffix is appended if the slug is already taken.",
+    ),
+    file_pattern: v.string().optional().describe(
+      "Optional file pattern to filter which files to clone (e.g., '*.tsx')",
+    ),
+  })
+);
+const remoteCloneProjectInput = getRemoteCloneProjectInput();
 
-type RemoteCloneProjectInput = z.infer<typeof remoteCloneProjectInput>;
+type RemoteCloneProjectInput = InferSchema<ReturnType<typeof getRemoteCloneProjectInput>>;
 
 interface RemoteCloneProjectOutput {
   success: boolean;

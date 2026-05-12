@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 const mockWeather: Record<string, { temp: number; condition: string }> = {
   "San Francisco, CA": { temp: 65, condition: "Foggy" },
@@ -10,9 +10,11 @@ const mockWeather: Record<string, { temp: number; condition: string }> = {
 
 export default tool({
   description: "Get the current weather for a location",
-  inputSchema: z.object({
-    location: z.string().describe("The city and state, e.g. San Francisco, CA"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      location: v.string().describe("The city and state, e.g. San Francisco, CA"),
+    })
+  )(),
   execute: ({ location }: { location: string }): {
     location: string;
     temperature: number;

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertExists,
@@ -6,7 +7,9 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { dynamicTool } from "#veryfront/tool";
-import { z } from "zod";
+import "#veryfront/schemas/_test-setup.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+
 import { clearMCPRegistry, registerResource, registerTool } from "./registry.ts";
 import { createMCPServer } from "./server.ts";
 import type { ToolListEntry } from "./types.ts";
@@ -86,7 +89,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:context",
         description: "Echo tool context",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async (_input, context) => {
           capturedContext = context as typeof capturedContext;
           return { ok: true };
@@ -128,7 +131,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:context",
         description: "Echo tool context",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async (_input, context) => {
           capturedContext = context as typeof capturedContext;
           return { ok: true };
@@ -639,7 +642,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:annotated",
         description: "Tool with annotations",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => ({ ok: true }),
         mcp: {
           enabled: true,
@@ -683,7 +686,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:plain",
         description: "Plain tool",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => ({ ok: true }),
       }),
     );
@@ -712,7 +715,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:partial-annotations",
         description: "Partially annotated",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => ({ ok: true }),
         mcp: {
           enabled: true,
@@ -746,7 +749,7 @@ describe("mcp/server", () => {
         dynamicTool({
           id: "test:echo",
           description: "Echo tool",
-          inputSchema: z.object({}),
+          inputSchema: defineSchema((v) => v.object({}))(),
           execute: async () => ({ hello: "world" }),
         }),
       );
@@ -779,7 +782,7 @@ describe("mcp/server", () => {
         dynamicTool({
           id: "test:fail",
           description: "Failing tool",
-          inputSchema: z.object({}),
+          inputSchema: defineSchema((v) => v.object({}))(),
           execute: async () => {
             throw new Error("tool broke");
           },
@@ -831,7 +834,7 @@ describe("mcp/server", () => {
         dynamicTool({
           id: "test:strict",
           description: "Tool with required arg",
-          inputSchema: z.object({ required_field: z.string() }),
+          inputSchema: defineSchema((v) => v.object({ required_field: v.string() }))(),
           execute: async (input) => input,
         }),
       );
@@ -878,7 +881,7 @@ describe("mcp/server", () => {
         dynamicTool({
           id: "test:pagination",
           description: "Pagination test tool",
-          inputSchema: z.object({}),
+          inputSchema: defineSchema((v) => v.object({}))(),
           execute: async () => ({ ok: true }),
         }),
       );
@@ -955,7 +958,7 @@ describe("mcp/server", () => {
         id: "test:users",
         pattern: "/users/:id",
         description: "Get user by id",
-        paramsSchema: z.object({ id: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
         load: async () => ({}),
       });
 
@@ -983,7 +986,7 @@ describe("mcp/server", () => {
         id: "test:openapi",
         pattern: "openapi://spec",
         description: "OpenAPI spec",
-        paramsSchema: z.object({}),
+        paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
 
@@ -1010,7 +1013,7 @@ describe("mcp/server", () => {
         pattern: "/posts/:slug",
         description: "Get post",
         title: "Blog Post",
-        paramsSchema: z.object({ slug: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ slug: v.string() }))(),
         load: async () => ({}),
       });
 
@@ -1683,7 +1686,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:progress",
         description: "Captures context",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async (_input, context) => {
           capturedContext = context as Record<string, unknown>;
           return { ok: true };
@@ -1741,7 +1744,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:slow",
         description: "Slow tool",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => {
           await new Promise((r) => setTimeout(r, 50));
           return { done: true };
@@ -1770,7 +1773,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:slow2",
         description: "Slow tool",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => {
           await new Promise((r) => setTimeout(r, 200));
           return { done: true };
@@ -1806,7 +1809,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:slow3",
         description: "Slow tool",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => {
           await new Promise((r) => setTimeout(r, 100));
           return { done: true };
@@ -1843,7 +1846,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:fast",
         description: "Fast tool",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => ({ answer: 42 }),
       }),
     );
@@ -1876,7 +1879,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:slow4",
         description: "Slow tool",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => {
           await new Promise((r) => setTimeout(r, 200));
           return { done: true };
@@ -1911,7 +1914,7 @@ describe("mcp/server", () => {
       dynamicTool({
         id: "test:fail",
         description: "Failing tool",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => {
           throw new Error("tool broke");
         },

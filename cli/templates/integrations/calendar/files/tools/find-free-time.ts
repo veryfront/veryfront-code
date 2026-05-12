@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
 
 type FreeSlot = { start: Date; end: Date };
@@ -7,24 +7,24 @@ type FreeSlot = { start: Date; end: Date };
 export default tool({
   id: "find-free-time",
   description: "Find available time slots in the calendar for scheduling",
-  inputSchema: z.object({
-    durationMinutes: z
+  inputSchema: defineSchema((v) => v.object({
+    durationMinutes: v
       .number()
       .min(15)
       .max(480)
       .default(60)
       .describe("Duration needed in minutes"),
-    daysToSearch: z
+    daysToSearch: v
       .number()
       .min(1)
       .max(14)
       .default(7)
       .describe("Number of days to search ahead"),
-    workingHoursOnly: z
+    workingHoursOnly: v
       .boolean()
       .default(true)
       .describe("Only show slots during working hours (9 AM - 6 PM)"),
-  }),
+  }))(),
   execute: async (
     { durationMinutes, daysToSearch, workingHoursOnly },
     context,

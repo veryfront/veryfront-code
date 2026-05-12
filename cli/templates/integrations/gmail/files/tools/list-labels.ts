@@ -1,12 +1,12 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "list-labels",
   description: "List Gmail labels for the connected account.",
-  inputSchema: z.object({}),
+  inputSchema: defineSchema((v) => v.object({}))(),
   execute: async (_input, context) => {
     const userId = resolveUserId(context);
 

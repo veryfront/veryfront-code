@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listProjects, listWorkspaces } from "../../lib/asana-client.ts";
 
 export default tool({
   id: "list-projects",
   description: "List all projects in the Asana workspace.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(50)
       .default(20)
       .describe("Maximum number of projects to return"),
-  }),
+  }))(),
   async execute({ limit }) {
     const [workspace] = await listWorkspaces();
 

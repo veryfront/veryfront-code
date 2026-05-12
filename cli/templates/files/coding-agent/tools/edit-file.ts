@@ -1,15 +1,15 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { readTextFile, writeTextFile, resolve, cwd } from "veryfront/fs";
 
 export default tool({
   id: "edit-file",
   description: "Edit a file by replacing a specific string with new content",
-  inputSchema: z.object({
-    path: z.string().describe("File path relative to the project root"),
-    search: z.string().describe("Exact string to find in the file"),
-    replace: z.string().describe("String to replace it with"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    path: v.string().describe("File path relative to the project root"),
+    search: v.string().describe("Exact string to find in the file"),
+    replace: v.string().describe("String to replace it with"),
+  }))(),
   execute: async ({ path, search, replace }) => {
     const absolute = resolve(cwd(), path);
 

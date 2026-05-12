@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /****
  * Unit Tests for State Bridge
  * Tests client-server state synchronization and persistence

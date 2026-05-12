@@ -1,6 +1,7 @@
 import { mapAgUiRuntimeMessagesToChatUiMessages } from "#veryfront/chat/ag-ui.ts";
 import type { ChatRequestContext, ChatRuntimeOverrides } from "#veryfront/chat/types.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   createAgUiRuntimeContextMap,
   deriveAgUiForwardedConfig,
@@ -17,19 +18,25 @@ import type {
   ParseHostedChatRequestOptions,
 } from "./hosted-chat-request-parser.ts";
 
-export const hostedAgUiChatForwardedConfigSchema = z
-  .object({
-    projectId: z.string().nullable().optional(),
-    branchId: z.string().nullable().optional(),
-    conversationId: z.string().optional(),
-    environmentContext: z.string().optional(),
-    model: z.string().optional(),
-    allowDelegation: z.boolean().optional(),
+export const getHostedAgUiChatForwardedConfigSchema = defineSchema((v) =>
+  v.object({
+    projectId: v.string().nullable().optional(),
+    branchId: v.string().nullable().optional(),
+    conversationId: v.string().optional(),
+    environmentContext: v.string().optional(),
+    model: v.string().optional(),
+    allowDelegation: v.boolean().optional(),
     runtimeOverrides: hostedChatRuntimeOverridesSchema.optional(),
   })
-  .strict();
+    .strict()
+);
 
-export type HostedAgUiChatForwardedConfig = z.infer<typeof hostedAgUiChatForwardedConfigSchema>;
+/** @deprecated Use getHostedAgUiChatForwardedConfigSchema() */
+export const hostedAgUiChatForwardedConfigSchema = getHostedAgUiChatForwardedConfigSchema();
+
+export type HostedAgUiChatForwardedConfig = InferSchema<
+  ReturnType<typeof getHostedAgUiChatForwardedConfigSchema>
+>;
 
 export type DerivedHostedAgUiChatContext = {
   validatedContext: ChatRequestContext;
@@ -52,12 +59,15 @@ export type BuildParsedHostedAgUiRequestOptions = {
   verifyProjectAccess?: ParseHostedChatRequestOptions["verifyProjectAccess"];
 };
 
-const hostedValidationErrorBodySchema = z
-  .object({
-    error: z.string().optional(),
-    details: z.array(z.object({ message: z.string().optional() }).passthrough()).optional(),
+const getHostedValidationErrorBodySchema = defineSchema((v) =>
+  v.object({
+    error: v.string().optional(),
+    details: v.array(v.object({ message: v.string().optional() }).passthrough()).optional(),
   })
-  .passthrough();
+    .passthrough()
+);
+
+const hostedValidationErrorBodySchema = getHostedValidationErrorBodySchema();
 
 async function verifyHostedAgUiProjectAccess(input: {
   projectId: string | null;

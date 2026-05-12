@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Auto-Discovery Integration Tests
  */
@@ -109,12 +110,12 @@ describe(
           `${tempDir}/tools/write-report.ts`,
           [
             'import { tool } from "veryfront/tool";',
-            'import { z } from "zod";',
+            'import { defineSchema } from "#veryfront/schemas/index.ts";',
             "",
             "export default tool({",
             '  id: "write-report",',
             '  description: "Write a markdown report",',
-            "  inputSchema: z.object({ markdown: z.string() }),",
+            "  inputSchema: defineSchema((v) => v.object({ markdown: v.string() }))(),",
             "  execute: async ({ markdown }) => ({ ok: true, markdown }),",
             "});",
           ].join("\n"),
@@ -143,12 +144,12 @@ describe(
           `${tempDir}/tools/write-report.ts`,
           [
             'import { tool } from "veryfront/tool";',
-            'import { z } from "zod";',
+            'import { defineSchema } from "#veryfront/schemas/index.ts";',
             "",
             "export default tool({",
             '  id: "tool_2024_01",',
             '  description: "Write a markdown report",',
-            "  inputSchema: z.object({ markdown: z.string() }),",
+            "  inputSchema: defineSchema((v) => v.object({ markdown: v.string() }))(),",
             "  execute: async ({ markdown }) => ({ ok: true, markdown }),",
             "});",
           ].join("\n"),
@@ -177,11 +178,11 @@ describe(
           `${tempDir}/tools/write-report.ts`,
           [
             'import { tool } from "veryfront/tool";',
-            'import { z } from "zod";',
+            'import { defineSchema } from "#veryfront/schemas/index.ts";',
             "",
             "const generated = tool({",
             '  description: "Write a markdown report",',
-            "  inputSchema: z.object({ markdown: z.string() }),",
+            "  inputSchema: defineSchema((v) => v.object({ markdown: v.string() }))(),",
             "  execute: async ({ markdown }) => ({ ok: true, markdown }),",
             "});",
             "",

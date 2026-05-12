@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/loader.test */
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";

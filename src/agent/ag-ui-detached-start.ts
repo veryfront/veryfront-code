@@ -1,7 +1,8 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { streamDataStreamEvents } from "./data-stream.ts";
-import { AgUiRequestSchema, normalizeAgUiMessages } from "./ag-ui-host-support.ts";
+import { getAgUiRequestSchema, normalizeAgUiMessages } from "./ag-ui-host-support.ts";
 import { extractRequest } from "./ag-ui-request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./ag-ui-tool-shared.ts";
 import {
@@ -13,7 +14,9 @@ import type { Agent } from "./types.ts";
 import type { ChatUiMessage, MessageMetadata } from "#veryfront/chat/types.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const AG_UI_DETACHED_RUN_ID_SCHEMA = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
+const getAgUiDetachedRunIdSchema = defineSchema((v) =>
+  v.string().min(1).max(128).regex(AGENT_ID_PATTERN)
+);
 
 type AgUiContextValue =
   | Record<string, unknown>
@@ -68,20 +71,33 @@ async function drainRuntimeStream(
   }
 }
 
-export const AgUiDetachedStartRequestSchema = AgUiRequestSchema.extend({
-  threadId: z.string().uuid(),
-  runId: AG_UI_DETACHED_RUN_ID_SCHEMA,
-});
+export const getAgUiDetachedStartRequestSchema = defineSchema((v) =>
+  getAgUiRequestSchema().extend({
+    threadId: v.string().uuid(),
+    runId: getAgUiDetachedRunIdSchema(),
+  })
+);
 
-export const AgUiDetachedStartAcceptedSchema = z.object({
-  accepted: z.literal(true),
-  duplicate: z.boolean(),
-  runId: AG_UI_DETACHED_RUN_ID_SCHEMA,
-  threadId: z.string().uuid(),
-});
+export const getAgUiDetachedStartAcceptedSchema = defineSchema((v) =>
+  v.object({
+    accepted: v.literal(true),
+    duplicate: v.boolean(),
+    runId: getAgUiDetachedRunIdSchema(),
+    threadId: v.string().uuid(),
+  })
+);
 
-export type AgUiDetachedStartRequest = z.infer<typeof AgUiDetachedStartRequestSchema>;
-export type AgUiDetachedStartAccepted = z.infer<typeof AgUiDetachedStartAcceptedSchema>;
+/** @deprecated Use getAgUiDetachedStartRequestSchema() */
+export const AgUiDetachedStartRequestSchema = getAgUiDetachedStartRequestSchema();
+/** @deprecated Use getAgUiDetachedStartAcceptedSchema() */
+export const AgUiDetachedStartAcceptedSchema = getAgUiDetachedStartAcceptedSchema();
+
+export type AgUiDetachedStartRequest = InferSchema<
+  ReturnType<typeof getAgUiDetachedStartRequestSchema>
+>;
+export type AgUiDetachedStartAccepted = InferSchema<
+  ReturnType<typeof getAgUiDetachedStartAcceptedSchema>
+>;
 
 function toDetachedAgUiMessageMetadata(
   metadata: MessageMetadata | undefined,
@@ -120,7 +136,9 @@ export function buildDetachedAgUiStartRequest(input: {
   forwardedProps?: Record<string, unknown>;
   createThreadId?: () => string;
 }): AgUiDetachedStartRequest {
-  const effectiveThreadId = z.string().uuid().safeParse(input.threadId).success
+  const isValidUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(input.threadId);
+  const effectiveThreadId = isValidUuid
     ? input.threadId
     : (input.createThreadId?.() ?? crypto.randomUUID());
   const effectiveMessages: AgUiDetachedStartRequest["messages"] = input.messages.length > 0
@@ -370,18 +388,23 @@ export function createAgUiDetachedStartHandler(
     const request = extractRequest(requestOrCtx);
 
     try {
-      const parsed = AgUiDetachedStartRequestSchema.parse(await request.json());
+      const parsed = getAgUiDetachedStartRequestSchema().parse(await request.json());
       return await executeAgUiDetachedStart(options, {
         request: parsed,
         rawRequest: request,
         requestOrCtx,
       });
     } catch (error) {
-      if (error instanceof z.ZodError) {
+      if (
+        error instanceof Error &&
+        "issues" in error &&
+        Array.isArray((error as Record<string, unknown>).issues)
+      ) {
+        const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
         return Response.json(
           {
             error: "Invalid AG-UI detached start request",
-            details: error.issues.map((issue) => ({
+            details: issues.map((issue) => ({
               path: issue.path,
               message: issue.message,
             })),

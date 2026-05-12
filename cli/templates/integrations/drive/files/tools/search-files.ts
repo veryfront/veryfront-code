@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createDriveClient } from "../../lib/drive-client.ts";
 
 const DEFAULT_USER_ID = "demo-user";
@@ -9,23 +9,23 @@ export default tool({
   id: "search-files",
   description:
     "Search for files and folders in Google Drive using queries. Supports searching by name, content, type, and more. Use Drive query syntax (e.g., \"name contains 'report'\", \"mimeType='application/pdf'\").",
-  inputSchema: z.object({
-    query: z
+  inputSchema: defineSchema((v) => v.object({
+    query: v
       .string()
       .describe(
         "Search query using Drive query syntax. Examples: \"name contains 'report'\", \"mimeType='application/pdf'\", \"fullText contains 'budget'\"",
       ),
-    pageSize: z
+    pageSize: v
       .number()
       .min(1)
       .max(1000)
       .default(100)
       .describe("Maximum number of files to return"),
-    pageToken: z
+    pageToken: v
       .string()
       .optional()
       .describe("Token for pagination to get next page of results"),
-    orderBy: z
+    orderBy: v
       .enum([
         "createdTime",
         "folder",
@@ -40,7 +40,7 @@ export default tool({
       ])
       .optional()
       .describe("Field to sort results by"),
-  }),
+  }))(),
   async execute({ query, pageSize, pageToken, orderBy }) {
     const client = createDriveClient(DEFAULT_USER_ID);
 

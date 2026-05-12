@@ -5,23 +5,27 @@
  * Reuses parseTestOutput from the CLI test command.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { parseTestOutput, type TestResult } from "../../commands/test/command.ts";
 
-const runTestsInput = z.object({
-  filter: z.string().optional().describe(
-    "Filter tests by name pattern. Example: 'router' to run only tests matching 'router'.",
-  ),
-  parallel: z.boolean().optional().default(false).describe(
-    "Run tests in parallel. Defaults to false.",
-  ),
-  timeout: z.number().optional().default(300000).describe(
-    "Maximum time to wait for test completion in milliseconds. Defaults to 300000 (5 minutes).",
-  ),
-});
+const getRunTestsInput = defineSchema((v) =>
+  v.object({
+    filter: v.string().optional().describe(
+      "Filter tests by name pattern. Example: 'router' to run only tests matching 'router'.",
+    ),
+    parallel: v.boolean().optional().default(false).describe(
+      "Run tests in parallel. Defaults to false.",
+    ),
+    timeout: v.number().optional().default(300000).describe(
+      "Maximum time to wait for test completion in milliseconds. Defaults to 300000 (5 minutes).",
+    ),
+  })
+);
+const runTestsInput = getRunTestsInput();
 
-type RunTestsInput = z.infer<typeof runTestsInput>;
+type RunTestsInput = InferSchema<ReturnType<typeof getRunTestsInput>>;
 
 /** Build the deno test command args from input options. */
 export function buildTestArgs(input: { filter?: string; parallel?: boolean }): string[] {

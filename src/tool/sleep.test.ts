@@ -1,8 +1,28 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { createSleepTool, DEFAULT_SLEEP_TOOL_MAX_SECONDS, sleepTool } from "./sleep.ts";
+import { createZodAdapter } from "../../extensions/ext-zod/src/adapter.ts";
 
 describe("tool/sleep", () => {
+  afterEach(() => {
+    reset();
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
+  });
+
+  it("installs the default validator when created before schema bootstrap", () => {
+    reset();
+
+    assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
+
+    const testSleepTool = createSleepTool({ wait: () => undefined });
+
+    assertEquals(!!tryResolve<SchemaValidator>("SchemaValidator"), true);
+    assertEquals(testSleepTool.inputSchema.safeParse({ seconds: 1 }).success, true);
+  });
+
   it("waits for the requested number of seconds and returns a concise result", async () => {
     const waits: number[] = [];
     const testSleepTool = createSleepTool({

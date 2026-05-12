@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";

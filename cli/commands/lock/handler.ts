@@ -2,20 +2,24 @@
  * Lock command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { lockCommand } from "./command.ts";
 import { createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { handleProjectDirCommand } from "../../shared/handler-utils.ts";
 
-const LockArgsSchema = z.object({
-  projectDir: z.string().default(""),
-  update: z.boolean().default(false),
-  verify: z.boolean().default(false),
-  clear: z.boolean().default(false),
-  list: z.boolean().default(false),
-  force: z.boolean().default(false),
-});
+const getLockArgsSchema = defineSchema((v) =>
+  v.object({
+    projectDir: v.string().default(""),
+    update: v.boolean().default(false),
+    verify: v.boolean().default(false),
+    clear: v.boolean().default(false),
+    list: v.boolean().default(false),
+    force: v.boolean().default(false),
+  })
+);
+
+const LockArgsSchema = getLockArgsSchema();
 
 const parseLockArgs = createArgParser(LockArgsSchema, {
   projectDir: { keys: ["project"], type: "string" },

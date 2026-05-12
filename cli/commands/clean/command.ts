@@ -90,7 +90,7 @@ async function cleanCacheStore(projectDir: string): Promise<void> {
     const adapter = await runtime.get();
     const config = await getConfig(projectDir, adapter);
     const cacheDir = config.cache?.dir ?? DEFAULT_CACHE_DIR;
-    const renderConfig: RenderCacheConfig = config.cache?.render ?? {};
+    const renderConfig: RenderCacheConfig = (config.cache?.render ?? {}) as RenderCacheConfig;
 
     const store = createRenderCacheStore(renderConfig.type, {
       projectDir,

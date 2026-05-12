@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Acceptance criteria tests for Streamable HTTP transport (issue #839).
  * Tests the framework MCPServer HTTP handler against all acceptance criteria.

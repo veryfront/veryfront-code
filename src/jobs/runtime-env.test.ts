@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
@@ -15,20 +16,10 @@ describe("jobs/runtime-env", () => {
   });
 
   it("filters unsafe and reserved injected env keys", () => {
-    const injectedEnv: Record<string, unknown> = {
-      SAFE_VALUE: "ok",
-      VERYFRONT_API_TOKEN: "secret",
-      TENANT_SECRET: "tenant-secret",
-      nonString: 123,
-    };
-    Object.defineProperty(injectedEnv, "__proto__", {
-      value: "polluted",
-      enumerable: true,
-    });
-
     assertEquals(
       readInjectedProjectEnv({
-        [INJECTED_TASK_ENV_JSON]: JSON.stringify(injectedEnv),
+        [INJECTED_TASK_ENV_JSON]:
+          '{"SAFE_VALUE":"ok","VERYFRONT_API_TOKEN":"secret","TENANT_SECRET":"tenant-secret","nonString":123,"__proto__":"polluted"}',
       }),
       {
         SAFE_VALUE: "ok",

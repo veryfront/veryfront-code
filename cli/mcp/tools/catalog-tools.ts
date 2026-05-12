@@ -2,12 +2,14 @@
  * MCP tools for catalog browsing and project creation.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, toSlug } from "./helpers.ts";
+import type { InitTemplate } from "../../commands/init/types.ts";
 
 // ============================================================================
 // Static Data
@@ -328,9 +330,10 @@ const USECASES: UsecaseInfo[] = [
 // Tool: vf_list_examples
 // ============================================================================
 
-const listExamplesInput = z.object({});
+const getListExamplesInput = defineSchema((v) => v.object({}));
+const listExamplesInput = getListExamplesInput();
 
-type ListExamplesInput = z.infer<typeof listExamplesInput>;
+type ListExamplesInput = InferSchema<ReturnType<typeof getListExamplesInput>>;
 
 export const vfListExamples: MCPTool<ListExamplesInput, ExampleInfo[]> = {
   name: "vf_list_examples",
@@ -346,9 +349,10 @@ export const vfListExamples: MCPTool<ListExamplesInput, ExampleInfo[]> = {
 // Tool: vf_list_templates
 // ============================================================================
 
-const listTemplatesInput = z.object({});
+const getListTemplatesInput = defineSchema((v) => v.object({}));
+const listTemplatesInput = getListTemplatesInput();
 
-type ListTemplatesInput = z.infer<typeof listTemplatesInput>;
+type ListTemplatesInput = InferSchema<ReturnType<typeof getListTemplatesInput>>;
 
 export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
   name: "vf_list_templates",
@@ -364,15 +368,18 @@ export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
 // Tool: vf_list_integrations
 // ============================================================================
 
-const listIntegrationsInput = z.object({
-  category: z
-    .enum(["all", "productivity", "development", "communication", "data", "ai"])
-    .optional()
-    .default("all")
-    .describe("Filter integrations by category"),
-});
+const getListIntegrationsInput = defineSchema((v) =>
+  v.object({
+    category: v
+      .enum(["all", "productivity", "development", "communication", "data", "ai"])
+      .optional()
+      .default("all")
+      .describe("Filter integrations by category"),
+  })
+);
+const listIntegrationsInput = getListIntegrationsInput();
 
-type ListIntegrationsInput = z.infer<typeof listIntegrationsInput>;
+type ListIntegrationsInput = InferSchema<ReturnType<typeof getListIntegrationsInput>>;
 
 export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[]> = {
   name: "vf_list_integrations",
@@ -392,9 +399,10 @@ export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[
 // Tool: vf_list_usecases
 // ============================================================================
 
-const listUsecasesInput = z.object({});
+const getListUsecasesInput = defineSchema((v) => v.object({}));
+const listUsecasesInput = getListUsecasesInput();
 
-type ListUsecasesInput = z.infer<typeof listUsecasesInput>;
+type ListUsecasesInput = InferSchema<ReturnType<typeof getListUsecasesInput>>;
 
 export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
   name: "vf_list_usecases",
@@ -410,32 +418,35 @@ export const vfListUsecases: MCPTool<ListUsecasesInput, UsecaseInfo[]> = {
 // Tool: vf_create_project
 // ============================================================================
 
-const createProjectInput = z.object({
-  name: z.string().describe("Project name (will be converted to slug for directory)"),
-  template: z
-    .enum([
-      "ai-agent",
-      "docs-agent",
-      "multi-agent-system",
-      "agentic-workflow",
-      "coding-agent",
-      "saas-starter",
-      "minimal",
-    ])
-    .optional()
-    .default("ai-agent")
-    .describe("Project template to use"),
-  integrations: z
-    .array(z.string())
-    .optional()
-    .describe("Service integrations to include (e.g., ['gmail', 'slack'])"),
-  directory: z
-    .string()
-    .optional()
-    .describe("Parent directory to create project in (defaults to current directory)"),
-});
+const getCreateProjectInput = defineSchema((v) =>
+  v.object({
+    name: v.string().describe("Project name (will be converted to slug for directory)"),
+    template: v
+      .enum([
+        "ai-agent",
+        "docs-agent",
+        "multi-agent-system",
+        "agentic-workflow",
+        "coding-agent",
+        "saas-starter",
+        "minimal",
+      ])
+      .optional()
+      .default("ai-agent")
+      .describe("Project template to use"),
+    integrations: v
+      .array(v.string())
+      .optional()
+      .describe("Service integrations to include (e.g., ['gmail', 'slack'])"),
+    directory: v
+      .string()
+      .optional()
+      .describe("Parent directory to create project in (defaults to current directory)"),
+  })
+);
+const createProjectInput = getCreateProjectInput();
 
-type CreateProjectInput = z.infer<typeof createProjectInput>;
+type CreateProjectInput = InferSchema<ReturnType<typeof getCreateProjectInput>>;
 
 interface CreateProjectResult {
   success: boolean;
@@ -468,7 +479,7 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
 
           await initCommand({
             name: input.name,
-            template: input.template,
+            template: input.template as InitTemplate,
             integrations: input.integrations as
               | import("../../templates/types.ts").IntegrationName[]
               | undefined,

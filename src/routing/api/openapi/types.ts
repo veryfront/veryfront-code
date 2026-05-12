@@ -1,13 +1,13 @@
-import type { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { JsonSchema } from "#veryfront/tool/schema";
 import type { AppRouteHandler } from "../module-loader/types.ts";
 
 export const OPENAPI_METADATA = Symbol.for("veryfront.openapi.metadata");
 
 export interface OpenAPIRouteConfig<
-  TParams extends z.ZodTypeAny = z.ZodTypeAny,
-  TQuery extends z.ZodTypeAny = z.ZodTypeAny,
-  TBody extends z.ZodTypeAny = z.ZodTypeAny,
+  TParams extends Schema = Schema,
+  TQuery extends Schema = Schema,
+  TBody extends Schema = Schema,
 > {
   summary?: string;
   description?: string;
@@ -17,7 +17,7 @@ export interface OpenAPIRouteConfig<
   body?: TBody;
   response?: Record<
     number,
-    z.ZodTypeAny | { schema: z.ZodTypeAny; description?: string }
+    Schema | { schema: Schema; description?: string }
   >;
   deprecated?: boolean;
   handler: AppRouteHandler;

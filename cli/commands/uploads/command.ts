@@ -1,6 +1,10 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 
-type SafeParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
+type SafeParseResult<T> = { success: true; data: T } | {
+  success: false;
+  error: Error & { issues: unknown[] };
+};
 import { createFileSystem, cwd, lookupMimeType } from "veryfront/platform";
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -41,52 +45,68 @@ interface CreateUploadResponse {
   required_headers: Record<string, string>;
 }
 
-const UploadListArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  path: z.string().optional(),
-  limit: z.coerce.number().min(1).max(100).optional(),
-  recursive: z.boolean().default(true),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+const getUploadListArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    path: v.string().optional(),
+    limit: v.coerce.number().min(1).max(100).optional(),
+    recursive: v.boolean().default(true),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
 
-export type UploadListOptions = z.infer<typeof UploadListArgsSchema>;
+const UploadListArgsSchema = getUploadListArgsSchema();
 
-const UploadPullArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  uploads: z.array(z.string()).default([]),
-  path: z.string().optional(),
-  all: z.boolean().default(false),
-  outputDir: z.string().default(join(cwd(), "uploads")),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+export type UploadListOptions = InferSchema<ReturnType<typeof getUploadListArgsSchema>>;
 
-export type UploadPullOptions = z.infer<typeof UploadPullArgsSchema>;
+const getUploadPullArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    uploads: v.array(v.string()).default([]),
+    path: v.string().optional(),
+    all: v.boolean().default(false),
+    outputDir: v.string().default(join(cwd(), "uploads")),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
 
-const UploadPutArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  uploadPath: z.string().min(1),
-  from: z.string().min(1),
-  contentType: z.string().optional(),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+const UploadPullArgsSchema = getUploadPullArgsSchema();
 
-export type UploadPutOptions = z.infer<typeof UploadPutArgsSchema>;
+export type UploadPullOptions = InferSchema<ReturnType<typeof getUploadPullArgsSchema>>;
 
-const UploadDeleteArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  uploadPath: z.string().min(1),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+const getUploadPutArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    uploadPath: v.string().min(1),
+    from: v.string().min(1),
+    contentType: v.string().optional(),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
 
-export type UploadDeleteOptions = z.infer<typeof UploadDeleteArgsSchema>;
+const UploadPutArgsSchema = getUploadPutArgsSchema();
+
+export type UploadPutOptions = InferSchema<ReturnType<typeof getUploadPutArgsSchema>>;
+
+const getUploadDeleteArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    uploadPath: v.string().min(1),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
+
+const UploadDeleteArgsSchema = getUploadDeleteArgsSchema();
+
+export type UploadDeleteOptions = InferSchema<ReturnType<typeof getUploadDeleteArgsSchema>>;
 
 function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
   return keys.some((key) => Boolean(args[key]));
@@ -140,7 +160,7 @@ export function parseUploadsListArgs(
     recursive: args.recursive === undefined ? true : Boolean(args.recursive),
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<UploadListOptions>;
 }
 
 export function parseUploadsPullArgs(
@@ -155,7 +175,7 @@ export function parseUploadsPullArgs(
     outputDir: getStringArg(args, "output-dir") ?? join(cwd(), "uploads"),
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<UploadPullOptions>;
 }
 
 export function parseUploadsPutArgs(
@@ -169,7 +189,7 @@ export function parseUploadsPutArgs(
     contentType: getStringArg(args, "content-type"),
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<UploadPutOptions>;
 }
 
 export function parseUploadsDeleteArgs(
@@ -181,7 +201,7 @@ export function parseUploadsDeleteArgs(
     uploadPath: typeof args._[2] === "string" ? args._[2] : "",
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<UploadDeleteOptions>;
 }
 
 export function buildUploadsListUrl(projectSlug: string): string {

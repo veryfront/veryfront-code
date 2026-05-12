@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { extractRequest } from "./ag-ui-request-shared.ts";
 import {
   RunNotActiveError,
@@ -10,16 +11,21 @@ import {
 const RESUME_PATH_REGEX = /^\/api\/ag-ui\/runs\/([^/]+)\/resume$/;
 const CANCEL_PATH_REGEX = /^\/api\/ag-ui\/runs\/([^/]+)$/;
 
-export const AgUiResumeSignalSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("tool_result"),
-    toolCallId: z.string().min(1).max(128),
-    result: z.unknown(),
-    isError: z.boolean().optional().default(false),
-  }),
-]);
+export const getAgUiResumeSignalSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("tool_result"),
+      toolCallId: v.string().min(1).max(128),
+      result: v.unknown(),
+      isError: v.boolean().optional().default(false),
+    }),
+  ])
+);
 
-export type AgUiResumeSignal = z.infer<typeof AgUiResumeSignalSchema>;
+/** @deprecated Use getAgUiResumeSignalSchema() */
+export const AgUiResumeSignalSchema = getAgUiResumeSignalSchema();
+
+export type AgUiResumeSignal = InferSchema<ReturnType<typeof getAgUiResumeSignalSchema>>;
 
 type ResumeValue = {
   result: unknown;
@@ -67,7 +73,7 @@ export function createAgUiResumeHandler(
     }
 
     try {
-      const parsed = AgUiResumeSignalSchema.parse(await request.json());
+      const parsed = getAgUiResumeSignalSchema().parse(await request.json());
       const outcome = options.sessionManager.submitSignal(runId, {
         waitKey: parsed.toolCallId,
         value: {
@@ -78,11 +84,16 @@ export function createAgUiResumeHandler(
 
       return Response.json(outcome, { status: 200 });
     } catch (error) {
-      if (error instanceof z.ZodError) {
+      if (
+        error instanceof Error &&
+        "issues" in error &&
+        Array.isArray((error as Record<string, unknown>).issues)
+      ) {
+        const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
         return Response.json(
           {
             error: "Invalid AG-UI resume request",
-            details: error.issues.map((issue) => ({
+            details: issues.map((issue) => ({
               path: issue.path,
               message: issue.message,
             })),

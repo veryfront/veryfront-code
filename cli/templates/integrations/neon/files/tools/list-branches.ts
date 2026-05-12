@@ -1,14 +1,14 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listBranches } from "../../lib/neon-client.ts";
 
 export default tool({
   id: "list-branches",
   description:
     "List all branches for a specific Neon project. Branches are isolated database environments that can be created from any point in time.",
-  inputSchema: z.object({
-    projectId: z.string().describe("The ID of the Neon project"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    projectId: v.string().describe("The ID of the Neon project"),
+  }))(),
   async execute({ projectId }) {
     const branches = await listBranches(projectId);
 

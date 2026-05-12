@@ -61,10 +61,10 @@ export function generateHydrationData(
     pagePath: options.pagePath
       ? toProjectRelativePath(options.pagePath, options.projectDir)
       : undefined,
-    pageType: options.pageType || inferPageType(options.pagePath),
+    pageType: (options.pageType || inferPageType(options.pagePath)) as any,
     clientModuleStrategy: determineClientModuleStrategy({
       isLocalProject: options.isLocalProject,
-      environment: options.environment,
+      environment: options.environment as any,
     }),
     frontmatter: options.frontmatter,
     layoutProps: options.layoutProps,

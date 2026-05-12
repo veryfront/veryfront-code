@@ -1,17 +1,17 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient, parseEmailHeaders } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "get-email",
   description: "Get a Gmail message by ID, including headers, labels, snippet, and payload data.",
-  inputSchema: z.object({
-    messageId: z.string().min(1).describe("Gmail message ID"),
-    format: z.enum(["full", "metadata", "minimal", "raw"]).default("full").describe(
+  inputSchema: defineSchema((v) => v.object({
+    messageId: v.string().min(1).describe("Gmail message ID"),
+    format: v.enum(["full", "metadata", "minimal", "raw"]).default("full").describe(
       "Message format",
     ),
-  }),
+  }))(),
   execute: async ({ messageId, format }, context) => {
     const userId = resolveUserId(context);
 

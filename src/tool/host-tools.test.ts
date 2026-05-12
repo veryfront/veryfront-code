@@ -1,6 +1,7 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createToolsFromHostDefinitions, type HostToolSet } from "./host-tools.ts";
 import type { ToolExecutionContext, ToolSet } from "./types.ts";
 
@@ -13,7 +14,7 @@ describe("tool/host-tools", () => {
     const tools = createToolsFromHostDefinitions({
       search: {
         description: "Search docs",
-        inputSchema: z.object({ query: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
         execute: (input: unknown, context?: ToolExecutionContext) => {
           receivedContextToolCallId = String(context?.toolCallId);
           return input;
@@ -39,7 +40,7 @@ describe("tool/host-tools", () => {
     const tools = createToolsFromHostDefinitions({
       read_file: {
         description: "Read a file",
-        inputSchema: z.object({ path: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
         execute: (_input: unknown, context?: ToolExecutionContext) => {
           receivedProjectId = String(context?.projectId);
           receivedToolCallId = String(context?.toolCallId);
@@ -64,7 +65,7 @@ describe("tool/host-tools", () => {
     const tools = createToolsFromHostDefinitions({
       dynamic_search: {
         description: "Search docs",
-        inputSchema: z.object({}).passthrough(),
+        inputSchema: defineSchema((v) => v.object({}).passthrough())(),
         inputSchemaJson: emptyJsonSchema,
         execute: () => ({ ok: true }),
         mcp: { title: "Search documentation", annotations: { readOnlyHint: true } },
@@ -83,7 +84,7 @@ describe("tool/host-tools", () => {
     const tools = createToolsFromHostDefinitions({
       missingExecute: {
         description: "No execute",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
       },
       missingSchema: {
         description: "No schema",
@@ -107,7 +108,7 @@ describe("tool/host-tools", () => {
       },
       valid: {
         description: "Valid tool",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: () => ({ ok: true }),
       },
     });
@@ -119,7 +120,7 @@ describe("tool/host-tools", () => {
     const hostTools: HostToolSet = {
       search: {
         description: "Search docs",
-        inputSchema: z.object({ query: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
         execute: (input: unknown) => input,
       },
     };

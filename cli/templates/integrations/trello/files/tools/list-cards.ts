@@ -1,25 +1,25 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listCards } from "../../lib/trello-client.ts";
 
 export default tool({
   id: "list-cards",
   description:
     "List cards from Trello. Can filter by board or list. Provide either boardId or listId.",
-  inputSchema: z.object({
-    boardId: z.string().optional().describe("Board ID to list cards from"),
-    listId: z.string().optional().describe("List ID to list cards from"),
-    includeArchived: z
+  inputSchema: defineSchema((v) => v.object({
+    boardId: v.string().optional().describe("Board ID to list cards from"),
+    listId: v.string().optional().describe("List ID to list cards from"),
+    includeArchived: v
       .boolean()
       .default(false)
       .describe("Include archived/closed cards"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(50)
       .describe("Maximum number of cards to return"),
-  }),
+  }))(),
   async execute({ boardId, listId, includeArchived, limit }) {
     if (!boardId && !listId) {
       return { cards: [], message: "Please specify either a boardId or listId" };

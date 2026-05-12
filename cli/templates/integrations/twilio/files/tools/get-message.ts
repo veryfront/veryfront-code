@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getMessage } from "../../lib/twilio-client.ts";
 
 export default tool({
   id: "get-message",
   description:
     "Get detailed information about a specific SMS or WhatsApp message by its SID (Message ID)",
-  inputSchema: z.object({
-    messageSid: z
+  inputSchema: defineSchema((v) => v.object({
+    messageSid: v
       .string()
       .describe(
         "The unique Twilio Message SID (starts with 'MM' or 'SM', e.g., MM1234567890abcdef)",
       ),
-  }),
+  }))(),
   execute: async ({ messageSid }) => {
     try {
       const message = await getMessage(messageSid);

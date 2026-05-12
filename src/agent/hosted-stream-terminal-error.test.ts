@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import {
   getEmptyHostedFinalizedMessageTerminalError,

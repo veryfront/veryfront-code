@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatContactName, listContacts } from "../../lib/hubspot-client.ts";
 
 export default tool({
   id: "list-contacts",
   description:
     "List contacts from your HubSpot CRM. Returns contact information including name, email, phone, company, and job title.",
-  inputSchema: z.object({
-    limit: z.number().min(1).max(100).default(10).describe("Maximum number of contacts to return"),
-    properties: z
-      .array(z.string())
+  inputSchema: defineSchema((v) => v.object({
+    limit: v.number().min(1).max(100).default(10).describe("Maximum number of contacts to return"),
+    properties: v
+      .array(v.string())
       .optional()
       .describe("Additional properties to retrieve (e.g., website, city, state)"),
-  }),
+  }))(),
   async execute({ limit, properties }) {
     const response = await listContacts({ limit, properties });
 

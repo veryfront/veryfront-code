@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Tests for cache portability - ensuring code stored in distributed cache
  * is portable across different environments (build server -> production pod).

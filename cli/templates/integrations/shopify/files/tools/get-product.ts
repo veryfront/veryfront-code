@@ -1,13 +1,13 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getProduct } from "../../lib/shopify-client.ts";
 
 export default tool({
   id: "get-product",
   description: "Get details of a specific Shopify product by its ID.",
-  inputSchema: z.object({
-    productId: z.union([z.number(), z.string()]).describe("The ID of the product to retrieve"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    productId: v.union([v.number(), v.string()]).describe("The ID of the product to retrieve"),
+  }))(),
   async execute({ productId }) {
     const product = await getProduct(productId);
 

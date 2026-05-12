@@ -1,35 +1,40 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 
-export const SkillManifestSchema = z.object({
-  name: z.string(),
-  version: z.string(),
-  description: z.string(),
-  requires: z
-    .object({
-      cli: z.array(z.string()).optional(),
-      mcp: z.array(z.string()).optional(),
-    })
-    .optional(),
-  inputs: z
-    .record(
-      z.string(),
-      z.object({
-        type: z.string(),
-        default: z.unknown().optional(),
-        description: z.string().optional(),
-      }),
-    )
-    .optional(),
-});
+export const getSkillManifestSchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+    version: v.string(),
+    description: v.string(),
+    requires: v
+      .object({
+        cli: v.array(v.string()).optional(),
+        mcp: v.array(v.string()).optional(),
+      })
+      .optional(),
+    inputs: v
+      .record(
+        v.string(),
+        v.object({
+          type: v.string(),
+          default: v.unknown().optional(),
+          description: v.string().optional(),
+        }),
+      )
+      .optional(),
+  })
+);
+export const SkillManifestSchema = getSkillManifestSchema();
 
-export type SkillManifest = z.infer<typeof SkillManifestSchema>;
+export type SkillManifest = InferSchema<ReturnType<typeof getSkillManifestSchema>>;
 
 export function parseSkillJson(
   raw: unknown,
 ): { success: true; data: SkillManifest } | { success: false; error: string } {
   const result = SkillManifestSchema.safeParse(raw);
   if (result.success) return { success: true, data: result.data };
-  return { success: false, error: result.error.message };
+  const message = result.issues?.map((i) => i.message).join("; ") ?? "Validation failed";
+  return { success: false, error: message };
 }
 
 export interface LoadedSkill {

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/http-cache-utils.test
  *
  * Unit tests for pure-logic helpers in http-cache.ts.

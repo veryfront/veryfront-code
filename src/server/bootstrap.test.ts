@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Bootstrap unit tests — narrow coverage of the orchestrate/dispose seam.
  *

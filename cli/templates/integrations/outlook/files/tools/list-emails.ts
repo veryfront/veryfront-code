@@ -1,28 +1,28 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listEmails } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "list-emails",
   description:
     "List recent emails from inbox or a specific folder. Returns email metadata including subject, sender, date, and preview.",
-  inputSchema: z.object({
-    folderId: z
+  inputSchema: defineSchema((v) => v.object({
+    folderId: v
       .string()
       .optional()
       .describe("Folder ID to list emails from (default: inbox)"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(50)
       .default(10)
       .describe("Maximum number of emails to return"),
-    unreadOnly: z.boolean().default(false).describe("Only return unread emails"),
-    orderBy: z
+    unreadOnly: v.boolean().default(false).describe("Only return unread emails"),
+    orderBy: v
       .enum(["receivedDateTime desc", "receivedDateTime asc", "subject"])
       .default("receivedDateTime desc")
       .describe("Sort order for emails"),
-  }),
+  }))(),
   async execute({ folderId, limit, unreadOnly, orderBy }) {
     const messages = await listEmails({
       folderId,

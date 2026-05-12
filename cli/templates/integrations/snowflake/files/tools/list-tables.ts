@@ -1,24 +1,24 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listTables } from "../../lib/snowflake-client.ts";
 
 export default tool({
   id: "list-tables",
   description:
     "List all tables in a Snowflake database schema. Returns table names, types, creation dates, row counts, and sizes.",
-  inputSchema: z.object({
-    database: z.string().describe("The name of the database containing the schema"),
-    schema: z
+  inputSchema: defineSchema((v) => v.object({
+    database: v.string().describe("The name of the database containing the schema"),
+    schema: v
       .string()
       .default("PUBLIC")
       .describe("The name of the schema to list tables from. Defaults to PUBLIC."),
-    includeDetails: z
+    includeDetails: v
       .boolean()
       .default(true)
       .describe(
         "Include detailed information like creation date, row count, size, and owner",
       ),
-  }),
+  }))(),
   async execute({ database, schema, includeDetails }) {
     const tables = await listTables(database, schema);
 

@@ -5,17 +5,21 @@
  * Reuses parseLintJsonOutput from the CLI lint command.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "../tools.ts";
 import { type LintResult, parseLintJsonOutput } from "../../commands/lint/command.ts";
 
-const runLintInput = z.object({
-  timeout: z.number().optional().default(120000).describe(
-    "Maximum time to wait for lint completion in milliseconds. Defaults to 120000 (2 minutes).",
-  ),
-});
+const getRunLintInput = defineSchema((v) =>
+  v.object({
+    timeout: v.number().optional().default(120000).describe(
+      "Maximum time to wait for lint completion in milliseconds. Defaults to 120000 (2 minutes).",
+    ),
+  })
+);
+const runLintInput = getRunLintInput();
 
-type RunLintInput = z.infer<typeof runLintInput>;
+type RunLintInput = InferSchema<ReturnType<typeof getRunLintInput>>;
 
 const PROCESS_CLEANUP_TIMEOUT_MS = 1000;
 

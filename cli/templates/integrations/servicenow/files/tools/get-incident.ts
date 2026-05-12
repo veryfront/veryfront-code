@@ -2,7 +2,7 @@
  * Get ServiceNow Incident Tool
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
 
@@ -16,9 +16,9 @@ export default defineTool({
   id: "servicenow-get-incident",
   description:
     "Get details of a specific ServiceNow incident by number (e.g., INC0010001) or sys_id",
-  inputSchema: z.object({
-    id: z.string().describe("Incident number (INC0010001) or sys_id"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    id: v.string().describe("Incident number (INC0010001) or sys_id"),
+  }))(),
   async execute(input) {
     if (!(await isServiceNowConnected())) {
       return {

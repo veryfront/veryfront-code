@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { normalizeConversationRunEvents } from "./conversation-run-event-normalization.ts";
 
@@ -16,11 +17,18 @@ export const conversationRunEventTypes = {
   toolCallResult: "TOOL_CALL_RESULT",
 } as const;
 
-export const ConversationRunEventSchema = z.object({
-  type: z.string().min(1),
-}).passthrough();
+export const getConversationRunEventSchema = defineSchema((v) =>
+  v.object({
+    type: v.string().min(1),
+  }).passthrough()
+);
 
-export type ConversationRunEvent = z.infer<typeof ConversationRunEventSchema>;
+/** @deprecated Use getConversationRunEventSchema() */
+export const ConversationRunEventSchema = getConversationRunEventSchema();
+
+export type ConversationRunEvent =
+  & InferSchema<ReturnType<typeof getConversationRunEventSchema>>
+  & Record<string, unknown>;
 
 function serializeToolInput(input: unknown): string {
   try {

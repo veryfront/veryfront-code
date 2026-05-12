@@ -1,12 +1,16 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import type { CommandCategory } from "../../help/types.ts";
 import { generateCommandSchema, generateSchema } from "./command.ts";
 
-const SchemaArgsSchema = z.object({
-  category: z.string().optional(),
-});
+const getSchemaArgsSchema = defineSchema((v) =>
+  v.object({
+    category: v.string().optional(),
+  })
+);
+
+const SchemaArgsSchema = getSchemaArgsSchema();
 
 const parseSchemaArgs = createArgParser(SchemaArgsSchema, {
   category: { keys: ["category", "c"], type: "string" },

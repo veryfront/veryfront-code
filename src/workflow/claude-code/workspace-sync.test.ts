@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Tests for WorkspaceSync symlink hardening (VULN-FS-4).
  *

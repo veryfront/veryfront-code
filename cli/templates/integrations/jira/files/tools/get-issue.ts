@@ -1,14 +1,14 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { extractDescriptionText, getIssue } from "../../lib/jira-client.ts";
 
 export default tool({
   id: "get-issue",
   description:
     "Get detailed information about a specific Jira issue by its key (e.g., PROJ-123) or ID. Returns all fields including description, comments, history, etc.",
-  inputSchema: z.object({
-    issueKey: z.string().describe('The issue key (e.g., "PROJ-123") or ID'),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    issueKey: v.string().describe('The issue key (e.g., "PROJ-123") or ID'),
+  }))(),
   async execute({ issueKey }) {
     const issue = await getIssue(issueKey);
     const { fields } = issue;

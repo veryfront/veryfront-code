@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createSlackClient } from "../../lib/slack-client.ts";
 
 type SlackChannel = {
@@ -14,18 +14,18 @@ type SlackChannel = {
 export default tool({
   id: "list-channels",
   description: "List Slack channels the user is a member of",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of channels to return"),
-    excludeArchived: z
+    excludeArchived: v
       .boolean()
       .default(true)
       .describe("Exclude archived channels"),
-  }),
+  }))(),
   execute: async ({ limit, excludeArchived }, context) => {
     const userId = context?.userId ?? "current-user";
 

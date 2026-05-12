@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "../testing/assert.ts";
 import { getRuntimeUploadUrl } from "./runtime-upload-url-client.ts";
 

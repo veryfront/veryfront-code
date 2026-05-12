@@ -1,6 +1,5 @@
-import { z } from "zod";
 import { dynamicTool, tool } from "./factory.ts";
-import type { JsonSchema } from "./schema/json-schema.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
 
 type HostToolExecute = {
@@ -24,7 +23,7 @@ export type HostToolSet = Record<string, HostToolDefinition>;
 
 type RunnableHostToolDefinition = HostToolDefinition & {
   description: string;
-  inputSchema: z.ZodSchema<unknown>;
+  inputSchema: Schema<unknown>;
   execute: HostToolExecute;
 };
 
@@ -36,8 +35,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isZodSchema(value: unknown): value is z.ZodSchema<unknown> {
-  if (!isRecord(value) || typeof value.parse !== "function") return false;
+/**
+ * Detect a contract `Schema<T>` (defineSchema-produced wrapper) or a raw
+ * zod schema. Both are accepted during the migration window so host tools
+ * can feed either into the framework without bespoke conversion.
+ */
+function isSchemaLike(value: unknown): value is Schema<unknown> {
+  if (!isRecord(value)) return false;
+  if (typeof value.parse !== "function") return false;
+  // Contract Schema<T> brand from the ext-zod adapter.
+  if ("__zod" in value) return true;
+  // defineSchema wrapper without a brand yet — match on the contract surface.
+  if ("_output" in value && typeof value.safeParse === "function") return true;
+  // Raw zod schema (legacy host paths still hand us bare zod instances).
   if (!isRecord(value._def)) return false;
   return typeof value._def.typeName === "string" || typeof value._def.type === "string";
 }
@@ -46,7 +56,7 @@ function isHostToolDefinition(value: unknown): value is RunnableHostToolDefiniti
   return (
     isRecord(value) &&
     typeof value.description === "string" &&
-    isZodSchema(value.inputSchema) &&
+    isSchemaLike(value.inputSchema) &&
     typeof value.execute === "function"
   );
 }

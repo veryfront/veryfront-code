@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatPhoneNumber, listMessages } from "../../lib/twilio-client.ts";
 
 type ListMessagesOptions = {
@@ -13,26 +13,26 @@ export default tool({
   id: "list-messages",
   description:
     "List recent SMS and WhatsApp messages from your Twilio account. Supports filtering by recipient, sender, and date.",
-  inputSchema: z.object({
-    to: z
+  inputSchema: defineSchema((v) => v.object({
+    to: v
       .string()
       .optional()
       .describe("Filter by recipient phone number in E.164 format (e.g., +14155552671)"),
-    from: z
+    from: v
       .string()
       .optional()
       .describe("Filter by sender phone number in E.164 format (e.g., +14155552671)"),
-    dateSent: z
+    dateSent: v
       .string()
       .optional()
       .describe("Filter by date sent in YYYY-MM-DD format (e.g., 2024-01-15)"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .optional()
       .describe("Maximum number of messages to return (default: 20, max: 100)"),
-  }),
+  }))(),
   execute: async ({ to, from, dateSent, limit }) => {
     try {
       const options: ListMessagesOptions = {

@@ -5,6 +5,9 @@
  */
 
 export {
+  getMCPAuthConfigSchema,
+  getMCPServerConfigSchema,
+  getMCPStatsSchema,
   MCPAuthConfigSchema,
   type MCPServerConfig,
   MCPServerConfigSchema,

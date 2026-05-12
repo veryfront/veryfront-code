@@ -1,19 +1,19 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatDate, getFeatureFlags } from "../../lib/posthog-client.ts";
 
 export default tool({
   id: "list-feature-flags",
   description:
     "List all feature flags in your PostHog project. View flag status, rollout percentages, and configuration.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of feature flags to retrieve"),
-  }),
+  }))(),
   async execute({ limit }) {
     const { results } = await getFeatureFlags({ limit });
 

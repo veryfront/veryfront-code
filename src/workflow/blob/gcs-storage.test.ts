@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "@std/assert";
 import { GCSBlobStorage } from "./gcs-storage.ts";
 

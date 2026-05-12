@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Unit tests for deploy command
  * @module cli/commands/deploy.test

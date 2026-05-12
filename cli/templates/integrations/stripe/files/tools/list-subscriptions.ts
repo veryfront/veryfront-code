@@ -1,20 +1,20 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatAmount, formatDate, listSubscriptions } from "../../lib/stripe-client.ts";
 
 export default tool({
   id: "list-subscriptions",
   description:
     "List Stripe subscriptions. Supports filtering by customer, status, and creation date range.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(10)
       .describe("Maximum number of subscriptions to retrieve"),
-    customerId: z.string().optional().describe("Filter by customer ID (starts with cus_)"),
-    status: z
+    customerId: v.string().optional().describe("Filter by customer ID (starts with cus_)"),
+    status: v
       .enum([
         "incomplete",
         "incomplete_expired",
@@ -27,15 +27,15 @@ export default tool({
       ])
       .optional()
       .describe("Filter by subscription status"),
-    createdAfter: z
+    createdAfter: v
       .number()
       .optional()
       .describe("Filter subscriptions created after this Unix timestamp"),
-    createdBefore: z
+    createdBefore: v
       .number()
       .optional()
       .describe("Filter subscriptions created before this Unix timestamp"),
-  }),
+  }))(),
   async execute({ limit, customerId, status, createdAfter, createdBefore }) {
     const created =
       createdAfter || createdBefore ? { gte: createdAfter, lte: createdBefore } : undefined;

@@ -1,24 +1,24 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getPageTitle, searchNotion } from "../../lib/notion-client.ts";
 
 export default tool({
   id: "search-notion",
   description:
     "Search for pages and databases in the connected Notion workspace. Returns matching pages with their titles and IDs.",
-  inputSchema: z.object({
-    query: z.string().describe("Search query to find pages or databases"),
-    type: z
+  inputSchema: defineSchema((v) => v.object({
+    query: v.string().describe("Search query to find pages or databases"),
+    type: v
       .enum(["page", "database", "all"])
       .default("all")
       .describe("Type of objects to search for"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(20)
       .default(10)
       .describe("Maximum number of results to return"),
-  }),
+  }))(),
   async execute({ query, type, limit }) {
     const filter = type === "all" ? undefined : { property: "object", value: type };
     const results = await searchNotion(query, { filter, pageSize: limit });

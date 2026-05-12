@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import {
   assertEquals,
@@ -5,7 +6,8 @@ import {
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { dynamicTool, tool } from "./factory.ts";
 
 describe("tool factory", () => {
@@ -14,7 +16,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "my-tool",
         description: "A test tool",
-        inputSchema: z.object({ query: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
         execute: async () => "result",
       });
       assertEquals(t.id, "my-tool");
@@ -25,7 +27,7 @@ describe("tool factory", () => {
     it("should auto-generate id when not provided", () => {
       const t = tool({
         description: "auto-id",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => null,
       });
       assertStringIncludes(t.id, "tool_");
@@ -36,7 +38,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "tool_2024_01",
         description: "explicit generated-looking id",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => null,
       });
       assertEquals(t.id, "tool_2024_01");
@@ -46,7 +48,7 @@ describe("tool factory", () => {
     it("should preserve an explicit id assigned after creation", () => {
       const generated = tool({
         description: "auto-id",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => null,
       });
       const overridden = { ...generated, id: "my-tool" };
@@ -59,10 +61,12 @@ describe("tool factory", () => {
       const t = tool({
         id: "schema-test",
         description: "desc",
-        inputSchema: z.object({
-          name: z.string(),
-          age: z.number(),
-        }),
+        inputSchema: defineSchema((v) =>
+          v.object({
+            name: v.string(),
+            age: v.number(),
+          })
+        )(),
         execute: async () => null,
       });
       assertEquals(t.inputSchemaJson?.type, "object");
@@ -83,7 +87,7 @@ describe("tool factory", () => {
               age: {},
             },
           },
-        } as unknown as z.ZodSchema<unknown>,
+        } as unknown as Schema<unknown>,
         execute: async () => null,
       });
       assertEquals(t.inputSchemaJson, {
@@ -102,7 +106,7 @@ describe("tool factory", () => {
           tool({
             id: "invalid-schema",
             description: "desc",
-            inputSchema: {} as z.ZodSchema<unknown>,
+            inputSchema: {} as Schema<unknown>,
             execute: async () => null,
           }),
         Error,
@@ -114,7 +118,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "permissive-tool",
         description: "desc",
-        inputSchema: {} as z.ZodSchema<unknown>,
+        inputSchema: {} as Schema<unknown>,
         execute: async () => null,
         allowUnknownSchema: true,
       });
@@ -126,7 +130,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "mcp-tool",
         description: "desc",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => null,
         mcp: { enabled: true, requiresAuth: false, cachePolicy: "cache" },
       });
@@ -140,7 +144,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "exec-test",
         description: "desc",
-        inputSchema: z.object({ value: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),
         execute: async ({ value }) => `Got: ${value}`,
       });
       const result = await t.execute({ value: "hello" });
@@ -151,7 +155,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "validate-test",
         description: "desc",
-        inputSchema: z.object({ value: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ value: v.string() }))(),
         execute: async () => "ok",
       });
       await assertRejects(
@@ -166,7 +170,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "ctx-test",
         description: "desc",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async (_input, ctx) => {
           receivedCtx = ctx;
           return null;
@@ -181,7 +185,7 @@ describe("tool factory", () => {
       const t = tool({
         id: "sync-exec",
         description: "desc",
-        inputSchema: z.object({ x: z.number() }),
+        inputSchema: defineSchema((v) => v.object({ x: v.number() }))(),
         execute: ({ x }) => x * 2,
       });
       const result = await t.execute({ x: 5 });
@@ -238,7 +242,7 @@ describe("tool factory", () => {
       const t = dynamicTool({
         id: "remote-dynamic",
         description: "Remote dynamic tool",
-        inputSchema: z.object({}).passthrough(),
+        inputSchema: defineSchema((v) => v.object({}).passthrough())(),
         inputSchemaJson: {
           type: "object",
           properties: {
@@ -263,7 +267,7 @@ describe("tool factory", () => {
       const t = dynamicTool({
         id: "zod-validate",
         description: "desc",
-        inputSchema: z.object({ query: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
         execute: async (input) => input,
       });
       const result = await t.execute({ query: "test" });
@@ -274,7 +278,7 @@ describe("tool factory", () => {
       const t = dynamicTool({
         id: "zod-reject",
         description: "desc",
-        inputSchema: z.object({ query: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
         execute: async () => "ok",
       });
       await assertRejects(

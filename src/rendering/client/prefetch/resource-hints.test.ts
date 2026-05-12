@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Unit Tests for Resource Hints Manager
  * Tests resource hint generation and application (preload, prefetch, dns-prefetch)

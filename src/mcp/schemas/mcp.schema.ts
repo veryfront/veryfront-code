@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 /**
  * MCP auth configuration. One of:
@@ -7,37 +8,52 @@ import { z } from "zod";
  *   unauthenticated server. Required for local dev/testing; prevents accidental
  *   exposure of the JSON-RPC surface in production (VULN-SRV-5).
  */
-const AuthValidatedSchema = z.object({
-  type: z.literal("bearer"),
-  validate: z.function().optional(),
-});
+const getAuthValidatedSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("bearer"),
+    validate: v.function().optional(),
+  })
+);
 
-const AuthNoneSchema = z.object({
-  type: z.literal("none"),
-  allowUnauthenticated: z.literal(true),
-});
+const getAuthNoneSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("none"),
+    allowUnauthenticated: v.literal(true),
+  })
+);
 
-export const MCPAuthConfigSchema = z.union([AuthValidatedSchema, AuthNoneSchema]);
+export const getMCPAuthConfigSchema = defineSchema((v) =>
+  v.union([getAuthValidatedSchema(), getAuthNoneSchema()])
+);
 
-export const MCPServerConfigSchema = z.object({
-  enabled: z.boolean(),
-  port: z.number().int().positive().optional(),
-  auth: MCPAuthConfigSchema,
-  cors: z
-    .object({
-      enabled: z.boolean(),
-      origins: z.array(z.string()).optional(),
-    })
-    .optional(),
-});
+export const getMCPServerConfigSchema = defineSchema((v) =>
+  v.object({
+    enabled: v.boolean(),
+    port: v.number().int().positive().optional(),
+    auth: getMCPAuthConfigSchema(),
+    cors: v
+      .object({
+        enabled: v.boolean(),
+        origins: v.array(v.string()).optional(),
+      })
+      .optional(),
+  })
+);
 
-export const MCPStatsSchema = z.object({
-  tools: z.number().int().nonnegative(),
-  resources: z.number().int().nonnegative(),
-  prompts: z.number().int().nonnegative(),
-  total: z.number().int().nonnegative(),
-});
+export const getMCPStatsSchema = defineSchema((v) =>
+  v.object({
+    tools: v.number().int().nonnegative(),
+    resources: v.number().int().nonnegative(),
+    prompts: v.number().int().nonnegative(),
+    total: v.number().int().nonnegative(),
+  })
+);
+
+// Backward-compat aliases
+export const MCPAuthConfigSchema = getMCPAuthConfigSchema();
+export const MCPServerConfigSchema = getMCPServerConfigSchema();
+export const MCPStatsSchema = getMCPStatsSchema();
 
 // Inferred types
-export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>;
-export type MCPStats = z.infer<typeof MCPStatsSchema>;
+export type MCPServerConfig = InferSchema<ReturnType<typeof getMCPServerConfigSchema>>;
+export type MCPStats = InferSchema<ReturnType<typeof getMCPStatsSchema>>;

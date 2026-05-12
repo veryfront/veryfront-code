@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { dynamicTool } from "./factory.ts";
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
@@ -6,6 +6,14 @@ export interface RemoteToolMaterializationOptions {
   context?: ToolExecutionContext;
   toolNameAliases?: Record<string, string>;
 }
+
+/**
+ * Permissive input schema used for remote tools whose JSON Schema is
+ * sourced from the remote and we only need a no-op contract `Schema<T>` to
+ * satisfy the runtime input-validation pass. Equivalent to
+ * `z.object({}).passthrough()`.
+ */
+const getRemoteToolPassthroughSchema = defineSchema((v) => v.object({}).passthrough());
 
 function toToolInputRecord(input: unknown): Record<string, unknown> {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -29,7 +37,7 @@ export function createToolsFromRemoteDefinitions(
         dynamicTool({
           id: toolName,
           description: definition.description,
-          inputSchema: z.object({}).passthrough(),
+          inputSchema: getRemoteToolPassthroughSchema(),
           inputSchemaJson: definition.parameters,
           mcp: {
             title: definition.title,

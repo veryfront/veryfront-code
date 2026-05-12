@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/mdx/esm-module-loader/module-fetcher/index.test */
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";

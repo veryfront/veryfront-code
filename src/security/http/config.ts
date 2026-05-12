@@ -39,7 +39,7 @@ export class SecurityConfigLoader {
   }
 
   private applyConfig(cfg?: VeryfrontConfig): void {
-    const security: SecurityConfig = cfg?.security ? { ...cfg.security } : {};
+    const security: SecurityConfig = cfg?.security ? { ...cfg.security } as SecurityConfig : {};
 
     if (security.headers) security.headers = { ...security.headers };
 

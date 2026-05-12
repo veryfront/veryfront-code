@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Unit tests for interactive wizard
  * @module cli/commands/init/interactive-wizard.test

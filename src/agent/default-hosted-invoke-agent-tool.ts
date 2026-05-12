@@ -9,7 +9,8 @@ import {
   sleepTool,
   type ToolExecutionContext,
 } from "#veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { buildExecuteToolTraceAttributes } from "./agent-trace-attributes.ts";
 import type {
   ChildRunExecutionResult,
@@ -46,9 +47,9 @@ import {
 import type { HostedChildRunIdentifiers } from "./hosted-child-status.ts";
 import {
   DEFAULT_HOSTED_CHILD_AGENT_ID,
+  getHostedChildForkToolInputSchema,
   type HostedChildForkRuntimeConfig,
   type HostedChildForkToolInput,
-  hostedChildForkToolInputSchema,
 } from "./hosted-child-tool-input.ts";
 import type {
   DefaultHostedChildForkToolAssemblyResult,
@@ -137,16 +138,26 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     ];
   };
 
-export const defaultHostedInvokeAgentSelectionSchema = z.object({
-  agent_id: z.string().optional().describe("Built-in child agent type or user-defined agent id."),
+const defaultHostedInvokeAgentSelectionFields = (v: SchemaValidator) => ({
+  agent_id: v.string().optional().describe("Built-in child agent type or user-defined agent id."),
 });
 
-export const defaultHostedInvokeAgentInputSchema = hostedChildForkToolInputSchema.extend(
-  defaultHostedInvokeAgentSelectionSchema.shape,
+export const getDefaultHostedInvokeAgentSelectionSchema = defineSchema((v) =>
+  v.object(defaultHostedInvokeAgentSelectionFields(v))
 );
 
-export type DefaultHostedInvokeAgentInput = z.infer<
-  typeof defaultHostedInvokeAgentInputSchema
+/** @deprecated Use getDefaultHostedInvokeAgentSelectionSchema() */
+export const defaultHostedInvokeAgentSelectionSchema = getDefaultHostedInvokeAgentSelectionSchema();
+
+export const getDefaultHostedInvokeAgentInputSchema = defineSchema((v) =>
+  getHostedChildForkToolInputSchema().extend(defaultHostedInvokeAgentSelectionFields(v))
+);
+
+/** @deprecated Use getDefaultHostedInvokeAgentInputSchema() */
+export const defaultHostedInvokeAgentInputSchema = getDefaultHostedInvokeAgentInputSchema();
+
+export type DefaultHostedInvokeAgentInput = InferSchema<
+  ReturnType<typeof getDefaultHostedInvokeAgentInputSchema>
 >;
 
 const DEFAULT_USER_AGENT_MODEL = "opus";

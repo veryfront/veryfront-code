@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { describeTable, getTableRowCount } from "../../lib/neon-client.ts";
 
 export default tool({
   id: "describe-table",
   description:
     "Get detailed schema information for a specific table including column names, data types, nullability, defaults, and constraints.",
-  inputSchema: z.object({
-    tableName: z.string().describe("Name of the table to describe"),
-    schema: z
+  inputSchema: defineSchema((v) => v.object({
+    tableName: v.string().describe("Name of the table to describe"),
+    schema: v
       .string()
       .default("public")
       .describe("Schema name where the table is located"),
-  }),
+  }))(),
   async execute({ tableName, schema }): Promise<{
     tableName: string;
     schema: string;

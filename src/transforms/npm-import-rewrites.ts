@@ -16,9 +16,7 @@ import { join } from "#veryfront/compat/path/index.ts";
  * Bare specifiers that should be rewritten to their pinned npm: versions.
  * Each must have a corresponding entry in deno.json's import map.
  */
-const REWRITABLE_PACKAGES = [
-  "zod",
-] as const;
+const REWRITABLE_PACKAGES = [] as const;
 
 interface RewriteRule {
   pattern: RegExp;

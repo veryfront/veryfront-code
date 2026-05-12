@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listBoards } from "../../lib/trello-client.ts";
 
 export default tool({
   id: "list-boards",
   description: "List all Trello boards accessible to the current user.",
-  inputSchema: z.object({
-    includeArchived: z
+  inputSchema: defineSchema((v) => v.object({
+    includeArchived: v
       .boolean()
       .default(false)
       .describe("Include archived/closed boards"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of boards to return"),
-  }),
+  }))(),
   async execute({ includeArchived, limit }) {
     const boards = await listBoards();
 

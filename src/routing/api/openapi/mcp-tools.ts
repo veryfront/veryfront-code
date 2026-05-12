@@ -10,7 +10,8 @@
 import { dynamicTool } from "#veryfront/tool";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { logger as baseLogger } from "#veryfront/utils";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
 
 const logger = baseLogger.component("open-api-mcp");
@@ -85,27 +86,30 @@ function buildToolDescription(operation: OpenAPIOperation, method: string, path:
   return `${summary}${description}${tags}${deprecated}`;
 }
 
-function buildInputSchema(operation: OpenAPIOperation): z.ZodTypeAny {
-  const shape: Record<string, z.ZodTypeAny> = {};
-  const params = operation.parameters ?? [];
+function buildInputSchema(operation: OpenAPIOperation): Schema<unknown> {
+  return defineSchema((v) => {
+    const shape: Record<string, Schema<unknown>> = {};
+    const params = operation.parameters ?? [];
 
-  for (const param of params) {
-    if (param.in !== "path") continue;
-    shape[param.name] = withRequired(buildParamSchema(param), param.required);
-  }
+    for (const param of params) {
+      if (param.in !== "path") continue;
+      shape[param.name] = withRequired(buildParamSchema(v, param), param.required);
+    }
 
-  addParamGroup(shape, params, "query", "query", "Query parameters");
-  addParamGroup(shape, params, "header", "headers", "Request headers");
+    addParamGroup(v, shape, params, "query", "query", "Query parameters");
+    addParamGroup(v, shape, params, "header", "headers", "Request headers");
 
-  if (operation.requestBody) {
-    shape.body = z.record(z.string(), z.unknown()).optional().describe("Request body (JSON)");
-  }
+    if (operation.requestBody) {
+      shape.body = v.record(v.string(), v.unknown()).optional().describe("Request body (JSON)");
+    }
 
-  return z.object(shape);
+    return v.object(shape);
+  })();
 }
 
 function addParamGroup(
-  shape: Record<string, z.ZodTypeAny>,
+  v: SchemaValidator,
+  shape: Record<string, Schema<unknown>>,
   params: OpenAPIParameter[],
   paramIn: "query" | "header",
   key: "query" | "headers",
@@ -114,32 +118,35 @@ function addParamGroup(
   const groupParams = params.filter((p) => p.in === paramIn);
   if (!groupParams.length) return;
 
-  const groupShape: Record<string, z.ZodTypeAny> = {};
+  const groupShape: Record<string, Schema<unknown>> = {};
   for (const param of groupParams) {
-    groupShape[param.name] = withRequired(buildParamSchema(param), param.required);
+    groupShape[param.name] = withRequired(buildParamSchema(v, param), param.required);
   }
 
-  shape[key] = z.object(groupShape).optional().describe(description);
+  shape[key] = v.object(groupShape).optional().describe(description);
 }
 
-function withRequired(schema: z.ZodTypeAny, required?: boolean): z.ZodTypeAny {
+function withRequired(schema: Schema<unknown>, required?: boolean): Schema<unknown> {
   return required ? schema : schema.optional();
 }
 
-function buildParamSchema(param: OpenAPIParameter): z.ZodTypeAny {
+function buildParamSchema(
+  v: SchemaValidator,
+  param: OpenAPIParameter,
+): Schema<unknown> {
   const schema = param.schema;
-  if (!schema) return z.string();
+  if (!schema) return v.string();
 
   switch (schema.type) {
     case "integer":
     case "number":
-      return z.coerce.number();
+      return v.coerce.number();
     case "boolean":
-      return z.coerce.boolean();
+      return v.coerce.boolean();
     case "array":
-      return z.array(z.string());
+      return v.array(v.string());
     default:
-      return z.string();
+      return v.string();
   }
 }
 

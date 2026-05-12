@@ -146,16 +146,18 @@ async function publishConversationChildProgress(
   ctx: ConversationChildLifecycleContext,
   status: InvokeAgentChildRunProgressInput["status"],
 ): Promise<void> {
-  await publishInvokeAgentChildRunProgress({
-    authToken: ctx.authToken,
-    apiUrl: ctx.apiUrl,
-    conversationId: ctx.parentConversationId,
-    runId: ctx.parentRunId,
-    ...(ctx.projectId !== undefined ? { projectId: ctx.projectId } : {}),
-    ...ctx.progress,
-    status,
-    ...(ctx.publishParentRunEvents ? { publishParentRunEvents: ctx.publishParentRunEvents } : {}),
-  });
+  await publishInvokeAgentChildRunProgress(
+    {
+      authToken: ctx.authToken,
+      apiUrl: ctx.apiUrl,
+      conversationId: ctx.parentConversationId,
+      runId: ctx.parentRunId,
+      ...(ctx.projectId !== undefined ? { projectId: ctx.projectId } : {}),
+      ...ctx.progress,
+      status,
+      ...(ctx.publishParentRunEvents ? { publishParentRunEvents: ctx.publishParentRunEvents } : {}),
+    } as Parameters<typeof publishInvokeAgentChildRunProgress>[0],
+  );
 }
 
 export function createConversationChildLifecycleAdapter(

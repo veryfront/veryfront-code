@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { buildHostedChildForkInstructions } from "./hosted-child-fork-instructions.ts";
 

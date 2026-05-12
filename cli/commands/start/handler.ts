@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { startCommand } from "./command.ts";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -6,12 +6,16 @@ import { DEFAULT_MCP_PORT } from "#cli/shared/constants";
 
 const DEFAULT_START_PORT = 8080;
 
-const StartArgsSchema = z.object({
-  port: z.number().default(DEFAULT_START_PORT),
-  mcpPort: z.number().default(DEFAULT_MCP_PORT),
-  project: z.string().optional(),
-  headless: z.boolean().default(false),
-});
+const getStartArgsSchema = defineSchema((v) =>
+  v.object({
+    port: v.number().default(DEFAULT_START_PORT),
+    mcpPort: v.number().default(DEFAULT_MCP_PORT),
+    project: v.string().optional(),
+    headless: v.boolean().default(false),
+  })
+);
+
+const StartArgsSchema = getStartArgsSchema();
 
 export const parseStartArgs = createArgParser(StartArgsSchema, {
   port: { keys: ["port", "p"], type: "number" },

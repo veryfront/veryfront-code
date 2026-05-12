@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import "./styles-builder/__tests__/css-processor-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertStringIncludes } from "#veryfront/testing/assert.ts";

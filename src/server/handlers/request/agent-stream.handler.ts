@@ -27,7 +27,7 @@ import {
   agentRunSessionManager,
 } from "#veryfront/internal-agents/session-manager.ts";
 import {
-  InternalAgentStreamRequestSchema,
+  getInternalAgentStreamRequestSchema,
   type RuntimeAgentSourceContext,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
@@ -169,7 +169,7 @@ export class AgentStreamHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
         );
-        const payload = InternalAgentStreamRequestSchema.parse(JSON.parse(rawBody));
+        const payload = getInternalAgentStreamRequestSchema().parse(JSON.parse(rawBody));
         await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: payload.runId,
           expectedSurface: "studio",

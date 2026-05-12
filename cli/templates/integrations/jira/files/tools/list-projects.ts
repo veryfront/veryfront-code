@@ -1,12 +1,12 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listProjects } from "../../lib/jira-client.ts";
 
 export default tool({
   id: "list-projects",
   description:
     "List all accessible Jira projects in the connected site. Returns project keys, names, and basic information.",
-  inputSchema: z.object({}),
+  inputSchema: defineSchema((v) => v.object({}))(),
   async execute() {
     const projects = await listProjects();
 

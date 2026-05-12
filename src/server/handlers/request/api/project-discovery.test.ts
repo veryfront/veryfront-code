@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";

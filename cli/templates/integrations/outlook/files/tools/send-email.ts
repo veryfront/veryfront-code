@@ -1,26 +1,26 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { sendEmail } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "send-email",
   description:
     "Send a new email message. Supports multiple recipients, CC, BCC, and importance levels.",
-  inputSchema: z.object({
-    to: z.array(z.string().email()).min(1).describe("Email addresses of recipients"),
-    subject: z.string().min(1).describe("Email subject line"),
-    body: z.string().min(1).describe("Email body content"),
-    cc: z.array(z.string().email()).optional().describe("Email addresses to CC"),
-    bcc: z.array(z.string().email()).optional().describe("Email addresses to BCC"),
-    importance: z
+  inputSchema: defineSchema((v) => v.object({
+    to: v.array(v.string().email()).min(1).describe("Email addresses of recipients"),
+    subject: v.string().min(1).describe("Email subject line"),
+    body: v.string().min(1).describe("Email body content"),
+    cc: v.array(v.string().email()).optional().describe("Email addresses to CC"),
+    bcc: v.array(v.string().email()).optional().describe("Email addresses to BCC"),
+    importance: v
       .enum(["low", "normal", "high"])
       .default("normal")
       .describe("Email importance level"),
-    bodyType: z
+    bodyType: v
       .enum(["text", "html"])
       .default("text")
       .describe("Body content type (text or html)"),
-  }),
+  }))(),
   async execute({ to, subject, body, cc, bcc, importance, bodyType }) {
     await sendEmail({ to, subject, body, cc, bcc, importance, bodyType });
 

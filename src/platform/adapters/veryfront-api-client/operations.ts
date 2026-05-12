@@ -1,21 +1,21 @@
 import { logger as baseLogger } from "#veryfront/utils";
-import { z } from "zod";
 import { type RequestOptions, requestWithRetry, type RetryConfig } from "./retry-handler.ts";
 import { API_CLIENT_ERROR } from "./types.ts";
 import {
-  BranchFileDetailSchema,
-  EnvironmentFileDetailSchema,
-  ListBranchFilesResponseSchema,
-  ListEnvironmentFilesResponseSchema,
-  ListProjectsResponseSchema,
-  ListReleaseFilesResponseSchema,
+  getBranchFileDetailSchema,
+  getEnvironmentFileDetailSchema,
+  getListBranchFilesResponseSchema,
+  getListEnvironmentFilesResponseSchema,
+  getListProjectsResponseSchema,
+  getListReleaseFilesResponseSchema,
+  getProjectSchema,
+  getProjectWithEnvironmentsSchema,
+  getReleaseFileDetailSchema,
+  getStyleArtifactResolveResponseSchema,
   type LookupDomainResponse,
   type PageInfo,
   type Project,
   type ProjectFile,
-  ProjectSchema,
-  ReleaseFileDetailSchema,
-  StyleArtifactResolveResponseSchema,
 } from "./schemas/index.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
@@ -130,7 +130,7 @@ function buildStyleArtifactParams(input: ResolveStyleArtifactInput): URLSearchPa
 }
 
 function mapStyleArtifactResolution(raw: unknown): ProjectStyleArtifactResolution {
-  const response = StyleArtifactResolveResponseSchema.parse(raw);
+  const response = getStyleArtifactResolveResponseSchema().parse(raw);
   return {
     status: response.status,
     artifactHash: response.artifact_hash,
@@ -206,12 +206,12 @@ export class VeryfrontAPIOperations {
 
     const query = params.toString();
     const raw = await this.request(query ? `/projects?${query}` : "/projects");
-    return ListProjectsResponseSchema.parse(raw).data;
+    return getListProjectsResponseSchema().parse(raw).data;
   }
 
   async getProject(projectRef: string): Promise<Project> {
     const raw = await this.request(`/projects/${encodeURIComponent(projectRef)}`);
-    return ProjectSchema.parse(raw);
+    return getProjectSchema().parse(raw);
   }
 
   async listBranchFiles(
@@ -225,7 +225,7 @@ export class VeryfrontAPIOperations {
     logger.debug("listBranchFiles", { projectRef, branchRef, pattern: options.pattern });
 
     const raw = await this.request(url);
-    const response = ListBranchFilesResponseSchema.parse(raw);
+    const response = getListBranchFilesResponseSchema().parse(raw);
 
     return {
       files: response.data.map(mapProjectFile),
@@ -266,7 +266,7 @@ export class VeryfrontAPIOperations {
         logger.debug("getBranchFile", { projectRef, branchRef, pathOrId });
 
         const raw = await this.request(url);
-        const response = BranchFileDetailSchema.parse(raw);
+        const response = getBranchFileDetailSchema().parse(raw);
 
         return {
           path: response.path,
@@ -301,7 +301,7 @@ export class VeryfrontAPIOperations {
     });
 
     const raw = await this.request(url);
-    const response = ListEnvironmentFilesResponseSchema.parse(raw);
+    const response = getListEnvironmentFilesResponseSchema().parse(raw);
 
     return {
       files: response.data.map(mapProjectFile),
@@ -349,7 +349,7 @@ export class VeryfrontAPIOperations {
         logger.debug("getEnvironmentFile", { projectRef, environmentName, pathOrId });
 
         const raw = await this.request(url);
-        const response = EnvironmentFileDetailSchema.parse(raw);
+        const response = getEnvironmentFileDetailSchema().parse(raw);
 
         return {
           path: response.path,
@@ -381,7 +381,7 @@ export class VeryfrontAPIOperations {
     logger.debug("listReleaseFiles", { projectRef, version, pattern: options.pattern });
 
     const raw = await this.request(url);
-    const response = ListReleaseFilesResponseSchema.parse(raw);
+    const response = getListReleaseFilesResponseSchema().parse(raw);
 
     return {
       files: response.data.map(mapProjectFile),
@@ -411,7 +411,7 @@ export class VeryfrontAPIOperations {
         logger.debug("getReleaseFile", { projectRef, version, pathOrId });
 
         const raw = await this.request(url);
-        const response = ReleaseFileDetailSchema.parse(raw);
+        const response = getReleaseFileDetailSchema().parse(raw);
 
         return {
           path: response.path,
@@ -441,18 +441,7 @@ export class VeryfrontAPIOperations {
 
         try {
           const raw = await this.request(url);
-          const project = ProjectSchema.extend({
-            environments: z
-              .array(
-                z.object({
-                  id: z.string().uuid(),
-                  name: z.string(),
-                  domains: z.array(z.string()).optional(),
-                  active_release_id: z.string().uuid().nullable().optional(),
-                }),
-              )
-              .optional(),
-          }).parse(raw);
+          const project = getProjectWithEnvironmentsSchema().parse(raw);
 
           const matchingEnv = project.environments?.find((env) =>
             env.domains?.some((d) => d.toLowerCase() === domainWithoutPort.toLowerCase())

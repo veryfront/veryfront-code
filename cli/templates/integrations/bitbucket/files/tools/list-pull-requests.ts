@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
 
 type PullRequest = {
@@ -28,20 +28,20 @@ type PullRequest = {
 export default tool({
   id: "list-pull-requests",
   description: "List pull requests for a Bitbucket repository",
-  inputSchema: z.object({
-    workspace: z.string().describe("Workspace name or UUID"),
-    repoSlug: z.string().describe("Repository slug (e.g., 'my-repo')"),
-    state: z
+  inputSchema: defineSchema((v) => v.object({
+    workspace: v.string().describe("Workspace name or UUID"),
+    repoSlug: v.string().describe("Repository slug (e.g., 'my-repo')"),
+    state: v
       .enum(["OPEN", "MERGED", "DECLINED", "SUPERSEDED"])
       .default("OPEN")
       .describe("State of pull requests to list"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(10)
       .describe("Maximum number of pull requests to return"),
-  }),
+  }))(),
   execute: async ({ workspace, repoSlug, state, limit }, context) => {
     const userId = context?.userId ?? "current-user";
 

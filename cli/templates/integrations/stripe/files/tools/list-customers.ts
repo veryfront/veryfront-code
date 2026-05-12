@@ -1,24 +1,24 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatDate, listCustomers } from "../../lib/stripe-client.ts";
 
 export default tool({
   id: "list-customers",
   description: "List Stripe customers. Supports filtering by email and creation date range.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(10)
       .describe("Maximum number of customers to retrieve"),
-    email: z.string().email().optional().describe("Filter by customer email address"),
-    createdAfter: z.number().optional().describe("Filter customers created after this Unix timestamp"),
-    createdBefore: z
+    email: v.string().email().optional().describe("Filter by customer email address"),
+    createdAfter: v.number().optional().describe("Filter customers created after this Unix timestamp"),
+    createdBefore: v
       .number()
       .optional()
       .describe("Filter customers created before this Unix timestamp"),
-  }),
+  }))(),
   async execute({ limit, email, createdAfter, createdBefore }) {
     const created =
       createdAfter != null || createdBefore != null

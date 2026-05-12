@@ -1,19 +1,19 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { updateIssue } from "../../lib/linear-client.ts";
 
 export default tool({
   id: "update-issue",
   description:
     "Update an existing Linear issue. You can change the title, description, status, priority, assignee, project, or labels.",
-  inputSchema: z.object({
-    issueId: z.string().describe("The ID of the issue to update"),
-    title: z.string().optional().describe("New title for the issue"),
-    description: z
+  inputSchema: defineSchema((v) => v.object({
+    issueId: v.string().describe("The ID of the issue to update"),
+    title: v.string().optional().describe("New title for the issue"),
+    description: v
       .string()
       .optional()
       .describe("New description for the issue (supports markdown)"),
-    priority: z
+    priority: v
       .number()
       .min(0)
       .max(4)
@@ -21,20 +21,20 @@ export default tool({
       .describe(
         "New priority level: 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low",
       ),
-    stateId: z
+    stateId: v
       .string()
       .optional()
       .describe("New workflow state ID to move the issue to"),
-    assigneeId: z
+    assigneeId: v
       .string()
       .optional()
       .describe("User ID to assign the issue to (or null to unassign)"),
-    projectId: z.string().optional().describe("Project ID to move the issue to"),
-    labelIds: z
-      .array(z.string())
+    projectId: v.string().optional().describe("Project ID to move the issue to"),
+    labelIds: v
+      .array(v.string())
       .optional()
       .describe("New array of label IDs (replaces existing labels)"),
-  }),
+  }))(),
   async execute({
     issueId,
     title,

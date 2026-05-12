@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getSite, listDrives } from "../../lib/sharepoint-client.ts";
 
 export default tool({
   id: "get-site",
   description:
     "Get detailed information about a specific SharePoint site including its document libraries (drives).",
-  inputSchema: z.object({
-    siteId: z.string().describe("The ID of the SharePoint site to retrieve"),
-    includeDrives: z
+  inputSchema: defineSchema((v) => v.object({
+    siteId: v.string().describe("The ID of the SharePoint site to retrieve"),
+    includeDrives: v
       .boolean()
       .default(true)
       .describe("Whether to include the list of document libraries in the response"),
-  }),
+  }))(),
   async execute({ siteId, includeDrives }): Promise<Record<string, unknown>> {
     const site = await getSite(siteId);
 

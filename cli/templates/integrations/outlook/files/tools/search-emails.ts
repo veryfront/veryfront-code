@@ -1,23 +1,23 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { searchEmails } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "search-emails",
   description:
     "Search emails by query string. Searches across subject, body, sender, and recipients. Supports advanced search syntax.",
-  inputSchema: z.object({
-    query: z
+  inputSchema: defineSchema((v) => v.object({
+    query: v
       .string()
       .min(1)
       .describe("Search query (searches subject, body, from, to fields)"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(50)
       .default(10)
       .describe("Maximum number of results to return"),
-  }),
+  }))(),
   async execute({ query, limit }) {
     const messages = await searchEmails({ query, top: limit });
 

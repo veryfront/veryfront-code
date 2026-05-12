@@ -1,5 +1,5 @@
 import { extract } from "#std/front-matter/yaml.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 function normalizeAllowedTools(value: string | string[] | undefined): string[] {
   if (value === undefined) {
@@ -15,27 +15,44 @@ function normalizeAllowedTools(value: string | string[] | undefined): string[] {
   return values.map((entry) => entry.trim()).filter((entry) => entry.length > 0);
 }
 
-const rawRuntimeSkillFrontmatterSchema = z
-  .object({
-    name: z.string().optional(),
-    description: z.string().optional(),
-    "allowed-tools": z.union([z.string(), z.array(z.string())]).optional(),
-    model: z.string().optional(),
-    thinking: z.union([z.literal(false), z.coerce.number().int().positive()]).optional(),
-    "max-steps": z.coerce.number().int().positive().optional(),
-  })
-  .passthrough();
+// Hand-written transform output type. The contract DSL erases the parameter
+// type through `.transform()`, so we annotate explicitly.
+export interface RuntimeSkillFrontmatter {
+  name: string | undefined;
+  description: string | undefined;
+  allowedTools: string[];
+  model: string | undefined;
+  thinking: false | number | undefined;
+  maxSteps: number | undefined;
+}
 
-export const RuntimeSkillFrontmatterSchema = rawRuntimeSkillFrontmatterSchema.transform((data) => ({
-  name: data.name?.trim() || undefined,
-  description: data.description?.trim() || undefined,
-  allowedTools: normalizeAllowedTools(data["allowed-tools"]),
-  model: data.model?.trim() || undefined,
-  thinking: data.thinking,
-  maxSteps: data["max-steps"],
-}));
+export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
+  v
+    .object({
+      name: v.string().optional(),
+      description: v.string().optional(),
+      "allowed-tools": v.union([v.string(), v.array(v.string())]).optional(),
+      model: v.string().optional(),
+      thinking: v.union([v.literal(false), v.coerce.number().int().positive()]).optional(),
+      "max-steps": v.coerce.number().int().positive().optional(),
+    })
+    .passthrough()
+    .transform((data): RuntimeSkillFrontmatter => {
+      const d = data as Record<string, unknown>;
+      return {
+        name: (typeof d.name === "string" ? d.name.trim() : undefined) || undefined,
+        description: (typeof d.description === "string" ? d.description.trim() : undefined) ||
+          undefined,
+        allowedTools: normalizeAllowedTools(d["allowed-tools"] as string | string[] | undefined),
+        model: (typeof d.model === "string" ? d.model.trim() : undefined) || undefined,
+        thinking: d.thinking as false | number | undefined,
+        maxSteps: d["max-steps"] as number | undefined,
+      };
+    })
+);
 
-export type RuntimeSkillFrontmatter = z.infer<typeof RuntimeSkillFrontmatterSchema>;
+/** @deprecated Use getRuntimeSkillFrontmatterSchema() */
+export const RuntimeSkillFrontmatterSchema = getRuntimeSkillFrontmatterSchema();
 
 export type RuntimeSkillDefinition = {
   id: string;
@@ -111,11 +128,11 @@ export function parseRuntimeSkillDocument(
 ): ParsedRuntimeSkillDocument | null {
   try {
     const parsed = extract<Record<string, unknown>>(content);
-    const result = RuntimeSkillFrontmatterSchema.safeParse(parsed.attrs);
+    const result = getRuntimeSkillFrontmatterSchema().safeParse(parsed.attrs);
 
     if (!result.success) {
       options.logger?.error?.("Invalid skill frontmatter; skipping skill", {
-        error: result.error.message,
+        error: result.issues?.map((i) => i.message).join("; ") ?? "validation failed",
       });
       return null;
     }

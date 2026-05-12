@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Test that all polyfill paths referenced by the import rewriter
  * have corresponding entries in EMBEDDED_POLYFILLS.

@@ -1,28 +1,49 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { isUuid, toConversationPartsFromUiMessage } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
 
 const CONVERSATION_API_TIMEOUT_MS = 15_000;
 
-export const ConversationRecordSchema = z
-  .object({
-    id: z.string(),
-    projectId: z.string().nullable().optional(),
-    project_id: z.string().nullable().optional(),
+// Hand-written transform output type.
+export interface ConversationRecord {
+  id: string;
+  projectId: string | null;
+}
+
+export const getConversationRecordSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    projectId: v.string().nullable().optional(),
+    project_id: v.string().nullable().optional(),
   })
-  .passthrough()
-  .transform((data) => ({
-    id: data.id,
-    projectId: data.projectId ?? data.project_id ?? null,
-  }));
+    .passthrough()
+    .transform((data): ConversationRecord => {
+      const d = data as Record<string, unknown>;
+      return {
+        id: d.id as string,
+        projectId: (d.projectId as string | null | undefined) ??
+          (d.project_id as string | null | undefined) ?? null,
+      };
+    })
+);
 
-export const ConversationMessageRecordSchema = z.object({
-  id: z.string().uuid(),
-});
+/** @deprecated Use getConversationRecordSchema() */
+export const ConversationRecordSchema = getConversationRecordSchema();
 
-export type ConversationRecord = z.infer<typeof ConversationRecordSchema>;
-export type ConversationMessageRecord = z.infer<typeof ConversationMessageRecordSchema>;
+export const getConversationMessageRecordSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().uuid(),
+  })
+);
+
+/** @deprecated Use getConversationMessageRecordSchema() */
+export const ConversationMessageRecordSchema = getConversationMessageRecordSchema();
+
+export type ConversationMessageRecord = InferSchema<
+  ReturnType<typeof getConversationMessageRecordSchema>
+>;
 
 export interface ConversationControlPlaneResponseError {
   status: number;
@@ -41,7 +62,7 @@ async function controlPlaneJson<T>(input: {
   url: string;
   method?: "GET" | "POST" | "PATCH";
   body?: unknown;
-  responseSchema: z.ZodSchema<T>;
+  responseSchema: Schema<T>;
   operation: string;
   onResponseError?: (error: ConversationControlPlaneResponseError) => void;
 }): Promise<T> {

@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { updateRow, updateRows } from "../../lib/supabase-client.ts";
 
 export default tool({
   id: "update-row",
   description: "Update rows in a Supabase table. Can update by ID or by custom filter conditions.",
-  inputSchema: z.object({
-    tableName: z.string().describe("The name of the table to update"),
-    id: z
-      .union([z.string(), z.number()])
+  inputSchema: defineSchema((v) => v.object({
+    tableName: v.string().describe("The name of the table to update"),
+    id: v
+      .union([v.string(), v.number()])
       .optional()
       .describe("The ID of the row to update (if updating a single row by ID)"),
-    filter: z
-      .record(z.unknown())
+    filter: v
+      .record(v.string(), v.unknown())
       .optional()
       .describe('Filter conditions to match rows to update (e.g., {"status": "pending"})'),
-    data: z.record(z.string(), z.unknown()).describe("The data to update as key-value pairs"),
-  }),
+    data: v.record(v.string(), v.unknown()).describe("The data to update as key-value pairs"),
+  }))(),
   async execute({ tableName, id, filter, data }) {
     if (id == null && filter == null) {
       return {

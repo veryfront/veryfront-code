@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "#veryfront/tool/schema";
 import {
   getDefaultStatusDescription,
@@ -9,9 +9,9 @@ import {
 } from "./types.ts";
 
 export function createRoute<
-  TParams extends z.ZodTypeAny = z.ZodTypeAny,
-  TQuery extends z.ZodTypeAny = z.ZodTypeAny,
-  TBody extends z.ZodTypeAny = z.ZodTypeAny,
+  TParams extends Schema = Schema,
+  TQuery extends Schema = Schema,
+  TBody extends Schema = Schema,
 >(config: OpenAPIRouteConfig<TParams, TQuery, TBody>): WrappedHandler {
   const { handler, ...openApiConfig } = config;
 
@@ -57,9 +57,9 @@ export function createRoute<
           schemaOrConfig !== null &&
           "schema" in schemaOrConfig;
 
-        const zodSchema = isConfigObject
-          ? (schemaOrConfig as { schema: z.ZodTypeAny }).schema
-          : (schemaOrConfig as z.ZodTypeAny);
+        const responseSchema = isConfigObject
+          ? (schemaOrConfig as { schema: Schema }).schema
+          : (schemaOrConfig as Schema);
 
         const description = isConfigObject
           ? (schemaOrConfig as { description?: string }).description
@@ -69,7 +69,7 @@ export function createRoute<
           description: description ?? getDefaultStatusDescription(status),
           content: {
             "application/json": {
-              schema: zodToJsonSchema(zodSchema),
+              schema: zodToJsonSchema(responseSchema),
             },
           },
         };
@@ -88,4 +88,4 @@ export function createRoute<
   return wrappedHandler;
 }
 
-export { z } from "zod";
+export { defineSchema } from "#veryfront/schemas/index.ts";

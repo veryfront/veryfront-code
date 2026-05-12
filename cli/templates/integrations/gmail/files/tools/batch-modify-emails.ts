@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
-const BatchModifyInput = z
+const getBatchModifyInput = defineSchema((v) => v
   .object({
-    messageIds: z.array(z.string().min(1)).min(1).describe("Gmail message IDs"),
-    addLabelIds: z.array(z.string().min(1)).optional().describe("Label IDs to add"),
-    removeLabelIds: z.array(z.string().min(1)).optional().describe("Label IDs to remove"),
+    messageIds: v.array(v.string().min(1)).min(1).describe("Gmail message IDs"),
+    addLabelIds: v.array(v.string().min(1)).optional().describe("Label IDs to add"),
+    removeLabelIds: v.array(v.string().min(1)).optional().describe("Label IDs to remove"),
   })
   .refine((value) => value.addLabelIds?.length || value.removeLabelIds?.length, {
     message: "At least one label must be added or removed",
-  });
+  }));
 
 export default tool({
   id: "batch-modify-emails",
   description: "Modify labels on multiple Gmail messages.",
-  inputSchema: BatchModifyInput,
+  inputSchema: getBatchModifyInput(),
   execute: async ({ messageIds, addLabelIds, removeLabelIds }, context) => {
     const userId = resolveUserId(context);
 

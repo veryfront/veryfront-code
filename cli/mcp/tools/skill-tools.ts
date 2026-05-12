@@ -2,7 +2,8 @@
  * MCP tools for skill discovery and reference loading.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -62,13 +63,15 @@ async function getSkillReferences(skillName: string): Promise<string[] | undefin
   return references.length ? references : undefined;
 }
 
-const getSkillsInput = z.object({
-  name: z.string().optional().describe(
-    "Specific skill name to get full content for (omit for list of all skills)",
-  ),
-});
+const getSkillsInput = defineSchema((v) =>
+  v.object({
+    name: v.string().optional().describe(
+      "Specific skill name to get full content for (omit for list of all skills)",
+    ),
+  })
+)();
 
-type GetSkillsInput = z.infer<typeof getSkillsInput>;
+type GetSkillsInput = InferSchema<typeof getSkillsInput>;
 
 interface SkillMetadata {
   name: string;
@@ -156,12 +159,14 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
     ),
 };
 
-const getSkillReferenceInput = z.object({
-  skill: z.string().describe("Skill name"),
-  reference: z.string().describe("Reference file path (e.g., 'references/ROUTES.md')"),
-});
+const getSkillReferenceInput = defineSchema((v) =>
+  v.object({
+    skill: v.string().describe("Skill name"),
+    reference: v.string().describe("Reference file path (e.g., 'references/ROUTES.md')"),
+  })
+)();
 
-type GetSkillReferenceInput = z.infer<typeof getSkillReferenceInput>;
+type GetSkillReferenceInput = InferSchema<typeof getSkillReferenceInput>;
 
 interface GetSkillReferenceResult {
   content?: string;

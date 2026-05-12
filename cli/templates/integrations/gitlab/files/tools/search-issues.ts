@@ -1,28 +1,28 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatIssueForDisplay, searchIssues } from "../../lib/gitlab-client.ts";
 
 export default tool({
   id: "search-issues",
   description:
     "Search for issues in GitLab projects. Can search across all accessible projects or within a specific project. Returns issue titles, states, assignees, and labels.",
-  inputSchema: z.object({
-    scope: z
+  inputSchema: defineSchema((v) => v.object({
+    scope: v
       .enum(["created_by_me", "assigned_to_me", "all"])
       .default("all")
       .describe("Scope of issues to search"),
-    state: z
+    state: v
       .enum(["opened", "closed", "all"])
       .default("opened")
       .describe("State of issues to search for"),
-    search: z.string().optional().describe("Search query to filter issues by title or description"),
-    labels: z.array(z.string()).optional().describe('Filter by labels (e.g., ["bug", "urgent"])'),
-    projectId: z
-      .union([z.number(), z.string()])
+    search: v.string().optional().describe("Search query to filter issues by title or description"),
+    labels: v.array(v.string()).optional().describe('Filter by labels (e.g., ["bug", "urgent"])'),
+    projectId: v
+      .union([v.number(), v.string()])
       .optional()
       .describe('Project ID or path (e.g., "gitlab-org/gitlab" or 278964)'),
-    limit: z.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
-  }),
+    limit: v.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
+  }))(),
   async execute({ scope, state, search, labels, projectId, limit }) {
     const issues = await searchIssues({
       scope,

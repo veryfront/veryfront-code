@@ -7,7 +7,8 @@
  * @module cli/commands/pull
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
@@ -25,21 +26,25 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 
 /**
- * Zod schema for pull command arguments
+ * Schema factory for pull command arguments
  */
-export const PullArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projects: z.array(z.string()).optional(),
-  projectDir: z.string().optional(),
-  branch: z.string().optional(),
-  env: z.string().optional(),
-  release: z.string().optional(),
-  force: z.boolean().default(false),
-  dryRun: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+export const getPullArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projects: v.array(v.string()).optional(),
+    projectDir: v.string().optional(),
+    branch: v.string().optional(),
+    env: v.string().optional(),
+    release: v.string().optional(),
+    force: v.boolean().default(false),
+    dryRun: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
 
-export type PullArgs = z.infer<typeof PullArgsSchema>;
+export const PullArgsSchema = getPullArgsSchema();
+
+export type PullArgs = InferSchema<ReturnType<typeof getPullArgsSchema>>;
 
 /**
  * Parse pull command arguments from CLI args

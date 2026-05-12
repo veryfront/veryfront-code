@@ -1,6 +1,7 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
 import { toolRegistry } from "./registry.ts";
 import { executeTool } from "./executor.ts";
@@ -14,7 +15,7 @@ describe("executeTool", () => {
     const t = tool({
       id: "greet",
       description: "Greet someone",
-      inputSchema: z.object({ name: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ name: v.string() }))(),
       execute: async ({ name }) => `Hello, ${name}!`,
     });
     toolRegistry.register("greet", t);
@@ -28,7 +29,7 @@ describe("executeTool", () => {
     const t = tool({
       id: "ctx-tool",
       description: "Context tool",
-      inputSchema: z.object({}),
+      inputSchema: defineSchema((v) => v.object({}))(),
       execute: async (_input, ctx) => {
         receivedContext = ctx;
         return null;

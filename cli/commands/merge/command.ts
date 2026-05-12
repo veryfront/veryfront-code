@@ -7,7 +7,8 @@
  * @module cli/commands/merge
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
@@ -16,19 +17,23 @@ import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
 
 /**
- * Zod schema for merge command arguments
+ * Schema factory for merge command arguments
  */
-export const MergeArgsSchema = z.object({
-  branch: z.string().min(1, "Branch name is required"),
-  into: z.string().min(1).optional(),
-  dryRun: z.boolean().default(false),
-  force: z.boolean().default(false),
-});
+export const getMergeArgsSchema = defineSchema((v) =>
+  v.object({
+    branch: v.string().min(1, "Branch name is required"),
+    into: v.string().min(1).optional(),
+    dryRun: v.boolean().default(false),
+    force: v.boolean().default(false),
+  })
+);
+
+export const MergeArgsSchema = getMergeArgsSchema();
 
 /**
  * Merge command options (inferred from schema)
  */
-export type MergeOptions = z.infer<typeof MergeArgsSchema>;
+export type MergeOptions = InferSchema<ReturnType<typeof getMergeArgsSchema>>;
 
 /**
  * Parse CLI arguments into validated MergeOptions

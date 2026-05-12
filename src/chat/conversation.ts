@@ -1,128 +1,125 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatUiMessage, ChatUiMessagePart, ProviderModelMessage } from "./types.ts";
 
-const textPartSchema = z.object({ type: z.literal("text"), text: z.string() });
-const imagePartSchema = z.object({
-  type: z.literal("image"),
-  upload_id: z.string().uuid(),
-  media_type: z.string(),
-  url: z.string().optional(),
-});
-const filePartSchema = z.object({
-  type: z.literal("file"),
-  upload_id: z.string().uuid(),
-  media_type: z.string(),
-  filename: z.string().optional(),
-  url: z.string().optional(),
-});
-const toolCallPartSchema = z.object({
-  type: z.literal("tool_call"),
-  id: z.string(),
-  name: z.string(),
-  input: z.record(z.string(), z.unknown()),
-  state: z.enum(["streaming", "pending", "completed", "error"]),
-});
-const toolResultPartSchema = z.object({
-  type: z.literal("tool_result"),
-  tool_call_id: z.string(),
-  output: z.unknown(),
-  is_error: z.boolean().optional(),
-});
-const reasoningPartSchema = z.object({
-  type: z.literal("reasoning"),
-  text: z.string(),
-  signature: z.string().optional(),
-});
-const citationPartSchema = z.object({
-  type: z.literal("citation"),
-  source_id: z.string(),
-  url: z.string().optional(),
-  title: z.string().optional(),
-  quote: z.string().optional(),
-});
-const stepStartPartSchema = z.object({ type: z.literal("step_start") });
-const errorPartSchema = z.object({
-  type: z.literal("error"),
-  code: z.string(),
-  message: z.string(),
-});
-const dataPartSchema = z.object({ type: z.literal("data"), name: z.string(), value: z.unknown() });
+export const getMessagePartSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({ type: v.literal("text"), text: v.string() }),
+    v.object({
+      type: v.literal("image"),
+      upload_id: v.string().uuid(),
+      media_type: v.string(),
+      url: v.string().optional(),
+    }),
+    v.object({
+      type: v.literal("file"),
+      upload_id: v.string().uuid(),
+      media_type: v.string(),
+      filename: v.string().optional(),
+      url: v.string().optional(),
+    }),
+    v.object({
+      type: v.literal("tool_call"),
+      id: v.string(),
+      name: v.string(),
+      input: v.record(v.string(), v.unknown()),
+      state: v.enum(["streaming", "pending", "completed", "error"]),
+    }),
+    v.object({
+      type: v.literal("tool_result"),
+      tool_call_id: v.string(),
+      output: v.unknown(),
+      is_error: v.boolean().optional(),
+    }),
+    v.object({
+      type: v.literal("reasoning"),
+      text: v.string(),
+      signature: v.string().optional(),
+    }),
+    v.object({
+      type: v.literal("citation"),
+      source_id: v.string(),
+      url: v.string().optional(),
+      title: v.string().optional(),
+      quote: v.string().optional(),
+    }),
+    v.object({ type: v.literal("step_start") }),
+    v.object({
+      type: v.literal("error"),
+      code: v.string(),
+      message: v.string(),
+    }),
+    v.object({ type: v.literal("data"), name: v.string(), value: v.unknown() }),
+  ])
+);
 
-export const messagePartSchema = z.discriminatedUnion("type", [
-  textPartSchema,
-  imagePartSchema,
-  filePartSchema,
-  toolCallPartSchema,
-  toolResultPartSchema,
-  reasoningPartSchema,
-  citationPartSchema,
-  stepStartPartSchema,
-  errorPartSchema,
-  dataPartSchema,
-]);
+/** @deprecated Use getMessagePartSchema() */
+export const messagePartSchema = getMessagePartSchema();
 
-export type MessagePart = z.infer<typeof messagePartSchema>;
+export type MessagePart = InferSchema<ReturnType<typeof getMessagePartSchema>>;
 
-export const conversationTypeSchema = z.enum([
-  "chat",
-  "agent_task",
-  "support",
-  "channel",
-  "project_agent",
-]);
-export type ConversationType = z.infer<typeof conversationTypeSchema>;
+export const getConversationTypeSchema = defineSchema((v) =>
+  v.enum(["chat", "agent_task", "support", "channel", "project_agent"])
+);
+/** @deprecated Use getConversationTypeSchema() */
+export const conversationTypeSchema = getConversationTypeSchema();
+export type ConversationType = InferSchema<ReturnType<typeof getConversationTypeSchema>>;
 
-export const messageStatusSchema = z.enum([
-  "pending",
-  "streaming",
-  "completed",
-  "error",
-  "failed",
-  "cancelled",
-  "stopped",
-]);
-export type MessageStatus = z.infer<typeof messageStatusSchema>;
+export const getMessageStatusSchema = defineSchema((v) =>
+  v.enum(["pending", "streaming", "completed", "error", "failed", "cancelled", "stopped"])
+);
+/** @deprecated Use getMessageStatusSchema() */
+export const messageStatusSchema = getMessageStatusSchema();
+export type MessageStatus = InferSchema<ReturnType<typeof getMessageStatusSchema>>;
 
-export const apiConversationSchema = z.object({
-  id: z.string(),
-  projectId: z.string().nullable().optional(),
-  type: conversationTypeSchema,
-  title: z.string().nullable().optional(),
-  status: z.enum(["active", "archived", "deleted"]),
-  summary: z.string().nullable().optional(),
-  currentNode: z.string().nullable().optional(),
-  messageCount: z.number(),
-  lastMessageAt: z.string().nullable().optional(),
-  metadata: z.record(z.string(), z.unknown()).nullable().optional(),
-  createdBy: z.string(),
-  archivedAt: z.string().nullable().optional(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
-});
+export const getApiConversationSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    projectId: v.string().nullable().optional(),
+    type: getConversationTypeSchema(),
+    title: v.string().nullable().optional(),
+    status: v.enum(["active", "archived", "deleted"]),
+    summary: v.string().nullable().optional(),
+    currentNode: v.string().nullable().optional(),
+    messageCount: v.number(),
+    lastMessageAt: v.string().nullable().optional(),
+    metadata: v.record(v.string(), v.unknown()).nullable().optional(),
+    createdBy: v.string(),
+    archivedAt: v.string().nullable().optional(),
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+);
+/** @deprecated Use getApiConversationSchema() */
+export const apiConversationSchema = getApiConversationSchema();
 
-export type ApiConversation = z.infer<typeof apiConversationSchema>;
+export type ApiConversation = InferSchema<ReturnType<typeof getApiConversationSchema>>;
 
-export const apiMessageSchema = z.object({
-  id: z.string(),
-  conversationId: z.string(),
-  parentId: z.string().nullable(),
-  seq: z.number(),
-  role: z.enum(["user", "assistant", "tool"]),
-  parts: z.array(messagePartSchema),
-  status: messageStatusSchema,
-  model: z.string().nullable(),
-  tokenUsage: z.object({ input: z.number(), output: z.number() }).nullable(),
-  finishReason: z.string().nullable(),
-  costCredits: z.string().nullable().optional(),
-  createdBy: z.string().nullable(),
-  editedAt: z.string().nullable().optional(),
-  idempotencyKey: z.string().nullable().optional(),
-  metadata: z.record(z.string(), z.unknown()).nullable(),
-  createdAt: z.string(),
-  updatedAt: z.string().nullable(),
-});
+export const getApiMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    conversationId: v.string(),
+    parentId: v.string().nullable(),
+    seq: v.number(),
+    role: v.enum(["user", "assistant", "tool"]),
+    parts: v.array(getMessagePartSchema()),
+    status: getMessageStatusSchema(),
+    model: v.string().nullable(),
+    tokenUsage: v.object({ input: v.number(), output: v.number() }).nullable(),
+    finishReason: v.string().nullable(),
+    costCredits: v.string().nullable().optional(),
+    createdBy: v.string().nullable(),
+    editedAt: v.string().nullable().optional(),
+    idempotencyKey: v.string().nullable().optional(),
+    metadata: v.record(v.string(), v.unknown()).nullable(),
+    createdAt: v.string(),
+    updatedAt: v.string().nullable(),
+  })
+);
+/** @deprecated Use getApiMessageSchema() */
+export const apiMessageSchema = getApiMessageSchema();
 
-export type ApiMessage = z.infer<typeof apiMessageSchema>;
+export type ApiMessage = InferSchema<ReturnType<typeof getApiMessageSchema>>;
 
 export interface ToolCallLike {
   type: "tool-call";
@@ -381,7 +378,7 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
     }
   }
 
-  return parts.filter((part) => messagePartSchema.safeParse(part).success);
+  return parts.filter((part) => getMessagePartSchema().safeParse(part).success);
 }
 
 function isToolComplete(part: ToolUiPart): boolean {

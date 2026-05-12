@@ -1,25 +1,25 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGitHubClient } from "../../lib/github-client.ts";
 
 export default tool({
   id: "create-issue",
   description: "Create a new issue in a GitHub repository",
-  inputSchema: z.object({
-    repo: z
+  inputSchema: defineSchema((v) => v.object({
+    repo: v
       .string()
       .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
-    title: z.string().min(1).describe("Issue title"),
-    body: z
+    title: v.string().min(1).describe("Issue title"),
+    body: v
       .string()
       .optional()
       .describe("Issue body/description (supports Markdown)"),
-    labels: z.array(z.string()).optional().describe("Labels to add to the issue"),
-    assignees: z
-      .array(z.string())
+    labels: v.array(v.string()).optional().describe("Labels to add to the issue"),
+    assignees: v
+      .array(v.string())
       .optional()
       .describe("GitHub usernames to assign to the issue"),
-  }),
+  }))(),
   execute: async ({ repo, title, body, labels, assignees }, context) => {
     const userId = context?.userId ?? "current-user";
 

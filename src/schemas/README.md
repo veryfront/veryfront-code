@@ -6,8 +6,8 @@ This directory contains shared validation schemas used across multiple modules i
 
 The veryfront codebase follows a **schema-first approach** where:
 
-1. **Zod schemas are the single source of truth** for types
-2. **TypeScript types are inferred** from schemas using `z.infer<>`
+1. **`defineSchema` schemas are the single source of truth** for types
+2. **TypeScript types are inferred** from schemas using `InferSchema<ReturnType<typeof getSchema>>`
 3. **Module-local schemas** live in `{module}/schemas/` directories
 4. **Shared schemas** (cross-module) live in `src/schemas/` (this directory)
 
@@ -15,8 +15,9 @@ The veryfront codebase follows a **schema-first approach** where:
 
 - **Schema files**: `{name}.schema.ts` (e.g., `config.schema.ts`)
 - **Shared schema files**: `common.ts`, `primitives.ts` (no `.schema` suffix since they're collections)
-- **Schema exports**: Use PascalCase for schema objects (e.g., `UserSchema`)
-- **Type exports**: Infer types from schemas (e.g., `type User = z.infer<typeof UserSchema>`)
+- **Schema getters**: Use `get` + PascalCase (e.g., `getUserSchema`)
+- **Schema exports**: Backward-compat constant (e.g., `export const UserSchema = getUserSchema()`)
+- **Type exports**: Infer types from schema getters (e.g., `type User = InferSchema<ReturnType<typeof getUserSchema>>`)
 
 ## Directory Structure
 
@@ -59,96 +60,117 @@ src/
 
 ```typescript
 // schemas/user.schema.ts
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { CommonSchemas } from "#veryfront/schemas";
 
-export const UserSchema = z.object({
-  id: z.string().uuid(),
-  email: CommonSchemas.email,
-  name: z.string().min(1),
-  createdAt: z.string().datetime(),
-});
+export const getUserSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().uuid(),
+    email: CommonSchemas.email,
+    name: v.string().min(1),
+    createdAt: v.string().datetime(),
+  })
+);
+export const UserSchema = getUserSchema();
 
-export type User = z.infer<typeof UserSchema>;
+export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 ```
 
 ### 2. Discriminated Union (Event Types)
 
 ```typescript
 // schemas/events.schema.ts
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-export const EventSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("user_created"),
-    userId: z.string(),
-    email: z.string().email(),
-  }),
-  z.object({
-    type: z.literal("user_deleted"),
-    userId: z.string(),
-  }),
-]);
+export const getEventSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("user_created"),
+      userId: v.string(),
+      email: v.string().email(),
+    }),
+    v.object({
+      type: v.literal("user_deleted"),
+      userId: v.string(),
+    }),
+  ])
+);
+export const EventSchema = getEventSchema();
 
-export type Event = z.infer<typeof EventSchema>;
+export type Event = InferSchema<ReturnType<typeof getEventSchema>>;
 ```
 
 ### 3. Composing Schemas
 
 ```typescript
 // schemas/api.schema.ts
-import { z } from "zod";
-import { CommonSchemas } from "#veryfront/schemas";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-const BaseResponseSchema = z.object({
-  success: z.boolean(),
-  timestamp: z.string().datetime(),
-});
+const getBaseResponseSchema = defineSchema((v) =>
+  v.object({
+    success: v.boolean(),
+    timestamp: v.string().datetime(),
+  })
+);
 
-export const SuccessResponseSchema = BaseResponseSchema.extend({
-  success: z.literal(true),
-  data: z.unknown(),
-});
+export const getSuccessResponseSchema = defineSchema((v) =>
+  getBaseResponseSchema().extend({
+    success: v.literal(true),
+    data: v.unknown(),
+  })
+);
 
-export const ErrorResponseSchema = BaseResponseSchema.extend({
-  success: z.literal(false),
-  error: z.object({
-    message: z.string(),
-    code: z.string().optional(),
-  }),
-});
+export const getErrorResponseSchema = defineSchema((v) =>
+  getBaseResponseSchema().extend({
+    success: v.literal(false),
+    error: v.object({
+      message: v.string(),
+      code: v.string().optional(),
+    }),
+  })
+);
 
-export const ApiResponseSchema = z.union([
-  SuccessResponseSchema,
-  ErrorResponseSchema,
-]);
+export const getApiResponseSchema = defineSchema((v) =>
+  v.union([
+    getSuccessResponseSchema(),
+    getErrorResponseSchema(),
+  ])
+);
+export const ApiResponseSchema = getApiResponseSchema();
 
-export type ApiResponse = z.infer<typeof ApiResponseSchema>;
+export type ApiResponse = InferSchema<ReturnType<typeof getApiResponseSchema>>;
 ```
 
 ### 4. Recursive/Lazy Schemas
 
 ```typescript
 // schemas/tree.schema.ts
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
-export const TreeNodeSchema: z.ZodType<{
-  id: string;
-  children?: TreeNode[];
-}> = z.lazy(() =>
-  z.object({
-    id: z.string(),
-    children: z.array(TreeNodeSchema).optional(),
-  })
-);
+export const getTreeNodeSchema = defineSchema((v) => {
+  const schema: Schema<{ id: string; children?: TreeNode[] }> = v.lazy(() =>
+    v.object({
+      id: v.string(),
+      children: v.array(schema).optional(),
+    })
+  );
+  return schema;
+});
+export const TreeNodeSchema = getTreeNodeSchema();
 
-export type TreeNode = z.infer<typeof TreeNodeSchema>;
+export type TreeNode = InferSchema<ReturnType<typeof getTreeNodeSchema>>;
 ```
 
 ### 5. Using with Runtime Validation
 
 ```typescript
-import { UserSchema } from "./schemas/user.schema.ts";
+import { getUserSchema } from "./schemas/user.schema.ts";
+
+const UserSchema = getUserSchema();
 
 function createUser(data: unknown) {
   // Runtime validation
@@ -163,7 +185,7 @@ function createUserSafe(data: unknown) {
   const result = UserSchema.safeParse(data);
 
   if (!result.success) {
-    console.error("Validation failed:", result.error);
+    console.error("Validation failed:", result.issues);
     return null;
   }
 
@@ -176,8 +198,8 @@ function createUserSafe(data: unknown) {
 When converting existing `types.ts` files to schemas:
 
 1. **Create the schema file** in `{module}/schemas/`
-2. **Define Zod schemas** for each type
-3. **Export inferred types** using `z.infer<>`
+2. **Define schemas** using `defineSchema` for each type
+3. **Export inferred types** using `InferSchema<ReturnType<typeof getSchema>>`
 4. **Update imports** throughout the module to use the schemas
 5. **Delete old `types.ts`** file (no legacy cruft)
 6. **Run `deno task verify`** to ensure everything works
@@ -197,15 +219,19 @@ export interface User {
 
 ```typescript
 // schemas/user.schema.ts
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-export const UserSchema = z.object({
-  id: z.string().uuid(),
-  email: z.string().email(),
-  name: z.string().min(1),
-});
+export const getUserSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().uuid(),
+    email: v.string().email(),
+    name: v.string().min(1),
+  })
+);
+export const UserSchema = getUserSchema();
 
-export type User = z.infer<typeof UserSchema>;
+export type User = InferSchema<ReturnType<typeof getUserSchema>>;
 ```
 
 ## Benefits
@@ -221,9 +247,12 @@ export type User = z.infer<typeof UserSchema>;
 ## Testing Schemas
 
 ```typescript
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect";
-import { UserSchema } from "./user.schema.ts";
+import { getUserSchema } from "./user.schema.ts";
+
+const UserSchema = getUserSchema();
 
 describe("UserSchema", () => {
   it("validates correct user data", () => {
@@ -250,5 +279,5 @@ describe("UserSchema", () => {
 
 ## References
 
-- [Zod Documentation](https://zod.dev/)
+- [defineSchema Contract](../extensions/schema/schema-validator.ts)
 - [TypeScript Handbook - Type Inference](https://www.typescriptlang.org/docs/handbook/type-inference.html)

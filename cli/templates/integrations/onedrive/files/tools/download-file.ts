@@ -1,17 +1,17 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { downloadFile, formatFileSize } from "../../lib/onedrive-client.ts";
 
 export default tool({
   id: "download-file",
   description: "Download file content from OneDrive. Returns the file content and metadata.",
-  inputSchema: z.object({
-    itemId: z.string().describe("The ID of the file to download"),
-    preview: z
+  inputSchema: defineSchema((v) => v.object({
+    itemId: v.string().describe("The ID of the file to download"),
+    preview: v
       .boolean()
       .default(false)
       .describe("If true, return only first 1000 characters as preview"),
-  }),
+  }))(),
   async execute({ itemId, preview }) {
     const { content, metadata } = await downloadFile(itemId);
 

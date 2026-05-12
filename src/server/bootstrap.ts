@@ -147,8 +147,8 @@ function maybeAttachFileLogSubscriber(config: VeryfrontConfig): FileLogHandle | 
     path: fileConfig.path ?? DEFAULT_FILE_LOG_PATH,
     maxSize: fileConfig.maxSize ?? DEFAULT_FILE_LOG_MAX_SIZE,
     maxFiles: fileConfig.maxFiles ?? DEFAULT_FILE_LOG_MAX_FILES,
-    level: fileConfig.level ?? DEFAULT_FILE_LOG_LEVEL,
-    format: fileConfig.format ?? DEFAULT_FILE_LOG_FORMAT,
+    level: (fileConfig.level ?? DEFAULT_FILE_LOG_LEVEL) as "debug" | "info" | "warn" | "error",
+    format: (fileConfig.format ?? DEFAULT_FILE_LOG_FORMAT) as "text" | "json",
   };
 
   const subscriber = createFileLogSubscriber(resolved);
@@ -312,7 +312,7 @@ export async function bootstrap(
 
     const enhancedAdapter = await enhanceAdapterWithFS(
       adapter,
-      { ...config, fs: fsWithCallbacks },
+      { ...config, fs: fsWithCallbacks } as any,
       projectDir,
     );
 

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import type { CreateSandboxBashTool, SandboxShellToolSet } from "./shell-tools.ts";

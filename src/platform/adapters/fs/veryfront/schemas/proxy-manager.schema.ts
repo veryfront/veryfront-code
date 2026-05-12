@@ -1,13 +1,16 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-export const GetAdapterParamsSchema = z.object({
-  projectSlug: z.string().min(1, "projectSlug must be non-empty"),
-  token: z.string().min(1, "token must be non-empty"),
-  projectId: z.string().optional(),
-  productionMode: z.boolean(),
-  releaseId: z.string().nullable().optional(),
-  environmentName: z.string().nullable().optional(),
-  branch: z.string().nullable().optional(),
-});
+export const getGetAdapterParamsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().min(1, "projectSlug must be non-empty"),
+    token: v.string().min(1, "token must be non-empty"),
+    projectId: v.string().optional(),
+    productionMode: v.boolean(),
+    releaseId: v.string().nullable().optional(),
+    environmentName: v.string().nullable().optional(),
+    branch: v.string().nullable().optional(),
+  })
+);
 
-export type GetAdapterParams = z.infer<typeof GetAdapterParamsSchema>;
+export type GetAdapterParams = InferSchema<ReturnType<typeof getGetAdapterParamsSchema>>;

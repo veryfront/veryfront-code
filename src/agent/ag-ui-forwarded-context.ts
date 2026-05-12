@@ -1,8 +1,9 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { AgUiRuntimeRequest } from "./runtime-ag-ui-contract.ts";
 
 export type AgUiForwardedConfigOptions<TConfig> = {
-  schema: z.ZodType<TConfig>;
+  schema: Schema<TConfig>;
   namespace?: string;
 };
 
@@ -53,7 +54,7 @@ export function parseAgUiContextBoolean(raw: string | undefined): boolean | unde
 
 export function parseAgUiContextSchema<TValue>(
   raw: string | undefined,
-  schema: z.ZodType<TValue>,
+  schema: Schema<TValue>,
 ): TValue | undefined {
   const parsed = parseAgUiContextJsonValue(raw);
   const result = schema.safeParse(parsed);
@@ -64,7 +65,8 @@ export function deriveAgUiForwardedConfig<TConfig>(
   input: Pick<AgUiRuntimeRequest, "forwardedProps">,
   options: AgUiForwardedConfigOptions<TConfig>,
 ): TConfig | undefined {
-  const forwardedProps = z.record(z.string(), z.unknown()).safeParse(input.forwardedProps);
+  const getRecordSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
+  const forwardedProps = getRecordSchema().safeParse(input.forwardedProps);
   if (!forwardedProps.success) {
     return undefined;
   }

@@ -1,12 +1,12 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listProjects } from "../../lib/neon-client.ts";
 
 export default tool({
   id: "list-projects",
   description:
     "List all Neon projects in your account. Returns project details including name, region, PostgreSQL version, and creation date.",
-  inputSchema: z.object({}),
+  inputSchema: defineSchema((v) => v.object({}))(),
   async execute() {
     const projects = await listProjects();
 

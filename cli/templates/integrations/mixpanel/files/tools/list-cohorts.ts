@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listCohorts } from "../../lib/mixpanel-client.ts";
 
 export default tool({
   id: "list-cohorts",
   description:
     "List all user cohorts defined in your Mixpanel project. Cohorts are saved user segments based on properties or behaviors.",
-  inputSchema: z.object({
-    includeHidden: z
+  inputSchema: defineSchema((v) => v.object({
+    includeHidden: v
       .boolean()
       .optional()
       .default(false)
       .describe("Include hidden cohorts in the results (defaults to false)"),
-  }),
+  }))(),
   async execute({ includeHidden }) {
     const allCohorts = await listCohorts();
     const cohorts = includeHidden

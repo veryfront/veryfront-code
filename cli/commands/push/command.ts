@@ -7,7 +7,8 @@
  * @module cli/commands/push
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { join, relative } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
@@ -28,18 +29,22 @@ import { listAllFiles } from "../pull/index.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 
 /**
- * Zod schema for push command arguments
+ * Schema factory for push command arguments
  */
-export const PushArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  branch: z.string().optional(),
-  force: z.boolean().default(false),
-  dryRun: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+export const getPushArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    branch: v.string().optional(),
+    force: v.boolean().default(false),
+    dryRun: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
 
-export type PushArgs = z.infer<typeof PushArgsSchema>;
+export const PushArgsSchema = getPushArgsSchema();
+
+export type PushArgs = InferSchema<ReturnType<typeof getPushArgsSchema>>;
 
 /**
  * Parse push command arguments from CLI args

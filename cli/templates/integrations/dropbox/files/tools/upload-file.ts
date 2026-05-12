@@ -1,29 +1,29 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatFileSize, uploadFile } from "../../lib/dropbox-client.ts";
 
 export default tool({
   id: "upload-file",
   description:
     "Upload or update a file in Dropbox. Can create new files or overwrite existing ones.",
-  inputSchema: z.object({
-    path: z
+  inputSchema: defineSchema((v) => v.object({
+    path: v
       .string()
       .describe(
         'Full path where the file should be saved in Dropbox (e.g., "/Documents/notes.txt")',
       ),
-    content: z.string().describe("The content to write to the file"),
-    mode: z
+    content: v.string().describe("The content to write to the file"),
+    mode: v
       .enum(["add", "overwrite", "update"])
       .default("add")
       .describe(
         'Upload mode: "add" (fail if exists), "overwrite" (replace if exists), "update" (update specific revision)',
       ),
-    autorename: z
+    autorename: v
       .boolean()
       .default(false)
       .describe("If true and file exists, automatically rename to avoid conflicts"),
-  }),
+  }))(),
   async execute({ path, content, mode, autorename }) {
     if (!path.startsWith("/")) {
       throw new Error('Path must start with "/" (e.g., "/Documents/file.txt")');

@@ -7,7 +7,8 @@ import {
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui-runtime-support.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   createStreamTransformState,
   finalizeRunEvents,
@@ -19,7 +20,8 @@ import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-m
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 
-const anyObjectSchema = z.record(z.string(), z.unknown());
+const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
+const anyObjectSchema = getAnyObjectSchema() as Schema<Record<string, unknown>>;
 const logger = serverLogger.component("internal-agent-run-stream");
 
 type RuntimeFilteredAgent = Agent & {

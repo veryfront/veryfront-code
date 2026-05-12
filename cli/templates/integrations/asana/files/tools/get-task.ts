@@ -1,13 +1,13 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getTask } from "../../lib/asana-client.ts";
 
 export default tool({
   id: "get-task",
   description: "Get details of a specific Asana task by its GID.",
-  inputSchema: z.object({
-    taskGid: z.string().describe("The GID of the task to retrieve"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    taskGid: v.string().describe("The GID of the task to retrieve"),
+  }))(),
   async execute({ taskGid }) {
     const task = await getTask(taskGid);
 

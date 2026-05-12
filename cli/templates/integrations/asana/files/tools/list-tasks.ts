@@ -1,20 +1,20 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getMe, listTasks, listWorkspaces } from "../../lib/asana-client.ts";
 
 export default tool({
   id: "list-tasks",
   description:
     "List tasks from Asana. Can filter by project or get tasks assigned to the current user.",
-  inputSchema: z.object({
-    projectGid: z.string().optional().describe("Project GID to list tasks from"),
-    assignedToMe: z
+  inputSchema: defineSchema((v) => v.object({
+    projectGid: v.string().optional().describe("Project GID to list tasks from"),
+    assignedToMe: v
       .boolean()
       .default(false)
       .describe("List tasks assigned to the current user"),
-    includeCompleted: z.boolean().default(false).describe("Include completed tasks"),
-    limit: z.number().min(1).max(50).default(20).describe("Maximum number of tasks to return"),
-  }),
+    includeCompleted: v.boolean().default(false).describe("Include completed tasks"),
+    limit: v.number().min(1).max(50).default(20).describe("Maximum number of tasks to return"),
+  }))(),
   async execute({ projectGid, assignedToMe, includeCompleted, limit }) {
     const completedSince = includeCompleted ? undefined : "now";
 

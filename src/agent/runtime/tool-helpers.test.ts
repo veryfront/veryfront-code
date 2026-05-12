@@ -1,6 +1,7 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { createRemoteMCPToolSource, tool, toolRegistry } from "#veryfront/tool";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import {
@@ -114,7 +115,7 @@ describe("tool-helpers", () => {
       const injectedTool = tool({
         id: "studio_invoke_agent",
         description: "Invoke another project agent",
-        inputSchema: z.object({ prompt: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ prompt: v.string() }))(),
         execute: async ({ prompt }) => ({ echoed: prompt }),
       });
 
@@ -134,7 +135,7 @@ describe("tool-helpers", () => {
       const sharedTool = tool({
         id: "shared-search",
         description: "Shared search",
-        inputSchema: z.object({ query: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
         execute: async ({ query }) => ({ query }),
       });
       toolRegistry.register("shared-search", sharedTool);
@@ -158,7 +159,7 @@ describe("tool-helpers", () => {
       const injectedTool = tool({
         id: "studio_invoke_agent",
         description: "Invoke another project agent",
-        inputSchema: z.object({ prompt: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ prompt: v.string() }))(),
         execute: async ({ prompt }) => ({ text: prompt.toUpperCase() }),
       });
 
@@ -180,7 +181,7 @@ describe("tool-helpers", () => {
       const sharedTool = tool({
         id: "shared-search",
         description: "Shared search",
-        inputSchema: z.object({ query: z.string() }),
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
         execute: async ({ query }) => ({ source: "registry", query }),
       });
       toolRegistry.register("shared-search", sharedTool);
@@ -283,7 +284,7 @@ describe("tool-helpers", () => {
         tool({
           id: "roll-dice",
           description: "Roll a die",
-          inputSchema: z.object({}),
+          inputSchema: defineSchema((v) => v.object({}))(),
           execute: async () => ({ total: 4 }),
         }),
       );

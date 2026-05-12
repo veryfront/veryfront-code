@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getComments } from "../../lib/figma-client.ts";
 
 type FormattedComment = {
@@ -29,16 +29,16 @@ export default tool({
   id: "get-comments",
   description:
     "Get all comments on a Figma file. Returns comment threads with messages, authors, timestamps, and resolution status.",
-  inputSchema: z.object({
-    fileKey: z.string().describe("The file key (from the Figma URL)"),
-    includeResolved: z.boolean().default(false).describe("Include resolved comments"),
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    fileKey: v.string().describe("The file key (from the Figma URL)"),
+    includeResolved: v.boolean().default(false).describe("Include resolved comments"),
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(50)
       .describe("Maximum number of comments to return"),
-  }),
+  }))(),
   async execute({ fileKey, includeResolved, limit }): Promise<Output> {
     const response = await getComments(fileKey);
 

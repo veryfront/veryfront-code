@@ -2,17 +2,21 @@
  * Analyze chunks command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { cwd } from "veryfront/platform";
 import { analyzeChunksCommand } from "./command.ts";
 import { showLogo } from "#cli/utils";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const AnalyzeChunksArgsSchema = z.object({
-  projectDir: z.string().default(""),
-  output: z.string().optional(),
-});
+const getAnalyzeChunksArgsSchema = defineSchema((v) =>
+  v.object({
+    projectDir: v.string().default(""),
+    output: v.string().optional(),
+  })
+);
+
+const AnalyzeChunksArgsSchema = getAnalyzeChunksArgsSchema();
 
 export const parseAnalyzeChunksArgs = createArgParser(AnalyzeChunksArgsSchema, {
   projectDir: CommonArgs.projectDir,

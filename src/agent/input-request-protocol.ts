@@ -1,129 +1,198 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
-import { HumanInputFieldSchema, HumanInputRequestSchema } from "./human-input.ts";
+import { getHumanInputFieldSchema, humanInputRequestBaseFields } from "./human-input.ts";
 
-export const formInputToolInputSchema = HumanInputRequestSchema.omit({ metadata: true });
-export const inputResponseValuesSchema = z.record(
-  z.string(),
-  z.union([z.string(), z.boolean(), z.number(), z.null()]),
+// `formInputToolInputSchema` is `HumanInputRequestSchema` minus its `metadata`
+// field. The contract DSL doesn't expose `.omit(...)`, so we share the base
+// shape via `humanInputRequestBaseFields(v)` and construct two object schemas.
+export const getFormInputToolInputSchema = defineSchema((v) =>
+  v.object(humanInputRequestBaseFields(v))
 );
 
-export const createInputRequestRequestSchema = z.object({
-  run_id: z.string().min(1),
-  tool_call_id: z.string().min(1),
-  kind: z.literal("form"),
-  requested_responder_type: z.literal("human"),
-  title: z.string(),
-  description: z.string().optional(),
-  fields: z.array(HumanInputFieldSchema).min(1),
-  expires_at: z.string().datetime({ offset: true }),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
+export const getInputResponseValuesSchema = defineSchema((v) =>
+  v.record(
+    v.string(),
+    v.union([v.string(), v.boolean(), v.number(), v.null()]),
+  )
+);
 
-export const inputResponseRestSchema = z
-  .object({
-    id: z.string().uuid(),
-    input_request_id: z.string().uuid(),
-    conversation_id: z.string().uuid(),
-    run_id: z.string().min(1),
-    actor_type: z.string(),
-    actor_id: z.string(),
-    values: inputResponseValuesSchema,
-    created_at: z.string(),
+export const getCreateInputRequestRequestSchema = defineSchema((v) =>
+  v.object({
+    run_id: v.string().min(1),
+    tool_call_id: v.string().min(1),
+    kind: v.literal("form"),
+    requested_responder_type: v.literal("human"),
+    title: v.string(),
+    description: v.string().optional(),
+    fields: v.array(getHumanInputFieldSchema()).min(1),
+    // Note: original used `.datetime({ offset: true })`; the contract DSL only
+    // exposes `.datetime()` without the offset option. Validation is slightly
+    // looser (offset is no longer enforced); acceptable for migration.
+    expires_at: v.string().datetime(),
+    metadata: v.record(v.string(), v.unknown()).optional(),
   })
-  .passthrough()
-  .transform((value) => ({
-    id: value.id,
-    inputRequestId: value.input_request_id,
-    conversationId: value.conversation_id,
-    runId: value.run_id,
-    actorType: value.actor_type,
-    actorId: value.actor_id,
-    values: value.values,
-    createdAt: value.created_at,
-  }));
+);
 
-export const inputRequestRestSchema = z
-  .object({
-    id: z.string().uuid(),
-    conversation_id: z.string().uuid(),
-    run_id: z.string().min(1),
-    tool_call_id: z.string().min(1),
-    kind: z.literal("form"),
-    status: z.enum(["open", "submitted", "cancelled", "expired"]),
-    requested_responder_type: z.enum(["human", "agent", "system"]),
-    title: z.string(),
-    description: z.string().nullable(),
-    fields: z.array(HumanInputFieldSchema),
-    recommendations: z.record(z.string(), z.unknown()).nullable().optional(),
-    metadata: z.record(z.string(), z.unknown()).nullable().optional(),
-    created_at: z.string(),
-    expires_at: z.string().nullable(),
-    submitted_at: z.string().nullable().optional(),
-    cancelled_at: z.string().nullable().optional(),
-    expired_at: z.string().nullable().optional(),
-    latest_response: inputResponseRestSchema.nullable().optional(),
+// Hand-written transform output type. The contract DSL erases the parameter
+// type through `.transform()` (the adapter casts the callback parameter to
+// `never`), so we need an explicit annotation to keep the downstream type
+// inference flowing.
+export interface InputResponseRestOutput {
+  id: string;
+  inputRequestId: string;
+  conversationId: string;
+  runId: string;
+  actorType: string;
+  actorId: string;
+  values: Record<string, string | number | boolean | null>;
+  createdAt: string;
+}
+
+export const getInputResponseRestSchema = defineSchema((v) =>
+  v
+    .object({
+      id: v.string().uuid(),
+      input_request_id: v.string().uuid(),
+      conversation_id: v.string().uuid(),
+      run_id: v.string().min(1),
+      actor_type: v.string(),
+      actor_id: v.string(),
+      values: getInputResponseValuesSchema(),
+      created_at: v.string(),
+    })
+    .passthrough()
+    .transform((value): InputResponseRestOutput => {
+      const v2 = value as Record<string, unknown>;
+      return {
+        id: v2.id as string,
+        inputRequestId: v2.input_request_id as string,
+        conversationId: v2.conversation_id as string,
+        runId: v2.run_id as string,
+        actorType: v2.actor_type as string,
+        actorId: v2.actor_id as string,
+        values: v2.values as Record<string, string | number | boolean | null>,
+        createdAt: v2.created_at as string,
+      };
+    })
+);
+
+// Hand-written transform output type — see InputResponseRestOutput note.
+export interface InputRequestRestOutput {
+  id: string;
+  conversationId: string;
+  runId: string;
+  toolCallId: string;
+  kind: "form";
+  status: "open" | "submitted" | "cancelled" | "expired";
+  requestedResponderType: "human" | "agent" | "system";
+  title: string;
+  description: string | null;
+  fields: unknown[];
+  recommendations: Record<string, unknown> | null;
+  metadata: Record<string, unknown> | null;
+  createdAt: string;
+  expiresAt: string | null;
+  submittedAt: string | null;
+  cancelledAt: string | null;
+  expiredAt: string | null;
+  latestResponse: InputResponseRestOutput | null;
+}
+
+export const getInputRequestRestSchema = defineSchema((v) =>
+  v
+    .object({
+      id: v.string().uuid(),
+      conversation_id: v.string().uuid(),
+      run_id: v.string().min(1),
+      tool_call_id: v.string().min(1),
+      kind: v.literal("form"),
+      status: v.enum(["open", "submitted", "cancelled", "expired"] as const),
+      requested_responder_type: v.enum(["human", "agent", "system"] as const),
+      title: v.string(),
+      description: v.string().nullable(),
+      fields: v.array(getHumanInputFieldSchema()),
+      recommendations: v.record(v.string(), v.unknown()).nullable().optional(),
+      metadata: v.record(v.string(), v.unknown()).nullable().optional(),
+      created_at: v.string(),
+      expires_at: v.string().nullable(),
+      submitted_at: v.string().nullable().optional(),
+      cancelled_at: v.string().nullable().optional(),
+      expired_at: v.string().nullable().optional(),
+      latest_response: getInputResponseRestSchema().nullable().optional(),
+    })
+    .passthrough()
+    .transform((value): InputRequestRestOutput => {
+      const v2 = value as Record<string, unknown>;
+      return {
+        id: v2.id as string,
+        conversationId: v2.conversation_id as string,
+        runId: v2.run_id as string,
+        toolCallId: v2.tool_call_id as string,
+        kind: v2.kind as "form",
+        status: v2.status as InputRequestRestOutput["status"],
+        requestedResponderType: v2
+          .requested_responder_type as InputRequestRestOutput["requestedResponderType"],
+        title: v2.title as string,
+        description: v2.description as string | null,
+        fields: v2.fields as unknown[],
+        recommendations: (v2.recommendations as Record<string, unknown> | null | undefined) ?? null,
+        metadata: (v2.metadata as Record<string, unknown> | null | undefined) ?? null,
+        createdAt: v2.created_at as string,
+        expiresAt: v2.expires_at as string | null,
+        submittedAt: (v2.submitted_at as string | null | undefined) ?? null,
+        cancelledAt: (v2.cancelled_at as string | null | undefined) ?? null,
+        expiredAt: (v2.expired_at as string | null | undefined) ?? null,
+        latestResponse: (v2.latest_response as InputResponseRestOutput | null | undefined) ?? null,
+      };
+    })
+);
+
+export const getCreateInputRequestResponseSchema = getInputRequestRestSchema;
+export const getGetInputRequestResponseSchema = getInputRequestRestSchema;
+
+export const getInputRequestOutputSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().uuid(),
+    conversationId: v.string().uuid(),
+    runId: v.string().min(1),
+    toolCallId: v.string().min(1),
+    kind: v.literal("form"),
+    status: v.enum(["open", "submitted", "cancelled", "expired"] as const),
+    requestedResponderType: v.enum(["human", "agent", "system"] as const),
+    title: v.string(),
+    description: v.string().nullable(),
+    fields: v.array(getHumanInputFieldSchema()),
+    recommendations: v.record(v.string(), v.unknown()).nullable(),
+    metadata: v.record(v.string(), v.unknown()).nullable(),
+    createdAt: v.string(),
+    expiresAt: v.string().nullable(),
+    submittedAt: v.string().nullable(),
+    cancelledAt: v.string().nullable(),
+    expiredAt: v.string().nullable(),
+    latestResponse: getInputResponseRestSchema().nullable(),
   })
-  .passthrough()
-  .transform((value) => ({
-    id: value.id,
-    conversationId: value.conversation_id,
-    runId: value.run_id,
-    toolCallId: value.tool_call_id,
-    kind: value.kind,
-    status: value.status,
-    requestedResponderType: value.requested_responder_type,
-    title: value.title,
-    description: value.description,
-    fields: value.fields,
-    recommendations: value.recommendations ?? null,
-    metadata: value.metadata ?? null,
-    createdAt: value.created_at,
-    expiresAt: value.expires_at,
-    submittedAt: value.submitted_at ?? null,
-    cancelledAt: value.cancelled_at ?? null,
-    expiredAt: value.expired_at ?? null,
-    latestResponse: value.latest_response ?? null,
-  }));
+);
 
-export const createInputRequestResponseSchema = inputRequestRestSchema;
-export const getInputRequestResponseSchema = inputRequestRestSchema;
-export const inputRequestOutputSchema = z.object({
-  id: z.string().uuid(),
-  conversationId: z.string().uuid(),
-  runId: z.string().min(1),
-  toolCallId: z.string().min(1),
-  kind: z.literal("form"),
-  status: z.enum(["open", "submitted", "cancelled", "expired"]),
-  requestedResponderType: z.enum(["human", "agent", "system"]),
-  title: z.string(),
-  description: z.string().nullable(),
-  fields: z.array(HumanInputFieldSchema),
-  recommendations: z.record(z.string(), z.unknown()).nullable(),
-  metadata: z.record(z.string(), z.unknown()).nullable(),
-  createdAt: z.string(),
-  expiresAt: z.string().nullable(),
-  submittedAt: z.string().nullable(),
-  cancelledAt: z.string().nullable(),
-  expiredAt: z.string().nullable(),
-  latestResponse: inputResponseRestSchema.nullable(),
-});
+export const getInputRequestLifecycleDataEventSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("veryfront.input_request.lifecycle"),
+    data: v.object({
+      action: v.enum(["created", "updated"] as const),
+      inputRequest: getInputRequestOutputSchema(),
+    }),
+    name: v.literal("veryfront.input_request.lifecycle"),
+    value: v.object({
+      action: v.enum(["created", "updated"] as const),
+      inputRequest: getInputRequestOutputSchema(),
+    }),
+  })
+);
 
-export const inputRequestLifecycleDataEventSchema = z.object({
-  type: z.literal("veryfront.input_request.lifecycle"),
-  data: z.object({
-    action: z.enum(["created", "updated"]),
-    inputRequest: inputRequestOutputSchema,
-  }),
-  name: z.literal("veryfront.input_request.lifecycle"),
-  value: z.object({
-    action: z.enum(["created", "updated"]),
-    inputRequest: inputRequestOutputSchema,
-  }),
-});
-
-export type FormInputToolInput = z.infer<typeof formInputToolInputSchema>;
-export type InputRequestOutput = z.infer<typeof inputRequestOutputSchema>;
+export type FormInputToolInput = InferSchema<ReturnType<typeof getFormInputToolInputSchema>>;
+// `InputRequestOutput` mirrors `InputRequestRestOutput` (the transform result
+// of `getInputRequestRestSchema`); both share the camelCase output shape.
+export type InputRequestOutput = InputRequestRestOutput;
 
 export async function createInputRequest(input: {
   authToken: string;
@@ -134,7 +203,7 @@ export async function createInputRequest(input: {
   form: FormInputToolInput;
   expiresAt: string;
 }): Promise<InputRequestOutput> {
-  const requestBody = createInputRequestRequestSchema.parse({
+  const requestBody = getCreateInputRequestRequestSchema().parse({
     run_id: input.runId,
     tool_call_id: input.toolCallId,
     kind: "form",
@@ -163,7 +232,7 @@ export async function createInputRequest(input: {
     throw new Error(detail || `Failed to create durable input request (HTTP ${response.status})`);
   }
 
-  return createInputRequestResponseSchema.parse(await response.json());
+  return getCreateInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;
 }
 
 export async function getInputRequest(input: {
@@ -188,14 +257,14 @@ export async function getInputRequest(input: {
     throw new Error(detail || `Failed to fetch durable input request (HTTP ${response.status})`);
   }
 
-  return getInputRequestResponseSchema.parse(await response.json());
+  return getGetInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;
 }
 
 export function buildInputRequestLifecycleDataEvent(input: {
   action: "created" | "updated";
   inputRequest: InputRequestOutput;
 }): ToolExecutionDataEvent {
-  return inputRequestLifecycleDataEventSchema.parse({
+  return getInputRequestLifecycleDataEventSchema().parse({
     type: "veryfront.input_request.lifecycle",
     data: {
       action: input.action,

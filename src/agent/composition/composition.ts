@@ -12,14 +12,14 @@ import type { Tool } from "#veryfront/tool";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
-import { AgentToolInputSchema } from "../schemas/index.ts";
+import { getAgentToolInputSchema } from "../schemas/index.ts";
 
 export function agentAsTool(agent: Agent, description: string): Tool {
   return {
     id: `agent_${agent.id}`,
     type: "function",
     description,
-    inputSchema: AgentToolInputSchema,
+    inputSchema: getAgentToolInputSchema(),
     execute({ input }) {
       return withSpan(
         "agent.composition.agentAsTool.execute",

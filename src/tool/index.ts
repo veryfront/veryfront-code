@@ -1,17 +1,19 @@
 /**
- * Define tools with Zod schemas for agents and MCP.
+ * Define tools with `defineSchema`-built input schemas for agents and MCP.
  *
  * @module tool
  *
  * @example Basic tool
  * ```ts
  * import { tool } from "veryfront/tool";
- * import { z } from "zod";
+ * import { defineSchema } from "veryfront/schemas";
+ *
+ * const getWeatherInputSchema = defineSchema((v) => v.object({ city: v.string() }));
  *
  * const weather = tool({
  *   id: "weather",
  *   description: "Get current weather for a city",
- *   inputSchema: z.object({ city: z.string() }),
+ *   inputSchema: getWeatherInputSchema(),
  *   execute: async ({ city }) => {
  *     const res = await fetch(`https://api.weather.com/${city}`);
  *     return res.json();
@@ -23,12 +25,14 @@
  * ```ts
  * import { tool } from "veryfront/tool";
  * import { agent } from "veryfront/agent";
- * import { z } from "zod";
+ * import { defineSchema } from "veryfront/schemas";
+ *
+ * const getWeatherInputSchema = defineSchema((v) => v.object({ city: v.string() }));
  *
  * const weather = tool({
  *   id: "weather",
  *   description: "Get current weather for a city",
- *   inputSchema: z.object({ city: z.string() }),
+ *   inputSchema: getWeatherInputSchema(),
  *   execute: async ({ city }) => {
  *     const res = await fetch(`https://api.weather.com/${city}`);
  *     return res.json();

@@ -1,18 +1,20 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 const DEFAULT_RUNTIME_UPLOAD_URL_TIMEOUT_MS = 15_000;
 
-const runtimeUploadUrlResponseSchema = z.object({
-  signed_url: z.string(),
-});
-
-const apiErrorBodySchema = z
-  .object({
-    detail: z.string().optional(),
-    message: z.string().optional(),
-    error: z.string().optional(),
+const getRuntimeUploadUrlResponseSchema = defineSchema((v) =>
+  v.object({
+    signed_url: v.string(),
   })
-  .passthrough();
+);
+
+const getApiErrorBodySchema = defineSchema((v) =>
+  v.object({
+    detail: v.string().optional(),
+    message: v.string().optional(),
+    error: v.string().optional(),
+  }).passthrough()
+);
 
 export type RuntimeUploadUrlFetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -45,7 +47,7 @@ export async function getRuntimeUploadUrl(options: RuntimeUploadUrlOptions): Pro
     );
   }
 
-  const parsed = runtimeUploadUrlResponseSchema.safeParse(await response.json());
+  const parsed = getRuntimeUploadUrlResponseSchema().safeParse(await response.json());
   if (!parsed.success) {
     throw new Error(
       `Failed to fetch signed upload URL for ${options.uploadId}: invalid API response`,
@@ -74,18 +76,16 @@ async function readApiErrorMessage(response: Response): Promise<string> {
     return response.statusText || `HTTP ${response.status}`;
   }
 
-  const parsedJson = z
-    .string()
-    .transform((value, ctx) => {
-      try {
-        return JSON.parse(value);
-      } catch {
-        ctx.addIssue({ code: "custom", message: "Invalid JSON" });
-        return z.NEVER;
-      }
-    })
-    .pipe(apiErrorBodySchema)
-    .safeParse(body);
+  let parsedJson: { success: true; data: { detail?: string; message?: string; error?: string } } | {
+    success: false;
+  };
+  try {
+    const jsonValue = JSON.parse(body);
+    const result = getApiErrorBodySchema().safeParse(jsonValue);
+    parsedJson = result.success ? { success: true, data: result.data } : { success: false };
+  } catch {
+    parsedJson = { success: false };
+  }
 
   if (parsedJson.success) {
     return parsedJson.data.detail ?? parsedJson.data.message ?? parsedJson.data.error ?? body;

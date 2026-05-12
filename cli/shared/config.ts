@@ -5,7 +5,8 @@
  * @module cli/shared/config
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
@@ -14,21 +15,27 @@ import { readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import { DEFAULT_API_URL } from "./constants.ts";
 
-export const VeryfrontConfigSchema = z.object({
-  projectSlug: z.string().optional(),
-  /** List of project slugs for multi-project pull */
-  projects: z.array(z.string()).optional(),
-  apiToken: z.string().optional(),
-  apiUrl: z.string().optional(),
-});
-export type VeryfrontConfig = z.infer<typeof VeryfrontConfigSchema>;
+export const getVeryfrontConfigSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    /** List of project slugs for multi-project pull */
+    projects: v.array(v.string()).optional(),
+    apiToken: v.string().optional(),
+    apiUrl: v.string().optional(),
+  })
+);
+export const VeryfrontConfigSchema = getVeryfrontConfigSchema();
+export type VeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
 
-export const ResolvedConfigSchema = z.object({
-  apiUrl: z.string(),
-  apiToken: z.string(),
-  projectSlug: z.string(),
-});
-export type ResolvedConfig = z.infer<typeof ResolvedConfigSchema>;
+export const getResolvedConfigSchema = defineSchema((v) =>
+  v.object({
+    apiUrl: v.string(),
+    apiToken: v.string(),
+    projectSlug: v.string(),
+  })
+);
+export const ResolvedConfigSchema = getResolvedConfigSchema();
+export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSchema>>;
 
 export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
   const fs = createFileSystem();
@@ -176,12 +183,15 @@ export interface ApiClient {
   delete<T>(path: string): Promise<T>;
 }
 
-export const ApiErrorSchema = z.object({
-  error: z.string(),
-  message: z.string().optional(),
-  code: z.string().optional(),
-});
-export type ApiError = z.infer<typeof ApiErrorSchema>;
+export const getApiErrorSchema = defineSchema((v) =>
+  v.object({
+    error: v.string(),
+    message: v.string().optional(),
+    code: v.string().optional(),
+  })
+);
+export const ApiErrorSchema = getApiErrorSchema();
+export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
 
 export function createApiClient(config: ResolvedConfig): ApiClient {
   const { apiUrl, apiToken } = config;

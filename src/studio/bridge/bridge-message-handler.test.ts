@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Tests for bridge-message-handler: URL validation and route handling.
  */

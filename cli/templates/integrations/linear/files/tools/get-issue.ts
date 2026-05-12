@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getIssue } from "../../lib/linear-client.ts";
 
 export default tool({
   id: "get-issue",
   description:
     "Get detailed information about a specific Linear issue by its ID or identifier (e.g., ENG-123). Returns complete issue details including description, status, assignee, labels, and project.",
-  inputSchema: z.object({
-    issueId: z
+  inputSchema: defineSchema((v) => v.object({
+    issueId: v
       .string()
       .describe(
         'The ID or identifier of the issue (e.g., "ENG-123" or full UUID)',
       ),
-  }),
+  }))(),
   async execute({ issueId }) {
     const issue = await getIssue(issueId);
 

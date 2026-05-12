@@ -9,7 +9,7 @@
  * @module
  */
 
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import type { Tool } from "#veryfront/tool";
 import { readTextFile } from "#veryfront/platform/compat/fs.ts";
@@ -29,6 +29,39 @@ import {
 
 /** Maximum allowed script execution timeout in milliseconds (5 minutes) */
 const MAX_SCRIPT_TIMEOUT_MS = 300_000;
+
+const getLoadSkillInputSchema = defineSchema((v) =>
+  v.object({
+    skillId: v.string().describe("The ID of the skill to load"),
+  })
+);
+
+const getLoadSkillReferenceInputSchema = defineSchema((v) =>
+  v.object({
+    skillId: v.string().describe("The ID of the skill"),
+    reference: v.string().describe(
+      "Relative path to the reference file (e.g. 'references/CLAUSES.md')",
+    ),
+  })
+);
+
+const getExecuteSkillScriptInputSchema = defineSchema((v) =>
+  v.object({
+    skillId: v.string().describe("The ID of the skill"),
+    script: v.string().describe("Relative path to the script (e.g. 'scripts/setup.sh')"),
+    args: v.array(v.string()).optional().describe("Arguments to pass to the script"),
+    env: v.record(v.string(), v.string()).optional().describe(
+      "Environment variables for the script",
+    ),
+    timeoutMs: v
+      .number()
+      .int()
+      .positive()
+      .max(MAX_SCRIPT_TIMEOUT_MS)
+      .optional()
+      .describe(`Optional execution timeout in milliseconds (max ${MAX_SCRIPT_TIMEOUT_MS})`),
+  })
+);
 
 /**
  * Read a file from a skill directory.
@@ -63,9 +96,7 @@ export function createLoadSkillTool(): Tool {
     id: "load-skill",
     description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
       "allowed tools policy, and lists of available reference files and scripts.",
-    inputSchema: z.object({
-      skillId: z.string().describe("The ID of the skill to load"),
-    }),
+    inputSchema: getLoadSkillInputSchema(),
     execute: async (input): Promise<SkillContent> => {
       const skill = skillRegistry.get(input.skillId);
       if (!skill) {
@@ -120,12 +151,7 @@ export function createLoadSkillReferenceTool(): Tool {
     id: "load-skill-reference",
     description: "Read a reference file from a skill. Only files in the skill's " +
       "references/ and assets/ directories are accessible.",
-    inputSchema: z.object({
-      skillId: z.string().describe("The ID of the skill"),
-      reference: z.string().describe(
-        "Relative path to the reference file (e.g. 'references/CLAUSES.md')",
-      ),
-    }),
+    inputSchema: getLoadSkillReferenceInputSchema(),
     execute: async (input): Promise<{ content: string; path: string }> => {
       const skill = skillRegistry.get(input.skillId);
       if (!skill) {
@@ -160,21 +186,7 @@ export function createExecuteSkillScriptTool(): Tool {
     id: "execute-skill-script",
     description:
       "Execute a script from a skill's scripts/ directory. Returns stdout, stderr, and exit code.",
-    inputSchema: z.object({
-      skillId: z.string().describe("The ID of the skill"),
-      script: z.string().describe("Relative path to the script (e.g. 'scripts/setup.sh')"),
-      args: z.array(z.string()).optional().describe("Arguments to pass to the script"),
-      env: z.record(z.string(), z.string()).optional().describe(
-        "Environment variables for the script",
-      ),
-      timeoutMs: z
-        .number()
-        .int()
-        .positive()
-        .max(MAX_SCRIPT_TIMEOUT_MS)
-        .optional()
-        .describe(`Optional execution timeout in milliseconds (max ${MAX_SCRIPT_TIMEOUT_MS})`),
-    }),
+    inputSchema: getExecuteSkillScriptInputSchema(),
     execute: async (input) => {
       const skill = skillRegistry.get(input.skillId);
       if (!skill) {

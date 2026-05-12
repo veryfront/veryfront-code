@@ -1,3 +1,5 @@
+import "#veryfront/schemas/_test-setup.ts";
+
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";

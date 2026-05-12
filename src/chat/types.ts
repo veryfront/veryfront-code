@@ -6,7 +6,8 @@ import type {
   ChildRunAuditToolCall,
   ChildRunAuditToolResult,
 } from "./protocol.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
 const NATIVE_TEXT_ATTACHMENT_EXTENSIONS = [
   ".txt",
@@ -293,223 +294,247 @@ export interface UploadedFileReference {
   size?: number;
 }
 
-export const chatRequestContextSchema = z
-  .object({
-    conversationId: z.string().optional(),
-    projectId: z.string().nullable(),
-    branchId: z.string().nullable(),
-    environmentContext: z.string().optional(),
-  })
-  .strict();
-
-export type ChatRequestContext = z.infer<typeof chatRequestContextSchema>;
-
-const childRunAuditStatusSchema: z.ZodType<ChildRunAudit["status"]> = z.enum([
-  "completed",
-  "failed",
-  "cancelled",
-  "stopped",
-]);
-
-const childRunAuditToolCallSchema: z.ZodType<ChildRunAuditToolCall> = z
-  .object({
-    toolName: z.string(),
-    toolCallId: z.string(),
-    input: z.unknown().optional(),
-  })
-  .strict();
-
-const childRunAuditToolResultSchema: z.ZodType<ChildRunAuditToolResult> = z
-  .object({
-    toolName: z.string(),
-    toolCallId: z.string(),
-    input: z.unknown(),
-    output: z.unknown(),
-  })
-  .strict();
-
-const childRunAuditSchema: z.ZodType<ChildRunAudit> = z
-  .object({
-    status: childRunAuditStatusSchema,
-    description: z.string().optional(),
-    steps: z.number().optional(),
-    durationMs: z.number().optional(),
-    toolCalls: z.array(childRunAuditToolCallSchema).optional(),
-    toolResults: z.array(childRunAuditToolResultSchema).optional(),
-    terminalErrorCode: z.string().nullable().optional(),
-    terminalErrorMessage: z.string().nullable().optional(),
-  })
-  .strict();
-
-const messageMetadataUsageSchema: z.ZodType<ChatMessageMetadataUsage> = z
-  .object({
-    inputTokens: z.number().optional(),
-    outputTokens: z.number().optional(),
-    reasoningTokens: z.number().optional(),
-    cachedInputTokens: z.number().optional(),
-  })
-  .strict();
-
-export const messageMetadataSchema: z.ZodType<ChatMessageMetadata> = z
-  .object({
-    createdAt: z.string().optional(),
-    isStopped: z.boolean().optional(),
-    isCompleted: z.boolean().optional(),
-    completedAt: z.string().optional(),
-    agentId: z.string().optional(),
-    agentName: z.string().optional(),
-    conversationId: z.string().optional(),
-    modelId: z.string().optional(),
-    runId: z.string().optional(),
-    streamingMessageId: z.string().optional(),
-    childRunAudit: childRunAuditSchema.optional(),
-    usage: messageMetadataUsageSchema.optional(),
-  })
-  .strict();
-
-const nonEmptyStringSchema = z.string().min(1);
-
-export const chatUiMessageRoleSchema: z.ZodType<ChatUiMessageRole> = z.enum([
-  "system",
-  "user",
-  "assistant",
-]);
-
-export const chatToolPartStateSchema: z.ZodType<ChatToolPartState> = z.enum([
-  "pending",
-  "input-streaming",
-  "input-available",
-  "approval-requested",
-  "approval-responded",
-  "output-available",
-  "output-error",
-  "output-denied",
-  "error",
-  "completed",
-]);
-
-const toolApprovalSchema = z
-  .object({
-    id: nonEmptyStringSchema,
-  })
-  .strict();
-
-const toolPartBaseSchema = z
-  .object({
-    toolCallId: nonEmptyStringSchema,
-    input: z.unknown(),
-    state: chatToolPartStateSchema,
-    title: nonEmptyStringSchema.optional(),
-    providerExecuted: z.boolean().optional(),
-    callProviderMetadata: z.record(z.string(), z.unknown()).optional(),
-    output: z.unknown().optional(),
-    errorText: nonEmptyStringSchema.optional(),
-    approval: toolApprovalSchema.optional(),
-  })
-  .strip();
-
-const chatTextUiPartSchema: z.ZodType<ChatTextUiPart> = z
-  .object({
-    type: z.literal("text"),
-    text: z.string(),
-  })
-  .strip();
-
-const chatReasoningUiPartSchema: z.ZodType<ChatReasoningUiPart> = z
-  .object({
-    type: z.literal("reasoning"),
-    text: z.string(),
-  })
-  .strip();
-
-const chatStepStartUiPartSchema: z.ZodType<ChatStepStartUiPart> = z
-  .object({
-    type: z.literal("step-start"),
-  })
-  .strip();
-
-const chatSourceUrlUiPartSchema: z.ZodType<ChatSourceUrlUiPart> = z
-  .object({
-    type: z.literal("source-url"),
-    sourceId: nonEmptyStringSchema,
-    url: nonEmptyStringSchema,
-    title: z.string().optional(),
-  })
-  .strip();
-
-const chatSourceDocumentUiPartSchema: z.ZodType<ChatSourceDocumentUiPart> = z
-  .object({
-    type: z.literal("source-document"),
-    sourceId: nonEmptyStringSchema,
-    title: nonEmptyStringSchema,
-    mediaType: nonEmptyStringSchema.optional(),
-    filename: nonEmptyStringSchema.optional(),
-  })
-  .strip();
-
-const chatFileUiPartBaseSchema = z
-  .object({
-    type: z.literal("file"),
-    mediaType: nonEmptyStringSchema,
-    url: nonEmptyStringSchema,
-    filename: nonEmptyStringSchema.optional(),
-  })
-  .strip();
-
-const fileUiPartWithUploadSchema: z.ZodType<FileUIPartWithUpload> = chatFileUiPartBaseSchema.extend(
-  {
-    uploadId: nonEmptyStringSchema.optional(),
-    uploadPath: nonEmptyStringSchema.optional(),
-  },
+export const getChatRequestContextSchema = defineSchema((v) =>
+  v.object({
+    conversationId: v.string().optional(),
+    projectId: v.string().nullable(),
+    branchId: v.string().nullable(),
+    environmentContext: v.string().optional(),
+  }).strict()
 );
 
-const chatDynamicToolUiPartSchema: z.ZodType<ChatDynamicToolUiPart> = toolPartBaseSchema.extend({
-  type: z.literal("dynamic-tool"),
-  toolName: nonEmptyStringSchema,
-});
+/** @deprecated Use getChatRequestContextSchema() */
+export const chatRequestContextSchema = getChatRequestContextSchema();
 
-const chatNamedToolTypeSchema: z.ZodType<ChatNamedToolUiPart["type"]> = z.custom<
-  ChatNamedToolUiPart["type"]
->((value) => typeof value === "string" && (value === "tool_call" || /^tool-.+$/u.test(value)));
+export type ChatRequestContext = InferSchema<ReturnType<typeof getChatRequestContextSchema>>;
 
-const chatNamedToolUiPartSchema: z.ZodType<ChatNamedToolUiPart> = toolPartBaseSchema.extend({
-  type: chatNamedToolTypeSchema,
-  toolName: nonEmptyStringSchema.optional(),
-});
+// Helper that returns a nonEmptyString schema for reuse within defineSchema callbacks.
+const nonEmptyString = (v: SchemaValidator) => v.string().min(1);
 
-const chatDataUiPartTypeSchema: z.ZodType<ChatDataUiPart["type"]> = z.custom<
-  ChatDataUiPart["type"]
->((value) => typeof value === "string" && /^data-.+$/u.test(value));
+const getChildRunAuditStatusSchema = defineSchema((v) =>
+  v.enum(["completed", "failed", "cancelled", "stopped"])
+);
 
-const chatDataUiPartSchema: z.ZodType<ChatDataUiPart> = z
-  .object({
-    type: chatDataUiPartTypeSchema,
-    data: z.unknown(),
+const getChildRunAuditToolCallSchema = defineSchema((v) =>
+  v.object({
+    toolName: v.string(),
+    toolCallId: v.string(),
+    input: v.unknown().optional(),
+  }).strict()
+);
+
+const getChildRunAuditToolResultSchema = defineSchema((v) =>
+  v.object({
+    toolName: v.string(),
+    toolCallId: v.string(),
+    input: v.unknown(),
+    output: v.unknown(),
+  }).strict()
+);
+
+const getChildRunAuditSchema = defineSchema((v) =>
+  v.object({
+    status: getChildRunAuditStatusSchema(),
+    description: v.string().optional(),
+    steps: v.number().optional(),
+    durationMs: v.number().optional(),
+    toolCalls: v.array(getChildRunAuditToolCallSchema()).optional(),
+    toolResults: v.array(getChildRunAuditToolResultSchema()).optional(),
+    terminalErrorCode: v.string().nullable().optional(),
+    terminalErrorMessage: v.string().nullable().optional(),
+  }).strict()
+);
+
+const getMessageMetadataUsageSchema = defineSchema((v) =>
+  v.object({
+    inputTokens: v.number().optional(),
+    outputTokens: v.number().optional(),
+    reasoningTokens: v.number().optional(),
+    cachedInputTokens: v.number().optional(),
+  }).strict()
+);
+
+export const getMessageMetadataSchema = defineSchema((v) =>
+  v.object({
+    createdAt: v.string().optional(),
+    isStopped: v.boolean().optional(),
+    isCompleted: v.boolean().optional(),
+    completedAt: v.string().optional(),
+    agentId: v.string().optional(),
+    agentName: v.string().optional(),
+    conversationId: v.string().optional(),
+    modelId: v.string().optional(),
+    runId: v.string().optional(),
+    streamingMessageId: v.string().optional(),
+    childRunAudit: getChildRunAuditSchema().optional(),
+    usage: getMessageMetadataUsageSchema().optional(),
+  }).strict()
+);
+
+/** @deprecated Use getMessageMetadataSchema() */
+export const messageMetadataSchema = getMessageMetadataSchema();
+
+export const getChatUiMessageRoleSchema = defineSchema((v) =>
+  v.enum(["system", "user", "assistant"])
+);
+
+/** @deprecated Use getChatUiMessageRoleSchema() */
+export const chatUiMessageRoleSchema = getChatUiMessageRoleSchema();
+
+export const getChatToolPartStateSchema = defineSchema((v) =>
+  v.enum([
+    "pending",
+    "input-streaming",
+    "input-available",
+    "approval-requested",
+    "approval-responded",
+    "output-available",
+    "output-error",
+    "output-denied",
+    "error",
+    "completed",
+  ])
+);
+
+/** @deprecated Use getChatToolPartStateSchema() */
+export const chatToolPartStateSchema = getChatToolPartStateSchema();
+
+const getToolApprovalSchema = defineSchema((v) =>
+  v.object({
+    id: nonEmptyString(v),
+  }).strict()
+);
+
+const getToolPartBaseSchema = defineSchema((v) =>
+  v.object({
+    toolCallId: nonEmptyString(v),
+    input: v.unknown(),
+    state: getChatToolPartStateSchema(),
+    title: nonEmptyString(v).optional(),
+    providerExecuted: v.boolean().optional(),
+    callProviderMetadata: v.record(v.string(), v.unknown()).optional(),
+    output: v.unknown().optional(),
+    errorText: nonEmptyString(v).optional(),
+    approval: getToolApprovalSchema().optional(),
+  }).strip()
+);
+
+const getChatTextUiPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("text"),
+    text: v.string(),
+  }).strip()
+);
+
+const getChatReasoningUiPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("reasoning"),
+    text: v.string(),
+  }).strip()
+);
+
+const getChatStepStartUiPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("step-start"),
+  }).strip()
+);
+
+const getChatSourceUrlUiPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("source-url"),
+    sourceId: nonEmptyString(v),
+    url: nonEmptyString(v),
+    title: v.string().optional(),
+  }).strip()
+);
+
+const getChatSourceDocumentUiPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("source-document"),
+    sourceId: nonEmptyString(v),
+    title: nonEmptyString(v),
+    mediaType: nonEmptyString(v).optional(),
+    filename: nonEmptyString(v).optional(),
+  }).strip()
+);
+
+const getFileUiPartWithUploadSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("file"),
+    mediaType: nonEmptyString(v),
+    url: nonEmptyString(v),
+    filename: nonEmptyString(v).optional(),
+    uploadId: nonEmptyString(v).optional(),
+    uploadPath: nonEmptyString(v).optional(),
+  }).strip()
+);
+
+const getChatDynamicToolUiPartSchema = defineSchema((v) =>
+  getToolPartBaseSchema().extend({
+    type: v.literal("dynamic-tool"),
+    toolName: nonEmptyString(v),
   })
-  .strip();
+);
 
-export const chatUiMessagePartSchema: z.ZodType<ChatUiMessagePart> = z.union([
-  chatTextUiPartSchema,
-  chatReasoningUiPartSchema,
-  chatStepStartUiPartSchema,
-  chatSourceUrlUiPartSchema,
-  chatSourceDocumentUiPartSchema,
-  fileUiPartWithUploadSchema,
-  chatDynamicToolUiPartSchema,
-  chatNamedToolUiPartSchema,
-  chatDataUiPartSchema,
-]);
+const getChatNamedToolTypeSchema = defineSchema((v) =>
+  v.custom<ChatNamedToolUiPart["type"]>(
+    (value) => typeof value === "string" && (value === "tool_call" || /^tool-.+$/u.test(value)),
+  )
+);
 
-export const chatUiMessageSchema: z.ZodType<ChatUiMessage> = z
-  .object({
-    id: nonEmptyStringSchema,
-    role: chatUiMessageRoleSchema,
-    parts: z.array(chatUiMessagePartSchema),
-    metadata: messageMetadataSchema.optional(),
+const getChatNamedToolUiPartSchema = defineSchema((v) =>
+  getToolPartBaseSchema().extend({
+    type: getChatNamedToolTypeSchema(),
+    toolName: nonEmptyString(v).optional(),
   })
-  .strip();
+);
 
-export const chatUiMessagesSchema = z.array(chatUiMessageSchema);
+const getChatDataUiPartTypeSchema = defineSchema((v) =>
+  v.custom<ChatDataUiPart["type"]>(
+    (value) => typeof value === "string" && /^data-.+$/u.test(value),
+  )
+);
+
+const getChatDataUiPartSchema = defineSchema((v) =>
+  v.object({
+    type: getChatDataUiPartTypeSchema(),
+    data: v.unknown(),
+  }).strip()
+);
+
+export const getChatUiMessagePartSchema = defineSchema((v) =>
+  v.union([
+    getChatTextUiPartSchema(),
+    getChatReasoningUiPartSchema(),
+    getChatStepStartUiPartSchema(),
+    getChatSourceUrlUiPartSchema(),
+    getChatSourceDocumentUiPartSchema(),
+    getFileUiPartWithUploadSchema(),
+    getChatDynamicToolUiPartSchema(),
+    getChatNamedToolUiPartSchema(),
+    getChatDataUiPartSchema(),
+  ])
+);
+
+/** @deprecated Use getChatUiMessagePartSchema() */
+export const chatUiMessagePartSchema = getChatUiMessagePartSchema();
+
+export const getChatUiMessageSchema = defineSchema((v) =>
+  v.object({
+    id: nonEmptyString(v),
+    role: getChatUiMessageRoleSchema(),
+    parts: v.array(getChatUiMessagePartSchema()),
+    metadata: getMessageMetadataSchema().optional(),
+  }).strip()
+);
+
+/** @deprecated Use getChatUiMessageSchema() */
+export const chatUiMessageSchema = getChatUiMessageSchema();
+
+export const getChatUiMessagesSchema = defineSchema((v) => v.array(getChatUiMessageSchema()));
+
+/** @deprecated Use getChatUiMessagesSchema() */
+export const chatUiMessagesSchema = getChatUiMessagesSchema();
 
 function hasExtension(filename: string | undefined, extensions: readonly string[]) {
   const normalizedFilename = filename?.toLowerCase() ?? "";

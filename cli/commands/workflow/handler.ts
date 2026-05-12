@@ -1,15 +1,20 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const WorkflowArgsSchema = z.object({
-  action: z.enum(["run"]),
-  name: z.string(),
-  input: z.string().optional(),
-  debug: z.boolean().default(false),
-});
+const getWorkflowArgsSchema = defineSchema((v) =>
+  v.object({
+    action: v.enum(["run"]),
+    name: v.string(),
+    input: v.string().optional(),
+    debug: v.boolean().default(false),
+  })
+);
 
-export type WorkflowArgs = z.infer<typeof WorkflowArgsSchema>;
+const WorkflowArgsSchema = getWorkflowArgsSchema();
+
+export type WorkflowArgs = InferSchema<ReturnType<typeof getWorkflowArgsSchema>>;
 
 export const parseWorkflowArgs = createArgParser(WorkflowArgsSchema, {
   action: { keys: ["action"], type: "string", positional: 0 },

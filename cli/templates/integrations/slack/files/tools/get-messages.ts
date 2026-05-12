@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createSlackClient } from "../../lib/slack-client.ts";
 
 type SlackMessage = {
@@ -14,15 +14,15 @@ type SlackMessage = {
 export default tool({
   id: "get-messages",
   description: "Get recent messages from a Slack channel",
-  inputSchema: z.object({
-    channel: z.string().describe("Channel ID (e.g., 'C1234567890')"),
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    channel: v.string().describe("Channel ID (e.g., 'C1234567890')"),
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of messages to return"),
-  }),
+  }))(),
   execute: async ({ channel, limit }, context) => {
     const userId = context?.userId ?? "current-user";
 

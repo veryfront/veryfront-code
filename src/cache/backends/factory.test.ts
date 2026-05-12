@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "@std/assert";
 import { createCacheBackend, isDiskCacheConfigured, isDistributedBackend } from "./factory.ts";
 import { DiskCacheBackend } from "./disk.ts";

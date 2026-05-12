@@ -1,13 +1,13 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { extractPlainText, getPage, getPageContent, getPageTitle } from "../../lib/notion-client.ts";
 
 export default tool({
   id: "read-page",
   description: "Read the content of a Notion page. Returns the page title and text content.",
-  inputSchema: z.object({
-    pageId: z.string().describe("The ID of the Notion page to read"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    pageId: v.string().describe("The ID of the Notion page to read"),
+  }))(),
   async execute({ pageId }): Promise<{
     id: string;
     title: string;

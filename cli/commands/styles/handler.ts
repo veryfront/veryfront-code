@@ -1,14 +1,19 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const StylesArgsSchema = z.object({
-  subcommand: z.literal("build-artifact"),
-  config: z.string().optional(),
-  debug: z.boolean().default(false),
-});
+const getStylesArgsSchema = defineSchema((v) =>
+  v.object({
+    subcommand: v.literal("build-artifact"),
+    config: v.string().optional(),
+    debug: v.boolean().default(false),
+  })
+);
 
-export type StylesArgs = z.infer<typeof StylesArgsSchema>;
+const StylesArgsSchema = getStylesArgsSchema();
+
+export type StylesArgs = InferSchema<ReturnType<typeof getStylesArgsSchema>>;
 
 export const parseStylesArgs = createArgParser(StylesArgsSchema, {
   subcommand: { keys: ["subcommand"], type: "string", positional: 0 },

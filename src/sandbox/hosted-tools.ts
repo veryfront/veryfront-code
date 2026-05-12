@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
 import type { CommandJob, CommandJobOutput, ExecOptions } from "./sandbox.ts";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
@@ -120,6 +120,18 @@ export function createHostedSandboxClient(
   };
 }
 
+const getStartCommandJobInputSchema = defineSchema((v) =>
+  v.object({
+    command: v.string().describe("Single shell command to run asynchronously in the sandbox"),
+  })
+);
+
+const getCommandJobIdInputSchema = defineSchema((v) =>
+  v.object({
+    jobId: v.string().describe("Sandbox command job ID"),
+  })
+);
+
 export async function createHostedSandboxTools(
   input: HostedSandboxToolsOptions,
 ): Promise<HostedSandboxToolsResult> {
@@ -131,32 +143,24 @@ export async function createHostedSandboxTools(
     start_command_job: tool({
       description:
         "Start a long-running sandbox command as an async job. Use this instead of bash for durable shell operations.",
-      inputSchema: z.object({
-        command: z.string().describe("Single shell command to run asynchronously in the sandbox"),
-      }),
+      inputSchema: getStartCommandJobInputSchema(),
       execute: async ({ command }) => await sandbox.startCommandJob(command),
     }),
     get_command_job: tool({
       description:
         "Get the current status for an async sandbox command job. Use this for polling while a long-running job is still running.",
-      inputSchema: z.object({
-        jobId: z.string().describe("Sandbox command job ID"),
-      }),
+      inputSchema: getCommandJobIdInputSchema(),
       execute: async ({ jobId }) => await sandbox.getCommandJob(jobId),
     }),
     get_command_job_output: tool({
       description:
         "Get the captured stdout/stderr and terminal metadata for an async sandbox command job. Prefer calling this after the job reaches a terminal state.",
-      inputSchema: z.object({
-        jobId: z.string().describe("Sandbox command job ID"),
-      }),
+      inputSchema: getCommandJobIdInputSchema(),
       execute: async ({ jobId }) => await sandbox.getCommandJobOutput(jobId),
     }),
     cancel_command_job: tool({
       description: "Cancel a running async sandbox command job.",
-      inputSchema: z.object({
-        jobId: z.string().describe("Sandbox command job ID"),
-      }),
+      inputSchema: getCommandJobIdInputSchema(),
       execute: async ({ jobId }) => await sandbox.cancelCommandJob(jobId),
     }),
   };

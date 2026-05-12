@@ -1,15 +1,9 @@
-export type JsonSchema = {
-  type?: "string" | "number" | "integer" | "boolean" | "object" | "array" | "null";
-  description?: string;
-  enum?: unknown[];
-  const?: unknown;
-  default?: unknown;
-  properties?: Record<string, JsonSchema>;
-  required?: string[];
-  items?: JsonSchema;
-  additionalProperties?: boolean | JsonSchema;
-  anyOf?: JsonSchema[];
-  prefixItems?: JsonSchema[];
-  minItems?: number;
-  maxItems?: number;
-};
+/**
+ * Back-compat re-export. The canonical `JsonSchema` type now lives in
+ * `src/extensions/schema/json-schema.ts` so the `SchemaValidator`
+ * contract can reference it without an upward import.
+ *
+ * @module tool/schema/json-schema
+ */
+
+export type { JsonSchema } from "#veryfront/extensions/schema/json-schema.ts";

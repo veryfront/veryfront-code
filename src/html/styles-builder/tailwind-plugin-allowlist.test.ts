@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assert } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { BINARY_TAILWIND_PLUGIN_PACKAGES } from "#veryfront/build/binary-plugin-includes.ts";

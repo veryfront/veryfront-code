@@ -1,14 +1,14 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
 
 export default defineTool({
   id: "servicenow-search-knowledge",
   description: "Search the ServiceNow knowledge base for articles matching a query",
-  inputSchema: z.object({
-    query: z.string().describe("Search query for knowledge articles"),
-    limit: z.number().optional().describe("Maximum number of articles to return (default: 10)"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    query: v.string().describe("Search query for knowledge articles"),
+    limit: v.number().optional().describe("Maximum number of articles to return (default: 10)"),
+  }))(),
   async execute(input) {
     if (!(await isServiceNowConnected())) {
       return {

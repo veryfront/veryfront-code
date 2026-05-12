@@ -1,37 +1,37 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listFiles, searchFiles } from "../../lib/sharepoint-client.ts";
 
 export default tool({
   id: "list-files",
   description:
     "List files and folders in a SharePoint document library. Can list root level or a specific folder, or search across the entire library.",
-  inputSchema: z.object({
-    siteId: z.string().describe("The ID of the SharePoint site"),
-    driveId: z.string().describe("The ID of the document library (drive)"),
-    folderId: z
+  inputSchema: defineSchema((v) => v.object({
+    siteId: v.string().describe("The ID of the SharePoint site"),
+    driveId: v.string().describe("The ID of the document library (drive)"),
+    folderId: v
       .string()
       .optional()
       .describe(
         "Optional folder ID to list contents from. If not provided, lists root level.",
       ),
-    search: z
+    search: v
       .string()
       .optional()
       .describe(
         "Optional search query to find files by name or content instead of listing",
       ),
-    orderBy: z
+    orderBy: v
       .enum(["name", "lastModifiedDateTime", "size"])
       .optional()
       .describe("Sort order for results"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(50)
       .describe("Maximum number of items to return"),
-  }),
+  }))(),
   async execute({ siteId, driveId, folderId, search, orderBy, limit }) {
     const files = search
       ? await searchFiles(siteId, search, { limit })

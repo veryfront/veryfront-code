@@ -1,14 +1,17 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { VeryfrontError } from "./errors.ts";
 import { parseJsonBody, parseQueryParams } from "./parsers.ts";
 
 describe("parseJsonBody", () => {
-  const schema = z.object({
-    name: z.string(),
-    age: z.number(),
-  });
+  const schema = defineSchema((v) =>
+    v.object({
+      name: v.string(),
+      age: v.number(),
+    })
+  )();
 
   function createJsonRequest(body: string): Request {
     return new Request("http://localhost/test", {
@@ -100,10 +103,12 @@ describe("parseJsonBody", () => {
 });
 
 describe("parseQueryParams", () => {
-  const schema = z.object({
-    page: z.string().optional(),
-    q: z.string(),
-  });
+  const schema = defineSchema((v) =>
+    v.object({
+      page: v.string().optional(),
+      q: v.string(),
+    })
+  )();
 
   it("should parse valid query params", () => {
     const request = new Request("http://localhost/search?q=test&page=2");
@@ -122,18 +127,22 @@ describe("parseQueryParams", () => {
   });
 
   it("should handle repeated query params as arrays", () => {
-    const arraySchema = z.object({
-      tags: z.union([z.string(), z.array(z.string())]),
-    });
+    const arraySchema = defineSchema((v) =>
+      v.object({
+        tags: v.union([v.string(), v.array(v.string())]),
+      })
+    )();
     const request = new Request("http://localhost/search?tags=a&tags=b&tags=c");
     const result = parseQueryParams(request, arraySchema);
     assertEquals(result, { tags: ["a", "b", "c"] });
   });
 
   it("should handle single query param as string (not array)", () => {
-    const simpleSchema = z.object({
-      name: z.string(),
-    });
+    const simpleSchema = defineSchema((v) =>
+      v.object({
+        name: v.string(),
+      })
+    )();
     const request = new Request("http://localhost/search?name=alice");
     const result = parseQueryParams(request, simpleSchema);
     assertEquals(result, { name: "alice" });

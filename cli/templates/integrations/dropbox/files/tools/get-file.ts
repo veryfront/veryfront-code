@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { downloadFile, formatFileSize, getMetadata, isFile } from "../../lib/dropbox-client.ts";
 
 export default tool({
   id: "get-file",
   description:
     "Get file metadata and optionally download file content from Dropbox. Use this to read file information or retrieve file contents.",
-  inputSchema: z.object({
-    path: z.string().describe('Path to the file in Dropbox (e.g., "/Documents/file.txt")'),
-    includeContent: z
+  inputSchema: defineSchema((v) => v.object({
+    path: v.string().describe('Path to the file in Dropbox (e.g., "/Documents/file.txt")'),
+    includeContent: v
       .boolean()
       .default(false)
       .describe("Whether to download and return the file content (only works for text files and small files)"),
-  }),
+  }))(),
   async execute({ path, includeContent }): Promise<Record<string, unknown>> {
     const metadata = await getMetadata(path);
 

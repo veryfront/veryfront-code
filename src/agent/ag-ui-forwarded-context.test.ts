@@ -1,5 +1,6 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "@std/assert";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   createAgUiRuntimeContextMap,
   deriveAgUiForwardedConfig,
@@ -38,7 +39,9 @@ Deno.test("ag-ui-forwarded-context builds a description context map", () => {
 });
 
 Deno.test("ag-ui-forwarded-context parses typed legacy context values", () => {
-  const overridesSchema = z.object({ maxSteps: z.number().int().positive().optional() }).strip();
+  const overridesSchema = defineSchema((v) =>
+    v.object({ maxSteps: v.number().int().positive().optional() }).strip()
+  )();
 
   assertEquals(parseAgUiContextString('"model-1"'), "model-1");
   assertEquals(parseAgUiContextString("   "), undefined);
@@ -51,13 +54,13 @@ Deno.test("ag-ui-forwarded-context parses typed legacy context values", () => {
 });
 
 Deno.test("ag-ui-forwarded-context prefers nested forwarded config before flat forwarded props", () => {
-  const configSchema = z
-    .object({
-      projectId: z.string().nullable().optional(),
-      model: z.string().optional(),
-      allowDelegation: z.boolean().optional(),
-    })
-    .strict();
+  const configSchema = defineSchema((v) =>
+    v.object({
+      projectId: v.string().nullable().optional(),
+      model: v.string().optional(),
+      allowDelegation: v.boolean().optional(),
+    }).strict()
+  )();
 
   const result = deriveAgUiForwardedConfig(
     createAgUiInput({
@@ -83,13 +86,13 @@ Deno.test("ag-ui-forwarded-context prefers nested forwarded config before flat f
 });
 
 Deno.test("ag-ui-forwarded-context accepts flat forwarded config when no namespace payload exists", () => {
-  const configSchema = z
-    .object({
-      projectId: z.string().nullable().optional(),
-      model: z.string().optional(),
-      allowDelegation: z.boolean().optional(),
-    })
-    .strict();
+  const configSchema = defineSchema((v) =>
+    v.object({
+      projectId: v.string().nullable().optional(),
+      model: v.string().optional(),
+      allowDelegation: v.boolean().optional(),
+    }).strict()
+  )();
 
   const result = deriveAgUiForwardedConfig(
     createAgUiInput({
@@ -111,13 +114,13 @@ Deno.test("ag-ui-forwarded-context accepts flat forwarded config when no namespa
 });
 
 Deno.test("ag-ui-forwarded-context rejects malformed namespaced forwarded config", () => {
-  const configSchema = z
-    .object({
-      projectId: z.string().nullable().optional(),
-      model: z.string().optional(),
-      allowDelegation: z.boolean().optional(),
-    })
-    .strict();
+  const configSchema = defineSchema((v) =>
+    v.object({
+      projectId: v.string().nullable().optional(),
+      model: v.string().optional(),
+      allowDelegation: v.boolean().optional(),
+    }).strict()
+  )();
 
   const result = deriveAgUiForwardedConfig(
     createAgUiInput({

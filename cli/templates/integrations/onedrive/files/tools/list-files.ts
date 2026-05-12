@@ -1,27 +1,27 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatFileSize, isFile, isFolder, listFiles } from "../../lib/onedrive-client.ts";
 
 export default tool({
   id: "list-files",
   description:
     "List files and folders in a OneDrive folder. Returns file/folder names, types, sizes, and modification dates.",
-  inputSchema: z.object({
-    folderId: z
+  inputSchema: defineSchema((v) => v.object({
+    folderId: v
       .string()
       .default("root")
       .describe('Folder ID or "root" for the root folder'),
-    orderBy: z
+    orderBy: v
       .string()
       .optional()
       .describe('Order by field (e.g., "name", "lastModifiedDateTime desc")'),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(200)
       .default(100)
       .describe("Maximum number of items to return"),
-  }),
+  }))(),
   async execute({ folderId, orderBy, limit }) {
     const result = await listFiles(folderId, { orderBy, top: limit });
 

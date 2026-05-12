@@ -2,7 +2,8 @@
  * MCP tools for development workflow (HMR, preview, debug, flywheel).
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { getEnvironmentConfig } from "veryfront/config";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { ReloadNotifier } from "veryfront/server";
@@ -14,14 +15,19 @@ import { formatError } from "./helpers.ts";
 // Tool: vf_hot_reload
 // ============================================================================
 
-const hotReloadInput = z.object({
-  file: z
-    .string()
-    .optional()
-    .describe("Specific file to trigger reload for. Example: 'app/page.tsx'. Omit to reload all."),
-});
+const getHotReloadInput = defineSchema((v) =>
+  v.object({
+    file: v
+      .string()
+      .optional()
+      .describe(
+        "Specific file to trigger reload for. Example: 'app/page.tsx'. Omit to reload all.",
+      ),
+  })
+);
+const hotReloadInput = getHotReloadInput();
 
-type HotReloadInput = z.infer<typeof hotReloadInput>;
+type HotReloadInput = InferSchema<ReturnType<typeof getHotReloadInput>>;
 
 interface HotReloadResult {
   success: boolean;
@@ -51,18 +57,24 @@ export const vfHotReload: MCPTool<HotReloadInput, HotReloadResult> = {
 // Tool: vf_get_debug_context
 // ============================================================================
 
-const getDebugContextInput = z.object({
-  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
-    "Dev server port (defaults to 8080)",
-  ),
-  project: z
-    .string()
-    .regex(/^[a-z0-9-]+$/, "Project slug must contain only lowercase letters, numbers, and hyphens")
-    .optional()
-    .describe("Project slug to check (for multi-project mode)"),
-});
+const getGetDebugContextInput = defineSchema((v) =>
+  v.object({
+    port: v.number().int().min(1).max(65535).optional().default(8080).describe(
+      "Dev server port (defaults to 8080)",
+    ),
+    project: v
+      .string()
+      .regex(
+        /^[a-z0-9-]+$/,
+        "Project slug must contain only lowercase letters, numbers, and hyphens",
+      )
+      .optional()
+      .describe("Project slug to check (for multi-project mode)"),
+  })
+);
+const getDebugContextInput = getGetDebugContextInput();
 
-type GetDebugContextInput = z.infer<typeof getDebugContextInput>;
+type GetDebugContextInput = InferSchema<ReturnType<typeof getGetDebugContextInput>>;
 
 interface DebugContextResult {
   success: boolean;
@@ -120,14 +132,17 @@ export const vfGetDebugContext: MCPTool<GetDebugContextInput, DebugContextResult
 // Tool: vf_trigger_hmr
 // ============================================================================
 
-const triggerHmrInput = z.object({
-  path: z.string().describe("File path that changed. Example: 'app/page.tsx'."),
-  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
-    "Dev server port (defaults to 8080)",
-  ),
-});
+const getTriggerHmrInput = defineSchema((v) =>
+  v.object({
+    path: v.string().describe("File path that changed. Example: 'app/page.tsx'."),
+    port: v.number().int().min(1).max(65535).optional().default(8080).describe(
+      "Dev server port (defaults to 8080)",
+    ),
+  })
+);
+const triggerHmrInput = getTriggerHmrInput();
 
-type TriggerHmrInput = z.infer<typeof triggerHmrInput>;
+type TriggerHmrInput = InferSchema<ReturnType<typeof getTriggerHmrInput>>;
 
 interface TriggerHmrResult {
   success: boolean;
@@ -168,23 +183,26 @@ export const vfTriggerHmr: MCPTool<TriggerHmrInput, TriggerHmrResult> = {
 // Tool: vf_preview_route
 // ============================================================================
 
-const previewRouteInput = z.object({
-  route: z.string().startsWith("/", "Route must start with /").describe(
-    "Route path to preview. Example: '/', '/dashboard', '/api/users'.",
-  ),
-  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
-    "Dev server port (defaults to 8080)",
-  ),
-  format: z
-    .enum(["html", "json", "status"])
-    .optional()
-    .default("status")
-    .describe(
-      "Output format: 'html' for full page, 'json' for API response, 'status' for just HTTP status. Defaults to 'status'.",
+const getPreviewRouteInput = defineSchema((v) =>
+  v.object({
+    route: v.string().regex(/^\//, "Route must start with /").describe(
+      "Route path to preview. Example: '/', '/dashboard', '/api/users'.",
     ),
-});
+    port: v.number().int().min(1).max(65535).optional().default(8080).describe(
+      "Dev server port (defaults to 8080)",
+    ),
+    format: v
+      .enum(["html", "json", "status"])
+      .optional()
+      .default("status")
+      .describe(
+        "Output format: 'html' for full page, 'json' for API response, 'status' for just HTTP status. Defaults to 'status'.",
+      ),
+  })
+);
+const previewRouteInput = getPreviewRouteInput();
 
-type PreviewRouteInput = z.infer<typeof previewRouteInput>;
+type PreviewRouteInput = InferSchema<ReturnType<typeof getPreviewRouteInput>>;
 
 interface PreviewRouteResult {
   success: boolean;
@@ -255,23 +273,26 @@ export const vfPreviewRoute: MCPTool<PreviewRouteInput, PreviewRouteResult> = {
 // Tool: vf_wait_for_ready
 // ============================================================================
 
-const waitForReadyInput = z.object({
-  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
-    "Server port to check (defaults to 8080)",
-  ),
-  timeout: z
-    .number()
-    .optional()
-    .default(30000)
-    .describe("Maximum time to wait in milliseconds (defaults to 30000)"),
-  interval: z
-    .number()
-    .optional()
-    .default(500)
-    .describe("Polling interval in milliseconds (defaults to 500)"),
-});
+const getWaitForReadyInput = defineSchema((v) =>
+  v.object({
+    port: v.number().int().min(1).max(65535).optional().default(8080).describe(
+      "Server port to check (defaults to 8080)",
+    ),
+    timeout: v
+      .number()
+      .optional()
+      .default(30000)
+      .describe("Maximum time to wait in milliseconds (defaults to 30000)"),
+    interval: v
+      .number()
+      .optional()
+      .default(500)
+      .describe("Polling interval in milliseconds (defaults to 500)"),
+  })
+);
+const waitForReadyInput = getWaitForReadyInput();
 
-type WaitForReadyInput = z.infer<typeof waitForReadyInput>;
+type WaitForReadyInput = InferSchema<ReturnType<typeof getWaitForReadyInput>>;
 
 interface WaitForReadyResult {
   success: boolean;
@@ -326,13 +347,16 @@ export const vfWaitForReady: MCPTool<WaitForReadyInput, WaitForReadyResult> = {
 // Tool: vf_get_flywheel_status
 // ============================================================================
 
-const getFlywheelStatusInput = z.object({
-  port: z.number().int().min(1).max(65535).optional().default(8080).describe(
-    "Server port (defaults to 8080)",
-  ),
-});
+const getGetFlywheelStatusInput = defineSchema((v) =>
+  v.object({
+    port: v.number().int().min(1).max(65535).optional().default(8080).describe(
+      "Server port (defaults to 8080)",
+    ),
+  })
+);
+const getFlywheelStatusInput = getGetFlywheelStatusInput();
 
-type GetFlywheelStatusInput = z.infer<typeof getFlywheelStatusInput>;
+type GetFlywheelStatusInput = InferSchema<ReturnType<typeof getGetFlywheelStatusInput>>;
 
 interface FlywheelStatus {
   server: {

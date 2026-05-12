@@ -4,7 +4,7 @@
  * Re-exports schema types and defines interfaces with functions/methods.
  */
 
-import type { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Agent } from "#veryfront/agent";
 import type { Tool } from "#veryfront/tool";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
@@ -207,8 +207,8 @@ export interface WorkflowDefinition<TInput = unknown, TOutput = unknown> {
   id: string;
   description?: string;
   version?: string;
-  inputSchema?: z.ZodSchema<TInput>;
-  outputSchema?: z.ZodSchema<TOutput>;
+  inputSchema?: Schema<TInput>;
+  outputSchema?: Schema<TOutput>;
   retry?: RetryConfig;
   timeout?: string | number;
   introspect?: boolean;

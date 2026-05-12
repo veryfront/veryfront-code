@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createDocsClient, type Request } from "../../lib/docs-client.ts";
 
 const DEFAULT_USER_ID = "demo-user";
@@ -8,49 +8,49 @@ export default tool({
   id: "update-document",
   description:
     "Update a Google Docs document using batch requests. Supports inserting text, deleting content, replacing text, and more.",
-  inputSchema: z
+  inputSchema: defineSchema((v) => v
     .object({
-      documentId: z.string().describe("The ID of the document to update"),
-      requests: z
-        .array(z.any())
+      documentId: v.string().describe("The ID of the document to update"),
+      requests: v
+        .array(v.any())
         .describe(
           "Array of batch update requests. See Google Docs API documentation for request types: insertText, deleteContentRange, replaceAllText, etc.",
         ),
     })
     .or(
-      z.object({
-        documentId: z.string().describe("The ID of the document to update"),
-        operation: z
+      v.object({
+        documentId: v.string().describe("The ID of the document to update"),
+        operation: v
           .object({
-            type: z
+            type: v
               .enum(["insertText", "deleteContent", "replaceAllText"])
               .describe("Type of operation to perform"),
-            insertText: z
+            insertText: v
               .object({
-                text: z.string().describe("Text to insert"),
-                index: z.number().describe("Position to insert at (1 = start of document)"),
+                text: v.string().describe("Text to insert"),
+                index: v.number().describe("Position to insert at (1 = start of document)"),
               })
               .optional()
               .describe("Parameters for insertText operation"),
-            deleteContent: z
+            deleteContent: v
               .object({
-                startIndex: z.number().describe("Start position of content to delete"),
-                endIndex: z.number().describe("End position of content to delete"),
+                startIndex: v.number().describe("Start position of content to delete"),
+                endIndex: v.number().describe("End position of content to delete"),
               })
               .optional()
               .describe("Parameters for deleteContent operation"),
-            replaceAllText: z
+            replaceAllText: v
               .object({
-                searchText: z.string().describe("Text to search for"),
-                replaceText: z.string().describe("Text to replace with"),
-                matchCase: z.boolean().default(false).describe("Whether to match case"),
+                searchText: v.string().describe("Text to search for"),
+                replaceText: v.string().describe("Text to replace with"),
+                matchCase: v.boolean().default(false).describe("Whether to match case"),
               })
               .optional()
               .describe("Parameters for replaceAllText operation"),
           })
           .describe("Simple operation to perform"),
       }),
-    ),
+    ))(),
   async execute(input): Promise<{
     documentId: string;
     success: true;

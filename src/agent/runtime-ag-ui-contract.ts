@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -22,131 +23,161 @@ function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   }
 }
 
-export const AgUiRuntimeRunIdSchema = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
+export const getAgUiRuntimeRunIdSchema = defineSchema((v) =>
+  v.string().min(1).max(128).regex(AGENT_ID_PATTERN)
+);
 
-export const AgUiRuntimeInjectedToolSchema = z.object({
-  name: z
-    .string()
-    .min(1)
-    .max(128)
-    .regex(
-      /^[a-zA-Z][a-zA-Z0-9._:-]*$/,
-      "Tool names must start with a letter and use a valid client-tool format",
+// Shape-helper: lifted from `AgUiRuntimeInjectedToolSchema.shape.name` so it
+// can be reused inside `AgUiRuntimeToolFunctionCallSchema` without exposing
+// `.shape` (not in the contract DSL).
+const agUiRuntimeInjectedToolNameSchema = (v: SchemaValidator) =>
+  v.string().min(1).max(128).regex(
+    /^[a-zA-Z][a-zA-Z0-9._:-]*$/,
+    "Tool names must start with a letter and use a valid client-tool format",
+  );
+
+export const getAgUiRuntimeInjectedToolSchema = defineSchema((v) =>
+  v.object({
+    name: agUiRuntimeInjectedToolNameSchema(v),
+    description: v.string().max(1024).optional(),
+    parameters: v.record(v.string(), v.unknown()).optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
+      { message: "Tool parameters must be less than 16 KB" },
     ),
-  description: z.string().max(1024).optional(),
-  parameters: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
-    { message: "Tool parameters must be less than 16 KB" },
-  ),
+  })
+);
+
+export const getAgUiRuntimeContextItemSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("text"),
+      title: v.string().max(256).optional(),
+      text: v.string().max(MAX_CONTEXT_ITEM_BYTES),
+    }),
+    v.object({
+      type: v.literal("json"),
+      title: v.string().max(256).optional(),
+      data: v.record(v.string(), v.unknown()).refine(
+        (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_ITEM_BYTES),
+        { message: "JSON context item must be less than 16 KB" },
+      ),
+    }),
+    v.object({
+      type: v.literal("resource"),
+      title: v.string().max(256).optional(),
+      uri: v.string().max(2048),
+      mimeType: v.string().max(256).optional(),
+      text: v.string().max(MAX_CONTEXT_ITEM_BYTES).optional(),
+    }),
+  ])
+);
+
+const runtimeMessageExtensionFields = (v: SchemaValidator) => ({
+  name: v.string().max(256).optional(),
+  metadata: v.record(v.string(), v.unknown()).optional(),
+  createdAt: v.string().optional(),
 });
 
-export const AgUiRuntimeContextItemSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("text"),
-    title: z.string().max(256).optional(),
-    text: z.string().max(MAX_CONTEXT_ITEM_BYTES),
-  }),
-  z.object({
-    type: z.literal("json"),
-    title: z.string().max(256).optional(),
-    data: z.record(z.string(), z.unknown()).refine(
-      (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_ITEM_BYTES),
-      { message: "JSON context item must be less than 16 KB" },
+export const getAgUiRuntimeToolFunctionCallSchema = defineSchema((v) =>
+  v.object({
+    name: agUiRuntimeInjectedToolNameSchema(v),
+    arguments: v.string().max(MAX_TOOL_PARAMETERS_BYTES),
+  }).strict()
+);
+
+export const getAgUiRuntimeToolCallSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1).max(128),
+    type: v.literal("function"),
+    function: getAgUiRuntimeToolFunctionCallSchema(),
+  }).strict()
+);
+
+export const getAgUiRuntimeSystemMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    role: v.literal("system"),
+    content: v.string(),
+    ...runtimeMessageExtensionFields(v),
+  }).strict()
+);
+
+export const getAgUiRuntimeUserMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    role: v.literal("user"),
+    content: v.string(),
+    ...runtimeMessageExtensionFields(v),
+  }).strict()
+);
+
+export const getAgUiRuntimeAssistantMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    role: v.literal("assistant"),
+    content: v.string().optional(),
+    toolCalls: v.array(getAgUiRuntimeToolCallSchema()).optional(),
+    ...runtimeMessageExtensionFields(v),
+  }).strict()
+);
+
+export const getAgUiRuntimeToolMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    role: v.literal("tool"),
+    toolCallId: v.string().min(1).max(128),
+    content: v.string(),
+    error: v.string().optional(),
+    ...runtimeMessageExtensionFields(v),
+  }).strict()
+);
+
+export const getAgUiRuntimeMessageSchema = defineSchema((v) =>
+  v.discriminatedUnion("role", [
+    getAgUiRuntimeSystemMessageSchema(),
+    getAgUiRuntimeUserMessageSchema(),
+    getAgUiRuntimeAssistantMessageSchema(),
+    getAgUiRuntimeToolMessageSchema(),
+  ])
+);
+
+export const getAgUiRuntimeContextSchema = defineSchema((v) =>
+  v.union([
+    v.object({
+      description: v.string().max(1024),
+      value: v.string().max(MAX_CONTEXT_ITEM_BYTES),
+    }),
+    getAgUiRuntimeContextItemSchema(),
+  ])
+);
+
+export const getAgUiRuntimeRequestSchema = defineSchema((v) =>
+  v.object({
+    threadId: v.string().uuid(),
+    runId: getAgUiRuntimeRunIdSchema(),
+    parentRunId: getAgUiRuntimeRunIdSchema().optional(),
+    state: v.unknown().optional(),
+    messages: v.array(getAgUiRuntimeMessageSchema()).max(MAX_RUNTIME_MESSAGES),
+    tools: v.array(getAgUiRuntimeInjectedToolSchema()).max(50).default([]),
+    context: v.array(getAgUiRuntimeContextSchema()).max(10).default([]).refine(
+      (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
+      { message: "context must be less than 64 KB total" },
     ),
-  }),
-  z.object({
-    type: z.literal("resource"),
-    title: z.string().max(256).optional(),
-    uri: z.string().max(2048),
-    mimeType: z.string().max(256).optional(),
-    text: z.string().max(MAX_CONTEXT_ITEM_BYTES).optional(),
-  }),
-]);
+    forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
+      { message: "forwardedProps must be less than 64 KB" },
+    ),
+  })
+);
 
-const RuntimeMessageExtensionFieldsSchema = {
-  name: z.string().max(256).optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-  createdAt: z.string().optional(),
-} as const;
-
-export const AgUiRuntimeToolFunctionCallSchema = z.object({
-  name: AgUiRuntimeInjectedToolSchema.shape.name,
-  arguments: z.string().max(MAX_TOOL_PARAMETERS_BYTES),
-}).strict();
-
-export const AgUiRuntimeToolCallSchema = z.object({
-  id: z.string().min(1).max(128),
-  type: z.literal("function"),
-  function: AgUiRuntimeToolFunctionCallSchema,
-}).strict();
-
-export const AgUiRuntimeSystemMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.literal("system"),
-  content: z.string(),
-  ...RuntimeMessageExtensionFieldsSchema,
-}).strict();
-
-export const AgUiRuntimeUserMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.literal("user"),
-  content: z.string(),
-  ...RuntimeMessageExtensionFieldsSchema,
-}).strict();
-
-export const AgUiRuntimeAssistantMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.literal("assistant"),
-  content: z.string().optional(),
-  toolCalls: z.array(AgUiRuntimeToolCallSchema).optional(),
-  ...RuntimeMessageExtensionFieldsSchema,
-}).strict();
-
-export const AgUiRuntimeToolMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.literal("tool"),
-  toolCallId: z.string().min(1).max(128),
-  content: z.string(),
-  error: z.string().optional(),
-  ...RuntimeMessageExtensionFieldsSchema,
-}).strict();
-
-export const AgUiRuntimeMessageSchema = z.discriminatedUnion("role", [
-  AgUiRuntimeSystemMessageSchema,
-  AgUiRuntimeUserMessageSchema,
-  AgUiRuntimeAssistantMessageSchema,
-  AgUiRuntimeToolMessageSchema,
-]);
-
-export const AgUiRuntimeContextSchema = z.union([
-  z.object({
-    description: z.string().max(1024),
-    value: z.string().max(MAX_CONTEXT_ITEM_BYTES),
-  }),
-  AgUiRuntimeContextItemSchema,
-]);
-
-export const AgUiRuntimeRequestSchema = z.object({
-  threadId: z.string().uuid(),
-  runId: AgUiRuntimeRunIdSchema,
-  parentRunId: AgUiRuntimeRunIdSchema.optional(),
-  state: z.unknown().optional(),
-  messages: z.array(AgUiRuntimeMessageSchema).max(MAX_RUNTIME_MESSAGES),
-  tools: z.array(AgUiRuntimeInjectedToolSchema).max(50).default([]),
-  context: z.array(AgUiRuntimeContextSchema).max(10).default([]).refine(
-    (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
-    { message: "context must be less than 64 KB total" },
-  ),
-  forwardedProps: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-    { message: "forwardedProps must be less than 64 KB" },
-  ),
-});
-
-export type AgUiRuntimeInjectedTool = z.infer<typeof AgUiRuntimeInjectedToolSchema>;
-export type AgUiRuntimeContextItem = z.infer<typeof AgUiRuntimeContextItemSchema>;
-export type AgUiRuntimeMessage = z.infer<typeof AgUiRuntimeMessageSchema>;
-export type AgUiRuntimeRequest = z.infer<typeof AgUiRuntimeRequestSchema>;
+export type AgUiRuntimeInjectedTool = InferSchema<
+  ReturnType<typeof getAgUiRuntimeInjectedToolSchema>
+>;
+export type AgUiRuntimeContextItem = InferSchema<
+  ReturnType<typeof getAgUiRuntimeContextItemSchema>
+>;
+export type AgUiRuntimeMessage = InferSchema<ReturnType<typeof getAgUiRuntimeMessageSchema>>;
+export type AgUiRuntimeRequest = InferSchema<ReturnType<typeof getAgUiRuntimeRequestSchema>>;
 
 export function normalizeAgUiBrowserRuntimeRequest(
   input: AgUiRuntimeRequest,
@@ -157,17 +188,22 @@ export function normalizeAgUiBrowserRuntimeRequest(
 ): AgUiRuntimeRequest {
   const { state, ...rest } = input;
 
+  // Preserve the original behaviour: omit the `state` key entirely when the
+  // value is not a plain object. The contract DSL's strict object shape sees
+  // `state` as a required key (value `unknown | undefined`), so cast the
+  // return literal to satisfy the type-checker while keeping runtime semantics
+  // identical to the pre-migration schema.
   return {
     ...rest,
     threadId: defaults?.threadId ?? input.threadId,
     runId: defaults?.runId ?? input.runId,
     messages: input.messages,
     ...(isRecord(state) ? { state } : {}),
-  };
+  } as AgUiRuntimeRequest;
 }
 
 export async function parseAgUiRuntimeRequest(request: Request): Promise<AgUiRuntimeRequest> {
-  return AgUiRuntimeRequestSchema.parse(await request.json());
+  return getAgUiRuntimeRequestSchema().parse(await request.json());
 }
 
 export async function parseAgUiRuntimeRequestOrError(

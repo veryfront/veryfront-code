@@ -4,7 +4,7 @@ import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
   type FormInputToolInput,
-  formInputToolInputSchema,
+  getFormInputToolInputSchema,
   getInputRequest,
   type InputRequestOutput,
 } from "./input-request-protocol.ts";
@@ -21,10 +21,10 @@ export interface HostedFormInputToolContext {
 }
 
 export function createHostedFormInputTool(context: HostedFormInputToolContext, apiUrl: string) {
-  return tool({
+  return tool<FormInputToolInput, unknown>({
     description:
       "Display a durable structured form to collect user input. Use this when you need a concrete choice or structured values before continuing. The request is persisted as an input_request and the tool waits until the user submits or the request expires.",
-    inputSchema: formInputToolInputSchema,
+    inputSchema: getFormInputToolInputSchema(),
     execute: async (input, execOptions) =>
       executeDurableFormInputFlow(context, apiUrl, input, execOptions),
   });
@@ -50,11 +50,21 @@ async function executeDurableFormInputFlow(
       ? execContext.toolCallId
       : `form_input-${crypto.randomUUID()}`;
 
-  const { result, createdRequest } = await executeDurableHumanInputFlow({
+  // Explicitly type the executeDurableHumanInputFlow generics so
+  // `created`/`createdRequest`/`current` are correctly typed downstream.
+  // (The contract DSL erases callback parameter types through .transform, so
+  // we annotate at the boundary to keep inference flowing.)
+  const { result, createdRequest } = await executeDurableHumanInputFlow<
+    InputRequestOutput,
+    InputRequestOutput
+  >({
     runId: parentRunId,
     threadId: conversationId,
     toolCallId,
-    request: input,
+    // FormInputToolInput omits `metadata`; spread it explicitly as undefined to
+    // satisfy the contract DSL's strict object shape (optional fields are
+    // typed as required-key, undefined-or-T value).
+    request: { ...input, metadata: undefined },
     timeoutMs: INPUT_REQUEST_TIMEOUT_MS + 5_000,
     pollIntervalMs: INPUT_REQUEST_POLL_INTERVAL_MS,
     onRequest: async (pendingRequest) => {

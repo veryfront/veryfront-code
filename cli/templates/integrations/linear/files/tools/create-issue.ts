@@ -1,39 +1,39 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createIssue } from "../../lib/linear-client.ts";
 
 export default tool({
   id: "create-issue",
   description:
     "Create a new Linear issue in a specified team. You can optionally set priority, assign to someone, add to a project, and attach labels.",
-  inputSchema: z.object({
-    teamId: z
+  inputSchema: defineSchema((v) => v.object({
+    teamId: v
       .string()
       .describe(
         "The ID of the team to create the issue in. Use list-projects tool first if you need to find team IDs.",
       ),
-    title: z.string().describe("Title of the issue"),
-    description: z
+    title: v.string().describe("Title of the issue"),
+    description: v
       .string()
       .optional()
       .describe("Detailed description of the issue (supports markdown)"),
-    priority: z
+    priority: v
       .number()
       .min(0)
       .max(4)
       .optional()
       .describe("Priority level: 0=No priority, 1=Urgent, 2=High, 3=Medium, 4=Low"),
-    stateId: z
+    stateId: v
       .string()
       .optional()
       .describe('Workflow state ID (e.g., "Todo", "In Progress", "Done")'),
-    assigneeId: z.string().optional().describe("User ID to assign the issue to"),
-    projectId: z.string().optional().describe("Project ID to add the issue to"),
-    labelIds: z
-      .array(z.string())
+    assigneeId: v.string().optional().describe("User ID to assign the issue to"),
+    projectId: v.string().optional().describe("Project ID to add the issue to"),
+    labelIds: v
+      .array(v.string())
       .optional()
       .describe("Array of label IDs to attach to the issue"),
-  }),
+  }))(),
   async execute(
     { teamId, title, description, priority, stateId, assigneeId, projectId, labelIds },
   ) {

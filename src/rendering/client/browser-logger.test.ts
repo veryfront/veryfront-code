@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Unit Tests for Browser Logger
  * Tests browser-specific logging functionality with conditional log levels

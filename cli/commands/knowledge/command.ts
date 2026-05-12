@@ -1,5 +1,9 @@
-import { z } from "zod";
-type SafeParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
+type SafeParseResult<T> = { success: true; data: T } | {
+  success: false;
+  error: Error & { issues: unknown[] };
+};
 import { type CommandResult, createFileSystem, getEnv, runCommand } from "veryfront/platform";
 import { basename } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -56,60 +60,64 @@ type DownloadResult = { uploadPath: string; localPath: string; bytes?: number };
 
 const knowledgeJobLogger = serverLogger.component("knowledge-ingest");
 
-const KnowledgeIngestArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  sources: z.array(z.string()).default([]),
-  path: z.string().optional(),
-  all: z.boolean().default(false),
-  recursive: z.boolean().default(false),
-  outputDir: z.string().optional(),
-  knowledgePath: z.string().default("knowledge"),
-  description: z.string().optional(),
-  slug: z.string().optional(),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-}).superRefine((value, ctx) => {
-  const hasExplicitSources = value.sources.length > 0;
-  const hasPath = typeof value.path === "string" && value.path.length > 0;
+const getKnowledgeIngestArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    sources: v.array(v.string()).default([]),
+    path: v.string().optional(),
+    all: v.boolean().default(false),
+    recursive: v.boolean().default(false),
+    outputDir: v.string().optional(),
+    knowledgePath: v.string().default("knowledge"),
+    description: v.string().optional(),
+    slug: v.string().optional(),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  }).superRefine((value, ctx) => {
+    const hasExplicitSources = value.sources.length > 0;
+    const hasPath = typeof value.path === "string" && value.path.length > 0;
 
-  if (hasExplicitSources && (hasPath || value.all)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Use either explicit source paths or --path with --all, not both.",
-    });
-  }
+    if (hasExplicitSources && (hasPath || value.all)) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Use either explicit source paths or --path with --all, not both.",
+      });
+    }
 
-  if (!hasExplicitSources && !hasPath && !value.all) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Provide one or more source paths or use --path with --all.",
-    });
-  }
+    if (!hasExplicitSources && !hasPath && !value.all) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide one or more source paths or use --path with --all.",
+      });
+    }
 
-  if (hasPath && !value.all) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "--path requires --all.",
-    });
-  }
+    if (hasPath && !value.all) {
+      ctx.addIssue({
+        code: "custom",
+        message: "--path requires --all.",
+      });
+    }
 
-  if (!hasPath && value.all) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "--all requires --path.",
-    });
-  }
+    if (!hasPath && value.all) {
+      ctx.addIssue({
+        code: "custom",
+        message: "--all requires --path.",
+      });
+    }
 
-  if (value.slug && value.sources.length !== 1) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "--slug can only be used with a single explicit source.",
-    });
-  }
-});
+    if (value.slug && value.sources.length !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "--slug can only be used with a single explicit source.",
+      });
+    }
+  })
+);
 
-export type KnowledgeIngestOptions = z.infer<typeof KnowledgeIngestArgsSchema>;
+const KnowledgeIngestArgsSchema = getKnowledgeIngestArgsSchema();
+
+export type KnowledgeIngestOptions = InferSchema<ReturnType<typeof getKnowledgeIngestArgsSchema>>;
 
 function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
   return keys.some((key) => Boolean(args[key]));
@@ -169,7 +177,7 @@ export function parseKnowledgeIngestArgs(
     slug: getStringArg(args, "slug"),
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<KnowledgeIngestOptions>;
 }
 
 function defaultOutputRoot(): Promise<string> {

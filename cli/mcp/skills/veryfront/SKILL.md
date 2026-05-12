@@ -128,14 +128,16 @@ export async function POST(req: Request) {
 ### AI Tool
 
 ```ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export const toolName = {
   name: "tool-name",
   description: "What it does",
-  parameters: z.object({
-    input: z.string(),
-  }),
+  parameters: defineSchema((v) =>
+    v.object({
+      input: v.string(),
+    })
+  )(),
   execute: async ({ input }) => {
     return { result: input };
   },

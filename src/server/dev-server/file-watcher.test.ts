@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { delay } from "#std/async.ts";
 import { expect } from "#std/expect.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";

@@ -1,9 +1,10 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
-  createInputRequestResponseSchema,
+  getCreateInputRequestResponseSchema,
   getInputRequest,
 } from "./index.ts";
 
@@ -97,12 +98,15 @@ describe("agent/input-request-protocol", () => {
       conversationId: CONVERSATION_ID,
       runId: RUN_ID,
       toolCallId: TOOL_CALL_ID,
+      // Cast through `unknown` since the contract DSL types optional object
+      // fields with required keys (value `T | undefined`); the actual schema
+      // accepts the looser literal here at runtime.
       form: {
         title: "Choose one",
         description: "Pick",
         submitLabel: "Send",
         fields: [{ type: "confirm", name: "confirmed", label: "Confirm?" }],
-      },
+      } as unknown as Parameters<typeof createInputRequest>[0]["form"],
       expiresAt: EXPIRES_AT,
     });
 
@@ -165,7 +169,7 @@ describe("agent/input-request-protocol", () => {
   });
 
   it("builds input request lifecycle data events", () => {
-    const inputRequest = createInputRequestResponseSchema.parse(createInputRequestRecord());
+    const inputRequest = getCreateInputRequestResponseSchema().parse(createInputRequestRecord());
 
     assertEquals(buildInputRequestLifecycleDataEvent({ action: "created", inputRequest }), {
       type: "veryfront.input_request.lifecycle",

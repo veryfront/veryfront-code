@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
-const LabelChangeInput = z
+const getLabelChangeInput = defineSchema((v) => v
   .object({
-    messageId: z.string().min(1).describe("Gmail message ID"),
-    addLabelIds: z.array(z.string().min(1)).optional().describe("Label IDs to add"),
-    removeLabelIds: z.array(z.string().min(1)).optional().describe("Label IDs to remove"),
+    messageId: v.string().min(1).describe("Gmail message ID"),
+    addLabelIds: v.array(v.string().min(1)).optional().describe("Label IDs to add"),
+    removeLabelIds: v.array(v.string().min(1)).optional().describe("Label IDs to remove"),
   })
   .refine((value) => value.addLabelIds?.length || value.removeLabelIds?.length, {
     message: "At least one label must be added or removed",
-  });
+  }));
 
 export default tool({
   id: "apply-labels",
   description: "Apply or remove Gmail labels on a message.",
-  inputSchema: LabelChangeInput,
+  inputSchema: getLabelChangeInput(),
   execute: async ({ messageId, addLabelIds, removeLabelIds }, context) => {
     const userId = resolveUserId(context);
 

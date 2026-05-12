@@ -1,27 +1,29 @@
 import { tool } from 'veryfront/tool';
-import { z } from 'zod';
+import { defineSchema } from 'veryfront/schemas';
 import { getAnthropicAdminClient } from '../../lib/anthropic-admin-client';
 
 export const getUsage = tool({
   id: 'get_usage',
   description:
     'Get API usage statistics for a specific date range. Returns token usage and costs broken down by date, workspace, and model. Dates must be in YYYY-MM-DD format.',
-  inputSchema: z.object({
-    startDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
-      .describe('Start date for usage query (YYYY-MM-DD format, e.g., 2025-01-01)'),
-    endDate: z
-      .string()
-      .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
-      .describe('End date for usage query (YYYY-MM-DD format, e.g., 2025-01-31)'),
-    workspaceId: z.string().optional().describe('Optional workspace ID to filter usage by specific workspace'),
-    model: z
-      .string()
-      .optional()
-      .describe('Optional model name to filter usage (e.g., claude-3-opus-20240229, claude-3-sonnet-20240229)'),
-    granularity: z.enum(['day', 'hour']).default('day').describe('Time granularity for usage aggregation (day or hour)'),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      startDate: v
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
+        .describe('Start date for usage query (YYYY-MM-DD format, e.g., 2025-01-01)'),
+      endDate: v
+        .string()
+        .regex(/^\d{4}-\d{2}-\d{2}$/, 'Date must be in YYYY-MM-DD format')
+        .describe('End date for usage query (YYYY-MM-DD format, e.g., 2025-01-31)'),
+      workspaceId: v.string().optional().describe('Optional workspace ID to filter usage by specific workspace'),
+      model: v
+        .string()
+        .optional()
+        .describe('Optional model name to filter usage (e.g., claude-3-opus-20240229, claude-3-sonnet-20240229)'),
+      granularity: v.enum(['day', 'hour']).default('day').describe('Time granularity for usage aggregation (day or hour)'),
+    })
+  )(),
   execute: async ({ startDate, endDate, workspaceId, model, granularity }) => {
     try {
       const client = getAnthropicAdminClient();
@@ -34,7 +36,7 @@ export const getUsage = tool({
           cacheCreation: acc.cacheCreation + (record.cache_creation_tokens ?? 0),
           cacheRead: acc.cacheRead + (record.cache_read_tokens ?? 0),
         }),
-        { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 }
+        { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 },
       );
 
       return {

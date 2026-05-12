@@ -79,7 +79,9 @@ export function prepareHostedChildForkRuntimeStepMessages(
 ): HostedChildForkRuntimeStepMessages {
   const currentInstructions = input.buildInstructions();
   const compactedMessages = compactForStep(
-    convertAgentRuntimeMessagesToProviderMessages(input.messages),
+    convertAgentRuntimeMessagesToProviderMessages(
+      input.messages as any,
+    ),
     estimateOverhead(currentInstructions, input.forkToolNames.length),
   );
   const resolvedSystem = input.resolveSystem?.({

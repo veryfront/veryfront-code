@@ -1,28 +1,28 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "update-draft",
   description: "Replace the content of a Gmail draft.",
-  inputSchema: z.object({
-    draftId: z.string().min(1).describe("Gmail draft ID"),
-    to: z.union([z.string().email(), z.array(z.string().email())]).describe("Email recipient(s)"),
-    subject: z.string().min(1).describe("Email subject line"),
-    body: z.string().min(1).describe("Email body content"),
-    cc: z
-      .union([z.string().email(), z.array(z.string().email())])
+  inputSchema: defineSchema((v) => v.object({
+    draftId: v.string().min(1).describe("Gmail draft ID"),
+    to: v.union([v.string().email(), v.array(v.string().email())]).describe("Email recipient(s)"),
+    subject: v.string().min(1).describe("Email subject line"),
+    body: v.string().min(1).describe("Email body content"),
+    cc: v
+      .union([v.string().email(), v.array(v.string().email())])
       .optional()
       .describe("CC recipient(s)"),
-    bcc: z
-      .union([z.string().email(), z.array(z.string().email())])
+    bcc: v
+      .union([v.string().email(), v.array(v.string().email())])
       .optional()
       .describe("BCC recipient(s)"),
-    replyTo: z.string().email().optional().describe("Reply-To address"),
-    isHtml: z.boolean().default(false).describe("Whether the body contains HTML"),
-    threadId: z.string().optional().describe("Thread ID to keep the draft in"),
-  }),
+    replyTo: v.string().email().optional().describe("Reply-To address"),
+    isHtml: v.boolean().default(false).describe("Whether the body contains HTML"),
+    threadId: v.string().optional().describe("Thread ID to keep the draft in"),
+  }))(),
   execute: async ({ draftId, ...input }, context) => {
     const userId = resolveUserId(context);
 

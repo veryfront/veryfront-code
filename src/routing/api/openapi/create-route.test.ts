@@ -1,10 +1,11 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * createRoute wrapper tests
  */
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createRoute, z } from "./create-route.ts";
+import { createRoute, defineSchema } from "./create-route.ts";
 import { OPENAPI_METADATA, type OpenAPIRouteMetadata } from "./types.ts";
 
 function getMetadata(handler: unknown): OpenAPIRouteMetadata {
@@ -26,9 +27,11 @@ describe("createRoute", () => {
 
   it("should convert params schema to JSON Schema", () => {
     const handler = createRoute({
-      params: z.object({
-        id: z.string().uuid(),
-      }),
+      params: defineSchema((v) =>
+        v.object({
+          id: v.string().uuid(),
+        })
+      )(),
       handler: () => new Response("ok"),
     });
 
@@ -40,10 +43,12 @@ describe("createRoute", () => {
 
   it("should convert query schema to JSON Schema", () => {
     const handler = createRoute({
-      query: z.object({
-        page: z.coerce.number().optional(),
-        limit: z.coerce.number().default(10),
-      }),
+      query: defineSchema((v) =>
+        v.object({
+          page: v.coerce.number().optional(),
+          limit: v.coerce.number().default(10),
+        })
+      )(),
       handler: () => new Response("ok"),
     });
 
@@ -56,10 +61,12 @@ describe("createRoute", () => {
 
   it("should convert body schema to JSON Schema", () => {
     const handler = createRoute({
-      body: z.object({
-        name: z.string(),
-        email: z.string().email(),
-      }),
+      body: defineSchema((v) =>
+        v.object({
+          name: v.string(),
+          email: v.string().email(),
+        })
+      )(),
       handler: () => new Response("ok"),
     });
 
@@ -73,7 +80,7 @@ describe("createRoute", () => {
   it("should handle response with schema only", () => {
     const handler = createRoute({
       response: {
-        200: z.object({ id: z.string() }),
+        200: defineSchema((v) => v.object({ id: v.string() }))(),
       },
       handler: () => new Response("ok"),
     });
@@ -88,11 +95,11 @@ describe("createRoute", () => {
     const handler = createRoute({
       response: {
         200: {
-          schema: z.object({ id: z.string() }),
+          schema: defineSchema((v) => v.object({ id: v.string() }))(),
           description: "User found",
         },
         404: {
-          schema: z.object({ error: z.string() }),
+          schema: defineSchema((v) => v.object({ error: v.string() }))(),
           description: "User not found",
         },
       },

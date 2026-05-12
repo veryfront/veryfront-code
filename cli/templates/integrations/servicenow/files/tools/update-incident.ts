@@ -1,29 +1,29 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
 
 export default defineTool({
   id: "servicenow-update-incident",
   description: "Update an existing incident in ServiceNow",
-  inputSchema: z.object({
-    sys_id: z.string().describe("The sys_id of the incident to update"),
-    state: z
+  inputSchema: defineSchema((v) => v.object({
+    sys_id: v.string().describe("The sys_id of the incident to update"),
+    state: v
       .enum(["1", "2", "3", "6", "7"])
       .optional()
       .describe("New state (1=New, 2=In Progress, 3=On Hold, 6=Resolved, 7=Closed)"),
-    short_description: z.string().optional().describe("Updated short description"),
-    description: z.string().optional().describe("Updated description"),
-    urgency: z
+    short_description: v.string().optional().describe("Updated short description"),
+    description: v.string().optional().describe("Updated description"),
+    urgency: v
       .enum(["1", "2", "3"])
       .optional()
       .describe("Updated urgency (1=High, 2=Medium, 3=Low)"),
-    impact: z
+    impact: v
       .enum(["1", "2", "3"])
       .optional()
       .describe("Updated impact (1=High, 2=Medium, 3=Low)"),
-    work_notes: z.string().optional().describe("Add work notes to the incident"),
-    close_notes: z.string().optional().describe("Close notes (required when closing)"),
-  }),
+    work_notes: v.string().optional().describe("Add work notes to the incident"),
+    close_notes: v.string().optional().describe("Close notes (required when closing)"),
+  }))(),
   async execute(input) {
     const connected = await isServiceNowConnected();
     if (!connected) {

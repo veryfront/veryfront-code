@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { MCPDevServer } from "./server.ts";
@@ -185,6 +186,19 @@ describe("cli/mcp/server", { sanitizeOps: false, sanitizeResources: false }, () 
         assertExists(tool.description);
         assertExists(tool.inputSchema);
       }
+
+      const getErrorsTool = data.result.tools.find((tool: { name: string }) =>
+        tool.name === "vf_get_errors"
+      );
+      assertExists(getErrorsTool);
+      assertEquals(getErrorsTool.inputSchema.properties.type.enum, [
+        "compile",
+        "runtime",
+        "bundle",
+        "hmr",
+        "module",
+      ]);
+      assertEquals(getErrorsTool.inputSchema.properties.limit.default, 50);
     });
 
     it("should return resources list", async () => {

@@ -1,23 +1,23 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listProjects } from "../../lib/linear-client.ts";
 
 export default tool({
   id: "list-projects",
   description:
     "List all projects in the Linear workspace. Returns project details including name, state, progress, and associated teams.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of projects to return"),
-    includeArchived: z
+    includeArchived: v
       .boolean()
       .default(false)
       .describe("Whether to include archived projects in results"),
-  }),
+  }))(),
   async execute({ limit, includeArchived }) {
     const projects = await listProjects({ limit, includeArchived });
 

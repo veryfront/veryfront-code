@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createDocsClient } from "../../lib/docs-client.ts";
 
 const DEFAULT_USER_ID = "demo-user";
@@ -8,18 +8,18 @@ export default tool({
   id: "list-documents",
   description:
     "List recent Google Docs documents from Google Drive. Returns document names, IDs, and metadata.",
-  inputSchema: z.object({
-    maxResults: z
+  inputSchema: defineSchema((v) => v.object({
+    maxResults: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of documents to return"),
-    orderBy: z
+    orderBy: v
       .enum(["createdTime", "modifiedTime", "name"])
       .default("modifiedTime")
       .describe("Sort order for results"),
-  }),
+  }))(),
   async execute({ maxResults, orderBy }) {
     const client = createDocsClient(DEFAULT_USER_ID);
     const documents = await client.listDocuments({ maxResults, orderBy });

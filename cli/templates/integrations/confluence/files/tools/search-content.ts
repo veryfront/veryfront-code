@@ -1,24 +1,24 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { searchContent } from "../../lib/confluence-client.ts";
 
 export default tool({
   id: "search-content",
   description:
     "Search for pages and blog posts in Confluence. Returns matching content with titles, excerpts, and links.",
-  inputSchema: z.object({
-    query: z.string().describe("Search query to find pages or blog posts"),
-    spaceKey: z
+  inputSchema: defineSchema((v) => v.object({
+    query: v.string().describe("Search query to find pages or blog posts"),
+    spaceKey: v
       .string()
       .optional()
       .describe("Optional space key to limit search to a specific space"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(50)
       .default(10)
       .describe("Maximum number of results to return"),
-  }),
+  }))(),
   async execute({ query, spaceKey, limit }) {
     const results = await searchContent(query, { spaceKey, limit });
 
