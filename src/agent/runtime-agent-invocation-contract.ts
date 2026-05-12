@@ -1,8 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type {
-  InferSchema,
-  RefinementCtx,
-} from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";
 
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;

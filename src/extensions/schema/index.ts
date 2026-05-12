@@ -6,13 +6,13 @@
 
 // Type aliases (generic helpers + unions)
 export type {
-  InferSchema,
   InferInput,
+  InferSchema,
   InferShape,
+  JsonSchema,
   RefinementCtx,
   SchemaFactory,
   ValidationResult,
-  JsonSchema,
 } from "./schema-validator.ts";
 
 // Interfaces
