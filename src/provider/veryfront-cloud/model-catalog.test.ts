@@ -6,6 +6,7 @@ import {
   getVeryfrontCloudProviderFromModelId,
   groupVeryfrontCloudModelsByProvider,
   resolveHostedVeryfrontCloudModelId,
+  resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudThinkingProviderOptions,
@@ -96,21 +97,25 @@ describe("provider/veryfront-cloud/model-catalog", () => {
     );
   });
 
-  it("prefixes direct provider model ids for the hosted gateway", () => {
+  it("prefixes direct provider model ids for the Veryfront Cloud gateway", () => {
     assertEquals(
-      resolveHostedVeryfrontCloudModelId("anthropic/claude-opus-4-6"),
+      resolveVeryfrontCloudGatewayModelId("anthropic/claude-opus-4-6"),
       "veryfront-cloud/anthropic/claude-opus-4-6",
     );
     assertEquals(
-      resolveHostedVeryfrontCloudModelId("google-ai-studio/gemini-2.5-flash"),
+      resolveVeryfrontCloudGatewayModelId("google-ai-studio/gemini-2.5-flash"),
       "veryfront-cloud/google-ai-studio/gemini-2.5-flash",
     );
     assertEquals(
-      resolveHostedVeryfrontCloudModelId("veryfront-cloud/openai/gpt-5.2"),
+      resolveVeryfrontCloudGatewayModelId("veryfront-cloud/openai/gpt-5.2"),
       "veryfront-cloud/openai/gpt-5.2",
     );
-    assertEquals(resolveHostedVeryfrontCloudModelId("opus"), "opus");
-    assertEquals(resolveHostedVeryfrontCloudModelId(undefined), undefined);
+    assertEquals(resolveVeryfrontCloudGatewayModelId("opus"), "opus");
+    assertEquals(resolveVeryfrontCloudGatewayModelId(undefined), undefined);
+    assertEquals(
+      resolveHostedVeryfrontCloudModelId("openai/gpt-5.2"),
+      "veryfront-cloud/openai/gpt-5.2",
+    );
   });
 
   it("maps enabled Anthropic thinking into provider options", () => {
