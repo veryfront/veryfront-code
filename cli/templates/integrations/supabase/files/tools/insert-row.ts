@@ -8,7 +8,7 @@ export default tool({
   inputSchema: defineSchema((v) => v.object({
     tableName: v.string().describe("The name of the table to insert into"),
     data: v
-      .record(v.unknown())
+      .record(v.string(), v.unknown())
       .describe("The data to insert as key-value pairs matching the table schema"),
   }))(),
   async execute({ tableName, data }) {

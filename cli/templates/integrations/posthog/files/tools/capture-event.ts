@@ -10,7 +10,7 @@ export default tool({
     event: v.string().describe("Event name (e.g., 'button_clicked', 'page_viewed')"),
     distinctId: v.string().describe("Unique identifier for the user or session"),
     properties: v
-      .record(v.unknown())
+      .record(v.string(), v.unknown())
       .optional()
       .describe("Additional properties to attach to the event"),
     timestamp: v

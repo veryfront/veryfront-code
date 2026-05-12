@@ -15,7 +15,7 @@ export default tool({
         'Columns to select (comma-separated, e.g., "id,name,email"). Default is all columns (*)',
       ),
     filter: v
-      .record(v.unknown())
+      .record(v.string(), v.unknown())
       .optional()
       .describe(
         'Filter conditions as key-value pairs (e.g., {"status": "active", "age": 25})',

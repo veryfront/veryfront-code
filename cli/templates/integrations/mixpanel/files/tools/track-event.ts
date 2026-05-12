@@ -18,7 +18,7 @@ export default tool({
         "Unique identifier for the user or session (e.g., user ID, email, or anonymous ID)",
       ),
     properties: v
-      .record(v.unknown())
+      .record(v.string(), v.unknown())
       .optional()
       .describe(
         "Additional properties to attach to the event (e.g., {product_id: '123', price: 29.99, category: 'electronics'})",

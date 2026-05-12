@@ -29,7 +29,7 @@ const getClaudeCodeInputSchema = defineSchema((v) =>
       .optional()
       .describe("Specific files to focus on"),
     context: v
-      .record(v.unknown())
+      .record(v.string(), v.unknown())
       .optional()
       .describe("Additional context to include in the prompt"),
   })

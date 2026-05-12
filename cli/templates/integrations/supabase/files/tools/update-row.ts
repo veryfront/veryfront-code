@@ -12,7 +12,7 @@ export default tool({
       .optional()
       .describe("The ID of the row to update (if updating a single row by ID)"),
     filter: v
-      .record(v.unknown())
+      .record(v.string(), v.unknown())
       .optional()
       .describe('Filter conditions to match rows to update (e.g., {"status": "pending"})'),
     data: v.record(v.string(), v.unknown()).describe("The data to update as key-value pairs"),

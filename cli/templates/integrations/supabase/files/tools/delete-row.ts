@@ -13,7 +13,7 @@ export default tool({
       .optional()
       .describe("The ID of the row to delete (if deleting a single row by ID)"),
     filter: v
-      .record(v.unknown())
+      .record(v.string(), v.unknown())
       .optional()
       .describe('Filter conditions to match rows to delete (e.g., {"status": "archived"})'),
     confirm: v

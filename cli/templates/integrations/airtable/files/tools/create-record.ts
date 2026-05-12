@@ -10,7 +10,7 @@ export default tool({
     baseId: v.string().describe('The ID of the Airtable base (starts with "app")'),
     tableIdOrName: v.string().describe("The ID or name of the table"),
     fields: v
-      .record(v.unknown())
+      .record(v.string(), v.unknown())
       .describe(
         'Object with field names as keys and their values. Field names must match exactly. Example: { "Name": "John Doe", "Email": "john@example.com", "Status": "Active" }',
       ),

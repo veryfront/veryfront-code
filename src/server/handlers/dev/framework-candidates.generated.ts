@@ -5305,6 +5305,7 @@ export const FRAMEWORK_CANDIDATES: readonly string[] = [
   "veryfront/chat",
   "veryfront/errors/error-registry.ts",
   "veryfront/platform/compat/runtime.ts",
+  "veryfront/schemas/_test-setup.ts",
   "veryfront/security/client/html-sanitizer.ts",
   "veryfront/testing/assert",
   "veryfront/testing/assert.ts",

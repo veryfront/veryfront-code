@@ -54,17 +54,17 @@ describe("npm-import-rewrites", () => {
   });
 
   describe("rewriteNpmImports", () => {
-    it("rewrites static zod imports to pinned versions", () => {
-      const input = 'import { z } from "zod"';
+    it("rewrites static npm imports to pinned versions", () => {
+      const input = 'import { unified } from "unified"';
       const result = rewriteNpmImports(input);
-      assertEquals(result.includes("npm:zod@"), true);
+      assertEquals(result.includes("npm:unified@"), true);
       assertEquals(result.includes("@latest"), false);
     });
 
-    it("rewrites dynamic zod imports to pinned versions", () => {
-      const input = 'const mod = await import("zod")';
+    it("rewrites dynamic npm imports to pinned versions", () => {
+      const input = 'const mod = await import("unified")';
       const result = rewriteNpmImports(input);
-      assertEquals(result.includes("npm:zod@"), true);
+      assertEquals(result.includes("npm:unified@"), true);
     });
 
     it("does not rewrite unrelated imports", () => {
