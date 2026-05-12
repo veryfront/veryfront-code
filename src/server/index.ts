@@ -61,11 +61,15 @@ export {
   type NodeVeryfrontServiceServer,
   startNodeVeryfrontServer,
   type StartNodeVeryfrontServerOptions,
+  startVeryfrontServer,
+  type StartVeryfrontServerOptions,
+  type VeryfrontServiceServer,
   type VeryfrontServiceServerFetch,
   type VeryfrontServiceServerLogger,
   type VeryfrontServiceServerModule,
   type VeryfrontServiceServerModuleResponse,
   type VeryfrontServiceServerRuntime,
+  type VeryfrontServiceServerRuntimeKind,
 } from "./service-server.ts";
 export type {
   DevServerOptions,

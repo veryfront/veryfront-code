@@ -250,10 +250,13 @@ export {
   type NormalizedAgentServiceContract,
 } from "./agent-service.ts";
 export {
+  type AgentServiceServer,
   type AgentServiceServerLifecycle,
   createAgentServiceServerRuntime,
   type CreateAgentServiceServerRuntimeOptions,
   type NodeAgentServiceServer,
+  startAgentServiceServer,
+  type StartAgentServiceServerOptions,
   startNodeAgentServiceServer,
   type StartNodeAgentServiceServerOptions,
 } from "./agent-service-server.ts";
@@ -314,6 +317,9 @@ export {
   type HostedAgentServiceRuntimeConfig,
   type HostedAgentServiceRuntimeLogger,
   type HostedAgentServiceRuntimeTrace,
+  startAgentServiceRuntime,
+  type StartAgentServiceRuntimeOptions,
+  type StartAgentServiceRuntimeResult,
   startNodeAgentService,
   type StartNodeAgentServiceOptions,
   type StartNodeAgentServiceResult,
@@ -327,7 +333,9 @@ export {
   type NodeVeryfrontCloudAgentServicePreparedExecution,
   type NodeVeryfrontCloudAgentServiceProcessTarget,
   runNodeVeryfrontCloudAgentServiceMain,
+  startAgentService,
   startNodeVeryfrontCloudAgentService,
+  type VeryfrontCloudAgentServiceOptions,
 } from "./veryfront-cloud-agent-service.ts";
 export {
   type AgentServiceConfig,

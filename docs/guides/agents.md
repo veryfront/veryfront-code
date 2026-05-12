@@ -178,25 +178,23 @@ If the service also uses the project-files API for instructions, skills,
 and `load_skill`, use `createAgentServiceProjectSteering()` to bind the markdown
 agent definition and project-steering adapter as one reusable service primitive.
 For the standard Veryfront Cloud service shape, use
-`runNodeVeryfrontCloudAgentServiceMain()` to bind those pieces in one Node
+`startAgentService()` to bind those pieces in one cross-runtime
 process entrypoint. The service entrypoint can stay small while agent behavior
 lives in `agents/<agent-id>.md` or a discovered code agent such as
 `agents/<agent-id>.ts`:
 
 ```ts
-import { createBashTool } from "bash-tool";
-import { runNodeVeryfrontCloudAgentServiceMain } from "veryfront/agent";
+import { startAgentService } from "veryfront/agent";
 
-await runNodeVeryfrontCloudAgentServiceMain({
+await startAgentService({
   serviceName: "support-agent",
   agentId: "support",
   entryUrl: import.meta.url,
-  createBashTool,
 });
 ```
 
-Use the lower-level helpers when a service needs custom tools, non-Node
-startup, or a different control-plane integration.
+Use the lower-level helpers when a service needs custom tools, a custom
+server adapter, or a different control-plane integration.
 
 The cloud service helper uses the same project discovery conventions as normal
 Veryfront projects: `agents/`, `tools/`, `skills/`, `resources/`, `prompts/`,

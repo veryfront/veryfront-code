@@ -83,8 +83,7 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent 
     const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
       serviceName: "veryfront-agent-test",
       agentId: "veryfront",
-      entryUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
-      createBashTool,
+      entryUrl: pathToFileURL(resolve(rootDir, "main.ts")),
       env: {
         NODE_ENV: "test",
         VERYFRONT_API_URL: "https://api.example.com",

@@ -61,7 +61,7 @@ Create a lazily-provisioned sandbox client for agent-service runtimes. The clien
 
 ### `createAgentServiceSandboxTools(options)`
 
-Create sandbox shell tools plus async command job tools for agent-service runtimes. Pass an injected `createBashTool` factory to keep the framework independent of a concrete bash-tool package.
+Create sandbox shell tools plus async command job tools for agent-service runtimes. The higher-level agent-service preset provides the bash-tool factory by default; pass `createBashTool` here when composing sandbox tools directly.
 
 `createHostedSandboxTools()` remains available as a compatibility alias.
 
