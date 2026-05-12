@@ -1,19 +1,21 @@
 import { tool } from 'veryfront/tool';
-import { z } from 'zod';
+import { defineSchema } from 'veryfront/schemas';
 import { getAWSClient } from '../../lib/aws-client';
 
 export const listLambdaFunctionsTool = tool({
   id: 'list-lambda-functions',
   description:
     'List all Lambda functions in your AWS account. Returns function details including name, ARN, runtime, and configuration.',
-  inputSchema: z.object({
-    region: z
-      .string()
-      .optional()
-      .describe(
-        'AWS region to list Lambda functions from (e.g., "us-east-1", "eu-west-1"). Defaults to configured region.',
-      ),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      region: v
+        .string()
+        .optional()
+        .describe(
+          'AWS region to list Lambda functions from (e.g., "us-east-1", "eu-west-1"). Defaults to configured region.',
+        ),
+    })
+  )(),
   execute: async ({ region }) => {
     try {
       const client = getAWSClient();

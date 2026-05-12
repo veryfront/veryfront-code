@@ -1,11 +1,11 @@
 import { tool } from 'veryfront/tool';
-import { z } from 'zod';
+import { defineSchema } from 'veryfront/schemas';
 import { getAWSClient } from '../../lib/aws-client';
 
 export const listS3BucketsTool = tool({
   id: 'list-s3-buckets',
   description: 'List all S3 buckets in your AWS account. Returns bucket names and creation dates.',
-  inputSchema: z.object({}),
+  inputSchema: defineSchema((v) => v.object({}))(),
   execute: async () => {
     try {
       const client = getAWSClient();
