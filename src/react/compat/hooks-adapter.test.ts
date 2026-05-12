@@ -689,7 +689,6 @@ describe("hooks-adapter", () => {
 
     it("callback errors are handled", () => {
       let startTransition: any;
-      let _error: any;
 
       function TestComponent() {
         const [, start] = useTransitionCompat();
@@ -703,8 +702,8 @@ describe("hooks-adapter", () => {
         startTransition(() => {
           throw new Error("test error");
         });
-      } catch (e) {
-        _error = e;
+      } catch {
+        // React versions differ on whether transition callback errors surface synchronously.
       }
 
       assertEquals(typeof startTransition, "function");

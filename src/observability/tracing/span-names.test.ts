@@ -6,7 +6,7 @@ import { SpanNames } from "./span-names.ts";
 describe("observability/tracing/span-names", () => {
   it("should be a frozen-like constant object", () => {
     assertEquals(typeof SpanNames, "object");
-    assert(SpanNames !== null);
+    assertEquals(Array.isArray(SpanNames), false);
   });
 
   it("should have expected span names", () => {

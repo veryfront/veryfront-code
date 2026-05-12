@@ -164,31 +164,10 @@ describe("src/task/runner", () => {
           return null;
         },
       });
-      const injectedEnv = Object.create(null) as Record<string, string>;
-      injectedEnv.SERVICENOW_USERNAME = "automation@example.com";
-      Object.defineProperty(injectedEnv, "__proto__", {
-        value: "polluted",
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(injectedEnv, "constructor", {
-        value: "polluted",
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-      Object.defineProperty(injectedEnv, "prototype", {
-        value: "polluted",
-        enumerable: true,
-        configurable: true,
-        writable: true,
-      });
-
       try {
         Deno.env.set(
           "VERYFRONT_TASK_ENV_JSON",
-          JSON.stringify(injectedEnv),
+          '{"SERVICENOW_USERNAME":"automation@example.com","__proto__":"polluted","constructor":"polluted","prototype":"polluted"}',
         );
 
         await runTask({ task });
