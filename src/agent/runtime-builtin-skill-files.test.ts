@@ -31,11 +31,21 @@ Deno.test("resolveRuntimeBuiltinSkillsDir resolves repo-root skills from dist-li
   });
 });
 
+Deno.test("resolveRuntimeBuiltinSkillsDir resolves root-level skills from cwd base dir", () => {
+  withTempDir((rootDir) => {
+    const skillsDir = resolve(rootDir, "skills");
+    Deno.mkdirSync(resolve(skillsDir, "veryfront"), { recursive: true });
+    Deno.writeTextFileSync(resolve(skillsDir, "veryfront", "SKILL.md"), "body");
+
+    assertEquals(resolveRuntimeBuiltinSkillsDir(rootDir), skillsDir);
+  });
+});
+
 Deno.test("resolveRuntimeBuiltinSkillsDir falls back to the first candidate", () => {
   withTempDir((rootDir) => {
     const baseDir = resolve(rootDir, "app", "src", "skills");
 
-    assertEquals(resolveRuntimeBuiltinSkillsDir(baseDir), resolve(baseDir, "../../../skills"));
+    assertEquals(resolveRuntimeBuiltinSkillsDir(baseDir), resolve(baseDir, "skills"));
   });
 });
 
