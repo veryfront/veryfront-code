@@ -21,10 +21,10 @@ export default defineConfig({
 
 ## Provided contracts
 
-| Contract     | Implementation   | Backed by         |
-| ------------ | ---------------- | ----------------- |
-| `Bundler`    | `EsbuildBundler` | `esbuild`         |
-| `ModuleLexer`| `EsModuleLexer`  | `es-module-lexer` |
+| Contract      | Implementation   | Backed by         |
+| ------------- | ---------------- | ----------------- |
+| `Bundler`     | `EsbuildBundler` | `esbuild`         |
+| `ModuleLexer` | `EsModuleLexer`  | `es-module-lexer` |
 
 Both classes are also exported by name so callers can construct an instance outside the registry:
 

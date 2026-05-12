@@ -16,8 +16,8 @@ export default defineConfig({
 
 ## Environment Variables
 
-| Variable     | Required               | Description                                                                       |
-| ------------ | ---------------------- | --------------------------------------------------------------------------------- |
+| Variable     | Required                | Description                                                                      |
+| ------------ | ----------------------- | -------------------------------------------------------------------------------- |
 | `JWT_SECRET` | Yes (for sign / verify) | HMAC secret for symmetric JWT operations. Without it, `sign` and `verify` throw. |
 
 ## Factory configuration

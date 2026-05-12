@@ -18,12 +18,12 @@ export default defineConfig({
 
 The extension reads the standard OpenTelemetry env vars at setup time:
 
-| Variable                       | Required          | Description                                                                          |
-| ------------------------------ | ----------------- | ------------------------------------------------------------------------------------ |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`  | Yes (for export)  | Collector URL — e.g. `http://localhost:4318/v1/traces`                                |
-| `OTEL_EXPORTER_OTLP_HEADERS`   | No                | Comma-separated `key=value` pairs (commonly used for auth tokens)                    |
-| `OTEL_SERVICE_NAME`            | No                | Service name attached to spans                                                       |
-| `OTEL_TRACES_ENABLED`          | No                | Set to `false` to disable tracing without removing the extension                     |
+| Variable                      | Required         | Description                                                       |
+| ----------------------------- | ---------------- | ----------------------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes (for export) | Collector URL — e.g. `http://localhost:4318/v1/traces`            |
+| `OTEL_EXPORTER_OTLP_HEADERS`  | No               | Comma-separated `key=value` pairs (commonly used for auth tokens) |
+| `OTEL_SERVICE_NAME`           | No               | Service name attached to spans                                    |
+| `OTEL_TRACES_ENABLED`         | No               | Set to `false` to disable tracing without removing the extension  |
 
 Explicit config under `ctx.config.otel` wins over env vars.
 

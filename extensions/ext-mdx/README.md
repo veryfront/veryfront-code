@@ -24,9 +24,9 @@ export default defineConfig({
 
 ## Default plugin stack
 
-| Phase  | Plugins                                                                                            |
-| ------ | -------------------------------------------------------------------------------------------------- |
-| remark | `remark-gfm`, `remark-frontmatter`                                                                 |
+| Phase  | Plugins                                                                                                       |
+| ------ | ------------------------------------------------------------------------------------------------------------- |
+| remark | `remark-gfm`, `remark-frontmatter`                                                                            |
 | rehype | `rehype-slug`, `rehype-highlight`, `rehype-starry-night`, `rehype-raw`, `rehype-sanitize`, `rehype-stringify` |
 
 Pass `plugins.remark` / `plugins.rehype` in `ContentCompileOptions` to extend the stack at the call site.

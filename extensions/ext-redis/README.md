@@ -16,10 +16,10 @@ export default defineConfig({
 
 ## Environment Variables
 
-| Variable       | Required                       | Description                                                                |
-| -------------- | ------------------------------ | -------------------------------------------------------------------------- |
+| Variable       | Required                       | Description                                                                  |
+| -------------- | ------------------------------ | ---------------------------------------------------------------------------- |
 | `REDIS_URL`    | Yes (if explicit config unset) | Redis connection URL — e.g. `redis://localhost:6379` or `rediss://...` (TLS) |
-| `REDIS_PREFIX` | No                             | Key prefix for all stored entries (default: none)                          |
+| `REDIS_PREFIX` | No                             | Key prefix for all stored entries (default: none)                            |
 
 Explicit config under `ctx.config.proxy.cache.redis` wins over env vars.
 
@@ -33,8 +33,8 @@ config = {
     cache: {
       type: "redis",
       redis: {
-        url: "redis://...",       // or REDIS_URL
-        prefix: "vf:",            // or REDIS_PREFIX
+        url: "redis://...", // or REDIS_URL
+        prefix: "vf:", // or REDIS_PREFIX
         tls: true,
         username: "...",
         password: "...",
