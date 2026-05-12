@@ -149,23 +149,23 @@ export default agent({
 });
 ```
 
-For step-boundary refresh during a long-lived hosted run, use
+For step-boundary refresh during a long-lived agent-service run, use
 `resolveRuntimeState` instead of relying on `system()` to re-run mid-turn.
-Hosted service runtimes that fetch project instructions, skills, and
+Agent service runtimes that fetch project instructions, skills, and
 project-scoped tool inventory from an external control plane can use
-`createDefaultHostedProjectSteeringRefresh()` from `veryfront/agent` to reuse
-the default refresh sequencing while keeping fetch and prompt-building policy
-local. Use `fetchDefaultHostedProjectSteering()` for the matching initial
+`createDefaultAgentServiceProjectSteeringRefresh()` from
+`veryfront/agent` to reuse the default refresh sequencing while keeping fetch and prompt-building policy
+local. Use `fetchDefaultAgentServiceProjectSteering()` for the matching initial
 execution-preparation fetch.
-Services that prepare and stream hosted executions through Veryfront Cloud can
-use `prepareVeryfrontCloudHostedChatExecution()`,
-`createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions()`, and
-`buildVeryfrontCloudRuntimeInstructions()` to reuse the default hosted model
-normalization, model-provider, runtime system-message, durable root-run, and
+Services that prepare and stream agent-service executions through Veryfront Cloud can
+use `prepareVeryfrontCloudAgentServiceChatExecution()`,
+`createVeryfrontCloudPreparedAgentServiceChatExecutionRuntimeOptions()`, and
+`buildVeryfrontCloudRuntimeInstructions()` to reuse the default Veryfront Cloud
+model normalization, model-provider, runtime system-message, durable root-run, and
 stream-watchdog wiring. Agent services can also use
 `loadAgentServiceEnvFiles()` before
 `parseAgentServiceConfig()` to share the default env-file precedence and
-environment contract for API URL, hosted MCP URL, port, CORS origins, durable
+environment contract for API URL, service MCP URL, port, CORS origins, durable
 feature flags, and OpenTelemetry flags. Node services can pair that with
 `createNodeAgentServiceRuntimeInfrastructure()` to reuse the default
 config parsing, logger, service tracer, trace-context getter, and Node SDK
@@ -173,10 +173,10 @@ telemetry setup while keeping non-Node runtimes on the lower-level
 observability APIs.
 Use `resolveRuntimeAgentDefinitionsDir()` and
 `loadRuntimeAgentMarkdownDefinitionFromFile()` when a separately deployed
-hosted agent stores persona/configuration in `agents/*.md` files.
-If the service also uses the hosted project-files API for instructions, skills,
-and `load_skill`, use `createHostedAgentProjectSteering()` to bind the markdown
-agent definition and hosted steering adapter as one reusable service primitive.
+agent stores persona/configuration in `agents/*.md` files.
+If the service also uses the project-files API for instructions, skills,
+and `load_skill`, use `createAgentServiceProjectSteering()` to bind the markdown
+agent definition and project-steering adapter as one reusable service primitive.
 
 ## Agent configuration
 
