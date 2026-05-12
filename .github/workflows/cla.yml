@@ -45,7 +45,7 @@ jobs:
           missing=()
           for login in "${contributors[@]}"; do
             case "${login}" in
-              dependabot\[bot\]|github-actions\[bot\]|renovate\[bot\]|aikido-autofix\[bot\])
+              dependabot\[bot\]|github-actions\[bot\]|renovate\[bot\]|aikido-autofix\[bot\]|web-flow)
                 continue
                 ;;
             esac
