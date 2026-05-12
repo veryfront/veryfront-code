@@ -26,7 +26,9 @@ export const getConversationRunEventSchema = defineSchema((v) =>
 /** @deprecated Use getConversationRunEventSchema() */
 export const ConversationRunEventSchema = getConversationRunEventSchema();
 
-export type ConversationRunEvent = InferSchema<ReturnType<typeof getConversationRunEventSchema>>;
+export type ConversationRunEvent =
+  & InferSchema<ReturnType<typeof getConversationRunEventSchema>>
+  & Record<string, unknown>;
 
 function serializeToolInput(input: unknown): string {
   try {

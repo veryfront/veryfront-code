@@ -27,7 +27,9 @@ export interface Schema<T = unknown> {
   optional(): Schema<T | undefined>;
   nullable(): Schema<T | null>;
   nullish(): Schema<T | null | undefined>;
-  default(value: T | (() => T)): Schema<T>;
+  default(
+    value: Exclude<T, undefined> | (() => Exclude<T, undefined>),
+  ): Schema<Exclude<T, undefined>>;
   describe(description: string): Schema<T>;
   refine(check: (value: T) => boolean, message?: string | { message?: string }): Schema<T>;
   /**
@@ -47,7 +49,7 @@ export interface Schema<T = unknown> {
    * explicit about their intent.
    */
   strip(): Schema<T>;
-  passthrough(): Schema<T>;
+  passthrough(): Schema<T & Record<string, unknown>>;
   partial(): Schema<Partial<T>>;
   extend<U extends Record<string, Schema<unknown>>>(
     shape: U,

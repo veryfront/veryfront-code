@@ -43,7 +43,8 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
     optional: () => wrap<T | undefined>(zs.optional()),
     nullable: () => wrap<T | null>(zs.nullable()),
     nullish: () => wrap<T | null | undefined>(zs.nullish()),
-    default: (value: T | (() => T)) => wrap<T>(anyZs.default(value)),
+    default: (value: Exclude<T, undefined> | (() => Exclude<T, undefined>)) =>
+      wrap<Exclude<T, undefined>>(anyZs.default(value)),
     describe: (description: string) => wrap<T>(zs.describe(description)),
     refine: (
       check: (value: T) => boolean,
@@ -75,7 +76,7 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
     transform: <U>(fn: (value: T) => U) => wrap<U>(zs.transform(fn as never)),
     strict: () => wrap<T>(anyZs.strict()),
     strip: () => wrap<T>(anyZs.strip()),
-    passthrough: () => wrap<T>(anyZs.passthrough()),
+    passthrough: () => wrap<T & Record<string, unknown>>(anyZs.passthrough()),
     partial: () => wrap<Partial<T>>(anyZs.partial()),
     extend: <U extends Record<string, Schema<unknown>>>(shape: U) => {
       const zodShape = toZodShape(shape);
