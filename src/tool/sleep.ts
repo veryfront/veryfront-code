@@ -1,9 +1,5 @@
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type {
-  InferSchema,
-  Schema,
-  SchemaValidator,
-} from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import { resolveSchemaValidator } from "#veryfront/schemas/define.ts";
 import { tool } from "./factory.ts";
 import type { Tool } from "./types.ts";
 
@@ -28,15 +24,12 @@ interface SleepToolInputShape {
 /**
  * Build the sleep-tool input schema parameterised by `maxSeconds`.
  *
- * Resolves the `SchemaValidator` contract directly (rather than going
+ * Resolves the `SchemaValidator` through the shared fallback path (rather than going
  * through `defineSchema`) because `defineSchema` produces a memoized
  * zero-arg getter — incompatible with per-instance parametric schemas.
  */
 function createSleepToolInputSchema(maxSeconds: number): Schema<SleepToolInputShape> {
-  const v = tryResolve<SchemaValidator>("SchemaValidator");
-  if (!v) {
-    throw new Error("SchemaValidator contract unresolved — install ext-zod");
-  }
+  const v = resolveSchemaValidator();
   return v.object({
     seconds: v.number().min(1).max(maxSeconds).describe(
       `Number of seconds to wait (1-${maxSeconds})`,
