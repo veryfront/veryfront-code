@@ -1,144 +1,180 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
-export const modelProviderSchema = z.enum(["openai", "anthropic", "google", "local"]);
+export const getModelProviderSchema = defineSchema((v) =>
+  v.enum(["openai", "anthropic", "google", "local"] as const)
+);
 
-export const agentStatusSchema = z.enum([
-  "idle",
-  "thinking",
-  "tool_execution",
-  "streaming",
-  "completed",
-  "error",
-]);
+export const getAgentStatusSchema = defineSchema((v) =>
+  v.enum([
+    "idle",
+    "thinking",
+    "tool_execution",
+    "streaming",
+    "completed",
+    "error",
+  ] as const)
+);
 
-export const MemoryConfigSchema = z.object({
-  type: z.enum(["conversation", "buffer", "summary", "redis"]),
-  maxTokens: z.number().int().positive().optional(),
-  maxMessages: z.number().int().positive().optional(),
-});
+export const getMemoryConfigSchema = defineSchema((v) =>
+  v.object({
+    type: v.enum(["conversation", "buffer", "summary", "redis"] as const),
+    maxTokens: v.number().int().positive().optional(),
+    maxMessages: v.number().int().positive().optional(),
+  })
+);
 
-export const EdgeConfigSchema = z.object({
-  enabled: z.boolean(),
-  maxSteps: z.number().int().positive().optional(),
-  timeoutMs: z.number().int().positive().optional(),
-  streaming: z.boolean().optional(),
-});
+export const getEdgeConfigSchema = defineSchema((v) =>
+  v.object({
+    enabled: v.boolean(),
+    maxSteps: v.number().int().positive().optional(),
+    timeoutMs: v.number().int().positive().optional(),
+    streaming: v.boolean().optional(),
+  })
+);
 
-export const ToolCallPartWithArgsSchema = z.object({
-  type: z.string().regex(/^tool-.+$/),
-  toolCallId: z.string(),
-  toolName: z.string(),
-  args: z.record(z.string(), z.unknown()),
-  inputText: z.string().optional(),
-});
+export const getToolCallPartWithArgsSchema = defineSchema((v) =>
+  v.object({
+    type: v.string().regex(/^tool-.+$/),
+    toolCallId: v.string(),
+    toolName: v.string(),
+    args: v.record(v.string(), v.unknown()),
+    inputText: v.string().optional(),
+  })
+);
 
-export const ToolCallPartWithInputSchema = z.object({
-  type: z.string().regex(/^tool-.+$/),
-  toolCallId: z.string(),
-  toolName: z.string(),
-  input: z.record(z.string(), z.unknown()),
-  inputText: z.string().optional(),
-});
+export const getToolCallPartWithInputSchema = defineSchema((v) =>
+  v.object({
+    type: v.string().regex(/^tool-.+$/),
+    toolCallId: v.string(),
+    toolName: v.string(),
+    input: v.record(v.string(), v.unknown()),
+    inputText: v.string().optional(),
+  })
+);
 
-export const ToolCallPartSchema = z.union([
-  ToolCallPartWithArgsSchema,
-  ToolCallPartWithInputSchema,
-]);
+export const getToolCallPartSchema = defineSchema((v) =>
+  v.union([
+    getToolCallPartWithArgsSchema(),
+    getToolCallPartWithInputSchema(),
+  ])
+);
 
-export const ToolResultPartSchema = z.object({
-  type: z.literal("tool-result"),
-  toolCallId: z.string(),
-  toolName: z.string(),
-  result: z.unknown(),
-});
+export const getToolResultPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool-result"),
+    toolCallId: v.string(),
+    toolName: v.string(),
+    result: v.unknown(),
+  })
+);
 
-export const MessagePartSchema = z.union([
-  z.object({
-    type: z.literal("text"),
-    text: z.string(),
-  }),
-  ToolCallPartSchema,
-  z.object({
-    type: z.literal("tool-call"),
-    toolCallId: z.string(),
-    toolName: z.string(),
-    args: z.record(z.string(), z.unknown()),
-  }),
-  ToolResultPartSchema,
-  z.object({
-    type: z.literal("image"),
-    url: z.string(),
-    mediaType: z.string(),
-  }),
-  z.object({
-    type: z.literal("file"),
-    url: z.string(),
-    mediaType: z.string(),
-  }),
-]);
+// Helper for the inline tool-call alternative within MessagePartSchema —
+// matches the legacy `{ type: "tool-call", ... }` shape distinct from the
+// top-level ToolCallPart variants above.
+const inlineToolCallPartShape = (v: SchemaValidator) =>
+  v.object({
+    type: v.literal("tool-call"),
+    toolCallId: v.string(),
+    toolName: v.string(),
+    args: v.record(v.string(), v.unknown()),
+  });
+>>>>>>> 74be6ed69 (refactor(agent/prompt schemas): migrate leaf schemas + clean B2 cast (Phase B5))
 
-export const MessageSchema = z.object({
-  id: z.string(),
-  role: z.enum(["user", "assistant", "system", "tool"]),
-  parts: z.array(MessagePartSchema),
-  timestamp: z.number().int().nonnegative().optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
+export const getMessagePartSchema = defineSchema((v) =>
+  v.union([
+    v.object({
+      type: v.literal("text"),
+      text: v.string(),
+    }),
+    getToolCallPartSchema(),
+    inlineToolCallPartShape(v),
+    getToolResultPartSchema(),
+    v.object({
+      type: v.literal("image"),
+      url: v.string(),
+      mediaType: v.string(),
+    }),
+    v.object({
+      type: v.literal("file"),
+      url: v.string(),
+      mediaType: v.string(),
+    }),
+  ])
+);
 
-export const StreamToolCallSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  arguments: z.record(z.string(), z.unknown()),
-});
+export const getMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    role: v.enum(["user", "assistant", "system", "tool"] as const),
+    parts: v.array(getMessagePartSchema()),
+    timestamp: v.number().int().nonnegative().optional(),
+    metadata: v.record(v.string(), v.unknown()).optional(),
+  })
+);
 
-export const ToolCallSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  args: z.record(z.string(), z.unknown()),
-  inputText: z.string().optional(),
-  status: z.enum(["pending", "executing", "completed", "error"]),
-  result: z.unknown().optional(),
-  error: z.string().optional(),
-  executionTime: z.number().nonnegative().optional(),
-});
+export const getStreamToolCallSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    name: v.string(),
+    arguments: v.record(v.string(), v.unknown()),
+  })
+);
 
-export const AgentResponseSchema = z.object({
-  text: z.string(),
-  messages: z.array(MessageSchema),
-  toolCalls: z.array(ToolCallSchema),
-  status: agentStatusSchema,
-  thinking: z.string().optional(),
-  usage: z
-    .object({
-      promptTokens: z.number().int().nonnegative(),
-      completionTokens: z.number().int().nonnegative(),
-      totalTokens: z.number().int().nonnegative(),
-    })
-    .optional(),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
+export const getToolCallSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    name: v.string(),
+    args: v.record(v.string(), v.unknown()),
+    inputText: v.string().optional(),
+    status: v.enum(["pending", "executing", "completed", "error"] as const),
+    result: v.unknown().optional(),
+    error: v.string().optional(),
+    executionTime: v.number().nonnegative().optional(),
+  })
+);
 
-export const AgentContextSchema = z.object({
-  agentId: z.string(),
-  model: z.string().optional(),
-  input: z.union([z.string(), z.array(MessageSchema)]),
-  data: z.record(z.string(), z.unknown()).optional(),
-  platform: z.any(), // Platform type is complex
-  metadata: z.record(z.string(), z.unknown()).optional(),
-});
+export const getAgentResponseSchema = defineSchema((v) =>
+  v.object({
+    text: v.string(),
+    messages: v.array(getMessageSchema()),
+    toolCalls: v.array(getToolCallSchema()),
+    status: getAgentStatusSchema(),
+    thinking: v.string().optional(),
+    usage: v
+      .object({
+        promptTokens: v.number().int().nonnegative(),
+        completionTokens: v.number().int().nonnegative(),
+        totalTokens: v.number().int().nonnegative(),
+      })
+      .optional(),
+    metadata: v.record(v.string(), v.unknown()).optional(),
+  })
+);
+
+export const getAgentContextSchema = defineSchema((v) =>
+  v.object({
+    agentId: v.string(),
+    model: v.string().optional(),
+    input: v.union([v.string(), v.array(getMessageSchema())]),
+    data: v.record(v.string(), v.unknown()).optional(),
+    platform: v.any(), // Platform type is complex
+    metadata: v.record(v.string(), v.unknown()).optional(),
+  })
+);
 
 // Inferred types
-export type ModelProvider = z.infer<typeof modelProviderSchema>;
-export type AgentStatus = z.infer<typeof agentStatusSchema>;
-export type MemoryConfig = z.infer<typeof MemoryConfigSchema>;
-export type EdgeConfig = z.infer<typeof EdgeConfigSchema>;
-export type ToolCallPartWithArgs = z.infer<typeof ToolCallPartWithArgsSchema>;
-export type ToolCallPartWithInput = z.infer<typeof ToolCallPartWithInputSchema>;
-export type ToolCallPart = z.infer<typeof ToolCallPartSchema>;
-export type ToolResultPart = z.infer<typeof ToolResultPartSchema>;
-export type MessagePart = z.infer<typeof MessagePartSchema>;
-export type Message = z.infer<typeof MessageSchema>;
-export type StreamToolCall = z.infer<typeof StreamToolCallSchema>;
-export type ToolCall = z.infer<typeof ToolCallSchema>;
-export type AgentResponse = z.infer<typeof AgentResponseSchema>;
-export type AgentContext = z.infer<typeof AgentContextSchema>;
+export type ModelProvider = InferSchema<ReturnType<typeof getModelProviderSchema>>;
+export type AgentStatus = InferSchema<ReturnType<typeof getAgentStatusSchema>>;
+export type MemoryConfig = InferSchema<ReturnType<typeof getMemoryConfigSchema>>;
+export type EdgeConfig = InferSchema<ReturnType<typeof getEdgeConfigSchema>>;
+export type ToolCallPartWithArgs = InferSchema<ReturnType<typeof getToolCallPartWithArgsSchema>>;
+export type ToolCallPartWithInput = InferSchema<ReturnType<typeof getToolCallPartWithInputSchema>>;
+export type ToolCallPart = InferSchema<ReturnType<typeof getToolCallPartSchema>>;
+export type ToolResultPart = InferSchema<ReturnType<typeof getToolResultPartSchema>>;
+export type MessagePart = InferSchema<ReturnType<typeof getMessagePartSchema>>;
+export type Message = InferSchema<ReturnType<typeof getMessageSchema>>;
+export type StreamToolCall = InferSchema<ReturnType<typeof getStreamToolCallSchema>>;
+export type ToolCall = InferSchema<ReturnType<typeof getToolCallSchema>>;
+export type AgentResponse = InferSchema<ReturnType<typeof getAgentResponseSchema>>;
+export type AgentContext = InferSchema<ReturnType<typeof getAgentContextSchema>>;

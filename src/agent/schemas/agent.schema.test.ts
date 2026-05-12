@@ -1,18 +1,19 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
-  AgentContextSchema,
-  AgentResponseSchema,
-  agentStatusSchema,
-  EdgeConfigSchema,
-  MemoryConfigSchema,
-  MessagePartSchema,
-  MessageSchema,
-  modelProviderSchema,
-  StreamToolCallSchema,
-  ToolCallPartSchema,
-  ToolCallSchema,
-  ToolResultPartSchema,
+  getAgentContextSchema,
+  getAgentResponseSchema,
+  getAgentStatusSchema,
+  getEdgeConfigSchema,
+  getMemoryConfigSchema,
+  getMessagePartSchema,
+  getMessageSchema,
+  getModelProviderSchema,
+  getStreamToolCallSchema,
+  getToolCallPartSchema,
+  getToolCallSchema,
+  getToolResultPartSchema,
 } from "./agent.schema.ts";
 
 describe("agent/schema", () => {
@@ -21,13 +22,13 @@ describe("agent/schema", () => {
       const providers = ["openai", "anthropic", "google", "local"];
 
       for (const provider of providers) {
-        const result = modelProviderSchema.safeParse(provider);
+        const result = getModelProviderSchema().safeParse(provider);
         assertEquals(result.success, true, `${provider} should be valid`);
       }
     });
 
     it("should reject invalid provider", () => {
-      const result = modelProviderSchema.safeParse("invalid");
+      const result = getModelProviderSchema().safeParse("invalid");
       assertEquals(result.success, false);
     });
   });
@@ -44,20 +45,20 @@ describe("agent/schema", () => {
       ];
 
       for (const status of statuses) {
-        const result = agentStatusSchema.safeParse(status);
+        const result = getAgentStatusSchema().safeParse(status);
         assertEquals(result.success, true, `${status} should be valid`);
       }
     });
 
     it("should reject invalid status", () => {
-      const result = agentStatusSchema.safeParse("processing");
+      const result = getAgentStatusSchema().safeParse("processing");
       assertEquals(result.success, false);
     });
   });
 
   describe("MemoryConfigSchema", () => {
     it("should accept valid memory config", () => {
-      const result = MemoryConfigSchema.safeParse({
+      const result = getMemoryConfigSchema().safeParse({
         type: "conversation",
         maxTokens: 4096,
         maxMessages: 100,
@@ -69,20 +70,20 @@ describe("agent/schema", () => {
       const types = ["conversation", "buffer", "summary", "redis"];
 
       for (const type of types) {
-        const result = MemoryConfigSchema.safeParse({ type });
+        const result = getMemoryConfigSchema().safeParse({ type });
         assertEquals(result.success, true, `${type} should be valid`);
       }
     });
 
     it("should accept config with only type", () => {
-      const result = MemoryConfigSchema.safeParse({
+      const result = getMemoryConfigSchema().safeParse({
         type: "buffer",
       });
       assertEquals(result.success, true);
     });
 
     it("should reject negative maxTokens", () => {
-      const result = MemoryConfigSchema.safeParse({
+      const result = getMemoryConfigSchema().safeParse({
         type: "conversation",
         maxTokens: -100,
       });
@@ -90,7 +91,7 @@ describe("agent/schema", () => {
     });
 
     it("should reject negative maxMessages", () => {
-      const result = MemoryConfigSchema.safeParse({
+      const result = getMemoryConfigSchema().safeParse({
         type: "conversation",
         maxMessages: -10,
       });
@@ -100,7 +101,7 @@ describe("agent/schema", () => {
 
   describe("EdgeConfigSchema", () => {
     it("should accept valid edge config", () => {
-      const result = EdgeConfigSchema.safeParse({
+      const result = getEdgeConfigSchema().safeParse({
         enabled: true,
         maxSteps: 10,
         timeoutMs: 30000,
@@ -110,14 +111,14 @@ describe("agent/schema", () => {
     });
 
     it("should accept minimal config", () => {
-      const result = EdgeConfigSchema.safeParse({
+      const result = getEdgeConfigSchema().safeParse({
         enabled: false,
       });
       assertEquals(result.success, true);
     });
 
     it("should reject negative maxSteps", () => {
-      const result = EdgeConfigSchema.safeParse({
+      const result = getEdgeConfigSchema().safeParse({
         enabled: true,
         maxSteps: -5,
       });
@@ -125,7 +126,7 @@ describe("agent/schema", () => {
     });
 
     it("should reject negative timeoutMs", () => {
-      const result = EdgeConfigSchema.safeParse({
+      const result = getEdgeConfigSchema().safeParse({
         enabled: true,
         timeoutMs: -1000,
       });
@@ -135,7 +136,7 @@ describe("agent/schema", () => {
 
   describe("MessagePartSchema - nested union types", () => {
     it("should accept text part", () => {
-      const result = MessagePartSchema.safeParse({
+      const result = getMessagePartSchema().safeParse({
         type: "text",
         text: "Hello, world!",
       });
@@ -143,7 +144,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept tool call part with args", () => {
-      const result = MessagePartSchema.safeParse({
+      const result = getMessagePartSchema().safeParse({
         type: "tool-call-123",
         toolCallId: "call-456",
         toolName: "calculator",
@@ -153,7 +154,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept tool call part with input", () => {
-      const result = MessagePartSchema.safeParse({
+      const result = getMessagePartSchema().safeParse({
         type: "tool-execute",
         toolCallId: "call-789",
         toolName: "search",
@@ -163,7 +164,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept tool-call literal type", () => {
-      const result = MessagePartSchema.safeParse({
+      const result = getMessagePartSchema().safeParse({
         type: "tool-call",
         toolCallId: "call-abc",
         toolName: "fetch",
@@ -173,7 +174,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept tool result part", () => {
-      const result = MessagePartSchema.safeParse({
+      const result = getMessagePartSchema().safeParse({
         type: "tool-result",
         toolCallId: "call-123",
         toolName: "calculator",
@@ -183,7 +184,7 @@ describe("agent/schema", () => {
     });
 
     it("should reject invalid part type", () => {
-      const result = MessagePartSchema.safeParse({
+      const result = getMessagePartSchema().safeParse({
         type: "unknown",
         data: "test",
       });
@@ -193,7 +194,7 @@ describe("agent/schema", () => {
 
   describe("ToolCallPartSchema", () => {
     it("should accept tool call with args", () => {
-      const result = ToolCallPartSchema.safeParse({
+      const result = getToolCallPartSchema().safeParse({
         type: "tool-search",
         toolCallId: "call-1",
         toolName: "search",
@@ -203,7 +204,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept tool call with input", () => {
-      const result = ToolCallPartSchema.safeParse({
+      const result = getToolCallPartSchema().safeParse({
         type: "tool-fetch",
         toolCallId: "call-2",
         toolName: "fetch",
@@ -213,7 +214,7 @@ describe("agent/schema", () => {
     });
 
     it("should validate tool- prefix in type", () => {
-      const result = ToolCallPartSchema.safeParse({
+      const result = getToolCallPartSchema().safeParse({
         type: "tool-custom",
         toolCallId: "call-3",
         toolName: "custom",
@@ -223,7 +224,7 @@ describe("agent/schema", () => {
     });
 
     it("should reject type without tool- prefix", () => {
-      const result = ToolCallPartSchema.safeParse({
+      const result = getToolCallPartSchema().safeParse({
         type: "invalid",
         toolCallId: "call-4",
         toolName: "test",
@@ -244,7 +245,7 @@ describe("agent/schema", () => {
       ];
 
       for (const data of results) {
-        const result = ToolResultPartSchema.safeParse({
+        const result = getToolResultPartSchema().safeParse({
           type: "tool-result",
           toolCallId: "call-1",
           toolName: "test",
@@ -257,7 +258,7 @@ describe("agent/schema", () => {
 
   describe("MessageSchema - nested structure", () => {
     it("should accept valid message with text parts", () => {
-      const result = MessageSchema.safeParse({
+      const result = getMessageSchema().safeParse({
         id: "msg-123",
         role: "user",
         parts: [
@@ -272,7 +273,7 @@ describe("agent/schema", () => {
       const roles = ["user", "assistant", "system", "tool"];
 
       for (const role of roles) {
-        const result = MessageSchema.safeParse({
+        const result = getMessageSchema().safeParse({
           id: "msg-1",
           role,
           parts: [{ type: "text", text: "test" }],
@@ -282,7 +283,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept message with mixed parts", () => {
-      const result = MessageSchema.safeParse({
+      const result = getMessageSchema().safeParse({
         id: "msg-456",
         role: "assistant",
         parts: [
@@ -306,7 +307,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept message with timestamp", () => {
-      const result = MessageSchema.safeParse({
+      const result = getMessageSchema().safeParse({
         id: "msg-789",
         role: "user",
         parts: [{ type: "text", text: "test" }],
@@ -316,7 +317,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept message with metadata", () => {
-      const result = MessageSchema.safeParse({
+      const result = getMessageSchema().safeParse({
         id: "msg-abc",
         role: "assistant",
         parts: [{ type: "text", text: "test" }],
@@ -326,7 +327,7 @@ describe("agent/schema", () => {
     });
 
     it("should reject negative timestamp", () => {
-      const result = MessageSchema.safeParse({
+      const result = getMessageSchema().safeParse({
         id: "msg-999",
         role: "user",
         parts: [{ type: "text", text: "test" }],
@@ -336,7 +337,7 @@ describe("agent/schema", () => {
     });
 
     it("should reject invalid role", () => {
-      const result = MessageSchema.safeParse({
+      const result = getMessageSchema().safeParse({
         id: "msg-999",
         role: "moderator",
         parts: [{ type: "text", text: "test" }],
@@ -347,7 +348,7 @@ describe("agent/schema", () => {
 
   describe("StreamToolCallSchema", () => {
     it("should accept valid stream tool call", () => {
-      const result = StreamToolCallSchema.safeParse({
+      const result = getStreamToolCallSchema().safeParse({
         id: "stream-1",
         name: "search",
         arguments: { query: "test", limit: 10 },
@@ -356,7 +357,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept empty arguments", () => {
-      const result = StreamToolCallSchema.safeParse({
+      const result = getStreamToolCallSchema().safeParse({
         id: "stream-2",
         name: "ping",
         arguments: {},
@@ -370,7 +371,7 @@ describe("agent/schema", () => {
       const statuses = ["pending", "executing", "completed", "error"];
 
       for (const status of statuses) {
-        const result = ToolCallSchema.safeParse({
+        const result = getToolCallSchema().safeParse({
           id: "tool-1",
           name: "test",
           args: {},
@@ -381,7 +382,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept tool call with result", () => {
-      const result = ToolCallSchema.safeParse({
+      const result = getToolCallSchema().safeParse({
         id: "tool-2",
         name: "calculator",
         args: { x: 5, y: 3 },
@@ -393,7 +394,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept tool call with error", () => {
-      const result = ToolCallSchema.safeParse({
+      const result = getToolCallSchema().safeParse({
         id: "tool-3",
         name: "fetch",
         args: { url: "invalid" },
@@ -404,7 +405,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept tool call with execution time", () => {
-      const result = ToolCallSchema.safeParse({
+      const result = getToolCallSchema().safeParse({
         id: "tool-4",
         name: "search",
         args: { query: "test" },
@@ -415,7 +416,7 @@ describe("agent/schema", () => {
     });
 
     it("should reject negative execution time", () => {
-      const result = ToolCallSchema.safeParse({
+      const result = getToolCallSchema().safeParse({
         id: "tool-5",
         name: "test",
         args: {},
@@ -428,7 +429,7 @@ describe("agent/schema", () => {
 
   describe("AgentResponseSchema - complex nested structure", () => {
     it("should accept valid agent response", () => {
-      const result = AgentResponseSchema.safeParse({
+      const result = getAgentResponseSchema().safeParse({
         text: "Here's the answer to your question.",
         messages: [
           {
@@ -449,7 +450,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept response with tool calls", () => {
-      const result = AgentResponseSchema.safeParse({
+      const result = getAgentResponseSchema().safeParse({
         text: "I've calculated the result.",
         messages: [
           {
@@ -484,7 +485,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept response with thinking", () => {
-      const result = AgentResponseSchema.safeParse({
+      const result = getAgentResponseSchema().safeParse({
         text: "After analyzing the problem...",
         messages: [],
         toolCalls: [],
@@ -495,7 +496,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept response with usage statistics", () => {
-      const result = AgentResponseSchema.safeParse({
+      const result = getAgentResponseSchema().safeParse({
         text: "Response",
         messages: [],
         toolCalls: [],
@@ -510,7 +511,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept response with metadata", () => {
-      const result = AgentResponseSchema.safeParse({
+      const result = getAgentResponseSchema().safeParse({
         text: "Response",
         messages: [],
         toolCalls: [],
@@ -525,7 +526,7 @@ describe("agent/schema", () => {
     });
 
     it("should reject negative token counts", () => {
-      const result = AgentResponseSchema.safeParse({
+      const result = getAgentResponseSchema().safeParse({
         text: "Response",
         messages: [],
         toolCalls: [],
@@ -542,7 +543,7 @@ describe("agent/schema", () => {
 
   describe("AgentContextSchema", () => {
     it("should accept context with string input", () => {
-      const result = AgentContextSchema.safeParse({
+      const result = getAgentContextSchema().safeParse({
         agentId: "agent-123",
         input: "What is the weather?",
         platform: {}, // Platform is z.any()
@@ -551,7 +552,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept context with message array input", () => {
-      const result = AgentContextSchema.safeParse({
+      const result = getAgentContextSchema().safeParse({
         agentId: "agent-456",
         input: [
           {
@@ -566,7 +567,7 @@ describe("agent/schema", () => {
     });
 
     it("should accept context with optional fields", () => {
-      const result = AgentContextSchema.safeParse({
+      const result = getAgentContextSchema().safeParse({
         agentId: "agent-789",
         model: "gpt-4",
         input: "test",
@@ -587,7 +588,7 @@ describe("agent/schema", () => {
       ];
 
       for (const platform of platforms) {
-        const result = AgentContextSchema.safeParse({
+        const result = getAgentContextSchema().safeParse({
           agentId: "agent-1",
           input: "test",
           platform,

@@ -1,12 +1,15 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/interfaces/index.ts";
 
-export const PromptConfigSchema = z.object({
-  id: z.string().optional(),
-  description: z.string(),
-  content: z.string().optional(),
-  generate: z.function().optional(),
-  /** Example message text to use as a chat suggestion */
-  suggestion: z.string().optional(),
-});
+export const getPromptConfigSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().optional(),
+    description: v.string(),
+    content: v.string().optional(),
+    generate: v.function().optional(),
+    /** Example message text to use as a chat suggestion */
+    suggestion: v.string().optional(),
+  })
+);
 
-export type PromptConfig = z.infer<typeof PromptConfigSchema>;
+export type PromptConfig = InferSchema<ReturnType<typeof getPromptConfigSchema>>;

@@ -9,21 +9,17 @@
 
 import type { Agent } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
-import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
-import { type AgentToolInput, AgentToolInputSchema } from "../schemas/index.ts";
+import { getAgentToolInputSchema } from "../schemas/index.ts";
 
 export function agentAsTool(agent: Agent, description: string): Tool {
   return {
     id: `agent_${agent.id}`,
     type: "function",
     description,
-    // Phase B2 transition: raw zod schema is accepted by the tool factory's
-    // back-compat path; cast satisfies the new Schema<T> contract while the
-    // full defineSchema migration of this module is deferred to Phase B5.
-    inputSchema: AgentToolInputSchema as unknown as Schema<AgentToolInput>,
+    inputSchema: getAgentToolInputSchema(),
     execute({ input }) {
       return withSpan(
         "agent.composition.agentAsTool.execute",

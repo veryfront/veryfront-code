@@ -1,8 +1,11 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/interfaces/index.ts";
 
 /** Input schema when an agent is used as a tool */
-export const AgentToolInputSchema = z.object({
-  input: z.string().describe("Input for the agent"),
-});
+export const getAgentToolInputSchema = defineSchema((v) =>
+  v.object({
+    input: v.string().describe("Input for the agent"),
+  })
+);
 
-export type AgentToolInput = z.infer<typeof AgentToolInputSchema>;
+export type AgentToolInput = InferSchema<ReturnType<typeof getAgentToolInputSchema>>;
