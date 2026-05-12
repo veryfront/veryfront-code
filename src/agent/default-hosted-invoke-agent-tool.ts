@@ -127,6 +127,9 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     createHostedSandboxTools?: (
       input: HostedSandboxToolsOptions,
     ) => Promise<HostedSandboxToolsResult>;
+    createAgentServiceSandboxTools?: (
+      input: HostedSandboxToolsOptions,
+    ) => Promise<HostedSandboxToolsResult>;
     createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
     createToolsFromRemoteDefinitions?: typeof createToolsFromRemoteDefinitions;
     createLiveStudioTools?: Parameters<typeof prepareDefaultHostedChildForkSandboxToolSources>[0][
@@ -213,7 +216,8 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
     isAbortError: isChildRunAbortError,
     logger: options.logger,
     createBashTool: options.createBashTool,
-    createHostedSandboxTools: options.createHostedSandboxTools ?? createHostedSandboxTools,
+    createAgentServiceSandboxTools: options.createAgentServiceSandboxTools ??
+      options.createHostedSandboxTools ?? createHostedSandboxTools,
     createLiveStudioTools: options.createLiveStudioTools ?? createLiveStudioMcpTools,
     createRemoteToolSource: options.createRemoteToolSource ?? createRemoteMCPToolSource,
     createToolsFromRemoteDefinitions: options.createToolsFromRemoteDefinitions ??

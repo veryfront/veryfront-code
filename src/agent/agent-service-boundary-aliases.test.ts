@@ -16,6 +16,8 @@ import {
   createHostedAgentServiceRouteSet,
   createHostedAgUiValidationErrorResponse,
   createHostedServiceAuth,
+  type DefaultAgentServiceInvokeAgentContext,
+  type DefaultAgentServiceInvokeAgentToolOptions,
   deriveAgentServiceAgUiChatContext,
   type DerivedAgentServiceAgUiChatContext,
   deriveHostedAgUiChatContext,
@@ -82,6 +84,11 @@ Deno.test("agent-service boundary aliases are available as types", () => {
   const rootRunContext: Partial<AgentServiceConversationRootRunContext> = {};
   const normalizedRequest: Partial<NormalizedAgentServiceChatRequest> = {};
   const toolAssembly: Partial<AgentServiceChatRuntimeToolAssemblyResult> = {};
+  const invokeOptions: Partial<
+    DefaultAgentServiceInvokeAgentToolOptions<DefaultAgentServiceInvokeAgentContext>
+  > = {
+    createAgentServiceSandboxTools: undefined,
+  };
 
   assertEquals(routeOptions, {});
   assertEquals(parsedRequest, {});
@@ -89,4 +96,5 @@ Deno.test("agent-service boundary aliases are available as types", () => {
   assertEquals(rootRunContext, {});
   assertEquals(normalizedRequest, {});
   assertEquals(toolAssembly, {});
+  assertEquals(invokeOptions, { createAgentServiceSandboxTools: undefined });
 });
