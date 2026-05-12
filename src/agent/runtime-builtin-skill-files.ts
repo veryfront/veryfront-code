@@ -13,11 +13,12 @@ function hasRuntimeBuiltinSkillFiles(path: string): boolean {
 }
 
 export function resolveRuntimeBuiltinSkillsDir(baseDir: string): string {
-  const firstCandidate = resolve(baseDir, "../../../skills");
+  const firstCandidate = resolve(baseDir, "skills");
   const candidates = [
     firstCandidate,
-    resolve(baseDir, "../../skills"),
     resolve(baseDir, "../skills"),
+    resolve(baseDir, "../../skills"),
+    resolve(baseDir, "../../../skills"),
   ];
 
   return candidates.find((candidate) => hasRuntimeBuiltinSkillFiles(candidate)) ?? firstCandidate;
