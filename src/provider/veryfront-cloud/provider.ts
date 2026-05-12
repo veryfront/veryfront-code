@@ -1,5 +1,5 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { ensureBuiltinAIProviders } from "#veryfront/extensions/builtin-extensions.ts";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import type { ModelRuntime } from "../types.ts";
 import {
   createVeryfrontCloudFetch,
@@ -14,7 +14,7 @@ export function createVeryfrontCloudModel(modelId: string): ModelRuntime {
   const { apiBaseUrl, apiToken, projectSlug } = requireVeryfrontCloudBootstrap();
   const baseURL = getVeryfrontCloudGatewayBaseUrl(apiBaseUrl, provider);
   const fetch = createVeryfrontCloudFetch(apiToken, projectSlug);
-  const registry = ensureBuiltinAIProviders();
+  const registry = ensureBuiltinLLMProviders();
 
   switch (provider) {
     case "anthropic": {

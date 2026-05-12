@@ -1,22 +1,22 @@
 import { describe, it } from "@std/testing/bdd";
 import { assert, assertEquals } from "@std/assert";
-import extOpenAI, { OpenAIProvider } from "./index.ts";
-import type { AIProviderRegistry } from "veryfront/extensions/ai";
+import extAnthropic, { AnthropicProvider } from "./index.ts";
+import type { LLMProviderRegistry } from "veryfront/extensions/llm";
 
-describe("ext-ai-openai", () => {
-  it("factory descriptor advertises the AIProvider:openai capability", () => {
-    const ext = extOpenAI();
-    assertEquals(ext.name, "ext-ai-openai");
+describe("ext-llm-anthropic", () => {
+  it("factory descriptor advertises the LLMProvider:anthropic capability", () => {
+    const ext = extAnthropic();
+    assertEquals(ext.name, "ext-llm-anthropic");
     assertEquals(ext.capabilities?.[0], {
       type: "contract",
-      name: "AIProvider:openai",
+      name: "LLMProvider:anthropic",
     });
   });
 
-  it("setup registers the provider in the AIProviderRegistry", () => {
-    const ext = extOpenAI();
+  it("setup registers the provider in the LLMProviderRegistry", () => {
+    const ext = extAnthropic();
     const registered: Record<string, unknown> = {};
-    const fakeRegistry: AIProviderRegistry = {
+    const fakeRegistry: LLMProviderRegistry = {
       register: (p) => {
         registered[p.id] = p;
       },
@@ -34,11 +34,11 @@ describe("ext-ai-openai", () => {
       provide: () => {},
       get: () => undefined,
       require: <T>(name: string): T => {
-        if (name === "AIProviderRegistry") return fakeRegistry as unknown as T;
+        if (name === "LLMProviderRegistry") return fakeRegistry as unknown as T;
         throw new Error(`unexpected require(${name})`);
       },
     };
     ext.setup?.(ctx as never);
-    assert(registered.openai instanceof OpenAIProvider);
+    assert(registered.anthropic instanceof AnthropicProvider);
   });
 });

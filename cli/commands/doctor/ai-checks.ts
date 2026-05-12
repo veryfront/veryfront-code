@@ -46,7 +46,7 @@ export async function checkAIConfig(projectDir: string): Promise<DiagnosticResul
     results.push({
       status: "warn",
       name: "AI Providers",
-      message: "No AI providers configured",
+      message: "No LLM providers configured",
     });
     return results;
   }

@@ -4,9 +4,9 @@ import type { InvalidationProjectContext } from "#veryfront/platform/adapters/fs
 import { clearConfigCache, getConfig } from "#veryfront/config";
 import { type ExtensionLoader, orchestrateExtensions, tryResolve } from "veryfront/extensions";
 import {
-  AIProviderRegistryName,
-  createAIProviderRegistry,
-} from "#veryfront/extensions/ai/index.ts";
+  createLLMProviderRegistry,
+  LLMProviderRegistryName,
+} from "#veryfront/extensions/llm/index.ts";
 import { createBuiltinExtensions } from "#veryfront/extensions/builtin-extensions.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
@@ -283,7 +283,7 @@ export async function bootstrap(
         projectDir,
         config,
         logger: bootstrapLog,
-        primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
+        primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
         builtinExtensions: createBuiltinExtensions(),
       });
       wireTracingShim();
@@ -327,7 +327,7 @@ export async function bootstrap(
         projectDir,
         config,
         logger: bootstrapLog,
-        primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
+        primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
         builtinExtensions: createBuiltinExtensions(),
       });
       wireTracingShim();
@@ -400,7 +400,7 @@ export async function bootstrap(
           projectDir,
           config,
           logger: bootstrapLog,
-          primeContracts: { [AIProviderRegistryName]: createAIProviderRegistry() },
+          primeContracts: { [LLMProviderRegistryName]: createLLMProviderRegistry() },
           builtinExtensions: createBuiltinExtensions(),
         }),
       fsDispose,

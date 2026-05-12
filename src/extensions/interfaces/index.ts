@@ -3,7 +3,7 @@
  *
  * Re-exports the category-folder modules under `../{ai,auth,cache,...}/`.
  * Most entries are interface re-exports (erased at runtime); the
- * `AIProviderRegistryName` re-export is a runtime value (a const).
+ * `LLMProviderRegistryName` re-export is a runtime value (a const).
  * This file will be deleted once all consumers migrate to the
  * `veryfront/extensions/<category>` paths.
  *
@@ -78,12 +78,12 @@ export type {
 // Tracing exporter
 export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";
 
-// AI provider (registry + per-provider contract) — moved to ../ai/
-export type { AIProvider, AIProviderConfig, AIProviderRegistry } from "../ai/index.ts";
-export { AIProviderRegistryName } from "../ai/index.ts";
+// LLM provider (registry + per-provider contract) — moved to ../llm/
+export type { LLMProvider, LLMProviderConfig, LLMProviderRegistry } from "../llm/index.ts";
+export { LLMProviderRegistryName } from "../llm/index.ts";
 
-// Embedding provider — moved to ../ai/
-export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "../ai/index.ts";
+// Embedding provider — moved to ../llm/
+export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "../llm/index.ts";
 
 // Code parser
 export type {

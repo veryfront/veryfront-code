@@ -11,12 +11,12 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { detectConflicts, ExtensionLoader, resolve, tryResolve } from "./index.ts";
 import type { Extension, ResolvedExtension } from "./index.ts";
 import { register, reset } from "./contracts.ts";
-import { AIProviderRegistryName } from "./interfaces/index.ts";
-import type { AIProviderRegistry } from "./interfaces/index.ts";
-import { createAIProviderRegistry } from "./ai/ai-provider-registry.ts";
-import extOpenAI from "../../extensions/ext-ai-openai/src/index.ts";
-import extAnthropic from "../../extensions/ext-ai-anthropic/src/index.ts";
-import extGoogle from "../../extensions/ext-ai-google/src/index.ts";
+import { LLMProviderRegistryName } from "./interfaces/index.ts";
+import type { LLMProviderRegistry } from "./interfaces/index.ts";
+import { createLLMProviderRegistry } from "./llm/llm-provider-registry.ts";
+import extOpenAI from "../../extensions/ext-llm-openai/src/index.ts";
+import extAnthropic from "../../extensions/ext-llm-anthropic/src/index.ts";
+import extGoogle from "../../extensions/ext-llm-google/src/index.ts";
 import {
   _resetShimForTests,
   getTracer,
@@ -171,21 +171,21 @@ describe("extensions/integration", () => {
     assertEquals(order, ["c", "b", "a"]);
   });
 
-  it("ext-ai-openai registers into the primed AIProviderRegistry", async () => {
-    const registry = createAIProviderRegistry();
+  it("ext-llm-openai registers into the primed LLMProviderRegistry", async () => {
+    const registry = createLLMProviderRegistry();
     const loader = new ExtensionLoader(noopLogger);
-    loader.primeContracts({ [AIProviderRegistryName]: registry });
+    loader.primeContracts({ [LLMProviderRegistryName]: registry });
     await loader.setupAll(
       [
         {
           source: "local-file",
-          origin: "virtual://ext-ai-openai",
+          origin: "virtual://ext-llm-openai",
           extension: extOpenAI(),
         } satisfies ResolvedExtension,
       ],
       {},
     );
-    const resolved = resolve<AIProviderRegistry>(AIProviderRegistryName);
+    const resolved = resolve<LLMProviderRegistry>(LLMProviderRegistryName);
     assertEquals(resolved, registry);
     assert(registry.has("openai"));
     await loader.teardownAll();
@@ -260,41 +260,41 @@ describe("extensions/integration", () => {
     _resetShimForTests();
   });
 
-  it("ext-ai-anthropic registers into the primed AIProviderRegistry", async () => {
-    const registry = createAIProviderRegistry();
+  it("ext-llm-anthropic registers into the primed LLMProviderRegistry", async () => {
+    const registry = createLLMProviderRegistry();
     const loader = new ExtensionLoader(noopLogger);
-    loader.primeContracts({ [AIProviderRegistryName]: registry });
+    loader.primeContracts({ [LLMProviderRegistryName]: registry });
     await loader.setupAll(
       [
         {
           source: "local-file",
-          origin: "virtual://ext-ai-anthropic",
+          origin: "virtual://ext-llm-anthropic",
           extension: extAnthropic(),
         } satisfies ResolvedExtension,
       ],
       {},
     );
-    const resolved = resolve<AIProviderRegistry>(AIProviderRegistryName);
+    const resolved = resolve<LLMProviderRegistry>(LLMProviderRegistryName);
     assertEquals(resolved, registry);
     assert(registry.has("anthropic"));
     await loader.teardownAll();
   });
 
-  it("ext-ai-google registers into the primed AIProviderRegistry", async () => {
-    const registry = createAIProviderRegistry();
+  it("ext-llm-google registers into the primed LLMProviderRegistry", async () => {
+    const registry = createLLMProviderRegistry();
     const loader = new ExtensionLoader(noopLogger);
-    loader.primeContracts({ [AIProviderRegistryName]: registry });
+    loader.primeContracts({ [LLMProviderRegistryName]: registry });
     await loader.setupAll(
       [
         {
           source: "local-file",
-          origin: "virtual://ext-ai-google",
+          origin: "virtual://ext-llm-google",
           extension: extGoogle(),
         } satisfies ResolvedExtension,
       ],
       {},
     );
-    const resolved = resolve<AIProviderRegistry>(AIProviderRegistryName);
+    const resolved = resolve<LLMProviderRegistry>(LLMProviderRegistryName);
     assertEquals(resolved, registry);
     assert(registry.has("google"));
     await loader.teardownAll();

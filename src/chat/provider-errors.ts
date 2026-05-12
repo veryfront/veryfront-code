@@ -6,7 +6,7 @@ export interface ParsedProviderError {
 
 const DEFAULT_EXTERNAL_SERVICE_ERROR = {
   code: "EXTERNAL_SERVICE_ERROR",
-  message: "AI provider service error",
+  message: "LLM provider service error",
 } as const;
 
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
@@ -80,7 +80,7 @@ function parseKnownProviderBody(body: unknown): ParsedProviderError | null {
       code: "OVERLOADED_ERROR",
       message: typeof body.message === "string"
         ? body.message
-        : "The AI provider is currently overloaded",
+        : "The LLM provider is currently overloaded",
     };
   }
 
@@ -192,7 +192,7 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
       return { code: "INSUFFICIENT_CREDITS", message: "Insufficient AI credits", status: 402 };
     }
     if (normalizedMessage.includes("overload") || normalizedMessage.includes("capacity")) {
-      return { code: "OVERLOADED_ERROR", message: "The AI provider is currently overloaded" };
+      return { code: "OVERLOADED_ERROR", message: "The LLM provider is currently overloaded" };
     }
     if (
       normalizedMessage.includes("rate limit") ||

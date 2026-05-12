@@ -1,9 +1,9 @@
 import { describe, it } from "@std/testing/bdd";
 import { assert, assertEquals, assertThrows } from "@std/assert";
-import { createAIProviderRegistry } from "./ai-provider-registry.ts";
-import type { AIProvider } from "./ai-provider.ts";
+import { createLLMProviderRegistry } from "./llm-provider-registry.ts";
+import type { LLMProvider } from "./llm-provider.ts";
 
-function fakeProvider(id: string): AIProvider {
+function fakeProvider(id: string): LLMProvider {
   return {
     id,
     createModel: () => {
@@ -12,9 +12,9 @@ function fakeProvider(id: string): AIProvider {
   };
 }
 
-describe("AIProviderRegistry", () => {
+describe("LLMProviderRegistry", () => {
   it("register + get returns the same instance", () => {
-    const reg = createAIProviderRegistry();
+    const reg = createLLMProviderRegistry();
     const p = fakeProvider("openai");
     reg.register(p);
     assertEquals(reg.get("openai"), p);
@@ -22,13 +22,13 @@ describe("AIProviderRegistry", () => {
   });
 
   it("get returns undefined for unknown id", () => {
-    const reg = createAIProviderRegistry();
+    const reg = createLLMProviderRegistry();
     assertEquals(reg.get("nope"), undefined);
     assertEquals(reg.has("nope"), false);
   });
 
   it("require throws with a helpful message listing known providers", () => {
-    const reg = createAIProviderRegistry();
+    const reg = createLLMProviderRegistry();
     reg.register(fakeProvider("openai"));
     reg.register(fakeProvider("anthropic"));
     assertThrows(
@@ -44,7 +44,7 @@ describe("AIProviderRegistry", () => {
   });
 
   it("register is first-write-wins (duplicate id silently skipped)", () => {
-    const reg = createAIProviderRegistry();
+    const reg = createLLMProviderRegistry();
     const p1 = fakeProvider("openai");
     const p2 = fakeProvider("openai");
     reg.register(p1);
@@ -53,7 +53,7 @@ describe("AIProviderRegistry", () => {
   });
 
   it("unregister allows re-registration", () => {
-    const reg = createAIProviderRegistry();
+    const reg = createLLMProviderRegistry();
     const p1 = fakeProvider("openai");
     const p2 = fakeProvider("openai");
     reg.register(p1);
@@ -63,7 +63,7 @@ describe("AIProviderRegistry", () => {
   });
 
   it("list returns providers in insertion order", () => {
-    const reg = createAIProviderRegistry();
+    const reg = createLLMProviderRegistry();
     reg.register(fakeProvider("openai"));
     reg.register(fakeProvider("anthropic"));
     reg.register(fakeProvider("google"));

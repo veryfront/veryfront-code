@@ -19,10 +19,10 @@ import {
   getGoogleGenAIEnvConfig,
   getOpenAIEnvConfig,
 } from "#veryfront/config/env.ts";
-import { ensureBuiltinAIProviders } from "#veryfront/extensions/builtin-extensions.ts";
+import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { AIProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
-import { AIProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import type { LLMProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
+import { LLMProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";
@@ -91,7 +91,7 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      const registry = ensureBuiltinAIProviders();
+      const registry = ensureBuiltinLLMProviders();
       const provider = registry.get("openai");
       if (provider) {
         return provider.createModel(id, {
@@ -102,7 +102,7 @@ function autoInitializeFromEnv(): void {
       throw toError(createError({
         type: "config",
         message:
-          "OpenAI provider not installed. Add @veryfront/ext-ai-openai to use openai/* models.",
+          "OpenAI provider not installed. Add @veryfront/ext-llm-openai to use openai/* models.",
       }));
     });
   }
@@ -119,7 +119,7 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      const registry = ensureBuiltinAIProviders();
+      const registry = ensureBuiltinLLMProviders();
       const provider = registry.get("anthropic");
       if (provider) {
         return provider.createModel(id, {
@@ -130,7 +130,7 @@ function autoInitializeFromEnv(): void {
       throw toError(createError({
         type: "config",
         message:
-          "Anthropic provider not installed. Add @veryfront/ext-ai-anthropic to use anthropic/* models.",
+          "Anthropic provider not installed. Add @veryfront/ext-llm-anthropic to use anthropic/* models.",
       }));
     });
   }
@@ -147,7 +147,7 @@ function autoInitializeFromEnv(): void {
           }),
         );
       }
-      const registry = ensureBuiltinAIProviders();
+      const registry = ensureBuiltinLLMProviders();
       const provider = registry.get("google");
       if (provider) {
         return provider.createModel(id, {
@@ -158,7 +158,7 @@ function autoInitializeFromEnv(): void {
         createError({
           type: "config",
           message:
-            "Google provider not installed. Add @veryfront/ext-ai-google to use google/* models.",
+            "Google provider not installed. Add @veryfront/ext-llm-google to use google/* models.",
         }),
       );
     });
@@ -234,7 +234,7 @@ function isMissingProviderConfiguration(errorData: ReturnType<typeof fromError>)
  */
 export function findAvailableCloudModel(): string | null {
   autoInitializeFromEnv();
-  const registry = tryResolve<AIProviderRegistry>(AIProviderRegistryName);
+  const registry = tryResolve<LLMProviderRegistry>(LLMProviderRegistryName);
   for (const { provider, model, hasKey } of CLOUD_UPGRADE_CANDIDATES) {
     if (!hasKey()) continue;
     if (!manager.has(provider)) continue;
