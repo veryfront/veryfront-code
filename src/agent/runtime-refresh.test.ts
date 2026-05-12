@@ -56,7 +56,7 @@ describe("agent runtime refresh hooks", () => {
     const writeReport = tool({
       id: "write_report",
       description: "Write a report",
-      inputSchema: z.object({ path: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
       execute: async ({ path }, context) => ({
         path: `canonical/${path}`,
         projectId: context?.projectId,
@@ -136,7 +136,7 @@ describe("agent runtime refresh hooks", () => {
     const writeReport = tool({
       id: "write_report",
       description: "Write a report",
-      inputSchema: z.object({ path: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
       execute: async ({ path }, context) => ({
         path: `canonical/${path}`,
         projectId: context?.projectId,
