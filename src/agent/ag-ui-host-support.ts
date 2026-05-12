@@ -1,5 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { formatAgUiEvent } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import type { Message } from "./types.ts";
 import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";

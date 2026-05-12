@@ -2,7 +2,6 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type {
   InferSchema,
   RefinementCtx,
-  SchemaValidator,
 } from "#veryfront/extensions/schema/index.ts";
 import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";
 

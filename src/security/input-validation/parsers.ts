@@ -7,18 +7,6 @@ import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./
 // compatibility (engines.node >= 18.0.0).
 import { File } from "node:buffer";
 
-/** Duck-type check for validation errors with `.issues` (replaces `instanceof z.ZodError`). */
-function isValidationError(
-  error: unknown,
-): error is { issues: Array<{ path: (string | number)[]; message: string; code: string }> } {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "issues" in error &&
-    Array.isArray((error as { issues: unknown }).issues)
-  );
-}
-
 export async function parseJsonBody<T>(
   request: Request,
   schema: Schema<T>,

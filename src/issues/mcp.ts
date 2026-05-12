@@ -82,7 +82,7 @@ const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
 // Tool: issues_get
 // ============================================================================
 
-const getIssuesGetInput = defineSchema((v) =>
+const getIssuesGetInput = defineSchema((_v) =>
   getProjectDirSchema().extend({
     id: getIssueIdSchema().describe("Issue ID (e.g., ISSUE-001, TASK-042)"),
   })
@@ -208,7 +208,7 @@ const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
 // Tool: issues_close
 // ============================================================================
 
-const getIssuesCloseInput = defineSchema((v) =>
+const getIssuesCloseInput = defineSchema((_v) =>
   getProjectDirSchema().extend({
     id: getIssueIdSchema().describe("Issue ID to close"),
   })
@@ -239,7 +239,7 @@ const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
 // Tool: issues_delete
 // ============================================================================
 
-const getIssuesDeleteInput = defineSchema((v) =>
+const getIssuesDeleteInput = defineSchema((_v) =>
   getProjectDirSchema().extend({
     id: getIssueIdSchema().describe("Issue ID to delete"),
   })

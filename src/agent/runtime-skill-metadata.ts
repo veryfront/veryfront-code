@@ -1,6 +1,5 @@
 import { extract } from "#std/front-matter/yaml.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 function normalizeAllowedTools(value: string | string[] | undefined): string[] {
   if (value === undefined) {

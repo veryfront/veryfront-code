@@ -18,7 +18,7 @@ const getRawHistoryPartSchema = defineSchema((v) =>
     type: v.string(),
   }).passthrough()
 );
-const rawHistoryPartSchema = getRawHistoryPartSchema();
+const _rawHistoryPartSchema = getRawHistoryPartSchema();
 
 const getChannelAttachmentSchema = defineSchema((v) =>
   v.object({
@@ -134,7 +134,7 @@ const getChannelErrorPartSchema = defineSchema((v) =>
     message: v.string(),
   })
 );
-const channelErrorPartSchema = getChannelErrorPartSchema();
+const _channelErrorPartSchema = getChannelErrorPartSchema();
 
 export const getChannelResponsePartSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
