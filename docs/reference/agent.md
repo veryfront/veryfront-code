@@ -34,6 +34,7 @@ import {
   createAgUiSseErrorResponse,
   createMemory,
   createNodeAgentServiceRuntimeInfrastructure,
+  createNodeVeryfrontCloudAgentServiceRuntime,
   defineAgentService,
   DurableRunSink,
   executeAgUiDetachedStart,
@@ -57,10 +58,12 @@ import {
   registerAgent,
   runHostedChildLifecycle,
   runHostedLifecycle,
+  runNodeVeryfrontCloudAgentServiceMain,
   RunResumeSessionManager,
   RuntimeAgentRunInvocationSchema,
   shouldSkipHostedChildTerminalPersistence,
   startNodeAgentService,
+  startNodeVeryfrontCloudAgentService,
   waitForHumanInput,
 } from "veryfront/agent";
 ```
@@ -262,6 +265,36 @@ one registry contract. `service.createRuntime({ routes })` creates a
 request-native runtime with readiness, liveness, CORS, shutdown state, and
 host-supplied routes. For Node deployments, `startNodeAgentService()` wraps that
 runtime in the shared Veryfront service server with graceful shutdown.
+
+For a Veryfront Cloud-backed Node service that should use the default
+configuration, telemetry, model routing, sandbox, Studio MCP, project steering,
+durable-run, and prepared-execution wiring, use
+`runNodeVeryfrontCloudAgentServiceMain()` from a process entrypoint and keep the
+agent behavior in `agents/<agent-id>.md` or `agents/<agent-id>.ts`:
+
+```ts
+import { createBashTool } from "bash-tool";
+import { runNodeVeryfrontCloudAgentServiceMain } from "veryfront/agent";
+
+await runNodeVeryfrontCloudAgentServiceMain({
+  serviceName: "support-agent",
+  agentId: "support",
+  entryUrl: import.meta.url,
+  createBashTool,
+});
+```
+
+`createNodeVeryfrontCloudAgentServiceRuntime()` returns the same runtime bundle
+without starting a server, which is useful for tests and custom host shells.
+`startNodeVeryfrontCloudAgentService()` starts the Node server directly without
+the process bootstrap wrapper.
+
+The Veryfront Cloud service preset discovers the same project primitives as the
+project runtime: `agents/`, `tools/`, `skills/`, `resources/`, `prompts/`,
+`workflows/`, and `tasks/`. Code agents are preferred when the same `agentId` is
+available from discovery; set `agentSource: "markdown"` to force markdown
+definitions. Use `veryfront.config.ts` `ai.<primitive>.discovery.paths` for
+non-standard project paths.
 
 For a conversations/control-plane host composition that combines
 `runHostedLifecycle()` with the public durable-run helpers, see
@@ -790,6 +823,35 @@ helpers; for example `createAgentServiceRouteSet()`,
 `prepareAgentServiceConversationRootRunContext()`,
 `toMirroredAgentServiceStreamPart()`, and `createAgentServiceAuth()`.
 
+### `createNodeVeryfrontCloudAgentServiceRuntime(options)`
+
+Create a full Veryfront Cloud agent-service runtime bundle for separately
+deployed agents. The helper discovers project primitives using the same
+conventions and `veryfront.config.ts` discovery settings as a Veryfront project.
+It can use a code agent from `agents/*.ts` or fall back to a markdown-backed
+`agents/*.md` definition, uses the default service config and project-steering
+adapter, wires local tools (`form_input`, `load_skill`, `sleep`, discovered
+project tools, and `invoke_agent`), sandbox tools, Studio MCP tools, remote MCP
+definitions, prepared chat execution, AG-UI streaming, and detached durable-run
+execution.
+
+Hosts provide the service name, agent id, Node entry URL or base directory, and
+a bash-tool factory. Use this helper when tests or custom hosts need the runtime
+bundle without starting the Node server.
+
+### `startNodeVeryfrontCloudAgentService(options)`
+
+Start a Veryfront Cloud agent-service runtime with the shared Node service
+server and graceful shutdown handling. This helper is Node-specific. Use the
+lower-level agent-service runtime APIs for non-Node hosts.
+
+### `runNodeVeryfrontCloudAgentServiceMain(options)`
+
+Run the default Node process bootstrap for a Veryfront Cloud agent service. The
+helper loads `.env` files, initializes OpenTelemetry, registers trace-context
+logging, starts the Node service server, and handles startup failures through
+the provided process target.
+
 ### `parseAgentServiceConfig(env)`
 
 Parse the default agent service environment contract. The helper
@@ -1035,6 +1097,7 @@ Clear all stored messages from memory.
 | `deriveAgentServiceAgUiChatContext`                                   | Derive chat context from canonical AG-UI runtime input                   |
 | `filterAgentTraceAttributes`                                          | Filter unknown records to valid agent trace attributes                   |
 | `createNodeAgentServiceRuntimeInfrastructure`                         | Create Node service config, logger, tracer, and telemetry bundle         |
+| `createNodeVeryfrontCloudAgentServiceRuntime`                         | Create a full Veryfront Cloud agent-service runtime bundle               |
 | `loadAgentServiceEnvFiles`                                            | Load service env files while preserving host process env                 |
 | `initializeNodeAgentServiceOpenTelemetry`                             | Initialize Node OpenTelemetry for an agent service                       |
 | `parseAgentServiceChatRequestFromRequest`                             | Parse the agent-service chat request body and auth context               |
@@ -1046,7 +1109,9 @@ Clear all stored messages from memory.
 | `parseAgUiRuntimeRequest`                                             | Parse and validate the canonical runtime AG-UI request body              |
 | `parseAgUiRuntimeRequestOrError`                                      | Parse runtime AG-UI input or return a `400` validation `Response`        |
 | `parseRuntimeAgentRunInvocation`                                      | Parse and validate a control-plane runtime agent invocation body         |
+| `runNodeVeryfrontCloudAgentServiceMain`                               | Run the default Node process bootstrap for a Veryfront Cloud service     |
 | `startNodeAgentService`                                               | Start an agent service with the Node service server adapter              |
+| `startNodeVeryfrontCloudAgentService`                                 | Start a Veryfront Cloud agent service with the Node server adapter       |
 | `parseRuntimeAgentRunInvocationOrError`                               | Parse a runtime agent invocation or return a `400` validation `Response` |
 | `resolveRuntimeAgentDefinitionsDir`                                   | Resolve a hosted service `agents/` directory from source/bundled paths   |
 | `createChatHandler`                                                   | Create a POST handler for a chat API route.                              |

@@ -426,6 +426,54 @@ export const veryfrontConfigSchema = z
           })
           .partial()
           .optional(),
+        resources: z
+          .object({
+            discovery: z
+              .object({
+                enabled: z.boolean().optional(),
+                paths: z.array(z.string()).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .partial()
+          .optional(),
+        prompts: z
+          .object({
+            discovery: z
+              .object({
+                enabled: z.boolean().optional(),
+                paths: z.array(z.string()).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .partial()
+          .optional(),
+        workflows: z
+          .object({
+            discovery: z
+              .object({
+                enabled: z.boolean().optional(),
+                paths: z.array(z.string()).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .partial()
+          .optional(),
+        tasks: z
+          .object({
+            discovery: z
+              .object({
+                enabled: z.boolean().optional(),
+                paths: z.array(z.string()).optional(),
+              })
+              .partial()
+              .optional(),
+          })
+          .partial()
+          .optional(),
         mcp: z
           .object({
             enabled: z.boolean().optional(),

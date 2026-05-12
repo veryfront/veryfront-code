@@ -19,6 +19,10 @@ export type {
 
 // Re-export main discovery function
 export { discoverAll } from "./discovery-engine.ts";
+export {
+  createProjectDiscoveryConfig,
+  DEFAULT_PROJECT_DISCOVERY_DIRS,
+} from "./project-discovery-config.ts";
 
 // Re-export utilities
 export { clearTrackedAgents, filenameToId, filePathToPattern } from "./discovery-utils.ts";

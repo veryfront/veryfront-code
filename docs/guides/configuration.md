@@ -107,7 +107,7 @@ defineConfig({
 });
 ```
 
-### AI discovery (tools, agents, skills)
+### AI discovery
 
 Control which directories are scanned for AI primitives:
 
@@ -132,13 +132,33 @@ defineConfig({
         paths: ["skills", "internal/skills"],
       },
     },
+    prompts: {
+      discovery: {
+        paths: ["prompts"],
+      },
+    },
+    resources: {
+      discovery: {
+        paths: ["resources"],
+      },
+    },
+    workflows: {
+      discovery: {
+        paths: ["workflows"],
+      },
+    },
+    tasks: {
+      discovery: {
+        paths: ["tasks"],
+      },
+    },
   },
 });
 ```
 
 Notes:
 - `paths` are relative to your project root.
-- Defaults are `tools`, `agents`, and `skills`.
+- Defaults are `tools`, `agents`, `skills`, `prompts`, `resources`, `workflows`, and `tasks`.
 - Set `enabled: false` to disable discovery for that primitive.
 
 ### AI providers and MCP

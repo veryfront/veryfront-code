@@ -1,5 +1,5 @@
 import { serverLogger } from "#veryfront/utils";
-import { clearTrackedAgents } from "#veryfront/discovery";
+import { clearTrackedAgents, createProjectDiscoveryConfig } from "#veryfront/discovery";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { HandlerContext } from "../../types.ts";
 
@@ -15,31 +15,6 @@ const logger = serverLogger.component("api-wrapper");
  * allows retry on failure (the key is deleted if discovery rejects).
  */
 const discoveredProjects = new Map<string, Promise<void>>();
-
-function isDiscoveryEnabled(
-  discovery: { enabled?: boolean } | undefined,
-): boolean {
-  return discovery?.enabled ?? true;
-}
-
-function buildDiscoveryConfig(ctx: HandlerContext) {
-  const discoveryConfig = ctx.config?.ai;
-  const toolDiscovery = discoveryConfig?.tools?.discovery;
-  const agentDiscovery = discoveryConfig?.agents?.discovery;
-  const skillDiscovery = discoveryConfig?.skills?.discovery;
-
-  return {
-    baseDir: ctx.projectDir,
-    toolDirs: isDiscoveryEnabled(toolDiscovery) ? (toolDiscovery?.paths ?? ["tools"]) : [],
-    agentDirs: isDiscoveryEnabled(agentDiscovery) ? (agentDiscovery?.paths ?? ["agents"]) : [],
-    skillDirs: isDiscoveryEnabled(skillDiscovery) ? (skillDiscovery?.paths ?? ["skills"]) : [],
-    resourceDirs: ["resources"],
-    promptDirs: ["prompts"],
-    workflowDirs: ["workflows"],
-    fsAdapter: ctx.adapter.fs,
-    verbose: false,
-  };
-}
 
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
@@ -99,7 +74,11 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
     agentRegistry.clear();
     toolRegistry.clear();
 
-    const discoveryOptions = buildDiscoveryConfig(ctx);
+    const discoveryOptions = createProjectDiscoveryConfig({
+      projectDir: ctx.projectDir,
+      config: ctx.config,
+      fsAdapter: ctx.adapter.fs,
+    });
     const result = await discoverAll(discoveryOptions);
     const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
       discoveryOptions.agentDirs.length > 0;
