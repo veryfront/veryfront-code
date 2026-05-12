@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { SchemaValidator } from "#veryfront/extensions/interfaces/index.ts";
+import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { createSleepTool, DEFAULT_SLEEP_TOOL_MAX_SECONDS, sleepTool } from "./sleep.ts";
 import { createZodAdapter } from "../../extensions/ext-zod/src/adapter.ts";
 

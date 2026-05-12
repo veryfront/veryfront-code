@@ -8,7 +8,7 @@ Core modules never import zod directly. Instead they declare schemas via `define
 
 ```ts
 import { defineSchema } from "veryfront/schemas";
-import type { InferSchema } from "veryfront/extensions/interfaces";
+import type { InferSchema } from "veryfront/extensions/schema";
 
 const getUserSchema = defineSchema((v) =>
   v.object({
