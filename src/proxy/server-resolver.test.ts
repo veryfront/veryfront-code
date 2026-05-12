@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "@std/assert";
 import { ServerResolver } from "./server-resolver.ts";
 

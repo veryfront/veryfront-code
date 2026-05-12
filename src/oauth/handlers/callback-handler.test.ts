@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#std/assert";
 import { createOAuthCallbackHandler } from "./callback-handler.ts";
 import { MemoryTokenStore } from "../token-store/memory.ts";

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
 import { isCacheWriteRaceError, verifyCacheFileExists, writeCacheFile } from "./cache-file-ops.ts";

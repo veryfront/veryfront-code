@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#std/assert";
 import type { EnvironmentConfig } from "#veryfront/config/environment-config.ts";
 import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";

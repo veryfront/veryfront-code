@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/pipeline/index.test */
 
 import { assertEquals } from "#veryfront/testing/assert.ts";

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Orchestrator tests — pipeline wiring with injectable discovery and factory.
  *

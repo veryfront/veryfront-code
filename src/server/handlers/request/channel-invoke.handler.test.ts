@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/agent";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";

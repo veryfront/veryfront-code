@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert";
 import { ensureDir } from "#std/fs";
 import { describe, it } from "#veryfront/testing/bdd";

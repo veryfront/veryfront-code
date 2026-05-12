@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Type-level tests for the {@link ModuleLexer} contract.
  *

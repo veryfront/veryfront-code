@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Tests for the browser inference Worker script's extractText logic.
  *

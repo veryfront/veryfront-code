@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "@std/assert";
 import {
   buildRuntimeLoadedSkillResponse,

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "@std/assert";
 import { join } from "#veryfront/compat/path/index.ts";
 import { DiskCacheBackend } from "./disk.ts";

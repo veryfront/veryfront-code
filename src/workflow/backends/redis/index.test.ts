@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /****
  * Redis Workflow Backend Tests
  *

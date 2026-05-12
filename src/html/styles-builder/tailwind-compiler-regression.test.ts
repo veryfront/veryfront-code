@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import "./__tests__/css-processor-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";

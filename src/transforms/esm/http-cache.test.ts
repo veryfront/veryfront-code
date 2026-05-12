@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /** @module transforms/esm/http-cache.test */
 
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";

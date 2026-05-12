@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Regression tests for framework-owned env reads under project overlays.
  *

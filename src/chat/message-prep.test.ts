@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertMatch, assertStringIncludes } from "#std/assert";
 import type { ProviderModelMessage } from "./types.ts";
 import {

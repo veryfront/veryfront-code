@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Tests for the RendererAdapter layer, exercising lifecycle, error handling,
  * and concurrent-initialization deduplication through the RendererInitializer

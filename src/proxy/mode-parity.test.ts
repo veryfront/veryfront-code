@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * P1-1: Proxy-Renderer Mode Parity Tests
  *

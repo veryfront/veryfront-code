@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { getSlugFromPath, normalizeSlug, pathToSlug, slugToPath } from "./slug-normalizer.ts";

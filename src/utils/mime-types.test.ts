@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "@std/testing/bdd";
 import { assertEquals } from "@std/assert";
 import { charset, extension, lookup } from "./mime-types.ts";

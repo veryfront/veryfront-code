@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * React 18 SSR Compatibility Tests
  * Tests for Suspense, Error Boundaries, and Streaming SSR

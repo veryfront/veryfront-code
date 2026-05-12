@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "../testing/assert.ts";
 import type { ChatUiMessage } from "../chat/types.ts";
 import { generateText } from "../runtime/runtime-bridge.ts";

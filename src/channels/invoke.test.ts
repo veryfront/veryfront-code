@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/agent";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";

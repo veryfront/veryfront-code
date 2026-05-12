@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Unit tests for merge command
  * @module cli/commands/merge.test

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * P1-4: Cache Isolation — Content Source ID Tests
  *

@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "@std/assert";
 import { jumpHash, RendererRouter } from "./renderer-router.ts";
 

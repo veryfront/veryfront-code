@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import "../../../../transforms/plugins/__tests__/code-parser-setup.ts";
 import { mkdir, writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";

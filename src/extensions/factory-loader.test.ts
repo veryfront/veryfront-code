@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 /**
  * Factory loader tests — dynamic import, default export handling, error paths.
  *
