@@ -37,6 +37,29 @@ describe("findIllegalZodImports", () => {
     assertEquals(result.length, 1);
   });
 
+  it("catches multiline zod imports", () => {
+    const files = [
+      {
+        path: "src/types.ts",
+        content: `import {
+  z,
+  type ZodSchema,
+} from "zod";
+`,
+      },
+    ];
+    const result = findIllegalZodImports(files);
+    assertEquals(result, [{ path: "src/types.ts", line: 1 }]);
+  });
+
+  it("catches side-effect zod imports", () => {
+    const files = [
+      { path: "src/setup.ts", content: 'import "zod";' },
+    ];
+    const result = findIllegalZodImports(files);
+    assertEquals(result, [{ path: "src/setup.ts", line: 1 }]);
+  });
+
   it("catches type-only dynamic zod imports", () => {
     const files = [
       { path: "src/types.ts", content: 'type Schema = import("zod").ZodSchema;' },
