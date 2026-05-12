@@ -37,15 +37,21 @@ export type HostedAgentServiceRuntimeConfig = HostedServiceAuthConfig & {
   ALLOWED_ORIGINS: string[];
 };
 
+export type AgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig;
+
 export type HostedAgentServiceRuntimeLogger = VeryfrontServiceServerLogger & {
   info(message: string, metadata?: Record<string, unknown>): void;
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+export type AgentServiceRuntimeLogger = HostedAgentServiceRuntimeLogger;
+
 export type HostedAgentServiceRuntimeTrace = <TResult>(
   operationName: string,
   operation: () => Promise<TResult>,
 ) => Promise<TResult>;
+
+export type AgentServiceRuntimeTrace = HostedAgentServiceRuntimeTrace;
 
 export type CreateHostedAgentServiceRuntimeOptions<
   TExecution extends object,
@@ -72,6 +78,11 @@ export type CreateHostedAgentServiceRuntimeOptions<
   drainTimeoutMs?: number;
 };
 
+export type CreateAgentServiceRuntimeOptions<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+> = CreateHostedAgentServiceRuntimeOptions<TExecution, TConfig>;
+
 export type HostedAgentServiceRuntimeBundle<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -85,6 +96,11 @@ export type HostedAgentServiceRuntimeBundle<
   runtime: AgentServiceRuntime;
 };
 
+export type AgentServiceRuntimeBundle<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+> = HostedAgentServiceRuntimeBundle<TExecution, TConfig>;
+
 export type StartNodeHostedAgentServiceOptions<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -94,12 +110,22 @@ export type StartNodeHostedAgentServiceOptions<
   signals?: readonly NodeJS.Signals[];
 };
 
+export type StartNodeAgentServiceOptions<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+> = StartNodeHostedAgentServiceOptions<TExecution, TConfig>;
+
 export type StartNodeHostedAgentServiceResult<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
 > = HostedAgentServiceRuntimeBundle<TExecution, TConfig> & {
   nodeServer: NodeAgentServiceServer;
 };
+
+export type StartNodeAgentServiceResult<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+> = StartNodeHostedAgentServiceResult<TExecution, TConfig>;
 
 function defaultTrace<TResult>(
   _operationName: string,
@@ -169,6 +195,15 @@ export function createHostedAgentServiceRuntime<
   };
 }
 
+export function createAgentServiceRuntime<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+>(
+  options: CreateAgentServiceRuntimeOptions<TExecution, TConfig>,
+): AgentServiceRuntimeBundle<TExecution, TConfig> {
+  return createHostedAgentServiceRuntime(options);
+}
+
 export async function startNodeHostedAgentService<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -191,4 +226,13 @@ export async function startNodeHostedAgentService<
     ...bundle,
     nodeServer,
   };
+}
+
+export async function startNodeAgentService<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+>(
+  options: StartNodeAgentServiceOptions<TExecution, TConfig>,
+): Promise<StartNodeAgentServiceResult<TExecution, TConfig>> {
+  return startNodeHostedAgentService(options);
 }

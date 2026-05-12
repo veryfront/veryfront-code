@@ -1,7 +1,10 @@
 import { assertEquals } from "@std/assert";
 import { afterEach, beforeEach, describe, it } from "@std/testing/bdd";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { loadHostedAgentServiceEnvFiles } from "./hosted-agent-service-env-files.ts";
+import {
+  loadAgentServiceEnvFiles,
+  loadHostedAgentServiceEnvFiles,
+} from "./hosted-agent-service-env-files.ts";
 
 const TEST_KEYS = [
   "VF_AGENT_ENV_FILE_TEST_SHARED",
@@ -75,5 +78,17 @@ describe("loadHostedAgentServiceEnvFiles", () => {
 
     assertEquals(result.loadedFiles, [`${tempDir}/custom.env`]);
     assertEquals(getEnv("VF_AGENT_ENV_FILE_TEST_SHARED"), "custom");
+  });
+
+  it("exposes an agent service env loader alias without the hosted prefix", async () => {
+    await Deno.writeTextFile(`${tempDir}/custom.env`, "VF_AGENT_ENV_FILE_TEST_LOCAL_ONLY=alias");
+
+    const result = await loadAgentServiceEnvFiles({
+      cwd: tempDir,
+      files: ["custom.env"],
+    });
+
+    assertEquals(result.loadedVariables, 1);
+    assertEquals(getEnv("VF_AGENT_ENV_FILE_TEST_LOCAL_ONLY"), "alias");
   });
 });

@@ -1,8 +1,22 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resolveNodeHostedAgentServiceTelemetryConfig } from "./node-hosted-agent-service-telemetry.ts";
+import {
+  resolveNodeAgentServiceTelemetryConfig,
+  resolveNodeHostedAgentServiceTelemetryConfig,
+} from "./node-hosted-agent-service-telemetry.ts";
 
 describe("agent/node-hosted-agent-service-telemetry", () => {
+  it("exposes a node agent service telemetry resolver alias without the hosted prefix", () => {
+    const config = resolveNodeAgentServiceTelemetryConfig({
+      env: { NODE_ENV: "production" },
+      defaultServiceName: "agent-service",
+      defaultEnabled: false,
+    });
+
+    assertEquals(config.enabled, false);
+    assertEquals(config.serviceName, "agent-service");
+  });
+
   it("defaults to production-enabled hosted service telemetry", () => {
     const config = resolveNodeHostedAgentServiceTelemetryConfig({
       env: { NODE_ENV: "production" },

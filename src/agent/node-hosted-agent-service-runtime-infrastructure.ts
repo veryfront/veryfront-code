@@ -24,6 +24,9 @@ export type CreateNodeHostedAgentServiceRuntimeInfrastructureOptions = {
   processTarget?: NodeHostedAgentServiceTelemetryProcessTarget;
 };
 
+export type CreateNodeAgentServiceRuntimeInfrastructureOptions =
+  CreateNodeHostedAgentServiceRuntimeInfrastructureOptions;
+
 export type NodeHostedAgentServiceRuntimeInfrastructure = {
   getConfig(): HostedAgentServiceConfig;
   logger: Logger;
@@ -32,6 +35,8 @@ export type NodeHostedAgentServiceRuntimeInfrastructure = {
   getTraceContext(): { traceId?: string; spanId?: string };
   initializeOpenTelemetry(): Promise<boolean>;
 };
+
+export type NodeAgentServiceRuntimeInfrastructure = NodeHostedAgentServiceRuntimeInfrastructure;
 
 export function createNodeHostedAgentServiceRuntimeInfrastructure(
   options: CreateNodeHostedAgentServiceRuntimeInfrastructureOptions,
@@ -60,4 +65,10 @@ export function createNodeHostedAgentServiceRuntimeInfrastructure(
         processTarget: options.processTarget,
       }),
   };
+}
+
+export function createNodeAgentServiceRuntimeInfrastructure(
+  options: CreateNodeAgentServiceRuntimeInfrastructureOptions,
+): NodeAgentServiceRuntimeInfrastructure {
+  return createNodeHostedAgentServiceRuntimeInfrastructure(options);
 }

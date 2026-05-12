@@ -279,41 +279,69 @@ export {
 } from "./default-hosted-project-steering-refresh.ts";
 
 export {
+  type AgentServiceRuntimeBundle,
+  type AgentServiceRuntimeConfig,
+  type AgentServiceRuntimeLogger,
+  type AgentServiceRuntimeTrace,
+  createAgentServiceRuntime,
+  type CreateAgentServiceRuntimeOptions,
   createHostedAgentServiceRuntime,
   type CreateHostedAgentServiceRuntimeOptions,
   type HostedAgentServiceRuntimeBundle,
   type HostedAgentServiceRuntimeConfig,
   type HostedAgentServiceRuntimeLogger,
   type HostedAgentServiceRuntimeTrace,
+  startNodeAgentService,
+  type StartNodeAgentServiceOptions,
+  type StartNodeAgentServiceResult,
   startNodeHostedAgentService,
   type StartNodeHostedAgentServiceOptions,
   type StartNodeHostedAgentServiceResult,
 } from "./hosted-agent-service-runtime.ts";
 export {
+  type AgentServiceConfig,
+  type AgentServiceConfigInput,
+  agentServiceConfigSchema,
   type HostedAgentServiceConfig,
   type HostedAgentServiceConfigInput,
   hostedAgentServiceConfigSchema,
+  parseAgentServiceConfig,
   parseHostedAgentServiceConfig,
 } from "./hosted-agent-service-config.ts";
 export {
+  type AgentServiceEnvFileLoadOptions,
+  type AgentServiceEnvFileLoadResult,
   type HostedAgentServiceEnvFileLoadOptions,
   type HostedAgentServiceEnvFileLoadResult,
+  loadAgentServiceEnvFiles,
   loadHostedAgentServiceEnvFiles,
 } from "./hosted-agent-service-env-files.ts";
 export {
+  initializeNodeAgentServiceOpenTelemetry,
+  type InitializeNodeAgentServiceTelemetryOptions,
   initializeNodeHostedAgentServiceOpenTelemetry,
   type InitializeNodeHostedAgentServiceTelemetryOptions,
+  type NodeAgentServiceInstrumentationConfig,
+  type NodeAgentServiceTelemetryConfig,
+  type NodeAgentServiceTelemetryEnv,
+  type NodeAgentServiceTelemetryLogger,
+  type NodeAgentServiceTelemetryProcessTarget,
   type NodeHostedAgentServiceInstrumentationConfig,
   type NodeHostedAgentServiceTelemetryConfig,
   type NodeHostedAgentServiceTelemetryEnv,
   type NodeHostedAgentServiceTelemetryLogger,
   type NodeHostedAgentServiceTelemetryProcessTarget,
+  resolveNodeAgentServiceTelemetryConfig,
+  type ResolveNodeAgentServiceTelemetryConfigOptions,
   resolveNodeHostedAgentServiceTelemetryConfig,
   type ResolveNodeHostedAgentServiceTelemetryConfigOptions,
 } from "./node-hosted-agent-service-telemetry.ts";
 export {
+  createNodeAgentServiceRuntimeInfrastructure,
+  type CreateNodeAgentServiceRuntimeInfrastructureOptions,
   createNodeHostedAgentServiceRuntimeInfrastructure,
   type CreateNodeHostedAgentServiceRuntimeInfrastructureOptions,
+  type NodeAgentServiceRuntimeInfrastructure,
   type NodeHostedAgentServiceRuntimeInfrastructure,
 } from "./node-hosted-agent-service-runtime-infrastructure.ts";
 export {
