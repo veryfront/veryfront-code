@@ -27,7 +27,7 @@ function readRequestHeader(init: RequestInit | undefined, name: string): string 
   return new Headers(init.headers).get(name);
 }
 
-describe("ext-ai-google/google-provider", () => {
+describe("ext-llm-google/google-provider", () => {
   it("creates a Google-compatible language runtime without SDK helpers for generate", async () => {
     let requestedUrl = "";
     let requestedInit: RequestInit | undefined;

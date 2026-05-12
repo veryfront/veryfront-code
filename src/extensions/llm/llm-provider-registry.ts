@@ -1,18 +1,18 @@
 /**
- * Default Map-backed implementation of the AIProviderRegistry contract.
+ * Default Map-backed implementation of the LLMProviderRegistry contract.
  *
  * Preserves insertion order via Map (used by `list()`). Duplicate ids are
  * first-write-wins so higher-priority extensions keep their provider binding.
  *
- * @module extensions/ai/ai-provider-registry
+ * @module extensions/llm/llm-provider-registry
  */
 
-import type { AIProvider, AIProviderRegistry } from "./ai-provider.ts";
+import type { LLMProvider, LLMProviderRegistry } from "./llm-provider.ts";
 
-class AIProviderRegistryImpl implements AIProviderRegistry {
-  private readonly providers = new Map<string, AIProvider>();
+class LLMProviderRegistryImpl implements LLMProviderRegistry {
+  private readonly providers = new Map<string, LLMProvider>();
 
-  register(provider: AIProvider): void {
+  register(provider: LLMProvider): void {
     if (this.providers.has(provider.id)) {
       return;
     }
@@ -23,16 +23,16 @@ class AIProviderRegistryImpl implements AIProviderRegistry {
     this.providers.delete(id);
   }
 
-  get(id: string): AIProvider | undefined {
+  get(id: string): LLMProvider | undefined {
     return this.providers.get(id);
   }
 
-  require(id: string): AIProvider {
+  require(id: string): LLMProvider {
     const p = this.providers.get(id);
     if (p) return p;
     const known = [...this.providers.keys()].join(", ") || "(none)";
     throw new Error(
-      `No AIProvider registered for "${id}". Known providers: ${known}.`,
+      `No LLMProvider registered for "${id}". Known providers: ${known}.`,
     );
   }
 
@@ -40,11 +40,11 @@ class AIProviderRegistryImpl implements AIProviderRegistry {
     return this.providers.has(id);
   }
 
-  list(): AIProvider[] {
+  list(): LLMProvider[] {
     return [...this.providers.values()];
   }
 }
 
-export function createAIProviderRegistry(): AIProviderRegistry {
-  return new AIProviderRegistryImpl();
+export function createLLMProviderRegistry(): LLMProviderRegistry {
+  return new LLMProviderRegistryImpl();
 }

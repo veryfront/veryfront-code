@@ -10,9 +10,9 @@ import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
-import type { AIProvider, AIProviderRegistry } from "./interfaces/index.ts";
-import { AIProviderRegistryName } from "./interfaces/index.ts";
-import { createAIProviderRegistry } from "./ai/ai-provider-registry.ts";
+import type { LLMProvider, LLMProviderRegistry } from "./interfaces/index.ts";
+import { LLMProviderRegistryName } from "./interfaces/index.ts";
+import { createLLMProviderRegistry } from "./llm/llm-provider-registry.ts";
 import { createBuiltinExtensions } from "./builtin-extensions.ts";
 
 const noopLogger = {
@@ -371,7 +371,7 @@ describe("orchestrateExtensions()", () => {
   });
 
   it("lets higher-priority provider extensions override builtin provider ids", async () => {
-    const customProvider: AIProvider = {
+    const customProvider: LLMProvider = {
       id: "anthropic",
       createModel(modelId: string) {
         return {
@@ -384,19 +384,19 @@ describe("orchestrateExtensions()", () => {
       },
     };
     const custom = stubExt("custom-anthropic", {
-      capabilities: [{ type: "contract", name: "AIProvider:anthropic" }],
+      capabilities: [{ type: "contract", name: "LLMProvider:anthropic" }],
       setup(ctx) {
-        ctx.require<AIProviderRegistry>(AIProviderRegistryName).register(customProvider);
+        ctx.require<LLMProviderRegistry>(LLMProviderRegistryName).register(customProvider);
       },
     });
-    const registry = createAIProviderRegistry();
+    const registry = createLLMProviderRegistry();
 
     const loader = await orchestrateExtensions({
       projectDir: "/fake",
       config: { extensions: [custom] },
       logger: noopLogger,
       discovery: emptyDiscovery(),
-      primeContracts: { [AIProviderRegistryName]: registry },
+      primeContracts: { [LLMProviderRegistryName]: registry },
       builtinExtensions: createBuiltinExtensions(),
     });
 

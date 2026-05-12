@@ -1,7 +1,7 @@
 import type { EmbeddingRuntime, ModelRuntime } from "#veryfront/provider/types.ts";
-import { OpenAIProvider } from "@veryfront/ext-ai-openai";
+import { OpenAIProvider } from "@veryfront/ext-llm-openai";
 
-const openAIProvider = new OpenAIProvider();
+const openLLMProvider = new OpenAIProvider();
 
 interface VeryfrontCloudOpenAIConfig {
   apiToken: string;
@@ -13,7 +13,7 @@ export function createVeryfrontCloudOpenAIModel(
   modelId: string,
   config: VeryfrontCloudOpenAIConfig,
 ): ModelRuntime {
-  return openAIProvider.createModel(modelId, {
+  return openLLMProvider.createModel(modelId, {
     credential: config.apiToken,
     baseURL: config.baseURL,
     name: "veryfront-cloud",
@@ -25,7 +25,7 @@ export function createVeryfrontCloudOpenAIEmbeddingModel(
   modelId: string,
   config: VeryfrontCloudOpenAIConfig,
 ): EmbeddingRuntime {
-  return openAIProvider.createEmbedding(modelId, {
+  return openLLMProvider.createEmbedding(modelId, {
     credential: config.apiToken,
     baseURL: config.baseURL,
     name: "veryfront-cloud",

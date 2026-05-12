@@ -5,7 +5,7 @@ import { parseProviderError } from "../chat/provider-errors.ts";
 const EMPTY_RESPONSE_TERMINAL_ERROR_CODE = "EMPTY_RESPONSE";
 const EMPTY_RESPONSE_TERMINAL_ERROR_MESSAGE = "Assistant completed without producing a response";
 const EXTERNAL_SERVICE_ERROR_CODE = "EXTERNAL_SERVICE_ERROR";
-const EXTERNAL_SERVICE_ERROR_MESSAGE = "AI provider service error";
+const EXTERNAL_SERVICE_ERROR_MESSAGE = "LLM provider service error";
 const STREAM_ERROR_TERMINAL_ERROR_CODE = "STREAM_ERROR";
 
 export type HostedStreamTerminalError = {

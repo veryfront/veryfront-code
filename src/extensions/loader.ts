@@ -22,7 +22,7 @@ export class ExtensionLoader {
   /**
    * Register contracts that will be re-applied after each `setupAll()`
    * teardown pass. Used by `orchestrateExtensions()` to seed infrastructure
-   * (e.g. `AIProviderRegistry`) before per-extension `setup()` runs.
+   * (e.g. `LLMProviderRegistry`) before per-extension `setup()` runs.
    */
   primeContracts(contracts: Record<string, unknown>): void {
     this.primed = { ...this.primed, ...contracts };
