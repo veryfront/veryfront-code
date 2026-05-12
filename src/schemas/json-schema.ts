@@ -6,20 +6,8 @@
  * @module schemas/json-schema
  */
 
-import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type {
-  JsonSchema,
-  Schema,
-  SchemaValidator,
-} from "#veryfront/extensions/schema/index.ts";
-
-function requireValidator(): SchemaValidator {
-  const v = tryResolve<SchemaValidator>("SchemaValidator");
-  if (!v) {
-    throw new Error("SchemaValidator contract unresolved — install ext-zod");
-  }
-  return v;
-}
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
+import { resolveSchemaValidator } from "./define.ts";
 
 /**
  * Convert an opaque `Schema<T>` to a JSON Schema document.
@@ -29,7 +17,7 @@ function requireValidator(): SchemaValidator {
  * by `defineSchema` or any other contract-aware builder.
  */
 export function schemaToJsonSchema(schema: Schema<unknown>): JsonSchema {
-  return requireValidator().toJsonSchema(schema);
+  return resolveSchemaValidator().toJsonSchema(schema);
 }
 
 /**
@@ -39,7 +27,7 @@ export function schemaToJsonSchema(schema: Schema<unknown>): JsonSchema {
  * `isOptional` implementation.
  */
 export function isOptionalSchema(schema: Schema<unknown>): boolean {
-  return requireValidator().isOptional(schema);
+  return resolveSchemaValidator().isOptional(schema);
 }
 
 export type { JsonSchema };
