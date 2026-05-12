@@ -7,6 +7,8 @@
  * Usage: deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts
  */
 
+import { normalizeNpmPackageMetadata } from "../build/npm-package-metadata.ts";
+
 const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
 const imports: Record<string, string> = denoConfig.imports ?? {};
 
@@ -27,12 +29,12 @@ if (Object.keys(npmDeps).length === 0) {
 
 // Create a temporary package.json for npm audit
 const tmpDir = await Deno.makeTempDir({ prefix: "vf-audit-" });
-const packageJson = {
+const packageJson = normalizeNpmPackageMetadata({
   name: "veryfront-audit",
   version: "0.0.0",
   private: true,
   dependencies: npmDeps,
-};
+});
 
 await Deno.writeTextFile(
   `${tmpDir}/package.json`,
