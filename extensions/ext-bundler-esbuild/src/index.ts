@@ -1,8 +1,8 @@
 /**
- * ext-esbuild — Bundler + ModuleLexer contract implementations backed by
+ * ext-bundler-esbuild — Bundler + ModuleLexer contract implementations backed by
  * esbuild and es-module-lexer.
  *
- * @module extensions/ext-esbuild
+ * @module extensions/ext-bundler-esbuild
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
@@ -11,7 +11,7 @@ import { EsbuildBundler } from "./esbuild-bundler.ts";
 import { EsModuleLexer } from "./es-module-lexer.ts";
 
 /**
- * Default export — the ext-esbuild extension factory.
+ * Default export — the ext-bundler-esbuild extension factory.
  *
  * Registers both the `Bundler` (esbuild-backed) and `ModuleLexer`
  * (es-module-lexer-backed) contracts.
@@ -21,7 +21,7 @@ const extEsbuild: ExtensionFactory = () => {
   const lexer = new EsModuleLexer();
 
   return {
-    name: "ext-esbuild",
+    name: "ext-bundler-esbuild",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "Bundler" },
@@ -34,7 +34,7 @@ const extEsbuild: ExtensionFactory = () => {
       if (!ctx.get("ModuleLexer")) {
         ctx.provide("ModuleLexer", lexer);
       }
-      ctx.logger.info("[ext-esbuild] Bundler + ModuleLexer registered");
+      ctx.logger.info("[ext-bundler-esbuild] Bundler + ModuleLexer registered");
     },
     async teardown() {
       await bundler.stop?.();

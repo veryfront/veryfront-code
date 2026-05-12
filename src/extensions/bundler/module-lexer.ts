@@ -6,9 +6,9 @@
  * a lexer only inspects specifier positions, while a bundler compiles and
  * emits output.
  *
- * Default implementation: `@veryfront/ext-esbuild` (backed by `es-module-lexer`).
+ * Default implementation: `@veryfront/ext-bundler-esbuild` (backed by `es-module-lexer`).
  *
- * @module extensions/interfaces/module-lexer
+ * @module extensions/bundler/module-lexer
  */
 
 /**

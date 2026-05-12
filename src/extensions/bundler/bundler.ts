@@ -1,9 +1,9 @@
 /**
  * Contract interface for module bundlers.
  *
- * Default implementation: `@veryfront/ext-esbuild`
+ * Default implementation: `@veryfront/ext-bundler-esbuild`
  *
- * @module extensions/interfaces/bundler
+ * @module extensions/bundler/bundler
  */
 
 /** Location of an error or warning in source. */

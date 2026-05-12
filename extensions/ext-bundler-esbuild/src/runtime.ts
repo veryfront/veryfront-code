@@ -4,7 +4,7 @@
  *
  * Only the bits needed by the esbuild binary extractor are included here.
  *
- * @module extensions/ext-esbuild/runtime
+ * @module extensions/ext-bundler-esbuild/runtime
  */
 
 type GlobalWithRuntime = typeof globalThis & {

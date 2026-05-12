@@ -5,7 +5,7 @@ import { AIProviderRegistryName, createAIProviderRegistry } from "./ai/index.ts"
 import { OpenAIProvider } from "../../extensions/ext-ai-openai/src/index.ts";
 import { AnthropicProvider } from "../../extensions/ext-ai-anthropic/src/index.ts";
 import { GoogleProvider } from "../../extensions/ext-ai-google/src/index.ts";
-import extEsbuild from "../../extensions/ext-esbuild/src/index.ts";
+import extEsbuild from "../../extensions/ext-bundler-esbuild/src/index.ts";
 import extBabel from "../../extensions/ext-babel/src/index.ts";
 import extMdx from "../../extensions/ext-mdx/src/index.ts";
 import extTailwind from "../../extensions/ext-tailwind/src/index.ts";
@@ -96,7 +96,7 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
   return [
     {
       source: "builtin",
-      origin: "veryfront/ext-esbuild",
+      origin: "veryfront/ext-bundler-esbuild",
       extension: extEsbuild(),
     },
     {

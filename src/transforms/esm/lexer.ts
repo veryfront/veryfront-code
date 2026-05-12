@@ -3,7 +3,7 @@ import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type {
   ImportSpecifier,
   ModuleLexer,
-} from "#veryfront/extensions/interfaces/module-lexer.ts";
+} from "#veryfront/extensions/bundler/module-lexer.ts";
 
 export type { ImportSpecifier };
 
