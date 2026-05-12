@@ -275,8 +275,8 @@
     "veryfront/chat/message-prep": "./src/chat/message-prep.ts",
     "veryfront/chat/final-step-fallback": "./src/chat/final-step-fallback.ts",
     "veryfront/chat/provider-errors": "./src/chat/provider-errors.ts",
-    "bash-tool": "npm:bash-tool@^1.3.16",
-    "just-bash": "npm:just-bash@^2.14.0"
+    "bash-tool": "npm:bash-tool@1.3.16",
+    "just-bash": "npm:just-bash@2.14.3"
   },
   "compilerOptions": {
     "jsx": "react-jsx",
