@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
@@ -76,6 +76,15 @@ function writeCodeAgentDefinition(
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
 
+function getRuntimeAgent(
+  bundle: Awaited<ReturnType<typeof createNodeVeryfrontCloudAgentServiceRuntime>>,
+  agentId: string,
+) {
+  const runtimeAgent = bundle.runtime.contract.agents[agentId];
+  assert(runtimeAgent);
+  return runtimeAgent;
+}
+
 Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent and binds service routes", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir);
@@ -96,12 +105,59 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent 
     assertEquals(bundle.config.VERYFRONT_API_URL, "https://api.example.com");
     assertEquals(bundle.runtime.contract.serviceName, "veryfront-agent-test");
     assertEquals(bundle.runtime.contract.defaultAgentId, "veryfront");
-    assertEquals(bundle.runtime.contract.agents.veryfront.id, "veryfront");
-    assertEquals(bundle.runtime.contract.agents.veryfront.config.model, "openai/gpt-5.4");
+    const runtimeAgent = getRuntimeAgent(bundle, "veryfront");
+    assertEquals(runtimeAgent.id, "veryfront");
+    assertEquals(runtimeAgent.config.model, "openai/gpt-5.4");
 
     const liveness = await bundle.runtime.request("http://localhost/liveness");
     assertEquals(liveness.status, 200);
     assertEquals(await liveness.text(), "OK");
+  });
+});
+
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime defaults discovery to cwd", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir);
+    const previousCwd = Deno.cwd();
+    Deno.chdir(rootDir);
+    try {
+      const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+        serviceName: "cwd-agent-test",
+        agentId: "veryfront",
+        env: {
+          NODE_ENV: "test",
+          VERYFRONT_API_URL: "https://api.example.com",
+          PORT: "3144",
+          ALLOWED_ORIGINS: "https://studio.example.com",
+        },
+      });
+
+      assertEquals(bundle.runtime.contract.defaultAgentId, "veryfront");
+      assertEquals(getRuntimeAgent(bundle, "veryfront").config.model, "openai/gpt-5.4");
+    } finally {
+      Deno.chdir(previousCwd);
+    }
+  });
+});
+
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime accepts entrypointUrl alias", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir);
+
+    const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+      serviceName: "entrypoint-url-agent-test",
+      agentId: "veryfront",
+      entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+      env: {
+        NODE_ENV: "test",
+        VERYFRONT_API_URL: "https://api.example.com",
+        PORT: "3145",
+        ALLOWED_ORIGINS: "https://studio.example.com",
+      },
+    });
+
+    assertEquals(bundle.runtime.contract.defaultAgentId, "veryfront");
+    assertEquals(getRuntimeAgent(bundle, "veryfront").config.model, "openai/gpt-5.4");
   });
 });
 
@@ -143,7 +199,7 @@ Deno.test({
       });
 
       assertEquals(bundle.runtime.contract.defaultAgentId, "support");
-      assertEquals(bundle.runtime.contract.agents.support.config.system, "Help users from code.");
+      assertEquals(getRuntimeAgent(bundle, "support").config.system, "Help users from code.");
       assertEquals(toolRegistry.has("echo"), true);
     });
   },
@@ -175,9 +231,10 @@ Deno.test({
       });
 
       assertEquals(bundle.runtime.contract.defaultAgentId, "support");
-      assertEquals(bundle.runtime.contract.agents.support.config.system, "Help users from code.");
-      assertEquals(bundle.runtime.contract.agents.support.config.model, "openai/gpt-5.4");
-      assertEquals(bundle.runtime.contract.agents.support.config.maxSteps, 8);
+      const runtimeAgent = getRuntimeAgent(bundle, "support");
+      assertEquals(runtimeAgent.config.system, "Help users from code.");
+      assertEquals(runtimeAgent.config.model, "openai/gpt-5.4");
+      assertEquals(runtimeAgent.config.maxSteps, 8);
       assertEquals(toolRegistry.has("echo"), true);
     });
   },

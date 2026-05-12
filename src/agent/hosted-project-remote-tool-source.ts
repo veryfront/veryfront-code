@@ -188,6 +188,7 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     authToken: string;
     apiMcpUrl: string;
     studioMcpUrl?: string | null;
+    studioMcpEnabled?: boolean;
     clientProfile?: RuntimeClientProfile | null;
     getProjectId: () => string | null | undefined;
     conversationId?: string;
@@ -242,7 +243,9 @@ export function createHostedProjectRemoteToolSources(
     ),
   ];
 
-  if (!input.studioMcpUrl || !clientAllowsStudioMcp(input.clientProfile)) {
+  if (
+    !input.studioMcpEnabled || !input.studioMcpUrl || !clientAllowsStudioMcp(input.clientProfile)
+  ) {
     return sources;
   }
 

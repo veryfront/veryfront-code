@@ -58,6 +58,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
+  studioMcpEnabled?: boolean;
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -120,6 +121,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     authToken: input.taskContext.authToken,
     apiMcpUrl: input.apiMcpUrl,
     studioMcpUrl: input.studioMcpUrl,
+    studioMcpEnabled: input.studioMcpEnabled,
     clientProfile: input.taskContext.clientProfile,
     createRemoteToolSource: input.createRemoteToolSource ?? createRemoteMCPToolSource,
     defaultProjectId: () => activeProjectId(input.taskContext),

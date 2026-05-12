@@ -108,13 +108,35 @@ export type NodeVeryfrontCloudAgentServiceProcessTarget =
 
 export type NodeVeryfrontCloudAgentServiceAgentSource = "auto" | "code" | "markdown";
 
+export type NodeVeryfrontCloudAgentServiceMcpOptions = {
+  /**
+   * Opt in to Studio UI/control-plane MCP tools for trusted Studio-capable clients.
+   * API MCP tools remain part of the Veryfront Cloud service preset.
+   */
+  studio?: boolean;
+};
+
+type AgentServicePathOption = string | URL;
+
 export type NodeVeryfrontCloudAgentServiceOptions = {
   serviceName: string;
   agentId: string;
-  baseDir?: string;
+  /**
+   * Project/discovery root. Defaults to the process cwd when neither baseDir
+   * nor an entrypoint URL is provided.
+   */
+  baseDir?: AgentServicePathOption;
   projectDir?: string;
-  entryUrl?: string | URL;
+  /**
+   * Convenience URL for deriving baseDir from the entry module location.
+   */
+  entrypointUrl?: AgentServicePathOption;
+  /**
+   * Compatibility alias for entrypointUrl.
+   */
+  entryUrl?: AgentServicePathOption;
   agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
+  mcp?: NodeVeryfrontCloudAgentServiceMcpOptions;
   forwardedConfigNamespace?: string;
   createBashTool?: HostedSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
@@ -157,14 +179,21 @@ const PROJECT_CONFIG_FILES = [
   "veryfront.config.mjs",
 ];
 
+function pathOptionToPath(pathOption: AgentServicePathOption): string {
+  return pathOption instanceof URL ? fileURLToPath(pathOption) : pathOption;
+}
+
 function resolveBaseDir(
-  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "baseDir" | "entryUrl">,
+  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "baseDir" | "entrypointUrl" | "entryUrl">,
 ): string {
-  if (options.baseDir) {
-    return options.baseDir;
+  if (options.baseDir !== undefined) {
+    return pathOptionToPath(options.baseDir);
   }
-  if (options.entryUrl) {
-    return dirname(fileURLToPath(options.entryUrl));
+  if (options.entrypointUrl !== undefined) {
+    return dirname(pathOptionToPath(options.entrypointUrl));
+  }
+  if (options.entryUrl !== undefined) {
+    return dirname(pathOptionToPath(options.entryUrl));
   }
   if (typeof process !== "undefined") {
     return process.cwd();
@@ -191,7 +220,10 @@ function uniquePaths(paths: string[]): string[] {
 }
 
 function resolveProjectDir(
-  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "baseDir" | "entryUrl" | "projectDir">,
+  options: Pick<
+    NodeVeryfrontCloudAgentServiceOptions,
+    "baseDir" | "entrypointUrl" | "entryUrl" | "projectDir"
+  >,
 ): string {
   if (options.projectDir) {
     return options.projectDir;
@@ -406,11 +438,12 @@ function getInvokeAgentConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): DefaultHostedInvokeAgentConfig {
   const config = context.infrastructure.getConfig();
+  const studioMcpUrl = context.options.mcp?.studio ? config.VERYFRONT_STUDIO_MCP_URL : "";
 
   return {
     apiUrl: config.VERYFRONT_API_URL,
     apiMcpUrl: config.VERYFRONT_MCP_URL,
-    studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
+    studioMcpUrl,
     enableDurableInvokeAgent: config.VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT,
   };
 }
@@ -490,7 +523,8 @@ function createAgentRuntime(
     config: {
       apiUrl: config.VERYFRONT_API_URL,
       apiMcpUrl: config.VERYFRONT_MCP_URL,
-      studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
+      studioMcpUrl: context.options.mcp?.studio ? config.VERYFRONT_STUDIO_MCP_URL : "",
+      studioMcpEnabled: context.options.mcp?.studio ?? false,
     },
     buildLocalTools: (taskContext) => buildLocalTools(context, options, taskContext),
     refreshSystem,

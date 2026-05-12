@@ -268,7 +268,7 @@ host-supplied routes. For Node deployments, `startNodeAgentService()` wraps that
 runtime in the shared Veryfront service server with graceful shutdown.
 
 For a Veryfront Cloud-backed service that should use the default
-configuration, telemetry, model routing, sandbox, Studio MCP, project steering,
+configuration, telemetry, model routing, sandbox, project steering,
 durable-run, and prepared-execution wiring, use
 `startAgentService()` from a process entrypoint and keep the
 agent behavior in `agents/<agent-id>.md` or `agents/<agent-id>.ts`:
@@ -279,7 +279,23 @@ import { startAgentService } from "veryfront/agent";
 await startAgentService({
   serviceName: "support-agent",
   agentId: "support",
-  entryUrl: import.meta.url,
+});
+```
+
+By default, discovery is rooted at the process cwd. Pass `baseDir` only when the
+service may start from another working directory. `entrypointUrl` is a
+convenience fallback for deriving `baseDir` from an entry module URL; `entryUrl`
+remains supported as a compatibility alias.
+
+Studio MCP tools are opt-in because they are Studio/control-plane specific:
+
+```ts
+await startAgentService({
+  serviceName: "support-agent",
+  agentId: "support",
+  mcp: {
+    studio: true,
+  },
 });
 ```
 
@@ -830,13 +846,15 @@ conventions and `veryfront.config.ts` discovery settings as a Veryfront project.
 It can use a code agent from `agents/*.ts` or fall back to a markdown-backed
 `agents/*.md` definition, uses the default service config and project-steering
 adapter, wires local tools (`form_input`, `load_skill`, `sleep`, discovered
-project tools, and `invoke_agent`), sandbox tools, Studio MCP tools, remote MCP
-definitions, prepared chat execution, AG-UI streaming, and detached durable-run
-execution.
+project tools, and `invoke_agent`), sandbox tools, Veryfront API MCP tools,
+opt-in Studio MCP tools, prepared chat execution, AG-UI streaming, and detached
+durable-run execution.
 
-Hosts provide the service name, agent id, entry URL or base directory, and
-optionally a custom bash-tool factory. Use this helper when tests or custom
-hosts need the runtime bundle without starting the service server.
+Hosts provide the service name and agent id. Discovery defaults to cwd; hosts
+can pass `baseDir` when cwd is not the project root, or `entrypointUrl` when it
+is more convenient to derive the base directory from a module URL. Use this
+helper when tests or custom hosts need the runtime bundle without starting the
+service server.
 
 ### `startNodeVeryfrontCloudAgentService(options)`
 
