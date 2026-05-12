@@ -103,6 +103,30 @@ export function snapshotFromLock(
     directKeys.add(`${name}@${resolvedVersion}`);
   }
 
+  // Deno v5 lockfiles use bare child names ("zod") instead of "zod@x.y.z" for
+  // most transitive edges. Build a name → versions index so we can resolve
+  // them. When a name has multiple resolved versions we emit edges to all of
+  // them — over-approximating preserves reachability for vuln correlation.
+  const versionsByName = new Map<string, Set<string>>();
+  for (const key of Object.keys(npm)) {
+    const nv = parseNameVersion(key);
+    if (!nv) continue;
+    let versions = versionsByName.get(nv.name);
+    if (!versions) {
+      versions = new Set();
+      versionsByName.set(nv.name, versions);
+    }
+    versions.add(nv.version);
+  }
+
+  function resolveDepEdge(depKey: string): string[] {
+    const qualified = parseNameVersion(depKey);
+    if (qualified) return [purl(qualified.name, qualified.version)];
+    const versions = versionsByName.get(depKey);
+    if (!versions) return [];
+    return [...versions].map((v) => purl(depKey, v));
+  }
+
   const resolved: Record<string, ResolvedDependency> = {};
   for (const [key, info] of Object.entries(npm)) {
     const nv = parseNameVersion(key);
@@ -110,8 +134,7 @@ export function snapshotFromLock(
 
     const deps: string[] = [];
     for (const depKey of info.dependencies ?? []) {
-      const depNv = parseNameVersion(depKey);
-      if (depNv) deps.push(purl(depNv.name, depNv.version));
+      for (const purlStr of resolveDepEdge(depKey)) deps.push(purlStr);
     }
 
     resolved[`${nv.name}@${nv.version}`] = {
