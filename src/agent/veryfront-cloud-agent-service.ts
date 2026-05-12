@@ -1,4 +1,5 @@
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { HostedSandboxToolsOptions } from "#veryfront/sandbox";
 import { createHostedSandboxTools } from "#veryfront/sandbox";
@@ -7,8 +8,19 @@ import {
   createToolsFromRemoteDefinitions,
   type HostToolSet,
   sleepTool,
+  toolRegistry,
 } from "#veryfront/tool";
 import { parseProviderError } from "../chat/provider-errors.ts";
+import { getConfig } from "../config/index.ts";
+import {
+  clearTrackedAgents,
+  clearTranspileCache,
+  createProjectDiscoveryConfig,
+  DEFAULT_PROJECT_DISCOVERY_DIRS,
+  discoverAll,
+} from "../discovery/index.ts";
+import type { DiscoveryResult } from "../discovery/types.ts";
+import { nodeAdapter } from "../platform/adapters/node.ts";
 import {
   getVeryfrontCloudProviderFromModelId,
   resolveVeryfrontCloudModelId,
@@ -51,6 +63,7 @@ import { type HostedProjectSkillIdsContext } from "./hosted-project-steering-ada
 import type { RuntimeLoadSkillToolContext } from "./runtime-load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "./runtime-project-skill-catalog.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
+import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
 import {
   buildVeryfrontCloudRuntimeInstructions,
 } from "./veryfront-cloud-runtime-system-messages.ts";
@@ -81,6 +94,8 @@ import {
   prepareVeryfrontCloudHostedChatExecution,
 } from "./veryfront-cloud-hosted-chat-execution-preparation.ts";
 import { applyAgentProjectContextChange } from "./project-context.ts";
+import type { Agent, AgentConfig } from "./types.ts";
+import { agentRegistry, getAgent } from "./composition/index.ts";
 
 export type NodeVeryfrontCloudAgentServiceProcessTarget =
   & NonNullable<RunAgentServiceMainOptions["processTarget"]>
@@ -90,11 +105,15 @@ export type NodeVeryfrontCloudAgentServiceProcessTarget =
     exit?: (code: number) => never | void;
   };
 
+export type NodeVeryfrontCloudAgentServiceAgentSource = "auto" | "code" | "markdown";
+
 export type NodeVeryfrontCloudAgentServiceOptions = {
   serviceName: string;
   agentId: string;
   baseDir?: string;
+  projectDir?: string;
   entryUrl?: string | URL;
+  agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
   forwardedConfigNamespace?: string;
   createBashTool: HostedSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
@@ -123,6 +142,11 @@ const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_DRAIN_TIMEOUT_MS = 15_000;
 const DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS = 20_000;
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
+const PROJECT_CONFIG_FILES = [
+  "veryfront.config.js",
+  "veryfront.config.ts",
+  "veryfront.config.mjs",
+];
 
 function resolveBaseDir(
   options: Pick<NodeVeryfrontCloudAgentServiceOptions, "baseDir" | "entryUrl">,
@@ -137,6 +161,36 @@ function resolveBaseDir(
     return process.cwd();
   }
   return Deno.cwd();
+}
+function hasDiscoveryRoot(baseDir: string): boolean {
+  const discoveryDirs = [
+    ...DEFAULT_PROJECT_DISCOVERY_DIRS.agentDirs,
+    ...DEFAULT_PROJECT_DISCOVERY_DIRS.toolDirs,
+    ...DEFAULT_PROJECT_DISCOVERY_DIRS.skillDirs,
+    ...DEFAULT_PROJECT_DISCOVERY_DIRS.resourceDirs,
+    ...DEFAULT_PROJECT_DISCOVERY_DIRS.promptDirs,
+    ...DEFAULT_PROJECT_DISCOVERY_DIRS.workflowDirs,
+    ...DEFAULT_PROJECT_DISCOVERY_DIRS.taskDirs,
+  ];
+
+  return discoveryDirs.some((dir) => existsSync(resolve(baseDir, dir))) ||
+    PROJECT_CONFIG_FILES.some((file) => existsSync(resolve(baseDir, file)));
+}
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths.map((path) => resolve(path)))];
+}
+
+function resolveProjectDir(
+  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "baseDir" | "entryUrl" | "projectDir">,
+): string {
+  if (options.projectDir) {
+    return options.projectDir;
+  }
+
+  const baseDir = resolveBaseDir(options);
+  const candidates = uniquePaths([baseDir, dirname(baseDir), dirname(dirname(baseDir))]);
+  return candidates.find(hasDiscoveryRoot) ?? baseDir;
 }
 
 function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTarget | undefined {
@@ -192,11 +246,93 @@ function createNodeVeryfrontCloudAgentServiceContext(
   return {
     options,
     processTarget,
+    projectDir: resolveProjectDir(options),
     infrastructure,
     trace,
     projectSteering,
     tracker: createDetachedRunTracker<AgUiResumeValue>(),
+    discoveryResult: null as DiscoveryResult | null,
+    agentConfig: null as RuntimeAgentMarkdownDefinition | null,
   };
+}
+
+function resolveAgentSystem(system: AgentConfig["system"]): Promise<string> | string {
+  return typeof system === "function" ? system() : system;
+}
+
+async function createRuntimeAgentDefinitionFromCodeAgent(
+  codeAgent: Agent,
+): Promise<RuntimeAgentMarkdownDefinition> {
+  return {
+    id: codeAgent.id,
+    name: codeAgent.id,
+    description: "",
+    instructions: await resolveAgentSystem(codeAgent.config.system),
+    model: codeAgent.config.model,
+    maxSteps: codeAgent.config.maxSteps,
+  };
+}
+
+function getMarkdownAgentConfig(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): RuntimeAgentMarkdownDefinition {
+  return context.projectSteering.getAgentConfig();
+}
+
+async function resolveAgentConfig(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): Promise<RuntimeAgentMarkdownDefinition> {
+  const source = context.options.agentSource ?? "auto";
+  const codeAgent = getAgent(context.options.agentId);
+
+  if (source !== "markdown" && codeAgent) {
+    return await createRuntimeAgentDefinitionFromCodeAgent(codeAgent);
+  }
+
+  if (source === "code") {
+    throw new Error(`Code agent "${context.options.agentId}" was not discovered.`);
+  }
+
+  return getMarkdownAgentConfig(context);
+}
+
+function getResolvedAgentConfig(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): RuntimeAgentMarkdownDefinition {
+  if (!context.agentConfig) {
+    throw new Error("Agent service context has not been initialized.");
+  }
+  return context.agentConfig;
+}
+
+async function discoverProjectPrimitives(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): Promise<void> {
+  clearTrackedAgents();
+  clearTranspileCache();
+  agentRegistry.clear();
+  toolRegistry.clear();
+
+  const config = await getConfig(context.projectDir, nodeAdapter);
+  const discoveryOptions = createProjectDiscoveryConfig({
+    projectDir: context.projectDir,
+    config,
+  });
+
+  context.discoveryResult = await discoverAll(discoveryOptions);
+}
+
+async function initializeNodeVeryfrontCloudAgentServiceContext(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): Promise<void> {
+  await discoverProjectPrimitives(context);
+  context.agentConfig = await resolveAgentConfig(context);
+}
+
+function getDiscoveredHostTools(): HostToolSet {
+  return Object.fromEntries(
+    [...toolRegistry.getAll()].sort(([left], [right]) => left.localeCompare(right)),
+  );
 }
 
 function getProjectInstructions(
@@ -289,6 +425,7 @@ function buildLocalTools(
 ): HostToolSet {
   const config = context.infrastructure.getConfig();
   const tools: HostToolSet = {
+    ...getDiscoveredHostTools(),
     form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL),
     load_skill: createLoadSkillTool(context, taskContext),
     sleep: sleepTool,
@@ -439,7 +576,7 @@ async function prepareChatExecution(
 
   setPrepareChatExecutionStartAttributes(context, { projectId, userId });
 
-  const agentConfig = context.projectSteering.getAgentConfig();
+  const agentConfig = getResolvedAgentConfig(context);
   const {
     effectiveMessages,
     rootRunContext,
@@ -524,7 +661,7 @@ function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
     forwardedConfigNamespace: context.options.forwardedConfigNamespace ??
       DEFAULT_FORWARDED_CONFIG_NAMESPACE,
     getConfig: context.infrastructure.getConfig,
-    getAgentConfig: () => context.projectSteering.getAgentConfig(),
+    getAgentConfig: () => getResolvedAgentConfig(context),
     tracker: context.tracker,
     prepareExecution: (request) => prepareChatExecution(context, request),
     streamExecutionToAgUiResponse: (execution) =>
@@ -559,10 +696,11 @@ function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
   };
 }
 
-export function createNodeVeryfrontCloudAgentServiceRuntime(
+export async function createNodeVeryfrontCloudAgentServiceRuntime(
   options: NodeVeryfrontCloudAgentServiceOptions,
-): AgentServiceRuntimeBundle<NodeVeryfrontCloudAgentServicePreparedExecution> {
+): Promise<AgentServiceRuntimeBundle<NodeVeryfrontCloudAgentServicePreparedExecution>> {
   const context = createNodeVeryfrontCloudAgentServiceContext(options);
+  await initializeNodeVeryfrontCloudAgentServiceContext(context);
   return createAgentServiceRuntime(createNodeVeryfrontCloudAgentServiceRuntimeOptions(context));
 }
 
@@ -570,6 +708,7 @@ export async function startNodeVeryfrontCloudAgentService(
   options: NodeVeryfrontCloudAgentServiceOptions,
 ): Promise<StartNodeAgentServiceResult<NodeVeryfrontCloudAgentServicePreparedExecution>> {
   const context = createNodeVeryfrontCloudAgentServiceContext(options);
+  await initializeNodeVeryfrontCloudAgentServiceContext(context);
   return await startNodeAgentService({
     ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
     hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
@@ -589,6 +728,7 @@ export async function runNodeVeryfrontCloudAgentServiceMain(
     processTarget,
   });
   getRuntimeTraceContext = context.infrastructure.getTraceContext;
+  await initializeNodeVeryfrontCloudAgentServiceContext(context);
 
   await runAgentServiceMain({
     loadLogger: () => context.infrastructure.logger,

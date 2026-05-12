@@ -2,18 +2,24 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
+import { toolRegistry } from "#veryfront/tool";
+import { agentRegistry } from "./composition/index.ts";
 import { createNodeVeryfrontCloudAgentServiceRuntime } from "./veryfront-cloud-agent-service.ts";
+import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
-function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> | void {
+async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
   const dir = Deno.makeTempDirSync();
   try {
-    return fn(dir);
+    await fn(dir);
   } finally {
+    await stopEsbuild();
     Deno.removeSync(dir, { recursive: true });
+    agentRegistry.clearAll();
+    toolRegistry.clearAll();
   }
 }
 
-function writeAgentDefinition(rootDir: string): void {
+function writeMarkdownAgentDefinition(rootDir: string): void {
   const agentsDir = resolve(rootDir, "agents");
   Deno.mkdirSync(agentsDir, { recursive: true });
   Deno.writeTextFileSync(
@@ -29,13 +35,52 @@ Help users build with Veryfront.
   );
 }
 
+function writeCodeAgentDefinition(
+  rootDir: string,
+  options: { agentsDir?: string; toolsDir?: string } = {},
+): void {
+  const agentsDir = resolve(rootDir, options.agentsDir ?? "agents");
+  const toolsDir = resolve(rootDir, options.toolsDir ?? "tools");
+  Deno.mkdirSync(agentsDir, { recursive: true });
+  Deno.mkdirSync(toolsDir, { recursive: true });
+  Deno.writeTextFileSync(
+    resolve(agentsDir, "support.ts"),
+    [
+      'import { agent } from "veryfront/agent";',
+      "",
+      "export default agent({",
+      '  id: "support",',
+      '  model: "openai/gpt-5.4",',
+      "  maxSteps: 8,",
+      '  system: "Help users from code.",',
+      "});",
+      "",
+    ].join("\n"),
+  );
+  Deno.writeTextFileSync(
+    resolve(toolsDir, "echo.ts"),
+    [
+      'import { tool } from "veryfront/tool";',
+      'import { z } from "zod";',
+      "",
+      "export default tool({",
+      '  id: "echo",',
+      '  description: "Echo input",',
+      "  inputSchema: z.object({ text: z.string() }),",
+      "  execute: ({ text }) => ({ text }),",
+      "});",
+      "",
+    ].join("\n"),
+  );
+}
+
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
 
 Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent and binds service routes", async () => {
   await withTempDir(async (rootDir) => {
-    writeAgentDefinition(rootDir);
+    writeMarkdownAgentDefinition(rootDir);
 
-    const bundle = createNodeVeryfrontCloudAgentServiceRuntime({
+    const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
       serviceName: "veryfront-agent-test",
       agentId: "veryfront",
       entryUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
@@ -59,4 +104,82 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent 
     assertEquals(liveness.status, 200);
     assertEquals(await liveness.text(), "OK");
   });
+});
+
+Deno.test({
+  name: "createNodeVeryfrontCloudAgentServiceRuntime uses veryfront.config.ts discovery paths",
+  // Code primitive discovery invokes the esbuild-backed transpiler, which starts
+  // an esbuild child process. This matches the sanitizer policy in
+  // src/discovery/transpiler.test.ts.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withTempDir(async (rootDir) => {
+      writeCodeAgentDefinition(rootDir, { agentsDir: "crew", toolsDir: "tooling" });
+      Deno.writeTextFileSync(
+        resolve(rootDir, "veryfront.config.ts"),
+        [
+          "export default {",
+          "  ai: {",
+          '    agents: { discovery: { paths: ["crew"] } },',
+          '    tools: { discovery: { paths: ["tooling"] } },',
+          "  },",
+          "};",
+          "",
+        ].join("\n"),
+      );
+
+      const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+        serviceName: "configured-agent-test",
+        agentId: "support",
+        agentSource: "code",
+        entryUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
+        createBashTool,
+        env: {
+          NODE_ENV: "test",
+          VERYFRONT_API_URL: "https://api.example.com",
+          PORT: "3143",
+          ALLOWED_ORIGINS: "https://studio.example.com",
+        },
+      });
+
+      assertEquals(bundle.runtime.contract.defaultAgentId, "support");
+      assertEquals(bundle.runtime.contract.agents.support.config.system, "Help users from code.");
+      assertEquals(toolRegistry.has("echo"), true);
+    });
+  },
+});
+
+Deno.test({
+  name: "createNodeVeryfrontCloudAgentServiceRuntime discovers code agents and project primitives",
+  // Code primitive discovery invokes the esbuild-backed transpiler, which starts
+  // an esbuild child process. This matches the sanitizer policy in
+  // src/discovery/transpiler.test.ts.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withTempDir(async (rootDir) => {
+      writeCodeAgentDefinition(rootDir);
+
+      const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+        serviceName: "support-agent-test",
+        agentId: "support",
+        agentSource: "code",
+        entryUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
+        createBashTool,
+        env: {
+          NODE_ENV: "test",
+          VERYFRONT_API_URL: "https://api.example.com",
+          PORT: "3142",
+          ALLOWED_ORIGINS: "https://studio.example.com",
+        },
+      });
+
+      assertEquals(bundle.runtime.contract.defaultAgentId, "support");
+      assertEquals(bundle.runtime.contract.agents.support.config.system, "Help users from code.");
+      assertEquals(bundle.runtime.contract.agents.support.config.model, "openai/gpt-5.4");
+      assertEquals(bundle.runtime.contract.agents.support.config.maxSteps, 8);
+      assertEquals(toolRegistry.has("echo"), true);
+    });
+  },
 });

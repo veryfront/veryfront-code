@@ -270,7 +270,7 @@ For a Veryfront Cloud-backed Node service that should use the default
 configuration, telemetry, model routing, sandbox, Studio MCP, project steering,
 durable-run, and prepared-execution wiring, use
 `runNodeVeryfrontCloudAgentServiceMain()` from a process entrypoint and keep the
-agent behavior in `agents/<agent-id>.md`:
+agent behavior in `agents/<agent-id>.md` or `agents/<agent-id>.ts`:
 
 ```ts
 import { createBashTool } from "bash-tool";
@@ -288,6 +288,13 @@ await runNodeVeryfrontCloudAgentServiceMain({
 without starting a server, which is useful for tests and custom host shells.
 `startNodeVeryfrontCloudAgentService()` starts the Node server directly without
 the process bootstrap wrapper.
+
+The Veryfront Cloud service preset discovers the same project primitives as the
+project runtime: `agents/`, `tools/`, `skills/`, `resources/`, `prompts/`,
+`workflows/`, and `tasks/`. Code agents are preferred when the same `agentId` is
+available from discovery; set `agentSource: "markdown"` to force markdown
+definitions. Use `veryfront.config.ts` `ai.<primitive>.discovery.paths` for
+non-standard project paths.
 
 For a conversations/control-plane host composition that combines
 `runHostedLifecycle()` with the public durable-run helpers, see
@@ -819,11 +826,14 @@ helpers; for example `createAgentServiceRouteSet()`,
 ### `createNodeVeryfrontCloudAgentServiceRuntime(options)`
 
 Create a full Veryfront Cloud agent-service runtime bundle for separately
-deployed agents. The helper loads a markdown-backed `agents/*.md` definition,
-uses the default service config and project-steering adapter, wires local tools
-(`form_input`, `load_skill`, `sleep`, and `invoke_agent`), sandbox tools, Studio
-MCP tools, remote MCP definitions, prepared chat execution, AG-UI streaming, and
-detached durable-run execution.
+deployed agents. The helper discovers project primitives using the same
+conventions and `veryfront.config.ts` discovery settings as a Veryfront project.
+It can use a code agent from `agents/*.ts` or fall back to a markdown-backed
+`agents/*.md` definition, uses the default service config and project-steering
+adapter, wires local tools (`form_input`, `load_skill`, `sleep`, discovered
+project tools, and `invoke_agent`), sandbox tools, Studio MCP tools, remote MCP
+definitions, prepared chat execution, AG-UI streaming, and detached durable-run
+execution.
 
 Hosts provide the service name, agent id, Node entry URL or base directory, and
 a bash-tool factory. Use this helper when tests or custom hosts need the runtime

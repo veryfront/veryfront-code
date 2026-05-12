@@ -180,7 +180,8 @@ agent definition and project-steering adapter as one reusable service primitive.
 For the standard Veryfront Cloud service shape, use
 `runNodeVeryfrontCloudAgentServiceMain()` to bind those pieces in one Node
 process entrypoint. The service entrypoint can stay small while agent behavior
-lives in `agents/<agent-id>.md`:
+lives in `agents/<agent-id>.md` or a discovered code agent such as
+`agents/<agent-id>.ts`:
 
 ```ts
 import { createBashTool } from "bash-tool";
@@ -196,6 +197,12 @@ await runNodeVeryfrontCloudAgentServiceMain({
 
 Use the lower-level helpers when a service needs custom tools, non-Node
 startup, or a different control-plane integration.
+
+The cloud service helper uses the same project discovery conventions as normal
+Veryfront projects: `agents/`, `tools/`, `skills/`, `resources/`, `prompts/`,
+`workflows/`, and `tasks/`. When a project needs non-standard paths, configure
+them in `veryfront.config.ts` under `ai.<primitive>.discovery.paths` instead of
+adding service-specific discovery configuration.
 
 ## Agent configuration
 
