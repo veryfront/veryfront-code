@@ -33,6 +33,10 @@ interface ZodDef {
   defaultValue?: (() => unknown) | unknown;
 }
 
+interface ConversionContext {
+  seen: WeakSet<object>;
+}
+
 const LITERAL_TYPE_MAP: Record<string, "string" | "number" | "boolean"> = {
   string: "string",
   number: "number",
@@ -54,13 +58,17 @@ function getTypeTag(schema: z.ZodTypeAny): string | undefined {
 }
 
 export function zodToJsonSchema(schema: z.ZodTypeAny): JsonSchema {
+  return convertSchema(schema, { seen: new WeakSet() });
+}
+
+function convertSchema(schema: z.ZodTypeAny, context: ConversionContext): JsonSchema {
   // Guard against invalid schemas (can happen with different zod instances in npm bundle)
   if (!schema || typeof schema !== "object" || !("_def" in schema)) {
     throw new Error("Invalid Zod schema: missing _def property");
   }
 
   const { schema: unwrapped, nullable } = unwrapSchema(schema);
-  const json = convert(unwrapped);
+  const json = convert(unwrapped, context);
 
   return nullable ? { anyOf: [json, { type: "null" }] } : json;
 }
@@ -69,7 +77,18 @@ export function isOptionalSchema(schema: z.ZodTypeAny): boolean {
   return unwrapSchema(schema).optional;
 }
 
-function convert(schema: z.ZodTypeAny): JsonSchema {
+function convert(schema: z.ZodTypeAny, context: ConversionContext): JsonSchema {
+  if (context.seen.has(schema)) return {};
+  context.seen.add(schema);
+
+  try {
+    return convertInner(schema, context);
+  } finally {
+    context.seen.delete(schema);
+  }
+}
+
+function convertInner(schema: z.ZodTypeAny, context: ConversionContext): JsonSchema {
   const tag = getTypeTag(schema);
   const def = getDef(schema);
 
@@ -119,13 +138,13 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
       for (const [key, value] of Object.entries(shape ?? {})) {
         const zodSchema = value as z.ZodTypeAny;
-        properties[key] = zodToJsonSchema(zodSchema);
+        properties[key] = convertSchema(zodSchema, context);
         if (!isOptionalSchema(zodSchema)) required.push(key);
       }
 
       const json: JsonSchema = { type: "object", properties };
       if (required.length) json.required = required;
-      const additionalProperties = getObjectAdditionalProperties(def);
+      const additionalProperties = getObjectAdditionalProperties(def, context);
       if (additionalProperties !== undefined) json.additionalProperties = additionalProperties;
 
       return json;
@@ -136,7 +155,7 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
       // v3: _def.type (item schema), v4: _def.element (item schema)
       const itemType = def.element ?? (def.type as unknown as z.ZodTypeAny | undefined);
       if (!itemType || typeof itemType === "string") return { type: "array" };
-      return { type: "array", items: zodToJsonSchema(itemType) };
+      return { type: "array", items: convertSchema(itemType, context) };
     }
 
     case "ZodTuple":
@@ -144,7 +163,7 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
       const items = def.items ?? [];
       return {
         type: "array",
-        prefixItems: items.map((item: z.ZodTypeAny) => zodToJsonSchema(item)),
+        prefixItems: items.map((item: z.ZodTypeAny) => convertSchema(item, context)),
         minItems: items.length,
         maxItems: items.length,
       };
@@ -155,21 +174,21 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
     case "union": {
       const options = def.options ?? [];
       const optionArray = options instanceof Map ? Array.from(options.values()) : options;
-      return { anyOf: optionArray.map((option: z.ZodTypeAny) => zodToJsonSchema(option)) };
+      return { anyOf: optionArray.map((option: z.ZodTypeAny) => convertSchema(option, context)) };
     }
 
     case "ZodRecord":
     case "record": {
       const valueSchema = def.valueType ?? def.element;
       if (!valueSchema) return { type: "object" };
-      return { type: "object", additionalProperties: zodToJsonSchema(valueSchema) };
+      return { type: "object", additionalProperties: convertSchema(valueSchema, context) };
     }
 
     case "ZodDefault":
     case "default": {
       const innerType = def.innerType ?? def.schema;
       if (!innerType) return { type: "object" };
-      const inner = zodToJsonSchema(innerType);
+      const inner = convertSchema(innerType, context);
       const defaultValue = typeof def.defaultValue === "function"
         ? def.defaultValue()
         : def.defaultValue;
@@ -183,14 +202,14 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
     case "ZodLazy":
     case "lazy":
-      return def.getter ? convert(def.getter()) : { type: "object" };
+      return def.getter ? convert(def.getter(), context) : { type: "object" };
 
     case "ZodEffects":
     case "pipe": {
       // v3: ZodEffects wraps schema in _def.schema
       // v4: pipe wraps in _def.in (input schema)
       const innerSchema = def.schema ?? def.in;
-      return innerSchema ? convert(innerSchema) : { type: "object" };
+      return innerSchema ? convert(innerSchema, context) : { type: "object" };
     }
 
     default:
@@ -198,7 +217,10 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
   }
 }
 
-function getObjectAdditionalProperties(def: ZodDef): boolean | JsonSchema | undefined {
+function getObjectAdditionalProperties(
+  def: ZodDef,
+  context: ConversionContext,
+): boolean | JsonSchema | undefined {
   if (def.unknownKeys === "passthrough") return true;
   if (def.unknownKeys === "strict") return false;
   if (def.unknownKeys === "strip") return undefined;
@@ -208,7 +230,7 @@ function getObjectAdditionalProperties(def: ZodDef): boolean | JsonSchema | unde
   const catchallTag = getTypeTag(def.catchall);
   if (catchallTag === "unknown" || catchallTag === "ZodUnknown") return true;
   if (catchallTag === "never" || catchallTag === "ZodNever") return false;
-  return zodToJsonSchema(def.catchall);
+  return convertSchema(def.catchall, context);
 }
 
 function unwrapSchema(

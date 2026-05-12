@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, getJsonValueSchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { isOptionalSchema, zodToJsonSchema } from "./zod-json-schema.ts";
 
@@ -167,6 +167,13 @@ describe("zodToJsonSchema", () => {
     it("should convert v.lazy()", () => {
       const result = zodToJsonSchema(s((v) => v.lazy(() => v.string())));
       assertEquals(result, { type: "string" });
+    });
+
+    it("should stop recursive lazy schemas at the cycle point", () => {
+      const result = zodToJsonSchema(getJsonValueSchema());
+      assertEquals(result.anyOf?.some((schema) => schema.type === "string"), true);
+      assertEquals(result.anyOf?.some((schema) => schema.type === "array"), true);
+      assertEquals(result.anyOf?.some((schema) => schema.type === "object"), true);
     });
   });
 
