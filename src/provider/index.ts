@@ -39,6 +39,7 @@ export {
   groupVeryfrontCloudModelsByProvider,
   normalizeVeryfrontCloudModelId,
   resolveHostedVeryfrontCloudModelId,
+  resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
   resolveVeryfrontCloudModelThinking,
   resolveVeryfrontCloudThinkingProviderOptions,

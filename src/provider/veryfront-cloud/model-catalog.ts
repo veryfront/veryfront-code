@@ -17,7 +17,7 @@ export type VeryfrontCloudChatModel = {
 export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "opus";
 export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 
-const HOSTED_MODEL_PROVIDER_PREFIXES = [
+const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "anthropic/",
   "openai/",
   "google/",
@@ -138,7 +138,7 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
   return model.modelId;
 }
 
-export function resolveHostedVeryfrontCloudModelId(
+export function resolveVeryfrontCloudGatewayModelId(
   modelId: string | undefined,
 ): string | undefined {
   if (!modelId) {
@@ -149,7 +149,9 @@ export function resolveHostedVeryfrontCloudModelId(
     return modelId;
   }
 
-  return HOSTED_MODEL_PROVIDER_PREFIXES.some((prefix) => modelId.startsWith(prefix))
+  return VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES.some((prefix) =>
+      modelId.startsWith(prefix)
+    )
     ? `${VERYFRONT_CLOUD_MODEL_PREFIX}${modelId}`
     : modelId;
 }
@@ -218,3 +220,5 @@ export function groupVeryfrontCloudModelsByProvider(): Array<{
     models: VERYFRONT_CLOUD_CHAT_MODELS.filter((model) => model.provider === provider),
   })).filter((group) => group.models.length > 0);
 }
+
+export const resolveHostedVeryfrontCloudModelId = resolveVeryfrontCloudGatewayModelId;

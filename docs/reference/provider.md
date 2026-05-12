@@ -29,6 +29,7 @@ import {
   registerModelProvider,
   resolveHostedVeryfrontCloudModelId,
   resolveModel,
+  resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
 } from "veryfront/provider";
 ```
@@ -81,17 +82,18 @@ Clear all registered model providers (for testing).
 
 ### Veryfront Cloud model catalog
 
-Use the hosted language model catalog when an agent service needs stable aliases, provider grouping, hosted model normalization, or Anthropic thinking provider options.
+Use the Veryfront Cloud model catalog when an agent service needs stable aliases, provider grouping, gateway model normalization, or Anthropic thinking provider options.
 
 ```ts
 import {
   groupVeryfrontCloudModelsByProvider,
   resolveHostedVeryfrontCloudModelId,
+  resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelId,
 } from "veryfront/provider";
 
 const modelId = resolveVeryfrontCloudModelId("opus");
-const hostedModelId = resolveHostedVeryfrontCloudModelId(modelId);
+const gatewayModelId = resolveVeryfrontCloudGatewayModelId(modelId);
 const groupedModels = groupVeryfrontCloudModelsByProvider();
 ```
 
@@ -111,7 +113,8 @@ const groupedModels = groupVeryfrontCloudModelsByProvider();
 | `hasModelProvider`                             | Check if a model provider is registered (project-scoped or shared).        |
 | `normalizeVeryfrontCloudModelId`               | Remove the `veryfront-cloud/` prefix from a hosted model ID.               |
 | `registerModelProvider`                        | Register a custom model provider factory for the current project.          |
-| `resolveHostedVeryfrontCloudModelId`           | Prefix direct provider model IDs for the hosted gateway.                   |
+| `resolveVeryfrontCloudGatewayModelId`          | Prefix direct provider model IDs for the Veryfront Cloud gateway.          |
+| `resolveHostedVeryfrontCloudModelId`           | Compatibility alias for `resolveVeryfrontCloudGatewayModelId()`.           |
 | `resolveModel`                                 | Resolve a "provider/model" string to a framework-compatible model runtime. |
 | `resolveVeryfrontCloudModelId`                 | Resolve a hosted catalog alias to a direct provider model ID.              |
 | `resolveVeryfrontCloudModelThinking`           | Resolve default thinking configuration for a hosted catalog model.         |

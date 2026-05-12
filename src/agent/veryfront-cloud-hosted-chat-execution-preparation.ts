@@ -1,5 +1,5 @@
 import {
-  resolveHostedVeryfrontCloudModelId,
+  resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelThinking,
 } from "#veryfront/provider";
 import type { HostedChatRuntimeCreationResult } from "./hosted-chat-runtime-contract.ts";
@@ -92,7 +92,7 @@ export async function prepareVeryfrontCloudHostedChatExecution<
       rootRun,
       logger,
     }),
-    resolveModelId: resolveHostedVeryfrontCloudModelId,
+    resolveModelId: resolveVeryfrontCloudGatewayModelId,
     resolveModelThinking: resolveVeryfrontCloudModelThinking,
   });
 }
