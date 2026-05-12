@@ -35,7 +35,7 @@ describe("agent/ag-ui-run-control", () => {
 
     const handler = createAgUiResumeHandler({ sessionManager });
     const response = await handler(
-      new Request("https://example.com/api/ag-ui/runs/run_1/resume", {
+      new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -58,7 +58,7 @@ describe("agent/ag-ui-run-control", () => {
 
     const handler = createAgUiCancelHandler({ sessionManager });
     const response = await handler(
-      new Request("https://example.com/api/ag-ui/runs/run_1", {
+      new Request("https://example.com/api/runs/run_1", {
         method: "DELETE",
       }),
     );
@@ -73,7 +73,7 @@ describe("agent/ag-ui-run-control", () => {
     });
 
     const response = await handler({
-      request: new Request("https://example.com/api/ag-ui/runs/run_1/resume", {
+      request: new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -115,7 +115,7 @@ describe("agent/ag-ui-run-control", () => {
     });
 
     const response = await handler(
-      new Request("https://example.com/api/ag-ui/runs/run_1/resume", {
+      new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -147,7 +147,7 @@ describe("agent/ag-ui-run-control", () => {
 
     const handler = createAgUiResumeHandler({ sessionManager });
     const response = await handler(
-      new Request("https://example.com/api/ag-ui/runs/run_1/resume", {
+      new Request("https://example.com/api/runs/run_1/resume", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -168,7 +168,7 @@ describe("agent/ag-ui-run-control", () => {
     });
 
     const response = await handler(
-      new Request("https://example.com/api/ag-ui/runs/run_1", {
+      new Request("https://example.com/api/runs/run_1", {
         method: "DELETE",
       }),
     );

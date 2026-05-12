@@ -73,9 +73,9 @@ describe("agent/hosted-agent-service-runtime", () => {
     assertEquals(bundle.routes.map((route) => route.path), [
       "/api/ag-ui/messages/stream",
       "/api/ag-ui",
-      "/api/ag-ui/runs/:runId",
-      "/api/ag-ui/runs",
-      "/internal/agents/stream",
+      "/api/runs/:runId",
+      "/api/runs",
+      "/api/control-plane/agents/stream",
     ]);
 
     const ready = await bundle.runtime.request("/readiness");

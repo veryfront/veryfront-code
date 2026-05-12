@@ -61,7 +61,7 @@ describe("internal-agents/control-plane-auth", () => {
       requestId: "run-1",
       surface: "studio",
     });
-    const request = new Request("https://veryfront.test/internal/agents/stream", {
+    const request = new Request("https://veryfront.test/api/control-plane/agents/stream", {
       headers: { "x-veryfront-control-plane-jws": jws },
     });
 
@@ -84,7 +84,7 @@ describe("internal-agents/control-plane-auth", () => {
       const error = await assertRejects(
         () =>
           verifyControlPlaneRequest(
-            new Request("https://veryfront.test/internal/agents/stream"),
+            new Request("https://veryfront.test/api/control-plane/agents/stream"),
             createVerificationCtx(),
             "{}",
           ),
@@ -111,7 +111,7 @@ describe("internal-agents/control-plane-auth", () => {
     const error = await assertRejects(
       () =>
         verifyControlPlaneRequest(
-          new Request("https://veryfront.test/internal/agents/stream"),
+          new Request("https://veryfront.test/api/control-plane/agents/stream"),
           ctx,
           "{}",
         ),
@@ -126,7 +126,7 @@ describe("internal-agents/control-plane-auth", () => {
     const error = await assertRejects(
       () =>
         verifyControlPlaneRequest(
-          new Request("https://veryfront.test/internal/agents/stream"),
+          new Request("https://veryfront.test/api/control-plane/agents/stream"),
           createVerificationCtx("test-key"),
           "{}",
         ),
@@ -143,7 +143,7 @@ describe("internal-agents/control-plane-auth", () => {
       requestId: "run-1",
       surface: "studio",
     });
-    const request = new Request("https://veryfront.test/internal/agents/stream", {
+    const request = new Request("https://veryfront.test/api/control-plane/agents/stream", {
       headers: { "x-veryfront-control-plane-jws": jws },
     });
 

@@ -71,7 +71,6 @@ const INTERNAL_CONTROL_PLANE_SIGNATURE_HEADERS = [
 function isInternalControlPlanePath(pathname: string): boolean {
   return pathname === "/channels/invoke" ||
     pathname.startsWith("/api/control-plane/agents/") ||
-    pathname.startsWith("/internal/agents/") ||
     pathname.startsWith("/internal/tasks/") ||
     pathname.startsWith("/internal/workflows/");
 }

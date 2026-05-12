@@ -15,7 +15,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1", {
         method: "DELETE",
         headers: {
           "content-type": "application/json",
@@ -63,7 +63,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1", {
         method: "DELETE",
         headers: {
           "content-type": "application/json",
@@ -89,7 +89,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1", {
         method: "DELETE",
         headers: {
           "content-type": "application/json",
@@ -109,7 +109,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
     const handler = new AgentRunCancelHandler(new AgentRunSessionManager());
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1", {
         method: "DELETE",
         headers: {
           "content-type": "application/json",
@@ -127,7 +127,7 @@ describe("server/handlers/request/agent-run-cancel.handler", () => {
   it("ignores non-matching cancel routes", async () => {
     const handler = new AgentRunCancelHandler(new AgentRunSessionManager());
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/extra", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/extra", {
         method: "DELETE",
       }),
       createCtx(),

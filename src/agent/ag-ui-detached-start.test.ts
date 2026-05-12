@@ -47,7 +47,7 @@ function createTestAgent(): Agent {
 function createDetachedRequest(
   overrides: Record<string, unknown> = {},
 ): Request {
-  return new Request("http://localhost/api/ag-ui/runs", {
+  return new Request("http://localhost/api/runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -256,7 +256,7 @@ describe("agent/ag-ui-detached-start", () => {
     });
 
     const response = await handler(
-      new Request("http://localhost/api/ag-ui/runs", {
+      new Request("http://localhost/api/runs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -304,7 +304,7 @@ describe("agent/ag-ui-detached-start", () => {
             parts: [{ type: "text", text: "hello" }],
           }],
         }),
-        rawRequest: new Request("http://localhost/api/ag-ui/runs", {
+        rawRequest: new Request("http://localhost/api/runs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
         }),
@@ -341,7 +341,7 @@ describe("agent/ag-ui-detached-start", () => {
             parts: [{ type: "text", text: "hello" }],
           }],
         }),
-        rawRequest: new Request("http://localhost/api/ag-ui/runs", {
+        rawRequest: new Request("http://localhost/api/runs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
         }),

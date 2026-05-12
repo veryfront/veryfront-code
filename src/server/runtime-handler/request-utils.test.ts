@@ -138,8 +138,8 @@ describe("request-utils", () => {
       assertEquals(shouldSkipEnrichedContext("/api/bench/status"), true);
     });
 
-    it("returns true for internal agent control-plane routes", () => {
-      assertEquals(shouldSkipEnrichedContext("/internal/agents/list"), true);
+    it("returns true for agent control-plane routes", () => {
+      assertEquals(shouldSkipEnrichedContext("/api/control-plane/agents/list"), true);
     });
 
     it("returns true for public control-plane agent routes", () => {

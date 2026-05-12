@@ -4,7 +4,6 @@ import {
   CONTROL_PLANE_AGENTS_LIST_PATH,
   type ControlPlaneAgentsListRequest,
   ControlPlaneAgentsListRequestSchema,
-  LEGACY_INTERNAL_AGENTS_LIST_PATH,
   listRuntimeAgents,
   type RuntimeAgentDiscoveryDeps,
 } from "../../../channels/control-plane.ts";
@@ -26,7 +25,6 @@ export class InternalAgentsListHandler extends BaseHandler {
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
     patterns: [
       { pattern: CONTROL_PLANE_AGENTS_LIST_PATH, exact: true, method: "POST" },
-      { pattern: LEGACY_INTERNAL_AGENTS_LIST_PATH, exact: true, method: "POST" },
     ],
   };
 

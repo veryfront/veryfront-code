@@ -66,7 +66,7 @@ flowchart TD
         APIRoute["API Route<br/>(app/api/**/route.*<br/>or pages/api/**)"]
         PageRoute["Page Route<br/>(app/**/page.*<br/>or pages/**)"]
         MCPEndpoint["MCP Endpoint<br/>(configurable path, default /mcp)"]
-        AgentEndpoint["AG-UI Endpoint<br/>(package default /api/ag-ui;<br/>current internal wrapper /internal/agents/stream)"]
+        AgentEndpoint["AG-UI Endpoint<br/>(package default /api/ag-ui;<br/>current control-plane wrapper /api/control-plane/agents/stream)"]
     end
 
     subgraph MiddlewarePipeline["Middleware Pipeline"]
@@ -119,7 +119,7 @@ flowchart TD
     RouteMatch -->|"/api/*"| APIRoute
     RouteMatch -->|"page path"| PageRoute
     RouteMatch -->|"/mcp"| MCPEndpoint
-    RouteMatch -->|"/internal/agents/stream"| AgentEndpoint
+    RouteMatch -->|"/api/control-plane/agents/stream"| AgentEndpoint
 
     StaticFile --> StaticHandler
     APIRoute --> MiddlewarePipeline
@@ -152,7 +152,7 @@ The request pipeline has five route categories:
 - **API Routes:** Pass through the full middleware pipeline, then execute the user-defined handler function. Depending on router mode, these come from `app/api/**/route.*` or `pages/api/**`. Input is validated and output is serialized as JSON.
 - **Page Routes:** The most complex path. After middleware, the rendering engine fetches data via `getServerData()`, resolves the active router mode, runs SSR, optionally applies RSC transforms, and streams the HTML response with Suspense boundaries and hydration scripts. Both router modes can apply matching `layout.tsx` and `error.tsx` files, but the composition rules differ between app-router and pages-router projects.
 - **MCP Endpoints:** Handle JSON-RPC requests for the MCP protocol. Session validation, dispatch to tools/resources/prompts, and support for async tasks.
-- **AG-UI Endpoints:** The package-level AG-UI handlers are designed around host-configurable routes such as `/api/ag-ui`, but the current Studio/control-plane path uses the signed compatibility wrapper at `/internal/agents/stream`. This transport is separate from MCP and streams AG-UI SSE events back to the client.
+- **AG-UI Endpoints:** The package-level AG-UI handlers are designed around host-configurable routes such as `/api/ag-ui`, but the current Studio/control-plane path uses the signed compatibility wrapper at `/api/control-plane/agents/stream`. This transport is separate from MCP and streams AG-UI SSE events back to the client.
 
 ---
 

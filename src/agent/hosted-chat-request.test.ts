@@ -132,7 +132,7 @@ describe("agent/hosted-chat-request", () => {
 
   it("parses hosted chat requests with auth and project-access callbacks", async () => {
     const parsed = await parseHostedChatRequestFromRequest(
-      new Request("https://agent.example.com/api/ag-ui/runs", {
+      new Request("https://agent.example.com/api/runs", {
         method: "POST",
         body: JSON.stringify({
           messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
@@ -180,7 +180,7 @@ describe("agent/hosted-chat-request", () => {
 
   it("returns hosted chat project-access errors as stable JSON responses", async () => {
     const response = await parseHostedChatRequestFromRequest(
-      new Request("https://agent.example.com/api/ag-ui/runs", {
+      new Request("https://agent.example.com/api/runs", {
         method: "POST",
         body: JSON.stringify({
           messages: [{ id: "m1", role: "user", parts: [{ type: "text", text: "Hello" }] }],
@@ -218,7 +218,7 @@ describe("agent/hosted-chat-request", () => {
   it("parses runtime agent invocations into hosted chat requests", async () => {
     const invocation = createRuntimeInvocation();
     const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
-      new Request("https://agent.example.com/internal/agents/stream", {
+      new Request("https://agent.example.com/api/control-plane/agents/stream", {
         method: "POST",
         body: JSON.stringify(invocation),
       }),

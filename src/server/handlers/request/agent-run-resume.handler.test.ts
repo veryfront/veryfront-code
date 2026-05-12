@@ -21,7 +21,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -84,7 +84,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -110,7 +110,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -132,7 +132,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -164,7 +164,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -194,7 +194,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -229,7 +229,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -257,7 +257,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -287,7 +287,7 @@ describe("server/handlers/request/agent-run-resume.handler", () => {
     const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/runs/run_1/resume", {
+      new Request("https://example.com/api/control-plane/agents/runs/run_1/resume", {
         method: "POST",
         headers: {
           "content-type": "application/json",

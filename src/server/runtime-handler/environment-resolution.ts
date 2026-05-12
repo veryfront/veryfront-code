@@ -62,16 +62,15 @@ export function resolveEnvironment(
 
   let releaseId = opts.releaseId;
 
-  // Some internal framework surfaces are routed directly to a runtime owner pod and
+  // Some framework control-plane surfaces are routed directly to a runtime owner pod and
   // rely on signed control-plane auth instead of a user-facing release address.
-  const isInternalAgentControlPlanePath = opts.pathname.startsWith("/internal/agents/") ||
-    opts.pathname.startsWith("/api/control-plane/agents/");
+  const isAgentControlPlanePath = opts.pathname.startsWith("/api/control-plane/agents/");
 
-  // Skip releaseId validation for development assets and signed internal control-plane
+  // Skip releaseId validation for development assets and signed control-plane
   // requests because they do not require a user-facing release context.
   const canSkipReleaseIdValidation = opts.pathname === "/_ws" ||
     opts.pathname.startsWith("/_veryfront/") ||
-    isInternalAgentControlPlanePath;
+    isAgentControlPlanePath;
 
   // Validate releaseId in proxy mode production
   if (

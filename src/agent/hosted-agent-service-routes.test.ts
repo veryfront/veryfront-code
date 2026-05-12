@@ -73,9 +73,9 @@ Deno.test("hosted agent service routes expose the default hosted paths", () => {
   assertEquals(routeSet.routes.map((route) => `${route.method} ${route.path}`), [
     "POST /api/ag-ui/messages/stream",
     "POST /api/ag-ui",
-    "DELETE /api/ag-ui/runs/:runId",
-    "POST /api/ag-ui/runs",
-    "POST /internal/agents/stream",
+    "DELETE /api/runs/:runId",
+    "POST /api/runs",
+    "POST /api/control-plane/agents/stream",
   ]);
 });
 
@@ -108,7 +108,7 @@ Deno.test("hosted agent service routes stream prepared AG-UI execution", async (
 Deno.test("hosted agent service routes enforce durable root lineage", async () => {
   const { routeSet } = createRouteSet();
   const response = await routeSet.handleDurableChatRunExecuteRequest({
-    request: createAuthenticatedRequest("/api/ag-ui/runs", {
+    request: createAuthenticatedRequest("/api/runs", {
       messages: [],
       context: { projectId: null, branchId: null },
     }),
@@ -121,7 +121,7 @@ Deno.test("hosted agent service routes enforce durable root lineage", async () =
 Deno.test("hosted agent service routes cancel AG-UI runs", async () => {
   const { routeSet } = createRouteSet();
   const response = await routeSet.handleDurableChatRunCancelRequest({
-    request: createAuthenticatedRequest("/api/ag-ui/runs/run-1", {}, "DELETE"),
+    request: createAuthenticatedRequest("/api/runs/run-1", {}, "DELETE"),
     runId: "run-1",
   });
 
