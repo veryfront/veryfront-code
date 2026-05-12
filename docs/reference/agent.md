@@ -710,6 +710,14 @@ Fetch initial hosted project steering for execution preparation. The helper
 returns empty steering when no project is active, otherwise fetches project
 instructions and skills in parallel with an optional host trace wrapper.
 
+### `createHostedAgentProjectSteering(options)`
+
+Create a reusable hosted project-steering binding for separately deployed agent
+services. The helper loads and caches a markdown-backed `agents/*.md` definition
+and wires the hosted project-steering adapter for project instructions, project
+skills, builtin skills, `load_skill`, and skill-id refresh. Hosts provide the
+service API URL plus optional logger, trace, and fetch hooks.
+
 ### `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(options)`
 
 Create the default runtime options used by prepared hosted chat execution on
@@ -984,6 +992,7 @@ Clear all stored messages from memory.
 | `createAgUiSseErrorResponse`                                    | Create an AG-UI SSE error `Response`                                     |
 | `createAgUiResumeHandler`                                       | Create a POST handler for hosted AG-UI run resume values                 |
 | `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
+| `createHostedAgentProjectSteering`                              | Create hosted agent-definition and project-steering bindings             |
 | `buildVeryfrontCloudRuntimeInstructions`                        | Adapt hosted preparation input to Veryfront Cloud system messages        |
 | `createVeryfrontCloudHostedChatExecutionRootRunOptions`         | Create Veryfront Cloud hosted root-run preparation defaults              |
 | `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |

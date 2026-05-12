@@ -174,6 +174,9 @@ observability APIs.
 Use `resolveRuntimeAgentDefinitionsDir()` and
 `loadRuntimeAgentMarkdownDefinitionFromFile()` when a separately deployed
 hosted agent stores persona/configuration in `agents/*.md` files.
+If the service also uses the hosted project-files API for instructions, skills,
+and `load_skill`, use `createHostedAgentProjectSteering()` to bind the markdown
+agent definition and hosted steering adapter as one reusable service primitive.
 
 ## Agent configuration
 
