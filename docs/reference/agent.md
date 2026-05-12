@@ -23,6 +23,7 @@ import {
   AgUiResumeSignalSchema,
   AgUiRuntimeRequestSchema,
   buildAgUiBrowserFinalizeResponse,
+  createAgentServiceRuntime,
   createAgUiBrowserEncoderState,
   createAgUiCancelHandler,
   createAgUiDetachedStartHandler,
@@ -32,6 +33,7 @@ import {
   createAgUiRuntimeHandler,
   createAgUiSseErrorResponse,
   createMemory,
+  createNodeAgentServiceRuntimeInfrastructure,
   defineAgentService,
   DurableRunSink,
   executeAgUiDetachedStart,
@@ -42,8 +44,10 @@ import {
   HostedLifecycleTerminalState,
   HumanInputRequestSchema,
   isHostedChildTerminalErrorCode,
+  loadAgentServiceEnvFiles,
   normalizeAgUiMessages,
   normalizeAgUiRuntimeMessages,
+  parseAgentServiceConfig,
   parseAgUiRequest,
   parseAgUiRequestOrError,
   parseAgUiRuntimeRequest,
@@ -56,6 +60,7 @@ import {
   RunResumeSessionManager,
   RuntimeAgentRunInvocationSchema,
   shouldSkipHostedChildTerminalPersistence,
+  startNodeAgentService,
   waitForHumanInput,
 } from "veryfront/agent";
 ```
@@ -229,7 +234,7 @@ await runHostedLifecycle({
 });
 ```
 
-### Phase-0 hosted service contract stub
+### Agent service runtime shell
 
 ```ts
 import { agent, defineAgentService, type DurableRunSink } from "veryfront/agent";
@@ -245,14 +250,18 @@ const durableRunSink: DurableRunSink = {
   cancelRun: async () => {},
 };
 
-// Phase 0 reserves the public signature only. This currently throws until the
-// hosted runtime implementation lands in a later migration phase.
-defineAgentService({
+const service = defineAgentService({
   serviceName: "veryfront-agent",
   agent: assistant,
   durableRunSink,
 });
 ```
+
+`defineAgentService()` normalizes single-agent and multi-agent services into
+one registry contract. `service.createRuntime({ routes })` creates a
+request-native runtime with readiness, liveness, CORS, shutdown state, and
+host-supplied routes. For Node deployments, `startNodeAgentService()` wraps that
+runtime in the shared Veryfront service server with graceful shutdown.
 
 For a conversations/control-plane host composition that combines
 `runHostedLifecycle()` with the public durable-run helpers, see
@@ -772,42 +781,55 @@ Create the default durable root-run preparation options used by
 operation text, missing-user-message errors, instrumentation, implementation
 kind, or persistence-failure handling.
 
-### `parseHostedAgentServiceConfig(env)`
+### `parseAgentServiceConfig(env)`
 
-Parse the default hosted agent service environment contract. The helper
+Parse the default agent service environment contract. The helper
 validates API URL, node environment, port, durable feature flags, OAuth public
 key, Studio MCP URL, allowed origins, and OpenTelemetry endpoint flags, and it
 derives the hosted MCP URL from `VERYFRONT_API_URL`.
 
-### `loadHostedAgentServiceEnvFiles(options)`
+`parseHostedAgentServiceConfig()` remains available as a compatibility alias.
 
-Load hosted agent service env files before parsing config. By default the
+### `loadAgentServiceEnvFiles(options)`
+
+Load agent service env files before parsing config. By default the
 helper reads `.env` and then `.env.local` from the current working directory,
 preserves variables that were already present in the host process environment,
 and lets later env files override earlier env-file values. This matches the
-recommended service bootstrap shape for separately deployed hosted agents.
+recommended service bootstrap shape for separately deployed agents.
 
-### `resolveNodeHostedAgentServiceTelemetryConfig(options)`
+`loadHostedAgentServiceEnvFiles()` remains available as a compatibility alias.
+
+### `resolveNodeAgentServiceTelemetryConfig(options)`
 
 Resolve the default Node hosted-agent OpenTelemetry configuration from a service
 environment. The helper centralizes `OTEL_ENABLED`, service name/version,
 sampling, exporter headers, and Node auto-instrumentation flags for separately
 deployed Node agent services.
 
-### `initializeNodeHostedAgentServiceOpenTelemetry(options)`
+`resolveNodeHostedAgentServiceTelemetryConfig()` remains available as a
+compatibility alias.
+
+### `initializeNodeAgentServiceOpenTelemetry(options)`
 
 Initialize the Node OpenTelemetry SDK for a hosted agent service using the
-configuration resolved by `resolveNodeHostedAgentServiceTelemetryConfig()`. This
+configuration resolved by `resolveNodeAgentServiceTelemetryConfig()`. This
 helper is intentionally Node-specific; cross-runtime service shells should keep
 using the lower-level framework observability APIs.
 
-### `createNodeHostedAgentServiceRuntimeInfrastructure(options)`
+`initializeNodeHostedAgentServiceOpenTelemetry()` remains available as a
+compatibility alias.
+
+### `createNodeAgentServiceRuntimeInfrastructure(options)`
 
 Create the standard Node hosted service infrastructure bundle for separately
 deployed agent services: hosted service config parsing, component logger,
 service tracer, active-span attribute setter, trace-context getter, and Node
 OpenTelemetry startup. The helper is intentionally Node-specific because it
 binds the npm OpenTelemetry API and Node SDK startup path.
+
+`createNodeHostedAgentServiceRuntimeInfrastructure()` remains available as a
+compatibility alias.
 
 ### `AgUiRuntimeRequestSchema`
 
@@ -991,6 +1013,7 @@ Clear all stored messages from memory.
 | `createAgUiRunErrorEvent`                                       | Create a `RunError` AG-UI SSE event                                      |
 | `createAgUiSseErrorResponse`                                    | Create an AG-UI SSE error `Response`                                     |
 | `createAgUiResumeHandler`                                       | Create a POST handler for hosted AG-UI run resume values                 |
+| `createAgentServiceRuntime`                                     | Create an agent service runtime with default service routes              |
 | `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
 | `createHostedAgentProjectSteering`                              | Create hosted agent-definition and project-steering bindings             |
 | `buildVeryfrontCloudRuntimeInstructions`                        | Adapt hosted preparation input to Veryfront Cloud system messages        |
@@ -999,17 +1022,18 @@ Clear all stored messages from memory.
 | `createVeryfrontCloudRuntimeSystemMessages`                     | Create Veryfront Cloud runtime system messages                           |
 | `fetchDefaultHostedProjectSteering`                             | Fetch initial hosted project instructions and skills                     |
 | `filterAgentTraceAttributes`                                    | Filter unknown records to valid agent trace attributes                   |
-| `createNodeHostedAgentServiceRuntimeInfrastructure`             | Create Node hosted service config, logger, tracer, and telemetry bundle  |
-| `loadHostedAgentServiceEnvFiles`                                | Load hosted service env files while preserving host process env          |
-| `initializeNodeHostedAgentServiceOpenTelemetry`                 | Initialize Node OpenTelemetry for a hosted agent service                 |
+| `createNodeAgentServiceRuntimeInfrastructure`                   | Create Node service config, logger, tracer, and telemetry bundle         |
+| `loadAgentServiceEnvFiles`                                      | Load service env files while preserving host process env                 |
+| `initializeNodeAgentServiceOpenTelemetry`                       | Initialize Node OpenTelemetry for an agent service                       |
 | `loadRuntimeAgentMarkdownDefinitionFromFile`                    | Load and parse a markdown agent definition from an agents directory      |
-| `parseHostedAgentServiceConfig`                                 | Parse default hosted agent service environment config                    |
-| `resolveNodeHostedAgentServiceTelemetryConfig`                  | Resolve Node hosted service OpenTelemetry config from environment        |
+| `parseAgentServiceConfig`                                       | Parse default agent service environment config                           |
+| `resolveNodeAgentServiceTelemetryConfig`                        | Resolve Node service OpenTelemetry config from environment               |
 | `prepareVeryfrontCloudHostedChatExecution`                      | Prepare hosted chat execution with Veryfront Cloud defaults              |
 | `normalizeAgUiRuntimeMessages`                                  | Normalize runtime AG-UI messages into package `Message[]`                |
 | `parseAgUiRuntimeRequest`                                       | Parse and validate the canonical runtime AG-UI request body              |
 | `parseAgUiRuntimeRequestOrError`                                | Parse runtime AG-UI input or return a `400` validation `Response`        |
 | `parseRuntimeAgentRunInvocation`                                | Parse and validate a control-plane runtime agent invocation body         |
+| `startNodeAgentService`                                         | Start an agent service with the Node service server adapter              |
 | `parseRuntimeAgentRunInvocationOrError`                         | Parse a runtime agent invocation or return a `400` validation `Response` |
 | `resolveRuntimeAgentDefinitionsDir`                             | Resolve a hosted service `agents/` directory from source/bundled paths   |
 | `createChatHandler`                                             | Create a POST handler for a chat API route.                              |

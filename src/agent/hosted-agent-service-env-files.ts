@@ -13,6 +13,9 @@ export type HostedAgentServiceEnvFileLoadOptions = {
   files?: readonly string[];
 };
 
+export type AgentServiceEnvFileLoadResult = HostedAgentServiceEnvFileLoadResult;
+export type AgentServiceEnvFileLoadOptions = HostedAgentServiceEnvFileLoadOptions;
+
 function joinEnvPath(cwd: string, file: string): string {
   if (file.startsWith("/") || file.startsWith("./") || file.startsWith("../")) {
     return file;
@@ -52,4 +55,10 @@ export async function loadHostedAgentServiceEnvFiles(
   }
 
   return { loadedFiles, loadedVariables };
+}
+
+export async function loadAgentServiceEnvFiles(
+  options: AgentServiceEnvFileLoadOptions = {},
+): Promise<AgentServiceEnvFileLoadResult> {
+  return loadHostedAgentServiceEnvFiles(options);
 }

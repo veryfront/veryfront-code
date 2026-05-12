@@ -1,10 +1,14 @@
 export type NodeHostedAgentServiceTelemetryEnv = Record<string, string | undefined>;
 
+export type NodeAgentServiceTelemetryEnv = NodeHostedAgentServiceTelemetryEnv;
+
 export type NodeHostedAgentServiceInstrumentationConfig = {
   http: boolean;
   express: boolean;
   fs: boolean;
 };
+
+export type NodeAgentServiceInstrumentationConfig = NodeHostedAgentServiceInstrumentationConfig;
 
 export type NodeHostedAgentServiceTelemetryConfig = {
   enabled: boolean;
@@ -16,6 +20,8 @@ export type NodeHostedAgentServiceTelemetryConfig = {
   instrumentation: NodeHostedAgentServiceInstrumentationConfig;
 };
 
+export type NodeAgentServiceTelemetryConfig = NodeHostedAgentServiceTelemetryConfig;
+
 export type ResolveNodeHostedAgentServiceTelemetryConfigOptions = {
   env: NodeHostedAgentServiceTelemetryEnv;
   defaultServiceName: string;
@@ -23,14 +29,21 @@ export type ResolveNodeHostedAgentServiceTelemetryConfigOptions = {
   defaultEnabled?: boolean;
 };
 
+export type ResolveNodeAgentServiceTelemetryConfigOptions =
+  ResolveNodeHostedAgentServiceTelemetryConfigOptions;
+
 export type NodeHostedAgentServiceTelemetryLogger = {
   info(message: string, metadata?: Record<string, unknown>): void;
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+export type NodeAgentServiceTelemetryLogger = NodeHostedAgentServiceTelemetryLogger;
+
 export type NodeHostedAgentServiceTelemetryProcessTarget = {
   on(event: "SIGTERM", listener: () => void | Promise<void>): unknown;
 };
+
+export type NodeAgentServiceTelemetryProcessTarget = NodeHostedAgentServiceTelemetryProcessTarget;
 
 export type InitializeNodeHostedAgentServiceTelemetryOptions =
   & NodeHostedAgentServiceTelemetryConfig
@@ -38,6 +51,9 @@ export type InitializeNodeHostedAgentServiceTelemetryOptions =
     logger?: NodeHostedAgentServiceTelemetryLogger;
     processTarget?: NodeHostedAgentServiceTelemetryProcessTarget;
   };
+
+export type InitializeNodeAgentServiceTelemetryOptions =
+  InitializeNodeHostedAgentServiceTelemetryOptions;
 
 function resolveEnabled(env: NodeHostedAgentServiceTelemetryEnv, defaultEnabled: boolean): boolean {
   const envValue = env.OTEL_ENABLED;
@@ -96,6 +112,12 @@ export function resolveNodeHostedAgentServiceTelemetryConfig(
     exporterHeaders: parseExporterHeaders(options.env.OTEL_EXPORTER_OTLP_HEADERS),
     instrumentation: resolveInstrumentationConfig(options.env),
   };
+}
+
+export function resolveNodeAgentServiceTelemetryConfig(
+  options: ResolveNodeAgentServiceTelemetryConfigOptions,
+): NodeAgentServiceTelemetryConfig {
+  return resolveNodeHostedAgentServiceTelemetryConfig(options);
 }
 
 function logInfo(
@@ -189,4 +211,10 @@ export async function initializeNodeHostedAgentServiceOpenTelemetry(
     logError(options.logger, "Failed to initialize OpenTelemetry", error);
     return false;
   }
+}
+
+export async function initializeNodeAgentServiceOpenTelemetry(
+  options: InitializeNodeAgentServiceTelemetryOptions,
+): Promise<boolean> {
+  return initializeNodeHostedAgentServiceOpenTelemetry(options);
 }

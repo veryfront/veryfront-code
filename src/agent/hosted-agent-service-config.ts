@@ -38,8 +38,19 @@ export const hostedAgentServiceConfigSchema = z.object({
 export type HostedAgentServiceConfig = z.infer<typeof hostedAgentServiceConfigSchema>;
 export type HostedAgentServiceConfigInput = z.input<typeof hostedAgentServiceConfigSchema>;
 
+export const agentServiceConfigSchema = hostedAgentServiceConfigSchema;
+
+export type AgentServiceConfig = HostedAgentServiceConfig;
+export type AgentServiceConfigInput = HostedAgentServiceConfigInput;
+
 export function parseHostedAgentServiceConfig(
   input: HostedAgentServiceConfigInput,
 ): HostedAgentServiceConfig {
   return hostedAgentServiceConfigSchema.parse(input);
+}
+
+export function parseAgentServiceConfig(
+  input: AgentServiceConfigInput,
+): AgentServiceConfig {
+  return parseHostedAgentServiceConfig(input);
 }

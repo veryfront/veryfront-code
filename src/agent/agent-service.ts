@@ -1,8 +1,7 @@
 import type { Agent } from "./types.ts";
 
 /**
- * Transport-neutral durable run lifecycle sink reserved for hosted agent-service
- * adoption work.
+ * Transport-neutral durable run lifecycle sink for agent-service adoption work.
  */
 export interface DurableRunSink<
   TStartInput = void,
@@ -17,8 +16,7 @@ export interface DurableRunSink<
 }
 
 /**
- * Placeholder host-facing server config reserved for the future hosted service
- * implementation.
+ * Host-facing server config for the agent service runtime shell.
  */
 export type AgentServiceRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
 
@@ -68,7 +66,7 @@ export interface AgentServiceContractBase<
 }
 
 /**
- * Multi-agent hosted-service contract. Framework services route to
+ * Multi-agent service contract. Framework services route to
  * `defaultAgentId` unless the host chooses another registered agent.
  */
 export interface AgentServiceRegistryContract<
@@ -97,7 +95,7 @@ export interface AgentServiceSingleAgentContract<
 }
 
 /**
- * Phase-0 contract draft for the future framework-owned hosted agent service.
+ * Framework-owned agent service contract.
  */
 export type AgentContract<
   TStartInput = void,
@@ -119,8 +117,7 @@ export interface NormalizedAgentServiceContract<
 }
 
 /**
- * Type-preserving service definition reserved ahead of the runtime
- * implementation landing in a later migration phase.
+ * Type-preserving service definition for request-native agent service runtimes.
  */
 export interface AgentServiceDefinition<
   TStartInput = void,
@@ -364,7 +361,7 @@ function createAgentServiceRuntime<
 }
 
 /**
- * Define a hosted agent service and expose a policy-neutral runtime shell.
+ * Define an agent service and expose a policy-neutral runtime shell.
  *
  * The first implementation slice owns contract normalization plus standard
  * health/readiness behavior. Hosts pass product-specific routes explicitly so

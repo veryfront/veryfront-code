@@ -1,8 +1,21 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { parseHostedAgentServiceConfig } from "./hosted-agent-service-config.ts";
+import {
+  agentServiceConfigSchema,
+  parseAgentServiceConfig,
+  parseHostedAgentServiceConfig,
+} from "./hosted-agent-service-config.ts";
 
 describe("agent/hosted-agent-service-config", () => {
+  it("exposes agent service aliases without the hosted prefix", () => {
+    const config = parseAgentServiceConfig({
+      VERYFRONT_API_URL: "https://api.example.com",
+    });
+
+    assertEquals(config.VERYFRONT_MCP_URL, "https://api.example.com/mcp");
+    assertEquals(agentServiceConfigSchema.parse({}).PORT, 3001);
+  });
+
   it("builds hosted agent service config defaults", () => {
     const config = parseHostedAgentServiceConfig({});
 
