@@ -1,4 +1,4 @@
-# @veryfront/ext-openai
+# @veryfront/ext-llm-openai
 
 Veryfront extension that registers the OpenAI provider into the `AIProviderRegistry`, enabling `openai/*` models for chat, embeddings, and the Responses API.
 
@@ -7,7 +7,7 @@ Veryfront extension that registers the OpenAI provider into the `AIProviderRegis
 Add the extension to your project's `veryfront.config.ts`:
 
 ```ts
-import extOpenAI from "@veryfront/ext-openai";
+import extOpenAI from "@veryfront/ext-llm-openai";
 
 export default defineConfig({
   extensions: [extOpenAI()],
@@ -124,4 +124,4 @@ The extension surfaces typed provider errors:
 
 If the extension is not installed and an `openai/*` model is requested, the error message is:
 
-> OpenAI provider not installed. Add @veryfront/ext-openai to use openai/* models.
+> OpenAI provider not installed. Add @veryfront/ext-llm-openai to use openai/* models.

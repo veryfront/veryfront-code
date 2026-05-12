@@ -1,4 +1,4 @@
-# @veryfront/ext-google
+# @veryfront/ext-llm-google
 
 Veryfront extension that registers the Google Generative Language provider into the `AIProviderRegistry`, enabling `google/*` models for chat and embeddings (Gemini API).
 
@@ -7,7 +7,7 @@ Veryfront extension that registers the Google Generative Language provider into 
 Add the extension to your project's `veryfront.config.ts`:
 
 ```ts
-import extGoogle from "@veryfront/ext-google";
+import extGoogle from "@veryfront/ext-llm-google";
 
 export default defineConfig({
   extensions: [extGoogle()],
@@ -206,7 +206,7 @@ The extension surfaces typed provider errors:
 
 If the extension is not installed and a `google/*` model is requested:
 
-> Google provider not installed. Add @veryfront/ext-google to use google/* models.
+> Google provider not installed. Add @veryfront/ext-llm-google to use google/* models.
 
 ## Tool Choice
 

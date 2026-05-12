@@ -1,4 +1,4 @@
-# @veryfront/ext-anthropic
+# @veryfront/ext-llm-anthropic
 
 Veryfront extension that registers the **Anthropic** provider into the core `AIProviderRegistry`. Once loaded, any model string prefixed with `anthropic/` (e.g. `anthropic/claude-sonnet-4-6`) is routed through this provider.
 
@@ -17,7 +17,7 @@ The extension is configured through the standard `AIProviderConfig` interface:
 ### Example
 
 ```ts
-import extAnthropic from "@veryfront/ext-anthropic";
+import extAnthropic from "@veryfront/ext-llm-anthropic";
 
 const ext = extAnthropic();
 ext.setup({
