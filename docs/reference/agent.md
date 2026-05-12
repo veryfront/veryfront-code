@@ -782,7 +782,13 @@ persistence operation text, missing-user-message errors, instrumentation, implem
 kind, or persistence-failure handling.
 
 The hosted-prefixed API names for these helpers remain available as compatibility
-aliases for existing services.
+aliases for existing services. The agent-service naming is also available for
+route, parser, AG-UI context, root-run context, child-mirror, and auth boundary
+helpers; for example `createAgentServiceRouteSet()`,
+`parseAgentServiceChatRequestFromRequest()`,
+`deriveAgentServiceAgUiChatContext()`,
+`prepareAgentServiceConversationRootRunContext()`,
+`toMirroredAgentServiceStreamPart()`, and `createAgentServiceAuth()`.
 
 ### `parseAgentServiceConfig(env)`
 
@@ -1017,17 +1023,21 @@ Clear all stored messages from memory.
 | `createAgUiSseErrorResponse`                                          | Create an AG-UI SSE error `Response`                                     |
 | `createAgUiResumeHandler`                                             | Create a POST handler for hosted AG-UI run resume values                 |
 | `createAgentServiceRuntime`                                           | Create an agent service runtime with default service routes              |
+| `createAgentServiceRouteSet`                                          | Create default agent-service route handlers                              |
 | `createDefaultAgentServiceProjectSteeringRefresh`                     | Create the default agent-service project steering refresh callback       |
 | `createAgentServiceProjectSteering`                                   | Create agent-service agent-definition and project-steering bindings      |
+| `createAgentServiceAuth`                                              | Create request auth and project-access checks for an agent service       |
 | `buildVeryfrontCloudRuntimeInstructions`                              | Adapt agent-service preparation input to Veryfront Cloud system messages |
 | `createVeryfrontCloudAgentServiceChatExecutionRootRunOptions`         | Create Veryfront Cloud agent-service root-run preparation defaults       |
 | `createVeryfrontCloudPreparedAgentServiceChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
 | `createVeryfrontCloudRuntimeSystemMessages`                           | Create Veryfront Cloud runtime system messages                           |
 | `fetchDefaultAgentServiceProjectSteering`                             | Fetch initial agent-service project instructions and skills              |
+| `deriveAgentServiceAgUiChatContext`                                   | Derive chat context from canonical AG-UI runtime input                   |
 | `filterAgentTraceAttributes`                                          | Filter unknown records to valid agent trace attributes                   |
 | `createNodeAgentServiceRuntimeInfrastructure`                         | Create Node service config, logger, tracer, and telemetry bundle         |
 | `loadAgentServiceEnvFiles`                                            | Load service env files while preserving host process env                 |
 | `initializeNodeAgentServiceOpenTelemetry`                             | Initialize Node OpenTelemetry for an agent service                       |
+| `parseAgentServiceChatRequestFromRequest`                             | Parse the agent-service chat request body and auth context               |
 | `loadRuntimeAgentMarkdownDefinitionFromFile`                          | Load and parse a markdown agent definition from an agents directory      |
 | `parseAgentServiceConfig`                                             | Parse default agent service environment config                           |
 | `resolveNodeAgentServiceTelemetryConfig`                              | Resolve Node service OpenTelemetry config from environment               |
