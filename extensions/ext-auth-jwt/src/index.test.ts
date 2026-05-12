@@ -1,7 +1,7 @@
 /**
- * ext-jwt extension tests.
+ * ext-auth-jwt extension tests.
  *
- * @module extensions/ext-jwt/test
+ * @module extensions/ext-auth-jwt/test
  */
 
 import { assertEquals } from "@std/assert";
@@ -11,12 +11,12 @@ import { createLocalJWKSet, exportJWK, generateKeyPair, type JSONWebKeySet, Sign
 
 import factory, { type JwksResolver } from "./index.ts";
 
-const TEST_SECRET = "test-secret-for-ext-jwt-tests";
+const TEST_SECRET = "test-secret-for-ext-auth-jwt-tests";
 
-describe("ext-jwt factory", () => {
-  it("produces an Extension with name ext-jwt and an AuthProvider in provides", () => {
+describe("ext-auth-jwt factory", () => {
+  it("produces an Extension with name ext-auth-jwt and an AuthProvider in provides", () => {
     const ext = factory({ secret: TEST_SECRET });
-    assertEquals(ext.name, "ext-jwt");
+    assertEquals(ext.name, "ext-auth-jwt");
     assertEquals(typeof ext.version, "string");
     assertEquals(Array.isArray(ext.capabilities), true);
 
@@ -31,7 +31,7 @@ describe("ext-jwt factory", () => {
   });
 });
 
-describe("ext-jwt AuthProvider", () => {
+describe("ext-auth-jwt AuthProvider", () => {
   it("sign → verify round-trip returns the original subject", async () => {
     const ext = factory({ secret: TEST_SECRET });
     const auth = ext.provides!.AuthProvider as {
