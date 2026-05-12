@@ -11,7 +11,7 @@
  */
 
 import { dirname, extname, fromFileUrl, join } from "#std/path.ts";
-import { EsbuildBundler, EsModuleLexer } from "../../extensions/ext-esbuild/src/index.ts";
+import { EsbuildBundler, EsModuleLexer } from "../../extensions/ext-bundler-esbuild/src/index.ts";
 import { register as registerContract } from "../../src/extensions/contracts.ts";
 import {
   generateClientModule,

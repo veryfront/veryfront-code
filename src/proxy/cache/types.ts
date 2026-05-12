@@ -2,7 +2,7 @@
  * Token Cache Interface
  *
  * Abstraction for storing OAuth tokens with TTL support.
- * Implementations: MemoryCache (built-in), RedisCache (via @veryfront/ext-redis)
+ * Implementations: MemoryCache (built-in), RedisCache (via @veryfront/ext-cache-redis)
  */
 
 export interface TokenCacheEntry {

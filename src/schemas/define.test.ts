@@ -1,7 +1,7 @@
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { SchemaValidator } from "#veryfront/extensions/interfaces/index.ts";
+import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "./define.ts";
 import { registerZodAdapter, zodAdapter } from "./zod-adapter.ts";
 

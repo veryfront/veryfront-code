@@ -11,9 +11,8 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { detectConflicts, ExtensionLoader, resolve, tryResolve } from "./index.ts";
 import type { Extension, ResolvedExtension } from "./index.ts";
 import { register, reset } from "./contracts.ts";
-import { LLMProviderRegistryName } from "./interfaces/index.ts";
-import type { LLMProviderRegistry } from "./interfaces/index.ts";
-import { createLLMProviderRegistry } from "./llm/llm-provider-registry.ts";
+import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
+import type { LLMProviderRegistry } from "./llm/index.ts";
 import extOpenAI from "../../extensions/ext-llm-openai/src/index.ts";
 import extAnthropic from "../../extensions/ext-llm-anthropic/src/index.ts";
 import extGoogle from "../../extensions/ext-llm-google/src/index.ts";
@@ -22,7 +21,7 @@ import {
   getTracer,
   setGlobalTracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import type { TracingExporter } from "./interfaces/tracing-exporter.ts";
+import type { TracingExporter } from "./tracing/tracing-exporter.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -191,7 +190,7 @@ describe("extensions/integration", () => {
     await loader.teardownAll();
   });
 
-  it("ext-opentelemetry: TracingExporter registers and returns a real tracer", async () => {
+  it("ext-tracing-opentelemetry: TracingExporter registers and returns a real tracer", async () => {
     _resetShimForTests();
 
     let shimProvider: { getTracer(name: string): unknown } | null = null;
@@ -232,7 +231,7 @@ describe("extensions/integration", () => {
       },
     };
 
-    const otelExt = makeExt("ext-opentelemetry", {
+    const otelExt = makeExt("ext-tracing-opentelemetry", {
       provides: { TracingExporter: exporterStub },
       async setup(ctx) {
         await exporterStub.start(ctx.config);

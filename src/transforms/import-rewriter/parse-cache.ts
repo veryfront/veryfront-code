@@ -6,7 +6,7 @@
  */
 
 import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
-import type { ModuleLexer } from "#veryfront/extensions/interfaces/module-lexer.ts";
+import type { ModuleLexer } from "#veryfront/extensions/bundler/module-lexer.ts";
 import type { ImportSpecifierInfo } from "./types.ts";
 import type { ImportSpecifier } from "../esm/lexer.ts";
 

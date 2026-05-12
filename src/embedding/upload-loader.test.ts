@@ -104,7 +104,7 @@ describe("upload-loader", () => {
 
   describe("worker extraction (requires NodeCompat extension)", () => {
     // End-to-end kreuzberg extraction tests live in
-    // extensions/ext-node-compat/tests/integration.test.ts where the
+    // extensions/ext-node-compatibility/tests/integration.test.ts where the
     // extension is registered and @kreuzberg/wasm is available. Core-side,
     // we only assert that `loadUpload` surfaces a clear error when the
     // extension isn't installed — this is the documented fallback behavior.
@@ -119,7 +119,7 @@ describe("upload-loader", () => {
         Error,
       ) as Error;
       assertEquals(
-        err.message.includes("NodeCompat") || err.message.includes("ext-node-compat"),
+        err.message.includes("NodeCompat") || err.message.includes("ext-node-compatibility"),
         true,
         `expected actionable NodeCompat error, got: ${err.message}`,
       );

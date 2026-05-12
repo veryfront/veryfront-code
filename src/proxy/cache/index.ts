@@ -17,7 +17,7 @@ export { ResilientCache } from "./resilient-cache.ts";
 export { TracingTokenCache } from "./tracing-cache.ts";
 
 import type { CacheOptions, TokenCache } from "./types.ts";
-import type { TokenCacheStore } from "../../extensions/interfaces/token-cache-store.ts";
+import type { TokenCacheStore } from "../../extensions/cache/index.ts";
 import { MemoryCache } from "./memory-cache.ts";
 import { ResilientCache } from "./resilient-cache.ts";
 import { TracingTokenCache } from "./tracing-cache.ts";
@@ -29,7 +29,7 @@ import { withSpan } from "../tracing.ts";
 const logger = proxyLogger.child({ module: "cache" });
 
 const MISSING_EXTENSION_INFO =
-  "TokenCacheStore contract not provided — install @veryfront/ext-redis or scaffold extensions/ext-redis/";
+  "TokenCacheStore contract not provided — install @veryfront/ext-cache-redis or scaffold extensions/ext-cache-redis/";
 
 export async function createCache(options: CacheOptions): Promise<TokenCache> {
   return withSpan(

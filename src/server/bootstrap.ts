@@ -10,7 +10,7 @@ import {
 import { createBuiltinExtensions } from "#veryfront/extensions/builtin-extensions.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
-import type { TracingExporter } from "#veryfront/extensions/interfaces/tracing-exporter.ts";
+import type { TracingExporter } from "#veryfront/extensions/tracing/tracing-exporter.ts";
 import {
   setGlobalActiveSpanAccessor,
   setGlobalMetricsAPI,
@@ -97,7 +97,7 @@ function assertRequiredContracts(): void {
   if (!tryResolve("ModuleLexer")) {
     bootstrapLog.warn(
       `[bootstrap] no ModuleLexer extension registered — dev-server import rewriting will fail. Recommended: ${
-        getRecommendation("ModuleLexer") ?? "@veryfront/ext-esbuild"
+        getRecommendation("ModuleLexer") ?? "@veryfront/ext-bundler-esbuild"
       }`,
     );
   }

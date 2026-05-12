@@ -18,7 +18,7 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { isDeno } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
-import type { NodeCompat } from "#veryfront/extensions/interfaces/node-compat.ts";
+import type { NodeCompat } from "#veryfront/extensions/compat/node-compat.ts";
 
 function resolve(pkg: string, version: string): string {
   return isDeno ? `npm:${pkg}@${version}` : pkg;
@@ -43,9 +43,9 @@ export function importClaudeAgentSDK(): Promise<OpaqueModule> {
 /**
  * Lazily import kreuzberg document extraction.
  *
- * Delegates to the `NodeCompat` extension contract (`@veryfront/ext-node-compat`)
+ * Delegates to the `NodeCompat` extension contract (`@veryfront/ext-node-compatibility`)
  * when available. Without the extension, throws an actionable error instructing
- * the user to install `ext-node-compat`.
+ * the user to install `ext-node-compatibility`.
  *
  * Node/Bun path: `@kreuzberg/node` resolved from the project's node_modules at
  * runtime — the extension handles that dynamic import internally.
@@ -62,6 +62,6 @@ export async function importKreuzberg(): Promise<{
   }
   throw new Error(
     "Document extraction requires the NodeCompat extension. " +
-      "Install @veryfront/ext-node-compat and add it to your extensions configuration.",
+      "Install @veryfront/ext-node-compatibility and add it to your extensions configuration.",
   );
 }

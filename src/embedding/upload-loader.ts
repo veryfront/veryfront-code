@@ -1,5 +1,5 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { NodeCompat } from "#veryfront/extensions/interfaces/node-compat.ts";
+import type { NodeCompat } from "#veryfront/extensions/compat/node-compat.ts";
 
 /**
  * Extracts plain text from various upload formats.
@@ -36,7 +36,7 @@ export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise
   if (!nodeCompat?.extractInWorker) {
     throw new Error(
       "Document extraction requires the NodeCompat extension. " +
-        "Install @veryfront/ext-node-compat and add it to your extensions configuration.",
+        "Install @veryfront/ext-node-compatibility and add it to your extensions configuration.",
     );
   }
   return nodeCompat.extractInWorker(buffer, mimeType);

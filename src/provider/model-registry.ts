@@ -21,8 +21,8 @@ import {
 } from "#veryfront/config/env.ts";
 import { ensureBuiltinLLMProviders } from "#veryfront/extensions/builtin-extensions.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { LLMProviderRegistry } from "#veryfront/extensions/interfaces/index.ts";
-import { LLMProviderRegistryName } from "#veryfront/extensions/interfaces/index.ts";
+import type { LLMProviderRegistry } from "#veryfront/extensions/llm/index.ts";
+import { LLMProviderRegistryName } from "#veryfront/extensions/llm/index.ts";
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { serverLogger } from "#veryfront/utils";
 import { DEFAULT_LOCAL_MODEL } from "./local/model-catalog.ts";

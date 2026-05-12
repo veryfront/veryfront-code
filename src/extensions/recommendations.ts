@@ -5,25 +5,25 @@
  */
 
 const recommendations = new Map<string, string>([
-  ["Bundler", "@veryfront/ext-esbuild"],
+  ["Bundler", "@veryfront/ext-bundler-esbuild"],
   // ModuleLexer ships in the same package as Bundler (es-module-lexer +
-  // esbuild are co-bundled into ext-esbuild).
-  ["ModuleLexer", "@veryfront/ext-esbuild"],
-  ["CacheStore", "@veryfront/ext-redis"],
-  ["TokenCacheStore", "@veryfront/ext-redis"],
-  ["CSSProcessor", "@veryfront/ext-tailwind"],
-  ["ContentTransformer", "@veryfront/ext-mdx"],
+  // esbuild are co-bundled into ext-bundler-esbuild).
+  ["ModuleLexer", "@veryfront/ext-bundler-esbuild"],
+  ["CacheStore", "@veryfront/ext-cache-redis"],
+  ["TokenCacheStore", "@veryfront/ext-cache-redis"],
+  ["CSSProcessor", "@veryfront/ext-css-tailwind"],
+  ["ContentTransformer", "@veryfront/ext-transform-mdx"],
   ["DatabaseClient", "@veryfront/ext-postgres"],
   ["AuthProvider", "@veryfront/ext-auth-jwt"],
-  ["TracingExporter", "@veryfront/ext-opentelemetry"],
+  ["TracingExporter", "@veryfront/ext-tracing-opentelemetry"],
   ["LLMProviderRegistry", "@veryfront/ext-llm-openai"],
   ["LLMProvider:openai", "@veryfront/ext-llm-openai"],
   ["LLMProvider:anthropic", "@veryfront/ext-llm-anthropic"],
   ["LLMProvider:google", "@veryfront/ext-llm-google"],
   ["EmbeddingProvider", "@veryfront/ext-embeddings"],
-  ["CodeParser", "@veryfront/ext-babel"],
+  ["CodeParser", "@veryfront/ext-parser-babel"],
   ["SchemaValidator", "@veryfront/ext-zod"],
-  ["NodeCompat", "@veryfront/ext-node-compat"],
+  ["NodeCompat", "@veryfront/ext-node-compatibility"],
 ]);
 
 export function getRecommendation(contractName: string): string | undefined {

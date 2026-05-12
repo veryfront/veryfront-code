@@ -63,7 +63,7 @@ describe("config-generator", () => {
         });
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
         assertEquals(Object.keys(pkg.dependencies).sort(), [
-          "@veryfront/ext-esbuild",
+          "@veryfront/ext-bundler-esbuild",
           "react",
           "react-dom",
           "veryfront",

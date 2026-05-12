@@ -15,13 +15,13 @@ await import("veryfront/platform/esbuild-init");
 
 // Register the default Bundler + ModuleLexer contracts shipped with the
 // binary so bootstrap paths can resolve them without the user having to
-// declare @veryfront/ext-esbuild as a project extension. User-installed
+// declare @veryfront/ext-bundler-esbuild as a project extension. User-installed
 // extensions (orchestrated later) can still override these.
 {
   const { register } = await import("veryfront/extensions/contracts");
   const { tryResolve } = await import("veryfront/extensions");
   if (!tryResolve("Bundler") || !tryResolve("ModuleLexer")) {
-    const { EsbuildBundler, EsModuleLexer } = await import("@veryfront/ext-esbuild");
+    const { EsbuildBundler, EsModuleLexer } = await import("@veryfront/ext-bundler-esbuild");
     if (!tryResolve("Bundler")) register("Bundler", new EsbuildBundler());
     if (!tryResolve("ModuleLexer")) register("ModuleLexer", new EsModuleLexer());
   }

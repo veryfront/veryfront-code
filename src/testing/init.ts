@@ -10,7 +10,7 @@
  * @module
  */
 
-import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-esbuild";
+import { EsbuildBundler, EsModuleLexer } from "@veryfront/ext-bundler-esbuild";
 import { register as registerContract } from "#veryfront/extensions/contracts.ts";
 
 const g = globalThis as Record<string, unknown>;
