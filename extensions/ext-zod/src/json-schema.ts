@@ -19,6 +19,7 @@ interface ZodDef {
   value?: unknown; // v3 literal
   values?: unknown; // v3 enum / v4 literal
   entries?: Record<string, unknown>; // v4 enum
+  description?: string; // v3 description metadata
   shape?: (() => Record<string, z.ZodTypeAny>) | Record<string, z.ZodTypeAny>;
   element?: z.ZodTypeAny; // v4 array/record
   items?: z.ZodTypeAny[]; // tuple
@@ -69,12 +70,14 @@ function convertSchema(schema: z.ZodTypeAny, context: ConversionContext): JsonSc
 
   const { schema: unwrapped, nullable } = unwrapSchema(schema);
   const json = convert(unwrapped, context);
+  const description = getDescription(schema) ?? getDescription(unwrapped);
+  if (description && json.description === undefined) json.description = description;
 
   return nullable ? { anyOf: [json, { type: "null" }] } : json;
 }
 
 export function isOptionalSchema(schema: z.ZodTypeAny): boolean {
-  return unwrapSchema(schema).optional;
+  return unwrapSchema(schema).optional || hasDefaultSchema(schema);
 }
 
 function convert(schema: z.ZodTypeAny, context: ConversionContext): JsonSchema {
@@ -267,4 +270,42 @@ function unwrapSchema(
         return { schema: current, nullable, optional };
     }
   }
+}
+
+function hasDefaultSchema(schema: z.ZodTypeAny): boolean {
+  let current: z.ZodTypeAny = schema;
+
+  while (true) {
+    const tag = getTypeTag(current);
+    const def = getDef(current);
+
+    switch (tag) {
+      case "ZodDefault":
+      case "default":
+        return true;
+
+      case "ZodNullable":
+      case "nullable":
+      case "ZodOptional":
+      case "optional":
+      case "ZodEffects":
+      case "pipe": {
+        const inner = def.innerType ?? def.schema ?? def.in;
+        if (!inner || inner === current) return false;
+        current = inner;
+        break;
+      }
+
+      default:
+        return false;
+    }
+  }
+}
+
+function getDescription(schema: z.ZodTypeAny): string | undefined {
+  const direct = (schema as { description?: unknown }).description;
+  if (typeof direct === "string") return direct;
+
+  const defDescription = getDef(schema).description;
+  return typeof defDescription === "string" ? defDescription : undefined;
 }

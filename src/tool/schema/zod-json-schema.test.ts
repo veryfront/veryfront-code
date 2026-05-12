@@ -71,11 +71,26 @@ describe("zodToJsonSchema", () => {
       assertEquals(result.required?.includes("age"), true);
     });
 
+    it("should preserve field descriptions", () => {
+      const result = zodToJsonSchema(
+        s((v) => v.object({ name: v.string().describe("Display name") })),
+      );
+      assertEquals(result.properties?.name?.description, "Display name");
+    });
+
     it("should mark optional fields as not required", () => {
       const result = zodToJsonSchema(
         s((v) => v.object({ required: v.string(), optional: v.string().optional() })),
       );
       assertEquals(result.required, ["required"]);
+    });
+
+    it("should mark defaulted fields as not required", () => {
+      const result = zodToJsonSchema(
+        s((v) => v.object({ required: v.string(), defaulted: v.number().default(50) })),
+      );
+      assertEquals(result.required, ["required"]);
+      assertEquals(result.properties?.defaulted?.default, 50);
     });
 
     it("should handle empty object", () => {
@@ -221,5 +236,9 @@ describe("isOptionalSchema", () => {
 
   it("should return true for nested optional (nullable + optional)", () => {
     assertEquals(isOptionalSchema(s((v) => v.string().nullable().optional())), true);
+  });
+
+  it("should return true for defaulted schemas", () => {
+    assertEquals(isOptionalSchema(s((v) => v.number().default(50))), true);
   });
 });

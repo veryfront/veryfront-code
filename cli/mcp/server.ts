@@ -13,6 +13,7 @@ import { withSpan } from "veryfront/observability/otlp-setup";
 import { createIssuesManager } from "veryfront/issues";
 import type { ToolListEntry } from "veryfront/mcp";
 import { getErrorCollector, getLogBuffer } from "veryfront/observability";
+import { zodToJsonSchema } from "veryfront/tool/schema";
 import { allTools, getTool, setServerStartTime } from "./tools.ts";
 import { startStdioJsonRpc } from "./stdio.ts";
 import {
@@ -28,21 +29,6 @@ import {
   successResponse,
   ToolsCallParamsSchema,
 } from "./jsonrpc.ts";
-
-/** Minimal shape of a Zod schema's internal _def for JSON Schema conversion */
-interface ZodDef {
-  description?: string;
-  typeName?: string;
-  shape?: () => Record<string, unknown>;
-  type?: unknown;
-  values?: unknown[];
-  innerType?: unknown;
-  defaultValue?: () => unknown;
-  value?: unknown;
-  options?: unknown[];
-  valueType?: unknown;
-  keyType?: unknown;
-}
 
 export interface MCPServerConfig {
   /** Enable stdio transport (for Claude Code, Cursor, etc.) */
@@ -221,7 +207,7 @@ export class MCPDevServer {
         const entry: ToolListEntry = {
           name: tool.name,
           description: tool.description,
-          inputSchema: this.zodToJsonSchema(tool.inputSchema),
+          inputSchema: zodToJsonSchema(tool.inputSchema) as Record<string, unknown>,
         };
         if (tool.title) entry.title = tool.title;
         if (tool.annotations) entry.annotations = tool.annotations;
@@ -532,70 +518,6 @@ export class MCPDevServer {
       },
       { "mcp.prompt.name": name },
     );
-  }
-
-  private zodToJsonSchema(schema: unknown): Record<string, unknown> {
-    const def = (schema as { _def?: ZodDef } | null)?._def;
-    if (!def) return { type: "object", properties: {} };
-
-    const desc = def.description ? { description: def.description } : {};
-
-    switch (def.typeName) {
-      case "ZodObject": {
-        const shape = def.shape?.() ?? {};
-        const properties: Record<string, unknown> = {};
-        const required: string[] = [];
-
-        for (const [key, value] of Object.entries(shape)) {
-          const fieldDef = (value as { _def?: ZodDef } | null)?._def;
-          const fieldSchema = this.zodToJsonSchema(value);
-
-          if (fieldDef?.description) fieldSchema.description = fieldDef.description;
-          properties[key] = fieldSchema;
-
-          if (fieldDef?.typeName !== "ZodOptional" && fieldDef?.typeName !== "ZodDefault") {
-            required.push(key);
-          }
-        }
-
-        return { type: "object", properties, ...(required.length ? { required } : {}) };
-      }
-      case "ZodString":
-        return { type: "string", ...desc };
-      case "ZodNumber":
-        return { type: "number", ...desc };
-      case "ZodBoolean":
-        return { type: "boolean", ...desc };
-      case "ZodArray":
-        return { type: "array", items: this.zodToJsonSchema(def.type), ...desc };
-      case "ZodEnum":
-        return { type: "string", enum: def.values, ...desc };
-      case "ZodOptional":
-        return this.zodToJsonSchema(def.innerType);
-      case "ZodDefault": {
-        const inner = this.zodToJsonSchema(def.innerType);
-        inner.default = def.defaultValue?.();
-        return inner;
-      }
-      case "ZodNullable": {
-        const inner = this.zodToJsonSchema(def.innerType);
-        return { ...inner, nullable: true };
-      }
-      case "ZodLiteral":
-        return { const: def.value, ...desc };
-      case "ZodUnion": {
-        const options = (def.options ?? []).map((o: unknown) => this.zodToJsonSchema(o));
-        return { anyOf: options, ...desc };
-      }
-      case "ZodRecord":
-        return {
-          type: "object",
-          additionalProperties: this.zodToJsonSchema(def.valueType),
-          ...desc,
-        };
-      default:
-        return { type: "object" };
-    }
   }
 }
 
