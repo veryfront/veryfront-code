@@ -311,6 +311,12 @@ available from discovery; set `agentSource: "markdown"` to force markdown
 definitions. Use `veryfront.config.ts` `ai.<primitive>.discovery.paths` for
 non-standard project paths.
 
+The `agentId` option selects the default agent for direct `/api/runs` requests.
+Control-plane runtime invocations can target any discovered code or markdown
+agent by setting `run.agentId` in the `/api/control-plane/agents/stream`
+payload. This lets one deployed service expose multiple project agents while
+keeping direct chat integrations on a predictable default.
+
 For a conversations/control-plane host composition that combines
 `runHostedLifecycle()` with the public durable-run helpers, see
 [`Conversation-backed agent hosts`](./agent-conversation-control-plane.md).

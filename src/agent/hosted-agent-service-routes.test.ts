@@ -32,6 +32,27 @@ function createAgUiBody(): Record<string, unknown> {
   };
 }
 
+function createRuntimeAgentInvocationBody(): Record<string, unknown> {
+  return {
+    run: {
+      agentServiceId: "test-agent-service",
+      agentId: "builder",
+      conversationId: "00000000-0000-4000-8000-000000000001",
+      runId: "run-1",
+      messageId: "00000000-0000-4000-8000-000000000002",
+      inputAnchorMessageId: "00000000-0000-4000-8000-000000000003",
+      requestedByUserId: "00000000-0000-4000-8000-000000000004",
+      project: {
+        projectId: "00000000-0000-4000-8000-000000000005",
+        projectSlug: "demo",
+      },
+    },
+    messages: [],
+    tools: [],
+    context: [],
+  };
+}
+
 function createRouteSet(input: {
   prepareExecution?: (req: ParsedHostedChatRequest) => Promise<{ executionId: string }>;
   streamResponse?: Response;
@@ -103,6 +124,20 @@ Deno.test("hosted agent service routes stream prepared AG-UI execution", async (
   assertEquals(response, streamResponse);
   assertEquals(preparedRequests.length, 1);
   assertEquals(streamInputs, [{ executionId: "exec-1", agUiRunId: "run-1" }]);
+});
+
+Deno.test("hosted agent service routes preserve control-plane target agent ids", async () => {
+  const { routeSet, preparedRequests } = createRouteSet();
+  const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+    request: createAuthenticatedRequest(
+      "/api/control-plane/agents/stream",
+      createRuntimeAgentInvocationBody(),
+    ),
+  });
+
+  assertEquals(response.status, 202);
+  assertEquals(preparedRequests.length, 1);
+  assertEquals(preparedRequests[0]?.agentId, "builder");
 });
 
 Deno.test("hosted agent service routes enforce durable root lineage", async () => {

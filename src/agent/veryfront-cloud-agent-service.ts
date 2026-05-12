@@ -63,6 +63,10 @@ import { type HostedProjectSkillIdsContext } from "./hosted-project-steering-ada
 import type { RuntimeLoadSkillToolContext } from "./runtime-load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "./runtime-project-skill-catalog.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
+import {
+  loadRuntimeAgentMarkdownDefinitionFromFile,
+  resolveRuntimeAgentDefinitionsDir,
+} from "./runtime-agent-definition-files.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
 import {
   buildVeryfrontCloudRuntimeInstructions,
@@ -313,6 +317,7 @@ function createNodeVeryfrontCloudAgentServiceContext(
     tracker: createDetachedRunTracker<AgUiResumeValue>(),
     discoveryResult: null as DiscoveryResult | null,
     agentConfig: null as RuntimeAgentMarkdownDefinition | null,
+    agentConfigs: new Map<string, RuntimeAgentMarkdownDefinition>(),
   };
 }
 
@@ -339,21 +344,50 @@ function getMarkdownAgentConfig(
   return context.projectSteering.getAgentConfig();
 }
 
+function loadMarkdownAgentConfig(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  agentId: string,
+): RuntimeAgentMarkdownDefinition {
+  if (agentId === context.options.agentId) {
+    return getMarkdownAgentConfig(context);
+  }
+
+  const agentsDir = resolveRuntimeAgentDefinitionsDir({
+    baseDir: resolveBaseDir(context.options),
+    id: agentId,
+  });
+
+  return loadRuntimeAgentMarkdownDefinitionFromFile({
+    agentsDir,
+    id: agentId,
+  });
+}
+
 async function resolveAgentConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
+  agentId: string,
 ): Promise<RuntimeAgentMarkdownDefinition> {
+  const cachedAgentConfig = context.agentConfigs.get(agentId);
+  if (cachedAgentConfig) {
+    return cachedAgentConfig;
+  }
+
   const source = context.options.agentSource ?? "auto";
-  const codeAgent = getAgent(context.options.agentId);
+  const codeAgent = getAgent(agentId);
 
   if (source !== "markdown" && codeAgent) {
-    return await createRuntimeAgentDefinitionFromCodeAgent(codeAgent);
+    const agentConfig = await createRuntimeAgentDefinitionFromCodeAgent(codeAgent);
+    context.agentConfigs.set(agentConfig.id, agentConfig);
+    return agentConfig;
   }
 
   if (source === "code") {
-    throw new Error(`Code agent "${context.options.agentId}" was not discovered.`);
+    throw new Error(`Code agent "${agentId}" was not discovered.`);
   }
 
-  return getMarkdownAgentConfig(context);
+  const agentConfig = loadMarkdownAgentConfig(context, agentId);
+  context.agentConfigs.set(agentConfig.id, agentConfig);
+  return agentConfig;
 }
 
 function getResolvedAgentConfig(
@@ -386,7 +420,7 @@ async function initializeNodeVeryfrontCloudAgentServiceContext(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): Promise<void> {
   await discoverProjectPrimitives(context);
-  context.agentConfig = await resolveAgentConfig(context);
+  context.agentConfig = await resolveAgentConfig(context, context.options.agentId);
 }
 
 function getDiscoveredHostTools(): HostToolSet {
@@ -638,7 +672,7 @@ async function prepareChatExecution(
 
   setPrepareChatExecutionStartAttributes(context, { projectId, userId });
 
-  const agentConfig = getResolvedAgentConfig(context);
+  const agentConfig = await resolveAgentConfig(context, req.agentId ?? context.options.agentId);
   const {
     effectiveMessages,
     rootRunContext,
