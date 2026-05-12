@@ -8,6 +8,14 @@
  */
 
 import { parseArgs } from "#std/flags";
+import {
+  parseLock,
+  parseNameVersion,
+  purl,
+  SUPPORTED_LOCK_VERSIONS,
+} from "../lib/deno-lock.ts";
+
+export { SUPPORTED_LOCK_VERSIONS };
 
 export interface CycloneDXComponent {
   type: "library";
@@ -15,42 +23,6 @@ export interface CycloneDXComponent {
   version: string;
   purl: string;
   hashes?: Array<{ alg: string; content: string }>;
-}
-
-/**
- * Lockfile versions whose schema this parser has been validated against.
- * Bump (and re-test) when Deno introduces a new lock format.
- */
-export const SUPPORTED_LOCK_VERSIONS = ["5"] as const;
-
-interface DenoLockV5 {
-  version: string;
-  specifiers?: Record<string, string>;
-  npm?: Record<string, { integrity?: string; dependencies?: string[] }>;
-  jsr?: Record<string, unknown>;
-}
-
-function parseNameVersion(key: string): { name: string; version: string } | null {
-  let scope = "";
-  let rest = key;
-  if (key.startsWith("@")) {
-    const slash = key.indexOf("/");
-    if (slash < 0) return null;
-    scope = key.slice(0, slash + 1);
-    rest = key.slice(slash + 1);
-  }
-  const at = rest.indexOf("@");
-  if (at <= 0) return null;
-  const name = scope + rest.slice(0, at);
-  let version = rest.slice(at + 1);
-  const underscore = version.indexOf("_");
-  if (underscore >= 0) version = version.slice(0, underscore);
-  return { name, version };
-}
-
-function purlFor(name: string, version: string): string {
-  const encoded = name.split("/").map(encodeURIComponent).join("/");
-  return `pkg:npm/${encoded}@${version}`;
 }
 
 function hashFromIntegrity(
@@ -63,18 +35,7 @@ function hashFromIntegrity(
 }
 
 export function componentsFromLock(lockText: string): CycloneDXComponent[] {
-  const lock = JSON.parse(lockText) as DenoLockV5;
-  if (
-    !SUPPORTED_LOCK_VERSIONS.includes(
-      lock.version as typeof SUPPORTED_LOCK_VERSIONS[number],
-    )
-  ) {
-    throw new Error(
-      `Unsupported deno.lock version: "${lock.version}" (supported: ${
-        SUPPORTED_LOCK_VERSIONS.join(", ")
-      })`,
-    );
-  }
+  const lock = parseLock(lockText);
   const npm = lock.npm ?? {};
   const seen = new Set<string>();
   const components: CycloneDXComponent[] = [];
@@ -89,7 +50,7 @@ export function componentsFromLock(lockText: string): CycloneDXComponent[] {
       type: "library",
       name: nv.name,
       version: nv.version,
-      purl: purlFor(nv.name, nv.version),
+      purl: purl(nv.name, nv.version),
       ...(hash ? { hashes: [hash] } : {}),
     });
   }
