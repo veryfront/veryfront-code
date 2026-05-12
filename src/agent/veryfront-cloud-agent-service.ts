@@ -82,7 +82,7 @@ import {
 } from "./veryfront-cloud-hosted-chat-execution-preparation.ts";
 import { applyAgentProjectContextChange } from "./project-context.ts";
 
-export type VeryfrontCloudAgentServiceProcessTarget =
+export type NodeVeryfrontCloudAgentServiceProcessTarget =
   & NonNullable<RunAgentServiceMainOptions["processTarget"]>
   & NonNullable<CreateNodeAgentServiceRuntimeInfrastructureOptions["processTarget"]>
   & {
@@ -90,7 +90,7 @@ export type VeryfrontCloudAgentServiceProcessTarget =
     exit?: (code: number) => never | void;
   };
 
-export type VeryfrontCloudAgentServiceOptions = {
+export type NodeVeryfrontCloudAgentServiceOptions = {
   serviceName: string;
   agentId: string;
   baseDir?: string;
@@ -98,12 +98,12 @@ export type VeryfrontCloudAgentServiceOptions = {
   forwardedConfigNamespace?: string;
   createBashTool: HostedSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
-  processTarget?: VeryfrontCloudAgentServiceProcessTarget;
+  processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;
   drainTimeoutMs?: number;
   hardShutdownTimeoutMs?: number;
 };
 
-export type VeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
+export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
   config: AgentServiceRuntimeConfig;
   agent: HostedChatRuntimeCreationResult["agent"];
   runtimeKind: "framework";
@@ -112,7 +112,9 @@ export type VeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExec
   rootRunContext: HostedConversationRootRunContext;
 };
 
-type VeryfrontCloudAgentServiceContext = ReturnType<typeof createVeryfrontCloudAgentServiceContext>;
+type NodeVeryfrontCloudAgentServiceContext = ReturnType<
+  typeof createNodeVeryfrontCloudAgentServiceContext
+>;
 type ChildRunContext = DefaultHostedInvokeAgentContext & {
   clientProfile?: RuntimeClientProfile | null;
 };
@@ -123,7 +125,7 @@ const DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS = 20_000;
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
 
 function resolveBaseDir(
-  options: Pick<VeryfrontCloudAgentServiceOptions, "baseDir" | "entryUrl">,
+  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "baseDir" | "entryUrl">,
 ): string {
   if (options.baseDir) {
     return options.baseDir;
@@ -137,7 +139,7 @@ function resolveBaseDir(
   return Deno.cwd();
 }
 
-function resolveDefaultProcessTarget(): VeryfrontCloudAgentServiceProcessTarget | undefined {
+function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTarget | undefined {
   if (typeof process === "undefined") {
     return undefined;
   }
@@ -145,7 +147,7 @@ function resolveDefaultProcessTarget(): VeryfrontCloudAgentServiceProcessTarget 
 }
 
 function resolveEnvironment(
-  options: Pick<VeryfrontCloudAgentServiceOptions, "env" | "processTarget">,
+  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "env" | "processTarget">,
 ): CreateNodeAgentServiceRuntimeInfrastructureOptions["env"] {
   if (options.env) {
     return options.env;
@@ -159,7 +161,9 @@ function resolveEnvironment(
   return {};
 }
 
-function createVeryfrontCloudAgentServiceContext(options: VeryfrontCloudAgentServiceOptions) {
+function createNodeVeryfrontCloudAgentServiceContext(
+  options: NodeVeryfrontCloudAgentServiceOptions,
+) {
   const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
   const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
     serviceName: options.serviceName,
@@ -196,7 +200,7 @@ function createVeryfrontCloudAgentServiceContext(options: VeryfrontCloudAgentSer
 }
 
 function getProjectInstructions(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   lookup: RuntimeProjectSteeringLookup,
 ): Promise<string> {
   return context.trace("chat.getProjectInstructions", async () => {
@@ -205,7 +209,7 @@ function getProjectInstructions(
 }
 
 function getSkillsConfig(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   lookup: RuntimeProjectSteeringLookup,
 ): Promise<RuntimeSkillDefinition[]> {
   return context.trace("chat.getSkillsConfig", async () => {
@@ -214,28 +218,28 @@ function getSkillsConfig(
 }
 
 function createLoadSkillTool(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   toolContext: RuntimeLoadSkillToolContext,
 ) {
   return context.projectSteering.createLoadSkillTool(toolContext);
 }
 
 async function refreshProjectSkillIds(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   skillContext: HostedProjectSkillIdsContext,
 ): Promise<void> {
   await context.projectSteering.refreshProjectSkillIds(skillContext);
 }
 
 function setFilteredTraceAttributes(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   attributes: Record<string, unknown>,
 ): void {
   context.infrastructure.setActiveSpanAttributes(filterAgentTraceAttributes(attributes));
 }
 
 function getInvokeAgentConfig(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
 ): DefaultHostedInvokeAgentConfig {
   const config = context.infrastructure.getConfig();
 
@@ -252,7 +256,7 @@ function shouldRethrowInvokeAgentError(error: unknown): boolean {
 }
 
 function createInvokeAgentTool(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   childContext: ChildRunContext,
 ) {
   return createDefaultHostedInvokeAgentTool({
@@ -279,7 +283,7 @@ function createInvokeAgentTool(
 }
 
 function buildLocalTools(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
   taskContext: DefaultHostedChatRuntimeTaskContext,
 ): HostToolSet {
@@ -297,7 +301,7 @@ function buildLocalTools(
   return tools;
 }
 
-function createProjectSteeringRefresh(context: VeryfrontCloudAgentServiceContext) {
+function createProjectSteeringRefresh(context: NodeVeryfrontCloudAgentServiceContext) {
   return createDefaultHostedProjectSteeringRefresh({
     fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
     fetchSkills: (lookup) => getSkillsConfig(context, lookup),
@@ -310,7 +314,7 @@ function createProjectSteeringRefresh(context: VeryfrontCloudAgentServiceContext
 }
 
 function createAgentRuntime(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   options: DefaultHostedChatRuntimeCreationOptions,
 ): Promise<HostedChatRuntimeCreationResult> {
   const config = context.infrastructure.getConfig();
@@ -362,7 +366,7 @@ function createAgentRuntime(
 }
 
 function setPrepareChatExecutionStartAttributes(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   input: { projectId: string | null; userId: string },
 ): void {
   const span = context.infrastructure.tracer.scope().active();
@@ -373,7 +377,7 @@ function setPrepareChatExecutionStartAttributes(
 }
 
 function setPrepareChatExecutionResultAttributes(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   input: {
     conversationId?: string;
     projectId: string | null;
@@ -406,7 +410,7 @@ function setPrepareChatExecutionResultAttributes(
 }
 
 function fetchProjectSteering(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   input: { projectId: string | null; authToken: string; branchId?: string | null },
 ) {
   return fetchDefaultHostedProjectSteering({
@@ -419,9 +423,9 @@ function fetchProjectSteering(
 }
 
 async function prepareChatExecution(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   req: ParsedHostedChatRequest,
-): Promise<VeryfrontCloudAgentServicePreparedExecution> {
+): Promise<NodeVeryfrontCloudAgentServicePreparedExecution> {
   const {
     userId,
     authToken,
@@ -499,7 +503,7 @@ async function prepareChatExecution(
 }
 
 function createPreparedExecutionRuntimeOptions(
-  context: VeryfrontCloudAgentServiceContext,
+  context: NodeVeryfrontCloudAgentServiceContext,
   config: AgentServiceRuntimeConfig,
 ) {
   return createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions({
@@ -512,9 +516,9 @@ function createPreparedExecutionRuntimeOptions(
   });
 }
 
-function createVeryfrontCloudAgentServiceRuntimeOptions(
-  context: VeryfrontCloudAgentServiceContext,
-): CreateAgentServiceRuntimeOptions<VeryfrontCloudAgentServicePreparedExecution> {
+function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): CreateAgentServiceRuntimeOptions<NodeVeryfrontCloudAgentServicePreparedExecution> {
   return {
     serviceName: context.options.serviceName,
     forwardedConfigNamespace: context.options.forwardedConfigNamespace ??
@@ -555,32 +559,32 @@ function createVeryfrontCloudAgentServiceRuntimeOptions(
   };
 }
 
-export function createVeryfrontCloudAgentServiceRuntime(
-  options: VeryfrontCloudAgentServiceOptions,
-): AgentServiceRuntimeBundle<VeryfrontCloudAgentServicePreparedExecution> {
-  const context = createVeryfrontCloudAgentServiceContext(options);
-  return createAgentServiceRuntime(createVeryfrontCloudAgentServiceRuntimeOptions(context));
+export function createNodeVeryfrontCloudAgentServiceRuntime(
+  options: NodeVeryfrontCloudAgentServiceOptions,
+): AgentServiceRuntimeBundle<NodeVeryfrontCloudAgentServicePreparedExecution> {
+  const context = createNodeVeryfrontCloudAgentServiceContext(options);
+  return createAgentServiceRuntime(createNodeVeryfrontCloudAgentServiceRuntimeOptions(context));
 }
 
 export async function startNodeVeryfrontCloudAgentService(
-  options: VeryfrontCloudAgentServiceOptions,
-): Promise<StartNodeAgentServiceResult<VeryfrontCloudAgentServicePreparedExecution>> {
-  const context = createVeryfrontCloudAgentServiceContext(options);
+  options: NodeVeryfrontCloudAgentServiceOptions,
+): Promise<StartNodeAgentServiceResult<NodeVeryfrontCloudAgentServicePreparedExecution>> {
+  const context = createNodeVeryfrontCloudAgentServiceContext(options);
   return await startNodeAgentService({
-    ...createVeryfrontCloudAgentServiceRuntimeOptions(context),
+    ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
     hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
   });
 }
 
 export async function runNodeVeryfrontCloudAgentServiceMain(
-  options: VeryfrontCloudAgentServiceOptions,
+  options: NodeVeryfrontCloudAgentServiceOptions,
 ): Promise<void> {
   const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
   let getRuntimeTraceContext: NonNullable<BootstrapAgentServiceOptions["getTraceContext"]> =
     () => ({});
 
   await loadAgentServiceEnvFiles();
-  const context = createVeryfrontCloudAgentServiceContext({
+  const context = createNodeVeryfrontCloudAgentServiceContext({
     ...options,
     processTarget,
   });
@@ -603,7 +607,7 @@ export async function runNodeVeryfrontCloudAgentServiceMain(
     },
     start: async () => {
       await startNodeAgentService({
-        ...createVeryfrontCloudAgentServiceRuntimeOptions(context),
+        ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
         hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
       });
     },

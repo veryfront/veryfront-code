@@ -34,7 +34,7 @@ import {
   createAgUiSseErrorResponse,
   createMemory,
   createNodeAgentServiceRuntimeInfrastructure,
-  createVeryfrontCloudAgentServiceRuntime,
+  createNodeVeryfrontCloudAgentServiceRuntime,
   defineAgentService,
   DurableRunSink,
   executeAgUiDetachedStart,
@@ -284,7 +284,7 @@ await runNodeVeryfrontCloudAgentServiceMain({
 });
 ```
 
-`createVeryfrontCloudAgentServiceRuntime()` returns the same runtime bundle
+`createNodeVeryfrontCloudAgentServiceRuntime()` returns the same runtime bundle
 without starting a server, which is useful for tests and custom host shells.
 `startNodeVeryfrontCloudAgentService()` starts the Node server directly without
 the process bootstrap wrapper.
@@ -816,7 +816,7 @@ helpers; for example `createAgentServiceRouteSet()`,
 `prepareAgentServiceConversationRootRunContext()`,
 `toMirroredAgentServiceStreamPart()`, and `createAgentServiceAuth()`.
 
-### `createVeryfrontCloudAgentServiceRuntime(options)`
+### `createNodeVeryfrontCloudAgentServiceRuntime(options)`
 
 Create a full Veryfront Cloud agent-service runtime bundle for separately
 deployed agents. The helper loads a markdown-backed `agents/*.md` definition,
@@ -1087,7 +1087,7 @@ Clear all stored messages from memory.
 | `deriveAgentServiceAgUiChatContext`                                   | Derive chat context from canonical AG-UI runtime input                   |
 | `filterAgentTraceAttributes`                                          | Filter unknown records to valid agent trace attributes                   |
 | `createNodeAgentServiceRuntimeInfrastructure`                         | Create Node service config, logger, tracer, and telemetry bundle         |
-| `createVeryfrontCloudAgentServiceRuntime`                             | Create a full Veryfront Cloud agent-service runtime bundle               |
+| `createNodeVeryfrontCloudAgentServiceRuntime`                         | Create a full Veryfront Cloud agent-service runtime bundle               |
 | `loadAgentServiceEnvFiles`                                            | Load service env files while preserving host process env                 |
 | `initializeNodeAgentServiceOpenTelemetry`                             | Initialize Node OpenTelemetry for an agent service                       |
 | `parseAgentServiceChatRequestFromRequest`                             | Parse the agent-service chat request body and auth context               |

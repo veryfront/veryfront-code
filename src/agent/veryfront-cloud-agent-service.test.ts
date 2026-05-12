@@ -2,7 +2,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
-import { createVeryfrontCloudAgentServiceRuntime } from "./veryfront-cloud-agent-service.ts";
+import { createNodeVeryfrontCloudAgentServiceRuntime } from "./veryfront-cloud-agent-service.ts";
 
 function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> | void {
   const dir = Deno.makeTempDirSync();
@@ -31,11 +31,11 @@ Help users build with Veryfront.
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
 
-Deno.test("createVeryfrontCloudAgentServiceRuntime loads the markdown agent and binds service routes", async () => {
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent and binds service routes", async () => {
   await withTempDir(async (rootDir) => {
     writeAgentDefinition(rootDir);
 
-    const bundle = createVeryfrontCloudAgentServiceRuntime({
+    const bundle = createNodeVeryfrontCloudAgentServiceRuntime({
       serviceName: "veryfront-agent-test",
       agentId: "veryfront",
       entryUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
