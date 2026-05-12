@@ -5,6 +5,11 @@ on:
     branches: [main]
     paths:
       - "deno.json"
+  push:
+    branches: [main]
+    paths:
+      - "deno.lock"
+      - "deno.json"
   schedule:
     # Run weekly on Monday at 06:00 UTC
     - cron: "0 6 * * 1"
@@ -26,3 +31,19 @@ jobs:
 
       - name: Run dependency lint
         run: deno task lint:deps
+
+  submit-dependency-snapshot:
+    # Only push/schedule/manual — PRs from forks lack write access.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    name: Submit Dependency Snapshot
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-deno
+
+      - name: Submit deno.lock graph to GitHub
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: deno task submit-deps

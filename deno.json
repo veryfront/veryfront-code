@@ -372,6 +372,7 @@
     "start-split": "deno task generate && deno run --allow-all cli/main.ts serve --split",
     "start-split:binary": "deno task generate && deno run --allow-all cli/main.ts serve --split --binary",
     "sbom": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts",
+    "submit-deps": "deno run --allow-read --allow-env --allow-net=api.github.com scripts/security/submit-dependency-snapshot.ts",
     "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts"
   },
   "lint": {

@@ -330,6 +330,11 @@ jobs:
         with:
           path: binaries
 
+      - name: Generate SBOM
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: deno task sbom --output "dist/sbom-${VERSION}.json"
+
       - name: Create GitHub pre-release
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -354,7 +359,8 @@ jobs:
           npx veryfront@rc
           ```' \
             $BINARIES \
-            scripts/install.sh
+            scripts/install.sh \
+            "dist/sbom-${VERSION}.json"
 
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
@@ -426,6 +432,11 @@ jobs:
         with:
           path: binaries
 
+      - name: Generate SBOM
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: deno task sbom --output "dist/sbom-${VERSION}.json"
+
       - name: Create git tag
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -474,7 +485,8 @@ jobs:
           ```' \
               $BINARIES \
               scripts/install.sh \
-              scripts/install.ps1
+              scripts/install.ps1 \
+              "dist/sbom-${VERSION}.json"
           fi
 
       - name: Create source repo release
