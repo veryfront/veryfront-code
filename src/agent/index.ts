@@ -322,6 +322,14 @@ export {
   type StartNodeHostedAgentServiceResult,
 } from "./hosted-agent-service-runtime.ts";
 export {
+  createVeryfrontCloudAgentServiceRuntime,
+  runNodeVeryfrontCloudAgentServiceMain,
+  startNodeVeryfrontCloudAgentService,
+  type VeryfrontCloudAgentServiceOptions,
+  type VeryfrontCloudAgentServicePreparedExecution,
+  type VeryfrontCloudAgentServiceProcessTarget,
+} from "./veryfront-cloud-agent-service.ts";
+export {
   type AgentServiceConfig,
   type AgentServiceConfigInput,
   agentServiceConfigSchema,

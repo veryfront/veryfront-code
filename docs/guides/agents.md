@@ -177,6 +177,25 @@ agent stores persona/configuration in `agents/*.md` files.
 If the service also uses the project-files API for instructions, skills,
 and `load_skill`, use `createAgentServiceProjectSteering()` to bind the markdown
 agent definition and project-steering adapter as one reusable service primitive.
+For the standard Veryfront Cloud service shape, use
+`runNodeVeryfrontCloudAgentServiceMain()` to bind those pieces in one Node
+process entrypoint. The service entrypoint can stay small while agent behavior
+lives in `agents/<agent-id>.md`:
+
+```ts
+import { createBashTool } from "bash-tool";
+import { runNodeVeryfrontCloudAgentServiceMain } from "veryfront/agent";
+
+await runNodeVeryfrontCloudAgentServiceMain({
+  serviceName: "support-agent",
+  agentId: "support",
+  entryUrl: import.meta.url,
+  createBashTool,
+});
+```
+
+Use the lower-level helpers when a service needs custom tools, non-Node
+startup, or a different control-plane integration.
 
 ## Agent configuration
 

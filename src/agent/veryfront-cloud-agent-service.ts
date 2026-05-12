@@ -1,0 +1,616 @@
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import type { HostedSandboxToolsOptions } from "#veryfront/sandbox";
+import { createHostedSandboxTools } from "#veryfront/sandbox";
+import {
+  createRemoteMCPToolSource,
+  createToolsFromRemoteDefinitions,
+  type HostToolSet,
+  sleepTool,
+} from "#veryfront/tool";
+import { parseProviderError } from "../chat/provider-errors.ts";
+import {
+  getVeryfrontCloudProviderFromModelId,
+  resolveVeryfrontCloudModelId,
+  resolveVeryfrontCloudThinkingProviderOptions,
+} from "../provider/index.ts";
+import { __registerTraceContextGetter } from "../utils/logger/logger.ts";
+import {
+  buildAgentRunTraceAttributes,
+  buildExecuteToolTraceAttributes,
+  filterAgentTraceAttributes,
+} from "./agent-trace-attributes.ts";
+import {
+  type BootstrapAgentServiceOptions,
+  runAgentServiceMain,
+  type RunAgentServiceMainOptions,
+} from "./agent-service-bootstrap.ts";
+import { loadAgentServiceEnvFiles } from "./hosted-agent-service-env-files.ts";
+import { createHostedFormInputTool } from "./hosted-form-input-tool.ts";
+import { createHostedAgentProjectSteering } from "./hosted-agent-project-steering.ts";
+import { type HostedChatRuntimeCreationResult } from "./hosted-chat-runtime-contract.ts";
+import type { HostedConversationRootRunContext } from "./conversation-root-run-lifecycle.ts";
+import { type AgentRuntimeMessage } from "./agent-runtime-message-adapter.ts";
+import { createLiveStudioMcpTools } from "./live-studio-mcp-tools.ts";
+import {
+  createDefaultHostedChatRuntime,
+  type DefaultHostedChatRuntimeCreationOptions,
+  type DefaultHostedChatRuntimeTaskContext,
+} from "./default-hosted-chat-runtime.ts";
+import { createDefaultHostedInvokeAgentTool } from "./default-hosted-invoke-agent-tool.ts";
+import type { RuntimeClientProfile } from "./runtime-client-profile.ts";
+import type {
+  DefaultHostedInvokeAgentConfig,
+  DefaultHostedInvokeAgentContext,
+} from "./default-hosted-invoke-agent-tool.ts";
+import {
+  createDefaultHostedProjectSteeringRefresh,
+  fetchDefaultHostedProjectSteering,
+} from "./default-hosted-project-steering-refresh.ts";
+import { type HostedProjectSkillIdsContext } from "./hosted-project-steering-adapter.ts";
+import type { RuntimeLoadSkillToolContext } from "./runtime-load-skill-tool.ts";
+import type { RuntimeProjectSteeringLookup } from "./runtime-project-skill-catalog.ts";
+import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
+import {
+  buildVeryfrontCloudRuntimeInstructions,
+} from "./veryfront-cloud-runtime-system-messages.ts";
+import {
+  createNodeAgentServiceRuntimeInfrastructure,
+  type CreateNodeAgentServiceRuntimeInfrastructureOptions,
+} from "./node-hosted-agent-service-runtime-infrastructure.ts";
+import {
+  type AgentServiceRuntimeBundle,
+  type AgentServiceRuntimeConfig,
+  createAgentServiceRuntime,
+  type CreateAgentServiceRuntimeOptions,
+  startNodeAgentService,
+  type StartNodeAgentServiceResult,
+} from "./hosted-agent-service-runtime.ts";
+import { createDetachedRunTracker } from "./detached-run-tracker.ts";
+import type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
+import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
+import type { PreparedHostedChatExecution } from "./prepared-hosted-chat-execution.ts";
+import {
+  runPreparedHostedChatExecutionDetached,
+  streamPreparedHostedChatExecutionToAgUiResponse,
+} from "./prepared-hosted-chat-execution.ts";
+import {
+  createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions,
+} from "./veryfront-cloud-prepared-hosted-chat-execution-runtime.ts";
+import {
+  prepareVeryfrontCloudHostedChatExecution,
+} from "./veryfront-cloud-hosted-chat-execution-preparation.ts";
+import { applyAgentProjectContextChange } from "./project-context.ts";
+
+export type VeryfrontCloudAgentServiceProcessTarget =
+  & NonNullable<RunAgentServiceMainOptions["processTarget"]>
+  & NonNullable<CreateNodeAgentServiceRuntimeInfrastructureOptions["processTarget"]>
+  & {
+    env?: Record<string, string | undefined>;
+    exit?: (code: number) => never | void;
+  };
+
+export type VeryfrontCloudAgentServiceOptions = {
+  serviceName: string;
+  agentId: string;
+  baseDir?: string;
+  entryUrl?: string | URL;
+  forwardedConfigNamespace?: string;
+  createBashTool: HostedSandboxToolsOptions["createBashTool"];
+  env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
+  processTarget?: VeryfrontCloudAgentServiceProcessTarget;
+  drainTimeoutMs?: number;
+  hardShutdownTimeoutMs?: number;
+};
+
+export type VeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
+  config: AgentServiceRuntimeConfig;
+  agent: HostedChatRuntimeCreationResult["agent"];
+  runtimeKind: "framework";
+  finalMessages: AgentRuntimeMessage[];
+  messages: PreparedHostedChatExecution["messages"];
+  rootRunContext: HostedConversationRootRunContext;
+};
+
+type VeryfrontCloudAgentServiceContext = ReturnType<typeof createVeryfrontCloudAgentServiceContext>;
+type ChildRunContext = DefaultHostedInvokeAgentContext & {
+  clientProfile?: RuntimeClientProfile | null;
+};
+
+const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
+const DEFAULT_DRAIN_TIMEOUT_MS = 15_000;
+const DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS = 20_000;
+const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
+
+function resolveBaseDir(
+  options: Pick<VeryfrontCloudAgentServiceOptions, "baseDir" | "entryUrl">,
+): string {
+  if (options.baseDir) {
+    return options.baseDir;
+  }
+  if (options.entryUrl) {
+    return dirname(fileURLToPath(options.entryUrl));
+  }
+  if (typeof process !== "undefined") {
+    return process.cwd();
+  }
+  return Deno.cwd();
+}
+
+function resolveDefaultProcessTarget(): VeryfrontCloudAgentServiceProcessTarget | undefined {
+  if (typeof process === "undefined") {
+    return undefined;
+  }
+  return process;
+}
+
+function resolveEnvironment(
+  options: Pick<VeryfrontCloudAgentServiceOptions, "env" | "processTarget">,
+): CreateNodeAgentServiceRuntimeInfrastructureOptions["env"] {
+  if (options.env) {
+    return options.env;
+  }
+  if (options.processTarget?.env) {
+    return options.processTarget.env;
+  }
+  if (typeof process !== "undefined") {
+    return process.env;
+  }
+  return {};
+}
+
+function createVeryfrontCloudAgentServiceContext(options: VeryfrontCloudAgentServiceOptions) {
+  const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
+  const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
+    serviceName: options.serviceName,
+    env: resolveEnvironment({ env: options.env, processTarget }),
+    processTarget,
+  });
+  function trace<TResult>(
+    operationName: string,
+    operation: () => Promise<TResult>,
+  ): Promise<TResult>;
+  function trace<TResult>(operationName: string, operation: () => TResult): TResult;
+  function trace<TResult>(
+    operationName: string,
+    operation: () => TResult | Promise<TResult>,
+  ): TResult | Promise<TResult> {
+    return infrastructure.tracer.trace(operationName, operation);
+  }
+  const projectSteering = createHostedAgentProjectSteering({
+    baseDir: resolveBaseDir(options),
+    agentId: options.agentId,
+    getApiUrl: () => infrastructure.getConfig().VERYFRONT_API_URL,
+    logger: infrastructure.logger,
+    trace,
+  });
+
+  return {
+    options,
+    processTarget,
+    infrastructure,
+    trace,
+    projectSteering,
+    tracker: createDetachedRunTracker<AgUiResumeValue>(),
+  };
+}
+
+function getProjectInstructions(
+  context: VeryfrontCloudAgentServiceContext,
+  lookup: RuntimeProjectSteeringLookup,
+): Promise<string> {
+  return context.trace("chat.getProjectInstructions", async () => {
+    return await context.projectSteering.getProjectInstructions(lookup);
+  });
+}
+
+function getSkillsConfig(
+  context: VeryfrontCloudAgentServiceContext,
+  lookup: RuntimeProjectSteeringLookup,
+): Promise<RuntimeSkillDefinition[]> {
+  return context.trace("chat.getSkillsConfig", async () => {
+    return await context.projectSteering.getSkillsConfig(lookup);
+  });
+}
+
+function createLoadSkillTool(
+  context: VeryfrontCloudAgentServiceContext,
+  toolContext: RuntimeLoadSkillToolContext,
+) {
+  return context.projectSteering.createLoadSkillTool(toolContext);
+}
+
+async function refreshProjectSkillIds(
+  context: VeryfrontCloudAgentServiceContext,
+  skillContext: HostedProjectSkillIdsContext,
+): Promise<void> {
+  await context.projectSteering.refreshProjectSkillIds(skillContext);
+}
+
+function setFilteredTraceAttributes(
+  context: VeryfrontCloudAgentServiceContext,
+  attributes: Record<string, unknown>,
+): void {
+  context.infrastructure.setActiveSpanAttributes(filterAgentTraceAttributes(attributes));
+}
+
+function getInvokeAgentConfig(
+  context: VeryfrontCloudAgentServiceContext,
+): DefaultHostedInvokeAgentConfig {
+  const config = context.infrastructure.getConfig();
+
+  return {
+    apiUrl: config.VERYFRONT_API_URL,
+    apiMcpUrl: config.VERYFRONT_MCP_URL,
+    studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
+    enableDurableInvokeAgent: config.VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT,
+  };
+}
+
+function shouldRethrowInvokeAgentError(error: unknown): boolean {
+  return parseProviderError(error).code === "INSUFFICIENT_CREDITS";
+}
+
+function createInvokeAgentTool(
+  context: VeryfrontCloudAgentServiceContext,
+  childContext: ChildRunContext,
+) {
+  return createDefaultHostedInvokeAgentTool({
+    context: childContext,
+    getConfig: () => getInvokeAgentConfig(context),
+    logger: context.infrastructure.logger,
+    trace: context.trace,
+    setTraceAttributes: context.infrastructure.setActiveSpanAttributes,
+    createBashTool: context.options.createBashTool,
+    resolveModelId: resolveVeryfrontCloudModelId,
+    resolveProvider: getVeryfrontCloudProviderFromModelId,
+    resolveProviderOptions: resolveVeryfrontCloudThinkingProviderOptions,
+    shouldRethrowError: shouldRethrowInvokeAgentError,
+    buildGlobalTools: (globalToolContext) => ({
+      load_skill: createLoadSkillTool(context, globalToolContext),
+    }),
+    refreshProjectSkillIds: (projectSkillContext) =>
+      refreshProjectSkillIds(context, projectSkillContext),
+    createHostedSandboxTools,
+    createLiveStudioTools: createLiveStudioMcpTools,
+    createRemoteToolSource: createRemoteMCPToolSource,
+    createToolsFromRemoteDefinitions,
+  });
+}
+
+function buildLocalTools(
+  context: VeryfrontCloudAgentServiceContext,
+  options: DefaultHostedChatRuntimeCreationOptions,
+  taskContext: DefaultHostedChatRuntimeTaskContext,
+): HostToolSet {
+  const config = context.infrastructure.getConfig();
+  const tools: HostToolSet = {
+    form_input: createHostedFormInputTool(taskContext, config.VERYFRONT_API_URL),
+    load_skill: createLoadSkillTool(context, taskContext),
+    sleep: sleepTool,
+  };
+
+  if (options.allowDelegation !== false) {
+    tools.invoke_agent = createInvokeAgentTool(context, taskContext);
+  }
+
+  return tools;
+}
+
+function createProjectSteeringRefresh(context: VeryfrontCloudAgentServiceContext) {
+  return createDefaultHostedProjectSteeringRefresh({
+    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
+    fetchSkills: (lookup) => getSkillsConfig(context, lookup),
+    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
+    },
+    logger: context.infrastructure.logger,
+  });
+}
+
+function createAgentRuntime(
+  context: VeryfrontCloudAgentServiceContext,
+  options: DefaultHostedChatRuntimeCreationOptions,
+): Promise<HostedChatRuntimeCreationResult> {
+  const config = context.infrastructure.getConfig();
+  const refreshSystem = createProjectSteeringRefresh(context);
+
+  return createDefaultHostedChatRuntime({
+    options,
+    config: {
+      apiUrl: config.VERYFRONT_API_URL,
+      apiMcpUrl: config.VERYFRONT_MCP_URL,
+      studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
+    },
+    buildLocalTools: (taskContext) => buildLocalTools(context, options, taskContext),
+    refreshSystem,
+    onSteeringMutation: async ({ mutation, taskContext }) => {
+      if (mutation.skillsChanged) {
+        await refreshProjectSkillIds(context, {
+          ...taskContext,
+          authToken: taskContext.authToken,
+        });
+      }
+    },
+    onStudioProjectSwitch: async ({ projectId, taskContext }) => {
+      if (!applyAgentProjectContextChange(taskContext, projectId)) {
+        return false;
+      }
+
+      await refreshProjectSkillIds(context, {
+        ...taskContext,
+        authToken: taskContext.authToken,
+      });
+      return true;
+    },
+    projectScopedRemoteToolOptions: {
+      projectNavigationToolNames: DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES,
+    },
+    createRemoteToolSource: createRemoteMCPToolSource,
+    traceLocalTools: {
+      trace: (spanName, operation) => context.infrastructure.tracer.trace(spanName, operation),
+      buildAttributes: ({ toolName, toolCallId }) =>
+        buildExecuteToolTraceAttributes({
+          toolName,
+          toolCallId,
+        }),
+      setAttributes: (attributes) => setFilteredTraceAttributes(context, attributes),
+    },
+    logger: context.infrastructure.logger,
+  });
+}
+
+function setPrepareChatExecutionStartAttributes(
+  context: VeryfrontCloudAgentServiceContext,
+  input: { projectId: string | null; userId: string },
+): void {
+  const span = context.infrastructure.tracer.scope().active();
+  span?.setAttributes({
+    "chat.projectId": input.projectId ?? "none",
+    "chat.userId": input.userId,
+  });
+}
+
+function setPrepareChatExecutionResultAttributes(
+  context: VeryfrontCloudAgentServiceContext,
+  input: {
+    conversationId?: string;
+    projectId: string | null;
+    userId: string;
+    agentId: string;
+    runId?: string;
+    upstreamParentConversationId?: string;
+    upstreamParentRunId?: string;
+    spawnedFromToolCallId?: string;
+    runtimeKind: "framework";
+  },
+): void {
+  const span = context.infrastructure.tracer.scope().active();
+  span?.setAttributes(
+    buildAgentRunTraceAttributes({
+      operationName: "chat",
+      conversationId: input.conversationId,
+      projectId: input.projectId,
+      userId: input.userId,
+      agentId: input.agentId,
+      runId: input.runId,
+      parentConversationId: input.upstreamParentConversationId,
+      parentRunId: input.upstreamParentRunId,
+      toolCallId: input.spawnedFromToolCallId,
+    }),
+  );
+  span?.setAttributes({
+    "agent.runtime.kind": input.runtimeKind,
+  });
+}
+
+function fetchProjectSteering(
+  context: VeryfrontCloudAgentServiceContext,
+  input: { projectId: string | null; authToken: string; branchId?: string | null },
+) {
+  return fetchDefaultHostedProjectSteering({
+    ...input,
+    fetchProjectInstructions: (lookup) => getProjectInstructions(context, lookup),
+    fetchSkills: (lookup) => getSkillsConfig(context, lookup),
+    trace: context.trace,
+    traceOperationName: "chat.fetchSteering",
+  });
+}
+
+async function prepareChatExecution(
+  context: VeryfrontCloudAgentServiceContext,
+  req: ParsedHostedChatRequest,
+): Promise<VeryfrontCloudAgentServicePreparedExecution> {
+  const {
+    userId,
+    authToken,
+    projectId,
+    conversationId,
+    upstreamParentConversationId,
+    upstreamParentRunId,
+    spawnedFromToolCallId,
+  } = req;
+  const config = context.infrastructure.getConfig();
+
+  setPrepareChatExecutionStartAttributes(context, { projectId, userId });
+
+  const agentConfig = context.projectSteering.getAgentConfig();
+  const {
+    effectiveMessages,
+    rootRunContext,
+    runtime: { agent, runtimeKind, modelId, cleanup },
+    finalMessages,
+  } = await prepareVeryfrontCloudHostedChatExecution({
+    request: req,
+    agentConfig,
+    apiUrl: config.VERYFRONT_API_URL,
+    abortSignal: new AbortController().signal,
+    logger: context.infrastructure.logger,
+    rootRun: {
+      instrumentation: {
+        trace: context.trace,
+        setTraceAttributes: context.infrastructure.setActiveSpanAttributes,
+        debug: (message, metadata) => context.infrastructure.logger.debug(message, metadata),
+        warn: (message, metadata) => context.infrastructure.logger.warn(message, metadata),
+        error: (message, metadata) => context.infrastructure.logger.error(message, metadata),
+      },
+    },
+    fetchSteering: (steeringInput) => fetchProjectSteering(context, steeringInput),
+    buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    createRuntime: (creationOptions) =>
+      context.trace("chat.createRuntime", () =>
+        createAgentRuntime(context, {
+          ...creationOptions,
+          userId: req.userId,
+        })),
+  });
+
+  setPrepareChatExecutionResultAttributes(context, {
+    conversationId,
+    projectId,
+    userId,
+    agentId: agentConfig.id,
+    runId: rootRunContext.durableRootRun?.runId,
+    upstreamParentConversationId,
+    upstreamParentRunId,
+    spawnedFromToolCallId,
+    runtimeKind,
+  });
+
+  return {
+    config,
+    agent,
+    agentId: agentConfig.id,
+    runtimeKind,
+    modelId,
+    cleanup,
+    messages: effectiveMessages,
+    finalMessages,
+    conversationId,
+    authToken,
+    projectId,
+    userId,
+    rootRunContext,
+    upstreamParentConversationId,
+    upstreamParentRunId,
+    spawnedFromToolCallId,
+  };
+}
+
+function createPreparedExecutionRuntimeOptions(
+  context: VeryfrontCloudAgentServiceContext,
+  config: AgentServiceRuntimeConfig,
+) {
+  return createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions({
+    apiUrl: config.VERYFRONT_API_URL,
+    tracer: context.infrastructure.tracer,
+    trace: context.trace,
+    traceStream: (operation) => context.infrastructure.tracer.trace("chat.stream", operation),
+    logger: context.infrastructure.logger,
+    setActiveSpanAttributes: context.infrastructure.setActiveSpanAttributes,
+  });
+}
+
+function createVeryfrontCloudAgentServiceRuntimeOptions(
+  context: VeryfrontCloudAgentServiceContext,
+): CreateAgentServiceRuntimeOptions<VeryfrontCloudAgentServicePreparedExecution> {
+  return {
+    serviceName: context.options.serviceName,
+    forwardedConfigNamespace: context.options.forwardedConfigNamespace ??
+      DEFAULT_FORWARDED_CONFIG_NAMESPACE,
+    getConfig: context.infrastructure.getConfig,
+    getAgentConfig: () => context.projectSteering.getAgentConfig(),
+    tracker: context.tracker,
+    prepareExecution: (request) => prepareChatExecution(context, request),
+    streamExecutionToAgUiResponse: (execution) =>
+      streamPreparedHostedChatExecutionToAgUiResponse({
+        execution,
+        runtime: createPreparedExecutionRuntimeOptions(context, execution.config),
+      }),
+    startDetachedExecution: ({ execution, abortSignal }) =>
+      runPreparedHostedChatExecutionDetached({
+        execution: {
+          ...execution,
+          abortSignal,
+        },
+        runtime: createPreparedExecutionRuntimeOptions(context, execution.config),
+      }),
+    cleanupExecution: async ({ execution, runId, conversationId }) => {
+      await execution.cleanup().catch((error) => {
+        context.infrastructure.logger.error(
+          "Detached durable run cleanup failed after duplicate start",
+          {
+            runId,
+            conversationId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
+      });
+    },
+    setActiveSpanAttributes: context.infrastructure.setActiveSpanAttributes,
+    trace: context.trace,
+    logger: context.infrastructure.logger,
+    drainTimeoutMs: context.options.drainTimeoutMs ?? DEFAULT_DRAIN_TIMEOUT_MS,
+  };
+}
+
+export function createVeryfrontCloudAgentServiceRuntime(
+  options: VeryfrontCloudAgentServiceOptions,
+): AgentServiceRuntimeBundle<VeryfrontCloudAgentServicePreparedExecution> {
+  const context = createVeryfrontCloudAgentServiceContext(options);
+  return createAgentServiceRuntime(createVeryfrontCloudAgentServiceRuntimeOptions(context));
+}
+
+export async function startNodeVeryfrontCloudAgentService(
+  options: VeryfrontCloudAgentServiceOptions,
+): Promise<StartNodeAgentServiceResult<VeryfrontCloudAgentServicePreparedExecution>> {
+  const context = createVeryfrontCloudAgentServiceContext(options);
+  return await startNodeAgentService({
+    ...createVeryfrontCloudAgentServiceRuntimeOptions(context),
+    hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
+  });
+}
+
+export async function runNodeVeryfrontCloudAgentServiceMain(
+  options: VeryfrontCloudAgentServiceOptions,
+): Promise<void> {
+  const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
+  let getRuntimeTraceContext: NonNullable<BootstrapAgentServiceOptions["getTraceContext"]> =
+    () => ({});
+
+  await loadAgentServiceEnvFiles();
+  const context = createVeryfrontCloudAgentServiceContext({
+    ...options,
+    processTarget,
+  });
+  getRuntimeTraceContext = context.infrastructure.getTraceContext;
+
+  await runAgentServiceMain({
+    loadLogger: () => context.infrastructure.logger,
+    initializeTelemetry: async () => {
+      return await context.infrastructure.initializeOpenTelemetry().catch((error) => {
+        console.error("Failed to initialize OpenTelemetry:", error);
+        return false;
+      });
+    },
+    onTelemetryInitialized: () => {
+      console.log("OpenTelemetry initialized successfully");
+    },
+    getTraceContext: () => getRuntimeTraceContext(),
+    registerTraceContextGetter: (getter) => {
+      __registerTraceContextGetter(getter);
+    },
+    start: async () => {
+      await startNodeAgentService({
+        ...createVeryfrontCloudAgentServiceRuntimeOptions(context),
+        hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
+      });
+    },
+    onStartupError: (error) => {
+      console.error("Error in server startup:", error);
+    },
+    exit: processTarget?.exit,
+    processTarget,
+  });
+}
