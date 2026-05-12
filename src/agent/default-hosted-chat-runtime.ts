@@ -44,6 +44,7 @@ export type DefaultHostedChatRuntimeConfig = {
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
+  studioMcpEnabled?: boolean;
 };
 
 export type DefaultHostedChatRuntimeLogger = {
@@ -153,6 +154,7 @@ async function buildToolAssembly(
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
     studioMcpUrl: input.config.studioMcpUrl,
+    studioMcpEnabled: input.config.studioMcpEnabled,
     conversationId: input.options.conversationId,
     allowedToolNames: input.options.allowedTools ?? null,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,

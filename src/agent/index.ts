@@ -329,6 +329,7 @@ export {
 } from "./hosted-agent-service-runtime.ts";
 export {
   createNodeVeryfrontCloudAgentServiceRuntime,
+  type NodeVeryfrontCloudAgentServiceMcpOptions,
   type NodeVeryfrontCloudAgentServiceOptions,
   type NodeVeryfrontCloudAgentServicePreparedExecution,
   type NodeVeryfrontCloudAgentServiceProcessTarget,
