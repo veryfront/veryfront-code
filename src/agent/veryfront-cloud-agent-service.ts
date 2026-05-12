@@ -135,10 +135,6 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
    * Convenience URL for deriving baseDir from the entry module location.
    */
   entrypointUrl?: AgentServicePathOption;
-  /**
-   * Compatibility alias for entrypointUrl.
-   */
-  entryUrl?: AgentServicePathOption;
   agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
   mcp?: NodeVeryfrontCloudAgentServiceMcpOptions;
   forwardedConfigNamespace?: string;
@@ -188,16 +184,13 @@ function pathOptionToPath(pathOption: AgentServicePathOption): string {
 }
 
 function resolveBaseDir(
-  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "baseDir" | "entrypointUrl" | "entryUrl">,
+  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "baseDir" | "entrypointUrl">,
 ): string {
   if (options.baseDir !== undefined) {
     return pathOptionToPath(options.baseDir);
   }
   if (options.entrypointUrl !== undefined) {
     return dirname(pathOptionToPath(options.entrypointUrl));
-  }
-  if (options.entryUrl !== undefined) {
-    return dirname(pathOptionToPath(options.entryUrl));
   }
   if (typeof process !== "undefined") {
     return process.cwd();
@@ -226,7 +219,7 @@ function uniquePaths(paths: string[]): string[] {
 function resolveProjectDir(
   options: Pick<
     NodeVeryfrontCloudAgentServiceOptions,
-    "baseDir" | "entrypointUrl" | "entryUrl" | "projectDir"
+    "baseDir" | "entrypointUrl" | "projectDir"
   >,
 ): string {
   if (options.projectDir) {
@@ -856,10 +849,4 @@ export async function startAgentService(
     exit: processTarget?.exit,
     processTarget,
   });
-}
-
-export async function runNodeVeryfrontCloudAgentServiceMain(
-  options: NodeVeryfrontCloudAgentServiceOptions,
-): Promise<void> {
-  await startAgentService(options);
 }

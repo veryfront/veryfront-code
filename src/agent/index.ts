@@ -339,7 +339,6 @@ export {
   type NodeVeryfrontCloudAgentServiceOptions,
   type NodeVeryfrontCloudAgentServicePreparedExecution,
   type NodeVeryfrontCloudAgentServiceProcessTarget,
-  runNodeVeryfrontCloudAgentServiceMain,
   startAgentService,
   startNodeVeryfrontCloudAgentService,
   type VeryfrontCloudAgentServiceOptions,

@@ -92,7 +92,7 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent 
     const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
       serviceName: "veryfront-agent-test",
       agentId: "veryfront",
-      entryUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+      entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
       env: {
         NODE_ENV: "test",
         VERYFRONT_API_URL: "https://api.example.com",
@@ -140,7 +140,7 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime defaults discovery to cwd
   });
 });
 
-Deno.test("createNodeVeryfrontCloudAgentServiceRuntime accepts entrypointUrl alias", async () => {
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime accepts entrypointUrl for discovery", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir);
 
@@ -188,7 +188,7 @@ Deno.test({
         serviceName: "configured-agent-test",
         agentId: "support",
         agentSource: "code",
-        entryUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
+        entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
         createBashTool,
         env: {
           NODE_ENV: "test",
@@ -220,7 +220,7 @@ Deno.test({
         serviceName: "support-agent-test",
         agentId: "support",
         agentSource: "code",
-        entryUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
+        entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
         createBashTool,
         env: {
           NODE_ENV: "test",
