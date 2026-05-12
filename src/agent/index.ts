@@ -1020,6 +1020,14 @@ export {
   type RuntimeProjectFilesTrace,
 } from "./runtime-project-files-client.ts";
 export {
+  createHostedAgentProjectSteering,
+  type HostedAgentProjectSteering,
+  type HostedAgentProjectSteeringLogger,
+  type HostedAgentProjectSteeringOptions,
+  type HostedAgentProjectSteeringOptionsData,
+  hostedAgentProjectSteeringOptionsSchema,
+} from "./hosted-agent-project-steering.ts";
+export {
   createHostedProjectSteeringAdapter,
   type HostedProjectSkillIdsContext,
   type HostedProjectSteeringAdapter,
