@@ -1,12 +1,12 @@
 import { assert, assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 import extBabel, { BabelCodeParser } from "./index.ts";
-import type { CodeParser } from "veryfront/extensions/interfaces";
+import type { CodeParser } from "veryfront/extensions/parser";
 
-describe("ext-babel", () => {
+describe("ext-parser-babel", () => {
   it("factory returns a descriptor with the CodeParser capability", () => {
     const ext = extBabel();
-    assertEquals(ext.name, "ext-babel");
+    assertEquals(ext.name, "ext-parser-babel");
     assertEquals(ext.capabilities?.[0], { type: "contract", name: "CodeParser" });
   });
 

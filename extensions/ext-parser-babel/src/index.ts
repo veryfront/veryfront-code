@@ -1,5 +1,5 @@
 /**
- * ext-babel — CodeParser implementation backed by @babel/parser,
+ * ext-parser-babel — CodeParser implementation backed by @babel/parser,
  * @babel/traverse, @babel/generator, @babel/types.
  *
  * Provides the `CodeParser` contract:
@@ -11,7 +11,7 @@
  * Core's `src/transforms/plugins/babel-node-positions.ts` is a shim that
  * resolves this contract at call time.
  *
- * @module extensions/ext-babel
+ * @module extensions/ext-parser-babel
  */
 
 import * as parser from "@babel/parser";
@@ -26,7 +26,7 @@ import type {
   InjectJsxNodePositionsOptions,
   ParseOptions,
   TraverseVisitor,
-} from "veryfront/extensions/interfaces";
+} from "veryfront/extensions/parser";
 import { injectNodePositions } from "./inject-node-positions.ts";
 
 type TraverseFunction = (ast: unknown, opts: Record<string, unknown>) => void;
@@ -91,12 +91,12 @@ class BabelCodeParser implements CodeParser {
 const extBabel: ExtensionFactory = () => {
   const impl = new BabelCodeParser();
   return {
-    name: "ext-babel",
+    name: "ext-parser-babel",
     version: "0.1.0",
     capabilities: [{ type: "contract", name: "CodeParser" }],
     setup(ctx) {
       ctx.provide("CodeParser", impl);
-      ctx.logger.info("[ext-babel] CodeParser registered");
+      ctx.logger.info("[ext-parser-babel] CodeParser registered");
     },
     teardown() {
       // No resources to release.

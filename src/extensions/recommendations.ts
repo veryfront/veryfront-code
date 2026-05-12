@@ -21,7 +21,7 @@ const recommendations = new Map<string, string>([
   ["AIProvider:anthropic", "@veryfront/ext-ai-anthropic"],
   ["AIProvider:google", "@veryfront/ext-ai-google"],
   ["EmbeddingProvider", "@veryfront/ext-embeddings"],
-  ["CodeParser", "@veryfront/ext-babel"],
+  ["CodeParser", "@veryfront/ext-parser-babel"],
   ["SchemaValidator", "@veryfront/ext-zod"],
   ["NodeCompat", "@veryfront/ext-node-compat"],
 ]);

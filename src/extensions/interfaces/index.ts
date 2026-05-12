@@ -83,7 +83,7 @@ export { AIProviderRegistryName } from "../ai/index.ts";
 // Embedding provider — moved to ../ai/
 export type { EmbeddingOptions, EmbeddingProvider, EmbeddingResult } from "../ai/index.ts";
 
-// Code parser
+// Code parser — moved to ../parser/
 export type {
   ASTNode,
   CodeParser,
@@ -93,7 +93,7 @@ export type {
   NodePath,
   ParseOptions,
   TraverseVisitor,
-} from "./code-parser.ts";
+} from "../parser/index.ts";
 
 // Schema validator
 export type {
