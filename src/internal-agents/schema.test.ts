@@ -70,6 +70,38 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("uses the shared runtime agent source context contract", () => {
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [],
+      agentSource: {
+        type: "environment",
+        environmentName: "staging",
+        releaseId: "release_1",
+      },
+    });
+
+    assertEquals(parsed.agentSource, {
+      type: "environment",
+      environmentName: "staging",
+      releaseId: "release_1",
+    });
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          messages: [],
+          agentSource: { type: "branch", branch: "" },
+        }),
+      Error,
+      "Too small: expected string to have >=1 characters",
+    );
+  });
+
   it("accepts a canonical AG-UI-aligned runtime payload", () => {
     const parsed = getRuntimeRunAgentInputSchema().parse({
       threadId: crypto.randomUUID(),
