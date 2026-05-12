@@ -89,6 +89,9 @@ type DenoHttpServer = {
 
 type DenoServeRuntime = {
   serve: (options: DenoServeOptions, handler: DenoServeHandler) => DenoHttpServer;
+  addSignalListener?: (signal: NodeJS.Signals, handler: SignalHandler) => void;
+  removeSignalListener?: (signal: NodeJS.Signals, handler: SignalHandler) => void;
+  exit?: (code: number) => never | void;
 };
 
 type BunServeOptions = {
@@ -105,6 +108,14 @@ type BunHttpServer = {
 
 type BunServeRuntime = {
   serve: (options: BunServeOptions) => BunHttpServer;
+};
+
+type SignalHandler = () => void;
+
+type SignalRuntime = {
+  add: (signal: NodeJS.Signals, handler: SignalHandler) => void;
+  remove?: (signal: NodeJS.Signals, handler: SignalHandler) => void;
+  exit?: (code: number) => never | void;
 };
 
 function defaultNotFound(): Response {
@@ -208,10 +219,13 @@ function getDenoServeRuntime(): DenoServeRuntime | null {
     return null;
   }
   const serve = denoGlobal.serve;
+  const addSignalListener = denoGlobal.addSignalListener;
+  const removeSignalListener = denoGlobal.removeSignalListener;
+  const exit = denoGlobal.exit;
   if (typeof serve !== "function") {
     return null;
   }
-  return {
+  const runtime: DenoServeRuntime = {
     serve: (options, handler) => {
       const server: unknown = Reflect.apply(serve, denoGlobal, [options, handler]);
       if (!isDenoHttpServer(server)) {
@@ -220,6 +234,20 @@ function getDenoServeRuntime(): DenoServeRuntime | null {
       return server;
     },
   };
+  if (typeof addSignalListener === "function") {
+    runtime.addSignalListener = (signal, handler) => {
+      Reflect.apply(addSignalListener, denoGlobal, [signal, handler]);
+    };
+  }
+  if (typeof removeSignalListener === "function") {
+    runtime.removeSignalListener = (signal, handler) => {
+      Reflect.apply(removeSignalListener, denoGlobal, [signal, handler]);
+    };
+  }
+  if (typeof exit === "function") {
+    runtime.exit = (code) => Reflect.apply(exit, denoGlobal, [code]);
+  }
+  return runtime;
 }
 
 function getBunServeRuntime(): BunServeRuntime | null {
@@ -242,6 +270,49 @@ function getBunServeRuntime(): BunServeRuntime | null {
   };
 }
 
+function getProcessSignalRuntime(): SignalRuntime | null {
+  const processGlobal: unknown = Reflect.get(globalThis, "process");
+  if (!isObject(processGlobal)) {
+    return null;
+  }
+  const on = processGlobal.on;
+  const off = processGlobal.off;
+  const removeListener = processGlobal.removeListener;
+  const exit = processGlobal.exit;
+  if (typeof on !== "function") {
+    return null;
+  }
+  const runtime: SignalRuntime = {
+    add: (signal, handler) => {
+      Reflect.apply(on, processGlobal, [signal, handler]);
+    },
+  };
+  if (typeof off === "function") {
+    runtime.remove = (signal, handler) => {
+      Reflect.apply(off, processGlobal, [signal, handler]);
+    };
+  } else if (typeof removeListener === "function") {
+    runtime.remove = (signal, handler) => {
+      Reflect.apply(removeListener, processGlobal, [signal, handler]);
+    };
+  }
+  if (typeof exit === "function") {
+    runtime.exit = (code) => Reflect.apply(exit, processGlobal, [code]);
+  }
+  return runtime;
+}
+
+function createDenoSignalRuntime(deno: DenoServeRuntime): SignalRuntime | null {
+  if (!deno.addSignalListener) {
+    return null;
+  }
+  return {
+    add: deno.addSignalListener,
+    remove: deno.removeSignalListener,
+    exit: deno.exit,
+  };
+}
+
 function resolveRuntimeKind(): VeryfrontServiceServerRuntimeKind {
   if (getBunServeRuntime()) {
     return "bun";
@@ -261,6 +332,84 @@ async function stopRuntime(
   await runtime.stop();
 }
 
+function installSignalHandlers(options: {
+  signalRuntime: SignalRuntime | null;
+  signals?: readonly NodeJS.Signals[];
+  logger: VeryfrontServiceServerLogger;
+  stop: () => Promise<void>;
+  hardShutdownTimeoutMs?: number;
+  runtime: VeryfrontServiceServerRuntimeKind;
+}): () => void {
+  if (!options.signalRuntime) {
+    return () => undefined;
+  }
+
+  const hardShutdownTimeoutMs = options.hardShutdownTimeoutMs ?? 20_000;
+  const installedHandlers: Array<{ signal: NodeJS.Signals; handler: SignalHandler }> = [];
+  let signalShutdownStarted = false;
+
+  for (const signal of options.signals ?? ["SIGTERM"]) {
+    const handler = () => {
+      if (signalShutdownStarted) {
+        return;
+      }
+
+      signalShutdownStarted = true;
+      options.logger.info?.("Veryfront service server received shutdown signal", {
+        signal,
+        runtime: options.runtime,
+      });
+      const hardTimeout = setTimeout(() => {
+        options.logger.error?.("Veryfront service server graceful shutdown timed out", {
+          signal,
+          runtime: options.runtime,
+        });
+        options.signalRuntime?.exit?.(1);
+      }, hardShutdownTimeoutMs);
+
+      void options.stop()
+        .then(() => {
+          clearTimeout(hardTimeout);
+          options.signalRuntime?.exit?.(0);
+        })
+        .catch((error: unknown) => {
+          clearTimeout(hardTimeout);
+          options.logger.error?.("Veryfront service server shutdown failed", {
+            signal,
+            runtime: options.runtime,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          options.signalRuntime?.exit?.(1);
+        });
+    };
+
+    try {
+      options.signalRuntime.add(signal, handler);
+      installedHandlers.push({ signal, handler });
+    } catch (error) {
+      options.logger.warn?.("Veryfront service server could not install shutdown signal handler", {
+        signal,
+        runtime: options.runtime,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return () => {
+    for (const { signal, handler } of installedHandlers) {
+      try {
+        options.signalRuntime?.remove?.(signal, handler);
+      } catch (error) {
+        options.logger.warn?.("Veryfront service server could not remove shutdown signal handler", {
+          signal,
+          runtime: options.runtime,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  };
+}
+
 async function startDenoVeryfrontServer(
   options: StartVeryfrontServerOptions,
   deno: DenoServeRuntime,
@@ -275,6 +424,7 @@ async function startDenoVeryfrontServer(
     onListen: () => undefined,
   }, options.runtime.fetch);
   let shutdownStarted = false;
+  let removeSignalHandlers: () => void = () => undefined;
 
   const stop = async () => {
     if (shutdownStarted) {
@@ -282,15 +432,28 @@ async function startDenoVeryfrontServer(
     }
 
     shutdownStarted = true;
-    await stopRuntime(options.runtime, async () => {
-      if (server.shutdown) {
-        await server.shutdown();
-        return;
-      }
-      abortController.abort();
-      await server.finished?.catch(() => undefined);
-    });
+    try {
+      await stopRuntime(options.runtime, async () => {
+        if (server.shutdown) {
+          await server.shutdown();
+          return;
+        }
+        abortController.abort();
+        await server.finished?.catch(() => undefined);
+      });
+    } finally {
+      removeSignalHandlers();
+    }
   };
+
+  removeSignalHandlers = installSignalHandlers({
+    signalRuntime: createDenoSignalRuntime(deno),
+    signals: options.signals,
+    logger,
+    stop,
+    hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
+    runtime: "deno",
+  });
 
   logger.info?.("Veryfront service server listening", {
     port: server.addr?.port ?? options.port,
@@ -319,6 +482,7 @@ async function startBunVeryfrontServer(
     fetch: options.runtime.fetch,
   });
   let shutdownStarted = false;
+  let removeSignalHandlers: () => void = () => undefined;
 
   const stop = async () => {
     if (shutdownStarted) {
@@ -326,10 +490,23 @@ async function startBunVeryfrontServer(
     }
 
     shutdownStarted = true;
-    await stopRuntime(options.runtime, async () => {
-      await server.stop?.();
-    });
+    try {
+      await stopRuntime(options.runtime, async () => {
+        await server.stop?.();
+      });
+    } finally {
+      removeSignalHandlers();
+    }
   };
+
+  removeSignalHandlers = installSignalHandlers({
+    signalRuntime: getProcessSignalRuntime(),
+    signals: options.signals,
+    logger,
+    stop,
+    hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
+    runtime: "bun",
+  });
 
   logger.info?.("Veryfront service server listening", {
     port: server.port ?? options.port,
