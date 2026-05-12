@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getAllWorkflowIds, getWorkflow, registerWorkflow, workflowRegistry } from "./registry.ts";
 import type { WorkflowDefinition, WorkflowNode } from "./types.ts";
 import { workflow } from "./dsl/workflow.ts";
@@ -167,10 +168,11 @@ describe("WorkflowRegistry", () => {
     });
 
     it("should count schemas", () => {
+      const getSchema = defineSchema((v) => v.object({}).passthrough());
       workflowRegistry.register({
         id: "schema-test",
-        inputSchema: {} as import("zod").ZodSchema,
-        outputSchema: {} as import("zod").ZodSchema,
+        inputSchema: getSchema(),
+        outputSchema: getSchema(),
         steps: [],
       });
 

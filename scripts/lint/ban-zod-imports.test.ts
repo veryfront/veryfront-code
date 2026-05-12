@@ -37,6 +37,14 @@ describe("findIllegalZodImports", () => {
     assertEquals(result.length, 1);
   });
 
+  it("catches type-only dynamic zod imports", () => {
+    const files = [
+      { path: "src/types.ts", content: 'type Schema = import("zod").ZodSchema;' },
+    ];
+    const result = findIllegalZodImports(files);
+    assertEquals(result.length, 1);
+  });
+
   it("scans source and cli implementation files only", () => {
     assertEquals(shouldCheckZodImportPath("src/tool/factory.ts"), true);
     assertEquals(shouldCheckZodImportPath("cli/shared/args.ts"), true);

@@ -12,6 +12,9 @@ export function shouldCheckZodImportPath(path: string): boolean {
   return normalized.startsWith("src/") || normalized.startsWith("cli/");
 }
 
+const STATIC_ZOD_IMPORT_RE = /^\s*import\b.*from\s+["'](?:npm:)?zod(?:@[^"']*)?["']/;
+const DYNAMIC_ZOD_IMPORT_RE = /(^|[^"'`])\bimport\s*\(\s*["'](?:npm:)?zod(?:@[^"']*)?["']\s*\)/;
+
 export function findIllegalZodImports(
   files: Array<{ path: string; content: string }>,
 ): IllegalImport[] {
@@ -20,7 +23,7 @@ export function findIllegalZodImports(
     if (!shouldCheckZodImportPath(f.path)) continue;
     const lines = f.content.split("\n");
     for (let i = 0; i < lines.length; i++) {
-      if (/^\s*import\b.*from\s+["'](?:npm:)?zod(?:@[^"']*)?["']/.test(lines[i])) {
+      if (STATIC_ZOD_IMPORT_RE.test(lines[i]) || DYNAMIC_ZOD_IMPORT_RE.test(lines[i])) {
         result.push({ path: f.path, line: i + 1 });
       }
     }
