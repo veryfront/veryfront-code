@@ -108,10 +108,14 @@ export type InferSchema<S> = S extends Schema<infer T> ? T : never;
  */
 export type InferInput<S> = InferSchema<S>;
 
-/** Maps a raw object shape to its inferred object type. */
-export type InferShape<S extends Record<string, Schema<unknown>>> = {
-  [K in keyof S]: InferSchema<S[K]>;
-};
+/** Maps a raw object shape to its inferred object type, preserving optionality. */
+export type InferShape<S extends Record<string, Schema<unknown>>> =
+  & {
+    [K in keyof S as undefined extends InferSchema<S[K]> ? never : K]: InferSchema<S[K]>;
+  }
+  & {
+    [K in keyof S as undefined extends InferSchema<S[K]> ? K : never]?: InferSchema<S[K]>;
+  };
 
 /** A single validation issue with location context. */
 export interface ValidationIssue {
