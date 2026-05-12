@@ -36,35 +36,17 @@ describe("npm-import-rewrites", () => {
   });
 
   describe("buildRules", () => {
-    it("generates static and dynamic import rules for each package", () => {
-      const importMap = {
-        zod: "npm:zod@3.25.76",
-      };
-
-      const rules = buildRules(importMap);
-
-      // 1 package × 2 rules (static + dynamic) = 2 rules
-      assertEquals(rules.length, 2);
-    });
-
-    it("skips packages not in the import map", () => {
+    it("returns empty rules when REWRITABLE_PACKAGES is empty", () => {
       const rules = buildRules({});
       assertEquals(rules.length, 0);
     });
   });
 
   describe("rewriteNpmImports", () => {
-    it("rewrites static npm imports to pinned versions", () => {
+    it("returns input unchanged when no rewritable packages exist", () => {
       const input = 'import { unified } from "unified"';
       const result = rewriteNpmImports(input);
-      assertEquals(result.includes("npm:unified@"), true);
-      assertEquals(result.includes("@latest"), false);
-    });
-
-    it("rewrites dynamic npm imports to pinned versions", () => {
-      const input = 'const mod = await import("unified")';
-      const result = rewriteNpmImports(input);
-      assertEquals(result.includes("npm:unified@"), true);
+      assertEquals(result, input);
     });
 
     it("does not rewrite unrelated imports", () => {
