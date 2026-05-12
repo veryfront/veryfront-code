@@ -491,8 +491,8 @@ async function executeHostedDurableChildLifecycle<
       childRunId: identifiers.childRunId,
       childMessageId: identifiers.childMessageId,
       description: input.forkInput.description,
-      sourceTargetKind: targets.sourceTargetKind,
-      runtimeTargetKind: targets.runtimeTargetKind,
+      sourceTargetKind: targets.sourceTargetKind as any,
+      runtimeTargetKind: targets.runtimeTargetKind as any,
       targetBranchId: targets.targetBranchId,
     },
     model: bootstrapContext.resolvedModel,
@@ -524,7 +524,7 @@ async function executeHostedDurableChildLifecycle<
     }
 
     return input.buildTerminalFailureResult({
-      status: lifecycleResult.terminalState.status,
+      status: lifecycleResult.terminalState.status as any,
       identifiers,
       targets,
       terminalErrorCode: lifecycleResult.terminalState.terminalErrorCode ??

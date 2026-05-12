@@ -9,6 +9,7 @@ import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, toSlug } from "./helpers.ts";
+import type { InitTemplate } from "../../commands/init/types.ts";
 
 // ============================================================================
 // Static Data
@@ -478,7 +479,7 @@ export const vfCreateProject: MCPTool<CreateProjectInput, CreateProjectResult> =
 
           await initCommand({
             name: input.name,
-            template: input.template,
+            template: input.template as InitTemplate,
             integrations: input.integrations as
               | import("../../templates/types.ts").IntegrationName[]
               | undefined,

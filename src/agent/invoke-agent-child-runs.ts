@@ -73,8 +73,8 @@ export type InvokeAgentChildRunProgressInput = {
   childAgentId: string;
   description?: string;
   status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
-  sourceTargetKind?: "project" | "production" | "environment" | "preview_branch" | null;
-  runtimeTargetKind?: "production" | "environment" | "preview_branch" | null;
+  sourceTargetKind?: string | null;
+  runtimeTargetKind?: string | null;
   targetEnvironmentId?: string | null;
   targetBranchId?: string | null;
 };

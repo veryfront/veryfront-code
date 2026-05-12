@@ -296,7 +296,7 @@ export class Renderer {
     if (!url) return slug;
 
     // Get query param handling options from config
-    const queryParamOptions: QueryParamCacheOptions | undefined = ctx.config?.cache?.queryParams;
+    const queryParamOptions = ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined;
 
     return buildQueryAwareCacheKey(slug, url, queryParamOptions);
   }
@@ -521,7 +521,7 @@ export class Renderer {
       adapter: ctx.adapter,
       mode: ctx.mode,
       projectDir: ctx.projectDir,
-      queryParamOptions: ctx.config?.cache?.queryParams,
+      queryParamOptions: ctx.config?.cache?.queryParams as QueryParamCacheOptions | undefined,
     });
 
     return { pipeline };

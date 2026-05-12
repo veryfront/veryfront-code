@@ -329,7 +329,9 @@ export class IssuesManager {
       if (sortKey === "id") {
         comparison = a.metadata.id.localeCompare(b.metadata.id);
       } else {
-        comparison = String(a.metadata[sortKey]).localeCompare(String(b.metadata[sortKey]));
+        comparison = String((a.metadata as Record<string, unknown>)[sortKey]).localeCompare(
+          String((b.metadata as Record<string, unknown>)[sortKey]),
+        );
       }
       return sortDirection === "desc" ? -comparison : comparison;
     });

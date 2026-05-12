@@ -32,7 +32,7 @@ export const parseServeArgs = createArgParser(ServeArgsSchema, {
 export async function handleServeCommand(args: ParsedArgs): Promise<void> {
   const opts = parseArgsOrThrow(parseServeArgs, "serve", args);
   await serveCommand({
-    mode: opts.mode,
+    mode: opts.mode as "production" | "proxy" | "combined",
     port: opts.port,
     bindAddress: opts.hostname,
     splitMode: opts.split,

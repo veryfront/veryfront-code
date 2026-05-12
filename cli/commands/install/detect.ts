@@ -30,7 +30,7 @@ export async function detectAITools(
 
   const detected: AIToolId[] = [];
   for (const toolId of Object.keys(rules) as AIToolId[]) {
-    if (await rules[toolId](cwd)) detected.push(toolId);
+    if (await rules[toolId]!(cwd)) detected.push(toolId);
   }
 
   return detected;

@@ -246,7 +246,7 @@ export function normalizeConversationHistoryForRuntime(
       .filter((part): part is NonNullable<typeof part> => part !== null),
     ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
     ...(message.metadata ? { metadata: message.metadata } : {}),
-  }));
+  })) as any;
 }
 
 export function resolveChannelInvokeAgent(

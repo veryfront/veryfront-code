@@ -227,7 +227,7 @@ export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
         const slug = toSlug(input.name);
         const componentName = toComponentName(input.name);
 
-        const config = SCAFFOLD_CONFIGS[input.type];
+        const config = SCAFFOLD_CONFIGS[input.type]!;
         const directory = config.getDirectory(projectDir, slug);
         const filename = config.getFilename(slug, componentName);
         const filePath = join(directory, filename);

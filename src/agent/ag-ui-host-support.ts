@@ -207,7 +207,7 @@ export function normalizeAgUiMessages(messages: AgUiRequest["messages"]): Messag
       .filter((part): part is Message["parts"][number] => part !== null),
     ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
     ...(message.metadata ? { metadata: message.metadata } : {}),
-  }));
+  })) as any;
 }
 
 export function createAgUiRunErrorEvent(message: string, code?: string): AgUiSseEvent {

@@ -86,7 +86,7 @@ export interface ConversationRunProjection {
   latestExternalEventSequence: number;
   waitingToolCallId: string | null;
   waitingToolName: string | null;
-  status: string;
+  status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
 }
 
 export const getConversationRunProjectionSchema = defineSchema((v) =>
@@ -134,7 +134,7 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
         waitingToolCallId: ((d.waitingToolCallId ?? d.waiting_tool_call_id) as string | null) ??
           null,
         waitingToolName: ((d.waitingToolName ?? d.waiting_tool_name) as string | null) ?? null,
-        status: d.status as string,
+        status: d.status as ConversationRunProjection["status"],
       };
     })
 );
@@ -1209,7 +1209,12 @@ export async function monitorConversationRunStatus(input: {
       run.status === "failed" ||
       run.status === "cancelled"
     ) {
-      await input.onTerminal(new ConversationRunTerminalStateError(run, run.status));
+      await input.onTerminal(
+        new ConversationRunTerminalStateError(
+          run,
+          run.status as any,
+        ),
+      );
     }
     return;
   }

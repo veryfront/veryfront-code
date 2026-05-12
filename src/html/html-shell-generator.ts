@@ -165,7 +165,7 @@ async function generateHTMLShellPartsImpl(
       ? getProjectCSS(projectSlug, stylesheetContent, candidates, {
         minify: true,
         environment: options.environment,
-        buildMode: options.mode,
+        buildMode: options.mode as "development" | "production",
       })
       : Promise.resolve(null));
 

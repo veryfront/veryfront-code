@@ -89,6 +89,8 @@ export function resolveHostedChildTerminalErrorCode(
       return hostedChildTerminalErrorCodes.failed;
     case "completed":
       return hostedChildTerminalErrorCodes.completedExternally;
+    default:
+      return hostedChildTerminalErrorCodes.failed;
   }
 }
 
@@ -148,7 +150,12 @@ export async function monitorHostedChildRunStatus(
         continue;
       }
 
-      input.onTerminal(new HostedChildTerminalStateError(run.status, input.identifiers));
+      input.onTerminal(
+        new HostedChildTerminalStateError(
+          run.status as never,
+          input.identifiers,
+        ),
+      );
       return;
     } catch (error) {
       if (input.abortSignal?.aborted || isAbortError(error)) {

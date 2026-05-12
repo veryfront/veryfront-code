@@ -5,6 +5,7 @@
 import { defineSchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
+import type { DemoOptions } from "./index.ts";
 
 const getDemoArgsSchema = defineSchema((v) =>
   v.object({
@@ -25,5 +26,5 @@ export const parseDemoArgs = createArgParser(DemoArgsSchema, {
 export async function handleDemoCommand(args: ParsedArgs): Promise<void> {
   const data = parseArgsOrThrow(parseDemoArgs, "demo", args);
   const { demoCommand } = await import("./index.ts");
-  await demoCommand(data);
+  await demoCommand(data as DemoOptions);
 }

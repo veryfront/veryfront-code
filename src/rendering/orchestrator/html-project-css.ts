@@ -89,7 +89,7 @@ export function startProjectCSSPreparation(
     {
       minify: true,
       environment: htmlOptions.environment,
-      buildMode: htmlOptions.mode,
+      buildMode: htmlOptions.mode as "development" | "production",
     },
   );
 }

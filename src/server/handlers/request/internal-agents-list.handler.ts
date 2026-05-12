@@ -54,7 +54,7 @@ export class InternalAgentsListHandler extends BaseHandler {
         );
         const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: payload.requestId,
-          expectedSurface: payload.surface,
+          expectedSurface: payload.surface as any,
         });
 
         if (
