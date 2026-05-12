@@ -26,6 +26,13 @@ Deno.test("resolveRuntimeAgentDefinitionsDir resolves source and bundled agent d
 
     assertEquals(
       resolveRuntimeAgentDefinitionsDir({
+        baseDir: rootDir,
+        id: "support",
+      }),
+      agentsDir,
+    );
+    assertEquals(
+      resolveRuntimeAgentDefinitionsDir({
         baseDir: resolve(rootDir, "src"),
         id: "support",
       }),
@@ -50,6 +57,13 @@ Deno.test("resolveRuntimeAgentDefinitionsDir resolves source and bundled agent d
 
 Deno.test("resolveRuntimeAgentDefinitionsDir falls back to the nearest source-layout candidate", () => {
   withTempDir((rootDir) => {
+    assertEquals(
+      resolveRuntimeAgentDefinitionsDir({
+        baseDir: rootDir,
+        id: "support",
+      }),
+      resolve(rootDir, "agents"),
+    );
     assertEquals(
       resolveRuntimeAgentDefinitionsDir({
         baseDir: resolve(rootDir, "src"),

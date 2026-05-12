@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { z } from "zod";
 import {
   parseRuntimeAgentMarkdownDefinition,
@@ -45,15 +45,20 @@ export function resolveRuntimeAgentDefinitionsDir(
 ): string {
   const parsedInput = resolveRuntimeAgentDefinitionsDirInputSchema.parse(input);
   const fileName = getRuntimeAgentDefinitionFileName(parsedInput);
-  const firstCandidate = resolve(parsedInput.baseDir, "../agents");
+  const firstCandidate = resolve(parsedInput.baseDir, "agents");
+  const sourceLayoutCandidate = resolve(parsedInput.baseDir, "../agents");
   const candidates = [
     firstCandidate,
+    sourceLayoutCandidate,
     resolve(parsedInput.baseDir, "../../agents"),
     resolve(parsedInput.baseDir, "../../../agents"),
   ];
+  const fallbackCandidate = basename(parsedInput.baseDir) === "src"
+    ? sourceLayoutCandidate
+    : firstCandidate;
 
   return candidates.find((candidate) => hasRuntimeAgentDefinitionFile(candidate, fileName)) ??
-    firstCandidate;
+    fallbackCandidate;
 }
 
 export function resolveRuntimeAgentMarkdownDefinitionFilePath(

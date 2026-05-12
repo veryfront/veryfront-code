@@ -1,5 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { createVeryfrontServer } from "./service-server.ts";
+import { createVeryfrontServer, startVeryfrontServer } from "./service-server.ts";
 
 Deno.test("createVeryfrontServer dispatches to the first module response", async () => {
   const runtime = createVeryfrontServer({
@@ -55,4 +55,33 @@ Deno.test("createVeryfrontServer fans out shutdown state and stop hooks", async 
   await runtime.stop();
 
   assertEquals(events, ["first:shutdown", "second:shutdown", "first:stop", "second:stop"]);
+});
+
+Deno.test("startVeryfrontServer starts the current runtime fetch server", async () => {
+  const events: string[] = [];
+  const runtime = createVeryfrontServer({
+    modules: [{
+      name: "test",
+      handle: () => new Response("served"),
+      setShuttingDown: () => events.push("shutdown"),
+      stop: () => events.push("stop"),
+    }],
+  });
+  const server = await startVeryfrontServer({
+    runtime,
+    port: 0,
+    bindAddress: "127.0.0.1",
+  });
+
+  try {
+    const response = await fetch(server.url);
+
+    assertEquals(response.status, 200);
+    assertEquals(await response.text(), "served");
+    assertEquals(server.runtime, "deno");
+  } finally {
+    await server.stop();
+  }
+
+  assertEquals(events, ["shutdown", "stop"]);
 });

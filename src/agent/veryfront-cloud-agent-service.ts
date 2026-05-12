@@ -76,6 +76,7 @@ import {
   type AgentServiceRuntimeConfig,
   createAgentServiceRuntime,
   type CreateAgentServiceRuntimeOptions,
+  startAgentServiceRuntime,
   startNodeAgentService,
   type StartNodeAgentServiceResult,
 } from "./hosted-agent-service-runtime.ts";
@@ -115,12 +116,20 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   entryUrl?: string | URL;
   agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
   forwardedConfigNamespace?: string;
-  createBashTool: HostedSandboxToolsOptions["createBashTool"];
+  createBashTool?: HostedSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;
   drainTimeoutMs?: number;
   hardShutdownTimeoutMs?: number;
 };
+
+export type VeryfrontCloudAgentServiceOptions = NodeVeryfrontCloudAgentServiceOptions;
+
+type ResolvedNodeVeryfrontCloudAgentServiceOptions =
+  & NodeVeryfrontCloudAgentServiceOptions
+  & {
+    createBashTool: HostedSandboxToolsOptions["createBashTool"];
+  };
 
 export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
   config: AgentServiceRuntimeConfig;
@@ -200,6 +209,22 @@ function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTar
   return process;
 }
 
+async function loadDefaultCreateBashTool(): Promise<
+  HostedSandboxToolsOptions["createBashTool"]
+> {
+  const { createBashTool } = await import("bash-tool");
+  return createBashTool;
+}
+
+async function resolveNodeVeryfrontCloudAgentServiceOptions(
+  options: NodeVeryfrontCloudAgentServiceOptions,
+): Promise<ResolvedNodeVeryfrontCloudAgentServiceOptions> {
+  return {
+    ...options,
+    createBashTool: options.createBashTool ?? await loadDefaultCreateBashTool(),
+  };
+}
+
 function resolveEnvironment(
   options: Pick<NodeVeryfrontCloudAgentServiceOptions, "env" | "processTarget">,
 ): CreateNodeAgentServiceRuntimeInfrastructureOptions["env"] {
@@ -212,11 +237,14 @@ function resolveEnvironment(
   if (typeof process !== "undefined") {
     return process.env;
   }
+  if (typeof Deno !== "undefined") {
+    return Deno.env.toObject();
+  }
   return {};
 }
 
 function createNodeVeryfrontCloudAgentServiceContext(
-  options: NodeVeryfrontCloudAgentServiceOptions,
+  options: ResolvedNodeVeryfrontCloudAgentServiceOptions,
 ) {
   const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
   const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
@@ -699,7 +727,8 @@ function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
 export async function createNodeVeryfrontCloudAgentServiceRuntime(
   options: NodeVeryfrontCloudAgentServiceOptions,
 ): Promise<AgentServiceRuntimeBundle<NodeVeryfrontCloudAgentServicePreparedExecution>> {
-  const context = createNodeVeryfrontCloudAgentServiceContext(options);
+  const resolvedOptions = await resolveNodeVeryfrontCloudAgentServiceOptions(options);
+  const context = createNodeVeryfrontCloudAgentServiceContext(resolvedOptions);
   await initializeNodeVeryfrontCloudAgentServiceContext(context);
   return createAgentServiceRuntime(createNodeVeryfrontCloudAgentServiceRuntimeOptions(context));
 }
@@ -707,7 +736,8 @@ export async function createNodeVeryfrontCloudAgentServiceRuntime(
 export async function startNodeVeryfrontCloudAgentService(
   options: NodeVeryfrontCloudAgentServiceOptions,
 ): Promise<StartNodeAgentServiceResult<NodeVeryfrontCloudAgentServicePreparedExecution>> {
-  const context = createNodeVeryfrontCloudAgentServiceContext(options);
+  const resolvedOptions = await resolveNodeVeryfrontCloudAgentServiceOptions(options);
+  const context = createNodeVeryfrontCloudAgentServiceContext(resolvedOptions);
   await initializeNodeVeryfrontCloudAgentServiceContext(context);
   return await startNodeAgentService({
     ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
@@ -715,7 +745,7 @@ export async function startNodeVeryfrontCloudAgentService(
   });
 }
 
-export async function runNodeVeryfrontCloudAgentServiceMain(
+export async function startAgentService(
   options: NodeVeryfrontCloudAgentServiceOptions,
 ): Promise<void> {
   const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
@@ -723,8 +753,9 @@ export async function runNodeVeryfrontCloudAgentServiceMain(
     () => ({});
 
   await loadAgentServiceEnvFiles();
+  const resolvedOptions = await resolveNodeVeryfrontCloudAgentServiceOptions(options);
   const context = createNodeVeryfrontCloudAgentServiceContext({
-    ...options,
+    ...resolvedOptions,
     processTarget,
   });
   getRuntimeTraceContext = context.infrastructure.getTraceContext;
@@ -746,7 +777,7 @@ export async function runNodeVeryfrontCloudAgentServiceMain(
       __registerTraceContextGetter(getter);
     },
     start: async () => {
-      await startNodeAgentService({
+      await startAgentServiceRuntime({
         ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
         hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
       });
@@ -757,4 +788,10 @@ export async function runNodeVeryfrontCloudAgentServiceMain(
     exit: processTarget?.exit,
     processTarget,
   });
+}
+
+export async function runNodeVeryfrontCloudAgentServiceMain(
+  options: NodeVeryfrontCloudAgentServiceOptions,
+): Promise<void> {
+  await startAgentService(options);
 }

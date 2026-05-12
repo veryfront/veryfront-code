@@ -2,6 +2,8 @@ import {
   createVeryfrontServer,
   type NodeVeryfrontServiceServer,
   startNodeVeryfrontServer,
+  startVeryfrontServer,
+  type VeryfrontServiceServer,
   type VeryfrontServiceServerLogger,
   type VeryfrontServiceServerRuntime,
 } from "../server/service-server.ts";
@@ -26,7 +28,15 @@ export type StartNodeAgentServiceServerOptions = CreateAgentServiceServerRuntime
   hardShutdownTimeoutMs?: number;
 };
 
+export type StartAgentServiceServerOptions = CreateAgentServiceServerRuntimeOptions & {
+  port: number;
+  bindAddress?: string;
+  signals?: readonly NodeJS.Signals[];
+  hardShutdownTimeoutMs?: number;
+};
+
 export type NodeAgentServiceServer = NodeVeryfrontServiceServer;
+export type AgentServiceServer = VeryfrontServiceServer | NodeVeryfrontServiceServer;
 
 function getAgentServiceServerName(
   options: CreateAgentServiceServerRuntimeOptions,
@@ -60,6 +70,22 @@ export async function startNodeAgentServiceServer(
 ): Promise<NodeAgentServiceServer> {
   const runtime = createAgentServiceServerRuntime(options);
   const server = await startNodeVeryfrontServer({
+    runtime,
+    port: options.port,
+    bindAddress: options.bindAddress,
+    logger: options.logger,
+    signals: options.signals,
+    hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
+  });
+  await server.ready;
+  return server;
+}
+
+export async function startAgentServiceServer(
+  options: StartAgentServiceServerOptions,
+): Promise<AgentServiceServer> {
+  const runtime = createAgentServiceServerRuntime(options);
+  const server = await startVeryfrontServer({
     runtime,
     port: options.port,
     bindAddress: options.bindAddress,

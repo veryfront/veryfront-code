@@ -62,6 +62,7 @@ import {
   RunResumeSessionManager,
   RuntimeAgentRunInvocationSchema,
   shouldSkipHostedChildTerminalPersistence,
+  startAgentService,
   startNodeAgentService,
   startNodeVeryfrontCloudAgentService,
   waitForHumanInput,
@@ -266,21 +267,19 @@ request-native runtime with readiness, liveness, CORS, shutdown state, and
 host-supplied routes. For Node deployments, `startNodeAgentService()` wraps that
 runtime in the shared Veryfront service server with graceful shutdown.
 
-For a Veryfront Cloud-backed Node service that should use the default
+For a Veryfront Cloud-backed service that should use the default
 configuration, telemetry, model routing, sandbox, Studio MCP, project steering,
 durable-run, and prepared-execution wiring, use
-`runNodeVeryfrontCloudAgentServiceMain()` from a process entrypoint and keep the
+`startAgentService()` from a process entrypoint and keep the
 agent behavior in `agents/<agent-id>.md` or `agents/<agent-id>.ts`:
 
 ```ts
-import { createBashTool } from "bash-tool";
-import { runNodeVeryfrontCloudAgentServiceMain } from "veryfront/agent";
+import { startAgentService } from "veryfront/agent";
 
-await runNodeVeryfrontCloudAgentServiceMain({
+await startAgentService({
   serviceName: "support-agent",
   agentId: "support",
   entryUrl: import.meta.url,
-  createBashTool,
 });
 ```
 
@@ -835,22 +834,27 @@ project tools, and `invoke_agent`), sandbox tools, Studio MCP tools, remote MCP
 definitions, prepared chat execution, AG-UI streaming, and detached durable-run
 execution.
 
-Hosts provide the service name, agent id, Node entry URL or base directory, and
-a bash-tool factory. Use this helper when tests or custom hosts need the runtime
-bundle without starting the Node server.
+Hosts provide the service name, agent id, entry URL or base directory, and
+optionally a custom bash-tool factory. Use this helper when tests or custom
+hosts need the runtime bundle without starting the service server.
 
 ### `startNodeVeryfrontCloudAgentService(options)`
 
 Start a Veryfront Cloud agent-service runtime with the shared Node service
-server and graceful shutdown handling. This helper is Node-specific. Use the
-lower-level agent-service runtime APIs for non-Node hosts.
+server and graceful shutdown handling. This helper remains available for
+Node-specific hosts; use `startAgentService()` for the default cross-runtime
+process entrypoint.
+
+### `startAgentService(options)`
+
+Run the default cross-runtime bootstrap for a Veryfront Cloud agent service. The
+helper loads `.env` files, initializes OpenTelemetry where supported, registers
+trace-context logging, starts the service server, and handles startup failures
+through the provided process target.
 
 ### `runNodeVeryfrontCloudAgentServiceMain(options)`
 
-Run the default Node process bootstrap for a Veryfront Cloud agent service. The
-helper loads `.env` files, initializes OpenTelemetry, registers trace-context
-logging, starts the Node service server, and handles startup failures through
-the provided process target.
+Compatibility alias for `startAgentService()`.
 
 ### `parseAgentServiceConfig(env)`
 
@@ -1109,7 +1113,8 @@ Clear all stored messages from memory.
 | `parseAgUiRuntimeRequest`                                             | Parse and validate the canonical runtime AG-UI request body              |
 | `parseAgUiRuntimeRequestOrError`                                      | Parse runtime AG-UI input or return a `400` validation `Response`        |
 | `parseRuntimeAgentRunInvocation`                                      | Parse and validate a control-plane runtime agent invocation body         |
-| `runNodeVeryfrontCloudAgentServiceMain`                               | Run the default Node process bootstrap for a Veryfront Cloud service     |
+| `startAgentService`                                                   | Run the default cross-runtime bootstrap for a Veryfront Cloud service    |
+| `runNodeVeryfrontCloudAgentServiceMain`                               | Compatibility alias for `startAgentService`                              |
 | `startNodeAgentService`                                               | Start an agent service with the Node service server adapter              |
 | `startNodeVeryfrontCloudAgentService`                                 | Start a Veryfront Cloud agent service with the Node server adapter       |
 | `parseRuntimeAgentRunInvocationOrError`                               | Parse a runtime agent invocation or return a `400` validation `Response` |

@@ -27,7 +27,9 @@ import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
 import type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
 import {
+  type AgentServiceServer,
   type NodeAgentServiceServer,
+  startAgentServiceServer,
   startNodeAgentServiceServer,
 } from "./agent-service-server.ts";
 import type { VeryfrontServiceServerLogger } from "../server/service-server.ts";
@@ -115,6 +117,15 @@ export type StartNodeAgentServiceOptions<
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
 > = StartNodeHostedAgentServiceOptions<TExecution, TConfig>;
 
+export type StartAgentServiceRuntimeOptions<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+> = CreateAgentServiceRuntimeOptions<TExecution, TConfig> & {
+  bindAddress?: string;
+  hardShutdownTimeoutMs?: number;
+  signals?: readonly NodeJS.Signals[];
+};
+
 export type StartNodeHostedAgentServiceResult<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -126,6 +137,13 @@ export type StartNodeAgentServiceResult<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
 > = StartNodeHostedAgentServiceResult<TExecution, TConfig>;
+
+export type StartAgentServiceRuntimeResult<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+> = AgentServiceRuntimeBundle<TExecution, TConfig> & {
+  server: AgentServiceServer;
+};
 
 function defaultTrace<TResult>(
   _operationName: string,
@@ -235,4 +253,28 @@ export async function startNodeAgentService<
   options: StartNodeAgentServiceOptions<TExecution, TConfig>,
 ): Promise<StartNodeAgentServiceResult<TExecution, TConfig>> {
   return startNodeHostedAgentService(options);
+}
+
+export async function startAgentServiceRuntime<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+>(
+  options: StartAgentServiceRuntimeOptions<TExecution, TConfig>,
+): Promise<StartAgentServiceRuntimeResult<TExecution, TConfig>> {
+  const bundle = createAgentServiceRuntime(options);
+  const server = await startAgentServiceServer({
+    runtime: bundle.runtime,
+    serviceName: options.serviceName,
+    lifecycle: bundle.lifecycle,
+    port: bundle.config.PORT,
+    bindAddress: options.bindAddress,
+    signals: options.signals,
+    logger: options.logger,
+    hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
+  });
+
+  return {
+    ...bundle,
+    server,
+  };
 }
