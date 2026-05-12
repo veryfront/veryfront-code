@@ -30,17 +30,33 @@ export interface Schema<T = unknown> {
   default(value: T | (() => T)): Schema<T>;
   describe(description: string): Schema<T>;
   refine(check: (value: T) => boolean, message?: string | { message?: string }): Schema<T>;
+  /**
+   * Multi-issue refinement. The callback receives the parsed value and a
+   * `RefinementCtx` it can use to emit one or more issues via `addIssue`.
+   * Mirrors zod's `.superRefine`.
+   */
+  superRefine(check: (value: T, ctx: RefinementCtx) => void): Schema<T>;
   transform<U>(fn: (value: T) => U): Schema<U>;
 
   // Object-level chainables (no-op / type-preserving on non-object schemas;
   // implementations should only call these on object schemas).
   strict(): Schema<T>;
+  /**
+   * Strip unknown keys from object inputs (zod's default behavior). Exposed
+   * for parity with `.strict()` / `.passthrough()` so call sites can be
+   * explicit about their intent.
+   */
+  strip(): Schema<T>;
   passthrough(): Schema<T>;
   partial(): Schema<Partial<T>>;
   extend<U extends Record<string, Schema<unknown>>>(
     shape: U,
   ): Schema<T & { [K in keyof U]: InferSchema<U[K]> }>;
   merge<U>(other: Schema<U>): Schema<T & U>;
+  /** Drop the listed keys from an object schema. Mirrors zod's `.omit({k: true})`. */
+  omit<K extends keyof T>(keys: { [P in K]?: true }): Schema<Omit<T, K>>;
+  /** Keep only the listed keys from an object schema. Mirrors zod's `.pick({k: true})`. */
+  pick<K extends keyof T>(keys: { [P in K]?: true }): Schema<Pick<T, K>>;
 
   // String-level chainables
   min(value: number, message?: string): Schema<T>;
@@ -63,6 +79,19 @@ export interface Schema<T = unknown> {
   // Validation
   parse(data: unknown): T;
   safeParse(data: unknown): ValidationResult<T>;
+}
+
+/**
+ * Context passed to a `superRefine` callback. Provides `addIssue` to emit
+ * one or more validation issues and `path` to locate the current value.
+ *
+ * Mirrors the subset of zod's `RefinementCtx` we actually use.
+ */
+export interface RefinementCtx {
+  /** Emit a validation issue against the parsed value. */
+  addIssue(issue: { code?: string; message: string; path?: (string | number)[] }): void;
+  /** Path to the current value within its parent — used when emitting issues. */
+  readonly path: (string | number)[];
 }
 
 /** Extracts the inferred output type `T` from a `Schema<T>`. */
@@ -178,6 +207,13 @@ export interface SchemaValidator {
    * `z.instanceof`.
    */
   instanceof<T>(ctor: new (...args: never[]) => T): Schema<T>;
+
+  /**
+   * Loosely-typed escape hatch: accept input when `check` returns `true`.
+   * The runtime contract is the predicate; the type parameter `T` is purely
+   * structural and is trusted from the call site. Mirrors `z.custom<T>`.
+   */
+  custom<T>(check?: (value: unknown) => boolean, message?: string): Schema<T>;
 
   /** Coercing constructors — accept any input and coerce to the target. */
   coerce: SchemaValidatorCoerce;

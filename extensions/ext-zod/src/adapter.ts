@@ -14,6 +14,7 @@ import { z } from "zod";
 import type {
   InferShape,
   JsonSchema,
+  RefinementCtx,
   Schema,
   SchemaValidator,
   SchemaValidatorCoerce,
@@ -48,8 +49,32 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
       check: (value: T) => boolean,
       message?: string | { message?: string },
     ) => wrap<T>(zs.refine(check as (v: unknown) => boolean, message as never)),
+    superRefine: (check: (value: T, ctx: RefinementCtx) => void) =>
+      wrap<T>(
+        // zod v4's `RefinementCtx` extends `ParsePayload` (`{ value, issues }`)
+        // and exposes `addIssue(string | $ZodSuperRefineIssue)`. We bridge to
+        // our path-aware `RefinementCtx` shape: we don't have a stable `path`
+        // from the zod side here (path tracking is per-issue, not per-ctx),
+        // so we emit `[]` and let callers pass their own `path` through
+        // `addIssue({ path })`.
+        anyZs.superRefine((value: T, zodCtx: { addIssue: (arg: unknown) => void }) => {
+          const ctx: RefinementCtx = {
+            path: [],
+            addIssue: (issue) =>
+              zodCtx.addIssue({
+                // String literal "custom" replaces the deprecated
+                // z.ZodIssueCode.custom enum (zod v4 prefers raw codes).
+                code: issue.code ?? "custom",
+                message: issue.message,
+                path: issue.path,
+              }),
+          };
+          check(value, ctx);
+        }),
+      ),
     transform: <U>(fn: (value: T) => U) => wrap<U>(zs.transform(fn as never)),
     strict: () => wrap<T>(anyZs.strict()),
+    strip: () => wrap<T>(anyZs.strip()),
     passthrough: () => wrap<T>(anyZs.passthrough()),
     partial: () => wrap<Partial<T>>(anyZs.partial()),
     extend: <U extends Record<string, Schema<unknown>>>(shape: U) => {
@@ -59,6 +84,10 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
       );
     },
     merge: <U>(other: Schema<U>) => wrap<T & U>(anyZs.merge(toZod(other))),
+    omit: <K extends keyof T>(keys: { [P in K]?: true }) =>
+      wrap<Omit<T, K>>(anyZs.omit(keys)),
+    pick: <K extends keyof T>(keys: { [P in K]?: true }) =>
+      wrap<Pick<T, K>>(anyZs.pick(keys)),
     min: (value: number, message?: string) => wrap<T>(anyZs.min(value, message)),
     max: (value: number, message?: string) => wrap<T>(anyZs.max(value, message)),
     int: (message?: string) => wrap<T>(anyZs.int(message)),
@@ -195,6 +224,9 @@ export function createZodAdapter(): SchemaValidator {
       wrap<T>(
         (z.instanceof as unknown as (c: unknown) => AnyZodSchema)(ctor),
       ),
+
+    custom: <T>(check?: (value: unknown) => boolean, message?: string): Schema<T> =>
+      wrap<T>(z.custom<T>(check as (v: unknown) => boolean, message)),
 
     coerce,
 

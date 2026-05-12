@@ -9,6 +9,7 @@ export type {
   InferSchema,
   InferInput,
   InferShape,
+  RefinementCtx,
   SchemaFactory,
   ValidationResult,
   JsonSchema,
