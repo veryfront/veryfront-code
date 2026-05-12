@@ -2,7 +2,8 @@
  * MCP tools for scaffolding and conventions.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import type { MCPTool } from "../tools.ts";
@@ -82,15 +83,15 @@ export function ${componentName}({ children }: ${componentName}Props) {
 
 function generateToolTemplate(name: string): string {
   return `import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   id: "${name}",
   description: "Description of what this tool does",
-  parameters: z.object({
+  parameters: defineSchema((v) => v.object({
     // Add your parameters here
-    input: z.string().describe("Input parameter"),
-  }),
+    input: v.string().describe("Input parameter"),
+  }))(),
   execute: async ({ input }) => {
     // Implement your tool logic here
     return { result: input };
@@ -125,14 +126,14 @@ export default agent({
 
 function generatePromptTemplate(name: string): string {
   return `import { prompt } from "veryfront/prompt";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default prompt({
   id: "${name}",
   description: "Description of this prompt template",
-  argsSchema: z.object({
-    input: z.string().describe("User input"),
-  }),
+  argsSchema: defineSchema((v) => v.object({
+    input: v.string().describe("User input"),
+  }))(),
   getContent: ({ input }) => [
     { role: "system", content: "Role: describe what this assistant should do and its limits." },
     { role: "user", content: input },
@@ -145,22 +146,25 @@ export default prompt({
 // Scaffold Configuration
 // ============================================================================
 
-const scaffoldInput = z.object({
-  type: z.enum(["page", "api", "layout", "component", "tool", "agent", "prompt"]).describe(
-    "Type of entity to scaffold",
-  ),
-  name: z.string().describe(
-    "Name/path of the entity (e.g., 'users', 'api/users', 'dashboard/settings')",
-  ),
-  methods: z.array(z.enum(["GET", "POST", "PUT", "DELETE", "PATCH"])).optional().describe(
-    "HTTP methods for API routes (defaults to GET)",
-  ),
-  projectPath: z.string().optional().describe(
-    "Project directory (defaults to current working directory)",
-  ),
-});
+const getScaffoldInput = defineSchema((v) =>
+  v.object({
+    type: v.enum(["page", "api", "layout", "component", "tool", "agent", "prompt"]).describe(
+      "Type of entity to scaffold",
+    ),
+    name: v.string().describe(
+      "Name/path of the entity (e.g., 'users', 'api/users', 'dashboard/settings')",
+    ),
+    methods: v.array(v.enum(["GET", "POST", "PUT", "DELETE", "PATCH"])).optional().describe(
+      "HTTP methods for API routes (defaults to GET)",
+    ),
+    projectPath: v.string().optional().describe(
+      "Project directory (defaults to current working directory)",
+    ),
+  })
+);
+const scaffoldInput = getScaffoldInput();
 
-type ScaffoldInput = z.infer<typeof scaffoldInput>;
+type ScaffoldInput = InferSchema<ReturnType<typeof getScaffoldInput>>;
 type ScaffoldType = ScaffoldInput["type"];
 
 interface ScaffoldConfig {
@@ -262,15 +266,18 @@ export const vfScaffold: MCPTool<ScaffoldInput, ScaffoldResult> = {
 // Tool: vf_get_conventions
 // ============================================================================
 
-const getConventionsInput = z.object({
-  topic: z
-    .enum(["all", "routing", "api", "components", "ai", "styling"])
-    .optional()
-    .default("all")
-    .describe("Specific topic to get conventions for"),
-});
+const getGetConventionsInput = defineSchema((v) =>
+  v.object({
+    topic: v
+      .enum(["all", "routing", "api", "components", "ai", "styling"])
+      .optional()
+      .default("all")
+      .describe("Specific topic to get conventions for"),
+  })
+);
+const getConventionsInput = getGetConventionsInput();
 
-type GetConventionsInput = z.infer<typeof getConventionsInput>;
+type GetConventionsInput = InferSchema<ReturnType<typeof getGetConventionsInput>>;
 
 interface Convention {
   topic: string;
@@ -362,7 +369,7 @@ const CONVENTIONS: Record<string, Convention> = {
       "AI tools go in ai/tools/ directory",
       "Agents go in ai/agents/ directory",
       "Prompts go in ai/prompts/ directory",
-      "Use Zod for tool parameter validation",
+      "Use defineSchema for tool parameter validation",
       "Tools should be focused on a single capability",
       "Agents combine tools with instructions for complex tasks",
     ],
@@ -374,10 +381,10 @@ const CONVENTIONS: Record<string, Convention> = {
       {
         good: `export const searchTool = {
   name: "search_docs",
-  parameters: z.object({ query: z.string() }),
+  parameters: defineSchema((v) => v.object({ query: v.string() }))(),
   execute: async ({ query }) => { /* ... */ }
 };`,
-        explanation: "Tool with Zod schema and typed execute function",
+        explanation: "Tool with defineSchema and typed execute function",
       },
     ],
   },

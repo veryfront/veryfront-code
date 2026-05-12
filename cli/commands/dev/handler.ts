@@ -2,7 +2,7 @@
  * Dev command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { isAbsolute, join } from "veryfront/platform/path";
 import { cwd, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
@@ -12,12 +12,16 @@ import { clearAllLocalCaches } from "veryfront/transforms/mdx-cache";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const DevArgsSchema = z.object({
-  port: z.number().default(DEFAULT_DEV_SERVER_PORT),
-  project: z.string().optional(),
-  hmr: z.boolean().default(true),
-  debug: z.boolean().default(false),
-});
+const getDevArgsSchema = defineSchema((v) =>
+  v.object({
+    port: v.number().default(DEFAULT_DEV_SERVER_PORT),
+    project: v.string().optional(),
+    hmr: v.boolean().default(true),
+    debug: v.boolean().default(false),
+  })
+);
+
+const DevArgsSchema = getDevArgsSchema();
 
 export const parseDevArgs = createArgParser(DevArgsSchema, {
   port: { keys: ["port", "p"], type: "number" },

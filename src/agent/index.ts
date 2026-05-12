@@ -16,12 +16,12 @@
  * ```ts
  * import { agent } from "veryfront/agent";
  * import { tool } from "veryfront/tool";
- * import { z } from "zod";
+ * import { defineSchema } from "veryfront/schemas";
  *
  * const searchTool = tool({
  *   id: "search",
  *   description: "Search the knowledge base",
- *   inputSchema: z.object({ query: z.string() }),
+ *   inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
  *   execute: async ({ query }) => ({ results: [] }),
  * });
  *
@@ -150,6 +150,9 @@ export {
 
 export {
   clientAllowsStudioMcp,
+  getRuntimeClientCapabilitySchema,
+  getRuntimeClientProfileSchema,
+  getRuntimeClientTypeSchema,
   resolveRuntimeClientProfile,
   type RuntimeClientCapability,
   runtimeClientCapabilitySchema,
@@ -185,6 +188,9 @@ export {
   createRuntimeAgentSystemMessages,
   type CreateRuntimeAgentSystemMessagesInput,
   DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER,
+  getParseRuntimeAgentMarkdownDefinitionInputSchema,
+  getRuntimeAgentMarkdownDefinitionSchema,
+  getRuntimeAgentThinkingConfigSchema,
   parseRuntimeAgentMarkdownDefinition,
   type ParseRuntimeAgentMarkdownDefinitionInput,
   parseRuntimeAgentMarkdownDefinitionInputSchema,

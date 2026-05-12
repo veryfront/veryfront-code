@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listCustomers } from "../../lib/shopify-client.ts";
 
 export default tool({
   id: "list-customers",
   description: "List customers from your Shopify store. Can search by query string.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(250)
       .default(20)
       .describe("Maximum number of customers to return"),
-    query: z
+    query: v
       .string()
       .optional()
       .describe("Search query to filter customers (e.g., email, name)"),
-  }),
+  }))(),
   async execute({ limit, query }) {
     const customers = await listCustomers({ limit, query });
 

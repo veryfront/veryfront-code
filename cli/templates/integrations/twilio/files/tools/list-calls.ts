@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatPhoneNumber, listCalls } from "../../lib/twilio-client.ts";
 
 type CallStatus =
@@ -24,16 +24,16 @@ export default tool({
   id: "list-calls",
   description:
     "List recent phone calls from your Twilio account. Supports filtering by recipient, sender, status, and date.",
-  inputSchema: z.object({
-    to: z
+  inputSchema: defineSchema((v) => v.object({
+    to: v
       .string()
       .optional()
       .describe("Filter by recipient phone number in E.164 format (e.g., +14155552671)"),
-    from: z
+    from: v
       .string()
       .optional()
       .describe("Filter by sender phone number in E.164 format (e.g., +14155552671)"),
-    status: z
+    status: v
       .enum([
         "queued",
         "ringing",
@@ -46,17 +46,17 @@ export default tool({
       ])
       .optional()
       .describe("Filter by call status"),
-    startTime: z
+    startTime: v
       .string()
       .optional()
       .describe("Filter by start time in YYYY-MM-DD format (e.g., 2024-01-15)"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .optional()
       .describe("Maximum number of calls to return (default: 20, max: 100)"),
-  }),
+  }))(),
   execute: async ({ to, from, status, startTime, limit }) => {
     try {
       const options: ListCallsOptions = {

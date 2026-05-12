@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
 
 type BitbucketIssue = {
@@ -29,10 +29,10 @@ type BitbucketIssue = {
 export default tool({
   id: "list-issues",
   description: "List issues for a Bitbucket repository",
-  inputSchema: z.object({
-    workspace: z.string().describe("Workspace name or UUID"),
-    repoSlug: z.string().describe("Repository slug (e.g., 'my-repo')"),
-    state: z
+  inputSchema: defineSchema((v) => v.object({
+    workspace: v.string().describe("Workspace name or UUID"),
+    repoSlug: v.string().describe("Repository slug (e.g., 'my-repo')"),
+    state: v
       .enum([
         "new",
         "open",
@@ -45,21 +45,21 @@ export default tool({
       ])
       .optional()
       .describe("Filter by issue state"),
-    kind: z
+    kind: v
       .enum(["bug", "enhancement", "proposal", "task"])
       .optional()
       .describe("Filter by issue kind"),
-    priority: z
+    priority: v
       .enum(["trivial", "minor", "major", "critical", "blocker"])
       .optional()
       .describe("Filter by priority level"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of issues to return"),
-  }),
+  }))(),
   execute: async (
     { workspace, repoSlug, state, kind, priority, limit },
     context,

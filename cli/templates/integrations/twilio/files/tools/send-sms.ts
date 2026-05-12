@@ -1,26 +1,26 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatPhoneNumber, sendSMS } from "../../lib/twilio-client.ts";
 
 export default tool({
   id: "send-sms",
   description: "Send an SMS text message to a phone number using Twilio",
-  inputSchema: z.object({
-    to: z
+  inputSchema: defineSchema((v) => v.object({
+    to: v
       .string()
       .describe(
         "Recipient phone number in E.164 format (e.g., +14155552671) or 10-digit US format",
       ),
-    body: z
+    body: v
       .string()
       .min(1)
       .max(1600)
       .describe("Message text to send (max 1600 characters)"),
-    mediaUrl: z
-      .array(z.string().url())
+    mediaUrl: v
+      .array(v.string().url())
       .optional()
       .describe("Optional array of media URLs to send as MMS (images, videos, etc.)"),
-  }),
+  }))(),
   execute: async ({ to, body, mediaUrl }) => {
     try {
       const formattedPhone = formatPhoneNumber(to);

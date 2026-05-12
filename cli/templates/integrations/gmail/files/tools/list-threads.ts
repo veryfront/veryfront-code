@@ -1,19 +1,19 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "list-threads",
   description: "List Gmail threads with optional search and label filters.",
-  inputSchema: z.object({
-    maxResults: z.number().min(1).max(500).default(10).describe("Maximum number of threads"),
-    query: z.string().optional().describe("Gmail search query"),
-    labelIds: z.array(z.string().min(1)).optional().describe(
+  inputSchema: defineSchema((v) => v.object({
+    maxResults: v.number().min(1).max(500).default(10).describe("Maximum number of threads"),
+    query: v.string().optional().describe("Gmail search query"),
+    labelIds: v.array(v.string().min(1)).optional().describe(
       "Only return threads with these labels",
     ),
-    pageToken: z.string().optional().describe("Page token for pagination"),
-  }),
+    pageToken: v.string().optional().describe("Page token for pagination"),
+  }))(),
   execute: async ({ maxResults, query, labelIds, pageToken }, context) => {
     const userId = resolveUserId(context);
 

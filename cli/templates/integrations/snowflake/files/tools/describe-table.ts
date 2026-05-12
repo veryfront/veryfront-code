@@ -1,25 +1,25 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { describeTable, getTableRowCount } from "../../lib/snowflake-client.ts";
 
 export default tool({
   id: "describe-table",
   description:
     "Get detailed schema information about a specific table in Snowflake. Returns column names, data types, constraints, and table statistics.",
-  inputSchema: z.object({
-    database: z.string().describe("The name of the database containing the table"),
-    schema: z
+  inputSchema: defineSchema((v) => v.object({
+    database: v.string().describe("The name of the database containing the table"),
+    schema: v
       .string()
       .default("PUBLIC")
       .describe("The name of the schema containing the table. Defaults to PUBLIC."),
-    table: z.string().describe("The name of the table to describe"),
-    includeRowCount: z
+    table: v.string().describe("The name of the table to describe"),
+    includeRowCount: v
       .boolean()
       .default(false)
       .describe(
         "Include the current row count for the table (may be slow for large tables)",
       ),
-  }),
+  }))(),
   async execute({ database, schema, table, includeRowCount }) {
     const description = await describeTable(database, schema, table);
 

@@ -1,16 +1,16 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { insertRow } from "../../lib/supabase-client.ts";
 
 export default tool({
   id: "insert-row",
   description: "Insert a new row into a Supabase table. Returns the created row.",
-  inputSchema: z.object({
-    tableName: z.string().describe("The name of the table to insert into"),
-    data: z
-      .record(z.unknown())
+  inputSchema: defineSchema((v) => v.object({
+    tableName: v.string().describe("The name of the table to insert into"),
+    data: v
+      .record(v.unknown())
       .describe("The data to insert as key-value pairs matching the table schema"),
-  }),
+  }))(),
   async execute({ tableName, data }) {
     try {
       const row = await insertRow(tableName, data);

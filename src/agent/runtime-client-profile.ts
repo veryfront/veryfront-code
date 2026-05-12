@@ -1,43 +1,60 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-export const runtimeClientTypeSchema = z.enum(["web", "cli", "api", "internal"]);
-export const runtimeClientCapabilitySchema = z.enum([
-  "ui_panels",
-  "form_input",
-  "media_display",
-  "project_switching",
-]);
+export const getRuntimeClientTypeSchema = defineSchema((v) =>
+  v.enum(["web", "cli", "api", "internal"])
+);
 
-export const runtimeClientProfileSchema = z.object({
-  id: z.string().min(1).max(128),
-  type: runtimeClientTypeSchema,
-  trusted: z.boolean(),
-  capabilities: z.array(runtimeClientCapabilitySchema),
-});
+export const getRuntimeClientCapabilitySchema = defineSchema((v) =>
+  v.enum([
+    "ui_panels",
+    "form_input",
+    "media_display",
+    "project_switching",
+  ])
+);
 
-export type RuntimeClientType = z.infer<typeof runtimeClientTypeSchema>;
-export type RuntimeClientCapability = z.infer<typeof runtimeClientCapabilitySchema>;
-export type RuntimeClientProfile = z.infer<typeof runtimeClientProfileSchema>;
-
-const clientMetadataSchema = z
-  .object({
-    id: z.string().min(1).max(128),
-    type: runtimeClientTypeSchema.optional(),
-    platform: z.string().min(1).max(128).optional(),
-    version: z.string().min(1).max(64).optional(),
+export const getRuntimeClientProfileSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1).max(128),
+    type: getRuntimeClientTypeSchema(),
+    trusted: v.boolean(),
+    capabilities: v.array(getRuntimeClientCapabilitySchema()),
   })
-  .strict();
+);
 
-const clientEnvelopeSchema = z
-  .object({
-    veryfront: z
+/** @deprecated Use getRuntimeClientTypeSchema() */
+export const runtimeClientTypeSchema = getRuntimeClientTypeSchema();
+/** @deprecated Use getRuntimeClientCapabilitySchema() */
+export const runtimeClientCapabilitySchema = getRuntimeClientCapabilitySchema();
+/** @deprecated Use getRuntimeClientProfileSchema() */
+export const runtimeClientProfileSchema = getRuntimeClientProfileSchema();
+
+export type RuntimeClientType = InferSchema<ReturnType<typeof getRuntimeClientTypeSchema>>;
+export type RuntimeClientCapability = InferSchema<
+  ReturnType<typeof getRuntimeClientCapabilitySchema>
+>;
+export type RuntimeClientProfile = InferSchema<ReturnType<typeof getRuntimeClientProfileSchema>>;
+
+const getClientMetadataSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1).max(128),
+    type: getRuntimeClientTypeSchema().optional(),
+    platform: v.string().min(1).max(128).optional(),
+    version: v.string().min(1).max(64).optional(),
+  }).strict()
+);
+
+const getClientEnvelopeSchema = defineSchema((v) =>
+  v.object({
+    veryfront: v
       .object({
-        client: clientMetadataSchema.optional(),
+        client: getClientMetadataSchema().optional(),
       })
       .passthrough()
       .optional(),
-  })
-  .passthrough();
+  }).passthrough()
+);
 
 type FirstPartyClientProfile = {
   type: RuntimeClientType;
@@ -62,7 +79,7 @@ const FIRST_PARTY_CLIENTS: Readonly<Record<string, FirstPartyClientProfile>> = {
 export function resolveRuntimeClientProfile(
   forwardedProps: Record<string, unknown> | undefined,
 ): RuntimeClientProfile | null {
-  const parsed = clientEnvelopeSchema.safeParse(forwardedProps);
+  const parsed = getClientEnvelopeSchema().safeParse(forwardedProps);
   if (!parsed.success) {
     return null;
   }
@@ -75,7 +92,7 @@ export function resolveRuntimeClientProfile(
 
   const knownClient = FIRST_PARTY_CLIENTS[clientId];
   if (knownClient) {
-    return runtimeClientProfileSchema.parse({
+    return getRuntimeClientProfileSchema().parse({
       id: clientId,
       type: metadata?.type ?? knownClient.type,
       trusted: true,
@@ -83,7 +100,7 @@ export function resolveRuntimeClientProfile(
     });
   }
 
-  return runtimeClientProfileSchema.parse({
+  return getRuntimeClientProfileSchema().parse({
     id: clientId,
     type: metadata?.type ?? "api",
     trusted: false,

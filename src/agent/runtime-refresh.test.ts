@@ -3,7 +3,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { tool } from "#veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "./index.ts";
 import type { RuntimeStateRequest, ToolExecutionResultRequest } from "./types.ts";
 
@@ -224,14 +224,14 @@ describe("agent runtime refresh hooks", () => {
     const switchProject = tool({
       id: "switch_project",
       description: "Switch the active project context",
-      inputSchema: z.object({ projectId: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ projectId: v.string() }))(),
       execute: async ({ projectId }) => ({ projectId }),
     });
 
     const inspectContext = tool({
       id: "inspect_context",
       description: "Inspect the current runtime context",
-      inputSchema: z.object({}),
+      inputSchema: defineSchema((v) => v.object({}))(),
       execute: async (_input, context) => {
         inspectedContexts.push(context as Record<string, unknown> | undefined);
         return {
@@ -348,7 +348,7 @@ describe("agent runtime refresh hooks", () => {
     const switchProject = tool({
       id: "switch_project",
       description: "Switch the active project context",
-      inputSchema: z.object({ projectId: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ projectId: v.string() }))(),
       execute: async ({ projectId }) => ({ projectId }),
     });
 

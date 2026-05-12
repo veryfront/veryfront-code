@@ -2,7 +2,8 @@ import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/a
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   getAgent as getRegisteredAgent,
   getAllAgentIds as getRegisteredAgentIds,
@@ -12,123 +13,167 @@ import { ensureProjectDiscovery as ensureProjectDiscoveryForProject } from "#ver
 
 const logger = serverLogger.component("channels-invoke");
 
-const rawHistoryPartSchema = z.object({
-  type: z.string(),
-}).passthrough();
+const getRawHistoryPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.string(),
+  }).passthrough()
+);
+const rawHistoryPartSchema = getRawHistoryPartSchema();
 
-const channelAttachmentSchema = z.object({
-  id: z.string(),
-  kind: z.enum(["image", "file"]),
-  filename: z.string().optional(),
-  mediaType: z.string().optional(),
-  privateUrl: z.string().optional(),
-});
+const getChannelAttachmentSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    kind: v.enum(["image", "file"]),
+    filename: v.string().optional(),
+    mediaType: v.string().optional(),
+    privateUrl: v.string().optional(),
+  })
+);
 
-const channelInvokeHistoryMessageSchema = z.object({
-  id: z.string(),
-  role: z.enum(["user", "assistant", "system", "tool"]),
-  parts: z.array(rawHistoryPartSchema),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-  createdAt: z.string().optional(),
-});
+const getChannelInvokeHistoryMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    role: v.enum(["user", "assistant", "system", "tool"]),
+    parts: v.array(getRawHistoryPartSchema()),
+    metadata: v.record(v.string(), v.unknown()).optional(),
+    createdAt: v.string().optional(),
+  })
+);
 
-const channelInvokeRequestWireSchema = z.object({
-  dispatchId: z.string().min(1),
-  conversationId: z.string().min(1),
-  projectId: z.string().min(1),
-  assistantId: z.string().min(1),
-  platform: z.literal("slack"),
-  inboundMessage: z.object({
-    text: z.string(),
-    userId: z.string(),
-    userName: z.string(),
-    isDirectMessage: z.boolean(),
-    attachments: z.array(channelAttachmentSchema).optional(),
-  }),
-  conversationHistory: z.array(channelInvokeHistoryMessageSchema),
-  generation: z.object({
-    maxResponseTokens: z.number().int().positive().max(16384).optional(),
-  }).optional(),
-});
+const getChannelInvokeRequestWireSchema = defineSchema((v) =>
+  v.object({
+    dispatchId: v.string().min(1),
+    conversationId: v.string().min(1),
+    projectId: v.string().min(1),
+    assistantId: v.string().min(1),
+    platform: v.literal("slack"),
+    inboundMessage: v.object({
+      text: v.string(),
+      userId: v.string(),
+      userName: v.string(),
+      isDirectMessage: v.boolean(),
+      attachments: v.array(getChannelAttachmentSchema()).optional(),
+    }),
+    conversationHistory: v.array(getChannelInvokeHistoryMessageSchema()),
+    generation: v.object({
+      maxResponseTokens: v.number().int().positive().max(16384).optional(),
+    }).optional(),
+  })
+);
 
-export const ChannelInvokeRequestSchema = channelInvokeRequestWireSchema;
+export const getChannelInvokeRequestSchema = getChannelInvokeRequestWireSchema;
+export const ChannelInvokeRequestSchema = getChannelInvokeRequestSchema();
 
-export const ChannelAssistantsRequestSchema = z.object({
-  requestId: z.string().min(1),
-  projectId: z.string().min(1),
-  platform: z.literal("slack"),
-});
+export const getChannelAssistantsRequestSchema = defineSchema((v) =>
+  v.object({
+    requestId: v.string().min(1),
+    projectId: v.string().min(1),
+    platform: v.literal("slack"),
+  })
+);
+export const ChannelAssistantsRequestSchema = getChannelAssistantsRequestSchema();
 
-export const ChannelAssistantSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().nullable().optional(),
-  model: z.string().nullable().optional(),
-});
+export const getChannelAssistantSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    name: v.string().min(1),
+    description: v.string().nullable().optional(),
+    model: v.string().nullable().optional(),
+  })
+);
+export const ChannelAssistantSchema = getChannelAssistantSchema();
 
-export const ChannelAssistantsResponseSchema = z.object({
-  assistants: z.array(ChannelAssistantSchema),
-});
+export const getChannelAssistantsResponseSchema = defineSchema((v) =>
+  v.object({
+    assistants: v.array(getChannelAssistantSchema()),
+  })
+);
+export const ChannelAssistantsResponseSchema = getChannelAssistantsResponseSchema();
 
-const channelTextPartSchema = z.object({
-  type: z.literal("text"),
-  text: z.string(),
-});
+const getChannelTextPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("text"),
+    text: v.string(),
+  })
+);
+const channelTextPartSchema = getChannelTextPartSchema();
 
-const channelToolCallPartSchema = z.object({
-  type: z.literal("tool_call"),
-  id: z.string(),
-  name: z.string(),
-  input: z.record(z.string(), z.unknown()),
-  state: z.enum(["streaming", "pending", "completed", "error"]),
-});
+const getChannelToolCallPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool_call"),
+    id: v.string(),
+    name: v.string(),
+    input: v.record(v.string(), v.unknown()),
+    state: v.enum(["streaming", "pending", "completed", "error"]),
+  })
+);
+const channelToolCallPartSchema = getChannelToolCallPartSchema();
 
-const channelToolResultPartSchema = z.object({
-  type: z.literal("tool_result"),
-  tool_call_id: z.string(),
-  output: z.unknown(),
-  is_error: z.boolean().optional(),
-});
+const getChannelToolResultPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool_result"),
+    tool_call_id: v.string(),
+    output: v.unknown(),
+    is_error: v.boolean().optional(),
+  })
+);
+const channelToolResultPartSchema = getChannelToolResultPartSchema();
 
-const channelReasoningPartSchema = z.object({
-  type: z.literal("reasoning"),
-  text: z.string(),
-});
+const getChannelReasoningPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("reasoning"),
+    text: v.string(),
+  })
+);
+const channelReasoningPartSchema = getChannelReasoningPartSchema();
 
-const channelErrorPartSchema = z.object({
-  type: z.literal("error"),
-  code: z.string(),
-  message: z.string(),
-});
+const getChannelErrorPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("error"),
+    code: v.string(),
+    message: v.string(),
+  })
+);
+const channelErrorPartSchema = getChannelErrorPartSchema();
 
-export const ChannelResponsePartSchema = z.discriminatedUnion("type", [
-  channelTextPartSchema,
-  channelToolCallPartSchema,
-  channelToolResultPartSchema,
-  channelReasoningPartSchema,
-  channelErrorPartSchema,
-]);
+export const getChannelResponsePartSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    getChannelTextPartSchema(),
+    getChannelToolCallPartSchema(),
+    getChannelToolResultPartSchema(),
+    getChannelReasoningPartSchema(),
+    getChannelErrorPartSchema(),
+  ])
+);
+export const ChannelResponsePartSchema = getChannelResponsePartSchema();
 
-export const ChannelInvokeResponseSchema = z.object({
-  ignored: z.boolean(),
-  responseParts: z.array(ChannelResponsePartSchema).optional(),
-  tokenUsage: z.object({
-    inputTokens: z.number().int().nonnegative().optional(),
-    outputTokens: z.number().int().nonnegative().optional(),
-    totalTokens: z.number().int().nonnegative().optional(),
-  }).optional(),
-  error: z.object({
-    code: z.enum(["provider_error", "internal_error"]),
-    retryable: z.boolean(),
-  }).optional(),
-});
+export const getChannelInvokeResponseSchema = defineSchema((v) =>
+  v.object({
+    ignored: v.boolean(),
+    responseParts: v.array(getChannelResponsePartSchema()).optional(),
+    tokenUsage: v.object({
+      inputTokens: v.number().int().nonnegative().optional(),
+      outputTokens: v.number().int().nonnegative().optional(),
+      totalTokens: v.number().int().nonnegative().optional(),
+    }).optional(),
+    error: v.object({
+      code: v.enum(["provider_error", "internal_error"]),
+      retryable: v.boolean(),
+    }).optional(),
+  })
+);
+export const ChannelInvokeResponseSchema = getChannelInvokeResponseSchema();
 
-export type ChannelInvokeRequest = z.infer<typeof ChannelInvokeRequestSchema>;
-export type ChannelInvokeResponse = z.infer<typeof ChannelInvokeResponseSchema>;
-export type ChannelAssistantsRequest = z.infer<typeof ChannelAssistantsRequestSchema>;
-export type ChannelAssistantsResponse = z.infer<typeof ChannelAssistantsResponseSchema>;
+export type ChannelInvokeRequest = InferSchema<ReturnType<typeof getChannelInvokeRequestSchema>>;
+export type ChannelInvokeResponse = InferSchema<ReturnType<typeof getChannelInvokeResponseSchema>>;
+export type ChannelAssistantsRequest = InferSchema<
+  ReturnType<typeof getChannelAssistantsRequestSchema>
+>;
+export type ChannelAssistantsResponse = InferSchema<
+  ReturnType<typeof getChannelAssistantsResponseSchema>
+>;
 
-type ChannelResponsePart = z.infer<typeof ChannelResponsePartSchema>;
+type ChannelResponsePart = InferSchema<ReturnType<typeof getChannelResponsePartSchema>>;
 export interface ChannelInvokeDeps extends RuntimeAgentDiscoveryDeps {}
 
 export const defaultChannelInvokeDeps: ChannelInvokeDeps = {
@@ -156,7 +201,7 @@ export async function listChannelAssistants(
 export { verifyDispatchJws, verifyDispatchJwsSignature } from "./control-plane.ts";
 
 function normalizeConversationPart(
-  part: z.infer<typeof rawHistoryPartSchema>,
+  part: InferSchema<ReturnType<typeof getRawHistoryPartSchema>>,
 ): Message["parts"][number] | null {
   if (part.type === "text" && typeof part.text === "string") {
     return { type: "text", text: part.text };

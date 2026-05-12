@@ -1,19 +1,19 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { searchIssues } from "../../lib/linear-client.ts";
 
 export default tool({
   id: "search-issues",
   description:
     "Search for Linear issues by title or description. Returns matching issues with their details including status, assignee, and team.",
-  inputSchema: z.object({
-    query: z.string().describe("Search query to find issues (searches in title and description)"),
-    limit: z.number().min(1).max(50).default(10).describe("Maximum number of results to return"),
-    includeArchived: z
+  inputSchema: defineSchema((v) => v.object({
+    query: v.string().describe("Search query to find issues (searches in title and description)"),
+    limit: v.number().min(1).max(50).default(10).describe("Maximum number of results to return"),
+    includeArchived: v
       .boolean()
       .default(false)
       .describe("Whether to include archived issues in results"),
-  }),
+  }))(),
   async execute({ query, limit, includeArchived }) {
     const issues = await searchIssues(query, { limit, includeArchived });
 

@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 const AGENT_RUN_API_TIMEOUT_MS = 15_000;
 
@@ -30,19 +31,26 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
   };
 }
 
-export const ConversationRunTargetsSchema = z.object({
-  sourceTargetKind: z.enum(["project", "preview_branch"]).nullable(),
-  runtimeTargetKind: z.enum(["production", "preview_branch"]).nullable(),
-  targetBranchId: z.string().uuid().nullable(),
-});
+export const getConversationRunTargetsSchema = defineSchema((v) =>
+  v.object({
+    sourceTargetKind: v.enum(["project", "preview_branch"]).nullable(),
+    runtimeTargetKind: v.enum(["production", "preview_branch"]).nullable(),
+    targetBranchId: v.string().uuid().nullable(),
+  })
+);
 
-export type ConversationRunTargets = z.infer<typeof ConversationRunTargetsSchema>;
+/** @deprecated Use getConversationRunTargetsSchema() */
+export const ConversationRunTargetsSchema = getConversationRunTargetsSchema();
+
+export type ConversationRunTargets = InferSchema<
+  ReturnType<typeof getConversationRunTargetsSchema>
+>;
 
 export function resolveConversationRunTargets(input: {
   projectId?: string | null;
   branchId?: string | null;
 }): ConversationRunTargets {
-  return ConversationRunTargetsSchema.parse(
+  return getConversationRunTargetsSchema().parse(
     !input.projectId
       ? {
         sourceTargetKind: null,
@@ -63,63 +71,76 @@ export function resolveConversationRunTargets(input: {
   );
 }
 
-export const ConversationRunStatusSchema = z.enum([
-  "pending",
-  "running",
-  "waiting_for_tool",
-  "completed",
-  "failed",
-  "cancelled",
-]);
+export const getConversationRunStatusSchema = defineSchema((v) =>
+  v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"])
+);
 
-export const ConversationRunProjectionSchema = z
-  .object({
-    runId: z.string().min(1).optional(),
-    run_id: z.string().min(1).optional(),
-    conversationId: z.string().uuid().optional(),
-    conversation_id: z.string().uuid().optional(),
-    messageId: z.string().uuid().optional(),
-    message_id: z.string().uuid().optional(),
-    latestEventId: z.number().int().nonnegative().optional(),
-    latest_event_id: z.number().int().nonnegative().optional(),
-    latestExternalEventSequence: z.number().int().nonnegative().optional(),
-    latest_external_event_sequence: z.number().int().nonnegative().optional(),
-    waitingToolCallId: z.string().min(1).nullable().optional(),
-    waiting_tool_call_id: z.string().min(1).nullable().optional(),
-    waitingToolName: z.string().nullable().optional(),
-    waiting_tool_name: z.string().nullable().optional(),
-    status: ConversationRunStatusSchema,
+/** @deprecated Use getConversationRunStatusSchema() */
+export const ConversationRunStatusSchema = getConversationRunStatusSchema();
+
+export interface ConversationRunProjection {
+  runId: string;
+  conversationId: string;
+  messageId: string;
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  waitingToolCallId: string | null;
+  waitingToolName: string | null;
+  status: string;
+}
+
+export const getConversationRunProjectionSchema = defineSchema((v) =>
+  v.object({
+    runId: v.string().min(1).optional(),
+    run_id: v.string().min(1).optional(),
+    conversationId: v.string().uuid().optional(),
+    conversation_id: v.string().uuid().optional(),
+    messageId: v.string().uuid().optional(),
+    message_id: v.string().uuid().optional(),
+    latestEventId: v.number().int().nonnegative().optional(),
+    latest_event_id: v.number().int().nonnegative().optional(),
+    latestExternalEventSequence: v.number().int().nonnegative().optional(),
+    latest_external_event_sequence: v.number().int().nonnegative().optional(),
+    waitingToolCallId: v.string().min(1).nullable().optional(),
+    waiting_tool_call_id: v.string().min(1).nullable().optional(),
+    waitingToolName: v.string().nullable().optional(),
+    waiting_tool_name: v.string().nullable().optional(),
+    status: getConversationRunStatusSchema(),
   })
-  .passthrough()
-  .transform((data) => {
-    const runId = data.runId ?? data.run_id;
-    const conversationId = data.conversationId ?? data.conversation_id;
-    const messageId = data.messageId ?? data.message_id;
-    const latestEventId = data.latestEventId ?? data.latest_event_id ?? 0;
-    const latestExternalEventSequence = data.latestExternalEventSequence ??
-      data.latest_external_event_sequence;
+    .passthrough()
+    .transform((data): ConversationRunProjection => {
+      const d = data as Record<string, unknown>;
+      const runId = (d.runId ?? d.run_id) as string | undefined;
+      const conversationId = (d.conversationId ?? d.conversation_id) as string | undefined;
+      const messageId = (d.messageId ?? d.message_id) as string | undefined;
+      const latestEventId = ((d.latestEventId ?? d.latest_event_id) as number | undefined) ?? 0;
+      const latestExternalEventSequence = (d.latestExternalEventSequence ??
+        d.latest_external_event_sequence) as number | undefined;
 
-    if (!runId || !conversationId || !messageId) {
-      throw new Error("Missing run identifiers in durable run response");
-    }
+      if (!runId || !conversationId || !messageId) {
+        throw new Error("Missing run identifiers in durable run response");
+      }
 
-    if (latestExternalEventSequence === undefined) {
-      throw new Error("Missing latestExternalEventSequence in durable run response");
-    }
+      if (latestExternalEventSequence === undefined) {
+        throw new Error("Missing latestExternalEventSequence in durable run response");
+      }
 
-    return {
-      runId,
-      conversationId,
-      messageId,
-      latestEventId,
-      latestExternalEventSequence,
-      waitingToolCallId: data.waitingToolCallId ?? data.waiting_tool_call_id ?? null,
-      waitingToolName: data.waitingToolName ?? data.waiting_tool_name ?? null,
-      status: data.status,
-    };
-  });
+      return {
+        runId,
+        conversationId,
+        messageId,
+        latestEventId,
+        latestExternalEventSequence,
+        waitingToolCallId: ((d.waitingToolCallId ?? d.waiting_tool_call_id) as string | null) ??
+          null,
+        waitingToolName: ((d.waitingToolName ?? d.waiting_tool_name) as string | null) ?? null,
+        status: d.status as string,
+      };
+    })
+);
 
-export type ConversationRunProjection = z.infer<typeof ConversationRunProjectionSchema>;
+/** @deprecated Use getConversationRunProjectionSchema() */
+export const ConversationRunProjectionSchema = getConversationRunProjectionSchema();
 export type ActiveConversationRunStatus = Extract<
   ConversationRunProjection["status"],
   "pending" | "running" | "waiting_for_tool"
@@ -193,92 +214,108 @@ export interface ConversationRunEventQueueController {
   };
 }
 
-export const CreateConversationRunAcceptedSchema = z
-  .object({
-    run: z
-      .object({
-        runId: z.string().min(1).optional(),
-        run_id: z.string().min(1).optional(),
-      })
-      .passthrough(),
+export const getCreateConversationRunAcceptedSchema = defineSchema((v) =>
+  v.object({
+    run: v.object({
+      runId: v.string().min(1).optional(),
+      run_id: v.string().min(1).optional(),
+    }).passthrough(),
   })
-  .passthrough()
-  .transform((data) => {
-    const runId = data.run.runId ?? data.run.run_id;
-    if (!runId) {
-      throw new Error("Missing run id in canonical create run response");
-    }
+    .passthrough()
+    .transform((data): { runId: string } => {
+      const d = data as { run: Record<string, unknown> };
+      const runId = (d.run.runId ?? d.run.run_id) as string | undefined;
+      if (!runId) {
+        throw new Error("Missing run id in canonical create run response");
+      }
+      return { runId };
+    })
+);
 
-    return { runId };
-  });
+/** @deprecated Use getCreateConversationRunAcceptedSchema() */
+export const CreateConversationRunAcceptedSchema = getCreateConversationRunAcceptedSchema();
 
-export const CompleteConversationRunResponseSchema = z
-  .object({
-    completed: z.boolean(),
-    run: z
-      .object({
-        runId: z.string().min(1).optional(),
-        run_id: z.string().min(1).optional(),
-        status: z.enum(["pending", "running", "waiting", "completed", "failed", "cancelled"]),
-      })
-      .passthrough(),
-  })
-  .passthrough();
+export const getCompleteConversationRunResponseSchema = defineSchema((v) =>
+  v.object({
+    completed: v.boolean(),
+    run: v.object({
+      runId: v.string().min(1).optional(),
+      run_id: v.string().min(1).optional(),
+      status: v.enum(["pending", "running", "waiting", "completed", "failed", "cancelled"]),
+    }).passthrough(),
+  }).passthrough()
+);
 
-const AppendConversationRunEventsCamelRunSchema = z
-  .object({
-    runId: z.string().min(1),
-    conversationId: z.string().uuid(),
-    latestEventId: z.number().int().nonnegative(),
-    latestExternalEventSequence: z.number().int().nonnegative(),
-  })
-  .passthrough();
+/** @deprecated Use getCompleteConversationRunResponseSchema() */
+export const CompleteConversationRunResponseSchema = getCompleteConversationRunResponseSchema();
 
-const AppendConversationRunEventsSnakeRunSchema = z
-  .object({
-    run_id: z.string().min(1),
-    conversation_id: z.string().uuid(),
-    latest_event_id: z.number().int().nonnegative(),
-    latest_external_event_sequence: z.number().int().nonnegative(),
-  })
-  .passthrough();
+export interface AppendConversationRunEventsResponse {
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  appendedCount: number;
+  run: {
+    runId: string;
+    conversationId: string;
+    latestEventId: number;
+    latestExternalEventSequence: number;
+    [key: string]: unknown;
+  };
+}
 
-export const AppendConversationRunEventsResponseSchema = z.union([
-  z.object({
-    latestEventId: z.number().int().nonnegative(),
-    latestExternalEventSequence: z.number().int().nonnegative(),
-    appendedCount: z.number().int().nonnegative(),
-    run: AppendConversationRunEventsCamelRunSchema,
-  }),
-  z.object({
-    latest_event_id: z.number().int().nonnegative(),
-    latest_external_event_sequence: z.number().int().nonnegative(),
-    appended_count: z.number().int().nonnegative(),
-    run: AppendConversationRunEventsSnakeRunSchema,
-  }).transform((data) => ({
-    latestEventId: data.latest_event_id,
-    latestExternalEventSequence: data.latest_external_event_sequence,
-    appendedCount: data.appended_count,
-    run: {
-      ...data.run,
-      runId: data.run.run_id,
-      conversationId: data.run.conversation_id,
-      latestEventId: data.run.latest_event_id,
-      latestExternalEventSequence: data.run.latest_external_event_sequence,
-    },
-  })),
-]);
+export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
+  v.union([
+    v.object({
+      latestEventId: v.number().int().nonnegative(),
+      latestExternalEventSequence: v.number().int().nonnegative(),
+      appendedCount: v.number().int().nonnegative(),
+      run: v.object({
+        runId: v.string().min(1),
+        conversationId: v.string().uuid(),
+        latestEventId: v.number().int().nonnegative(),
+        latestExternalEventSequence: v.number().int().nonnegative(),
+      }).passthrough(),
+    }),
+    v.object({
+      latest_event_id: v.number().int().nonnegative(),
+      latest_external_event_sequence: v.number().int().nonnegative(),
+      appended_count: v.number().int().nonnegative(),
+      run: v.object({
+        run_id: v.string().min(1),
+        conversation_id: v.string().uuid(),
+        latest_event_id: v.number().int().nonnegative(),
+        latest_external_event_sequence: v.number().int().nonnegative(),
+      }).passthrough(),
+    }).transform((data): AppendConversationRunEventsResponse => {
+      const d = data as Record<string, unknown>;
+      const run = d.run as Record<string, unknown>;
+      return {
+        latestEventId: d.latest_event_id as number,
+        latestExternalEventSequence: d.latest_external_event_sequence as number,
+        appendedCount: d.appended_count as number,
+        run: {
+          ...run,
+          runId: run.run_id as string,
+          conversationId: run.conversation_id as string,
+          latestEventId: run.latest_event_id as number,
+          latestExternalEventSequence: run.latest_external_event_sequence as number,
+        },
+      };
+    }),
+  ])
+);
 
-export type AppendConversationRunEventsResponse = z.infer<
-  typeof AppendConversationRunEventsResponseSchema
->;
+/** @deprecated Use getAppendConversationRunEventsResponseSchema() */
+export const AppendConversationRunEventsResponseSchema =
+  getAppendConversationRunEventsResponseSchema();
 
 const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
 
-const ConversationRunErrorSchema = z.object({
-  detail: z.string().min(1).optional(),
-  error: z.string().min(1).optional(),
-});
+const getConversationRunErrorSchema = defineSchema((v) =>
+  v.object({
+    detail: v.string().min(1).optional(),
+    error: v.string().min(1).optional(),
+  })
+);
 
 export interface ConversationAgentRunUsage {
   inputTokens: number;
@@ -345,7 +382,7 @@ export function parseAppendConversationRunEventsErrorBody(bodyText: string): str
   }
 
   try {
-    const parsed = ConversationRunErrorSchema.safeParse(JSON.parse(bodyText));
+    const parsed = getConversationRunErrorSchema().safeParse(JSON.parse(bodyText));
     if (parsed.success) {
       return parsed.data.detail ?? parsed.data.error ?? null;
     }
@@ -1065,7 +1102,7 @@ async function controlPlaneJson<T>(input: {
   url: string;
   method?: "GET" | "POST";
   body?: unknown;
-  responseSchema: z.ZodSchema<T>;
+  responseSchema: Schema<T>;
   operation: string;
   abortSignal?: AbortSignal;
 }): Promise<T> {

@@ -1,38 +1,59 @@
 import { extract } from "#std/front-matter/yaml.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./runtime-prompt-block.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./runtime-skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
 
-export const runtimeAgentThinkingConfigSchema = z.object({
-  enabled: z.boolean(),
-  budgetTokens: z.number().positive().optional(),
-});
+export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
+  v.object({
+    enabled: v.boolean(),
+    budgetTokens: v.number().positive().optional(),
+  })
+);
 
-export type RuntimeAgentThinkingConfig = z.infer<typeof runtimeAgentThinkingConfigSchema>;
+/** @deprecated Use getRuntimeAgentThinkingConfigSchema() */
+export const runtimeAgentThinkingConfigSchema = getRuntimeAgentThinkingConfigSchema();
 
-export const runtimeAgentMarkdownDefinitionSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string(),
-  instructions: z.string(),
-  thinking: runtimeAgentThinkingConfigSchema.optional(),
-  model: z.string().min(1).optional(),
-  maxSteps: z.number().optional(),
-});
+export type RuntimeAgentThinkingConfig = InferSchema<
+  ReturnType<typeof getRuntimeAgentThinkingConfigSchema>
+>;
 
-export type RuntimeAgentMarkdownDefinition = z.infer<typeof runtimeAgentMarkdownDefinitionSchema>;
+export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    name: v.string().min(1),
+    description: v.string(),
+    instructions: v.string(),
+    thinking: getRuntimeAgentThinkingConfigSchema().optional(),
+    model: v.string().min(1).optional(),
+    maxSteps: v.number().optional(),
+  })
+);
 
 export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-context -->";
 
-export const parseRuntimeAgentMarkdownDefinitionInputSchema = z.object({
-  id: z.string().min(1),
-  content: z.string(),
-});
+/** @deprecated Use getRuntimeAgentMarkdownDefinitionSchema() */
+export const runtimeAgentMarkdownDefinitionSchema = getRuntimeAgentMarkdownDefinitionSchema();
 
-export type ParseRuntimeAgentMarkdownDefinitionInput = z.infer<
-  typeof parseRuntimeAgentMarkdownDefinitionInputSchema
+export type RuntimeAgentMarkdownDefinition = InferSchema<
+  ReturnType<typeof getRuntimeAgentMarkdownDefinitionSchema>
+>;
+
+export const getParseRuntimeAgentMarkdownDefinitionInputSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    content: v.string(),
+  })
+);
+
+/** @deprecated Use getParseRuntimeAgentMarkdownDefinitionInputSchema() */
+export const parseRuntimeAgentMarkdownDefinitionInputSchema =
+  getParseRuntimeAgentMarkdownDefinitionInputSchema();
+
+export type ParseRuntimeAgentMarkdownDefinitionInput = InferSchema<
+  ReturnType<typeof getParseRuntimeAgentMarkdownDefinitionInputSchema>
 >;
 
 export type CreateRuntimeAgentSystemMessagesInput = {
@@ -59,7 +80,7 @@ function parseThinking(value: unknown): RuntimeAgentThinkingConfig | undefined {
 export function parseRuntimeAgentMarkdownDefinition(
   input: ParseRuntimeAgentMarkdownDefinitionInput,
 ): RuntimeAgentMarkdownDefinition {
-  const parsedInput = parseRuntimeAgentMarkdownDefinitionInputSchema.parse(input);
+  const parsedInput = getParseRuntimeAgentMarkdownDefinitionInputSchema().parse(input);
   const { attrs, body } = extract<Record<string, unknown>>(parsedInput.content);
   const name = typeof attrs.name === "string" && attrs.name.trim() ? attrs.name : parsedInput.id;
   const description = typeof attrs.description === "string" ? attrs.description : "";
@@ -67,7 +88,7 @@ export function parseRuntimeAgentMarkdownDefinition(
   const thinking = parseThinking(attrs.thinking);
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
 
-  return runtimeAgentMarkdownDefinitionSchema.parse({
+  return getRuntimeAgentMarkdownDefinitionSchema().parse({
     id: parsedInput.id,
     name,
     description,

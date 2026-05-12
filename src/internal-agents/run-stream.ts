@@ -7,8 +7,8 @@ import {
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui-runtime-support.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
-import type { Schema } from "#veryfront/extensions/interfaces/index.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   createStreamTransformState,
   finalizeRunEvents,
@@ -20,12 +20,8 @@ import { AgentRunCancelledError, type AgentRunSessionManager } from "./session-m
 import type { RuntimeRunAgentInput } from "./schema.ts";
 import { serverLogger } from "#veryfront/utils";
 
-// Phase B2 transition: this raw zod schema is accepted by the tool factory's
-// back-compat path; cast satisfies the new Schema<T> contract while the full
-// defineSchema migration of this module is deferred to a later phase.
-const anyObjectSchema = z.record(z.string(), z.unknown()) as unknown as Schema<
-  Record<string, unknown>
->;
+const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
+const anyObjectSchema = getAnyObjectSchema() as Schema<Record<string, unknown>>;
 const logger = serverLogger.component("internal-agent-run-stream");
 
 type RuntimeFilteredAgent = Agent & {

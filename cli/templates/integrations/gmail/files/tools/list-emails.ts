@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient, parseEmailHeaders } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
@@ -7,19 +7,19 @@ export default tool({
   id: "list-emails",
   description:
     "List recent emails from Gmail inbox. Returns email subjects, senders, and snippets.",
-  inputSchema: z.object({
-    maxResults: z
+  inputSchema: defineSchema((v) => v.object({
+    maxResults: v
       .number()
       .min(1)
       .max(50)
       .default(10)
       .describe("Maximum number of emails to return"),
-    unreadOnly: z.boolean().default(false).describe("Only return unread emails"),
-    label: z
+    unreadOnly: v.boolean().default(false).describe("Only return unread emails"),
+    label: v
       .string()
       .optional()
       .describe("Filter by Gmail label (e.g., 'INBOX', 'IMPORTANT', 'STARRED')"),
-  }),
+  }))(),
   execute: async ({ maxResults, unreadOnly, label }, context) => {
     const userId = resolveUserId(context);
 

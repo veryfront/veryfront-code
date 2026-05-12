@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import {
@@ -9,10 +9,14 @@ import {
 } from "../../shared/json-output.ts";
 import { parseTestOutput } from "./command.ts";
 
-const TestArgsSchema = z.object({
-  filter: z.string().optional(),
-  parallel: z.boolean().default(false),
-});
+const getTestArgsSchema = defineSchema((v) =>
+  v.object({
+    filter: v.string().optional(),
+    parallel: v.boolean().default(false),
+  })
+);
+
+const TestArgsSchema = getTestArgsSchema();
 
 const parseTestArgs = createArgParser(TestArgsSchema, {
   filter: { keys: ["filter"], type: "string", positional: 0 },

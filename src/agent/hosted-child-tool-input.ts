@@ -1,28 +1,36 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { withDefaultResearchArtifactPath } from "./default-research-artifact-policy.ts";
 import type { RuntimeAgentThinkingConfig } from "./runtime-agent-definition.ts";
 
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";
 
-export const hostedChildForkToolInputSchema = z.object({
-  description: z.string().describe("3-5 word task summary"),
-  prompt: z.string().describe("Detailed instructions for the task"),
-  project_id: z.string().optional().describe(
-    "Override project context. Use after studio_open_project.",
-  ),
-  tools: z.array(z.string()).optional().describe(
-    "Tool subset for this fork. Omit = inherit all parent tools.",
-  ),
-  model: z.string().optional().describe('Model override (e.g. "sonnet" for cheaper work).'),
-  thinking: z
-    .number()
-    .nonnegative()
-    .optional()
-    .describe("Thinking override in budget tokens. Use 0 to disable thinking."),
-  max_steps: z.number().optional().describe("Max steps override."),
-});
+export const getHostedChildForkToolInputSchema = defineSchema((v) =>
+  v.object({
+    description: v.string().describe("3-5 word task summary"),
+    prompt: v.string().describe("Detailed instructions for the task"),
+    project_id: v.string().optional().describe(
+      "Override project context. Use after studio_open_project.",
+    ),
+    tools: v.array(v.string()).optional().describe(
+      "Tool subset for this fork. Omit = inherit all parent tools.",
+    ),
+    model: v.string().optional().describe('Model override (e.g. "sonnet" for cheaper work).'),
+    thinking: v
+      .number()
+      .nonnegative()
+      .optional()
+      .describe("Thinking override in budget tokens. Use 0 to disable thinking."),
+    max_steps: v.number().optional().describe("Max steps override."),
+  })
+);
 
-export type HostedChildForkToolInput = z.infer<typeof hostedChildForkToolInputSchema>;
+/** @deprecated Use getHostedChildForkToolInputSchema() */
+export const hostedChildForkToolInputSchema = getHostedChildForkToolInputSchema();
+
+export type HostedChildForkToolInput = InferSchema<
+  ReturnType<typeof getHostedChildForkToolInputSchema>
+>;
 
 export type HostedChildForkRuntimeConfig = {
   description: string;

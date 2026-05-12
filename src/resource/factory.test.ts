@@ -1,6 +1,7 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertRejects, assertStringIncludes } from "#veryfront/testing/assert";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { resource } from "./factory.ts";
 
 describe("resource factory", () => {
@@ -9,7 +10,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/users/:userId",
         description: "Get user",
-        paramsSchema: z.object({ userId: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
         load: async ({ userId }) => ({ id: userId }),
       });
       assertEquals(r.pattern, "/users/:userId");
@@ -20,7 +21,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/users/:userId/profile",
         description: "User profile",
-        paramsSchema: z.object({ userId: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string() }))(),
         load: async () => ({}),
       });
       assertEquals(r.id, "users_userId_profile");
@@ -29,14 +30,14 @@ describe("resource factory", () => {
     it("should auto-generate pattern when not provided", () => {
       const r = resource({
         description: "Auto pattern",
-        paramsSchema: z.object({}),
+        paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
       assertStringIncludes(r.pattern, "/resource_");
     });
 
     it("should preserve paramsSchema", () => {
-      const schema = z.object({ section: z.string() });
+      const schema = defineSchema((v) => v.object({ section: v.string() }))();
       const r = resource({
         pattern: "/docs/:section",
         description: "Docs",
@@ -50,7 +51,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/data",
         description: "Data",
-        paramsSchema: z.object({}),
+        paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
         mcp: { enabled: true, cachePolicy: "cache-first" },
       });
@@ -65,7 +66,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/stream",
         description: "Stream",
-        paramsSchema: z.object({}),
+        paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
         subscribe: subscribeFn,
       });
@@ -78,7 +79,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/items/:id",
         description: "Item",
-        paramsSchema: z.object({ id: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
         load: async ({ id }) => ({ name: `Item ${id}` }),
       });
       const result = await r.load({ id: "123" });
@@ -89,7 +90,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/items/:id",
         description: "Item",
-        paramsSchema: z.object({ id: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
         load: async () => ({}),
       });
       await assertRejects(
@@ -103,7 +104,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/items/:id/details",
         description: "Item details",
-        paramsSchema: z.object({ id: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
         load: async () => ({}),
       });
 
@@ -119,7 +120,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/items/:id",
         description: "Item",
-        paramsSchema: z.object({ id: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
         load: async () => {
           loadCalls += 1;
           return {};
@@ -138,7 +139,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/sync",
         description: "Sync",
-        paramsSchema: z.object({ key: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ key: v.string() }))(),
         load: ({ key }) => ({ value: key }),
       });
       const result = await r.load({ key: "test" });
@@ -151,7 +152,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/simple",
         description: "Simple",
-        paramsSchema: z.object({}),
+        paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
       assertEquals(r.id, "simple");
@@ -161,7 +162,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/a/b/c",
         description: "Nested",
-        paramsSchema: z.object({}),
+        paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
       assertEquals(r.id, "a_b_c");
@@ -171,7 +172,7 @@ describe("resource factory", () => {
       const r = resource({
         pattern: "/users/:userId/posts/:postId",
         description: "User posts",
-        paramsSchema: z.object({ userId: z.string(), postId: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string(), postId: v.string() }))(),
         load: async () => ({}),
       });
       assertEquals(r.id, "users_userId_posts_postId");

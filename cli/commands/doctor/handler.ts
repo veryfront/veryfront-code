@@ -2,16 +2,20 @@
  * Doctor command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { cwd } from "veryfront/platform";
 import { doctorCommand } from "./index.ts";
 import { showLogo } from "#cli/utils";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const DoctorArgsSchema = z.object({
-  strict: z.boolean().default(false),
-});
+const getDoctorArgsSchema = defineSchema((v) =>
+  v.object({
+    strict: v.boolean().default(false),
+  })
+);
+
+const DoctorArgsSchema = getDoctorArgsSchema();
 
 export const parseDoctorArgs = createArgParser(DoctorArgsSchema, {
   strict: { keys: ["strict", "s"], type: "boolean" },

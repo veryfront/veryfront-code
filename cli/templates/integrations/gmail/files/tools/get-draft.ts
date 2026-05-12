@@ -1,17 +1,17 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "get-draft",
   description: "Get a Gmail draft by ID.",
-  inputSchema: z.object({
-    draftId: z.string().min(1).describe("Gmail draft ID"),
-    format: z.enum(["full", "metadata", "minimal", "raw"]).default("full").describe(
+  inputSchema: defineSchema((v) => v.object({
+    draftId: v.string().min(1).describe("Gmail draft ID"),
+    format: v.enum(["full", "metadata", "minimal", "raw"]).default("full").describe(
       "Draft message format",
     ),
-  }),
+  }))(),
   execute: async ({ draftId, format }, context) => {
     const userId = resolveUserId(context);
 

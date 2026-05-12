@@ -1,13 +1,13 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatDate, getCustomer } from "../../lib/stripe-client.ts";
 
 export default tool({
   id: "get-customer",
   description: "Retrieve detailed information about a specific Stripe customer by their ID.",
-  inputSchema: z.object({
-    customerId: z.string().describe("The Stripe customer ID (starts with cus_)"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    customerId: v.string().describe("The Stripe customer ID (starts with cus_)"),
+  }))(),
   async execute({ customerId }) {
     const customer = await getCustomer(customerId);
 

@@ -1,23 +1,23 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { captureEvent } from "../../lib/posthog-client.ts";
 
 export default tool({
   id: "capture-event",
   description:
     "Track a custom event in PostHog. Capture user actions, page views, or any custom analytics event.",
-  inputSchema: z.object({
-    event: z.string().describe("Event name (e.g., 'button_clicked', 'page_viewed')"),
-    distinctId: z.string().describe("Unique identifier for the user or session"),
-    properties: z
-      .record(z.unknown())
+  inputSchema: defineSchema((v) => v.object({
+    event: v.string().describe("Event name (e.g., 'button_clicked', 'page_viewed')"),
+    distinctId: v.string().describe("Unique identifier for the user or session"),
+    properties: v
+      .record(v.unknown())
       .optional()
       .describe("Additional properties to attach to the event"),
-    timestamp: z
+    timestamp: v
       .string()
       .optional()
       .describe("Event timestamp in ISO format (defaults to current time)"),
-  }),
+  }))(),
   async execute({ event, distinctId, properties, timestamp }) {
     const result = await captureEvent({
       event,

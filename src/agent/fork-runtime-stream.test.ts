@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "./schemas/index.ts";
 import {
   buildForkRuntimeStepFromResponse,
@@ -414,7 +414,7 @@ describe("agent/fork-runtime-stream", () => {
       forkTools: {
         create_file: {
           description: "Create a file.",
-          inputSchema: z.object({ path: z.string() }),
+          inputSchema: defineSchema((v) => v.object({ path: v.string() }))(),
           execute: () => ({ ok: true }),
         },
       },

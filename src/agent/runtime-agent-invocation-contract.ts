@@ -1,4 +1,9 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type {
+  InferSchema,
+  RefinementCtx,
+  SchemaValidator,
+} from "#veryfront/extensions/schema/index.ts";
 import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";
 
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
@@ -15,106 +20,137 @@ function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   }
 }
 
-export const RuntimeAgentRunIdSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/);
-
-export const RuntimeAgentToolCallIdSchema = z.string().min(1).max(128);
-
-export const RuntimeAgentServiceIdSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(
-    /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/,
-    "Agent service ids must start with an alphanumeric character and use a valid service-id format",
-  );
-
-export const RuntimeAgentIdSchema = z.string().min(1).max(128);
-
-export const RuntimeAgentToolNameSchema = z
-  .string()
-  .min(1)
-  .max(128)
-  .regex(
-    /^[a-zA-Z][a-zA-Z0-9._:-]*$/,
-    "Tool names must start with a letter and use a valid client-tool format",
-  );
-
-const RuntimeAgentToolJsonSchemaDocumentSchema = z.record(z.string(), z.unknown()).refine(
-  (value) => isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
-  { message: "Tool schema metadata must be less than 16 KB" },
+export const getRuntimeAgentRunIdSchema = defineSchema((v) =>
+  v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/)
 );
 
-export const RuntimeAgentToolSchema = z.object({
-  name: RuntimeAgentToolNameSchema,
-  description: z.string().max(1024).optional(),
-  parameters: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
-    { message: "Tool parameters must be less than 16 KB" },
-  ),
-  inputSchema: RuntimeAgentToolJsonSchemaDocumentSchema.optional(),
-  outputSchema: RuntimeAgentToolJsonSchemaDocumentSchema.optional(),
-});
+/** @deprecated Use getRuntimeAgentRunIdSchema() */
+export const RuntimeAgentRunIdSchema = getRuntimeAgentRunIdSchema();
 
-export const RuntimeAgentContextItemSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("text"),
-    title: z.string().max(256).optional(),
-    text: z.string().max(MAX_CONTEXT_ITEM_BYTES),
-  }),
-  z.object({
-    type: z.literal("json"),
-    title: z.string().max(256).optional(),
-    data: z.record(z.string(), z.unknown()).refine(
-      (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_ITEM_BYTES),
-      { message: "JSON context item must be less than 16 KB" },
+export const getRuntimeAgentToolCallIdSchema = defineSchema((v) => v.string().min(1).max(128));
+
+/** @deprecated Use getRuntimeAgentToolCallIdSchema() */
+export const RuntimeAgentToolCallIdSchema = getRuntimeAgentToolCallIdSchema();
+
+export const getRuntimeAgentServiceIdSchema = defineSchema((v) =>
+  v.string().min(1).max(128).regex(
+    /^[a-zA-Z0-9][a-zA-Z0-9._:-]*$/,
+    "Agent service ids must start with an alphanumeric character and use a valid service-id format",
+  )
+);
+
+/** @deprecated Use getRuntimeAgentServiceIdSchema() */
+export const RuntimeAgentServiceIdSchema = getRuntimeAgentServiceIdSchema();
+
+export const getRuntimeAgentIdSchema = defineSchema((v) => v.string().min(1).max(128));
+
+/** @deprecated Use getRuntimeAgentIdSchema() */
+export const RuntimeAgentIdSchema = getRuntimeAgentIdSchema();
+
+export const getRuntimeAgentToolNameSchema = defineSchema((v) =>
+  v.string().min(1).max(128).regex(
+    /^[a-zA-Z][a-zA-Z0-9._:-]*$/,
+    "Tool names must start with a letter and use a valid client-tool format",
+  )
+);
+
+/** @deprecated Use getRuntimeAgentToolNameSchema() */
+export const RuntimeAgentToolNameSchema = getRuntimeAgentToolNameSchema();
+
+const getRuntimeAgentToolJsonSchemaDocumentSchema = defineSchema((v) =>
+  v.record(v.string(), v.unknown()).refine(
+    (value) => isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
+    { message: "Tool schema metadata must be less than 16 KB" },
+  )
+);
+
+export const getRuntimeAgentToolSchema = defineSchema((v) =>
+  v.object({
+    name: getRuntimeAgentToolNameSchema(),
+    description: v.string().max(1024).optional(),
+    parameters: v.record(v.string(), v.unknown()).optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
+      { message: "Tool parameters must be less than 16 KB" },
     ),
-  }),
-  z.object({
-    type: z.literal("resource"),
-    title: z.string().max(256).optional(),
-    uri: z.string().max(2048),
-    mimeType: z.string().max(256).optional(),
-    text: z.string().max(MAX_CONTEXT_ITEM_BYTES).optional(),
-  }),
-]);
+    inputSchema: getRuntimeAgentToolJsonSchemaDocumentSchema().optional(),
+    outputSchema: getRuntimeAgentToolJsonSchemaDocumentSchema().optional(),
+  })
+);
 
-export const RuntimeAgentSourceContextSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("branch"),
-    branch: z.string().min(1).max(255),
-  }),
-  z.object({
-    type: z.literal("environment"),
-    environmentName: z.string().min(1).max(255),
-    releaseId: z.string().min(1).max(255).optional(),
-  }),
-  z.object({
-    type: z.literal("release"),
-    releaseId: z.string().min(1).max(255),
-  }),
-]);
+/** @deprecated Use getRuntimeAgentToolSchema() */
+export const RuntimeAgentToolSchema = getRuntimeAgentToolSchema();
 
-export const RuntimeAgentTargetKindSchema = z.enum([
-  "production",
-  "environment",
-  "preview_branch",
-]);
+export const getRuntimeAgentContextItemSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("text"),
+      title: v.string().max(256).optional(),
+      text: v.string().max(MAX_CONTEXT_ITEM_BYTES),
+    }),
+    v.object({
+      type: v.literal("json"),
+      title: v.string().max(256).optional(),
+      data: v.record(v.string(), v.unknown()).refine(
+        (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_ITEM_BYTES),
+        { message: "JSON context item must be less than 16 KB" },
+      ),
+    }),
+    v.object({
+      type: v.literal("resource"),
+      title: v.string().max(256).optional(),
+      uri: v.string().max(2048),
+      mimeType: v.string().max(256).optional(),
+      text: v.string().max(MAX_CONTEXT_ITEM_BYTES).optional(),
+    }),
+  ])
+);
+
+/** @deprecated Use getRuntimeAgentContextItemSchema() */
+export const RuntimeAgentContextItemSchema = getRuntimeAgentContextItemSchema();
+
+export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("branch"),
+      branch: v.string().min(1).max(255),
+    }),
+    v.object({
+      type: v.literal("environment"),
+      environmentName: v.string().min(1).max(255),
+      releaseId: v.string().min(1).max(255).optional(),
+    }),
+    v.object({
+      type: v.literal("release"),
+      releaseId: v.string().min(1).max(255),
+    }),
+  ])
+);
+
+/** @deprecated Use getRuntimeAgentSourceContextSchema() */
+export const RuntimeAgentSourceContextSchema = getRuntimeAgentSourceContextSchema();
+
+export const getRuntimeAgentTargetKindSchema = defineSchema((v) =>
+  v.enum(["production", "environment", "preview_branch"])
+);
+
+/** @deprecated Use getRuntimeAgentTargetKindSchema() */
+export const RuntimeAgentTargetKindSchema = getRuntimeAgentTargetKindSchema();
 
 type RuntimeAgentTargetSelectionInput = {
-  runtimeTargetKind?: z.infer<typeof RuntimeAgentTargetKindSchema> | null;
+  runtimeTargetKind?: InferSchema<ReturnType<typeof getRuntimeAgentTargetKindSchema>> | null;
   runtimeTargetEnvironmentId?: string | null;
   runtimeTargetBranchId?: string | null;
 };
 
 export function validateRuntimeAgentTargetSelection(
   input: RuntimeAgentTargetSelectionInput,
-  ctx: z.RefinementCtx,
+  ctx: RefinementCtx,
 ) {
   const kind = input.runtimeTargetKind;
   if (!kind || kind === "production") {
     if (input.runtimeTargetEnvironmentId || input.runtimeTargetBranchId) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "production target does not accept environment or branch identifiers",
         path: ["runtimeTargetKind"],
       });
@@ -125,7 +161,7 @@ export function validateRuntimeAgentTargetSelection(
   if (kind === "environment") {
     if (!input.runtimeTargetEnvironmentId || input.runtimeTargetBranchId) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message:
           "environment target requires runtimeTargetEnvironmentId and no runtimeTargetBranchId",
         path: ["runtimeTargetKind"],
@@ -136,7 +172,7 @@ export function validateRuntimeAgentTargetSelection(
 
   if (!input.runtimeTargetBranchId || input.runtimeTargetEnvironmentId) {
     ctx.addIssue({
-      code: z.ZodIssueCode.custom,
+      code: "custom",
       message:
         "preview_branch target requires runtimeTargetBranchId and no runtimeTargetEnvironmentId",
       path: ["runtimeTargetKind"],
@@ -144,110 +180,145 @@ export function validateRuntimeAgentTargetSelection(
   }
 }
 
-export const RuntimeAgentProjectContextSchema = z.object({
-  projectId: z.string().uuid(),
-  projectSlug: z.string().min(1).max(255),
-  runtimeTargetKind: RuntimeAgentTargetKindSchema.nullable().optional(),
-  runtimeTargetEnvironmentId: z.string().uuid().nullable().optional(),
-  runtimeTargetBranchId: z.string().uuid().nullable().optional(),
-}).superRefine(validateRuntimeAgentTargetSelection);
+export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
+  v.object({
+    projectId: v.string().uuid(),
+    projectSlug: v.string().min(1).max(255),
+    runtimeTargetKind: getRuntimeAgentTargetKindSchema().nullable().optional(),
+    runtimeTargetEnvironmentId: v.string().uuid().nullable().optional(),
+    runtimeTargetBranchId: v.string().uuid().nullable().optional(),
+  }).superRefine(validateRuntimeAgentTargetSelection)
+);
 
-export const RuntimeAgentValidatedClaimsSchema = z.object({
-  subject: z.string().min(1).max(256),
-  projectId: z.string().uuid().optional(),
-  projectSlug: z.string().min(1).max(255).optional(),
-  scopes: z.array(z.string().min(1).max(128)).max(50).default([]),
-});
+/** @deprecated Use getRuntimeAgentProjectContextSchema() */
+export const RuntimeAgentProjectContextSchema = getRuntimeAgentProjectContextSchema();
 
-export const RuntimeAgentRunContextSchema = z.object({
-  agentServiceId: RuntimeAgentServiceIdSchema,
-  agentId: RuntimeAgentIdSchema,
-  conversationId: z.string().uuid(),
-  runId: RuntimeAgentRunIdSchema,
-  messageId: z.string().uuid(),
-  inputAnchorMessageId: z.string().uuid(),
-  requestedByUserId: z.string().uuid(),
-  project: RuntimeAgentProjectContextSchema,
-  parentConversationId: z.string().uuid().nullable().optional(),
-  parentRunId: RuntimeAgentRunIdSchema.nullable().optional(),
-  spawnedFromMessageId: z.string().uuid().nullable().optional(),
-  spawnedFromToolCallId: RuntimeAgentToolCallIdSchema.nullable().optional(),
-  validatedClaims: RuntimeAgentValidatedClaimsSchema.optional(),
-}).superRefine((input, ctx) => {
-  if (input.parentRunId && input.parentRunId === input.runId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "parentRunId cannot match runId",
-      path: ["parentRunId"],
-    });
-  }
+export const getRuntimeAgentValidatedClaimsSchema = defineSchema((v) =>
+  v.object({
+    subject: v.string().min(1).max(256),
+    projectId: v.string().uuid().optional(),
+    projectSlug: v.string().min(1).max(255).optional(),
+    scopes: v.array(v.string().min(1).max(128)).max(50).default([]),
+  })
+);
 
-  if (!input.parentRunId && input.spawnedFromMessageId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "spawnedFromMessageId requires parentRunId",
-      path: ["spawnedFromMessageId"],
-    });
-  }
+/** @deprecated Use getRuntimeAgentValidatedClaimsSchema() */
+export const RuntimeAgentValidatedClaimsSchema = getRuntimeAgentValidatedClaimsSchema();
 
-  if (!input.parentRunId && input.spawnedFromToolCallId) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "spawnedFromToolCallId requires parentRunId",
-      path: ["spawnedFromToolCallId"],
-    });
-  }
+export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
+  v.object({
+    agentServiceId: getRuntimeAgentServiceIdSchema(),
+    agentId: getRuntimeAgentIdSchema(),
+    conversationId: v.string().uuid(),
+    runId: getRuntimeAgentRunIdSchema(),
+    messageId: v.string().uuid(),
+    inputAnchorMessageId: v.string().uuid(),
+    requestedByUserId: v.string().uuid(),
+    project: getRuntimeAgentProjectContextSchema(),
+    parentConversationId: v.string().uuid().nullable().optional(),
+    parentRunId: getRuntimeAgentRunIdSchema().nullable().optional(),
+    spawnedFromMessageId: v.string().uuid().nullable().optional(),
+    spawnedFromToolCallId: getRuntimeAgentToolCallIdSchema().nullable().optional(),
+    validatedClaims: getRuntimeAgentValidatedClaimsSchema().optional(),
+  }).superRefine((input, ctx) => {
+    if (input.parentRunId && input.parentRunId === input.runId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "parentRunId cannot match runId",
+        path: ["parentRunId"],
+      });
+    }
 
-  if (
-    input.validatedClaims?.projectId && input.validatedClaims.projectId !== input.project.projectId
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "validatedClaims.projectId must match project.projectId",
-      path: ["validatedClaims", "projectId"],
-    });
-  }
+    if (!input.parentRunId && input.spawnedFromMessageId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "spawnedFromMessageId requires parentRunId",
+        path: ["spawnedFromMessageId"],
+      });
+    }
 
-  if (
-    input.validatedClaims?.projectSlug &&
-    input.validatedClaims.projectSlug !== input.project.projectSlug
-  ) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "validatedClaims.projectSlug must match project.projectSlug",
-      path: ["validatedClaims", "projectSlug"],
-    });
-  }
-});
+    if (!input.parentRunId && input.spawnedFromToolCallId) {
+      ctx.addIssue({
+        code: "custom",
+        message: "spawnedFromToolCallId requires parentRunId",
+        path: ["spawnedFromToolCallId"],
+      });
+    }
 
-export const RuntimeAgentRunInvocationSchema = z.object({
-  run: RuntimeAgentRunContextSchema,
-  messages: z.array(z.unknown()).default([]),
-  tools: z.array(RuntimeAgentToolSchema).max(50).default([]),
-  context: z.array(RuntimeAgentContextItemSchema).max(10).default([]).refine(
-    (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
-    { message: "context must be less than 64 KB total" },
-  ),
-  agentSource: RuntimeAgentSourceContextSchema.optional(),
-  forwardedProps: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-    { message: "forwardedProps must be less than 64 KB" },
-  ),
-});
+    if (
+      input.validatedClaims?.projectId &&
+      input.validatedClaims.projectId !== input.project.projectId
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "validatedClaims.projectId must match project.projectId",
+        path: ["validatedClaims", "projectId"],
+      });
+    }
 
-export type RuntimeAgentTool = z.infer<typeof RuntimeAgentToolSchema>;
-export type RuntimeAgentContextItem = z.infer<typeof RuntimeAgentContextItemSchema>;
-export type RuntimeAgentSourceContext = z.infer<typeof RuntimeAgentSourceContextSchema>;
-export type RuntimeAgentTargetKind = z.infer<typeof RuntimeAgentTargetKindSchema>;
-export type RuntimeAgentProjectContext = z.infer<typeof RuntimeAgentProjectContextSchema>;
-export type RuntimeAgentValidatedClaims = z.infer<typeof RuntimeAgentValidatedClaimsSchema>;
-export type RuntimeAgentRunContext = z.infer<typeof RuntimeAgentRunContextSchema>;
-export type RuntimeAgentRunInvocation = z.infer<typeof RuntimeAgentRunInvocationSchema>;
+    if (
+      input.validatedClaims?.projectSlug &&
+      input.validatedClaims.projectSlug !== input.project.projectSlug
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "validatedClaims.projectSlug must match project.projectSlug",
+        path: ["validatedClaims", "projectSlug"],
+      });
+    }
+  })
+);
+
+/** @deprecated Use getRuntimeAgentRunContextSchema() */
+export const RuntimeAgentRunContextSchema = getRuntimeAgentRunContextSchema();
+
+export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
+  v.object({
+    run: getRuntimeAgentRunContextSchema(),
+    messages: v.array(v.unknown()).default([]),
+    tools: v.array(getRuntimeAgentToolSchema()).max(50).default([]),
+    context: v.array(getRuntimeAgentContextItemSchema()).max(10).default([]).refine(
+      (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
+      { message: "context must be less than 64 KB total" },
+    ),
+    agentSource: getRuntimeAgentSourceContextSchema().optional(),
+    forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
+      { message: "forwardedProps must be less than 64 KB" },
+    ),
+  })
+);
+
+/** @deprecated Use getRuntimeAgentRunInvocationSchema() */
+export const RuntimeAgentRunInvocationSchema = getRuntimeAgentRunInvocationSchema();
+
+export type RuntimeAgentTool = InferSchema<ReturnType<typeof getRuntimeAgentToolSchema>>;
+export type RuntimeAgentContextItem = InferSchema<
+  ReturnType<typeof getRuntimeAgentContextItemSchema>
+>;
+export type RuntimeAgentSourceContext = InferSchema<
+  ReturnType<typeof getRuntimeAgentSourceContextSchema>
+>;
+export type RuntimeAgentTargetKind = InferSchema<
+  ReturnType<typeof getRuntimeAgentTargetKindSchema>
+>;
+export type RuntimeAgentProjectContext = InferSchema<
+  ReturnType<typeof getRuntimeAgentProjectContextSchema>
+>;
+export type RuntimeAgentValidatedClaims = InferSchema<
+  ReturnType<typeof getRuntimeAgentValidatedClaimsSchema>
+>;
+export type RuntimeAgentRunContext = InferSchema<
+  ReturnType<typeof getRuntimeAgentRunContextSchema>
+>;
+export type RuntimeAgentRunInvocation = InferSchema<
+  ReturnType<typeof getRuntimeAgentRunInvocationSchema>
+>;
 
 export async function parseRuntimeAgentRunInvocation(
   request: Request,
 ): Promise<RuntimeAgentRunInvocation> {
-  return RuntimeAgentRunInvocationSchema.parse(await request.json());
+  return getRuntimeAgentRunInvocationSchema().parse(await request.json());
 }
 
 export async function parseRuntimeAgentRunInvocationOrError(

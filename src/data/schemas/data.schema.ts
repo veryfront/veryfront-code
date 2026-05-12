@@ -1,47 +1,70 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 /** Context passed to data fetching functions */
-export const DataContextSchema = z.object({
-  params: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
-  query: z.instanceof(URLSearchParams),
-  request: z.instanceof(Request),
-  url: z.instanceof(URL),
-});
+export const getDataContextSchema = defineSchema((v) =>
+  v.object({
+    params: v.record(v.string(), v.union([v.string(), v.array(v.string())])),
+    query: v.instanceof(URLSearchParams),
+    request: v.instanceof(Request),
+    url: v.instanceof(URL),
+  })
+);
 
-export const RedirectSchema = z.object({
-  destination: z.string(),
-  permanent: z.boolean().optional(),
-});
+export const getRedirectSchema = defineSchema((v) =>
+  v.object({
+    destination: v.string(),
+    permanent: v.boolean().optional(),
+  })
+);
 
 /** Result returned from data fetching functions */
-export const DataResultSchema = z.object({
-  props: z.unknown().optional(),
-  redirect: RedirectSchema.optional(),
-  notFound: z.boolean().optional(),
-  revalidate: z.union([z.number(), z.literal(false)]).optional(),
-});
+export const getDataResultSchema = defineSchema((v) =>
+  v.object({
+    props: v.unknown().optional(),
+    redirect: getRedirectSchema().optional(),
+    notFound: v.boolean().optional(),
+    revalidate: v.union([v.number(), v.literal(false)]).optional(),
+  })
+);
 
-export const StaticPathEntrySchema = z.object({
-  params: z.record(z.string(), z.union([z.string(), z.array(z.string())])),
-});
+export const getStaticPathEntrySchema = defineSchema((v) =>
+  v.object({
+    params: v.record(v.string(), v.union([v.string(), v.array(v.string())])),
+  })
+);
 
-export const StaticPathsResultSchema = z.object({
-  paths: z.array(StaticPathEntrySchema),
-  fallback: z.union([z.boolean(), z.literal("blocking")]),
-});
+export const getStaticPathsResultSchema = defineSchema((v) =>
+  v.object({
+    paths: v.array(getStaticPathEntrySchema()),
+    fallback: v.union([v.boolean(), v.literal("blocking")]),
+  })
+);
 
-export const CacheEntrySchema = z.object({
-  data: DataResultSchema,
-  timestamp: z.number(),
-  revalidate: z.union([z.number(), z.literal(false)]).optional(),
-});
+export const getCacheEntrySchema = defineSchema((v) =>
+  v.object({
+    data: getDataResultSchema(),
+    timestamp: v.number(),
+    revalidate: v.union([v.number(), v.literal(false)]).optional(),
+  })
+);
 
 // Inferred types
-export type DataContext = z.infer<typeof DataContextSchema>;
-export type Redirect = z.infer<typeof RedirectSchema>;
-export type DataResult<T = unknown> = z.infer<typeof DataResultSchema> & { props?: T };
-export type StaticPathEntry = z.infer<typeof StaticPathEntrySchema>;
-export type StaticPathsResult = z.infer<typeof StaticPathsResultSchema>;
-export type CacheEntry<T = unknown> = z.infer<typeof CacheEntrySchema> & {
+export type DataContext = InferSchema<ReturnType<typeof getDataContextSchema>>;
+export type Redirect = InferSchema<ReturnType<typeof getRedirectSchema>>;
+export type DataResult<T = unknown> = InferSchema<ReturnType<typeof getDataResultSchema>> & {
+  props?: T;
+};
+export type StaticPathEntry = InferSchema<ReturnType<typeof getStaticPathEntrySchema>>;
+export type StaticPathsResult = InferSchema<ReturnType<typeof getStaticPathsResultSchema>>;
+export type CacheEntry<T = unknown> = InferSchema<ReturnType<typeof getCacheEntrySchema>> & {
   data: DataResult<T>;
 };
+
+// Backward compat aliases
+export const DataContextSchema = getDataContextSchema();
+export const RedirectSchema = getRedirectSchema();
+export const DataResultSchema = getDataResultSchema();
+export const StaticPathEntrySchema = getStaticPathEntrySchema();
+export const StaticPathsResultSchema = getStaticPathsResultSchema();
+export const CacheEntrySchema = getCacheEntrySchema();

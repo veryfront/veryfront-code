@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build output
+dist/
+.veryfront/
+
+# Local AI model cache
+.cache/
+
+# IDE
+.vscode/
+.idea/

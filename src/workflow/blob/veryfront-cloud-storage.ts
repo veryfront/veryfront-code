@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
 
@@ -14,44 +15,57 @@ const DEFAULT_PREFIX = ".veryfront/blobs/";
 const DATA_SUFFIX = ".blob";
 const META_SUFFIX = ".meta.json";
 
-const UploadCreateResponseSchema = z.object({
-  file_upload_url: z.string().url(),
-  file_path: z.string(),
-  upload_id: z.string(),
-  required_headers: z.record(z.string(), z.string()),
-});
+const getUploadCreateResponseSchema = defineSchema((v) =>
+  v.object({
+    file_upload_url: v.string().url(),
+    file_path: v.string(),
+    upload_id: v.string(),
+    required_headers: v.record(v.string(), v.string()),
+  })
+);
 
-const UploadMetadataResponseSchema = z.object({
-  id: z.string(),
-  path: z.string(),
-  file_name: z.string(),
-  content_type: z.string().nullable(),
-  size: z.number(),
-  url: z.string().nullable(),
-  status: z.enum(["pending", "active", "failed"]),
-  visibility: z.enum(["project", "public", "private"]),
-  created_at: z.string(),
-  updated_at: z.string(),
-  deleted_at: z.string().nullable(),
-});
+const getUploadMetadataResponseSchema = defineSchema((v) =>
+  v.object({
+    id: v.string(),
+    path: v.string(),
+    file_name: v.string(),
+    content_type: v.string().nullable(),
+    size: v.number(),
+    url: v.string().nullable(),
+    status: v.enum(["pending", "active", "failed"]),
+    visibility: v.enum(["project", "public", "private"]),
+    created_at: v.string(),
+    updated_at: v.string(),
+    deleted_at: v.string().nullable(),
+  })
+);
 
-const UploadSignedUrlResponseSchema = z.object({
-  signed_url: z.string().url(),
-  expires_at: z.string(),
-});
+const getUploadSignedUrlResponseSchema = defineSchema((v) =>
+  v.object({
+    signed_url: v.string().url(),
+    expires_at: v.string(),
+  })
+);
 
-const BlobMetadataSchema = z.object({
-  version: z.literal(1),
-  id: z.string(),
-  size: z.number().nonnegative(),
-  mimeType: z.string(),
-  createdAt: z.string(),
-  expiresAt: z.string().optional(),
-  metadata: z.record(z.string(), z.string()).optional(),
-});
+const getBlobMetadataSchema = defineSchema((v) =>
+  v.object({
+    version: v.literal(1),
+    id: v.string(),
+    size: v.number().nonnegative(),
+    mimeType: v.string(),
+    createdAt: v.string(),
+    expiresAt: v.string().optional(),
+    metadata: v.record(v.string(), v.string()).optional(),
+  })
+);
 
-type UploadMetadataResponse = z.infer<typeof UploadMetadataResponseSchema>;
-type BlobMetadata = z.infer<typeof BlobMetadataSchema>;
+const UploadCreateResponseSchema = getUploadCreateResponseSchema();
+const UploadMetadataResponseSchema = getUploadMetadataResponseSchema();
+const UploadSignedUrlResponseSchema = getUploadSignedUrlResponseSchema();
+const BlobMetadataSchema = getBlobMetadataSchema();
+
+type UploadMetadataResponse = InferSchema<ReturnType<typeof getUploadMetadataResponseSchema>>;
+type BlobMetadata = InferSchema<ReturnType<typeof getBlobMetadataSchema>>;
 
 export interface VeryfrontCloudBlobStorageConfig {
   /** Veryfront API base URL. Defaults to the current Veryfront Cloud bootstrap. */

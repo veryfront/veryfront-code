@@ -1,34 +1,48 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
 const DEFAULT_PROJECT_FILES_PAGE_LIMIT = 100;
 
-export const runtimeProjectFileSchema = z.object({
-  path: z.string(),
-  content: z.string(),
-});
-
-export const runtimeProjectFileListItemSchema = z.object({
-  path: z.string(),
-});
-
-const runtimeProjectFileListRestResponseSchema = z.object({
-  data: z.array(runtimeProjectFileListItemSchema),
-  page_info: z.object({
-    next: z.string().nullable(),
-  }),
-});
-
-const apiErrorBodySchema = z
-  .object({
-    detail: z.string().optional(),
-    message: z.string().optional(),
-    error: z.string().optional(),
+export const getRuntimeProjectFileSchema = defineSchema((v) =>
+  v.object({
+    path: v.string(),
+    content: v.string(),
   })
-  .passthrough();
+);
 
-export type RuntimeProjectFile = z.infer<typeof runtimeProjectFileSchema>;
-export type RuntimeProjectFileListItem = z.infer<typeof runtimeProjectFileListItemSchema>;
+export const getRuntimeProjectFileListItemSchema = defineSchema((v) =>
+  v.object({
+    path: v.string(),
+  })
+);
+
+const getRuntimeProjectFileListRestResponseSchema = defineSchema((v) =>
+  v.object({
+    data: v.array(getRuntimeProjectFileListItemSchema()),
+    page_info: v.object({
+      next: v.string().nullable(),
+    }),
+  })
+);
+
+const getApiErrorBodySchema = defineSchema((v) =>
+  v.object({
+    detail: v.string().optional(),
+    message: v.string().optional(),
+    error: v.string().optional(),
+  }).passthrough()
+);
+
+/** @deprecated Use getRuntimeProjectFileSchema() */
+export const runtimeProjectFileSchema = getRuntimeProjectFileSchema();
+/** @deprecated Use getRuntimeProjectFileListItemSchema() */
+export const runtimeProjectFileListItemSchema = getRuntimeProjectFileListItemSchema();
+
+export type RuntimeProjectFile = InferSchema<ReturnType<typeof getRuntimeProjectFileSchema>>;
+export type RuntimeProjectFileListItem = InferSchema<
+  ReturnType<typeof getRuntimeProjectFileListItemSchema>
+>;
 
 export type RuntimeProjectFilesApiOptions = {
   projectId: string;
@@ -103,7 +117,7 @@ export async function getRuntimeProjectFile(
       );
     }
 
-    const parsed = runtimeProjectFileSchema.safeParse(await response.json());
+    const parsed = getRuntimeProjectFileSchema().safeParse(await response.json());
     if (!parsed.success) {
       throw new Error(
         `Failed to fetch file ${options.path} for project ${options.projectId}: invalid API response`,
@@ -137,7 +151,7 @@ export async function getRuntimeProjectFiles(
         );
       }
 
-      const parsed = runtimeProjectFileListRestResponseSchema.safeParse(await response.json());
+      const parsed = getRuntimeProjectFileListRestResponseSchema().safeParse(await response.json());
       if (!parsed.success) {
         throw new Error(
           `Failed to fetch files for project ${options.projectId}: invalid API response`,
@@ -215,18 +229,16 @@ async function readApiErrorMessage(response: Response): Promise<string> {
     return response.statusText || `HTTP ${response.status}`;
   }
 
-  const parsedJson = z
-    .string()
-    .transform((value, ctx) => {
-      try {
-        return JSON.parse(value);
-      } catch {
-        ctx.addIssue({ code: "custom", message: "Invalid JSON" });
-        return z.NEVER;
-      }
-    })
-    .pipe(apiErrorBodySchema)
-    .safeParse(body);
+  let parsedJson: { success: true; data: { detail?: string; message?: string; error?: string } } | {
+    success: false;
+  };
+  try {
+    const jsonValue = JSON.parse(body);
+    const result = getApiErrorBodySchema().safeParse(jsonValue);
+    parsedJson = result.success ? { success: true, data: result.data } : { success: false };
+  } catch {
+    parsedJson = { success: false };
+  }
 
   if (parsedJson.success) {
     return parsedJson.data.detail ?? parsedJson.data.message ?? parsedJson.data.error ?? body;

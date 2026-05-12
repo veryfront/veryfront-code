@@ -1,12 +1,12 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "stop-mailbox-watch",
   description: "Stop Gmail push notifications for the connected mailbox.",
-  inputSchema: z.object({}),
+  inputSchema: defineSchema((v) => v.object({}))(),
   execute: async (_input, context) => {
     const userId = resolveUserId(context);
 

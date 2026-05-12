@@ -1,84 +1,110 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const ISSUE_PREFIXES = ["ISSUE", "TASK", "PLAN"] as const;
 const ISSUE_ID_BODY = `(${ISSUE_PREFIXES.join("|")})-(\\d{3,})`;
 
 export const ISSUE_ID_PATTERN = new RegExp(`^${ISSUE_ID_BODY}$`);
 
-export const issueStateSchema = z.enum(["open", "closed"]);
+export const getIssueStateSchema = defineSchema((v) => v.enum(["open", "closed"]));
+export const issueStateSchema = getIssueStateSchema();
 
-export const issuePrefixSchema = z.enum(ISSUE_PREFIXES);
+export const getIssuePrefixSchema = defineSchema((v) => v.enum(ISSUE_PREFIXES));
+export const issuePrefixSchema = getIssuePrefixSchema();
 
-export const issueIdSchema = z
-  .string()
-  .regex(ISSUE_ID_PATTERN, "Issue ID must be in format PREFIX-NNN (e.g., ISSUE-001, TASK-042)");
+export const getIssueIdSchema = defineSchema((v) =>
+  v.string()
+    .regex(ISSUE_ID_PATTERN, "Issue ID must be in format PREFIX-NNN (e.g., ISSUE-001, TASK-042)")
+);
+export const issueIdSchema = getIssueIdSchema();
 
-export const labelSchema = z.string().min(1).max(50);
+export const getLabelSchema = defineSchema((v) => v.string().min(1).max(50));
+export const labelSchema = getLabelSchema();
 
-export const isoDateSchema = z
-  .string()
-  .refine((val) => !Number.isNaN(Date.parse(val)), "Must be a valid ISO 8601 date string");
+export const getIsoDateSchema = defineSchema((v) =>
+  v.string()
+    .refine((val: string) => !Number.isNaN(Date.parse(val)), "Must be a valid ISO 8601 date string")
+);
+export const isoDateSchema = getIsoDateSchema();
 
-export const issueMetadataSchema = z.object({
-  id: issueIdSchema,
-  title: z.string().min(1).max(500),
-  state: issueStateSchema,
-  labels: z.array(labelSchema).default([]),
-  milestone: z.string().optional(),
-  assignees: z.array(z.string()).default([]),
-  created_at: isoDateSchema,
-  updated_at: isoDateSchema,
-});
+export const getIssueMetadataSchema = defineSchema((v) =>
+  v.object({
+    id: getIssueIdSchema(),
+    title: v.string().min(1).max(500),
+    state: getIssueStateSchema(),
+    labels: v.array(getLabelSchema()).default([]),
+    milestone: v.string().optional(),
+    assignees: v.array(v.string()).default([]),
+    created_at: getIsoDateSchema(),
+    updated_at: getIsoDateSchema(),
+  })
+);
+export const issueMetadataSchema = getIssueMetadataSchema();
 
-export const issueSchema = z.object({
-  metadata: issueMetadataSchema,
-  body: z.string(),
-  path: z.string(),
-});
+export const getIssueSchema = defineSchema((v) =>
+  v.object({
+    metadata: getIssueMetadataSchema(),
+    body: v.string(),
+    path: v.string(),
+  })
+);
+export const issueSchema = getIssueSchema();
 
-export const createIssueSchema = z.object({
-  title: z.string().min(1).max(500),
-  body: z.string().optional(),
-  labels: z.array(labelSchema).optional(),
-  milestone: z.string().optional(),
-  assignees: z.array(z.string()).optional(),
-  prefix: issuePrefixSchema.optional(),
-});
+export const getCreateIssueSchema = defineSchema((v) =>
+  v.object({
+    title: v.string().min(1).max(500),
+    body: v.string().optional(),
+    labels: v.array(getLabelSchema()).optional(),
+    milestone: v.string().optional(),
+    assignees: v.array(v.string()).optional(),
+    prefix: getIssuePrefixSchema().optional(),
+  })
+);
+export const createIssueSchema = getCreateIssueSchema();
 
-export const updateIssueSchema = z.object({
-  title: z.string().min(1).max(500).optional(),
-  body: z.string().optional(),
-  state: issueStateSchema.optional(),
-  labels: z.array(labelSchema).optional(),
-  milestone: z.string().nullable().optional(),
-  assignees: z.array(z.string()).optional(),
-});
+export const getUpdateIssueSchema = defineSchema((v) =>
+  v.object({
+    title: v.string().min(1).max(500).optional(),
+    body: v.string().optional(),
+    state: getIssueStateSchema().optional(),
+    labels: v.array(getLabelSchema()).optional(),
+    milestone: v.string().nullable().optional(),
+    assignees: v.array(v.string()).optional(),
+  })
+);
+export const updateIssueSchema = getUpdateIssueSchema();
 
-export const listIssuesSchema = z.object({
-  state: issueStateSchema.optional(),
-  labels: z.array(labelSchema).optional(),
-  milestone: z.string().optional(),
-  assignee: z.string().optional(),
-  prefix: issuePrefixSchema.optional(),
-  sortBy: z.enum(["created_at", "updated_at", "id"]).optional(),
-  sortDirection: z.enum(["asc", "desc"]).optional(),
-  limit: z.number().positive().optional(),
-});
+export const getListIssuesSchema = defineSchema((v) =>
+  v.object({
+    state: getIssueStateSchema().optional(),
+    labels: v.array(getLabelSchema()).optional(),
+    milestone: v.string().optional(),
+    assignee: v.string().optional(),
+    prefix: getIssuePrefixSchema().optional(),
+    sortBy: v.enum(["created_at", "updated_at", "id"]).optional(),
+    sortDirection: v.enum(["asc", "desc"]).optional(),
+    limit: v.number().positive().optional(),
+  })
+);
+export const listIssuesSchema = getListIssuesSchema();
 
-export const listIssuesResultSchema = z.object({
-  issues: z.array(issueSchema),
-  total: z.number(),
-});
+export const getListIssuesResultSchema = defineSchema((v) =>
+  v.object({
+    issues: v.array(getIssueSchema()),
+    total: v.number(),
+  })
+);
+export const listIssuesResultSchema = getListIssuesResultSchema();
 
 // Inferred types
-export type IssueState = z.infer<typeof issueStateSchema>;
-export type IssuePrefix = z.infer<typeof issuePrefixSchema>;
-export type IssueMetadata = z.infer<typeof issueMetadataSchema>;
-export type Issue = z.infer<typeof issueSchema>;
-export type CreateIssueOptions = z.infer<typeof createIssueSchema>;
-export type UpdateIssueOptions = z.infer<typeof updateIssueSchema>;
-export type ListIssuesOptions = z.infer<typeof listIssuesSchema>;
-export type ListIssuesResult = z.infer<typeof listIssuesResultSchema>;
+export type IssueState = InferSchema<ReturnType<typeof getIssueStateSchema>>;
+export type IssuePrefix = InferSchema<ReturnType<typeof getIssuePrefixSchema>>;
+export type IssueMetadata = InferSchema<ReturnType<typeof getIssueMetadataSchema>>;
+export type Issue = InferSchema<ReturnType<typeof getIssueSchema>>;
+export type CreateIssueOptions = InferSchema<ReturnType<typeof getCreateIssueSchema>>;
+export type UpdateIssueOptions = InferSchema<ReturnType<typeof getUpdateIssueSchema>>;
+export type ListIssuesOptions = InferSchema<ReturnType<typeof getListIssuesSchema>>;
+export type ListIssuesResult = InferSchema<ReturnType<typeof getListIssuesResultSchema>>;
 
 // Validation functions
 export function validateMetadata(data: unknown): IssueMetadata {

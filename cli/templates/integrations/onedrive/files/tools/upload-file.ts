@@ -1,21 +1,21 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatFileSize, uploadFile } from "../../lib/onedrive-client.ts";
 
 export default tool({
   id: "upload-file",
   description:
     "Upload or update a file in OneDrive. Can create new files or overwrite existing ones.",
-  inputSchema: z.object({
-    fileName: z
+  inputSchema: defineSchema((v) => v.object({
+    fileName: v
       .string()
       .describe("Name of the file to upload (e.g., 'notes.txt', 'document.pdf')"),
-    content: z.string().describe("The content to write to the file"),
-    parentFolderId: z
+    content: v.string().describe("The content to write to the file"),
+    parentFolderId: v
       .string()
       .default("root")
       .describe('Parent folder ID where the file should be uploaded (default: "root")'),
-  }),
+  }))(),
   async execute({ fileName, content, parentFolderId }) {
     const name = fileName.trim();
 

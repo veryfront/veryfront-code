@@ -1,5 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/interfaces/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getGetAdapterParamsSchema = defineSchema((v) =>
   v.object({

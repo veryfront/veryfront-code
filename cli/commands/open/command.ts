@@ -1,13 +1,18 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { createArgParser } from "#cli/shared/args";
 
-export const OpenArgsSchema = z.object({
-  env: z.string().optional(),
-  studio: z.boolean().default(false),
-  projectSlug: z.string().optional(),
-});
+export const getOpenArgsSchema = defineSchema((v) =>
+  v.object({
+    env: v.string().optional(),
+    studio: v.boolean().default(false),
+    projectSlug: v.string().optional(),
+  })
+);
 
-export type OpenOptions = z.infer<typeof OpenArgsSchema>;
+export const OpenArgsSchema = getOpenArgsSchema();
+
+export type OpenOptions = InferSchema<ReturnType<typeof getOpenArgsSchema>>;
 
 export const parseOpenArgs = createArgParser(OpenArgsSchema, {
   env: { keys: ["env"], type: "string" },

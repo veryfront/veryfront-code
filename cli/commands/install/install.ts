@@ -5,7 +5,7 @@
 import { dirname, join } from "veryfront/platform/path";
 import { cwd as getCwd } from "veryfront/platform";
 import { exists, mkdir, writeTextFile } from "veryfront/platform";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { bold, dim, multiSelect, type MultiSelectOption, muted, success, warning } from "#cli/ui";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
@@ -17,28 +17,36 @@ import {
   InstallOptionsSchema,
 } from "./types.ts";
 
-const TargetFlagSchema = z
-  .string()
-  .transform((val) => {
-    if (val === "all") return AI_TOOLS.map((t) => t.id);
+const getTargetFlagSchema = defineSchema((v) =>
+  v
+    .string()
+    .transform((val) => {
+      if (val === "all") return AI_TOOLS.map((t) => t.id);
 
-    return val
-      .split(",")
-      .map((t) => t.trim())
-      .filter(isValidToolId);
-  })
-  .refine((arr) => arr.length > 0, { message: "No valid targets specified" });
+      return val
+        .split(",")
+        .map((t) => t.trim())
+        .filter(isValidToolId);
+    })
+    .refine((arr) => arr.length > 0, { message: "No valid targets specified" })
+);
+
+const TargetFlagSchema = getTargetFlagSchema();
 
 export function parseTargetFlag(target: string): AIToolId[] {
   return TargetFlagSchema.parse(target);
 }
+
+const getAIToolIdArraySchema = defineSchema((v) => v.array(AIToolIdSchema).min(1));
+
+const AIToolIdArraySchema = getAIToolIdArraySchema();
 
 export async function installTargets(
   targets: AIToolId[],
   options: Pick<InstallOptions, "cwd" | "force" | "global">,
   env: EnvironmentConfig = getEnvironmentConfig(),
 ): Promise<void> {
-  z.array(AIToolIdSchema).min(1).parse(targets);
+  AIToolIdArraySchema.parse(targets);
 
   const cwd = options.cwd ?? getCwd();
   const homeDir = env.homeDir!;

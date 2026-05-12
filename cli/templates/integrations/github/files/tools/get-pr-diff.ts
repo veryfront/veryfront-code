@@ -1,16 +1,16 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGitHubClient } from "../../lib/github-client.ts";
 
 export default tool({
   id: "get-pr-diff",
   description: "Get the diff for a pull request to review code changes",
-  inputSchema: z.object({
-    repo: z
+  inputSchema: defineSchema((v) => v.object({
+    repo: v
       .string()
       .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
-    prNumber: z.number().int().positive().describe("Pull request number"),
-  }),
+    prNumber: v.number().int().positive().describe("Pull request number"),
+  }))(),
   execute: async ({ repo, prNumber }, context) => {
     // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";

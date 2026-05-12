@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatAddress, getAccount } from "../../lib/salesforce-client.ts";
 
 export default tool({
   id: "get-account",
   description:
     "Get detailed information about a specific account in Salesforce CRM by their account ID.",
-  inputSchema: z.object({
-    accountId: z
+  inputSchema: defineSchema((v) => v.object({
+    accountId: v
       .string()
       .describe("The Salesforce account ID (e.g., 001XXXXXXXXXXXXXXX)"),
-    fields: z
-      .array(z.string())
+    fields: v
+      .array(v.string())
       .optional()
       .describe(
         "Additional fields to retrieve (e.g., Description, Owner.Name, ParentId)",
       ),
-  }),
+  }))(),
   async execute({ accountId, fields }) {
     const account = await getAccount(accountId, fields);
 

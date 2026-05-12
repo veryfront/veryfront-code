@@ -1,9 +1,10 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { expect } from "#std/expect.ts";
 import { delay } from "#std/async.ts";
 import { scaleMs } from "#veryfront/testing";
 import type { Tool } from "#veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { createWorkflowClient, WorkflowClient } from "../api/workflow-client.ts";
 import { branch, loop, parallel, step, waitForApproval, workflow } from "../dsl/index.ts";
@@ -13,7 +14,7 @@ function createMockTool(name: string, handler: (input: any) => any): Tool {
     id: name,
     type: "function",
     description: `Mock tool: ${name}`,
-    inputSchema: z.object({}).passthrough(),
+    inputSchema: defineSchema((v) => v.object({}).passthrough())(),
     execute: (input) => Promise.resolve(handler(input)),
   };
 }

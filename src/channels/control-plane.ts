@@ -2,7 +2,8 @@ import type { Agent } from "#veryfront/agent";
 import type { HandlerContext } from "#veryfront/types";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
 
@@ -13,96 +14,134 @@ export const LEGACY_INTERNAL_AGENTS_LIST_PATH = "/internal/agents/list";
 export const LEGACY_INTERNAL_AGENT_STREAM_PATH = "/internal/agents/stream";
 export const LEGACY_INTERNAL_AGENT_RUNS_PATH_PREFIX = "/internal/agents/runs/";
 
-const compactJwsHeaderSchema = z.object({
-  alg: z.literal("EdDSA"),
-  typ: z.string().optional(),
-  kid: z.string().optional(),
-});
+const getCompactJwsHeaderSchema = defineSchema((v) =>
+  v.object({
+    alg: v.literal("EdDSA"),
+    typ: v.string().optional(),
+    kid: v.string().optional(),
+  })
+);
+const compactJwsHeaderSchema = getCompactJwsHeaderSchema();
 
-export const ControlPlaneSurfaceSchema = z.enum(["studio", "channels", "a2a", "mcp"]);
+export const getControlPlaneSurfaceSchema = defineSchema((v) =>
+  v.enum(["studio", "channels", "a2a", "mcp"])
+);
+export const ControlPlaneSurfaceSchema = getControlPlaneSurfaceSchema();
 
-export const ControlPlaneAgentsListRequestSchema = z.object({
-  requestId: z.string().min(1),
-  projectId: z.string().min(1),
-  surface: ControlPlaneSurfaceSchema,
-});
+export const getControlPlaneAgentsListRequestSchema = defineSchema((v) =>
+  v.object({
+    requestId: v.string().min(1),
+    projectId: v.string().min(1),
+    surface: getControlPlaneSurfaceSchema(),
+  })
+);
+export const ControlPlaneAgentsListRequestSchema = getControlPlaneAgentsListRequestSchema();
 
-export const RuntimeAgentSkillSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().optional(),
-  tags: z.array(z.string()).optional(),
-  examples: z.array(z.string()).optional(),
-});
+export const getRuntimeAgentSkillSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    name: v.string().min(1),
+    description: v.string().optional(),
+    tags: v.array(v.string()).optional(),
+    examples: v.array(v.string()).optional(),
+  })
+);
+export const RuntimeAgentSkillSchema = getRuntimeAgentSkillSchema();
 
-export const RuntimeAgentSuggestionSchema = z.discriminatedUnion("type", [
-  z.object({
-    id: z.string().min(1),
-    type: z.literal("prompt"),
-    title: z.string().min(1),
-    description: z.string().optional(),
-    prompt: z.string().min(1),
-  }),
-  z.object({
-    id: z.string().min(1),
-    type: z.literal("task"),
-    title: z.string().min(1),
-    description: z.string().optional(),
-    task: z.string().min(1),
-    prompt: z.string().min(1).optional(),
-  }),
-]);
+export const getRuntimeAgentSuggestionSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      id: v.string().min(1),
+      type: v.literal("prompt"),
+      title: v.string().min(1),
+      description: v.string().optional(),
+      prompt: v.string().min(1),
+    }),
+    v.object({
+      id: v.string().min(1),
+      type: v.literal("task"),
+      title: v.string().min(1),
+      description: v.string().optional(),
+      task: v.string().min(1),
+      prompt: v.string().min(1).optional(),
+    }),
+  ])
+);
+export const RuntimeAgentSuggestionSchema = getRuntimeAgentSuggestionSchema();
 
-export const RuntimeAgentSuggestionsSchema = z.object({
-  welcomeMessage: z.string().min(1).optional(),
-  suggestions: z.array(RuntimeAgentSuggestionSchema),
-});
+export const getRuntimeAgentSuggestionsSchema = defineSchema((v) =>
+  v.object({
+    welcomeMessage: v.string().min(1).optional(),
+    suggestions: v.array(getRuntimeAgentSuggestionSchema()),
+  })
+);
+export const RuntimeAgentSuggestionsSchema = getRuntimeAgentSuggestionsSchema();
 
-export const RuntimeAgentSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().nullable().optional(),
-  model: z.string().nullable().optional(),
-  version: z.string().nullable().optional(),
-  skills: z.array(RuntimeAgentSkillSchema).optional(),
-  suggestions: RuntimeAgentSuggestionsSchema.optional(),
-});
+export const getRuntimeAgentSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    name: v.string().min(1),
+    description: v.string().nullable().optional(),
+    model: v.string().nullable().optional(),
+    version: v.string().nullable().optional(),
+    skills: v.array(getRuntimeAgentSkillSchema()).optional(),
+    suggestions: getRuntimeAgentSuggestionsSchema().optional(),
+  })
+);
+export const RuntimeAgentSchema = getRuntimeAgentSchema();
 
-export const RuntimeAgentListResponseSchema = z.object({
-  agents: z.array(RuntimeAgentSchema),
-});
+export const getRuntimeAgentListResponseSchema = defineSchema((v) =>
+  v.object({
+    agents: v.array(getRuntimeAgentSchema()),
+  })
+);
+export const RuntimeAgentListResponseSchema = getRuntimeAgentListResponseSchema();
 
-const dispatchClaimsSchema = z.object({
-  iss: z.string(),
-  aud: z.string(),
-  sub: z.string(),
-  project_id: z.string(),
-  platform: z.string(),
-  body_sha256: z.string(),
-  iat: z.number().int(),
-  exp: z.number().int(),
-});
+const getDispatchClaimsSchema = defineSchema((v) =>
+  v.object({
+    iss: v.string(),
+    aud: v.string(),
+    sub: v.string(),
+    project_id: v.string(),
+    platform: v.string(),
+    body_sha256: v.string(),
+    iat: v.number().int(),
+    exp: v.number().int(),
+  })
+);
+const dispatchClaimsSchema = getDispatchClaimsSchema();
 
-const controlPlaneClaimsSchema = z.object({
-  iss: z.string(),
-  aud: z.string(),
-  sub: z.string(),
-  surface: ControlPlaneSurfaceSchema,
-  project_id: z.string(),
-  request_hash: z.string(),
-  iat: z.number().int(),
-  exp: z.number().int(),
-});
+const getControlPlaneClaimsSchema = defineSchema((v) =>
+  v.object({
+    iss: v.string(),
+    aud: v.string(),
+    sub: v.string(),
+    surface: getControlPlaneSurfaceSchema(),
+    project_id: v.string(),
+    request_hash: v.string(),
+    iat: v.number().int(),
+    exp: v.number().int(),
+  })
+);
+const controlPlaneClaimsSchema = getControlPlaneClaimsSchema();
 
-export type ControlPlaneSurface = z.infer<typeof ControlPlaneSurfaceSchema>;
-export type ControlPlaneAgentsListRequest = z.infer<typeof ControlPlaneAgentsListRequestSchema>;
-export type RuntimeAgentSkill = z.infer<typeof RuntimeAgentSkillSchema>;
-export type RuntimeAgentSuggestion = z.infer<typeof RuntimeAgentSuggestionSchema>;
-export type RuntimeAgentSuggestions = z.infer<typeof RuntimeAgentSuggestionsSchema>;
-export type RuntimeAgent = z.infer<typeof RuntimeAgentSchema>;
-export type RuntimeAgentListResponse = z.infer<typeof RuntimeAgentListResponseSchema>;
-export type DispatchClaims = z.infer<typeof dispatchClaimsSchema>;
-export type ControlPlaneClaims = z.infer<typeof controlPlaneClaimsSchema>;
+export type ControlPlaneSurface = InferSchema<ReturnType<typeof getControlPlaneSurfaceSchema>>;
+export type ControlPlaneAgentsListRequest = InferSchema<
+  ReturnType<typeof getControlPlaneAgentsListRequestSchema>
+>;
+export type RuntimeAgentSkill = InferSchema<ReturnType<typeof getRuntimeAgentSkillSchema>>;
+export type RuntimeAgentSuggestion = InferSchema<
+  ReturnType<typeof getRuntimeAgentSuggestionSchema>
+>;
+export type RuntimeAgentSuggestions = InferSchema<
+  ReturnType<typeof getRuntimeAgentSuggestionsSchema>
+>;
+export type RuntimeAgent = InferSchema<ReturnType<typeof getRuntimeAgentSchema>>;
+export type RuntimeAgentListResponse = InferSchema<
+  ReturnType<typeof getRuntimeAgentListResponseSchema>
+>;
+export type DispatchClaims = InferSchema<ReturnType<typeof getDispatchClaimsSchema>>;
+export type ControlPlaneClaims = InferSchema<ReturnType<typeof getControlPlaneClaimsSchema>>;
 
 export interface RuntimeAgentDiscoveryDeps {
   ensureProjectDiscovery: (ctx: HandlerContext) => Promise<void>;
@@ -166,7 +205,7 @@ async function verifySignedRequestJws<TClaims extends SignedRequestClaims>(
   body: string,
   options: {
     audience: string;
-    claimsSchema: z.ZodType<TClaims>;
+    claimsSchema: Schema<TClaims>;
     expectedProjectId?: string;
     expectedSubject?: string;
     hashClaimKey: keyof TClaims & string;

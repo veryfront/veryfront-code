@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatFileSize, isFile, searchFiles } from "../../lib/dropbox-client.ts";
 
 export default tool({
   id: "search-files",
   description:
     "Search for files and folders in Dropbox by name or content. Returns matching items with their paths and metadata.",
-  inputSchema: z.object({
-    query: z.string().describe("Search query to find files or folders"),
-    path: z.string().optional().describe("Optional path to limit search to a specific folder"),
-    maxResults: z.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
-    fileCategories: z
+  inputSchema: defineSchema((v) => v.object({
+    query: v.string().describe("Search query to find files or folders"),
+    path: v.string().optional().describe("Optional path to limit search to a specific folder"),
+    maxResults: v.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
+    fileCategories: v
       .array(
-        z.enum([
+        v.enum([
           "image",
           "document",
           "pdf",
@@ -27,7 +27,7 @@ export default tool({
       )
       .optional()
       .describe("Filter by file categories"),
-  }),
+  }))(),
   async execute({ query, path, maxResults, fileCategories }) {
     const result = await searchFiles(query, { path, maxResults, fileCategories });
 

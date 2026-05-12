@@ -1,20 +1,20 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatFileSize, isFile, isFolder, searchFiles } from "../../lib/onedrive-client.ts";
 
 export default tool({
   id: "search-files",
   description:
     "Search for files and folders in OneDrive by name or content. Returns matching items with their paths and metadata.",
-  inputSchema: z.object({
-    query: z.string().describe("Search query to find files or folders"),
-    maxResults: z
+  inputSchema: defineSchema((v) => v.object({
+    query: v.string().describe("Search query to find files or folders"),
+    maxResults: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of results to return"),
-  }),
+  }))(),
   async execute({ query, maxResults }) {
     const result = await searchFiles(query, { top: maxResults });
 

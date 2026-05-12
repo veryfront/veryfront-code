@@ -6,7 +6,7 @@ Build AI-powered features with Veryfront's native AI tool system.
 
 Veryfront provides first-class support for AI tools - functions that AI agents can call to perform actions. Tools are:
 
-- **Typed** - Full TypeScript support with Zod schemas
+- **Typed** - Full TypeScript support with defineSchema validation
 - **Composable** - Build complex workflows from simple tools
 - **Observable** - Built-in tracing and logging
 - **Testable** - Easy to unit test in isolation
@@ -17,21 +17,25 @@ Veryfront provides first-class support for AI tools - functions that AI agents c
 
 ```ts
 // ai/tools/search-products.ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 
 export const name = "search-products";
 
 export const description = "Search for products by name, category, or price range";
 
-export const parameters = z.object({
-  query: z.string().describe("Search query"),
-  category: z.string().optional().describe("Filter by category"),
-  minPrice: z.number().optional().describe("Minimum price"),
-  maxPrice: z.number().optional().describe("Maximum price"),
-  limit: z.number().default(10).describe("Maximum results to return"),
-});
+export const getParameters = defineSchema((v) =>
+  v.object({
+    query: v.string().describe("Search query"),
+    category: v.string().optional().describe("Filter by category"),
+    minPrice: v.number().optional().describe("Minimum price"),
+    maxPrice: v.number().optional().describe("Maximum price"),
+    limit: v.number().default(10).describe("Maximum results to return"),
+  })
+);
+export const parameters = getParameters();
 
-export type Input = z.infer<typeof parameters>;
+export type Input = InferSchema<ReturnType<typeof getParameters>>;
 
 export interface Product {
   id: string;
@@ -100,16 +104,18 @@ export const description = "Send an email to a recipient with subject and body";
 
 ### parameters
 
-Zod schema defining the input. Each field should have a `.describe()`.
+Schema defining the input via `defineSchema`. Each field should have a `.describe()`.
 
 ```ts
-export const parameters = z.object({
-  to: z.string().email().describe("Recipient email address"),
-  subject: z.string().max(200).describe("Email subject line"),
-  body: z.string().describe("Email body in plain text or HTML"),
-  priority: z.enum(["low", "normal", "high"]).default("normal")
-    .describe("Email priority level"),
-});
+export const parameters = defineSchema((v) =>
+  v.object({
+    to: v.string().email().describe("Recipient email address"),
+    subject: v.string().max(200).describe("Email subject line"),
+    body: v.string().describe("Email body in plain text or HTML"),
+    priority: v.enum(["low", "normal", "high"]).default("normal")
+      .describe("Email priority level"),
+  })
+)();
 ```
 
 **Guidelines:**
@@ -218,9 +224,11 @@ Read-only operations that fetch data.
 export const name = "get-user";
 export const description = "Retrieve user details by ID";
 
-export const parameters = z.object({
-  userId: z.string().describe("User ID to look up"),
-});
+export const parameters = defineSchema((v) =>
+  v.object({
+    userId: v.string().describe("User ID to look up"),
+  })
+)();
 
 export async function execute({ userId }) {
   return await db.users.findById(userId);
@@ -236,12 +244,14 @@ Operations that create, update, or delete data.
 export const name = "update-order-status";
 export const description = "Update the status of an order";
 
-export const parameters = z.object({
-  orderId: z.string().describe("Order ID"),
-  status: z.enum(["pending", "processing", "shipped", "delivered", "cancelled"])
-    .describe("New order status"),
-  note: z.string().optional().describe("Optional note about the status change"),
-});
+export const parameters = defineSchema((v) =>
+  v.object({
+    orderId: v.string().describe("Order ID"),
+    status: v.enum(["pending", "processing", "shipped", "delivered", "cancelled"])
+      .describe("New order status"),
+    note: v.string().optional().describe("Optional note about the status change"),
+  })
+)();
 
 export async function execute({ orderId, status, note }) {
   const order = await db.orders.update(orderId, { status, note });
@@ -259,11 +269,13 @@ Tools that interact with external services.
 export const name = "send-slack-message";
 export const description = "Send a message to a Slack channel";
 
-export const parameters = z.object({
-  channel: z.string().describe("Slack channel name or ID"),
-  message: z.string().describe("Message content"),
-  threadTs: z.string().optional().describe("Thread timestamp to reply to"),
-});
+export const parameters = defineSchema((v) =>
+  v.object({
+    channel: v.string().describe("Slack channel name or ID"),
+    message: v.string().describe("Message content"),
+    threadTs: v.string().optional().describe("Thread timestamp to reply to"),
+  })
+)();
 
 export async function execute({ channel, message, threadTs }) {
   const result = await slack.chat.postMessage({
@@ -289,12 +301,14 @@ Tools that perform calculations or transformations.
 export const name = "calculate-shipping";
 export const description = "Calculate shipping cost based on destination and weight";
 
-export const parameters = z.object({
-  origin: z.string().describe("Origin zip code"),
-  destination: z.string().describe("Destination zip code"),
-  weightKg: z.number().positive().describe("Package weight in kilograms"),
-  service: z.enum(["standard", "express", "overnight"]).describe("Shipping service"),
-});
+export const parameters = defineSchema((v) =>
+  v.object({
+    origin: v.string().describe("Origin zip code"),
+    destination: v.string().describe("Destination zip code"),
+    weightKg: v.number().positive().describe("Package weight in kilograms"),
+    service: v.enum(["standard", "express", "overnight"]).describe("Shipping service"),
+  })
+)();
 
 export async function execute(input) {
   const rate = await shippingProvider.getRate(input);
@@ -354,11 +368,13 @@ Create higher-level tools that orchestrate multiple operations:
 export const name = "onboard-customer";
 export const description = "Complete customer onboarding process";
 
-export const parameters = z.object({
-  email: z.string().email(),
-  name: z.string(),
-  plan: z.enum(["free", "pro", "enterprise"]),
-});
+export const parameters = defineSchema((v) =>
+  v.object({
+    email: v.string().email(),
+    name: v.string(),
+    plan: v.enum(["free", "pro", "enterprise"]),
+  })
+)();
 
 export async function execute(input) {
   // 1. Create account
@@ -459,7 +475,7 @@ describe("create-order integration", () => {
 3. **Structured Returns** - Return data, not formatted text
 4. **Graceful Errors** - Throw descriptive errors, handle edge cases
 5. **Idempotency** - Mutation tools should be safe to retry
-6. **Validation** - Validate all inputs with Zod
+6. **Validation** - Validate all inputs with defineSchema
 7. **Testing** - Unit test logic, integration test side effects
 8. **Documentation** - Document complex tools with examples
 

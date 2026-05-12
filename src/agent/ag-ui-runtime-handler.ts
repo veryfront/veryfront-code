@@ -1,4 +1,3 @@
-import { z } from "zod";
 import { isResponseLike } from "./response-like.ts";
 import {
   AgentRuntime,
@@ -482,11 +481,16 @@ export function createAgUiRuntimeHandler(
 
       throw new Error("createAgUiRuntimeHandler configuration became invalid during execution.");
     } catch (error) {
-      if (error instanceof z.ZodError) {
+      if (
+        error instanceof Error &&
+        "issues" in error &&
+        Array.isArray((error as Record<string, unknown>).issues)
+      ) {
+        const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
         return Response.json(
           {
             error: "Invalid AG-UI runtime request",
-            details: error.issues.map((issue) => ({
+            details: issues.map((issue) => ({
               path: issue.path,
               message: issue.message,
             })),

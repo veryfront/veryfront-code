@@ -1,30 +1,30 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listAccounts } from "../../lib/salesforce-client.ts";
 
 export default tool({
   id: "list-accounts",
   description:
     "List accounts from your Salesforce CRM. Returns account information including name, type, industry, website, and billing details.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(10)
       .describe("Maximum number of accounts to return"),
-    offset: z
+    offset: v
       .number()
       .min(0)
       .default(0)
       .describe("Number of records to skip for pagination"),
-    fields: z
-      .array(z.string())
+    fields: v
+      .array(v.string())
       .optional()
       .describe(
         "Additional fields to retrieve (e.g., Description, Owner.Name, ParentId)",
       ),
-  }),
+  }))(),
   async execute({ limit, offset, fields }) {
     const response = await listAccounts({ limit, offset, fields });
 

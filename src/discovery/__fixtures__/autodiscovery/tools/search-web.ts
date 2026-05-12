@@ -4,14 +4,16 @@
  */
 
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 export default tool({
   description: "Search the web for information",
-  inputSchema: z.object({
-    query: z.string().describe("The search query"),
-    maxResults: z.number().default(10).describe("Maximum number of results"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v.string().describe("The search query"),
+      maxResults: v.number().default(10).describe("Maximum number of results"),
+    })
+  )(),
   execute: async ({ query, maxResults }) => {
     // Mock search results
     return {

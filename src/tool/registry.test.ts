@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "./factory.ts";
 import { toolRegistry, toolToProviderDefinition } from "./registry.ts";
 import type { Tool } from "./types.ts";
@@ -15,7 +15,7 @@ describe("tool registry", () => {
     const registeredTool = tool({
       id: "registered-tool",
       description: "desc",
-      inputSchema: z.object({ query: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
       execute: async () => null,
     });
 
@@ -35,7 +35,7 @@ describe("tool registry", () => {
       id: "runtime-tool",
       type: "function",
       description: "desc",
-      inputSchema: z.object({ enabled: z.boolean() }),
+      inputSchema: defineSchema((v) => v.object({ enabled: v.boolean() }))(),
       execute: async () => null,
     };
 
@@ -56,7 +56,7 @@ describe("tool registry", () => {
       tool({
         id: "first-tool",
         description: "first",
-        inputSchema: z.object({}),
+        inputSchema: defineSchema((v) => v.object({}))(),
         execute: async () => null,
       }),
     );
@@ -65,7 +65,7 @@ describe("tool registry", () => {
       tool({
         id: "second-tool",
         description: "second",
-        inputSchema: z.object({ value: z.number() }),
+        inputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
         execute: async () => null,
       }),
     );

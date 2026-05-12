@@ -1,5 +1,9 @@
-import { z } from "zod";
-type SafeParseResult<T> = { success: true; data: T } | { success: false; error: z.ZodError };
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
+type SafeParseResult<T> = { success: true; data: T } | {
+  success: false;
+  error: Error & { issues: unknown[] };
+};
 import { createFileSystem } from "veryfront/platform";
 import { dirname, normalize } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -13,44 +17,60 @@ const MAIN_SOURCE = { type: "main" } as const;
 
 type RemoteFileEntry = Awaited<ReturnType<typeof listAllFiles>>[number];
 
-const FilesListArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  path: z.string().optional(),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+const getFilesListArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    path: v.string().optional(),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
 
-const FilesGetArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  remotePath: z.string().min(1),
-  output: z.string().optional(),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+const FilesListArgsSchema = getFilesListArgsSchema();
 
-const FilesPutArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  remotePath: z.string().min(1),
-  from: z.string().min(1),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+const getFilesGetArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    remotePath: v.string().min(1),
+    output: v.string().optional(),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
 
-const FilesDeleteArgsSchema = z.object({
-  projectSlug: z.string().optional(),
-  projectDir: z.string().optional(),
-  remotePath: z.string().min(1),
-  json: z.boolean().default(false),
-  quiet: z.boolean().default(false),
-});
+const FilesGetArgsSchema = getFilesGetArgsSchema();
 
-export type FilesListOptions = z.infer<typeof FilesListArgsSchema>;
-export type FilesGetOptions = z.infer<typeof FilesGetArgsSchema>;
-export type FilesPutOptions = z.infer<typeof FilesPutArgsSchema>;
-export type FilesDeleteOptions = z.infer<typeof FilesDeleteArgsSchema>;
+const getFilesPutArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    remotePath: v.string().min(1),
+    from: v.string().min(1),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
+
+const FilesPutArgsSchema = getFilesPutArgsSchema();
+
+const getFilesDeleteArgsSchema = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().optional(),
+    projectDir: v.string().optional(),
+    remotePath: v.string().min(1),
+    json: v.boolean().default(false),
+    quiet: v.boolean().default(false),
+  })
+);
+
+const FilesDeleteArgsSchema = getFilesDeleteArgsSchema();
+
+export type FilesListOptions = InferSchema<ReturnType<typeof getFilesListArgsSchema>>;
+export type FilesGetOptions = InferSchema<ReturnType<typeof getFilesGetArgsSchema>>;
+export type FilesPutOptions = InferSchema<ReturnType<typeof getFilesPutArgsSchema>>;
+export type FilesDeleteOptions = InferSchema<ReturnType<typeof getFilesDeleteArgsSchema>>;
 
 function getBooleanArg(args: ParsedArgs, ...keys: string[]): boolean {
   return keys.some((key) => Boolean(args[key]));
@@ -95,7 +115,7 @@ export function parseFilesListArgs(
     path: getStringArg(args, "path"),
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<FilesListOptions>;
 }
 
 export function parseFilesGetArgs(
@@ -108,7 +128,7 @@ export function parseFilesGetArgs(
     output: getStringArg(args, "output", "o"),
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<FilesGetOptions>;
 }
 
 export function parseFilesPutArgs(
@@ -121,7 +141,7 @@ export function parseFilesPutArgs(
     from: getStringArg(args, "from") ?? "",
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<FilesPutOptions>;
 }
 
 export function parseFilesDeleteArgs(
@@ -133,7 +153,7 @@ export function parseFilesDeleteArgs(
     remotePath: typeof args._[2] === "string" ? args._[2] : "",
     json: getBooleanArg(args, "json", "j"),
     quiet: getBooleanArg(args, "quiet", "q"),
-  });
+  }) as SafeParseResult<FilesDeleteOptions>;
 }
 
 export function buildRemoteFileUrl(projectSlug: string, remotePath: string): string {

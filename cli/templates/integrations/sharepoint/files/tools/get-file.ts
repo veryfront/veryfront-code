@@ -1,28 +1,28 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { downloadFileAsText, getFile } from "../../lib/sharepoint-client.ts";
 
 export default tool({
   id: "get-file",
   description:
     "Get detailed metadata and optionally download content of a file from SharePoint. Can retrieve text content for text-based files.",
-  inputSchema: z.object({
-    siteId: z.string().describe("The ID of the SharePoint site"),
-    driveId: z.string().describe("The ID of the document library (drive)"),
-    itemId: z.string().describe("The ID of the file to retrieve"),
-    includeContent: z
+  inputSchema: defineSchema((v) => v.object({
+    siteId: v.string().describe("The ID of the SharePoint site"),
+    driveId: v.string().describe("The ID of the document library (drive)"),
+    itemId: v.string().describe("The ID of the file to retrieve"),
+    includeContent: v
       .boolean()
       .default(false)
       .describe(
         "Whether to download and include the file content (only works for text-based files)",
       ),
-    contentMaxLength: z
+    contentMaxLength: v
       .number()
       .min(100)
       .max(100000)
       .default(50000)
       .describe("Maximum length of content to return if includeContent is true"),
-  }),
+  }))(),
   async execute({ siteId, driveId, itemId, includeContent, contentMaxLength }) {
     const file = await getFile(siteId, driveId, itemId);
 

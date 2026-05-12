@@ -1,6 +1,7 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { resource } from "./factory.ts";
 import { resourceRegistry } from "./registry.ts";
 
@@ -18,7 +19,7 @@ describe("resource registry", () => {
       const userPosts = resource({
         pattern: "/users/:userId/posts/:postId",
         description: "User post",
-        paramsSchema: z.object({ userId: z.string(), postId: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string(), postId: v.string() }))(),
         load: async () => ({}),
       });
 
@@ -31,7 +32,7 @@ describe("resource registry", () => {
       const userPosts = resource({
         pattern: "/users/:userId/posts/:postId",
         description: "User post",
-        paramsSchema: z.object({ userId: z.string(), postId: z.string() }),
+        paramsSchema: defineSchema((v) => v.object({ userId: v.string(), postId: v.string() }))(),
         load: async () => ({}),
       });
 
@@ -62,13 +63,13 @@ describe("resource registry", () => {
       const alpha = resource({
         pattern: "/alpha",
         description: "Alpha",
-        paramsSchema: z.object({}),
+        paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
       const beta = resource({
         pattern: "/beta",
         description: "Beta",
-        paramsSchema: z.object({}),
+        paramsSchema: defineSchema((v) => v.object({}))(),
         load: async () => ({}),
       });
 

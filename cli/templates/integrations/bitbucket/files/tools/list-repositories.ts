@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
 
 type BitbucketRepo = {
@@ -18,18 +18,18 @@ type BitbucketRepo = {
 export default tool({
   id: "list-repositories",
   description: "List Bitbucket repositories for the authenticated user",
-  inputSchema: z.object({
-    role: z
+  inputSchema: defineSchema((v) => v.object({
+    role: v
       .enum(["owner", "contributor", "member"])
       .optional()
       .describe("Filter repositories by role"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of repositories to return"),
-  }),
+  }))(),
   execute: async ({ role, limit }, context) => {
     const userId = context?.userId ?? "current-user";
 

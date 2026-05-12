@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
 
 type CalendarEvent = {
@@ -17,16 +17,16 @@ type CalendarEvent = {
 export default tool({
   id: "list-events",
   description: "List upcoming calendar events. By default shows events from now onwards.",
-  inputSchema: z.object({
-    maxResults: z
+  inputSchema: defineSchema((v) => v.object({
+    maxResults: v
       .number()
       .min(1)
       .max(100)
       .default(10)
       .describe("Maximum number of events to return"),
-    daysAhead: z.number().min(1).max(30).default(7).describe("Number of days to look ahead"),
-    todayOnly: z.boolean().default(false).describe("Only show events for today"),
-  }),
+    daysAhead: v.number().min(1).max(30).default(7).describe("Number of days to look ahead"),
+    todayOnly: v.boolean().default(false).describe("Only show events for today"),
+  }))(),
   execute: async ({ maxResults, daysAhead, todayOnly }, context) => {
     const userId = context?.userId ?? "current-user";
 

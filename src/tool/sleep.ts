@@ -3,7 +3,7 @@ import type {
   InferSchema,
   Schema,
   SchemaValidator,
-} from "#veryfront/extensions/interfaces/index.ts";
+} from "#veryfront/extensions/schema/index.ts";
 import { tool } from "./factory.ts";
 import type { Tool } from "./types.ts";
 

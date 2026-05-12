@@ -1,26 +1,26 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { deleteRow, deleteRows } from "../../lib/supabase-client.ts";
 
 export default tool({
   id: "delete-row",
   description:
     "Delete rows from a Supabase table. Can delete by ID or by custom filter conditions. Returns the deleted rows.",
-  inputSchema: z.object({
-    tableName: z.string().describe("The name of the table to delete from"),
-    id: z
-      .union([z.string(), z.number()])
+  inputSchema: defineSchema((v) => v.object({
+    tableName: v.string().describe("The name of the table to delete from"),
+    id: v
+      .union([v.string(), v.number()])
       .optional()
       .describe("The ID of the row to delete (if deleting a single row by ID)"),
-    filter: z
-      .record(z.unknown())
+    filter: v
+      .record(v.unknown())
       .optional()
       .describe('Filter conditions to match rows to delete (e.g., {"status": "archived"})'),
-    confirm: z
+    confirm: v
       .boolean()
       .default(false)
       .describe("Confirm deletion (must be true to proceed with delete operation)"),
-  }),
+  }))(),
   async execute({ tableName, id, filter, confirm }) {
     if (!confirm) {
       return {

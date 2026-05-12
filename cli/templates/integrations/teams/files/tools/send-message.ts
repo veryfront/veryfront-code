@@ -1,35 +1,35 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { sendChannelMessage, sendChatMessage } from "../../lib/teams-client.ts";
 
 export default tool({
   id: "send-message",
   description:
     "Send a message to a Microsoft Teams chat or channel. For chats, use the chatId. For channels, use both teamId and channelId.",
-  inputSchema: z
+  inputSchema: defineSchema((v) => v
     .object({
-      chatId: z
+      chatId: v
         .string()
         .optional()
         .describe("The ID of the chat to send the message to (use this for direct/group chats)"),
-      teamId: z
+      teamId: v
         .string()
         .optional()
         .describe("The ID of the team (use with channelId for channel messages)"),
-      channelId: z
+      channelId: v
         .string()
         .optional()
         .describe("The ID of the channel (use with teamId for channel messages)"),
-      content: z.string().min(1).describe("The message content to send"),
-      contentType: z.enum(["text", "html"]).default("text").describe("Content format: text or html"),
-      subject: z.string().optional().describe("Subject line (only for channel messages)"),
+      content: v.string().min(1).describe("The message content to send"),
+      contentType: v.enum(["text", "html"]).default("text").describe("Content format: text or html"),
+      subject: v.string().optional().describe("Subject line (only for channel messages)"),
     })
     .refine(
       (data) =>
         (data.chatId && !data.teamId && !data.channelId) ||
         (!data.chatId && data.teamId && data.channelId),
       { message: "Either provide chatId OR both teamId and channelId" },
-    ),
+    ))(),
   async execute({ chatId, teamId, channelId, content, contentType, subject }) {
     if (chatId) {
       const message = await sendChatMessage(chatId, content, contentType);

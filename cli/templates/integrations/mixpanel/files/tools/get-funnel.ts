@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { calculateFunnelConversionRate, getFunnel } from "../../lib/mixpanel-client.ts";
 
 export default tool({
   id: "get-funnel",
   description:
     "Retrieve funnel analysis data from Mixpanel. Analyze conversion rates and user drop-off at each step of a funnel.",
-  inputSchema: z.object({
-    funnelId: z
+  inputSchema: defineSchema((v) => v.object({
+    funnelId: v
       .number()
       .describe("The numeric ID of the funnel (found in Mixpanel funnel URL or settings)"),
-    from: z.string().describe("Start date in YYYY-MM-DD format (e.g., '2024-01-01')"),
-    to: z.string().describe("End date in YYYY-MM-DD format (e.g., '2024-01-31')"),
-  }),
+    from: v.string().describe("Start date in YYYY-MM-DD format (e.g., '2024-01-01')"),
+    to: v.string().describe("End date in YYYY-MM-DD format (e.g., '2024-01-31')"),
+  }))(),
   async execute({ funnelId, from, to }) {
     const funnel = await getFunnel(funnelId, from, to);
     const overallConversionRate = calculateFunnelConversionRate(funnel);

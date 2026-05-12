@@ -6,7 +6,7 @@
  * @module veryfront/resource
  */
 
-import type { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
 // Re-export schema-based types
 export type { CachePolicy, McpConfig } from "./schemas/index.ts";
@@ -18,7 +18,7 @@ export interface ResourceConfig<TParams = unknown, TData = unknown> {
   pattern?: string;
   description: string;
   title?: string;
-  paramsSchema: z.ZodSchema<TParams>;
+  paramsSchema: Schema<TParams>;
   load: (params: TParams) => Promise<TData> | TData;
   subscribe?: (params: TParams) => AsyncIterable<TData>;
   mcp?: McpConfig;
@@ -29,7 +29,7 @@ export interface Resource<TParams = unknown, TData = unknown> {
   pattern: string;
   description: string;
   title?: string;
-  paramsSchema: z.ZodSchema<TParams>;
+  paramsSchema: Schema<TParams>;
   load: (params: TParams) => Promise<TData>;
   subscribe?: (params: TParams) => AsyncIterable<TData>;
   mcp?: McpConfig;

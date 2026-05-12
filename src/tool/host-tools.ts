@@ -1,5 +1,5 @@
 import { dynamicTool, tool } from "./factory.ts";
-import type { JsonSchema, Schema } from "#veryfront/extensions/interfaces/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool, ToolConfig, ToolExecutionContext, ToolSet } from "./types.ts";
 
 type HostToolExecute = {

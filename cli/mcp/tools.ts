@@ -2,7 +2,8 @@
  * MCP Tools for Veryfront Dev Server
  **************************/
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import {
   type DevError,
   type ErrorType,
@@ -34,19 +35,22 @@ export function setServerStartTime(time: number): void {
   serverStartTime = time;
 }
 
-const getErrorsInput = z.object({
-  type: z.enum(["compile", "runtime", "bundle", "hmr", "module"]).optional().describe(
-    "Filter by error type. Example: 'compile'. Omit to return all types.",
-  ),
-  file: z.string().optional().describe(
-    "Filter by file path. Example: 'app/page.tsx'. Omit to return errors from all files.",
-  ),
-  limit: z.number().optional().default(50).describe(
-    "Maximum number of errors to return. Defaults to 50.",
-  ),
-});
+const getGetErrorsInput = defineSchema((v) =>
+  v.object({
+    type: v.enum(["compile", "runtime", "bundle", "hmr", "module"]).optional().describe(
+      "Filter by error type. Example: 'compile'. Omit to return all types.",
+    ),
+    file: v.string().optional().describe(
+      "Filter by file path. Example: 'app/page.tsx'. Omit to return errors from all files.",
+    ),
+    limit: v.number().optional().default(50).describe(
+      "Maximum number of errors to return. Defaults to 50.",
+    ),
+  })
+);
+const getErrorsInput = getGetErrorsInput();
 
-type GetErrorsInput = z.infer<typeof getErrorsInput>;
+type GetErrorsInput = InferSchema<ReturnType<typeof getGetErrorsInput>>;
 
 export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
   name: "vf_get_errors",
@@ -66,25 +70,28 @@ export const vfGetErrors: MCPTool<GetErrorsInput, DevError[]> = {
   },
 };
 
-const getLogsInput = z.object({
-  level: z.enum(["debug", "info", "warn", "error"]).optional().describe(
-    "Filter by log level. Example: 'error'. Omit to return all levels.",
-  ),
-  source: z.string().optional().describe(
-    "Filter by log source. Example: 'server', 'hmr', 'transform'. Omit to return all sources.",
-  ),
-  pattern: z.string().optional().describe(
-    "Filter by pattern (case-insensitive substring match). Example: 'timeout'.",
-  ),
-  limit: z.number().optional().default(100).describe(
-    "Maximum number of log entries to return. Defaults to 100.",
-  ),
-  since: z.number().optional().describe(
-    "Only return logs after this Unix timestamp in milliseconds.",
-  ),
-});
+const getGetLogsInput = defineSchema((v) =>
+  v.object({
+    level: v.enum(["debug", "info", "warn", "error"]).optional().describe(
+      "Filter by log level. Example: 'error'. Omit to return all levels.",
+    ),
+    source: v.string().optional().describe(
+      "Filter by log source. Example: 'server', 'hmr', 'transform'. Omit to return all sources.",
+    ),
+    pattern: v.string().optional().describe(
+      "Filter by pattern (case-insensitive substring match). Example: 'timeout'.",
+    ),
+    limit: v.number().optional().default(100).describe(
+      "Maximum number of log entries to return. Defaults to 100.",
+    ),
+    since: v.number().optional().describe(
+      "Only return logs after this Unix timestamp in milliseconds.",
+    ),
+  })
+);
+const getLogsInput = getGetLogsInput();
 
-type GetLogsInput = z.infer<typeof getLogsInput>;
+type GetLogsInput = InferSchema<ReturnType<typeof getGetLogsInput>>;
 
 export const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]> = {
   name: "vf_get_logs",
@@ -104,13 +111,16 @@ export const vfGetLogs: MCPTool<GetLogsInput, LogEntry[]> = {
   },
 };
 
-const clearCacheInput = z.object({
-  type: z.enum(["all", "modules", "mdx"]).optional().default("all").describe(
-    "Type of cache to clear. Example: 'modules'. Defaults to 'all'.",
-  ),
-});
+const getClearCacheInput = defineSchema((v) =>
+  v.object({
+    type: v.enum(["all", "modules", "mdx"]).optional().default("all").describe(
+      "Type of cache to clear. Example: 'modules'. Defaults to 'all'.",
+    ),
+  })
+);
+const clearCacheInput = getClearCacheInput();
 
-type ClearCacheInput = z.infer<typeof clearCacheInput>;
+type ClearCacheInput = InferSchema<ReturnType<typeof getClearCacheInput>>;
 
 interface ClearCacheOutput {
   success: boolean;
@@ -148,9 +158,10 @@ export const vfClearCache: MCPTool<ClearCacheInput, ClearCacheOutput> = {
   },
 };
 
-const getStatusInput = z.object({});
+const getGetStatusInput = defineSchema((v) => v.object({}));
+const getStatusInput = getGetStatusInput();
 
-type GetStatusInput = z.infer<typeof getStatusInput>;
+type GetStatusInput = InferSchema<ReturnType<typeof getGetStatusInput>>;
 
 interface ServerStatus {
   running: boolean;
@@ -193,16 +204,19 @@ export function createVfGetStatus(
 
 export const vfGetStatus = createVfGetStatus();
 
-const clearErrorsInput = z.object({
-  file: z.string().optional().describe(
-    "Clear errors for a specific file only. Example: 'app/page.tsx'. Omit to clear all files.",
-  ),
-  type: z.enum(["compile", "runtime", "bundle", "hmr", "module"]).optional().describe(
-    "Clear errors of a specific type only. Example: 'compile'. Omit to clear all types.",
-  ),
-});
+const getClearErrorsInput = defineSchema((v) =>
+  v.object({
+    file: v.string().optional().describe(
+      "Clear errors for a specific file only. Example: 'app/page.tsx'. Omit to clear all files.",
+    ),
+    type: v.enum(["compile", "runtime", "bundle", "hmr", "module"]).optional().describe(
+      "Clear errors of a specific type only. Example: 'compile'. Omit to clear all types.",
+    ),
+  })
+);
+const clearErrorsInput = getClearErrorsInput();
 
-type ClearErrorsInput = z.infer<typeof clearErrorsInput>;
+type ClearErrorsInput = InferSchema<ReturnType<typeof getClearErrorsInput>>;
 
 interface ClearErrorsOutput {
   cleared: number;

@@ -11,7 +11,7 @@ import {
   type RetryConfig,
 } from "#veryfront/platform/adapters/veryfront-api-client/retry-handler.ts";
 import { API_CLIENT_ERROR } from "#veryfront/platform/adapters/veryfront-api-client/types.ts";
-import { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   type CronJob,
   CronJobSchema,
@@ -474,15 +474,15 @@ export class VeryfrontJobsClient {
     });
   }
 
-  private async requestProjectJson<TSchema extends z.ZodTypeAny>(
+  private async requestProjectJson<T>(
     projectReference: string | undefined,
     path: string,
-    schema: TSchema,
+    schema: Schema<T>,
     options: {
       method?: "GET" | "POST" | "PATCH" | "DELETE";
       body?: Record<string, unknown>;
     } = {},
-  ): Promise<z.infer<TSchema>> {
+  ): Promise<T> {
     const resolvedProjectReference = this.resolveProjectReference(projectReference);
     const raw = await requestWithRetry(
       `${this.resolveApiUrl()}/projects/${encodeURIComponent(resolvedProjectReference)}${path}`,

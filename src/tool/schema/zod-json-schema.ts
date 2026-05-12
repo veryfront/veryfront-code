@@ -17,7 +17,7 @@
  * @module tool/schema/zod-json-schema
  */
 
-import type { JsonSchema, Schema } from "#veryfront/extensions/interfaces/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   isOptionalSchema as schemaIsOptional,
   schemaToJsonSchema,

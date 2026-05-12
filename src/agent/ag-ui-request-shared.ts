@@ -1,5 +1,19 @@
-import { z } from "zod";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
+
+/**
+ * Detects a validation error thrown by a `Schema.parse()` call. Works with
+ * both the contract-DSL adapter (ext-zod wraps `ZodError` and sets `issues`)
+ * and raw zod errors.
+ */
+function isSchemaValidationError(
+  error: unknown,
+): error is Error & { issues: ReadonlyArray<{ path: (string | number)[]; message: string }> } {
+  return (
+    error instanceof Error &&
+    "issues" in error &&
+    Array.isArray((error as Record<string, unknown>).issues)
+  );
+}
 
 export function isRequest(value: unknown): value is Request {
   return (
@@ -34,7 +48,7 @@ export async function parseAgUiJsonRequestOrError<T>(
   try {
     return await parseRequest();
   } catch (error) {
-    if (error instanceof z.ZodError) {
+    if (isSchemaValidationError(error)) {
       return Response.json(
         {
           error: errorLabel,

@@ -84,10 +84,8 @@ function wrap<T>(zs: AnyZodSchema): Schema<T> {
       );
     },
     merge: <U>(other: Schema<U>) => wrap<T & U>(anyZs.merge(toZod(other))),
-    omit: <K extends keyof T>(keys: { [P in K]?: true }) =>
-      wrap<Omit<T, K>>(anyZs.omit(keys)),
-    pick: <K extends keyof T>(keys: { [P in K]?: true }) =>
-      wrap<Pick<T, K>>(anyZs.pick(keys)),
+    omit: <K extends keyof T>(keys: { [P in K]?: true }) => wrap<Omit<T, K>>(anyZs.omit(keys)),
+    pick: <K extends keyof T>(keys: { [P in K]?: true }) => wrap<Pick<T, K>>(anyZs.pick(keys)),
     min: (value: number, message?: string) => wrap<T>(anyZs.min(value, message)),
     max: (value: number, message?: string) => wrap<T>(anyZs.max(value, message)),
     int: (message?: string) => wrap<T>(anyZs.int(message)),

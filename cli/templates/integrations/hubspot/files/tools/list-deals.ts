@@ -1,15 +1,15 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatDealName, listDeals } from "../../lib/hubspot-client.ts";
 
 export default tool({
   id: "list-deals",
   description:
     "List sales deals from your HubSpot CRM. Returns deal information including name, amount, stage, and close date.",
-  inputSchema: z.object({
-    limit: z.number().min(1).max(100).default(10).describe("Maximum number of deals to return"),
-    properties: z.array(z.string()).optional().describe("Additional properties to retrieve"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    limit: v.number().min(1).max(100).default(10).describe("Maximum number of deals to return"),
+    properties: v.array(v.string()).optional().describe("Additional properties to retrieve"),
+  }))(),
   async execute({ limit, properties }) {
     const response = await listDeals({ limit, properties });
 

@@ -23,7 +23,7 @@ cli/
 ├── router.ts            # Routes parsed args to commands
 ├── index.ts             # Public exports
 │
-├── shared/              # Types (Zod schemas), constants, config, arg utilities
+├── shared/              # Types (schemas), constants, config, arg utilities
 ├── commands/            # Command implementations (dev, build, deploy, etc.)
 │
 ├── app/                 # TUI dashboard
@@ -66,7 +66,7 @@ Each command lives in `commands/<name>/` with this structure:
 
 ```
 commands/my-command/
-  command.ts       # Zod schema, createArgParser, and implementation
+  command.ts       # Schema (defineSchema), createArgParser, and implementation
   command-help.ts  # Help text definition (CommandHelp object)
   handler.ts       # Thin handler: parse args → validate → call command
   handler.test.ts  # Handler tests
@@ -78,17 +78,21 @@ commands/my-command/
 
 ### Steps
 
-1. **`command.ts`** — Define a Zod schema for args, use `createArgParser` from `shared/args.ts`, implement the command function:
+1. **`command.ts`** — Define a schema for args with `defineSchema`, use `createArgParser` from `shared/args.ts`, implement the command function:
 
    ```typescript
-   import { z } from "zod";
+   import { defineSchema } from "veryfront/schemas";
+   import type { InferSchema } from "veryfront/extensions/schema";
    import { CommonArgs, createArgParser } from "../../shared/args.ts";
 
-   export const MyCommandArgsSchema = z.object({
-     force: z.boolean().default(false),
-   });
+   export const getMyCommandArgsSchema = defineSchema((v) =>
+     v.object({
+       force: v.boolean().default(false),
+     })
+   );
+   export const MyCommandArgsSchema = getMyCommandArgsSchema();
 
-   export type MyCommandOptions = z.infer<typeof MyCommandArgsSchema>;
+   export type MyCommandOptions = InferSchema<ReturnType<typeof getMyCommandArgsSchema>>;
 
    export const parseMyCommandArgs = createArgParser(MyCommandArgsSchema, {
      force: CommonArgs.force,

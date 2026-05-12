@@ -1,31 +1,31 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createFolder, uploadFile } from "../../lib/sharepoint-client.ts";
 
 export default tool({
   id: "upload-file",
   description:
     "Upload a file to a SharePoint document library. Can upload to root or a specific folder.",
-  inputSchema: z.object({
-    siteId: z.string().describe("The ID of the SharePoint site"),
-    driveId: z.string().describe("The ID of the document library (drive) to upload to"),
-    fileName: z.string().describe("The name of the file to create (including extension)"),
-    content: z.string().describe("The content of the file to upload"),
-    folderId: z
+  inputSchema: defineSchema((v) => v.object({
+    siteId: v.string().describe("The ID of the SharePoint site"),
+    driveId: v.string().describe("The ID of the document library (drive) to upload to"),
+    fileName: v.string().describe("The name of the file to create (including extension)"),
+    content: v.string().describe("The content of the file to upload"),
+    folderId: v
       .string()
       .optional()
       .describe("Optional folder ID to upload into. If not provided, uploads to root."),
-    createFolderIfNeeded: z
+    createFolderIfNeeded: v
       .boolean()
       .default(false)
       .describe("If true and folderPath is provided, creates the folder if it does not exist"),
-    folderPath: z
+    folderPath: v
       .string()
       .optional()
       .describe(
         'Optional folder path (e.g., "Documents/Projects") to create if createFolderIfNeeded is true',
       ),
-  }),
+  }))(),
   async execute({
     siteId,
     driveId,

@@ -1,14 +1,14 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { resolveIssue } from "../../lib/sentry-client.ts";
 
 export default tool({
   id: "resolve-issue",
   description:
     "Mark a Sentry issue as resolved. Use this after you've fixed a bug or determined an issue is no longer relevant.",
-  inputSchema: z.object({
-    issueId: z.string().describe("The ID of the issue to resolve"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    issueId: v.string().describe("The ID of the issue to resolve"),
+  }))(),
   async execute({ issueId }) {
     const issue = await resolveIssue(issueId);
 

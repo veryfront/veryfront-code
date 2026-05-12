@@ -1,5 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, Schema } from "#veryfront/extensions/interfaces/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import {
   type AgUiRuntimeContextItem,
   type AgUiRuntimeMessage,

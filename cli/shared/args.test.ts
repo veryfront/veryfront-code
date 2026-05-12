@@ -1,6 +1,9 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { z } from "zod";
+import { register, tryResolve } from "veryfront/extensions/contracts";
+import type { SchemaValidator } from "veryfront/extensions/schema";
+import { createZodAdapter } from "../../extensions/ext-zod/src/adapter.ts";
+import { defineSchema } from "veryfront/schemas";
 import {
   type ArgSpec,
   CommonArgs,
@@ -10,6 +13,10 @@ import {
   parseCliArgs,
 } from "./args.ts";
 import type { ParsedArgs } from "./types.ts";
+
+if (!tryResolve<SchemaValidator>("SchemaValidator")) {
+  register<SchemaValidator>("SchemaValidator", createZodAdapter());
+}
 
 function makeParsedArgs(overrides: Record<string, unknown> = {}): ParsedArgs {
   return { _: [], ...overrides } as ParsedArgs;
@@ -106,10 +113,12 @@ describe("cli/shared/args", () => {
 
   describe("createArgParser", () => {
     it("should create a parser that validates with schema", () => {
-      const schema = z.object({
-        force: z.boolean().default(false),
-        branch: z.string().optional(),
-      });
+      const schema = defineSchema((v) =>
+        v.object({
+          force: v.boolean().default(false),
+          branch: v.string().optional(),
+        })
+      )();
       const argMap = {
         force: { keys: ["force", "f"], type: "boolean" as const },
         branch: { keys: ["branch", "b"], type: "string" as const },
@@ -127,9 +136,11 @@ describe("cli/shared/args", () => {
     });
 
     it("should apply default values from schema", () => {
-      const schema = z.object({
-        force: z.boolean().default(false),
-      });
+      const schema = defineSchema((v) =>
+        v.object({
+          force: v.boolean().default(false),
+        })
+      )();
       const argMap = {
         force: { keys: ["force"], type: "boolean" as const },
       };
@@ -145,9 +156,11 @@ describe("cli/shared/args", () => {
     });
 
     it("should return error for invalid data", () => {
-      const schema = z.object({
-        name: z.string().min(1),
-      });
+      const schema = defineSchema((v) =>
+        v.object({
+          name: v.string().min(1),
+        })
+      )();
       const argMap = {
         name: { keys: ["name"], type: "string" as const },
       };

@@ -1,18 +1,18 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getEmail } from "../../lib/outlook-client.ts";
 
 export default tool({
   id: "get-email",
   description:
     "Get detailed information about a specific email, including full body content, recipients, and metadata.",
-  inputSchema: z.object({
-    messageId: z.string().describe("The ID of the email message to retrieve"),
-    includeBody: z
+  inputSchema: defineSchema((v) => v.object({
+    messageId: v.string().describe("The ID of the email message to retrieve"),
+    includeBody: v
       .boolean()
       .default(true)
       .describe("Include full email body content"),
-  }),
+  }))(),
   async execute({ messageId, includeBody }) {
     const message = await getEmail(messageId);
 

@@ -2,17 +2,21 @@
  * Routes command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { cwd } from "veryfront/platform";
 import { routesCommand } from "./command.ts";
 import { showLogo } from "#cli/utils";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const RoutesArgsSchema = z.object({
-  projectDir: z.string().default(""),
-  json: z.boolean().default(false),
-});
+const getRoutesArgsSchema = defineSchema((v) =>
+  v.object({
+    projectDir: v.string().default(""),
+    json: v.boolean().default(false),
+  })
+);
+
+const RoutesArgsSchema = getRoutesArgsSchema();
 
 export const parseRoutesArgs = createArgParser(RoutesArgsSchema, {
   projectDir: CommonArgs.projectDir,

@@ -1,5 +1,5 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema, SchemaValidator } from "veryfront/extensions/interfaces";
+import type { InferSchema, SchemaValidator } from "veryfront/extensions/schema";
 
 // ---------------------------------------------------------------------------
 // Shape-fragment helpers

@@ -2,13 +2,17 @@
  * MCP command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const MCPArgsSchema = z.object({
-  port: z.number().optional(),
-});
+const getMCPArgsSchema = defineSchema((v) =>
+  v.object({
+    port: v.number().optional(),
+  })
+);
+
+const MCPArgsSchema = getMCPArgsSchema();
 
 export const parseMCPArgs = createArgParser(MCPArgsSchema, {
   port: { keys: ["port"], type: "number" },

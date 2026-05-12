@@ -4,13 +4,15 @@
  */
 
 import { resource } from "veryfront/resource";
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 
 export default resource({
   description: "Get user profile information",
-  paramsSchema: z.object({
-    userId: z.string(),
-  }),
+  paramsSchema: defineSchema((v) =>
+    v.object({
+      userId: v.string(),
+    })
+  )(),
   load: async ({ userId }) => {
     // Mock user data
     return {

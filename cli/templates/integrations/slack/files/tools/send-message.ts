@@ -1,20 +1,20 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createSlackClient } from "../../lib/slack-client.ts";
 
 export default tool({
   id: "send-message",
   description: "Send a message to a Slack channel",
-  inputSchema: z.object({
-    channel: z
+  inputSchema: defineSchema((v) => v.object({
+    channel: v
       .string()
       .describe("Channel ID or name (e.g., 'C1234567890' or '#general')"),
-    text: z.string().min(1).describe("Message text to send"),
-    threadTs: z
+    text: v.string().min(1).describe("Message text to send"),
+    threadTs: v
       .string()
       .optional()
       .describe("Thread timestamp to reply to (for threaded messages)"),
-  }),
+  }))(),
   execute: async ({ channel, text, threadTs }, context) => {
     const userId = context?.userId ?? "current-user";
 

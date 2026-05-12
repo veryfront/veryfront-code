@@ -1,23 +1,23 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatPhoneNumber, sendWhatsApp } from "../../lib/twilio-client.ts";
 
 export default tool({
   id: "send-whatsapp",
   description:
     "Send a WhatsApp message to a phone number using Twilio. Note: Recipients must have opted in to receive messages.",
-  inputSchema: z.object({
-    to: z
+  inputSchema: defineSchema((v) => v.object({
+    to: v
       .string()
       .describe(
         "Recipient phone number in E.164 format (e.g., +14155552671). The 'whatsapp:' prefix is optional.",
       ),
-    body: z.string().min(1).describe("Message text to send"),
-    mediaUrl: z
-      .array(z.string().url())
+    body: v.string().min(1).describe("Message text to send"),
+    mediaUrl: v
+      .array(v.string().url())
       .optional()
       .describe("Optional array of media URLs to send (images, videos, PDFs, etc.)"),
-  }),
+  }))(),
   execute: async ({ to, body, mediaUrl }) => {
     try {
       const formattedPhone = formatPhoneNumber(to);

@@ -725,15 +725,19 @@ async function createToolSkeletons(baseDir: string, config: IntegrationConfig): 
  */
 
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listItems, getItem, searchItems } from "../lib/${config.name}-client.ts";
+
+const getInputSchema = defineSchema((v) =>
+  v.object({
+    ${inputSchema}
+  })
+);
 
 export default tool({
   id: "${tool.id}",
   description: "${tool.description}",
-  inputSchema: z.object({
-    ${inputSchema}
-  }),
+  inputSchema: getInputSchema(),
   execute: async (input) => {
     try {
       ${executeBody}

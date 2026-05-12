@@ -1,19 +1,23 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { serveCommand } from "./command.ts";
 import { ServerModeSchema } from "#cli/shared/types";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const ServeArgsSchema = z.object({
-  mode: ServerModeSchema.default("production"),
-  port: z.number().default(DEFAULT_DEV_SERVER_PORT),
-  hostname: z.string().default("0.0.0.0"),
-  split: z.boolean().default(false),
-  binary: z.boolean().default(false),
-  binaryPath: z.string().default("./bin/veryfront"),
-  debug: z.boolean().default(false),
-});
+const getServeArgsSchema = defineSchema((v) =>
+  v.object({
+    mode: ServerModeSchema.default("production"),
+    port: v.number().default(DEFAULT_DEV_SERVER_PORT),
+    hostname: v.string().default("0.0.0.0"),
+    split: v.boolean().default(false),
+    binary: v.boolean().default(false),
+    binaryPath: v.string().default("./bin/veryfront"),
+    debug: v.boolean().default(false),
+  })
+);
+
+const ServeArgsSchema = getServeArgsSchema();
 
 export const parseServeArgs = createArgParser(ServeArgsSchema, {
   mode: { keys: ["mode", "m"], type: "string" },

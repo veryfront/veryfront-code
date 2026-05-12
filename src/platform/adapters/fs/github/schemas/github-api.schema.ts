@@ -1,7 +1,7 @@
 /** @see https://docs.github.com/en/rest */
 
 import { defineSchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/interfaces/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getGitHubTreeEntrySchema = defineSchema((v) =>
   v.object({

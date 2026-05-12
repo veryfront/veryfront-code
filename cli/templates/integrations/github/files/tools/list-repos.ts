@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGitHubClient } from "../../lib/github-client.ts";
 
 type GitHubRepo = {
@@ -19,22 +19,22 @@ type GitHubRepo = {
 export default tool({
   id: "list-repos",
   description: "List GitHub repositories for the authenticated user",
-  inputSchema: z.object({
-    type: z
+  inputSchema: defineSchema((v) => v.object({
+    type: v
       .enum(["all", "owner", "public", "private", "member"])
       .default("all")
       .describe("Type of repositories to list"),
-    sort: z
+    sort: v
       .enum(["created", "updated", "pushed", "full_name"])
       .default("updated")
       .describe("How to sort the repositories"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(20)
       .describe("Maximum number of repositories to return"),
-  }),
+  }))(),
   execute: async ({ type, sort, limit }, context) => {
     // Default to "current-user" for development; in production, always pass userId from session
     const userId = context?.userId ?? "current-user";

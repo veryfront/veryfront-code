@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { bold, cyan, dim, green, yellow } from "#cli/ui";
 import { join } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
@@ -9,25 +10,29 @@ import { exitProcess, showLogo } from "#cli/utils";
 import type { ParsedArgs } from "#cli/shared/types";
 
 /**
- * Zod schema for build command arguments
+ * Schema factory for build command arguments
  */
-export const BuildArgsSchema = z.object({
-  output: z.string().optional(),
-  preset: z.string().optional(),
-  split: z.boolean().default(true),
-  compress: z.boolean().default(true),
-  prefetch: z.boolean().default(true),
-  ssg: z.boolean().default(true),
-  noSsg: z.boolean().default(false),
-  include: z.array(z.string()).optional(),
-  exclude: z.array(z.string()).optional(),
-  dryRun: z.boolean().default(false),
-});
+export const getBuildArgsSchema = defineSchema((v) =>
+  v.object({
+    output: v.string().optional(),
+    preset: v.string().optional(),
+    split: v.boolean().default(true),
+    compress: v.boolean().default(true),
+    prefetch: v.boolean().default(true),
+    ssg: v.boolean().default(true),
+    noSsg: v.boolean().default(false),
+    include: v.array(v.string()).optional(),
+    exclude: v.array(v.string()).optional(),
+    dryRun: v.boolean().default(false),
+  })
+);
+
+export const BuildArgsSchema = getBuildArgsSchema();
 
 /**
  * Build command options (inferred from schema)
  */
-export type BuildOptions = z.infer<typeof BuildArgsSchema>;
+export type BuildOptions = InferSchema<ReturnType<typeof getBuildArgsSchema>>;
 
 /**
  * Parse CLI arguments into validated BuildOptions

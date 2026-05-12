@@ -1,18 +1,23 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const WorkerArgsSchema = z.object({
-  redisUrl: z.string().default("redis://localhost:6379"),
-  concurrency: z.number().default(3),
-  pollInterval: z.number().default(5000),
-  stalledThreshold: z.number().default(60000),
-  executor: z.enum(["process", "k8s"]).default("process"),
-  entrypoint: z.string().optional(),
-  debug: z.boolean().default(false),
-});
+const getWorkerArgsSchema = defineSchema((v) =>
+  v.object({
+    redisUrl: v.string().default("redis://localhost:6379"),
+    concurrency: v.number().default(3),
+    pollInterval: v.number().default(5000),
+    stalledThreshold: v.number().default(60000),
+    executor: v.enum(["process", "k8s"]).default("process"),
+    entrypoint: v.string().optional(),
+    debug: v.boolean().default(false),
+  })
+);
 
-export type WorkerArgs = z.infer<typeof WorkerArgsSchema>;
+const WorkerArgsSchema = getWorkerArgsSchema();
+
+export type WorkerArgs = InferSchema<ReturnType<typeof getWorkerArgsSchema>>;
 
 export const parseWorkerArgs = createArgParser(WorkerArgsSchema, {
   redisUrl: { keys: ["redis-url", "redis"], type: "string" },

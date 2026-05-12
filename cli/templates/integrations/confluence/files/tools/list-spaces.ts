@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { listSpaces } from "../../lib/confluence-client.ts";
 
 export default tool({
   id: "list-spaces",
   description: "List all accessible Confluence spaces. Returns space keys, names, and links.",
-  inputSchema: z.object({
-    type: z
+  inputSchema: defineSchema((v) => v.object({
+    type: v
       .enum(["global", "personal", "all"])
       .default("all")
       .describe("Type of spaces to list (global, personal, or all)"),
-    limit: z
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(25)
       .describe("Maximum number of spaces to return"),
-  }),
+  }))(),
   async execute({ type, limit }) {
     const spaces = await listSpaces({
       type: type === "all" ? undefined : type,

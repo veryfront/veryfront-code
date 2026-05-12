@@ -2,7 +2,7 @@
  * Generate command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { generateCommand } from "./index.ts";
 import { showLogo } from "#cli/utils";
 import { createArgParser } from "#cli/shared/args";
@@ -11,10 +11,14 @@ import { cwd } from "veryfront/platform";
 
 const VALID_TYPES = ["page", "layout", "provider", "api", "integration"] as const;
 
-const GenerateArgsSchema = z.object({
-  type: z.enum(VALID_TYPES).optional(),
-  name: z.string().optional(),
-});
+const getGenerateArgsSchema = defineSchema((v) =>
+  v.object({
+    type: v.enum(VALID_TYPES).optional(),
+    name: v.string().optional(),
+  })
+);
+
+const GenerateArgsSchema = getGenerateArgsSchema();
 
 export const parseGenerateArgs = createArgParser(GenerateArgsSchema, {
   type: { keys: ["type"], type: "string", positional: 0 },

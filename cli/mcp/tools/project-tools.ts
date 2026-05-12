@@ -2,7 +2,8 @@
  * MCP tools for project discovery and analysis.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import type { FileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
@@ -24,16 +25,19 @@ import {
 // Tool: vf_list_routes
 // ============================================================================
 
-const listRoutesInput = z.object({
-  type: z.enum(["all", "pages", "api", "layouts"]).optional().default("all").describe(
-    "Filter routes by type",
-  ),
-  projectPath: z.string().optional().describe(
-    "Project directory (defaults to current working directory)",
-  ),
-});
+const getListRoutesInput = defineSchema((v) =>
+  v.object({
+    type: v.enum(["all", "pages", "api", "layouts"]).optional().default("all").describe(
+      "Filter routes by type",
+    ),
+    projectPath: v.string().optional().describe(
+      "Project directory (defaults to current working directory)",
+    ),
+  })
+);
+const listRoutesInput = getListRoutesInput();
 
-type ListRoutesInput = z.infer<typeof listRoutesInput>;
+type ListRoutesInput = InferSchema<ReturnType<typeof getListRoutesInput>>;
 
 export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
   name: "vf_list_routes",
@@ -68,13 +72,16 @@ export const vfListRoutes: MCPTool<ListRoutesInput, RouteInfo[]> = {
 // Tool: vf_get_project_context
 // ============================================================================
 
-const getProjectContextInput = z.object({
-  projectPath: z.string().optional().describe(
-    "Project directory (defaults to current working directory)",
-  ),
-});
+const getGetProjectContextInput = defineSchema((v) =>
+  v.object({
+    projectPath: v.string().optional().describe(
+      "Project directory (defaults to current working directory)",
+    ),
+  })
+);
+const getProjectContextInput = getGetProjectContextInput();
 
-type GetProjectContextInput = z.infer<typeof getProjectContextInput>;
+type GetProjectContextInput = InferSchema<ReturnType<typeof getGetProjectContextInput>>;
 
 const STANDARD_DIRS = ["app", "pages", "components", "lib", "ai"] as const;
 
@@ -182,14 +189,17 @@ export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext
 // Tool: vf_get_component_tree
 // ============================================================================
 
-const getComponentTreeInput = z.object({
-  route: z.string().describe("Route path to analyze (e.g., '/', '/dashboard')"),
-  projectPath: z.string().optional().describe(
-    "Project directory (defaults to current working directory)",
-  ),
-});
+const getGetComponentTreeInput = defineSchema((v) =>
+  v.object({
+    route: v.string().describe("Route path to analyze (e.g., '/', '/dashboard')"),
+    projectPath: v.string().optional().describe(
+      "Project directory (defaults to current working directory)",
+    ),
+  })
+);
+const getComponentTreeInput = getGetComponentTreeInput();
 
-type GetComponentTreeInput = z.infer<typeof getComponentTreeInput>;
+type GetComponentTreeInput = InferSchema<ReturnType<typeof getGetComponentTreeInput>>;
 
 interface ComponentNode {
   name: string;
@@ -283,16 +293,19 @@ export const vfGetComponentTree: MCPTool<GetComponentTreeInput, ComponentTreeRes
 // Tool: vf_list_local_projects
 // ============================================================================
 
-const listLocalProjectsInput = z.object({
-  directory: z.string().optional().describe(
-    "Directory to scan for projects (defaults to current directory and common locations)",
-  ),
-  depth: z.number().optional().default(2).describe(
-    "How deep to scan (1 = immediate children, 2 = grandchildren)",
-  ),
-});
+const getListLocalProjectsInput = defineSchema((v) =>
+  v.object({
+    directory: v.string().optional().describe(
+      "Directory to scan for projects (defaults to current directory and common locations)",
+    ),
+    depth: v.number().optional().default(2).describe(
+      "How deep to scan (1 = immediate children, 2 = grandchildren)",
+    ),
+  })
+);
+const listLocalProjectsInput = getListLocalProjectsInput();
 
-type ListLocalProjectsInput = z.infer<typeof listLocalProjectsInput>;
+type ListLocalProjectsInput = InferSchema<ReturnType<typeof getListLocalProjectsInput>>;
 
 interface LocalProjectInfo {
   name: string;

@@ -1,5 +1,5 @@
 import type { Tool, ToolConfig, ToolExecutionContext } from "./types.ts";
-import type { JsonSchema, Schema } from "#veryfront/extensions/interfaces/index.ts";
+import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";

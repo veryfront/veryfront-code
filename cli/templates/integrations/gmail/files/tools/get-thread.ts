@@ -1,17 +1,17 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "get-thread",
   description: "Get a Gmail thread by ID.",
-  inputSchema: z.object({
-    threadId: z.string().min(1).describe("Gmail thread ID"),
-    format: z.enum(["full", "metadata", "minimal"]).default("full").describe(
+  inputSchema: defineSchema((v) => v.object({
+    threadId: v.string().min(1).describe("Gmail thread ID"),
+    format: v.enum(["full", "metadata", "minimal"]).default("full").describe(
       "Thread message format",
     ),
-  }),
+  }))(),
   execute: async ({ threadId, format }, context) => {
     const userId = resolveUserId(context);
 

@@ -6,20 +6,21 @@
  * @module issues/mcp
  */
 
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { MCPTool } from "#veryfront/mcp/types.ts";
 import { createIssuesManager } from "./core.ts";
 import type { Issue } from "./schemas/index.ts";
 import {
-  createIssueSchema,
-  issueIdSchema,
-  issuePrefixSchema,
-  issueStateSchema,
-  labelSchema,
-  listIssuesSchema,
+  getCreateIssueSchema,
+  getIssueIdSchema,
+  getIssuePrefixSchema,
+  getIssueStateSchema,
+  getLabelSchema,
+  getListIssuesSchema,
+  getUpdateIssueSchema,
   parseState,
-  updateIssueSchema,
 } from "./schemas/index.ts";
 
 function getManager(projectDir?: string) {
@@ -30,26 +31,31 @@ function getManager(projectDir?: string) {
 // Shared schema extension for projectDir
 // ============================================================================
 
-const projectDirSchema = z.object({
-  projectDir: z.string().optional().describe("Project directory (defaults to cwd)"),
-});
+const getProjectDirSchema = defineSchema((v) =>
+  v.object({
+    projectDir: v.string().optional().describe("Project directory (defaults to cwd)"),
+  })
+);
 
 // ============================================================================
 // Tool: issues_create
 // ============================================================================
 
-const issuesCreateInput = createIssueSchema.extend({
-  title: z.string().describe("Issue title"),
-  body: z.string().optional().describe("Issue description in markdown"),
-  labels: z.array(labelSchema).optional().describe(
-    "Labels to apply (e.g., ['bug', 'priority:high'])",
-  ),
-  milestone: z.string().optional().describe("Milestone to assign"),
-  assignees: z.array(z.string()).optional().describe("Users to assign"),
-  prefix: issuePrefixSchema.optional().describe("ID prefix: ISSUE, TASK, or PLAN"),
-}).merge(projectDirSchema);
+const getIssuesCreateInput = defineSchema((v) =>
+  getCreateIssueSchema().extend({
+    title: v.string().describe("Issue title"),
+    body: v.string().optional().describe("Issue description in markdown"),
+    labels: v.array(getLabelSchema()).optional().describe(
+      "Labels to apply (e.g., ['bug', 'priority:high'])",
+    ),
+    milestone: v.string().optional().describe("Milestone to assign"),
+    assignees: v.array(v.string()).optional().describe("Users to assign"),
+    prefix: getIssuePrefixSchema().optional().describe("ID prefix: ISSUE, TASK, or PLAN"),
+  }).merge(getProjectDirSchema())
+);
+const issuesCreateInput = getIssuesCreateInput();
 
-type IssuesCreateInput = z.infer<typeof issuesCreateInput>;
+type IssuesCreateInput = InferSchema<ReturnType<typeof getIssuesCreateInput>>;
 
 const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
   name: "issues_create",
@@ -76,11 +82,14 @@ const issuesCreate: MCPTool<IssuesCreateInput, Issue> = {
 // Tool: issues_get
 // ============================================================================
 
-const issuesGetInput = projectDirSchema.extend({
-  id: issueIdSchema.describe("Issue ID (e.g., ISSUE-001, TASK-042)"),
-});
+const getIssuesGetInput = defineSchema((v) =>
+  getProjectDirSchema().extend({
+    id: getIssueIdSchema().describe("Issue ID (e.g., ISSUE-001, TASK-042)"),
+  })
+);
+const issuesGetInput = getIssuesGetInput();
 
-type IssuesGetInput = z.infer<typeof issuesGetInput>;
+type IssuesGetInput = InferSchema<ReturnType<typeof getIssuesGetInput>>;
 
 const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
   name: "issues_get",
@@ -99,17 +108,22 @@ const issuesGet: MCPTool<IssuesGetInput, Issue | null> = {
 // Tool: issues_update
 // ============================================================================
 
-const issuesUpdateInput = updateIssueSchema.extend({
-  id: issueIdSchema.describe("Issue ID to update"),
-  title: z.string().optional().describe("New title"),
-  body: z.string().optional().describe("New body content"),
-  state: z.string().optional().describe("New state: 'open' or 'closed' (aliases: done, resolved)"),
-  labels: z.array(labelSchema).optional().describe("Labels to set (replaces existing)"),
-  milestone: z.string().nullable().optional().describe("Milestone (set to null to remove)"),
-  assignees: z.array(z.string()).optional().describe("Assignees to set (replaces existing)"),
-}).merge(projectDirSchema);
+const getIssuesUpdateInput = defineSchema((v) =>
+  getUpdateIssueSchema().extend({
+    id: getIssueIdSchema().describe("Issue ID to update"),
+    title: v.string().optional().describe("New title"),
+    body: v.string().optional().describe("New body content"),
+    state: v.string().optional().describe(
+      "New state: 'open' or 'closed' (aliases: done, resolved)",
+    ),
+    labels: v.array(getLabelSchema()).optional().describe("Labels to set (replaces existing)"),
+    milestone: v.string().nullable().optional().describe("Milestone (set to null to remove)"),
+    assignees: v.array(v.string()).optional().describe("Assignees to set (replaces existing)"),
+  }).merge(getProjectDirSchema())
+);
+const issuesUpdateInput = getIssuesUpdateInput();
 
-type IssuesUpdateInput = z.infer<typeof issuesUpdateInput>;
+type IssuesUpdateInput = InferSchema<ReturnType<typeof getIssuesUpdateInput>>;
 
 const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
   name: "issues_update",
@@ -147,18 +161,21 @@ const issuesUpdate: MCPTool<IssuesUpdateInput, Issue | null> = {
 // Tool: issues_list
 // ============================================================================
 
-const issuesListInput = listIssuesSchema.extend({
-  state: issueStateSchema.optional().describe("Filter by state"),
-  labels: z.array(labelSchema).optional().describe("Filter by labels (must have ALL)"),
-  milestone: z.string().optional().describe("Filter by milestone"),
-  assignee: z.string().optional().describe("Filter by assignee"),
-  prefix: issuePrefixSchema.optional().describe("Filter by prefix (ISSUE, TASK, PLAN)"),
-  sortBy: z.enum(["created_at", "updated_at", "id"]).optional().describe("Sort field"),
-  sortDirection: z.enum(["asc", "desc"]).optional().describe("Sort direction"),
-  limit: z.number().optional().describe("Maximum results"),
-}).merge(projectDirSchema);
+const getIssuesListInput = defineSchema((v) =>
+  getListIssuesSchema().extend({
+    state: getIssueStateSchema().optional().describe("Filter by state"),
+    labels: v.array(getLabelSchema()).optional().describe("Filter by labels (must have ALL)"),
+    milestone: v.string().optional().describe("Filter by milestone"),
+    assignee: v.string().optional().describe("Filter by assignee"),
+    prefix: getIssuePrefixSchema().optional().describe("Filter by prefix (ISSUE, TASK, PLAN)"),
+    sortBy: v.enum(["created_at", "updated_at", "id"]).optional().describe("Sort field"),
+    sortDirection: v.enum(["asc", "desc"]).optional().describe("Sort direction"),
+    limit: v.number().optional().describe("Maximum results"),
+  }).merge(getProjectDirSchema())
+);
+const issuesListInput = getIssuesListInput();
 
-type IssuesListInput = z.infer<typeof issuesListInput>;
+type IssuesListInput = InferSchema<ReturnType<typeof getIssuesListInput>>;
 
 interface IssuesListOutput {
   issues: Issue[];
@@ -191,11 +208,14 @@ const issuesList: MCPTool<IssuesListInput, IssuesListOutput> = {
 // Tool: issues_close
 // ============================================================================
 
-const issuesCloseInput = projectDirSchema.extend({
-  id: issueIdSchema.describe("Issue ID to close"),
-});
+const getIssuesCloseInput = defineSchema((v) =>
+  getProjectDirSchema().extend({
+    id: getIssueIdSchema().describe("Issue ID to close"),
+  })
+);
+const issuesCloseInput = getIssuesCloseInput();
 
-type IssuesCloseInput = z.infer<typeof issuesCloseInput>;
+type IssuesCloseInput = InferSchema<ReturnType<typeof getIssuesCloseInput>>;
 
 const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
   name: "issues_close",
@@ -219,11 +239,14 @@ const issuesClose: MCPTool<IssuesCloseInput, Issue | null> = {
 // Tool: issues_delete
 // ============================================================================
 
-const issuesDeleteInput = projectDirSchema.extend({
-  id: issueIdSchema.describe("Issue ID to delete"),
-});
+const getIssuesDeleteInput = defineSchema((v) =>
+  getProjectDirSchema().extend({
+    id: getIssueIdSchema().describe("Issue ID to delete"),
+  })
+);
+const issuesDeleteInput = getIssuesDeleteInput();
 
-type IssuesDeleteInput = z.infer<typeof issuesDeleteInput>;
+type IssuesDeleteInput = InferSchema<ReturnType<typeof getIssuesDeleteInput>>;
 
 interface IssuesDeleteOutput {
   deleted: boolean;

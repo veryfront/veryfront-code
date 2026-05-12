@@ -1,44 +1,58 @@
 import type { ChatRuntimeOverrides, DurableRootRunDescriptor } from "#veryfront/chat/types.ts";
-import { chatRequestContextSchema, chatUiMessagesSchema } from "#veryfront/chat/types.ts";
-import { z } from "zod";
+import { getChatRequestContextSchema, getChatUiMessagesSchema } from "#veryfront/chat/types.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { RuntimeAgentRunInvocation } from "./runtime-agent-invocation-contract.ts";
 
-const durableRootRunIdSchema = z.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/);
+const getDurableRootRunIdSchema = defineSchema((v) =>
+  v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/)
+);
 
-export const hostedDurableRootRunDescriptorSchema: z.ZodType<DurableRootRunDescriptor> = z
-  .object({
-    runId: durableRootRunIdSchema,
-    messageId: z.string().uuid(),
-    latestEventId: z.number().int().nonnegative().optional(),
-    latestExternalEventSequence: z.number().int().nonnegative().optional(),
-    parentConversationId: z.string().uuid().optional(),
-    parentRunId: durableRootRunIdSchema.optional(),
-    spawnedFromToolCallId: z.string().min(1).max(256).optional(),
+export const getHostedDurableRootRunDescriptorSchema = defineSchema((v) =>
+  v.object({
+    runId: getDurableRootRunIdSchema(),
+    messageId: v.string().uuid(),
+    latestEventId: v.number().int().nonnegative().optional(),
+    latestExternalEventSequence: v.number().int().nonnegative().optional(),
+    parentConversationId: v.string().uuid().optional(),
+    parentRunId: getDurableRootRunIdSchema().optional(),
+    spawnedFromToolCallId: v.string().min(1).max(256).optional(),
+  }).strict()
+);
+
+/** @deprecated Use getHostedDurableRootRunDescriptorSchema() */
+export const hostedDurableRootRunDescriptorSchema = getHostedDurableRootRunDescriptorSchema();
+
+export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
+  v.object({
+    allowedTools: v.array(v.string().min(1)).max(100).optional(),
+    thinking: v.union([v.literal(false), v.number().int().positive()]).optional(),
+    maxSteps: v.number().int().positive().optional(),
+  }).strip()
+);
+
+/** @deprecated Use getHostedChatRuntimeOverridesSchema() */
+export const hostedChatRuntimeOverridesSchema = getHostedChatRuntimeOverridesSchema();
+
+export const getHostedChatRequestSchema = defineSchema((v) =>
+  v.object({
+    messages: getChatUiMessagesSchema(),
+    context: getChatRequestContextSchema(),
+    model: v.string().optional(),
+    allowDelegation: v.boolean().optional(),
+    forwardedProps: v.record(v.string(), v.unknown()).optional(),
+    runtimeOverrides: getHostedChatRuntimeOverridesSchema().optional(),
+    durableRootRun: getHostedDurableRootRunDescriptorSchema().optional(),
   })
-  .strict();
+);
 
-export const hostedChatRuntimeOverridesSchema: z.ZodType<ChatRuntimeOverrides> = z
-  .object({
-    allowedTools: z.array(z.string().min(1)).max(100).optional(),
-    thinking: z.union([z.literal(false), z.number().int().positive()]).optional(),
-    maxSteps: z.number().int().positive().optional(),
-  })
-  .strip();
+/** @deprecated Use getHostedChatRequestSchema() */
+export const hostedChatRequestSchema = getHostedChatRequestSchema();
 
-export const hostedChatRequestSchema = z.object({
-  messages: chatUiMessagesSchema,
-  context: chatRequestContextSchema,
-  model: z.string().optional(),
-  allowDelegation: z.boolean().optional(),
-  forwardedProps: z.record(z.string(), z.unknown()).optional(),
-  runtimeOverrides: hostedChatRuntimeOverridesSchema.optional(),
-  durableRootRun: hostedDurableRootRunDescriptorSchema.optional(),
-});
-
-export type HostedChatRequest = z.infer<typeof hostedChatRequestSchema>;
+export type HostedChatRequest = InferSchema<ReturnType<typeof getHostedChatRequestSchema>>;
 export type HostedChatRequestInput = {
   messages: RuntimeAgentRunInvocation["messages"];
-  context: z.infer<typeof chatRequestContextSchema>;
+  context: InferSchema<ReturnType<typeof getChatRequestContextSchema>>;
   model?: string;
   allowDelegation?: boolean;
   forwardedProps?: Record<string, unknown>;
@@ -92,7 +106,7 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
 export function buildHostedChatRequestFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,
 ): HostedChatRequest {
-  return hostedChatRequestSchema.parse(
+  return getHostedChatRequestSchema().parse(
     buildHostedChatRequestInputFromRuntimeAgentInvocation(input),
   );
 }

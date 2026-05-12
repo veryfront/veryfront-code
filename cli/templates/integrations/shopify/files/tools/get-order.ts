@@ -1,13 +1,13 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getOrder } from "../../lib/shopify-client.ts";
 
 export default tool({
   id: "get-order",
   description: "Get details of a specific Shopify order by its ID.",
-  inputSchema: z.object({
-    orderId: z.union([z.number(), z.string()]).describe("The ID of the order to retrieve"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    orderId: v.union([v.number(), v.string()]).describe("The ID of the order to retrieve"),
+  }))(),
   async execute({ orderId }) {
     const order = await getOrder(orderId);
 

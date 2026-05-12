@@ -1,26 +1,26 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
 
 export default tool({
   id: "create-pull-request",
   description: "Create a new pull request in a Bitbucket repository",
-  inputSchema: z.object({
-    workspace: z.string().describe("Workspace name or UUID"),
-    repoSlug: z.string().describe("Repository slug (e.g., 'my-repo')"),
-    title: z.string().min(1).describe("Pull request title"),
-    description: z
+  inputSchema: defineSchema((v) => v.object({
+    workspace: v.string().describe("Workspace name or UUID"),
+    repoSlug: v.string().describe("Repository slug (e.g., 'my-repo')"),
+    title: v.string().min(1).describe("Pull request title"),
+    description: v
       .string()
       .optional()
       .describe("Pull request description (supports Markdown)"),
-    sourceBranch: z.string().describe("Source branch name"),
-    destinationBranch: z.string().describe("Destination branch name"),
-    closeSourceBranch: z
+    sourceBranch: v.string().describe("Source branch name"),
+    destinationBranch: v.string().describe("Destination branch name"),
+    closeSourceBranch: v
       .boolean()
       .optional()
       .default(false)
       .describe("Close source branch after merge"),
-  }),
+  }))(),
   execute: async (
     {
       workspace,

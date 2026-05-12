@@ -1,24 +1,24 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
 
 export default defineTool({
   id: "servicenow-create-incident",
   description: "Create a new incident in ServiceNow",
-  inputSchema: z.object({
-    short_description: z.string().describe("Brief description of the incident"),
-    description: z.string().optional().describe("Detailed description of the incident"),
-    urgency: z
+  inputSchema: defineSchema((v) => v.object({
+    short_description: v.string().describe("Brief description of the incident"),
+    description: v.string().optional().describe("Detailed description of the incident"),
+    urgency: v
       .enum(["1", "2", "3"])
       .optional()
       .describe("Urgency level (1=High, 2=Medium, 3=Low)"),
-    impact: z
+    impact: v
       .enum(["1", "2", "3"])
       .optional()
       .describe("Impact level (1=High, 2=Medium, 3=Low)"),
-    category: z.string().optional().describe("Incident category"),
-    subcategory: z.string().optional().describe("Incident subcategory"),
-  }),
+    category: v.string().optional().describe("Incident category"),
+    subcategory: v.string().optional().describe("Incident subcategory"),
+  }))(),
   async execute(input) {
     const connected = await isServiceNowConnected();
     if (!connected) {

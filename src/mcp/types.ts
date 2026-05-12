@@ -1,4 +1,4 @@
-import type { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool } from "#veryfront/tool";
 import type { Resource } from "#veryfront/resource";
 import type { Prompt } from "#veryfront/prompt";
@@ -21,8 +21,7 @@ export interface ToolAnnotations {
 export interface MCPTool<TInput = any, TOutput = any> {
   name: string;
   description: string;
-  // deno-lint-ignore no-explicit-any -- ZodType Def/Input params require any for ZodDefault/ZodOptional compatibility
-  inputSchema: z.ZodType<TInput, any, any>;
+  inputSchema: Schema<TInput>;
   execute: (input: TInput) => Promise<TOutput>;
   title?: string;
   annotations?: ToolAnnotations;

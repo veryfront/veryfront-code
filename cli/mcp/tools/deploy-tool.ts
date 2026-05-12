@@ -5,7 +5,8 @@
  * Wraps the same API calls used by the `vf deploy` CLI command.
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { getEnvironmentConfig } from "veryfront/config";
 import { createApiClient, resolveConfig } from "#cli/shared/config";
@@ -15,19 +16,22 @@ import {
   getEnvironmentByName,
 } from "../../commands/deploy/command.ts";
 
-const triggerDeployInput = z.object({
-  projectSlug: z.string().describe(
-    "The project slug to deploy. Example: 'my-app'.",
-  ),
-  environment: z.string().optional().default("production").describe(
-    "Target environment name. Defaults to 'production'.",
-  ),
-  branch: z.string().optional().default("main").describe(
-    "Git branch to create the release from. Defaults to 'main'.",
-  ),
-});
+const getTriggerDeployInput = defineSchema((v) =>
+  v.object({
+    projectSlug: v.string().describe(
+      "The project slug to deploy. Example: 'my-app'.",
+    ),
+    environment: v.string().optional().default("production").describe(
+      "Target environment name. Defaults to 'production'.",
+    ),
+    branch: v.string().optional().default("main").describe(
+      "Git branch to create the release from. Defaults to 'main'.",
+    ),
+  })
+);
+const triggerDeployInput = getTriggerDeployInput();
 
-export type TriggerDeployInput = z.infer<typeof triggerDeployInput>;
+export type TriggerDeployInput = InferSchema<ReturnType<typeof getTriggerDeployInput>>;
 
 export interface TriggerDeployResult {
   success: boolean;

@@ -1,19 +1,19 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getPageTitle, queryDatabase } from "../../lib/notion-client.ts";
 
 export default tool({
   id: "query-database",
   description: "Query a Notion database to retrieve entries. Supports filtering and sorting.",
-  inputSchema: z.object({
-    databaseId: z.string().describe("The ID of the Notion database to query"),
-    sortProperty: z.string().optional().describe("Property name to sort by"),
-    sortDirection: z
+  inputSchema: defineSchema((v) => v.object({
+    databaseId: v.string().describe("The ID of the Notion database to query"),
+    sortProperty: v.string().optional().describe("Property name to sort by"),
+    sortDirection: v
       .enum(["ascending", "descending"])
       .default("descending")
       .describe("Sort direction"),
-    limit: z.number().min(1).max(50).default(20).describe("Maximum number of results"),
-  }),
+    limit: v.number().min(1).max(50).default(20).describe("Maximum number of results"),
+  }))(),
   async execute({ databaseId, sortProperty, sortDirection, limit }) {
     const results = await queryDatabase(databaseId, {
       sorts: sortProperty ? [{ property: sortProperty, direction: sortDirection }] : undefined,

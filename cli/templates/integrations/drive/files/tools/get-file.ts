@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createDriveClient } from "../../lib/drive-client.ts";
 
 const DEFAULT_USER_ID = "demo-user";
@@ -9,9 +9,9 @@ export default tool({
   id: "get-file",
   description:
     "Get detailed metadata about a specific file or folder in Google Drive. Returns detailed information including sharing settings, owners, and capabilities.",
-  inputSchema: z.object({
-    fileId: z.string().describe("The ID of the file or folder to retrieve"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    fileId: v.string().describe("The ID of the file or folder to retrieve"),
+  }))(),
   async execute({ fileId }) {
     const client = createDriveClient(DEFAULT_USER_ID);
     const file = await client.getFile(fileId);

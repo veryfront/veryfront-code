@@ -1,48 +1,68 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { appendConversationRunEvents, isIgnorableConversationRunAppendError } from "./durable.ts";
 
 const AG_UI_CUSTOM_EVENT_TYPE = "CUSTOM";
 
-export const InvokeAgentChildRunLifecycleValueSchema = z.object({
-  toolCallId: z.string().min(1),
-  childConversationId: z.string().uuid(),
-  childRunId: z.string().min(1),
-  childMessageId: z.string().uuid(),
-  childAgentId: z.string().min(1),
-  description: z.string().min(1).optional(),
-  status: z.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"]),
-  sourceTargetKind: z.enum(["project", "production", "environment", "preview_branch"]).nullable()
-    .optional(),
-  runtimeTargetKind: z.enum(["production", "environment", "preview_branch"]).nullable().optional(),
-  targetEnvironmentId: z.string().uuid().nullable().optional(),
-  targetBranchId: z.string().uuid().nullable().optional(),
-});
+export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
+  v.object({
+    toolCallId: v.string().min(1),
+    childConversationId: v.string().uuid(),
+    childRunId: v.string().min(1),
+    childMessageId: v.string().uuid(),
+    childAgentId: v.string().min(1),
+    description: v.string().min(1).optional(),
+    status: v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"]),
+    sourceTargetKind: v.enum(["project", "production", "environment", "preview_branch"]).nullable()
+      .optional(),
+    runtimeTargetKind: v.enum(["production", "environment", "preview_branch"]).nullable()
+      .optional(),
+    targetEnvironmentId: v.string().uuid().nullable().optional(),
+    targetBranchId: v.string().uuid().nullable().optional(),
+  })
+);
 
-export type InvokeAgentChildRunLifecycleValue = z.infer<
-  typeof InvokeAgentChildRunLifecycleValueSchema
+/** @deprecated Use getInvokeAgentChildRunLifecycleValueSchema() */
+export const InvokeAgentChildRunLifecycleValueSchema = getInvokeAgentChildRunLifecycleValueSchema();
+
+export type InvokeAgentChildRunLifecycleValue = InferSchema<
+  ReturnType<typeof getInvokeAgentChildRunLifecycleValueSchema>
 >;
 
-export const InvokeAgentChildRunStateDeltaSchema = z.object({
-  type: z.literal("STATE_DELTA"),
-  delta: z.array(
-    z.object({
-      op: z.enum(["add", "replace"]),
-      path: z.string().min(1),
-      value: InvokeAgentChildRunLifecycleValueSchema,
-    }),
-  ),
-});
+export const getInvokeAgentChildRunStateDeltaSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("STATE_DELTA"),
+    delta: v.array(
+      v.object({
+        op: v.enum(["add", "replace"]),
+        path: v.string().min(1),
+        value: getInvokeAgentChildRunLifecycleValueSchema(),
+      }),
+    ),
+  })
+);
 
-export type InvokeAgentChildRunStateDelta = z.infer<typeof InvokeAgentChildRunStateDeltaSchema>;
+/** @deprecated Use getInvokeAgentChildRunStateDeltaSchema() */
+export const InvokeAgentChildRunStateDeltaSchema = getInvokeAgentChildRunStateDeltaSchema();
 
-export const InvokeAgentChildRunLifecycleCustomEventSchema = z.object({
-  type: z.literal(AG_UI_CUSTOM_EVENT_TYPE),
-  name: z.literal("veryfront.invoke_agent.lifecycle"),
-  value: InvokeAgentChildRunLifecycleValueSchema,
-});
+export type InvokeAgentChildRunStateDelta = InferSchema<
+  ReturnType<typeof getInvokeAgentChildRunStateDeltaSchema>
+>;
 
-export type InvokeAgentChildRunLifecycleCustomEvent = z.infer<
-  typeof InvokeAgentChildRunLifecycleCustomEventSchema
+export const getInvokeAgentChildRunLifecycleCustomEventSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal(AG_UI_CUSTOM_EVENT_TYPE),
+    name: v.literal("veryfront.invoke_agent.lifecycle"),
+    value: getInvokeAgentChildRunLifecycleValueSchema(),
+  })
+);
+
+/** @deprecated Use getInvokeAgentChildRunLifecycleCustomEventSchema() */
+export const InvokeAgentChildRunLifecycleCustomEventSchema =
+  getInvokeAgentChildRunLifecycleCustomEventSchema();
+
+export type InvokeAgentChildRunLifecycleCustomEvent = InferSchema<
+  ReturnType<typeof getInvokeAgentChildRunLifecycleCustomEventSchema>
 >;
 
 export type InvokeAgentChildRunProgressInput = {
@@ -66,7 +86,7 @@ export type InvokeAgentChildRunProgressEvent =
 function buildInvokeAgentChildRunLifecycleValue(
   input: InvokeAgentChildRunProgressInput,
 ): InvokeAgentChildRunLifecycleValue {
-  return InvokeAgentChildRunLifecycleValueSchema.parse({
+  return getInvokeAgentChildRunLifecycleValueSchema().parse({
     toolCallId: input.toolCallId,
     childConversationId: input.childConversationId,
     childRunId: input.childRunId,
@@ -89,7 +109,7 @@ export function buildInvokeAgentChildRunStateDelta(
   input: InvokeAgentChildRunProgressInput,
 ): InvokeAgentChildRunStateDelta {
   const escapedToolCallId = input.toolCallId.replaceAll("~", "~0").replaceAll("/", "~1");
-  return InvokeAgentChildRunStateDeltaSchema.parse({
+  return getInvokeAgentChildRunStateDeltaSchema().parse({
     type: "STATE_DELTA",
     delta: [
       {
@@ -104,7 +124,7 @@ export function buildInvokeAgentChildRunStateDelta(
 export function buildInvokeAgentChildRunLifecycleCustomEvent(
   input: InvokeAgentChildRunProgressInput,
 ): InvokeAgentChildRunLifecycleCustomEvent {
-  return InvokeAgentChildRunLifecycleCustomEventSchema.parse({
+  return getInvokeAgentChildRunLifecycleCustomEventSchema().parse({
     type: AG_UI_CUSTOM_EVENT_TYPE,
     name: "veryfront.invoke_agent.lifecycle",
     value: buildInvokeAgentChildRunLifecycleValue(input),

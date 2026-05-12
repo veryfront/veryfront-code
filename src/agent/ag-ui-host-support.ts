@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { formatAgUiEvent } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import type { Message } from "./types.ts";
 import { parseAgUiJsonRequestOrError } from "./ag-ui-request-shared.ts";
@@ -30,70 +31,87 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const AgUiRunIdSchema = z.string().min(1).max(128).regex(AGENT_ID_PATTERN);
+const getAgUiRunIdSchema = defineSchema((v) => v.string().min(1).max(128).regex(AGENT_ID_PATTERN));
 
-export const AgUiInjectedToolSchema = z.object({
-  name: z.string().min(1).max(128),
-  description: z.string().max(1024).optional(),
-  parameters: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
-    { message: "Tool parameters must be less than 16 KB" },
-  ),
-});
-
-export const AgUiContextItemSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("text"),
-    title: z.string().max(256).optional(),
-    text: z.string().max(MAX_CONTEXT_ITEM_BYTES),
-  }),
-  z.object({
-    type: z.literal("json"),
-    title: z.string().max(256).optional(),
-    data: z.record(z.string(), z.unknown()).refine(
-      (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_ITEM_BYTES),
-      { message: "JSON context item must be less than 16 KB" },
+export const getAgUiInjectedToolSchema = defineSchema((v) =>
+  v.object({
+    name: v.string().min(1).max(128),
+    description: v.string().max(1024).optional(),
+    parameters: v.record(v.string(), v.unknown()).optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
+      { message: "Tool parameters must be less than 16 KB" },
     ),
-  }),
-  z.object({
-    type: z.literal("resource"),
-    title: z.string().max(256).optional(),
-    uri: z.string().max(2048),
-    mimeType: z.string().max(256).optional(),
-    text: z.string().max(MAX_CONTEXT_ITEM_BYTES).optional(),
-  }),
-]);
+  })
+);
 
-const AgUiMessagePartSchema = z.object({ type: z.string().min(1) }).passthrough();
+export const getAgUiContextItemSchema = defineSchema((v) =>
+  v.discriminatedUnion("type", [
+    v.object({
+      type: v.literal("text"),
+      title: v.string().max(256).optional(),
+      text: v.string().max(MAX_CONTEXT_ITEM_BYTES),
+    }),
+    v.object({
+      type: v.literal("json"),
+      title: v.string().max(256).optional(),
+      data: v.record(v.string(), v.unknown()).refine(
+        (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_ITEM_BYTES),
+        { message: "JSON context item must be less than 16 KB" },
+      ),
+    }),
+    v.object({
+      type: v.literal("resource"),
+      title: v.string().max(256).optional(),
+      uri: v.string().max(2048),
+      mimeType: v.string().max(256).optional(),
+      text: v.string().max(MAX_CONTEXT_ITEM_BYTES).optional(),
+    }),
+  ])
+);
 
-const AgUiMessageSchema = z.object({
-  id: z.string().min(1),
-  role: z.enum(["user", "assistant", "system", "tool"]),
-  parts: z.array(AgUiMessagePartSchema).default([]),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-  createdAt: z.string().optional(),
-});
+const getAgUiMessagePartSchema = defineSchema((v) =>
+  v.object({ type: v.string().min(1) }).passthrough()
+);
 
-export const AgUiRequestSchema = z.object({
-  threadId: z.string().uuid().optional(),
-  runId: AgUiRunIdSchema.optional(),
-  messages: z.array(AgUiMessageSchema).min(1).max(MAX_MESSAGES_PER_REQUEST),
-  tools: z.array(AgUiInjectedToolSchema).max(50).default([]),
-  context: z.array(AgUiContextItemSchema).max(10).default([]).refine(
-    (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
-    { message: "context must be less than 64 KB total" },
-  ),
-  forwardedProps: z.record(z.string(), z.unknown()).optional().refine(
-    (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-    { message: "forwardedProps must be less than 64 KB" },
-  ),
-  model: z.string().optional(),
-  maxOutputTokens: z.number().int().positive().optional(),
-});
+const getAgUiMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    role: v.enum(["user", "assistant", "system", "tool"]),
+    parts: v.array(getAgUiMessagePartSchema()).default([]),
+    metadata: v.record(v.string(), v.unknown()).optional(),
+    createdAt: v.string().optional(),
+  })
+);
 
-export type AgUiInjectedTool = z.infer<typeof AgUiInjectedToolSchema>;
-export type AgUiContextItem = z.infer<typeof AgUiContextItemSchema>;
-export type AgUiRequest = z.infer<typeof AgUiRequestSchema>;
+export const getAgUiRequestSchema = defineSchema((v) =>
+  v.object({
+    threadId: v.string().uuid().optional(),
+    runId: getAgUiRunIdSchema().optional(),
+    messages: v.array(getAgUiMessageSchema()).min(1).max(MAX_MESSAGES_PER_REQUEST),
+    tools: v.array(getAgUiInjectedToolSchema()).max(50).default([]),
+    context: v.array(getAgUiContextItemSchema()).max(10).default([]).refine(
+      (value) => isWithinJsonSizeLimit(value, MAX_CONTEXT_TOTAL_BYTES),
+      { message: "context must be less than 64 KB total" },
+    ),
+    forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
+      (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
+      { message: "forwardedProps must be less than 64 KB" },
+    ),
+    model: v.string().optional(),
+    maxOutputTokens: v.number().int().positive().optional(),
+  })
+);
+
+/** @deprecated Use getAgUiInjectedToolSchema() */
+export const AgUiInjectedToolSchema = getAgUiInjectedToolSchema();
+/** @deprecated Use getAgUiContextItemSchema() */
+export const AgUiContextItemSchema = getAgUiContextItemSchema();
+/** @deprecated Use getAgUiRequestSchema() */
+export const AgUiRequestSchema = getAgUiRequestSchema();
+
+export type AgUiInjectedTool = InferSchema<ReturnType<typeof getAgUiInjectedToolSchema>>;
+export type AgUiContextItem = InferSchema<ReturnType<typeof getAgUiContextItemSchema>>;
+export type AgUiRequest = InferSchema<ReturnType<typeof getAgUiRequestSchema>>;
 
 function normalizeToolArgs(part: Record<string, unknown>): Record<string, unknown> {
   if (isRecord(part.args)) return part.args;
@@ -168,7 +186,7 @@ function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][n
 }
 
 export async function parseAgUiRequest(request: Request): Promise<AgUiRequest> {
-  return AgUiRequestSchema.parse(await request.json());
+  return getAgUiRequestSchema().parse(await request.json());
 }
 
 export async function parseAgUiRequestOrError(

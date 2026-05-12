@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import {
   formatFileSize,
   getCurrentAccount,
@@ -10,12 +10,12 @@ export default tool({
   id: "get-account",
   description:
     "Get current Dropbox account information including user details and storage usage.",
-  inputSchema: z.object({
-    includeSpaceUsage: z
+  inputSchema: defineSchema((v) => v.object({
+    includeSpaceUsage: v
       .boolean()
       .default(true)
       .describe("Whether to include storage usage information"),
-  }),
+  }))(),
   async execute({ includeSpaceUsage }): Promise<Record<string, unknown>> {
     const account = await getCurrentAccount();
 

@@ -1,22 +1,22 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatUsername, getMessages } from "../../lib/discord-client.ts";
 
 export default tool({
   id: "get-messages",
   description:
     "Get recent messages from a Discord channel. Returns message content, authors, timestamps, and attachments.",
-  inputSchema: z.object({
-    channelId: z.string().describe("The ID of the Discord channel to get messages from"),
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    channelId: v.string().describe("The ID of the Discord channel to get messages from"),
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(50)
       .describe("Maximum number of messages to retrieve (1-100)"),
-    before: z.string().optional().describe("Get messages before this message ID"),
-    after: z.string().optional().describe("Get messages after this message ID"),
-  }),
+    before: v.string().optional().describe("Get messages before this message ID"),
+    after: v.string().optional().describe("Get messages after this message ID"),
+  }))(),
   async execute({ channelId, limit, before, after }) {
     const messages = await getMessages(channelId, { limit, before, after });
 

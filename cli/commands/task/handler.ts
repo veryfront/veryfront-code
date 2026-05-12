@@ -1,14 +1,19 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const TaskArgsSchema = z.object({
-  name: z.string(),
-  config: z.string().optional(),
-  debug: z.boolean().default(false),
-});
+const getTaskArgsSchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+    config: v.string().optional(),
+    debug: v.boolean().default(false),
+  })
+);
 
-export type TaskArgs = z.infer<typeof TaskArgsSchema>;
+const TaskArgsSchema = getTaskArgsSchema();
+
+export type TaskArgs = InferSchema<ReturnType<typeof getTaskArgsSchema>>;
 
 export const parseTaskArgs = createArgParser(TaskArgsSchema, {
   name: { keys: ["name"], type: "string", positional: 0 },

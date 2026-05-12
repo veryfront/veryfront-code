@@ -145,8 +145,8 @@ export function getNonInteractiveConfig(
 
 const TOOL_FILE_CONTENTS: Record<string, { inputSchema: string; executeBody: string }> = {
   "list-items.ts": {
-    inputSchema: `limit: z.number().optional().describe("Maximum number of items to return"),
-    offset: z.number().optional().describe("Number of items to skip"),`,
+    inputSchema: `limit: v.number().optional().describe("Maximum number of items to return"),
+    offset: v.number().optional().describe("Number of items to skip"),`,
     executeBody: `const items = await listItems({
         limit: input.limit,
         offset: input.offset,
@@ -158,7 +158,7 @@ const TOOL_FILE_CONTENTS: Record<string, { inputSchema: string; executeBody: str
       };`,
   },
   "get-item.ts": {
-    inputSchema: `id: z.string().describe("The ID of the item to retrieve"),`,
+    inputSchema: `id: v.string().describe("The ID of the item to retrieve"),`,
     executeBody: `const item = await getItem(input.id);
       return {
         success: true,
@@ -166,7 +166,7 @@ const TOOL_FILE_CONTENTS: Record<string, { inputSchema: string; executeBody: str
       };`,
   },
   "search.ts": {
-    inputSchema: `query: z.string().describe("Search query"),`,
+    inputSchema: `query: v.string().describe("Search query"),`,
     executeBody: `const results = await searchItems(input.query);
       return {
         success: true,

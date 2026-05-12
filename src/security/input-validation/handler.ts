@@ -1,11 +1,11 @@
-import { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { VeryfrontError } from "./errors.ts";
 import { parseJsonBody, parseQueryParams } from "./parsers.ts";
 import { type RequestLimits, type ValidatedData } from "./types.ts";
 
 export interface ValidatedHandlerConfig<TBody = unknown, TQuery = unknown> {
-  body?: z.ZodSchema<TBody>;
-  query?: z.ZodSchema<TQuery>;
+  body?: Schema<TBody>;
+  query?: Schema<TQuery>;
   limits?: RequestLimits;
 }
 

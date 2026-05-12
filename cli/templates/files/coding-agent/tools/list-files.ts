@@ -1,20 +1,20 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { readDir, resolve, cwd } from "veryfront/fs";
 
 export default tool({
   id: "list-files",
   description: "List files in a project directory",
-  inputSchema: z.object({
-    directory: z
+  inputSchema: defineSchema((v) => v.object({
+    directory: v
       .string()
       .default(".")
       .describe("Directory path relative to project root"),
-    extensions: z
-      .array(z.string())
+    extensions: v
+      .array(v.string())
       .optional()
       .describe("Filter by file extensions (e.g. ['.ts', '.tsx'])"),
-  }),
+  }))(),
   execute: async ({ directory, extensions }) => {
     const absolute = resolve(cwd(), directory);
     const entries = await readDir(absolute);

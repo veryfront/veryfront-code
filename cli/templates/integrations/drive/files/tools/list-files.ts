@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createDriveClient } from "../../lib/drive-client.ts";
 
 const DEFAULT_USER_ID = "demo-user";
@@ -9,24 +9,24 @@ export default tool({
   id: "list-files",
   description:
     "List files and folders in Google Drive. Can list from a specific folder or root. Returns file names, IDs, types, and metadata.",
-  inputSchema: z.object({
-    folderId: z
+  inputSchema: defineSchema((v) => v.object({
+    folderId: v
       .string()
       .optional()
       .describe(
         "ID of the folder to list files from. If not provided, lists from root.",
       ),
-    pageSize: z
+    pageSize: v
       .number()
       .min(1)
       .max(1000)
       .default(100)
       .describe("Maximum number of files to return"),
-    pageToken: z
+    pageToken: v
       .string()
       .optional()
       .describe("Token for pagination to get next page of results"),
-    orderBy: z
+    orderBy: v
       .enum([
         "createdTime",
         "folder",
@@ -41,7 +41,7 @@ export default tool({
       ])
       .optional()
       .describe("Field to sort results by"),
-  }),
+  }))(),
   async execute({ folderId, pageSize, pageToken, orderBy }) {
     const client = createDriveClient(DEFAULT_USER_ID);
 

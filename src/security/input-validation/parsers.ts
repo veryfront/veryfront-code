@@ -1,4 +1,4 @@
-import { z } from "zod";
+import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import { createValidationError, VeryfrontError } from "./errors.ts";
 import { readBodyWithLimit, validateContentType, validateRequestLimits } from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
@@ -7,9 +7,21 @@ import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./
 // compatibility (engines.node >= 18.0.0).
 import { File } from "node:buffer";
 
+/** Duck-type check for validation errors with `.issues` (replaces `instanceof z.ZodError`). */
+function isValidationError(
+  error: unknown,
+): error is { issues: Array<{ path: (string | number)[]; message: string; code: string }> } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "issues" in error &&
+    Array.isArray((error as { issues: unknown }).issues)
+  );
+}
+
 export async function parseJsonBody<T>(
   request: Request,
-  schema: z.ZodSchema<T>,
+  schema: Schema<T>,
   options?: ParseJsonOptions,
 ): Promise<T> {
   validateRequestLimits(request, options?.limits);
@@ -27,57 +39,54 @@ export async function parseJsonBody<T>(
     });
   }
 
-  try {
-    const validated = await schema.parseAsync(data);
-    return options?.sanitize ? (sanitizeData(validated) as T) : validated;
-  } catch (error) {
-    if (!(error instanceof z.ZodError)) throw error;
-
-    throw createValidationError("Validation failed", {
-      errors: error.issues.map((e) => ({
-        path: e.path.join("."),
-        message: e.message,
-        code: e.code,
-      })),
-    });
+  const result = schema.safeParse(data);
+  if (result.success) {
+    return options?.sanitize ? (sanitizeData(result.data) as T) : result.data;
   }
+
+  const issues = result.issues ?? [];
+  throw createValidationError("Validation failed", {
+    errors: issues.map((e) => ({
+      path: e.path.join("."),
+      message: e.message,
+      code: e.code ?? "custom",
+    })),
+  });
 }
 
 export async function parseFormData<T>(
   request: Request,
-  schema: z.ZodSchema<T>,
+  schema: Schema<T>,
   options?: ParseFormOptions,
 ): Promise<T> {
   validateRequestLimits(request, options?.limits);
 
   validateContentType(request, ["multipart/form-data", "application/x-www-form-urlencoded"]);
 
-  try {
-    const formData = await request.formData();
-    const data: Record<string, unknown> = {};
-    const maxFileSize = options?.limits?.maxFileSize ?? DEFAULT_LIMITS.maxFileSize;
+  const formData = await request.formData();
+  const data: Record<string, unknown> = {};
+  const maxFileSize = options?.limits?.maxFileSize ?? DEFAULT_LIMITS.maxFileSize;
 
-    for (const [key, value] of formData.entries()) {
-      if (value instanceof File && value.size > maxFileSize) {
-        throw createValidationError(`File ${key} too large`, {
-          maxSize: maxFileSize,
-          actualSize: value.size,
-        });
-      }
-      data[key] = value;
+  for (const [key, value] of formData.entries()) {
+    if (value instanceof File && value.size > maxFileSize) {
+      throw createValidationError(`File ${key} too large`, {
+        maxSize: maxFileSize,
+        actualSize: value.size,
+      });
     }
-
-    return await schema.parseAsync(data);
-  } catch (error) {
-    if (!(error instanceof z.ZodError)) throw error;
-
-    throw createValidationError("Form validation failed", {
-      errors: error.issues,
-    });
+    data[key] = value;
   }
+
+  const result = schema.safeParse(data);
+  if (result.success) return result.data;
+
+  const issues = result.issues ?? [];
+  throw createValidationError("Form validation failed", {
+    errors: issues,
+  });
 }
 
-export function parseQueryParams<T>(request: Request, schema: z.ZodSchema<T>): T {
+export function parseQueryParams<T>(request: Request, schema: Schema<T>): T {
   const url = new URL(request.url);
   const params: Record<string, unknown> = {};
 
@@ -97,13 +106,11 @@ export function parseQueryParams<T>(request: Request, schema: z.ZodSchema<T>): T
     params[key] = [existing, value];
   }
 
-  try {
-    return schema.parse(params);
-  } catch (error) {
-    if (!(error instanceof z.ZodError)) throw error;
+  const result = schema.safeParse(params);
+  if (result.success) return result.data;
 
-    throw createValidationError("Query parameter validation failed", {
-      errors: error.issues,
-    });
-  }
+  const issues = result.issues ?? [];
+  throw createValidationError("Query parameter validation failed", {
+    errors: issues,
+  });
 }

@@ -6,14 +6,16 @@ export const getModelProviderSchema = defineSchema((v) =>
 );
 
 export const getAgentStatusSchema = defineSchema((v) =>
-  v.enum([
-    "idle",
-    "thinking",
-    "tool_execution",
-    "streaming",
-    "completed",
-    "error",
-  ] as const)
+  v.enum(
+    [
+      "idle",
+      "thinking",
+      "tool_execution",
+      "streaming",
+      "completed",
+      "error",
+    ] as const,
+  )
 );
 
 export const getMemoryConfigSchema = defineSchema((v) =>
@@ -79,7 +81,6 @@ const inlineToolCallPartShape = (v: SchemaValidator) =>
     toolName: v.string(),
     args: v.record(v.string(), v.unknown()),
   });
->>>>>>> 74be6ed69 (refactor(agent/prompt schemas): migrate leaf schemas + clean B2 cast (Phase B5))
 
 export const getMessagePartSchema = defineSchema((v) =>
   v.union([

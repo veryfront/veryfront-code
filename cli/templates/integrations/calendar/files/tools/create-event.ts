@@ -1,29 +1,29 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
 
 export default tool({
   id: "create-event",
   description: "Create a new event in Google Calendar",
-  inputSchema: z.object({
-    title: z.string().min(1).describe("Event title"),
-    startTime: z
+  inputSchema: defineSchema((v) => v.object({
+    title: v.string().min(1).describe("Event title"),
+    startTime: v
       .string()
       .describe("Start time in ISO 8601 format (e.g., '2024-01-15T09:00:00')"),
-    endTime: z
+    endTime: v
       .string()
       .describe("End time in ISO 8601 format (e.g., '2024-01-15T10:00:00')"),
-    description: z.string().optional().describe("Event description"),
-    location: z.string().optional().describe("Event location"),
-    attendees: z
-      .array(z.string().email())
+    description: v.string().optional().describe("Event description"),
+    location: v.string().optional().describe("Event location"),
+    attendees: v
+      .array(v.string().email())
       .optional()
       .describe("Email addresses of attendees to invite"),
-    timeZone: z
+    timeZone: v
       .string()
       .default("UTC")
       .describe("Time zone for the event (e.g., 'America/New_York')"),
-  }),
+  }))(),
   execute: async (
     { title, startTime, endTime, description, location, attendees, timeZone },
     context,

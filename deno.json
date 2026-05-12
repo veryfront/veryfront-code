@@ -290,6 +290,7 @@
     "unified": "npm:unified@11.0.5",
     "class-variance-authority": "npm:class-variance-authority@0.7.1",
     "tailwind-merge": "npm:tailwind-merge@3.5.0",
+    "veryfront/schemas": "./src/schemas/index.ts",
     "veryfront/chat/conversation": "./src/chat/conversation.ts",
     "veryfront/chat/message-prep": "./src/chat/message-prep.ts",
     "veryfront/chat/final-step-fallback": "./src/chat/final-step-fallback.ts",

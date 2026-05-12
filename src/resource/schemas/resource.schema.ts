@@ -1,12 +1,21 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-export const cachePolicySchema = z.enum(["no-cache", "cache", "cache-first"]);
+export const getCachePolicySchema = defineSchema((v) =>
+  v.enum(["no-cache", "cache", "cache-first"] as const)
+);
 
-export const McpConfigSchema = z.object({
-  enabled: z.boolean().optional(),
-  cachePolicy: cachePolicySchema.optional(),
-});
+export const getMcpConfigSchema = defineSchema((v) =>
+  v.object({
+    enabled: v.boolean().optional(),
+    cachePolicy: getCachePolicySchema().optional(),
+  })
+);
+
+// Backward-compat aliases
+export const cachePolicySchema = getCachePolicySchema();
+export const McpConfigSchema = getMcpConfigSchema();
 
 // Inferred types
-export type CachePolicy = z.infer<typeof cachePolicySchema>;
-export type McpConfig = z.infer<typeof McpConfigSchema>;
+export type CachePolicy = InferSchema<ReturnType<typeof getCachePolicySchema>>;
+export type McpConfig = InferSchema<ReturnType<typeof getMcpConfigSchema>>;

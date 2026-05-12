@@ -2,17 +2,21 @@
  * Install/Uninstall command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { installCommand } from "./install.ts";
 import { uninstallCommand } from "./uninstall.ts";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
-const InstallArgsSchema = z.object({
-  target: z.string().optional(),
-  global: z.boolean().default(false),
-  force: z.boolean().default(false),
-});
+const getInstallArgsSchema = defineSchema((v) =>
+  v.object({
+    target: v.string().optional(),
+    global: v.boolean().default(false),
+    force: v.boolean().default(false),
+  })
+);
+
+const InstallArgsSchema = getInstallArgsSchema();
 
 export const parseInstallArgs = createArgParser(InstallArgsSchema, {
   target: { keys: ["target", "t"], type: "string" },

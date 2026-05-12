@@ -6,13 +6,13 @@
  * @module cli/shared/args
  */
 
-import { z } from "zod";
+import type { Schema } from "veryfront/extensions/schema";
 import type { ParsedArgs } from "./types.ts";
 
 /** Compat type for safeParse result (SafeParseReturnType removed in zod v4). */
 export type SafeParseResult<T> =
   | { success: true; data: T; error?: never }
-  | { success: false; data?: never; error: z.ZodError };
+  | { success: false; data?: never; error: Error & { issues: unknown[] } };
 
 /**
  * Argument specification for a single option
@@ -96,11 +96,12 @@ export function extractArgs<T>(
  *
  * @example
  * ```ts
- * const PullArgsSchema = z.object({
- *   projectSlug: z.string().optional(),
- *   projectDir: z.string().optional(),
- *   force: z.boolean().default(false),
- * });
+ * const getPullArgsSchema = defineSchema((v) => v.object({
+ *   projectSlug: v.string().optional(),
+ *   projectDir: v.string().optional(),
+ *   force: v.boolean().default(false),
+ * }));
+ * const PullArgsSchema = getPullArgsSchema();
  *
  * const parsePullArgs = createArgParser(PullArgsSchema, {
  *   projectSlug: { keys: ["project-slug", "p"], type: "string", positional: 0 },
@@ -115,7 +116,7 @@ export function extractArgs<T>(
  * ```
  */
 export function createArgParser<T>(
-  schema: z.ZodType<T>,
+  schema: Schema<T>,
   argMap: ArgMap<T>,
 ): (args: ParsedArgs) => SafeParseResult<T> {
   return function parseArgs(args: ParsedArgs): SafeParseResult<T> {
@@ -123,7 +124,9 @@ export function createArgParser<T>(
     if (result.success) {
       return { success: true, data: result.data };
     }
-    return { success: false, error: result.error };
+    const message = result.issues?.map((i) => i.message).join("; ") ?? "Validation failed";
+    const error = Object.assign(new Error(message), { issues: result.issues ?? [] });
+    return { success: false, error };
   };
 }
 

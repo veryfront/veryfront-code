@@ -7,7 +7,8 @@
  * @module cli/commands/deploy
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
+import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
@@ -16,22 +17,26 @@ import { createNoopSpinner, createSpinner, muted } from "#cli/ui";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
 
 /**
- * Zod schema for deploy command arguments
+ * Schema factory for deploy command arguments
  */
-export const DeployArgsSchema = z.object({
-  branch: z.string().min(1).default("main"),
-  env: z.string().min(1).default("production"),
-  releaseName: z.string().min(1).optional(),
-  dryRun: z.boolean().default(false),
-  force: z.boolean().default(false),
-  /** Quiet mode - suppress spinner/progress output */
-  quiet: z.boolean().default(false),
-});
+export const getDeployArgsSchema = defineSchema((v) =>
+  v.object({
+    branch: v.string().min(1).default("main"),
+    env: v.string().min(1).default("production"),
+    releaseName: v.string().min(1).optional(),
+    dryRun: v.boolean().default(false),
+    force: v.boolean().default(false),
+    /** Quiet mode - suppress spinner/progress output */
+    quiet: v.boolean().default(false),
+  })
+);
+
+export const DeployArgsSchema = getDeployArgsSchema();
 
 /**
  * Deploy command options (inferred from schema)
  */
-export type DeployOptions = z.infer<typeof DeployArgsSchema>;
+export type DeployOptions = InferSchema<ReturnType<typeof getDeployArgsSchema>>;
 
 /**
  * Parse CLI arguments into validated DeployOptions

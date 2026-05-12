@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { getServiceNowClient } from "../../lib/servicenow-client.ts";
 import { isServiceNowConnected } from "../../lib/token-store.ts";
 
@@ -14,18 +14,18 @@ export default defineTool({
   id: "servicenow-list-incidents",
   description:
     "List incidents from ServiceNow with optional filters for state, priority, or search query",
-  inputSchema: z.object({
-    limit: z.number().optional().describe("Maximum number of incidents to return (default: 20)"),
-    state: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v.number().optional().describe("Maximum number of incidents to return (default: 20)"),
+    state: v
       .enum(["new", "in_progress", "on_hold", "resolved", "closed"])
       .optional()
       .describe("Filter by incident state"),
-    priority: z
+    priority: v
       .enum(["1", "2", "3", "4", "5"])
       .optional()
       .describe("Filter by priority (1=Critical, 2=High, 3=Moderate, 4=Low, 5=Planning)"),
-    query: z.string().optional().describe("Search query for incident short description"),
-  }),
+    query: v.string().optional().describe("Search query for incident short description"),
+  }))(),
   async execute(input) {
     if (!(await isServiceNowConnected())) {
       return {

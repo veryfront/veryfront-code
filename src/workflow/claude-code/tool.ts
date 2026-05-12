@@ -4,47 +4,38 @@
  * Pre-configured tools for using the Claude Agent SDK in workflow steps.
  */
 
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { Tool } from "#veryfront/tool";
 import { executeAgent } from "./agent.ts";
 import type { ClaudeCodeMode, ClaudeCodeResult } from "./types.ts";
 
-/**
- * Input schema for claude-code tool
- */
-const claudeCodeInputSchema = z.object({
-  /** Task description for the agent */
-  task: z.string().describe("The task for the Claude Code agent to perform"),
+const getClaudeCodeInputSchema = defineSchema((v) =>
+  v.object({
+    task: v.string().describe("The task for the Claude Code agent to perform"),
+    mode: v
+      .enum(["code", "analysis", "custom"])
+      .optional()
+      .default("code")
+      .describe("Tool mode: code (read-write), analysis (read-only), custom (user-specified)"),
+    maxTurns: v
+      .number()
+      .max(100)
+      .optional()
+      .default(20)
+      .describe("Maximum agentic loop turns"),
+    files: v
+      .array(v.string())
+      .optional()
+      .describe("Specific files to focus on"),
+    context: v
+      .record(v.unknown())
+      .optional()
+      .describe("Additional context to include in the prompt"),
+  })
+);
 
-  /** Tool mode */
-  mode: z
-    .enum(["code", "analysis", "custom"])
-    .optional()
-    .default("code")
-    .describe("Tool mode: code (read-write), analysis (read-only), custom (user-specified)"),
-
-  /** Maximum turns */
-  maxTurns: z
-    .number()
-    .max(100)
-    .optional()
-    .default(20)
-    .describe("Maximum agentic loop turns"),
-
-  /** Files to focus on */
-  files: z
-    .array(z.string())
-    .optional()
-    .describe("Specific files to focus on"),
-
-  /** Additional context */
-  context: z
-    .record(z.unknown())
-    .optional()
-    .describe("Additional context to include in the prompt"),
-});
-
-type ClaudeCodeInput = z.infer<typeof claudeCodeInputSchema>;
+type ClaudeCodeInput = InferSchema<ReturnType<typeof getClaudeCodeInputSchema>>;
 
 /**
  * Build the full prompt from input
@@ -90,7 +81,7 @@ export const claudeCodeTool: Tool<ClaudeCodeInput, ClaudeCodeResult> = {
   type: "function",
   description: "Run a Claude Code agent for complex coding tasks. " +
     "Supports file editing, bash commands, and iterative problem-solving.",
-  inputSchema: claudeCodeInputSchema as unknown as z.ZodSchema<ClaudeCodeInput>,
+  inputSchema: getClaudeCodeInputSchema() as unknown as Schema<ClaudeCodeInput>,
   inputSchemaJson: {
     type: "object",
     properties: {

@@ -1,13 +1,22 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
-export const CacheBackendTypeSchema = z.enum(["memory", "redis", "api", "disk"]);
+export const getCacheBackendTypeSchema = defineSchema((v) =>
+  v.enum(["memory", "redis", "api", "disk"])
+);
 
-export const CacheSetBatchEntrySchema = z.object({
-  key: z.string(),
-  value: z.string(),
-  ttl: z.number().int().positive().optional(),
-});
+export const getCacheSetBatchEntrySchema = defineSchema((v) =>
+  v.object({
+    key: v.string(),
+    value: v.string(),
+    ttl: v.number().int().positive().optional(),
+  })
+);
 
 // Inferred types
-export type CacheBackendType = z.infer<typeof CacheBackendTypeSchema>;
-export type CacheSetBatchEntry = z.infer<typeof CacheSetBatchEntrySchema>;
+export type CacheBackendType = InferSchema<ReturnType<typeof getCacheBackendTypeSchema>>;
+export type CacheSetBatchEntry = InferSchema<ReturnType<typeof getCacheSetBatchEntrySchema>>;
+
+// Backward compat aliases
+export const CacheBackendTypeSchema = getCacheBackendTypeSchema();
+export const CacheSetBatchEntrySchema = getCacheSetBatchEntrySchema();

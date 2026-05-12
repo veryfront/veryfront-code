@@ -2,19 +2,23 @@
  * Clean command handler
  */
 
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { cleanCommand } from "./command.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { handleProjectDirCommand } from "../../shared/handler-utils.ts";
 
-const CleanArgsSchema = z.object({
-  projectDir: z.string().default(""),
-  cache: z.boolean().default(false),
-  build: z.boolean().default(false),
-  all: z.boolean().default(false),
-  force: z.boolean().default(false),
-});
+const getCleanArgsSchema = defineSchema((v) =>
+  v.object({
+    projectDir: v.string().default(""),
+    cache: v.boolean().default(false),
+    build: v.boolean().default(false),
+    all: v.boolean().default(false),
+    force: v.boolean().default(false),
+  })
+);
+
+const CleanArgsSchema = getCleanArgsSchema();
 
 const parseCleanArgs = createArgParser(CleanArgsSchema, {
   projectDir: CommonArgs.projectDir,

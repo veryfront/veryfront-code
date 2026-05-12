@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { isResponseLike } from "./response-like.ts";
 import { getAgent } from "./composition/index.ts";
 import type { Message } from "./types.ts";
@@ -13,72 +14,88 @@ const MAX_TEXT_PART_LENGTH = 10_000;
 const MAX_MESSAGES_PER_REQUEST = 100;
 
 // ---------------------------------------------------------------------------
-// Zod schemas for validating parts-based chat UI messages
+// Schemas for validating parts-based chat UI messages
 // ---------------------------------------------------------------------------
 
-const textPartSchema = z.object({
-  type: z.literal("text"),
-  text: z.string().max(MAX_TEXT_PART_LENGTH),
-  state: z.string().optional(),
-});
-
-const toolCallPartSchema = z.object({
-  type: z.literal("tool-call"),
-  toolCallId: z.string(),
-  toolName: z.string(),
-  args: z.unknown(),
-});
-
-const toolResultPartSchema = z.object({
-  type: z.literal("tool-result"),
-  toolCallId: z.string(),
-  result: z.unknown(),
-});
-
-const dynamicToolPartSchema = z
-  .object({
-    type: z.string().startsWith("tool-"),
-    toolCallId: z.string(),
-    toolName: z.string(),
-    state: z.string().optional(),
-    input: z.unknown().optional(),
-    output: z.unknown().optional(),
+const getTextPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("text"),
+    text: v.string().max(MAX_TEXT_PART_LENGTH),
+    state: v.string().optional(),
   })
-  .passthrough();
+);
 
-const stepPartSchema = z.object({
-  type: z.enum(["step-start", "step-end"]),
-  stepIndex: z.number().optional(),
-}).passthrough();
+const getToolCallPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool-call"),
+    toolCallId: v.string(),
+    toolName: v.string(),
+    args: v.unknown(),
+  })
+);
 
-const reasoningPartSchema = z.object({
-  type: z.literal("reasoning"),
-  text: z.string(),
-  state: z.string().optional(),
-}).passthrough();
+const getToolResultPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("tool-result"),
+    toolCallId: v.string(),
+    result: v.unknown(),
+  })
+);
 
-const partSchema = z.union([
-  textPartSchema,
-  toolCallPartSchema,
-  toolResultPartSchema,
-  dynamicToolPartSchema,
-  stepPartSchema,
-  reasoningPartSchema,
-]);
+const getDynamicToolPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.string(),
+    toolCallId: v.string(),
+    toolName: v.string(),
+    state: v.string().optional(),
+    input: v.unknown().optional(),
+    output: v.unknown().optional(),
+  }).passthrough()
+);
 
-const messageSchema = z.object({
-  id: z.string().optional(),
-  role: z.enum(["user", "assistant", "system", "tool"]),
-  parts: z.array(partSchema).min(1),
-});
+const getStepPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.enum(["step-start", "step-end"]),
+    stepIndex: v.number().optional(),
+  }).passthrough()
+);
 
-const chatRequestSchema = z.object({
-  messages: z.array(messageSchema).min(1).max(MAX_MESSAGES_PER_REQUEST),
-  model: z.string().optional(),
-});
+const getReasoningPartSchema = defineSchema((v) =>
+  v.object({
+    type: v.literal("reasoning"),
+    text: v.string(),
+    state: v.string().optional(),
+  }).passthrough()
+);
 
-type ParsedMessage = z.infer<typeof messageSchema>;
-type ParsedTextPart = z.infer<typeof textPartSchema>;
+const getPartSchema = defineSchema((v) =>
+  v.union([
+    getTextPartSchema(),
+    getToolCallPartSchema(),
+    getToolResultPartSchema(),
+    getDynamicToolPartSchema(),
+    getStepPartSchema(),
+    getReasoningPartSchema(),
+  ])
+);
+
+const getMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().optional(),
+    role: v.enum(["user", "assistant", "system", "tool"]),
+    parts: v.array(getPartSchema()).min(1),
+  })
+);
+
+const getChatRequestSchema = defineSchema((v) =>
+  v.object({
+    messages: v.array(getMessageSchema()).min(1).max(MAX_MESSAGES_PER_REQUEST),
+    model: v.string().optional(),
+  })
+);
+
+type ParsedMessage = InferSchema<ReturnType<typeof getMessageSchema>>;
+type ParsedTextPart = InferSchema<ReturnType<typeof getTextPartSchema>>;
 
 // ---------------------------------------------------------------------------
 // Message transformation
@@ -414,7 +431,7 @@ export function createChatHandler(
 
     try {
       const body = await request.json();
-      const { messages: rawMessages, model: requestModel } = chatRequestSchema.parse(body);
+      const { messages: rawMessages, model: requestModel } = getChatRequestSchema().parse(body);
 
       const context = typeof options?.context === "function"
         ? await options.context(request)
@@ -446,11 +463,16 @@ export function createChatHandler(
 
       return result.toDataStreamResponse();
     } catch (error) {
-      if (error instanceof z.ZodError) {
+      if (
+        error instanceof Error &&
+        "issues" in error &&
+        Array.isArray((error as Record<string, unknown>).issues)
+      ) {
+        const issues = (error as { issues: Array<{ path: unknown[]; message: string }> }).issues;
         return Response.json(
           {
             error: "Invalid request",
-            details: error.issues.map((e) => ({ path: e.path, message: e.message })),
+            details: issues.map((e) => ({ path: e.path, message: e.message })),
           },
           { status: 400 },
         );

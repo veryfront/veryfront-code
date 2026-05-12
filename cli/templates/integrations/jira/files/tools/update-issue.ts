@@ -1,5 +1,5 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import {
   getIssue,
   getIssueTransitions,
@@ -11,29 +11,29 @@ export default tool({
   id: "update-issue",
   description:
     'Update an existing Jira issue. Can update fields like summary, description, priority, assignee, labels, or transition the status (e.g., move to "In Progress", "Done").',
-  inputSchema: z.object({
-    issueKey: z.string().describe('The issue key (e.g., "PROJ-123") to update'),
-    summary: z.string().optional().describe("New summary/title for the issue"),
-    description: z.string().optional().describe("New description for the issue"),
-    priority: z
+  inputSchema: defineSchema((v) => v.object({
+    issueKey: v.string().describe('The issue key (e.g., "PROJ-123") to update'),
+    summary: v.string().optional().describe("New summary/title for the issue"),
+    description: v.string().optional().describe("New description for the issue"),
+    priority: v
       .string()
       .optional()
       .describe('New priority: "Highest", "High", "Medium", "Low", "Lowest"'),
-    assigneeId: z
+    assigneeId: v
       .string()
       .optional()
       .describe("Atlassian account ID of the new assignee"),
-    labels: z
-      .array(z.string())
+    labels: v
+      .array(v.string())
       .optional()
       .describe("New array of labels (replaces existing labels)"),
-    status: z
+    status: v
       .string()
       .optional()
       .describe(
         'New status to transition to (e.g., "In Progress", "Done", "To Do")',
       ),
-  }),
+  }))(),
   async execute({
     issueKey,
     summary,

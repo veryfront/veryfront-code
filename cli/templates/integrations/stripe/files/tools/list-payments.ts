@@ -1,21 +1,21 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { formatAmount, formatDate, listPaymentIntents } from "../../lib/stripe-client.ts";
 
 export default tool({
   id: "list-payments",
   description: "List Stripe payment intents. Supports filtering by customer and creation date range.",
-  inputSchema: z.object({
-    limit: z
+  inputSchema: defineSchema((v) => v.object({
+    limit: v
       .number()
       .min(1)
       .max(100)
       .default(10)
       .describe("Maximum number of payment intents to retrieve"),
-    customerId: z.string().optional().describe("Filter by customer ID (starts with cus_)"),
-    createdAfter: z.number().optional().describe("Filter payments created after this Unix timestamp"),
-    createdBefore: z.number().optional().describe("Filter payments created before this Unix timestamp"),
-  }),
+    customerId: v.string().optional().describe("Filter by customer ID (starts with cus_)"),
+    createdAfter: v.number().optional().describe("Filter payments created after this Unix timestamp"),
+    createdBefore: v.number().optional().describe("Filter payments created before this Unix timestamp"),
+  }))(),
   async execute({ limit, customerId, createdAfter, createdBefore }) {
     const created =
       createdAfter || createdBefore ? { gte: createdAfter, lte: createdBefore } : undefined;

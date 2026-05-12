@@ -1,14 +1,14 @@
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { createGmailClient } from "../lib/gmail-client.ts";
 import { resolveUserId } from "../lib/context.ts";
 
 export default tool({
   id: "delete-thread",
   description: "Permanently delete a Gmail thread.",
-  inputSchema: z.object({
-    threadId: z.string().min(1).describe("Gmail thread ID"),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    threadId: v.string().min(1).describe("Gmail thread ID"),
+  }))(),
   execute: async ({ threadId }, context) => {
     const userId = resolveUserId(context);
 
