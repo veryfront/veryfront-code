@@ -24,6 +24,8 @@ interface ZodDef {
   items?: z.ZodTypeAny[]; // tuple
   options?: z.ZodTypeAny[] | Map<string, z.ZodTypeAny>; // union
   valueType?: z.ZodTypeAny; // record
+  catchall?: z.ZodTypeAny; // object unknown-key policy / catchall
+  unknownKeys?: "strip" | "passthrough" | "strict"; // v3 object unknown-key policy
   innerType?: z.ZodTypeAny; // optional/nullable/default (v3)
   schema?: z.ZodTypeAny; // effects/optional/nullable (v3/v4)
   in?: z.ZodTypeAny; // pipe input (v4)
@@ -123,6 +125,8 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
       const json: JsonSchema = { type: "object", properties };
       if (required.length) json.required = required;
+      const additionalProperties = getObjectAdditionalProperties(def);
+      if (additionalProperties !== undefined) json.additionalProperties = additionalProperties;
 
       return json;
     }
@@ -192,6 +196,19 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
     default:
       return { type: "object" };
   }
+}
+
+function getObjectAdditionalProperties(def: ZodDef): boolean | JsonSchema | undefined {
+  if (def.unknownKeys === "passthrough") return true;
+  if (def.unknownKeys === "strict") return false;
+  if (def.unknownKeys === "strip") return undefined;
+
+  if (!def.catchall) return undefined;
+
+  const catchallTag = getTypeTag(def.catchall);
+  if (catchallTag === "unknown" || catchallTag === "ZodUnknown") return true;
+  if (catchallTag === "never" || catchallTag === "ZodNever") return false;
+  return zodToJsonSchema(def.catchall);
 }
 
 function unwrapSchema(

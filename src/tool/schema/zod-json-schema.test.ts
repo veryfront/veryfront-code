@@ -91,6 +91,16 @@ describe("zodToJsonSchema", () => {
       assertEquals(result.properties?.nested?.type, "object");
       assertEquals(result.properties?.nested?.properties?.value, { type: "number" });
     });
+
+    it("should preserve passthrough object policy", () => {
+      const result = zodToJsonSchema(s((v) => v.object({}).passthrough()));
+      assertEquals(result.additionalProperties, true);
+    });
+
+    it("should preserve strict object policy", () => {
+      const result = zodToJsonSchema(s((v) => v.object({ name: v.string() }).strict()));
+      assertEquals(result.additionalProperties, false);
+    });
   });
 
   describe("array types", () => {
