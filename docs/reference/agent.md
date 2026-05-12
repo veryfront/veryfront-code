@@ -58,7 +58,6 @@ import {
   registerAgent,
   runHostedChildLifecycle,
   runHostedLifecycle,
-  runNodeVeryfrontCloudAgentServiceMain,
   RunResumeSessionManager,
   RuntimeAgentRunInvocationSchema,
   shouldSkipHostedChildTerminalPersistence,
@@ -284,8 +283,7 @@ await startAgentService({
 
 By default, discovery is rooted at the process cwd. Pass `baseDir` only when the
 service may start from another working directory. `entrypointUrl` is a
-convenience fallback for deriving `baseDir` from an entry module URL; `entryUrl`
-remains supported as a compatibility alias.
+convenience fallback for deriving `baseDir` from an entry module URL.
 
 Studio MCP tools are opt-in because they are Studio/control-plane specific:
 
@@ -876,10 +874,6 @@ helper loads `.env` files, initializes OpenTelemetry where supported, registers
 trace-context logging, starts the service server, and handles startup failures
 through the provided process target.
 
-### `runNodeVeryfrontCloudAgentServiceMain(options)`
-
-Compatibility alias for `startAgentService()`.
-
 ### `parseAgentServiceConfig(env)`
 
 Parse the default agent service environment contract. The helper
@@ -1138,7 +1132,6 @@ Clear all stored messages from memory.
 | `parseAgUiRuntimeRequestOrError`                                      | Parse runtime AG-UI input or return a `400` validation `Response`        |
 | `parseRuntimeAgentRunInvocation`                                      | Parse and validate a control-plane runtime agent invocation body         |
 | `startAgentService`                                                   | Run the default cross-runtime bootstrap for a Veryfront Cloud service    |
-| `runNodeVeryfrontCloudAgentServiceMain`                               | Compatibility alias for `startAgentService`                              |
 | `startNodeAgentService`                                               | Start an agent service with the Node service server adapter              |
 | `startNodeVeryfrontCloudAgentService`                                 | Start a Veryfront Cloud agent service with the Node server adapter       |
 | `parseRuntimeAgentRunInvocationOrError`                               | Parse a runtime agent invocation or return a `400` validation `Response` |
