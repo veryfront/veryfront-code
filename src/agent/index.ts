@@ -258,24 +258,46 @@ export {
 } from "./agent-service-server.ts";
 export {
   createDefaultHostedChatRuntime,
+  createDefaultHostedChatRuntime as createDefaultAgentServiceChatRuntime,
   type CreateDefaultHostedChatRuntimeContextInput,
+  type CreateDefaultHostedChatRuntimeContextInput
+    as CreateDefaultAgentServiceChatRuntimeContextInput,
   type CreateDefaultHostedChatRuntimeOptions,
+  type CreateDefaultHostedChatRuntimeOptions as CreateDefaultAgentServiceChatRuntimeOptions,
   type DefaultHostedChatRuntimeConfig,
+  type DefaultHostedChatRuntimeConfig as DefaultAgentServiceChatRuntimeConfig,
   type DefaultHostedChatRuntimeCreationOptions,
+  type DefaultHostedChatRuntimeCreationOptions as DefaultAgentServiceChatRuntimeCreationOptions,
   type DefaultHostedChatRuntimeLogger,
+  type DefaultHostedChatRuntimeLogger as DefaultAgentServiceChatRuntimeLogger,
   type DefaultHostedChatRuntimeProjectSwitchInput,
+  type DefaultHostedChatRuntimeProjectSwitchInput
+    as DefaultAgentServiceChatRuntimeProjectSwitchInput,
   type DefaultHostedChatRuntimeSteeringMutationInput,
+  type DefaultHostedChatRuntimeSteeringMutationInput
+    as DefaultAgentServiceChatRuntimeSteeringMutationInput,
   type DefaultHostedChatRuntimeSystemRefreshInput,
+  type DefaultHostedChatRuntimeSystemRefreshInput
+    as DefaultAgentServiceChatRuntimeSystemRefreshInput,
   type DefaultHostedChatRuntimeTaskContext,
+  type DefaultHostedChatRuntimeTaskContext as DefaultAgentServiceChatRuntimeTaskContext,
 } from "./default-hosted-chat-runtime.ts";
 export {
   createDefaultHostedProjectSteeringRefresh,
+  createDefaultHostedProjectSteeringRefresh as createDefaultAgentServiceProjectSteeringRefresh,
   type CreateDefaultHostedProjectSteeringRefreshOptions,
+  type CreateDefaultHostedProjectSteeringRefreshOptions
+    as CreateDefaultAgentServiceProjectSteeringRefreshOptions,
   type DefaultHostedProjectSteeringFetchers,
+  type DefaultHostedProjectSteeringFetchers as DefaultAgentServiceProjectSteeringFetchers,
   type DefaultHostedProjectSteeringRefreshLogger,
+  type DefaultHostedProjectSteeringRefreshLogger as DefaultAgentServiceProjectSteeringRefreshLogger,
   type DefaultHostedProjectSteeringRefreshLookup,
+  type DefaultHostedProjectSteeringRefreshLookup as DefaultAgentServiceProjectSteeringRefreshLookup,
   fetchDefaultHostedProjectSteering,
+  fetchDefaultHostedProjectSteering as fetchDefaultAgentServiceProjectSteering,
   type FetchDefaultHostedProjectSteeringInput,
+  type FetchDefaultHostedProjectSteeringInput as FetchDefaultAgentServiceProjectSteeringInput,
 } from "./default-hosted-project-steering-refresh.ts";
 
 export {
@@ -433,14 +455,23 @@ export {
 
 export type {
   HostedChatRuntimeAgent,
+  HostedChatRuntimeAgent as AgentServiceChatRuntimeAgent,
   HostedChatRuntimeCreationOptions,
+  HostedChatRuntimeCreationOptions as AgentServiceChatRuntimeCreationOptions,
   HostedChatRuntimeCreationResult,
+  HostedChatRuntimeCreationResult as AgentServiceChatRuntimeCreationResult,
   HostedChatRuntimeFinishPart,
+  HostedChatRuntimeFinishPart as AgentServiceChatRuntimeFinishPart,
   HostedChatRuntimeOnFinishEvent,
+  HostedChatRuntimeOnFinishEvent as AgentServiceChatRuntimeOnFinishEvent,
   HostedChatRuntimeProjectSteering,
+  HostedChatRuntimeProjectSteering as AgentServiceChatRuntimeProjectSteering,
   HostedChatRuntimeStreamInput,
+  HostedChatRuntimeStreamInput as AgentServiceChatRuntimeStreamInput,
   HostedChatRuntimeStreamResult,
+  HostedChatRuntimeStreamResult as AgentServiceChatRuntimeStreamResult,
   HostedChatRuntimeToUiMessageStreamOptions,
+  HostedChatRuntimeToUiMessageStreamOptions as AgentServiceChatRuntimeToUiMessageStreamOptions,
 } from "./hosted-chat-runtime-contract.ts";
 
 export {
@@ -916,18 +947,29 @@ export {
 } from "./hosted-child-invoke-tool.ts";
 export {
   createDefaultHostedInvokeAgentTool,
+  createDefaultHostedInvokeAgentTool as createDefaultAgentServiceInvokeAgentTool,
   type DefaultHostedInvokeAgentConfig,
+  type DefaultHostedInvokeAgentConfig as DefaultAgentServiceInvokeAgentConfig,
   type DefaultHostedInvokeAgentContext,
+  type DefaultHostedInvokeAgentContext as DefaultAgentServiceInvokeAgentContext,
   type DefaultHostedInvokeAgentInput,
+  type DefaultHostedInvokeAgentInput as DefaultAgentServiceInvokeAgentInput,
   defaultHostedInvokeAgentInputSchema,
   type DefaultHostedInvokeAgentLogger,
+  type DefaultHostedInvokeAgentLogger as DefaultAgentServiceInvokeAgentLogger,
   type DefaultHostedInvokeAgentProjectRefresh,
+  type DefaultHostedInvokeAgentProjectRefresh as DefaultAgentServiceInvokeAgentProjectRefresh,
   defaultHostedInvokeAgentSelectionSchema,
   type DefaultHostedInvokeAgentToolOptions,
+  type DefaultHostedInvokeAgentToolOptions as DefaultAgentServiceInvokeAgentToolOptions,
   type DefaultHostedInvokeAgentToolResult,
+  type DefaultHostedInvokeAgentToolResult as DefaultAgentServiceInvokeAgentToolResult,
   type DefaultHostedInvokeAgentTrace,
+  type DefaultHostedInvokeAgentTrace as DefaultAgentServiceInvokeAgentTrace,
   type DefaultHostedInvokeAgentTraceAttributes,
+  type DefaultHostedInvokeAgentTraceAttributes as DefaultAgentServiceInvokeAgentTraceAttributes,
   executeDefaultHostedInvokeAgentTool,
+  executeDefaultHostedInvokeAgentTool as executeDefaultAgentServiceInvokeAgentTool,
 } from "./default-hosted-invoke-agent-tool.ts";
 export {
   buildDefaultHostedChildForkToolSet,
@@ -1049,15 +1091,21 @@ export {
 } from "./runtime-project-files-client.ts";
 export {
   createHostedAgentProjectSteering,
+  createHostedAgentProjectSteering as createAgentServiceProjectSteering,
   type HostedAgentProjectSteering,
+  type HostedAgentProjectSteering as AgentServiceProjectSteering,
   type HostedAgentProjectSteeringLogger,
+  type HostedAgentProjectSteeringLogger as AgentServiceProjectSteeringLogger,
   type HostedAgentProjectSteeringOptions,
+  type HostedAgentProjectSteeringOptions as AgentServiceProjectSteeringOptions,
   type HostedAgentProjectSteeringOptionsData,
+  type HostedAgentProjectSteeringOptionsData as AgentServiceProjectSteeringOptionsData,
   hostedAgentProjectSteeringOptionsSchema,
 } from "./hosted-agent-project-steering.ts";
 export {
   createHostedProjectSteeringAdapter,
   type HostedProjectSkillIdsContext,
+  type HostedProjectSkillIdsContext as AgentServiceProjectSkillIdsContext,
   type HostedProjectSteeringAdapter,
   type HostedProjectSteeringAdapterOptions,
   type HostedProjectSteeringLogger,
@@ -1199,21 +1247,39 @@ export {
 } from "./hosted-chat-execution-runtime.ts";
 export {
   type PreparedHostedChatExecution,
+  type PreparedHostedChatExecution as PreparedAgentServiceChatExecution,
   type PreparedHostedChatExecutionDetachedInput,
+  type PreparedHostedChatExecutionDetachedInput as PreparedAgentServiceChatExecutionDetachedInput,
   type PreparedHostedChatExecutionRuntimeOptions,
+  type PreparedHostedChatExecutionRuntimeOptions as PreparedAgentServiceChatExecutionRuntimeOptions,
   type PreparedHostedChatExecutionStreamInput,
+  type PreparedHostedChatExecutionStreamInput as PreparedAgentServiceChatExecutionStreamInput,
   runPreparedHostedChatExecutionDetached,
+  runPreparedHostedChatExecutionDetached as runPreparedAgentServiceChatExecutionDetached,
   streamPreparedHostedChatExecutionToAgUiResponse,
+  streamPreparedHostedChatExecutionToAgUiResponse
+    as streamPreparedAgentServiceChatExecutionToAgUiResponse,
 } from "./prepared-hosted-chat-execution.ts";
 export {
   createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions,
+  createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions
+    as createVeryfrontCloudPreparedAgentServiceChatExecutionRuntimeOptions,
   type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput,
+  type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput
+    as CreateVeryfrontCloudPreparedAgentServiceChatExecutionRuntimeOptionsInput,
 } from "./veryfront-cloud-prepared-hosted-chat-execution-runtime.ts";
 export {
   createVeryfrontCloudHostedChatExecutionRootRunOptions,
+  createVeryfrontCloudHostedChatExecutionRootRunOptions
+    as createVeryfrontCloudAgentServiceChatExecutionRootRunOptions,
   prepareVeryfrontCloudHostedChatExecution,
+  prepareVeryfrontCloudHostedChatExecution as prepareVeryfrontCloudAgentServiceChatExecution,
   type PrepareVeryfrontCloudHostedChatExecutionInput,
+  type PrepareVeryfrontCloudHostedChatExecutionInput
+    as PrepareVeryfrontCloudAgentServiceChatExecutionInput,
   type VeryfrontCloudHostedChatExecutionPreparationLogger,
+  type VeryfrontCloudHostedChatExecutionPreparationLogger
+    as VeryfrontCloudAgentServiceChatExecutionPreparationLogger,
 } from "./veryfront-cloud-hosted-chat-execution-preparation.ts";
 export {
   finalizeHostedDetached,
@@ -1468,7 +1534,9 @@ export {
 } from "./ag-ui-handler.ts";
 export {
   createHostedFormInputTool,
+  createHostedFormInputTool as createAgentServiceFormInputTool,
   type HostedFormInputToolContext,
+  type HostedFormInputToolContext as AgentServiceFormInputToolContext,
 } from "./hosted-form-input-tool.ts";
 export {
   buildInputRequestLifecycleDataEvent,

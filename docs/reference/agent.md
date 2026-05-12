@@ -702,9 +702,9 @@ Create a `RunError` AG-UI SSE event payload.
 Create an AG-UI SSE `Response` from a prepared AG-UI event, preserving the
 existing `RunError` wire shape used by hosted routes.
 
-### `createDefaultHostedProjectSteeringRefresh(options)`
+### `createDefaultAgentServiceProjectSteeringRefresh(options)`
 
-Create the default hosted step-boundary project steering refresh callback. The
+Create the default agent-service step-boundary project steering refresh callback. The
 helper refreshes project instructions, skills, and project-scoped remote tool
 names, filters skills by the runtime task context, records compatible available
 tool names, and appends the runtime tool inventory to the system instructions.
@@ -713,44 +713,44 @@ Hosts provide the control-plane fetchers and prompt builder, keeping product
 policy outside the framework while reusing the generic hosted refresh
 sequencing.
 
-### `fetchDefaultHostedProjectSteering(options)`
+### `fetchDefaultAgentServiceProjectSteering(options)`
 
-Fetch initial hosted project steering for execution preparation. The helper
+Fetch initial agent-service project steering for execution preparation. The helper
 returns empty steering when no project is active, otherwise fetches project
 instructions and skills in parallel with an optional host trace wrapper.
 
-### `createHostedAgentProjectSteering(options)`
+### `createAgentServiceProjectSteering(options)`
 
-Create a reusable hosted project-steering binding for separately deployed agent
-services. The helper loads and caches a markdown-backed `agents/*.md` definition
-and wires the hosted project-steering adapter for project instructions, project
+Create a reusable agent-service project-steering binding for separately
+deployed agent services. The helper loads and caches a markdown-backed `agents/*.md` definition
+and wires the project-steering adapter for project instructions, project
 skills, builtin skills, `load_skill`, and skill-id refresh. Hosts provide the
 service API URL plus optional logger, trace, and fetch hooks.
 
-### `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(options)`
+### `createVeryfrontCloudPreparedAgentServiceChatExecutionRuntimeOptions(options)`
 
-Create the default runtime options used by prepared hosted chat execution on
-Veryfront Cloud. The helper wires the hosted model-provider resolver and default
-chat stream watchdog while the host supplies its API URL, tracer, logger, and
+Create the default runtime options used by prepared agent-service chat execution
+on Veryfront Cloud. The helper wires the Veryfront Cloud model-provider resolver
+and default chat stream watchdog while the host supplies its API URL, tracer, logger, and
 optional trace hooks.
 
 ### `createVeryfrontCloudRuntimeSystemMessages(options)`
 
-Create the default runtime system messages for Veryfront Cloud hosted services.
+Create the default runtime system messages for Veryfront Cloud agent services.
 The helper inserts project instructions and project context blocks at the
 runtime-context marker, includes available skills, and appends environment
 context using the same prompt-block conventions as the core runtime.
 
 ### `buildVeryfrontCloudRuntimeInstructions(input)`
 
-Adapt hosted chat runtime preparation input into Veryfront Cloud runtime system
-messages. This is the callback-shaped companion to
+Adapt agent-service chat runtime preparation input into Veryfront Cloud runtime
+system messages. This is the callback-shaped companion to
 `createVeryfrontCloudRuntimeSystemMessages()` for
-`prepareVeryfrontCloudHostedChatExecution()`.
+`prepareVeryfrontCloudAgentServiceChatExecution()`.
 
 ### `resolveRuntimeAgentDefinitionsDir(options)`
 
-Resolve the `agents/` directory for a hosted service from a source or bundled
+Resolve the `agents/` directory for an agent service from a source or bundled
 module directory. The helper checks source-layout, bundled `dist/src`, and
 deeper bundled server paths for a markdown definition such as `assistant.md`.
 
@@ -759,7 +759,7 @@ deeper bundled server paths for a markdown definition such as `assistant.md`.
 Read a markdown agent definition from an `agents/` directory and parse its
 frontmatter plus body with `parseRuntimeAgentMarkdownDefinition()`. This keeps
 file loading, traversal-prone file-name validation, and markdown parsing
-consistent across separately deployed hosted agents.
+consistent across separately deployed agents.
 
 ### `filterAgentTraceAttributes(attributes)`
 
@@ -767,19 +767,22 @@ Filter an unknown attribute record down to OpenTelemetry-safe agent trace
 attribute values: strings, numbers, booleans, arrays of those primitives,
 `null`, or `undefined`.
 
-### `prepareVeryfrontCloudHostedChatExecution(options)`
+### `prepareVeryfrontCloudAgentServiceChatExecution(options)`
 
-Prepare hosted chat execution for services that run through Veryfront Cloud. The
-helper reuses the default hosted model normalization, hosted model thinking
+Prepare agent-service chat execution for services that run through Veryfront
+Cloud. The helper reuses the default Veryfront Cloud model normalization, model thinking
 defaults, and durable root-run persistence diagnostics while the host supplies
 steering fetch/build callbacks and runtime creation policy.
 
-### `createVeryfrontCloudHostedChatExecutionRootRunOptions(options)`
+### `createVeryfrontCloudAgentServiceChatExecutionRootRunOptions(options)`
 
 Create the default durable root-run preparation options used by
-`prepareVeryfrontCloudHostedChatExecution()`. Hosts may override persistence
-operation text, missing-user-message errors, instrumentation, implementation
+`prepareVeryfrontCloudAgentServiceChatExecution()`. Hosts may override
+persistence operation text, missing-user-message errors, instrumentation, implementation
 kind, or persistence-failure handling.
+
+The hosted-prefixed API names for these helpers remain available as compatibility
+aliases for existing services.
 
 ### `parseAgentServiceConfig(env)`
 
@@ -1001,54 +1004,54 @@ Clear all stored messages from memory.
 
 ### Functions
 
-| Name                                                            | Description                                                              |
-| --------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| `agent`                                                         | Create an agent                                                          |
-| `agentAsTool`                                                   | Wrap agent as callable tool                                              |
-| `createAgUiCancelHandler`                                       | Create a DELETE handler for hosted AG-UI run cancellation                |
-| `createAgUiDetachedStartHandler`                                | Create a POST handler for detached hosted AG-UI run kickoff              |
-| `executeAgUiDetachedStart`                                      | Run detached hosted-start lifecycle from a validated request object      |
-| `createAgUiHandler`                                             | Create a POST handler for an AG-UI route                                 |
-| `createAgUiRuntimeHandler`                                      | Create a POST handler for the canonical runtime AG-UI request contract   |
-| `createAgUiRunErrorEvent`                                       | Create a `RunError` AG-UI SSE event                                      |
-| `createAgUiSseErrorResponse`                                    | Create an AG-UI SSE error `Response`                                     |
-| `createAgUiResumeHandler`                                       | Create a POST handler for hosted AG-UI run resume values                 |
-| `createAgentServiceRuntime`                                     | Create an agent service runtime with default service routes              |
-| `createDefaultHostedProjectSteeringRefresh`                     | Create the default hosted project steering refresh callback              |
-| `createHostedAgentProjectSteering`                              | Create hosted agent-definition and project-steering bindings             |
-| `buildVeryfrontCloudRuntimeInstructions`                        | Adapt hosted preparation input to Veryfront Cloud system messages        |
-| `createVeryfrontCloudHostedChatExecutionRootRunOptions`         | Create Veryfront Cloud hosted root-run preparation defaults              |
-| `createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
-| `createVeryfrontCloudRuntimeSystemMessages`                     | Create Veryfront Cloud runtime system messages                           |
-| `fetchDefaultHostedProjectSteering`                             | Fetch initial hosted project instructions and skills                     |
-| `filterAgentTraceAttributes`                                    | Filter unknown records to valid agent trace attributes                   |
-| `createNodeAgentServiceRuntimeInfrastructure`                   | Create Node service config, logger, tracer, and telemetry bundle         |
-| `loadAgentServiceEnvFiles`                                      | Load service env files while preserving host process env                 |
-| `initializeNodeAgentServiceOpenTelemetry`                       | Initialize Node OpenTelemetry for an agent service                       |
-| `loadRuntimeAgentMarkdownDefinitionFromFile`                    | Load and parse a markdown agent definition from an agents directory      |
-| `parseAgentServiceConfig`                                       | Parse default agent service environment config                           |
-| `resolveNodeAgentServiceTelemetryConfig`                        | Resolve Node service OpenTelemetry config from environment               |
-| `prepareVeryfrontCloudHostedChatExecution`                      | Prepare hosted chat execution with Veryfront Cloud defaults              |
-| `normalizeAgUiRuntimeMessages`                                  | Normalize runtime AG-UI messages into package `Message[]`                |
-| `parseAgUiRuntimeRequest`                                       | Parse and validate the canonical runtime AG-UI request body              |
-| `parseAgUiRuntimeRequestOrError`                                | Parse runtime AG-UI input or return a `400` validation `Response`        |
-| `parseRuntimeAgentRunInvocation`                                | Parse and validate a control-plane runtime agent invocation body         |
-| `startNodeAgentService`                                         | Start an agent service with the Node service server adapter              |
-| `parseRuntimeAgentRunInvocationOrError`                         | Parse a runtime agent invocation or return a `400` validation `Response` |
-| `resolveRuntimeAgentDefinitionsDir`                             | Resolve a hosted service `agents/` directory from source/bundled paths   |
-| `createChatHandler`                                             | Create a POST handler for a chat API route.                              |
-| `createMemory`                                                  | Create memory (buffer, conversation, summary)                            |
-| `createRedisMemory`                                             | Create Redis-backed memory                                               |
-| `createWorkflow`                                                | Create sequential agent workflow                                         |
-| `getAgent`                                                      | Get agent by ID                                                          |
-| `getAgentsAsTools`                                              | Get agents as tools (multi-agent)                                        |
-| `getAllAgentIds`                                                | List registered agent IDs                                                |
-| `getTextFromParts`                                              | Extract text from multi-part message                                     |
-| `getToolArguments`                                              | Extract parsed tool call args                                            |
-| `hasArgs`                                                       | Check for parsed args on tool call                                       |
-| `hasInput`                                                      | Check for raw input on tool call                                         |
-| `registerAgent`                                                 | Register agent for discovery                                             |
-| `waitForHumanInput`                                             | Wait for a canonical human-input response over hosted AG-UI run control  |
+| Name                                                                  | Description                                                              |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `agent`                                                               | Create an agent                                                          |
+| `agentAsTool`                                                         | Wrap agent as callable tool                                              |
+| `createAgUiCancelHandler`                                             | Create a DELETE handler for hosted AG-UI run cancellation                |
+| `createAgUiDetachedStartHandler`                                      | Create a POST handler for detached hosted AG-UI run kickoff              |
+| `executeAgUiDetachedStart`                                            | Run detached hosted-start lifecycle from a validated request object      |
+| `createAgUiHandler`                                                   | Create a POST handler for an AG-UI route                                 |
+| `createAgUiRuntimeHandler`                                            | Create a POST handler for the canonical runtime AG-UI request contract   |
+| `createAgUiRunErrorEvent`                                             | Create a `RunError` AG-UI SSE event                                      |
+| `createAgUiSseErrorResponse`                                          | Create an AG-UI SSE error `Response`                                     |
+| `createAgUiResumeHandler`                                             | Create a POST handler for hosted AG-UI run resume values                 |
+| `createAgentServiceRuntime`                                           | Create an agent service runtime with default service routes              |
+| `createDefaultAgentServiceProjectSteeringRefresh`                     | Create the default agent-service project steering refresh callback       |
+| `createAgentServiceProjectSteering`                                   | Create agent-service agent-definition and project-steering bindings      |
+| `buildVeryfrontCloudRuntimeInstructions`                              | Adapt agent-service preparation input to Veryfront Cloud system messages |
+| `createVeryfrontCloudAgentServiceChatExecutionRootRunOptions`         | Create Veryfront Cloud agent-service root-run preparation defaults       |
+| `createVeryfrontCloudPreparedAgentServiceChatExecutionRuntimeOptions` | Create Veryfront Cloud prepared execution runtime defaults               |
+| `createVeryfrontCloudRuntimeSystemMessages`                           | Create Veryfront Cloud runtime system messages                           |
+| `fetchDefaultAgentServiceProjectSteering`                             | Fetch initial agent-service project instructions and skills              |
+| `filterAgentTraceAttributes`                                          | Filter unknown records to valid agent trace attributes                   |
+| `createNodeAgentServiceRuntimeInfrastructure`                         | Create Node service config, logger, tracer, and telemetry bundle         |
+| `loadAgentServiceEnvFiles`                                            | Load service env files while preserving host process env                 |
+| `initializeNodeAgentServiceOpenTelemetry`                             | Initialize Node OpenTelemetry for an agent service                       |
+| `loadRuntimeAgentMarkdownDefinitionFromFile`                          | Load and parse a markdown agent definition from an agents directory      |
+| `parseAgentServiceConfig`                                             | Parse default agent service environment config                           |
+| `resolveNodeAgentServiceTelemetryConfig`                              | Resolve Node service OpenTelemetry config from environment               |
+| `prepareVeryfrontCloudAgentServiceChatExecution`                      | Prepare agent-service chat execution with Veryfront Cloud defaults       |
+| `normalizeAgUiRuntimeMessages`                                        | Normalize runtime AG-UI messages into package `Message[]`                |
+| `parseAgUiRuntimeRequest`                                             | Parse and validate the canonical runtime AG-UI request body              |
+| `parseAgUiRuntimeRequestOrError`                                      | Parse runtime AG-UI input or return a `400` validation `Response`        |
+| `parseRuntimeAgentRunInvocation`                                      | Parse and validate a control-plane runtime agent invocation body         |
+| `startNodeAgentService`                                               | Start an agent service with the Node service server adapter              |
+| `parseRuntimeAgentRunInvocationOrError`                               | Parse a runtime agent invocation or return a `400` validation `Response` |
+| `resolveRuntimeAgentDefinitionsDir`                                   | Resolve a hosted service `agents/` directory from source/bundled paths   |
+| `createChatHandler`                                                   | Create a POST handler for a chat API route.                              |
+| `createMemory`                                                        | Create memory (buffer, conversation, summary)                            |
+| `createRedisMemory`                                                   | Create Redis-backed memory                                               |
+| `createWorkflow`                                                      | Create sequential agent workflow                                         |
+| `getAgent`                                                            | Get agent by ID                                                          |
+| `getAgentsAsTools`                                                    | Get agents as tools (multi-agent)                                        |
+| `getAllAgentIds`                                                      | List registered agent IDs                                                |
+| `getTextFromParts`                                                    | Extract text from multi-part message                                     |
+| `getToolArguments`                                                    | Extract parsed tool call args                                            |
+| `hasArgs`                                                             | Check for parsed args on tool call                                       |
+| `hasInput`                                                            | Check for raw input on tool call                                         |
+| `registerAgent`                                                       | Register agent for discovery                                             |
+| `waitForHumanInput`                                                   | Wait for a canonical human-input response over hosted AG-UI run control  |
 
 ### Classes
 
