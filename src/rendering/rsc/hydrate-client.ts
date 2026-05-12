@@ -10,8 +10,6 @@ import {
   readHydrationData,
   resolveClientModuleStrategy,
 } from "./client-module-strategy.ts";
-import type { Root } from "https://esm.sh/react-dom@18.3.1/client";
-
 type Manifest = {
   version: number;
   hash?: string;
@@ -25,6 +23,11 @@ type Manifest = {
 interface ClientModule {
   default?: React.ComponentType<unknown>;
   [exportName: string]: React.ComponentType<unknown> | unknown;
+}
+
+interface ReactRoot {
+  render(children: React.ReactNode): void;
+  unmount(): void;
 }
 
 interface VeryfrontHydrate {
@@ -177,7 +180,7 @@ export async function hydrateAllClientBoundaries(doc: Document = document): Prom
     if (typeof Cmp !== "function") continue;
 
     try {
-      const root: Root = createRoot(el);
+      const root: ReactRoot = createRoot(el);
       root.render(React.createElement(Cmp as React.FC, {}));
       el.dataset.hydrated = "true";
     } catch (e) {
