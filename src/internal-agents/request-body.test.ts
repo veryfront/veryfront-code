@@ -8,13 +8,13 @@ import {
 
 describe("internal-agents/request-body", () => {
   it("returns an empty string when the request has no body", async () => {
-    const request = new Request("https://veryfront.test/internal/agents/stream");
+    const request = new Request("https://veryfront.test/api/control-plane/agents/stream");
 
     assertEquals(await readInternalAgentRequestBody(request), "");
   });
 
   it("reads request bodies that stay within the configured limit", async () => {
-    const request = new Request("https://veryfront.test/internal/agents/stream", {
+    const request = new Request("https://veryfront.test/api/control-plane/agents/stream", {
       method: "POST",
       body: "ok",
     });
@@ -23,7 +23,7 @@ describe("internal-agents/request-body", () => {
   });
 
   it("maps oversized request bodies to an internal-agent-specific error", async () => {
-    const request = new Request("https://veryfront.test/internal/agents/stream", {
+    const request = new Request("https://veryfront.test/api/control-plane/agents/stream", {
       method: "POST",
       body: "too-large",
     });

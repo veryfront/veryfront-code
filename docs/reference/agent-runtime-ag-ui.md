@@ -9,16 +9,16 @@ order: 10
 The `veryfront/agent` package supports a generic AG-UI transport for hosted
 agent runtimes.
 
-This is the package-level AG-UI contract. The public control-plane wrapper convention is `/api/control-plane/agents/*`; Veryfront Studio's legacy `/internal/agents/*` routes remain compatibility aliases, not the canonical public package surface.
+This is the package-level AG-UI contract. The control-plane wrapper convention is `/api/control-plane/agents/*`.
 
 ## Contract
 
 - canonical hosted runtime request contract: `AgUiRuntimeRequestSchema`
 - response body: AG-UI SSE
 - default endpoint convention: `/api/ag-ui`
-- default detached hosted start endpoint: `POST /api/ag-ui/runs`
-- default hosted resume endpoint: `POST /api/ag-ui/runs/:runId/resume`
-- default hosted cancel endpoint: `DELETE /api/ag-ui/runs/:runId`
+- default detached hosted start endpoint: `POST /api/runs`
+- default hosted resume endpoint: `POST /api/runs/:runId/resume`
+- default hosted cancel endpoint: `DELETE /api/runs/:runId`
 - host path: overrideable by the application
 
 The package defines the runtime contract. The host chooses where to mount it.
@@ -217,7 +217,7 @@ const sessionManager = new RunResumeSessionManager<{
   isError: boolean;
 }>();
 
-// app/api/ag-ui/runs/route.ts
+// app/api/runs/route.ts
 export const POST = createAgUiDetachedStartHandler({
   agent: assistant,
   sessionManager,
@@ -241,7 +241,7 @@ const sessionManager = new RunResumeSessionManager<{
   isError: boolean;
 }>();
 
-// app/api/ag-ui/runs/[runId]/resume/route.ts
+// app/api/runs/[runId]/resume/route.ts
 export const POST = createAgUiResumeHandler({ sessionManager });
 ```
 
@@ -253,7 +253,7 @@ const sessionManager = new RunResumeSessionManager<{
   isError: boolean;
 }>();
 
-// app/api/ag-ui/runs/[runId]/route.ts
+// app/api/runs/[runId]/route.ts
 export const DELETE = createAgUiCancelHandler({ sessionManager });
 ```
 

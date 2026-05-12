@@ -1209,7 +1209,7 @@ describe("Proxy Handler", () => {
         const handler = createHandler(port);
 
         const req = new Request(
-          "http://protected-project.preview.veryfront.com/internal/agents/stream",
+          "http://protected-project.preview.veryfront.com/api/control-plane/agents/stream",
           {
             headers: {
               host: "protected-project.preview.veryfront.com",

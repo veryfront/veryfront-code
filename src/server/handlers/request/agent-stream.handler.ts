@@ -2,7 +2,6 @@ import type { Agent } from "#veryfront/agent";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import {
   CONTROL_PLANE_AGENT_STREAM_PATH,
-  LEGACY_INTERNAL_AGENT_STREAM_PATH,
   type RuntimeAgentDiscoveryDeps,
 } from "#veryfront/channels/control-plane.ts";
 import {
@@ -122,7 +121,6 @@ export class AgentStreamHandler extends BaseHandler {
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
     patterns: [
       { pattern: CONTROL_PLANE_AGENT_STREAM_PATH, exact: true, method: "POST" },
-      { pattern: LEGACY_INTERNAL_AGENT_STREAM_PATH, exact: true, method: "POST" },
     ],
   };
 

@@ -72,7 +72,7 @@ Examples of bridge/facade roles include:
 
 - chat surfaces that span React UI and agent runtime,
 - discovery/bootstrap code that touches multiple registries and runtimes,
-- AG-UI adapters and internal compatibility wrappers,
+- AG-UI adapters and control-plane wrappers,
 - cloud bootstrap/context resolution,
 - and invalidation hooks that coordinate rendering, modules, transforms, and styles.
 

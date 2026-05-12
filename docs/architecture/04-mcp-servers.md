@@ -1,9 +1,9 @@
-# MCP Server and Internal AG-UI Transport
+# MCP Server and Control-plane AG-UI Transport
 
 Veryfront has two distinct integration surfaces in this area:
 
 1. **App MCP Server** -- Lets user applications expose tools, resources, and prompts to any MCP client (Claude, Cursor, etc.)
-2. **Internal AG-UI Transport** -- A separate Studio/internal-agent transport for AG-UI streaming and run control. This is not a second MCP server.
+2. **Control-plane AG-UI Transport** -- A separate Studio/internal-agent transport for AG-UI streaming and run control. This is not a second MCP server.
 
 ---
 
@@ -152,21 +152,21 @@ The MCP server architecture connects user-defined primitives to MCP clients thro
 
 ---
 
-## Internal AG-UI Transport (Studio / Internal Agents)
+## Control-plane AG-UI Transport (Studio / Internal Agents)
 
 The Studio/internal-agent transport is a Veryfront-specific AG-UI wrapper around the public `veryfront/agent` AG-UI handlers. It powers the Studio UI with real-time agent execution, tool result submission from the UI, and AG-UI streaming, but it should not be described as a second MCP server.
 
 ```mermaid
 sequenceDiagram
     participant Studio as Veryfront Studio<br/>(Browser UI)
-    participant API as Agent Stream API<br/>(/internal/agents/stream)
+    participant API as Agent Stream API<br/>(/api/control-plane/agents/stream)
     participant SessionMgr as AgentRunSessionManager
     participant Runtime as Agent Runtime
     participant Provider as Model Provider
     participant InjectedTool as Injected Tool<br/>(UI-submitted result)
 
     Note over Studio,InjectedTool: Phase 1: Start Agent Run
-    Studio->>API: POST /internal/agents/stream<br/>{agentId, runId, threadId, messages, tools, context}
+    Studio->>API: POST /api/control-plane/agents/stream<br/>{agentId, runId, threadId, messages, tools, context}
     API->>API: Validate InternalAgentStreamRequestSchema
     API->>SessionMgr: startRun({runId, threadId})
     SessionMgr-->>API: AbortSignal
@@ -193,7 +193,7 @@ sequenceDiagram
     Runtime->>InjectedTool: waitForToolResult(runId, toolCallId)
     Note over InjectedTool: Blocks until UI submits result<br/>(5 min timeout)
 
-    Studio->>API: POST /internal/agents/runs/{runId}/resume<br/>{toolCallId, result: {...}}
+    Studio->>API: POST /api/control-plane/agents/runs/{runId}/resume<br/>{toolCallId, result: {...}}
     API->>SessionMgr: submitToolResult(runId, {toolCallId, result})
     SessionMgr->>InjectedTool: Unblock with result
 
@@ -211,11 +211,11 @@ sequenceDiagram
 
 The internal AG-UI transport bridges AI agents with the Studio UI:
 
-1. **Start Run:** The Studio sends a signed POST request to the internal compatibility wrapper with the agent ID, message history, injected tool definitions, and context. The `AgentRunSessionManager` creates a run with an abort signal.
+1. **Start Run:** The Studio sends a signed POST request to the control-plane wrapper with the agent ID, message history, injected tool definitions, and context. The `AgentRunSessionManager` creates a run with an abort signal.
 2. **Injected Tool Pattern:** The Studio passes tool definitions (name, schema) that the agent can call. The system creates wrapper tools that, when called by the agent, block execution and wait for the Studio to submit tool results. This enables human-in-the-loop tool execution where the UI handles the actual tool interaction.
-3. **Tool Result Submission:** When the agent calls an injected tool, the run pauses (up to 5 minutes). The Studio submits the tool result via `/internal/agents/runs/:runId/resume`. The wrapper tool unblocks and returns the result to the agent.
+3. **Tool Result Submission:** When the agent calls an injected tool, the run pauses (up to 5 minutes). The Studio submits the tool result via `/api/control-plane/agents/runs/:runId/resume`. The wrapper tool unblocks and returns the result to the agent.
 4. **AG-UI Streaming:** All events are streamed as SSE in the AG-UI wire format (`RunStarted`, `TextMessageContent`, `ToolCallStart`, `ToolCallArgs`, `ToolCallEnd`, `ToolCallResult`, `RunFinished`).
-5. **Contract Boundary:** The internal `/internal/agents/*` routes are compatibility/control-plane wrappers. The canonical package-level AG-UI handlers live under `veryfront/agent` and are designed around host-configurable endpoints such as `/api/ag-ui`. Hosted services should use the framework prepared-execution helpers to stream prepared chat runs to AG-UI responses or finish detached durable runs instead of reimplementing that lifecycle locally.
+5. **Contract Boundary:** The `/api/control-plane/agents/*` routes are control-plane wrappers. The canonical package-level AG-UI handlers live under `veryfront/agent` and are designed around host-configurable endpoints such as `/api/ag-ui`. Hosted services should use the framework prepared-execution helpers to stream prepared chat runs to AG-UI responses or finish detached durable runs instead of reimplementing that lifecycle locally.
 
 Session states: `active` → `waiting` (for tool result) → `completed` / `failed` / `cancelled`. Default session TTL is 15 minutes.
 
@@ -302,7 +302,7 @@ graph TB
             AgentB["Agent B<br/>(uses agent A as tool)"]
         end
 
-        subgraph InternalAgUi["Internal AG-UI<br/>(/internal/agents/stream)"]
+        subgraph InternalAgUi["Control-plane AG-UI<br/>(/api/control-plane/agents/stream)"]
             StudioBridge["Studio Bridge<br/>(AG-UI streaming + tool submission)"]
         end
     end

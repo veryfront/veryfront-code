@@ -39,7 +39,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/list", {
+      new Request("https://example.com/api/control-plane/agents/list", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -107,7 +107,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/list", {
+      new Request("https://example.com/api/control-plane/agents/list", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -141,7 +141,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/list", {
+      new Request("https://example.com/api/control-plane/agents/list", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -175,7 +175,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/list", {
+      new Request("https://example.com/api/control-plane/agents/list", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -212,7 +212,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/list", {
+      new Request("https://example.com/api/control-plane/agents/list", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -241,7 +241,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/list", {
+      new Request("https://example.com/api/control-plane/agents/list", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -274,7 +274,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/list", {
+      new Request("https://example.com/api/control-plane/agents/list", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -350,7 +350,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
       } as unknown as ReturnType<typeof createCtx>;
 
       const result = await handler.handle(
-        new Request("https://example.com/internal/agents/list", {
+        new Request("https://example.com/api/control-plane/agents/list", {
           method: "POST",
           headers: {
             "content-type": "application/json",
@@ -424,7 +424,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
 
       const result = await runWithProjectEnv({}, () =>
         handler.handle(
-          new Request("https://example.com/internal/agents/list", {
+          new Request("https://example.com/api/control-plane/agents/list", {
             method: "POST",
             headers: {
               "content-type": "application/json",
@@ -479,7 +479,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     await assertRejects(
       () =>
         handler.handle(
-          new Request("https://example.com/internal/agents/list", {
+          new Request("https://example.com/api/control-plane/agents/list", {
             method: "POST",
             headers: {
               "content-type": "application/json",
@@ -502,7 +502,7 @@ describe("server/handlers/request/internal-agents-list.handler", () => {
     });
 
     const result = await handler.handle(
-      new Request("https://example.com/internal/agents/other", {
+      new Request("https://example.com/api/control-plane/agents/other", {
         method: "POST",
       }),
       createCtx(),

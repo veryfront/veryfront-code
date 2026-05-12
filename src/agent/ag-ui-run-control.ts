@@ -8,8 +8,8 @@ import {
   WaitNotPendingError,
 } from "./runtime/resume-session.ts";
 
-const RESUME_PATH_REGEX = /^\/api\/ag-ui\/runs\/([^/]+)\/resume$/;
-const CANCEL_PATH_REGEX = /^\/api\/ag-ui\/runs\/([^/]+)$/;
+const RESUME_PATH_REGEX = /^\/api\/runs\/([^/]+)\/resume$/;
+const CANCEL_PATH_REGEX = /^\/api\/runs\/([^/]+)$/;
 
 export const getAgUiResumeSignalSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [

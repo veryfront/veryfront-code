@@ -75,7 +75,7 @@ The wrapper does not replace `AgUiRuntimeRequestSchema`. Hosts should use
 `RuntimeAgentRunInvocationSchema` only for signed control-plane routes where
 the control plane owns durable run identity and project context.
 
-Private routes such as `/internal/agents/stream` can use this wrapper as their
+Private routes such as `/api/control-plane/agents/stream` can use this wrapper as their
 host-specific service boundary, then normalize the message payload into the
 local agent runtime input model before execution.
 
@@ -86,9 +86,9 @@ The package should standardize the runtime contract, not force one hardcoded rou
 Recommended default convention:
 
 - `POST /api/ag-ui`
-- `POST /api/ag-ui/runs`
-- `POST /api/ag-ui/runs/:runId/resume`
-- `DELETE /api/ag-ui/runs/:runId`
+- `POST /api/runs`
+- `POST /api/runs/:runId/resume`
+- `DELETE /api/runs/:runId`
 
 Hosts may override the route when needed.
 
@@ -101,9 +101,9 @@ Public control-plane wrapper convention:
 
 Private signed control-plane wrappers:
 
-- `POST /internal/agents/stream`
-- `POST /internal/agents/runs/:runId/resume`
-- `DELETE /internal/agents/runs/:runId`
+- `POST /api/control-plane/agents/stream`
+- `POST /api/control-plane/agents/runs/:runId/resume`
+- `DELETE /api/control-plane/agents/runs/:runId`
 
 When a host needs to interoperate with the signed control-plane wrapper shape
 directly, the current request/response schemas and signature verification
@@ -134,5 +134,5 @@ Control-plane runtime service implementers can also target:
 - `parseRuntimeAgentRunInvocation()`
 - `parseRuntimeAgentRunInvocationOrError()`
 
-They should not treat `/internal/agents/stream` as the public package AG-UI
+They should not treat `/api/control-plane/agents/stream` as the public package AG-UI
 contract.

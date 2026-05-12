@@ -10,9 +10,6 @@ const SIGNATURE_SKEW_SECONDS = 5;
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
 export const CONTROL_PLANE_AGENT_STREAM_PATH = "/api/control-plane/agents/stream";
 export const CONTROL_PLANE_AGENT_RUNS_PATH_PREFIX = "/api/control-plane/agents/runs/";
-export const LEGACY_INTERNAL_AGENTS_LIST_PATH = "/internal/agents/list";
-export const LEGACY_INTERNAL_AGENT_STREAM_PATH = "/internal/agents/stream";
-export const LEGACY_INTERNAL_AGENT_RUNS_PATH_PREFIX = "/internal/agents/runs/";
 
 const getCompactJwsHeaderSchema = defineSchema((v) =>
   v.object({

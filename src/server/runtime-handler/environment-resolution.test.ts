@@ -58,7 +58,7 @@ describe("environment-resolution", () => {
       host: "10.192.2.245:20000",
       isLocalProject: false,
       isProxyMode: true,
-      pathname: "/internal/agents/runs/run_1",
+      pathname: "/api/control-plane/agents/runs/run_1",
       defaultEnvironment: undefined,
     });
 

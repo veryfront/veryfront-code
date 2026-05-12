@@ -416,6 +416,18 @@ export {
   type RequestAuthCache,
 } from "./request-auth-cache.ts";
 export {
+  type AgUiSseEventType,
+  agUiSseEventTypes,
+  type AgUiSseProgressSnapshot,
+  buildAgUiSseTraceSignature,
+  getAgUiSseEventsOfType,
+  getAgUiSseStringField,
+  parseAgUiSseResponse,
+  type ParseAgUiSseResponseOptions,
+  type ParsedAgUiSseRun,
+  stringifyAgUiSseEvent,
+} from "./ag-ui-sse-parser.ts";
+export {
   type AgUiRuntimeHandlerConfig,
   type AgUiRuntimeHandlerConfigWithAgent,
   type AgUiRuntimeHandlerExecute,

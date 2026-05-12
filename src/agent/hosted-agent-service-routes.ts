@@ -1,4 +1,5 @@
 import { parseProviderError } from "../chat/provider-errors.ts";
+import { CONTROL_PLANE_AGENT_STREAM_PATH } from "../channels/control-plane.ts";
 import type { AgentServiceRoute } from "./agent-service.ts";
 import { createAgUiRunErrorEvent, createAgUiSseErrorResponse } from "./ag-ui-host-support.ts";
 import { createAgUiRuntimeHandler } from "./ag-ui-runtime-handler.ts";
@@ -332,7 +333,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     },
     {
       method: "DELETE",
-      path: "/api/ag-ui/runs/:runId",
+      path: "/api/runs/:runId",
       handler: (request: Request, params: Record<string, string>) =>
         handleDurableChatRunCancelRequest({
           request,
@@ -341,12 +342,12 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     },
     {
       method: "POST",
-      path: "/api/ag-ui/runs",
+      path: "/api/runs",
       handler: (request: Request) => handleDurableChatRunExecuteRequest({ request }),
     },
     {
       method: "POST",
-      path: "/internal/agents/stream",
+      path: CONTROL_PLANE_AGENT_STREAM_PATH,
       handler: (request: Request) => handleRuntimeAgentRunInvocationExecuteRequest({ request }),
     },
   ];

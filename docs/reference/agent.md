@@ -170,7 +170,7 @@ export const POST = createAgUiHandler({
 ### AG-UI run control routes
 
 ```ts
-// app/api/ag-ui/runs/route.ts
+// app/api/runs/route.ts
 import { createAgUiDetachedStartHandler, RunResumeSessionManager } from "veryfront/agent";
 
 const sessionManager = new RunResumeSessionManager<{
@@ -185,7 +185,7 @@ export const POST = createAgUiDetachedStartHandler({
 ```
 
 ```ts
-// app/api/ag-ui/runs/[runId]/resume/route.ts
+// app/api/runs/[runId]/resume/route.ts
 import { createAgUiResumeHandler, RunResumeSessionManager } from "veryfront/agent";
 
 const sessionManager = new RunResumeSessionManager<{
@@ -197,7 +197,7 @@ export const POST = createAgUiResumeHandler({ sessionManager });
 ```
 
 ```ts
-// app/api/ag-ui/runs/[runId]/route.ts
+// app/api/runs/[runId]/route.ts
 import { createAgUiCancelHandler, RunResumeSessionManager } from "veryfront/agent";
 
 const sessionManager = new RunResumeSessionManager<{
@@ -1007,7 +1007,7 @@ Create a generic POST handler for detached hosted AG-UI run kickoff.
 
 Default route convention:
 
-- `POST /api/ag-ui/runs`
+- `POST /api/runs`
 
 Response shape:
 
@@ -1036,7 +1036,7 @@ Create a generic POST handler for hosted resumable AG-UI runs.
 
 Default route convention:
 
-- `POST /api/ag-ui/runs/:runId/resume`
+- `POST /api/runs/:runId/resume`
 
 ### `createAgUiCancelHandler(options)`
 
@@ -1044,7 +1044,7 @@ Create a generic DELETE handler for cancelling hosted resumable AG-UI runs.
 
 Default route convention:
 
-- `DELETE /api/ag-ui/runs/:runId`
+- `DELETE /api/runs/:runId`
 
 ### `RunResumeSessionManager`
 

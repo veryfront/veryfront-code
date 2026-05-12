@@ -164,14 +164,14 @@ describe("agent/agent-service", () => {
       routes: [
         {
           method: "DELETE",
-          path: "/api/ag-ui/runs/:runId",
+          path: "/api/runs/:runId",
           handler: (_request, params) => Response.json({ runId: params.runId }),
         },
       ],
     });
 
     const response = await runtime.fetch(
-      new Request("https://agent.test/api/ag-ui/runs/run-123", { method: "DELETE" }),
+      new Request("https://agent.test/api/runs/run-123", { method: "DELETE" }),
     );
 
     assertEquals(response.status, 200);
@@ -194,7 +194,7 @@ describe("agent/agent-service", () => {
     }).createRuntime();
 
     const response = await runtime.fetch(
-      new Request("https://agent.test/api/ag-ui/runs", {
+      new Request("https://agent.test/api/runs", {
         method: "OPTIONS",
         headers: {
           Origin: "http://localhost:3000",
@@ -226,7 +226,7 @@ describe("agent/agent-service", () => {
     }).createRuntime();
 
     const response = await runtime.fetch(
-      new Request("https://agent.test/api/ag-ui/runs", {
+      new Request("https://agent.test/api/runs", {
         method: "OPTIONS",
         headers: {
           Origin: "https://evil.example",

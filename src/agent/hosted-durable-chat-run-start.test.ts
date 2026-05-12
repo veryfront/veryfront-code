@@ -50,7 +50,7 @@ function createParsedRequest(
 }
 
 function createRequest(): Request {
-  return new Request("https://agent.example.com/api/ag-ui/runs", { method: "POST" });
+  return new Request("https://agent.example.com/api/runs", { method: "POST" });
 }
 
 async function readJson(response: Response): Promise<unknown> {
