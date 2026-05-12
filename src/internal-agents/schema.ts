@@ -13,6 +13,10 @@ import {
   getAgUiRuntimeToolCallSchema,
 } from "#veryfront/agent/runtime-ag-ui-contract.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/data-stream.ts";
+import {
+  getRuntimeAgentSourceContextSchema,
+  type RuntimeAgentSourceContext,
+} from "#veryfront/agent/runtime-agent-invocation-contract.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_FORWARDED_PROPS_BYTES = 65_536;
@@ -33,24 +37,6 @@ export const getRunIdSchema = getAgUiRuntimeRunIdSchema;
 
 export const getAgentIdSchema = defineSchema((v) =>
   v.string().min(1).max(128).regex(AGENT_ID_PATTERN)
-);
-
-export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
-  v.discriminatedUnion("type", [
-    v.object({
-      type: v.literal("branch"),
-      branch: v.string().min(1).max(255),
-    }),
-    v.object({
-      type: v.literal("environment"),
-      environmentName: v.string().min(1).max(255),
-      releaseId: v.string().min(1).max(255).optional(),
-    }),
-    v.object({
-      type: v.literal("release"),
-      releaseId: v.string().min(1).max(255),
-    }),
-  ])
 );
 
 export const getRuntimeInjectedToolSchema = getAgUiRuntimeInjectedToolSchema;
@@ -326,11 +312,10 @@ export const getResumeSignalSchema = defineSchema((v) =>
   ])
 );
 
+export { getRuntimeAgentSourceContextSchema };
+export type { RuntimeAgentSourceContext };
 export type RuntimeInjectedTool = InferSchema<ReturnType<typeof getRuntimeInjectedToolSchema>>;
 export type RuntimeContextItem = AgUiRuntimeContextItem;
-export type RuntimeAgentSourceContext = InferSchema<
-  ReturnType<typeof getRuntimeAgentSourceContextSchema>
->;
 export type RuntimeRunAgentInput = AgUiRuntimeRequest;
 export type InternalAgentStreamRequest = InferSchema<
   ReturnType<typeof getInternalAgentStreamRequestSchema>
