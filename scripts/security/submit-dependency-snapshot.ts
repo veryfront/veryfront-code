@@ -16,11 +16,7 @@
  * Token needs `contents: write` permission.
  */
 
-interface DenoLockV5 {
-  version: string;
-  specifiers?: Record<string, string>;
-  npm?: Record<string, { integrity?: string; dependencies?: string[] }>;
-}
+import { parseLock, parseNameVersion, purl } from "../lib/deno-lock.ts";
 
 interface ResolvedDependency {
   package_url: string;
@@ -51,31 +47,6 @@ const DETECTOR = {
   url: "https://github.com/veryfront/veryfront-code",
 } as const;
 
-function parseNameVersion(
-  key: string,
-): { name: string; version: string } | null {
-  let scope = "";
-  let rest = key;
-  if (key.startsWith("@")) {
-    const slash = key.indexOf("/");
-    if (slash < 0) return null;
-    scope = key.slice(0, slash + 1);
-    rest = key.slice(slash + 1);
-  }
-  const at = rest.indexOf("@");
-  if (at <= 0) return null;
-  const name = scope + rest.slice(0, at);
-  let version = rest.slice(at + 1);
-  const underscore = version.indexOf("_");
-  if (underscore >= 0) version = version.slice(0, underscore);
-  return { name, version };
-}
-
-function purl(name: string, version: string): string {
-  const encoded = name.split("/").map(encodeURIComponent).join("/");
-  return `pkg:npm/${encoded}@${version}`;
-}
-
 export function snapshotFromLock(
   lockText: string,
   ctx: {
@@ -85,13 +56,7 @@ export function snapshotFromLock(
     runId: string;
   },
 ): Snapshot {
-  const lock = JSON.parse(lockText) as DenoLockV5;
-  if (lock.version !== "5") {
-    throw new Error(
-      `Unsupported deno.lock version: "${lock.version}" (expected "5")`,
-    );
-  }
-
+  const lock = parseLock(lockText);
   const npm = lock.npm ?? {};
   const directKeys = new Set<string>();
   for (const [spec, resolvedVersion] of Object.entries(lock.specifiers ?? {})) {
