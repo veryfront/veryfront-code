@@ -68,6 +68,9 @@ export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
     createHostedSandboxTools?: (
       input: HostedSandboxToolsOptions,
     ) => Promise<HostedSandboxToolsResult>;
+    createAgentServiceSandboxTools?: (
+      input: HostedSandboxToolsOptions,
+    ) => Promise<HostedSandboxToolsResult>;
   };
 
 export async function prepareDefaultHostedChildForkToolSources(
@@ -148,10 +151,12 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
     apiUrl,
     createBashTool,
     createHostedSandboxTools: createHostedSandboxToolsOverride,
+    createAgentServiceSandboxTools: createAgentServiceSandboxToolsOverride,
     globalTools,
     ...toolSourceInput
   } = input;
-  const createSandboxTools = createHostedSandboxToolsOverride ?? createHostedSandboxTools;
+  const createSandboxTools = createAgentServiceSandboxToolsOverride ??
+    createHostedSandboxToolsOverride ?? createHostedSandboxTools;
   const sandboxResult = await createSandboxTools({
     authToken: input.authToken,
     apiUrl,
