@@ -4,7 +4,7 @@ import {
   reset as resetContracts,
   tryResolve as tryResolveContract,
 } from "#veryfront/extensions/contracts.ts";
-import type { CSSProcessor } from "#veryfront/extensions/interfaces/index.ts";
+import type { CSSProcessor } from "#veryfront/extensions/css/index.ts";
 import { generateTailwindCSS, invalidateCompiler } from "./tailwind-compiler.ts";
 
 const MOCK_TAILWIND_BASE_CSS = "@layer theme, base, components, utilities;";

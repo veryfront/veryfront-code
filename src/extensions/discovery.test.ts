@@ -31,7 +31,7 @@ function stubExtension(overrides: Partial<Extension> = {}): Extension {
 describe("parsePackageMetadata()", () => {
   it("should detect extension package", () => {
     const result = parsePackageMetadata({
-      name: "@veryfront/ext-tailwind",
+      name: "@veryfront/ext-css-tailwind",
       veryfront: { extension: true, capabilities: [{ type: "css" }] },
     });
     assertEquals(result?.isExtension, true);
@@ -205,13 +205,13 @@ describe("discoverPackageExtensions()", () => {
 
   it("finds scoped packages under @scope/", async () => {
     await writePkg(
-      join(tmp, "node_modules", "@veryfront", "ext-tailwind"),
-      "@veryfront/ext-tailwind",
+      join(tmp, "node_modules", "@veryfront", "ext-css-tailwind"),
+      "@veryfront/ext-css-tailwind",
       { extension: true },
     );
     const found = await discoverPackageExtensions(tmp);
     assertEquals(found.length, 1);
-    assertEquals(found[0]?.packageName, "@veryfront/ext-tailwind");
+    assertEquals(found[0]?.packageName, "@veryfront/ext-css-tailwind");
   });
 
   it("finds symlinked packages (pnpm layout)", async () => {

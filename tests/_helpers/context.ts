@@ -73,7 +73,7 @@ try {
 export async function registerExtBabelForTests(): Promise<void> {
   try {
     const { register } = await import("../../src/extensions/contracts.ts");
-    const extBabelFactory = (await import("../../extensions/ext-babel/src/index.ts")).default;
+    const extBabelFactory = (await import("../../extensions/ext-parser-babel/src/index.ts")).default;
     const ext = extBabelFactory();
     const noopLogger = {
       debug: () => {},
@@ -107,7 +107,7 @@ export async function registerExtOpenAIForTests(): Promise<void> {
       "../../src/extensions/llm/llm-provider-registry.ts"
     );
     const { LLMProviderRegistryName } = await import(
-      "../../src/extensions/interfaces/index.ts"
+      "../../src/extensions/llm/index.ts"
     );
     const extOpenAIFactory = (await import("../../extensions/ext-llm-openai/src/index.ts")).default;
     const ext = extOpenAIFactory();
@@ -157,7 +157,7 @@ export async function registerExtAnthropicForTests(): Promise<void> {
       "../../src/extensions/llm/llm-provider-registry.ts"
     );
     const { LLMProviderRegistryName } = await import(
-      "../../src/extensions/interfaces/index.ts"
+      "../../src/extensions/llm/index.ts"
     );
     const extAnthropicFactory =
       (await import("../../extensions/ext-llm-anthropic/src/index.ts")).default;
@@ -194,7 +194,7 @@ export async function registerExtGoogleForTests(): Promise<void> {
       "../../src/extensions/llm/llm-provider-registry.ts"
     );
     const { LLMProviderRegistryName } = await import(
-      "../../src/extensions/interfaces/index.ts"
+      "../../src/extensions/llm/index.ts"
     );
     const extGoogleFactory = (await import("../../extensions/ext-llm-google/src/index.ts")).default;
     const ext = extGoogleFactory();
@@ -625,14 +625,14 @@ export class TestContext {
       await mkdir(join(this.projectDir, dir), { recursive: true });
     }
 
-    // Symlink ext-babel into the project's extensions/ dir so that
+    // Symlink ext-parser-babel into the project's extensions/ dir so that
     // `orchestrateExtensions` (run from bootstrapProd) discovers it and
     // registers the CodeParser contract. Without this, bootstrap's
     // internal teardownAll() would wipe the registry we seeded earlier.
     try {
-      const extBabelDir = join(this.projectDir, "extensions", "ext-babel");
+      const extBabelDir = join(this.projectDir, "extensions", "ext-parser-babel");
       await mkdir(extBabelDir, { recursive: true });
-      const extBabelReal = resolvePath("extensions/ext-babel/src/index.ts");
+      const extBabelReal = resolvePath("extensions/ext-parser-babel/src/index.ts");
       await writeTextFile(
         join(extBabelDir, "index.ts"),
         `export { default } from "${"file://" + extBabelReal}";\n`,
@@ -660,9 +660,9 @@ export class TestContext {
     // `discoverProjectExtensions` re-registers ContentTransformer after
     // bootstrap's teardownAll() wipes the contract registry.
     try {
-      const extMdxDir = join(this.projectDir, "extensions", "ext-mdx");
+      const extMdxDir = join(this.projectDir, "extensions", "ext-transform-mdx");
       await mkdir(extMdxDir, { recursive: true });
-      const extMdxReal = resolvePath("extensions/ext-mdx/src/index.ts");
+      const extMdxReal = resolvePath("extensions/ext-transform-mdx/src/index.ts");
       await writeTextFile(
         join(extMdxDir, "index.ts"),
         `export { default } from "${"file://" + extMdxReal}";\n`,

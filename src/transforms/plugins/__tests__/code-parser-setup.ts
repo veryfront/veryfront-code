@@ -1,12 +1,12 @@
 /**
- * Side-effect module: activates the ext-babel factory and registers the
+ * Side-effect module: activates the ext-parser-babel factory and registers the
  * `CodeParser` contract with the core registry. Tests that exercise
  * `injectNodePositions()` or the generic parse/traverse/generate API
  * import this first so the contract resolver finds an implementation.
  */
 
 import { register as registerContract } from "#veryfront/extensions/contracts.ts";
-import extBabelFactory from "../../../../extensions/ext-babel/src/index.ts";
+import extBabelFactory from "../../../../extensions/ext-parser-babel/src/index.ts";
 
 const ext = extBabelFactory();
 const noopLogger = {

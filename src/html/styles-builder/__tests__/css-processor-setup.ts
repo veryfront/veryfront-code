@@ -1,5 +1,5 @@
 /**
- * Shared test helper: activates the `@veryfront/ext-tailwind` extension so
+ * Shared test helper: activates the `@veryfront/ext-css-tailwind` extension so
  * core tests that exercise the Tailwind compile path can resolve the
  * `CSSProcessor` contract and — for tests that dynamically load plugins
  * from esm.sh — find the `__tailwindPluginShim` / `__tailwindDefaultThemeShim`
@@ -19,7 +19,7 @@
  */
 
 import { register as registerContract } from "#veryfront/extensions/contracts.ts";
-import extTailwindFactory from "../../../../extensions/ext-tailwind/src/index.ts";
+import extTailwindFactory from "../../../../extensions/ext-css-tailwind/src/index.ts";
 
 const noopLogger = {
   debug: () => {},

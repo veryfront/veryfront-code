@@ -1,7 +1,7 @@
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset } from "../../extensions/contracts.ts";
-import type { NodeCompat } from "../../extensions/interfaces/node-compat.ts";
+import type { NodeCompat } from "../../extensions/compat/node-compat.ts";
 import { importClaudeAgentSDK, importKreuzberg, importTransformers } from "./opaque-deps.ts";
 
 const stubKreuzbergModule = {
@@ -77,7 +77,7 @@ describe("platform/compat/opaque-deps", () => {
       await assertRejects(
         () => importKreuzberg(),
         Error,
-        "ext-node-compat",
+        "ext-node-compatibility",
       );
     });
 

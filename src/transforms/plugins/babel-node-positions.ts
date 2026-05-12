@@ -1,15 +1,15 @@
 /**
  * Shim over the `CodeParser` contract's `injectJsxNodePositions()` method.
  *
- * The actual Babel-based implementation lives in `@veryfront/ext-babel`.
+ * The actual Babel-based implementation lives in `@veryfront/ext-parser-babel`.
  * Core modules continue to import from this path; the shim resolves the
  * contract at call time. Position injection powers Studio Navigator only —
- * if `ext-babel` is not installed we return the source unchanged rather
+ * if `ext-parser-babel` is not installed we return the source unchanged rather
  * than fail the SSR path.
  */
 
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { CodeParser } from "#veryfront/extensions/interfaces/index.ts";
+import type { CodeParser } from "#veryfront/extensions/parser/index.ts";
 
 interface TransformOptions {
   filePath: string;

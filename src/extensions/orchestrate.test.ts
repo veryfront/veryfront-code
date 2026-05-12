@@ -10,9 +10,8 @@ import { orchestrateExtensions } from "./orchestrate.ts";
 import { mergeExtensions } from "./discovery.ts";
 import { reset, resolve as resolveContract, tryResolve } from "./contracts.ts";
 import type { Extension, ExtensionSource, ResolvedExtension } from "./types.ts";
-import type { LLMProvider, LLMProviderRegistry } from "./interfaces/index.ts";
-import { LLMProviderRegistryName } from "./interfaces/index.ts";
-import { createLLMProviderRegistry } from "./llm/llm-provider-registry.ts";
+import type { LLMProvider, LLMProviderRegistry } from "./llm/index.ts";
+import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.ts";
 import { createBuiltinExtensions } from "./builtin-extensions.ts";
 
 const noopLogger = {

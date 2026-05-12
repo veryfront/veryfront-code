@@ -70,7 +70,7 @@ export async function createPackageJson(
       react: `^${DEFAULT_INIT_REACT_VERSION}`,
       "react-dom": `^${DEFAULT_INIT_REACT_VERSION}`,
       veryfront: `^${VERSION}`,
-      "@veryfront/ext-esbuild": `^${VERSION}`,
+      "@veryfront/ext-bundler-esbuild": `^${VERSION}`,
       zod: "^3.24.0",
     },
   };

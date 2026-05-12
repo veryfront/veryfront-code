@@ -67,7 +67,7 @@ try {
 
 // Global shims for `tailwindcss/plugin`, `tailwindcss/defaultTheme`, and
 // `tailwindcss/colors` used by dynamically loaded plugin bundles are installed
-// by the `@veryfront/ext-tailwind` extension's `setup()` hook — they depend on
+// by the `@veryfront/ext-css-tailwind` extension's `setup()` hook — they depend on
 // tailwindcss imports that live in the extension package, not in core.
 
 function isRealDenoRuntime(): boolean {

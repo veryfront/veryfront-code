@@ -5,11 +5,11 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.
 import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
 import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.ts";
 import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
-import extEsbuild from "../../extensions/ext-esbuild/src/index.ts";
-import extBabel from "../../extensions/ext-babel/src/index.ts";
-import extMdx from "../../extensions/ext-mdx/src/index.ts";
-import extTailwind from "../../extensions/ext-tailwind/src/index.ts";
-import extNodeCompat from "../../extensions/ext-node-compat/src/index.ts";
+import extEsbuild from "../../extensions/ext-bundler-esbuild/src/index.ts";
+import extBabel from "../../extensions/ext-parser-babel/src/index.ts";
+import extMdx from "../../extensions/ext-transform-mdx/src/index.ts";
+import extTailwind from "../../extensions/ext-css-tailwind/src/index.ts";
+import extNodeCompat from "../../extensions/ext-node-compatibility/src/index.ts";
 
 type BuiltinLLMProviderDefinition = {
   extensionName: string;
@@ -96,12 +96,12 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
   return [
     {
       source: "builtin",
-      origin: "veryfront/ext-esbuild",
+      origin: "veryfront/ext-bundler-esbuild",
       extension: extEsbuild(),
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-babel",
+      origin: "veryfront/ext-parser-babel",
       extension: extBabel(),
     },
     {
@@ -111,12 +111,12 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-tailwind",
+      origin: "veryfront/ext-css-tailwind",
       extension: extTailwind(),
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-node-compat",
+      origin: "veryfront/ext-node-compatibility",
       extension: extNodeCompat(),
     },
     ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
