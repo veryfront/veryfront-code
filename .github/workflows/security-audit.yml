@@ -6,10 +6,10 @@ on:
     paths:
       - "deno.json"
   push:
+    # No path filter: deno.lock is gitignored, and `npm:` specifiers live both
+    # in deno.json and inline in source files. A broad trigger keeps the
+    # dependency graph in sync with whatever lands on main.
     branches: [main]
-    paths:
-      - "deno.lock"
-      - "deno.json"
   schedule:
     # Run weekly on Monday at 06:00 UTC
     - cron: "0 6 * * 1"
