@@ -895,7 +895,7 @@ recommended service bootstrap shape for separately deployed agents.
 
 ### `resolveNodeAgentServiceTelemetryConfig(options)`
 
-Resolve the default Node hosted-agent OpenTelemetry configuration from a service
+Resolve the default Node agent-service OpenTelemetry configuration from a service
 environment. The helper centralizes `OTEL_ENABLED`, service name/version,
 sampling, exporter headers, and Node auto-instrumentation flags for separately
 deployed Node agent services.
@@ -905,7 +905,7 @@ compatibility alias.
 
 ### `initializeNodeAgentServiceOpenTelemetry(options)`
 
-Initialize the Node OpenTelemetry SDK for a hosted agent service using the
+Initialize the Node OpenTelemetry SDK for an agent service using the
 configuration resolved by `resolveNodeAgentServiceTelemetryConfig()`. This
 helper is intentionally Node-specific; cross-runtime service shells should keep
 using the lower-level framework observability APIs.
@@ -915,8 +915,8 @@ compatibility alias.
 
 ### `createNodeAgentServiceRuntimeInfrastructure(options)`
 
-Create the standard Node hosted service infrastructure bundle for separately
-deployed agent services: hosted service config parsing, component logger,
+Create the standard Node agent-service infrastructure bundle for separately
+deployed agent services: service config parsing, component logger,
 service tracer, active-span attribute setter, trace-context getter, and Node
 OpenTelemetry startup. The helper is intentionally Node-specific because it
 binds the npm OpenTelemetry API and Node SDK startup path.

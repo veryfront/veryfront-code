@@ -4,9 +4,9 @@ import {
   agentServiceConfigSchema,
   parseAgentServiceConfig,
   parseHostedAgentServiceConfig,
-} from "./hosted-agent-service-config.ts";
+} from "./agent-service-config.ts";
 
-describe("agent/hosted-agent-service-config", () => {
+describe("agent/agent-service-config", () => {
   it("exposes agent service aliases without the hosted prefix", () => {
     const config = parseAgentServiceConfig({
       VERYFRONT_API_URL: "https://api.example.com",
@@ -16,7 +16,7 @@ describe("agent/hosted-agent-service-config", () => {
     assertEquals(agentServiceConfigSchema.parse({}).PORT, 3001);
   });
 
-  it("builds hosted agent service config defaults", () => {
+  it("builds agent service config defaults", () => {
     const config = parseHostedAgentServiceConfig({});
 
     assertEquals(config.VERYFRONT_API_URL, "https://api.veryfront.com");

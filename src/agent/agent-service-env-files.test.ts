@@ -4,7 +4,7 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/platform/compat/process.ts
 import {
   loadAgentServiceEnvFiles,
   loadHostedAgentServiceEnvFiles,
-} from "./hosted-agent-service-env-files.ts";
+} from "./agent-service-env-files.ts";
 
 const TEST_KEYS = [
   "VF_AGENT_ENV_FILE_TEST_SHARED",
@@ -13,7 +13,7 @@ const TEST_KEYS = [
   "VF_AGENT_ENV_FILE_TEST_EMPTY",
 ];
 
-describe("loadHostedAgentServiceEnvFiles", () => {
+describe("loadAgentServiceEnvFiles", () => {
   let tempDir = "";
 
   beforeEach(async () => {
@@ -50,7 +50,7 @@ describe("loadHostedAgentServiceEnvFiles", () => {
       ].join("\n"),
     );
 
-    const result = await loadHostedAgentServiceEnvFiles({ cwd: tempDir });
+    const result = await loadAgentServiceEnvFiles({ cwd: tempDir });
 
     assertEquals(result.loadedFiles, [`${tempDir}/.env`, `${tempDir}/.env.local`]);
     assertEquals(result.loadedVariables, 3);
@@ -62,7 +62,7 @@ describe("loadHostedAgentServiceEnvFiles", () => {
   it("supports empty values from env files", async () => {
     await Deno.writeTextFile(`${tempDir}/.env`, "VF_AGENT_ENV_FILE_TEST_EMPTY=");
 
-    const result = await loadHostedAgentServiceEnvFiles({ cwd: tempDir });
+    const result = await loadAgentServiceEnvFiles({ cwd: tempDir });
 
     assertEquals(result.loadedVariables, 1);
     assertEquals(getEnv("VF_AGENT_ENV_FILE_TEST_EMPTY"), "");
@@ -71,7 +71,7 @@ describe("loadHostedAgentServiceEnvFiles", () => {
   it("supports explicit env file lists", async () => {
     await Deno.writeTextFile(`${tempDir}/custom.env`, "VF_AGENT_ENV_FILE_TEST_SHARED=custom");
 
-    const result = await loadHostedAgentServiceEnvFiles({
+    const result = await loadAgentServiceEnvFiles({
       cwd: tempDir,
       files: ["custom.env"],
     });
@@ -81,6 +81,8 @@ describe("loadHostedAgentServiceEnvFiles", () => {
   });
 
   it("exposes an agent service env loader alias without the hosted prefix", async () => {
+    assertEquals(loadAgentServiceEnvFiles, loadHostedAgentServiceEnvFiles);
+
     await Deno.writeTextFile(`${tempDir}/custom.env`, "VF_AGENT_ENV_FILE_TEST_LOCAL_ONLY=alias");
 
     const result = await loadAgentServiceEnvFiles({

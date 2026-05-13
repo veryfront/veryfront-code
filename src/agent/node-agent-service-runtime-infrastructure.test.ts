@@ -3,10 +3,15 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   createNodeAgentServiceRuntimeInfrastructure,
   createNodeHostedAgentServiceRuntimeInfrastructure,
-} from "./node-hosted-agent-service-runtime-infrastructure.ts";
+} from "./node-agent-service-runtime-infrastructure.ts";
 
-describe("createNodeHostedAgentServiceRuntimeInfrastructure", () => {
+describe("createNodeAgentServiceRuntimeInfrastructure", () => {
   it("exposes a node agent service infrastructure alias without the hosted prefix", async () => {
+    assertEquals(
+      createNodeAgentServiceRuntimeInfrastructure,
+      createNodeHostedAgentServiceRuntimeInfrastructure,
+    );
+
     const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
       serviceName: "custom-service",
       env: {
@@ -19,9 +24,9 @@ describe("createNodeHostedAgentServiceRuntimeInfrastructure", () => {
     assertEquals(await infrastructure.initializeOpenTelemetry(), false);
   });
 
-  it("binds hosted service config, logging, tracing, and disabled telemetry startup", async () => {
+  it("binds agent service config, logging, tracing, and disabled telemetry startup", async () => {
     const infoMessages: string[] = [];
-    const infrastructure = createNodeHostedAgentServiceRuntimeInfrastructure({
+    const infrastructure = createNodeAgentServiceRuntimeInfrastructure({
       serviceName: "custom-service",
       env: {
         VERYFRONT_API_URL: "https://api.example.com",

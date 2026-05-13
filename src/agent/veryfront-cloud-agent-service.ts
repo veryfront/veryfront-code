@@ -37,7 +37,7 @@ import {
   runAgentServiceMain,
   type RunAgentServiceMainOptions,
 } from "./agent-service-bootstrap.ts";
-import { loadAgentServiceEnvFiles } from "./hosted-agent-service-env-files.ts";
+import { loadAgentServiceEnvFiles } from "./agent-service-env-files.ts";
 import { createHostedFormInputTool } from "./hosted-form-input-tool.ts";
 import { createHostedAgentProjectSteering } from "./hosted-agent-project-steering.ts";
 import { type HostedChatRuntimeCreationResult } from "./hosted-chat-runtime-contract.ts";
@@ -74,7 +74,7 @@ import {
 import {
   createNodeAgentServiceRuntimeInfrastructure,
   type CreateNodeAgentServiceRuntimeInfrastructureOptions,
-} from "./node-hosted-agent-service-runtime-infrastructure.ts";
+} from "./node-agent-service-runtime-infrastructure.ts";
 import {
   type AgentServiceRuntimeBundle,
   type AgentServiceRuntimeConfig,
@@ -83,7 +83,7 @@ import {
   startAgentServiceRuntime,
   startNodeAgentService,
   type StartNodeAgentServiceResult,
-} from "./hosted-agent-service-runtime.ts";
+} from "./agent-service-runtime.ts";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
 import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";

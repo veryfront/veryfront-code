@@ -10,7 +10,7 @@ function splitAllowedOrigins(value: string): string[] {
 
 const booleanFlagSchema = z.string().default("false").transform(parseBooleanFlag);
 
-export const hostedAgentServiceConfigSchema = z.object({
+export const agentServiceConfigSchema = z.object({
   VERYFRONT_API_URL: z.string().url().default("https://api.veryfront.com"),
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   PORT: z.coerce.number().default(3001),
@@ -35,22 +35,21 @@ export const hostedAgentServiceConfigSchema = z.object({
   OTEL_EXPORTER_OTLP_ENDPOINT: env.OTEL_EXPORTER_OTLP_ENDPOINT,
 }));
 
-export type HostedAgentServiceConfig = z.infer<typeof hostedAgentServiceConfigSchema>;
-export type HostedAgentServiceConfigInput = z.input<typeof hostedAgentServiceConfigSchema>;
+export type AgentServiceConfig = z.infer<typeof agentServiceConfigSchema>;
+export type AgentServiceConfigInput = z.input<typeof agentServiceConfigSchema>;
 
-export const agentServiceConfigSchema = hostedAgentServiceConfigSchema;
-
-export type AgentServiceConfig = HostedAgentServiceConfig;
-export type AgentServiceConfigInput = HostedAgentServiceConfigInput;
-
-export function parseHostedAgentServiceConfig(
-  input: HostedAgentServiceConfigInput,
-): HostedAgentServiceConfig {
-  return hostedAgentServiceConfigSchema.parse(input);
-}
+export const hostedAgentServiceConfigSchema = agentServiceConfigSchema;
+export type HostedAgentServiceConfig = AgentServiceConfig;
+export type HostedAgentServiceConfigInput = AgentServiceConfigInput;
 
 export function parseAgentServiceConfig(
   input: AgentServiceConfigInput,
 ): AgentServiceConfig {
-  return parseHostedAgentServiceConfig(input);
+  return agentServiceConfigSchema.parse(input);
+}
+
+export function parseHostedAgentServiceConfig(
+  input: HostedAgentServiceConfigInput,
+): HostedAgentServiceConfig {
+  return parseAgentServiceConfig(input);
 }
