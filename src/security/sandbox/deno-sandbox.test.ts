@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
-import { runInWorker } from "./deno-sandbox.ts";
+import {
+  isNodeSandboxAllowedUnsafe,
+  NODE_SANDBOX_ALLOW_UNSAFE_ENV,
+  runInWorker,
+} from "./deno-sandbox.ts";
 import { MAX_SANDBOX_CODE_SIZE } from "./constants.ts";
 
 // Input validation tests work in all runtimes (no Worker needed)
@@ -42,6 +46,40 @@ describe("deno-sandbox input validation", () => {
       Error,
       "maximum size",
     );
+  });
+});
+
+// SEC-008: Node.js Workers do not support permission isolation. The opt-in
+// decision helper must be strict — only the literal "1" enables unsafe mode.
+// Unit-testing the pure helper means coverage works under any runtime.
+describe("deno-sandbox Node opt-in guard (SEC-008)", () => {
+  it("exposes the documented env var name", () => {
+    assertEquals(NODE_SANDBOX_ALLOW_UNSAFE_ENV, "VERYFRONT_NODE_SANDBOX_ALLOW_UNSAFE");
+  });
+
+  it("blocks when env var is undefined", () => {
+    assertEquals(isNodeSandboxAllowedUnsafe(undefined), false);
+  });
+
+  it("blocks when env var is empty", () => {
+    assertEquals(isNodeSandboxAllowedUnsafe(""), false);
+  });
+
+  it("blocks when env var is '0'", () => {
+    assertEquals(isNodeSandboxAllowedUnsafe("0"), false);
+  });
+
+  it("blocks when env var is loose truthy (rejects 'true', 'yes', etc.)", () => {
+    assertEquals(isNodeSandboxAllowedUnsafe("true"), false);
+    assertEquals(isNodeSandboxAllowedUnsafe("TRUE"), false);
+    assertEquals(isNodeSandboxAllowedUnsafe("yes"), false);
+    assertEquals(isNodeSandboxAllowedUnsafe("on"), false);
+    assertEquals(isNodeSandboxAllowedUnsafe("1 "), false);
+    assertEquals(isNodeSandboxAllowedUnsafe(" 1"), false);
+  });
+
+  it("allows execution only on the literal string '1'", () => {
+    assertEquals(isNodeSandboxAllowedUnsafe("1"), true);
   });
 });
 

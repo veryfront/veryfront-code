@@ -1,6 +1,7 @@
 import { DEFAULT_SANDBOX_TIMEOUT_MS, MAX_SANDBOX_CODE_SIZE } from "./constants.ts";
 import { isCompiledBinary, serverLogger } from "#veryfront/utils";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { INVALID_ARGUMENT, NOT_SUPPORTED, TIMEOUT_ERROR, UNKNOWN_ERROR } from "#veryfront/errors";
 
@@ -19,6 +20,53 @@ type ExtendedWorkerOptions = WorkerOptions & {
   };
 };
 
+/**
+ * Operator opt-in env var that allows {@link runInWorker} to execute on Node.js
+ * despite the lack of permission isolation. Read via {@link getHostEnv} so that
+ * a per-request project env overlay cannot enable unsafe execution from inside
+ * a tenant context.
+ *
+ * @internal Exported for testing.
+ */
+export const NODE_SANDBOX_ALLOW_UNSAFE_ENV = "VERYFRONT_NODE_SANDBOX_ALLOW_UNSAFE";
+
+/**
+ * Pure decision helper for the Node.js sandbox guard. Given the raw env-var
+ * value, decide whether to block execution on Node.
+ *
+ * Returns `true` only when the value is the literal string `"1"`. Any other
+ * value (including `"true"`, `"yes"`, whitespace, or empty string) keeps the
+ * guard active. Strict equality is intentional for a security opt-in.
+ *
+ * @internal Exported for testing only.
+ */
+export function isNodeSandboxAllowedUnsafe(envValue: string | undefined): boolean {
+  return envValue === "1";
+}
+
+/**
+ * Run untrusted JavaScript in an isolated Worker.
+ *
+ * ## Isolation model
+ *
+ * - **Deno (recommended):** the worker is spawned with `permissions: "none"`,
+ *   denying filesystem, network, env, and subprocess access. This is the
+ *   primary safe execution path.
+ * - **Node.js:** Node Workers do not support permission isolation. They
+ *   inherit full access to the filesystem, network, env vars, and built-in
+ *   modules. Only memory limits can be enforced. Because of this, the Node
+ *   path is **disabled by default** and throws {@link NOT_SUPPORTED}.
+ *   Operators who deliberately trust their input may set the env var
+ *   `VERYFRONT_NODE_SANDBOX_ALLOW_UNSAFE=1` to bypass the guard.
+ * - **Bun and other runtimes:** Bun Workers have the same lack of permission
+ *   isolation as Node. This guard does not currently cover Bun; treat Bun as
+ *   "no sandbox" for untrusted code until explicit support is added.
+ *
+ * Callers SHOULD NOT pass untrusted code to this function on Node.js unless
+ * they have audited every caller and operator and accept the risk.
+ *
+ * @throws NOT_SUPPORTED — on Node.js without the explicit opt-in env var.
+ */
 export function runInWorker<T = unknown>(code: string, options: SandboxOptions = {}): Promise<T> {
   if (typeof code !== "string") {
     return Promise.reject(INVALID_ARGUMENT.create({ message: "Sandbox code must be a string" }));
@@ -30,6 +78,18 @@ export function runInWorker<T = unknown>(code: string, options: SandboxOptions =
   if (codeByteLength > MAX_SANDBOX_CODE_SIZE) {
     return Promise.reject(INVALID_ARGUMENT.create({
       message: `Sandbox code exceeds maximum size (${MAX_SANDBOX_CODE_SIZE} bytes)`,
+    }));
+  }
+
+  // SEC-008: Node Workers have no permission isolation. Refuse execution
+  // unless the operator has explicitly opted in via host env var. Use
+  // getHostEnv so a tenant project env overlay cannot enable this.
+  if (isNode && !isNodeSandboxAllowedUnsafe(getHostEnv(NODE_SANDBOX_ALLOW_UNSAFE_ENV))) {
+    return Promise.reject(NOT_SUPPORTED.create({
+      detail: "Sandbox execution is not safely supported on Node.js. The current " +
+        "implementation provides only memory limits, not permission isolation. " +
+        "Set VERYFRONT_NODE_SANDBOX_ALLOW_UNSAFE=1 to enable execution at your " +
+        "own risk, or run under Deno for full isolation.",
     }));
   }
 
