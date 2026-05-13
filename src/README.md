@@ -54,7 +54,7 @@
 | **`agent/`**     | `veryfront/agent`      | AI agent runtime, AG-UI streaming, hosted execution   |
 | **`tool/`**      | `veryfront/tool`       | Tool definitions and registry                         |
 | **`workflow/`**  | `veryfront/workflow`   | Durable DAG-based workflow engine with crash recovery |
-| **`skill/`**     | `veryfront/skill`      | Agent skills (SKILL.md) and prompt augmentation       |
+| **`skill/`**     | `#veryfront/skill`     | Agent skills (SKILL.md) and prompt augmentation       |
 | **`chat/`**      | `veryfront/chat`       | Chat UI components, AG-UI protocol, streaming hooks   |
 | **`prompt/`**    | `veryfront/prompt`     | Prompt templates and registry                         |
 | **`resource/`**  | `veryfront/resource`   | Resource definitions (MCP protocol)                   |
@@ -68,7 +68,7 @@
 | Module                 | Export Alias             | Purpose                                           |
 | ---------------------- | ------------------------ | ------------------------------------------------- |
 | **`jobs/`**            | `veryfront/jobs`         | Background jobs client (one-off and cron)         |
-| **`task/`**            | `veryfront/task`         | Task definitions and runner                       |
+| **`task/`**            | `#veryfront/task`        | Task definitions and runner                       |
 | **`sandbox/`**         | `veryfront/sandbox`      | Ephemeral compute environments                    |
 | **`channels/`**        | `#veryfront/channels`    | Control-plane agent routing                       |
 | **`integrations/`**    | `veryfront/integrations` | Third-party connector metadata and remote tools   |
@@ -525,7 +525,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 #### `skill/` - Agent Skills
 
-**Exports**: `veryfront/skill`
+**Exports**: `#veryfront/skill`
 
 - SKILL.md file parsing and registry
 - Prompt augmentation for agents
@@ -602,7 +602,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 #### `task/` - Task Definitions
 
-**Exports**: `veryfront/task`
+**Exports**: `#veryfront/task`
 
 - File-based task discovery from project directories
 - Task runner with typed context

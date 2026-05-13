@@ -63,9 +63,9 @@ These contracts are backed by first-party extension packages. Without the extens
 | `TracingExporter`        | `@veryfront/ext-tracing-opentelemetry` | Network (OTLP endpoint)      |
 | `TokenCacheStore`        | `@veryfront/ext-cache-redis`           | Network (Redis)              |
 | `NodeCompat`             | `@veryfront/ext-node-compatibility`    | FS (SQLite, WASM)            |
-| `LLMProvider:openai`     | `@veryfront/ext-llm-openai`            | Network (OpenAI API)         |
-| `LLMProvider:anthropic`  | `@veryfront/ext-llm-anthropic`         | Network (Anthropic API)      |
-| `LLMProvider:google`     | `@veryfront/ext-llm-google`            | Network (Google AI API)      |
+| `LLMProvider`            | `@veryfront/ext-llm-openai`            | Network (OpenAI API)         |
+| `LLMProvider`            | `@veryfront/ext-llm-anthropic`         | Network (Anthropic API)      |
+| `LLMProvider`            | `@veryfront/ext-llm-google`            | Network (Google AI API)      |
 
 ## Documentation Rule
 

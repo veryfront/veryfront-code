@@ -10,9 +10,9 @@ Each extension registers one or more **contracts** — typed interfaces that the
 
 | Package | Contract | Type | Required | Description |
 |---------|----------|------|----------|-------------|
-| [`@veryfront/ext-llm-anthropic`](./ext-llm-anthropic) | `LLMProvider:anthropic` | LLM Provider | Built-in | Anthropic Claude models via `@anthropic-ai/sdk` |
-| [`@veryfront/ext-llm-google`](./ext-llm-google) | `LLMProvider:google` | LLM Provider | Built-in | Google Gemini models via `@google/generative-ai` |
-| [`@veryfront/ext-llm-openai`](./ext-llm-openai) | `LLMProvider:openai` | LLM Provider | Built-in | OpenAI models via `openai` SDK |
+| [`@veryfront/ext-llm-anthropic`](./ext-llm-anthropic) | `LLMProvider` | LLM Provider | Built-in | Anthropic Claude models via `@anthropic-ai/sdk` |
+| [`@veryfront/ext-llm-google`](./ext-llm-google) | `LLMProvider` | LLM Provider | Built-in | Google Gemini models via `@google/generative-ai` |
+| [`@veryfront/ext-llm-openai`](./ext-llm-openai) | `LLMProvider` | LLM Provider | Built-in | OpenAI models via `openai` SDK |
 
 ### Security
 

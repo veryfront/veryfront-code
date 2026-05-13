@@ -20,8 +20,10 @@ The Server module exports:
 - **`DevServer`** - Development server class
 - **`startProductionServer()`** - Starts a production server
 - **`createHandler()`** - Creates a runtime-agnostic request handler for any runtime
-- **`startServiceServer()`** - Starts a headless agent service server
-- **`nodeHandler()`** - Node.js-compatible request handler adapter
+- **`createVeryfrontServer()`** - Creates a Veryfront service server instance
+- **`startVeryfrontServer()`** - Starts a Veryfront service server
+- **`startNodeVeryfrontServer()`** - Starts a Node.js-compatible Veryfront service server
+- **`toNodeHandler()`** - Adapts a Veryfront handler for Node.js HTTP servers
 
 ## File Structure
 
