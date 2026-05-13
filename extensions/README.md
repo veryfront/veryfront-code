@@ -33,6 +33,11 @@ Each extension registers one or more **contracts** — typed interfaces that the
 | Package | Contract | Type | Description |
 |---------|----------|------|-------------|
 | [`@veryfront/ext-transform-mdx`](./ext-transform-mdx) | `ContentTransformer` | Content | MDX and Markdown compilation via unified/remark/rehype |
+
+### Validation
+
+| Package | Contract | Type | Description |
+|---------|----------|------|-------------|
 | [`@veryfront/ext-zod`](./ext-zod) | `SchemaValidator` | Validation | Schema-first validation DSL backed by Zod |
 
 ### Infrastructure

@@ -18,11 +18,11 @@ Purpose-built for TypeScript and React, Veryfront gives you everything you need 
 
 - [**Workflows**](https://veryfront.com/docs/code/guides/workflows) — Orchestrate multi-step AI pipelines with branching, parallelism, human-in-the-loop approval gates, and durable crash recovery via Redis checkpoints.
 
-- [**Skills**](https://veryfront.com/docs/code/guides/skills) — Project-level agent capabilities defined as `SKILL.md` files following the agentskills.io specification. Skills provide prompt augmentation, tool allowlists, and script execution.
+- **Skills** — Project-level agent capabilities defined as `SKILL.md` files following the agentskills.io specification. Skills provide prompt augmentation, tool allowlists, and script execution.
 
 - [**Jobs & Cron Jobs**](https://veryfront.com/docs/code/guides/jobs) — Run durable project-scoped background work now or on a schedule through the Veryfront platform.
 
-- [**Tasks**](https://veryfront.com/docs/code/guides/tasks) — File-based background task definitions discovered automatically and executable via the jobs system.
+- **Tasks** — File-based background task definitions discovered automatically and executable via the jobs system.
 
 - [**Multi-Agent**](https://veryfront.com/docs/code/guides/multi-agent) — Compose agents that delegate to each other as tools for complex, coordinated tasks. AG-UI control-plane for hosted agent orchestration.
 
@@ -32,7 +32,7 @@ Purpose-built for TypeScript and React, Veryfront gives you everything you need 
 
 - [**Sandbox**](https://veryfront.com/docs/code/guides/sandbox) — Ephemeral compute environments for isolated code execution with shell tools and agent service integration.
 
-- [**Integrations**](https://veryfront.com/docs/code/guides/integrations) — Pre-built connectors with OAuth flows, remote tools, and metadata for third-party services (Slack, Figma, Confluence, etc.).
+- [**Integrations**](https://veryfront.com/docs/code/guides/integrations) — Pre-built connectors with OAuth flows, remote tools, and metadata for third-party services.
 
 - [**Pages & Routing**](https://veryfront.com/docs/code/guides/pages-and-routing) — File-based routing with React Server Components, layouts, and server-side rendering.
 
@@ -55,6 +55,7 @@ Veryfront uses an extension system to keep the core lightweight while enabling p
 | [`@veryfront/ext-parser-babel`](./extensions/ext-parser-babel)                   | CodeParser           | Babel AST parsing, traversal, and generation       |
 | [`@veryfront/ext-tracing-opentelemetry`](./extensions/ext-tracing-opentelemetry) | TracingExporter      | OpenTelemetry trace export via OTLP                |
 | [`@veryfront/ext-transform-mdx`](./extensions/ext-transform-mdx)                 | ContentTransformer   | MDX and Markdown compilation with remark/rehype    |
+| [`@veryfront/ext-zod`](./extensions/ext-zod)                                     | SchemaValidator      | Schema-first runtime validation backed by Zod      |
 
 ## Get Started
 
@@ -91,9 +92,9 @@ Follow the [Quickstart guide](https://veryfront.com/docs/code/guides/quickstart)
 ```
 veryfront/
 ├── src/                  # Framework core modules
-│   ├── agent/            # Agent runtime, AG-UI, hosted execution
-│   ├── tool/             # Tool definitions and registry
-│   ├── workflow/          # Durable DAG workflows with crash recovery
+│   ├── agent/           # Agent runtime, AG-UI, hosted execution
+│   ├── tool/            # Tool definitions and registry
+│   ├── workflow/        # Durable DAG workflows with crash recovery
 │   ├── mcp/             # Model Context Protocol server
 │   ├── skill/           # Agent skills system (SKILL.md)
 │   ├── chat/            # Chat UI components and streaming
