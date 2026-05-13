@@ -8,6 +8,9 @@ on:
       - "src/**/types.ts"
       - "scripts/docs/**"
       - "deno.json"
+      - "docs/guides/**"
+      - "docs/reference/**"
+      - "docs/integrations.md"
   workflow_dispatch:
 
 permissions:
