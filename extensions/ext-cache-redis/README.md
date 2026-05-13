@@ -1,5 +1,7 @@
 # @veryfront/ext-cache-redis
 
+> **Type:** Cache | **Contract:** `TokenCacheStore`
+
 Veryfront extension that registers the `TokenCacheStore` contract, backed by Redis. Used by the Veryfront proxy to persist OAuth tokens across processes — the in-memory fallback works for a single-process dev server but loses tokens on restart and doesn't share across workers.
 
 ## Installation

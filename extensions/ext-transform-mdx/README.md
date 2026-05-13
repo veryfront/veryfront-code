@@ -1,5 +1,7 @@
 # @veryfront/ext-transform-mdx
 
+> **Type:** Content | **Contract:** `ContentTransformer`
+
 Veryfront extension that registers the `ContentTransformer` contract, backed by [`@mdx-js/mdx`](https://github.com/mdx-js/mdx) and the [`unified`](https://unifiedjs.com/) ecosystem. Compiles MDX and Markdown into runtime React bundles, with sanitized HTML output, frontmatter extraction, and heading collection.
 
 ## Installation

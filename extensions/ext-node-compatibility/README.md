@@ -1,5 +1,7 @@
 # @veryfront/ext-node-compatibility
 
+> **Type:** Runtime | **Contract:** `NodeCompat`
+
 Veryfront extension that registers the `NodeCompat` contract — Node-style compatibility shims for SQLite-backed persistence and document text extraction.
 
 ## Installation

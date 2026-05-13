@@ -1,5 +1,7 @@
 # @veryfront/ext-parser-babel
 
+> **Type:** Build Tool | **Contract:** `CodeParser`
+
 Veryfront extension that registers the `CodeParser` contract, backed by `@babel/parser`, `@babel/traverse`, `@babel/generator`, and `@babel/types`. Used by Veryfront's transform pipeline and the Studio Navigator to parse, traverse, and generate JavaScript / TypeScript AST.
 
 ## Installation

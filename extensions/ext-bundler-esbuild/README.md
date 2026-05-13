@@ -1,5 +1,7 @@
 # @veryfront/ext-bundler-esbuild
 
+> **Type:** Build Tool | **Contracts:** `Bundler`, `ModuleLexer`
+
 Veryfront extension that registers two contracts:
 
 - **`Bundler`** — esbuild-backed module bundler (`EsbuildBundler`)

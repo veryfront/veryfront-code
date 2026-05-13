@@ -1,5 +1,7 @@
 # @veryfront/ext-css-tailwind
 
+> **Type:** Build Tool | **Contract:** `CSSProcessor`
+
 Veryfront extension that registers the `CSSProcessor` contract, backed by Tailwind CSS v4. Compiles stylesheets at render time and supports dynamic plugin loading from CDN.
 
 ## Installation
