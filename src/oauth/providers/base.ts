@@ -340,6 +340,38 @@ export class OAuthService extends OAuthProvider {
     return result.tokens.accessToken;
   }
 
+  /**
+   * Resolve `endpoint` against `apiBaseUrl`, validating that absolute URLs
+   * share the configured origin.
+   *
+   * Without this check, a caller that forwards user-controlled data as
+   * `endpoint` could cause `fetch()` to issue requests to arbitrary hosts
+   * (including cloud metadata services and internal infrastructure). See
+   * SEC-003 in the security audit.
+   */
+  private resolveEndpointUrl(endpoint: string): string {
+    if (!endpoint.startsWith("http")) {
+      return `${this.apiBaseUrl}${endpoint}`;
+    }
+    let target: URL;
+    let allowed: URL;
+    try {
+      target = new URL(endpoint);
+      allowed = new URL(this.apiBaseUrl);
+    } catch {
+      throw INVALID_ARGUMENT.create({
+        detail: `Invalid OAuth endpoint URL`,
+      });
+    }
+    if (target.origin !== allowed.origin) {
+      throw INVALID_ARGUMENT.create({
+        detail:
+          `OAuth endpoint origin ${target.origin} does not match configured ${allowed.origin}`,
+      });
+    }
+    return endpoint;
+  }
+
   async fetch<T>(userId: string, endpoint: string, options: RequestInit = {}): Promise<T> {
     const token = await this.getAccessToken(userId);
     if (!token) {
@@ -348,7 +380,7 @@ export class OAuthService extends OAuthProvider {
       });
     }
 
-    const url = endpoint.startsWith("http") ? endpoint : `${this.apiBaseUrl}${endpoint}`;
+    const url = this.resolveEndpointUrl(endpoint);
 
     const response = await fetch(url, {
       ...options,
