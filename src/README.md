@@ -49,16 +49,36 @@
 
 ### Agent System
 
-| Module           | Export Alias          | Purpose                                        |
-| ---------------- | --------------------- | ---------------------------------------------- |
-| **`agent/`**     | `veryfront/agent`     | AI agent runtime, memory, composition          |
-| **`tool/`**      | `veryfront/tool`      | Tool definitions and registry                  |
-| **`workflow/`**  | `veryfront/workflow`  | Durable DAG-based workflow engine              |
-| **`prompt/`**    | `veryfront/prompt`    | Prompt templates and registry                  |
-| **`resource/`**  | `veryfront/resource`  | Resource definitions (MCP protocol)            |
-| **`mcp/`**       | `veryfront/mcp`       | Model Context Protocol server                  |
-| **`provider/`**  | `veryfront/provider`  | AI model providers (OpenAI, Anthropic, Google) |
-| **`embedding/`** | `veryfront/embedding` | Vector embeddings for semantic search          |
+| Module           | Export Alias           | Purpose                                               |
+| ---------------- | ---------------------- | ----------------------------------------------------- |
+| **`agent/`**     | `veryfront/agent`      | AI agent runtime, AG-UI streaming, hosted execution   |
+| **`tool/`**      | `veryfront/tool`       | Tool definitions and registry                         |
+| **`workflow/`**  | `veryfront/workflow`   | Durable DAG-based workflow engine with crash recovery |
+| **`skill/`**     | `veryfront/skill`      | Agent skills (SKILL.md) and prompt augmentation       |
+| **`chat/`**      | `veryfront/chat`       | Chat UI components, AG-UI protocol, streaming hooks   |
+| **`prompt/`**    | `veryfront/prompt`     | Prompt templates and registry                         |
+| **`resource/`**  | `veryfront/resource`   | Resource definitions (MCP protocol)                   |
+| **`mcp/`**       | `veryfront/mcp`        | Model Context Protocol server (SSE, sessions)         |
+| **`provider/`**  | `veryfront/provider`   | AI model providers (OpenAI, Anthropic, Google)        |
+| **`embedding/`** | `veryfront/embedding`  | Vector embeddings for semantic search                 |
+| **`discovery/`** | `#veryfront/discovery` | Auto-discovery of tools, agents, workflows            |
+
+### Services & Infrastructure
+
+| Module                 | Export Alias             | Purpose                                           |
+| ---------------------- | ------------------------ | ------------------------------------------------- |
+| **`jobs/`**            | `veryfront/jobs`         | Background jobs client (one-off and cron)         |
+| **`task/`**            | `veryfront/task`         | Task definitions and runner                       |
+| **`sandbox/`**         | `veryfront/sandbox`      | Ephemeral compute environments                    |
+| **`channels/`**        | `#veryfront/channels`    | Control-plane agent routing                       |
+| **`integrations/`**    | `veryfront/integrations` | Third-party connector metadata and remote tools   |
+| **`internal-agents/`** | -                        | Hosted agent runtime (AG-UI, sessions, auth)      |
+| **`schemas/`**         | `#veryfront/schemas`     | Shared Zod validation schemas and `defineSchema`  |
+| **`registry/`**        | -                        | Project-scoped multi-tenant registry manager      |
+| **`fs/`**              | `veryfront/fs`           | Cross-runtime filesystem and path utilities       |
+| **`markdown/`**        | `veryfront/markdown`     | Markdown React component with syntax highlighting |
+| **`mdx/`**             | `veryfront/mdx`          | MDXProvider for component overrides               |
+| **`extensions/`**      | `#veryfront/extensions`  | Extension contracts, loader, and orchestration    |
 
 ### Supporting Modules
 
@@ -69,10 +89,9 @@
 | **`studio/`**        | Studio integration (editor UI)               |
 | **`testing/`**       | Test utilities and fixtures                  |
 | **`repositories/`**  | Data repositories abstraction                |
+| **`runtime/`**       | Cross-runtime bridge and detection           |
 | **`issues/`**        | Issue tracking integration                   |
-| **`exports/`**       | Public API exports                           |
 | **`client/`**        | Client-side utilities                        |
-| **`dev/`**           | Development utilities                        |
 
 ---
 
@@ -473,10 +492,15 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 **Exports**: `veryfront/agent`
 
 - Agent factory and runtime execution
+- AG-UI protocol streaming (browser response encoding, chunk bridging, event normalization)
 - Hosted chat preparation, live steering refresh, prepared execution streaming, and detached run finalization
+- Veryfront Cloud agent service (bootstrap, routes, runtime system messages, gateway model resolver)
+- Child-run orchestration (fork execution, artifact support, tool selection, stream watchdog)
 - Memory management (conversation, buffer, summary)
 - Agent composition (`agentAsTool`)
 - React hooks (`useChat`, `useAgent`)
+- Project steering (mutation, refresh, adapter)
+- Provider-native tool inventory and transport
 
 #### `tool/` - Tool System
 
@@ -485,13 +509,39 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 - Tool factory and registry
 - Tool execution engine
 - Zod schema to JSON schema conversion
+- Project-scoped multi-tenant tool isolation
 
 #### `workflow/` - Workflow Engine
 
 **Exports**: `veryfront/workflow`
 
-- Durable DAG-based workflow execution
+- Durable DAG-based workflow execution with Redis checkpoints
 - Step, parallel, and branch primitives
+- Crash recovery via heartbeat and stalled detection
+- Pluggable job executors (K8sJobExecutor, ProcessJobExecutor)
+- Multi-tenant isolation with context capture/restore
+- Claude Code workflow integration
+- Workflow DSL, discovery, and runtime backends
+
+#### `skill/` - Agent Skills
+
+**Exports**: `veryfront/skill`
+
+- SKILL.md file parsing and registry
+- Prompt augmentation for agents
+- Tool allowlist enforcement
+- Script executor with path safety
+- Skill metadata and content loading
+
+#### `chat/` - Chat System
+
+**Exports**: `veryfront/chat`
+
+- Chat UI components and streaming hooks
+- AG-UI SSE parser and protocol types
+- Conversation management and message preparation
+- Provider error handling and stream watchdog
+- Hosted UI chunk mapping for Veryfront Cloud
 
 #### `prompt/` - Prompt Templates
 
@@ -511,15 +561,18 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 **Exports**: `veryfront/mcp`
 
-- Model Context Protocol server
-- Aggregates tools, prompts, resources
+- Model Context Protocol server (SSE and HTTP transports)
+- Session management and task store
+- Elicitation support for interactive tool inputs
+- Aggregates tools, prompts, resources from project discovery
 
 #### `provider/` - Model Providers
 
 **Exports**: `veryfront/provider`
 
 - Provider adapters (OpenAI, Anthropic, Google)
-- Provider initialization and management
+- Provider initialization and management via extension contracts
+- LLM provider registry with model routing (`anthropic/*`, `openai/*`, `google/*`)
 
 #### `embedding/` - Vector Embeddings
 
@@ -527,6 +580,112 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 - Vector embedding generation
 - Semantic search support
+
+#### `discovery/` - Auto-Discovery
+
+**Exports**: `#veryfront/discovery`
+
+- Automatic file-system discovery of tools, agents, workflows, prompts, resources
+- Project discovery configuration and handler dispatch
+- Import rewriting and transpilation for discovered files
+- Provider config validation
+- Skill discovery from project directories
+
+#### `jobs/` - Background Jobs
+
+**Exports**: `veryfront/jobs`
+
+- `VeryfrontJobsClient` for one-off and cron job management
+- Job target discovery and execution
+- Runtime environment helpers
+- Event and log streaming
+
+#### `task/` - Task Definitions
+
+**Exports**: `veryfront/task`
+
+- File-based task discovery from project directories
+- Task runner with typed context
+- Integration with the jobs system for background execution
+
+#### `sandbox/` - Ephemeral Compute
+
+**Exports**: `veryfront/sandbox`
+
+- `Sandbox` class for creating isolated execution environments
+- Command execution with streaming output
+- Shell tools and hosted tool integration
+- Agent service sandbox aliases
+
+#### `channels/` - Control Plane
+
+**Exports**: `#veryfront/channels`
+
+- Control-plane routes for agent listing and streaming
+- EdDSA-signed request validation
+- Agent invocation dispatch
+
+#### `integrations/` - Connectors
+
+**Exports**: `veryfront/integrations`
+
+- Integration metadata and SVG icons for all connectors
+- Remote tool definitions for third-party services
+- OAuth configuration schemas
+
+#### `internal-agents/` - Hosted Agent Runtime
+
+- AG-UI SSE streaming for hosted agent sessions
+- Control-plane authentication (EdDSA verification)
+- Session management and runtime ownership
+- Request body parsing and schema validation
+
+#### `schemas/` - Shared Validation
+
+**Exports**: `#veryfront/schemas`
+
+- `defineSchema` DSL backed by `@veryfront/ext-zod`
+- Common cross-module validators (email, URL, pagination)
+- Primitive validators (non-empty string, positive int)
+- Schema-first type inference pattern
+
+#### `registry/` - Multi-Tenant Registry
+
+- Project-scoped registry manager for multi-tenant isolation
+- Scoped facade for tools, prompts, workflows, agents, resources
+
+#### `fs/` - Filesystem Utilities
+
+**Exports**: `veryfront/fs`
+
+- Cross-runtime file operations (read, write, exists, mkdir)
+- Path utilities (join, resolve, dirname, basename, extname)
+- Working directory management
+
+#### `markdown/` - Markdown Rendering
+
+**Exports**: `veryfront/markdown`
+
+- `<Markdown>` React component with syntax highlighting
+- Code block rendering with language detection
+
+#### `mdx/` - MDX Provider
+
+**Exports**: `veryfront/mdx`
+
+- `<MDXProvider>` for component overrides in `.mdx` pages
+- `useMDXComponents` hook
+
+#### `extensions/` - Extension Bridge
+
+**Exports**: `#veryfront/extensions`
+
+- Extension contract definitions (AuthProvider, Bundler, CSSProcessor, etc.)
+- Extension factory loader and lifecycle orchestration
+- Capability validation and discovery
+- LLM provider registry bridge
+- Schema validator bridge
+- Database client bridge
 
 ---
 
@@ -575,19 +734,15 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 - Issue management utilities
 
-#### `exports/` - Public Exports
+#### `runtime/` - Runtime Bridge
 
-- Public API surface definition
+- Cross-runtime compatibility layer
+- Runtime detection and capability abstraction
 
 #### `client/` - Client Utilities
 
 - Client-side utilities
 - Browser-specific helpers
-
-#### `dev/` - Development Utilities
-
-- Development-only utilities
-- Debug helpers
 
 ---
 
@@ -612,19 +767,23 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 ```
 Foundation (0 deps)
-└─ config/, types/, utils/, errors/, platform/
+└─ config/, types/, utils/, errors/, platform/, fs/, schemas/
 
 Infrastructure (foundation only)
-└─ security/, routing/, middleware/
+└─ security/, routing/, middleware/, extensions/
 
 Module System (foundation + infrastructure)
-└─ modules/, transforms/, cache/, bundler/
+└─ modules/, transforms/, cache/, bundler/, registry/
 
 Features (foundation + infrastructure + modules)
-└─ data/, html/, react/, rendering/
+└─ data/, html/, react/, rendering/, markdown/, mdx/
 
-AI (foundation + tool)
-└─ tool/, agent/, workflow/, prompt/, resource/, mcp/, provider/
+AI (foundation + tool + extensions)
+└─ tool/, agent/, workflow/, prompt/, resource/, mcp/, provider/,
+   skill/, chat/, discovery/, embedding/, sandbox/
+
+Services (AI + infrastructure)
+└─ jobs/, task/, channels/, integrations/, internal-agents/
 
 Orchestrators (most modules)
 └─ server/, proxy/, build/, cli/
@@ -635,8 +794,10 @@ Orchestrators (most modules)
 1. Foundation modules have no internal dependencies
 2. Infrastructure depends only on foundation
 3. Features depend on foundation + infrastructure
-4. Orchestrators can depend on most modules
-5. **NO circular dependencies**
+4. AI modules depend on foundation + tool + extensions
+5. Services depend on AI + infrastructure
+6. Orchestrators can depend on most modules
+7. **NO circular dependencies**
 
 ---
 

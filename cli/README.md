@@ -24,12 +24,13 @@ cli/
 ├── index.ts             # Public exports
 │
 ├── shared/              # Types (schemas), constants, config, arg utilities
-├── commands/            # Command implementations (dev, build, deploy, etc.)
+├── commands/            # Command implementations (40+ commands)
 │
 ├── app/                 # TUI dashboard
 ├── auth/                # Login, token storage, OAuth
 ├── sync/                # Project discovery, ignore patterns (used by pull/push)
-├── mcp/                 # MCP server and tools for coding agents
+├── mcp/                 # MCP server, tools, and skills for coding agents
+├── skills/              # Skill loader and type definitions
 │
 ├── ui/                  # Colors, ANSI, box drawing
 ├── utils/               # General utilities
@@ -43,19 +44,33 @@ cli/
 
 Run `veryfront <command> --help` for options:
 
-| Command         | Description                         |
-| --------------- | ----------------------------------- |
-| `dev`           | Development server with HMR and TUI |
-| `build`         | Production build                    |
-| `deploy`        | Deploy to Veryfront                 |
-| `init`          | Create new project                  |
-| `generate`      | Scaffold pages, APIs, components    |
-| `doctor`        | Project diagnostics                 |
-| `login`         | Authenticate                        |
-| `pull` / `push` | Sync with remote                    |
-| `uploads`       | List, pull, put, and delete uploads |
-| `files`         | List, get, put, and delete files    |
-| `knowledge`     | Knowledge-base ingestion workflow   |
+| Command         | Description                          |
+| --------------- | ------------------------------------ |
+| `dev`           | Development server with HMR and TUI  |
+| `build`         | Production build                     |
+| `deploy`        | Deploy to Veryfront                  |
+| `init`          | Create new project                   |
+| `generate`      | Scaffold pages, APIs, components     |
+| `doctor`        | Project diagnostics                  |
+| `login`         | Authenticate                         |
+| `logout`        | Clear authentication                 |
+| `whoami`        | Show current authenticated user      |
+| `pull` / `push` | Sync with remote                     |
+| `uploads`       | List, pull, put, and delete uploads  |
+| `files`         | List, get, put, and delete files     |
+| `knowledge`     | Knowledge-base ingestion workflow    |
+| `skills`        | Manage agent skills                  |
+| `task`          | Run project tasks                    |
+| `workflow`      | Manage and inspect workflows         |
+| `mcp`           | Start MCP server for coding agents   |
+| `start`         | Multi-project TUI dashboard          |
+| `serve`         | Production HTTP server               |
+| `worker`        | Start workflow worker process        |
+| `routes`        | List project routes                  |
+| `schema`        | Generate or inspect schemas          |
+| `extension`     | Manage extensions                    |
+| `config`        | View or modify project configuration |
+| `studio`        | Open Studio UI                       |
 
 Use one or more `uploads/...` paths for remote project-upload references in `veryfront knowledge ingest`; use `./uploads/...` or `/workspace/uploads/...` to force a local sandbox path.
 `veryfront knowledge ingest` requires `python3`; inside the Veryfront sandbox it uses `docling` for PDF, Office, and HTML extraction, and outside the sandbox it falls back to the supported parser packages when `docling` is unavailable or extraction fails.

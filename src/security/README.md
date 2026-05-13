@@ -10,16 +10,20 @@ The security module provides core security primitives and policies for Veryfront
 
 - Content Security Policy (CSP) configuration and enforcement
 - CORS (Cross-Origin Resource Sharing) policies
+- CSRF (Cross-Site Request Forgery) protection
 - Authentication helpers and session management
 - Input validation and sanitization
+- Path traversal protection
 - Security headers management
-- XSS/CSRF protection utilities
+- Rate limiting
+- Secure filesystem operations
+- Deno permission management
+- Sandbox for untrusted code execution
 
 ### What this module does NOT do:
 
-- HTTP-level security enforcement (see `security/http/`)
 - Middleware execution (see `middleware/builtin/security/`)
-- Runtime sandboxing (see `runtime/security/`)
+- Agent sandbox execution (see `src/sandbox/`)
 
 ## Architecture
 
@@ -30,9 +34,18 @@ security/
 │   ├── config.ts          # Security configuration
 │   ├── cors.ts            # CORS policies
 │   └── csp.ts             # Content Security Policy
-└── input-validation/      # Input sanitization
-    ├── validators.ts      # Validation rules
-    └── sanitizers.ts      # Input cleaning
+├── csrf/                   # CSRF protection
+├── input-validation/       # Input sanitization
+│   ├── validators.ts      # Validation rules
+│   └── sanitizers.ts      # Input cleaning
+├── path-validation/        # Path traversal protection
+├── rate-limit/            # Rate limiting [has README]
+├── sandbox/               # Sandboxed code execution
+├── client/                # Client-side security utilities
+├── utils/                 # Security utility functions
+├── secure-fs.ts           # Secure filesystem operations
+├── path-validation.ts     # Path validation utilities
+└── deno-permissions.ts    # Deno permission management
 ```
 
 ## Key Exports

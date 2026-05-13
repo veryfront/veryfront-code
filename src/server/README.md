@@ -20,6 +20,8 @@ The Server module exports:
 - **`DevServer`** - Development server class
 - **`startProductionServer()`** - Starts a production server
 - **`createHandler()`** - Creates a runtime-agnostic request handler for any runtime
+- **`startServiceServer()`** - Starts a headless agent service server
+- **`nodeHandler()`** - Node.js-compatible request handler adapter
 
 ## File Structure
 
