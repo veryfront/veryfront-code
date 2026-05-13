@@ -1,6 +1,8 @@
 # @veryfront/ext-llm-google
 
-Veryfront extension that registers the Google Generative Language provider into the `AIProviderRegistry`, enabling `google/*` models for chat and embeddings (Gemini API).
+> **Category:** AI / LLM | **Contract:** `LLMProvider` | **Built-in**
+
+Provides Google Gemini models for Veryfront agents and chat, enabling `google/*` models for chat and embeddings via the `LLMProviderRegistry`.
 
 ## Installation
 
@@ -49,7 +51,7 @@ Any model accessible through the Google Generative Language API:
 
 ## Configuration
 
-The extension accepts configuration through `AIProviderConfig` when creating runtimes:
+The extension accepts configuration through `LLMProviderConfig` when creating runtimes:
 
 | Option       | Type           | Default                                            | Description                            |
 | ------------ | -------------- | -------------------------------------------------- | -------------------------------------- |

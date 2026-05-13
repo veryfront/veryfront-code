@@ -1,6 +1,8 @@
 # @veryfront/ext-llm-openai
 
-Veryfront extension that registers the OpenAI provider into the `AIProviderRegistry`, enabling `openai/*` models for chat, embeddings, and the Responses API.
+> **Category:** AI / LLM | **Contract:** `LLMProvider` | **Built-in**
+
+Provides OpenAI models for Veryfront agents and chat, enabling `openai/*` models for chat, embeddings, and the Responses API via the `LLMProviderRegistry`.
 
 ## Installation
 
@@ -61,7 +63,7 @@ Any model accessible through the OpenAI Chat Completions, Responses, or Embeddin
 
 ## Configuration Options
 
-The extension accepts configuration through `AIProviderConfig` when creating runtimes:
+The extension accepts configuration through `LLMProviderConfig` when creating runtimes:
 
 | Option       | Type           | Default                     | Description                                |
 | ------------ | -------------- | --------------------------- | ------------------------------------------ |

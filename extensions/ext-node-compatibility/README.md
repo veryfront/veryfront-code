@@ -1,6 +1,8 @@
 # @veryfront/ext-node-compatibility
 
-Veryfront extension that registers the `NodeCompat` contract — Node-style compatibility shims for SQLite-backed persistence and document text extraction.
+> **Category:** Infrastructure | **Contract:** `NodeCompat` | **Built-in**
+
+Provides Node.js compatibility shims for Veryfront — SQLite-backed persistence and document text extraction (PDF, DOCX, images) via Kreuzberg.
 
 ## Installation
 

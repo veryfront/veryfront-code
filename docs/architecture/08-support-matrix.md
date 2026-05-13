@@ -8,40 +8,64 @@ Use it for current support shape, not roadmap claims.
 
 Veryfront supports both router modes today.
 
-| Mode | Primary file shapes | Notes |
-|------|---------------------|-------|
-| App router | `app/**/page.*`, `app/api/**/route.*` | Directory-based routing model. |
-| Pages router | `pages/**`, `pages/api/**` | File-based routing model. |
-| Router preference | `router: "app"` or `router: "pages"` in `veryfront.config.ts` | The preferred router can be configured explicitly. |
+| Mode              | Primary file shapes                                                                                 | Notes                                                                      |
+| ----------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| App router        | `app/**/page.*`, `app/api/**/route.*`                                                               | Directory-based routing model.                                             |
+| Pages router      | `pages/**`, `pages/api/**`                                                                          | File-based routing model.                                                  |
+| Router preference | `router: "app"` or `router: "pages"` in `veryfront.config.ts`                                       | The preferred router can be configured explicitly.                         |
 | Fallback behavior | If the preferred router directory is missing, Veryfront falls back to the other router when present | This is a runtime convenience, not a reason to mix router styles casually. |
 
 ## Runtime Targets
 
 These are the runtime capability profiles currently modeled by the framework.
 
-| Runtime | Filesystem | MCP server | Long-running agents/workflows | Notes |
-|---------|------------|------------|-------------------------------|-------|
-| Deno | Yes | Yes | Yes | Primary local/runtime target in this repo. |
-| Node.js | Yes | Yes | Yes | Full runtime profile. |
-| Bun | Yes | Yes | Yes | Full runtime profile. |
-| Cloudflare Workers | No | No | Limited | Streaming is recommended; the runtime uses conservative step, CPU, and memory limits. |
-| Unknown runtime | No | No | Limited | Falls back to a constrained compatibility profile. |
+| Runtime            | Filesystem | MCP server | Long-running agents/workflows | Notes                                                                                 |
+| ------------------ | ---------- | ---------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| Deno               | Yes        | Yes        | Yes                           | Primary local/runtime target in this repo.                                            |
+| Node.js            | Yes        | Yes        | Yes                           | Full runtime profile.                                                                 |
+| Bun                | Yes        | Yes        | Yes                           | Full runtime profile.                                                                 |
+| Cloudflare Workers | No         | No         | Limited                       | Streaming is recommended; the runtime uses conservative step, CPU, and memory limits. |
+| Unknown runtime    | No         | No         | Limited                       | Falls back to a constrained compatibility profile.                                    |
 
 ## Capability Boundaries
 
 This matrix separates open-core framework support from capabilities that depend on a backing API or cloud bootstrap.
 
-| Capability | Current support shape | Notes |
-|------------|-----------------------|-------|
-| Routing, rendering, middleware, API routes | Open-core | Core framework capability. |
-| App MCP server | Open-core on runtimes that can host it | Not available on constrained runtimes like Cloudflare Workers. |
-| Internal AG-UI transport | Open-core runtime surface | Separate from the app MCP contract. |
-| Direct provider integrations (`openai`, `anthropic`, `google`, local) | Open-core with provider credentials/runtime setup | Depends on the selected provider configuration. |
-| Veryfront Cloud model routing | Requires Veryfront Cloud bootstrap | Depends on project/auth context and cloud gateway configuration. |
-| Veryfront Cloud blob storage | Requires Veryfront Cloud bootstrap | Uses project-scoped cloud upload APIs. |
-| Jobs client | Requires backing API/service layer | Exposed as SDK/API surface, not as a built-in MCP jobs layer. |
-| Sandbox | Requires backing API/service layer | Depends on authenticated sandbox session APIs. |
-| Remote integration tools | Requires backing API/service layer | Tool definitions and execution are fetched per request from the configured API layer. |
+| Capability                                                            | Current support shape                             | Notes                                                                                 |
+| --------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Routing, rendering, middleware, API routes                            | Open-core                                         | Core framework capability.                                                            |
+| App MCP server                                                        | Open-core on runtimes that can host it            | Not available on constrained runtimes like Cloudflare Workers.                        |
+| Internal AG-UI transport                                              | Open-core runtime surface                         | Separate from the app MCP contract.                                                   |
+| Direct provider integrations (`openai`, `anthropic`, `google`, local) | Open-core with provider credentials/runtime setup | Depends on the selected provider configuration.                                       |
+| Extension contracts (auth, bundler, CSS, parser, tracing, etc.)       | Open-core                                         | First-party `@veryfront/ext-*` packages provide implementations.                      |
+| Workflow engine (in-memory and Redis backends)                        | Open-core                                         | K8sJobExecutor requires Kubernetes; in-memory/Redis work standalone.                  |
+| Discovery (tools, agents, workflows, prompts, resources, skills)      | Open-core                                         | Convention-based file-system discovery at server startup.                             |
+| Veryfront Cloud model routing                                         | Requires Veryfront Cloud bootstrap                | Depends on project/auth context and cloud gateway configuration.                      |
+| Veryfront Cloud blob storage                                          | Requires Veryfront Cloud bootstrap                | Uses project-scoped cloud upload APIs.                                                |
+| Veryfront Cloud agent service                                         | Requires Veryfront Cloud bootstrap                | Hosted agent execution with project steering and runtime system messages.             |
+| Jobs client                                                           | Requires backing API/service layer                | Exposed as SDK/API surface, not as a built-in MCP jobs layer.                         |
+| Sandbox                                                               | Requires backing API/service layer                | Depends on authenticated sandbox session APIs.                                        |
+| Remote integration tools                                              | Requires backing API/service layer                | Tool definitions and execution are fetched per request from the configured API layer. |
+| Control-plane agent routing                                           | Requires Veryfront Cloud bootstrap                | EdDSA-signed request validation for hosted agent orchestration.                       |
+
+## Extension Contract Matrix
+
+These contracts are backed by first-party extension packages. Without the extension installed, the framework throws an install-suggestion error at first use.
+
+| Contract                 | Package                                | Runtime requirement          |
+| ------------------------ | -------------------------------------- | ---------------------------- |
+| `SchemaValidator`        | `@veryfront/ext-zod`                   | None (pure JS)               |
+| `AuthProvider`           | `@veryfront/ext-auth-jwt`              | None (jose library)          |
+| `Bundler`, `ModuleLexer` | `@veryfront/ext-bundler-esbuild`       | esbuild binary               |
+| `CSSProcessor`           | `@veryfront/ext-css-tailwind`          | Network (esm.sh for plugins) |
+| `ContentTransformer`     | `@veryfront/ext-transform-mdx`         | None (unified ecosystem)     |
+| `CodeParser`             | `@veryfront/ext-parser-babel`          | None (Babel)                 |
+| `TracingExporter`        | `@veryfront/ext-tracing-opentelemetry` | Network (OTLP endpoint)      |
+| `TokenCacheStore`        | `@veryfront/ext-cache-redis`           | Network (Redis)              |
+| `NodeCompat`             | `@veryfront/ext-node-compatibility`    | FS (SQLite, WASM)            |
+| `LLMProvider`            | `@veryfront/ext-llm-openai`            | Network (OpenAI API)         |
+| `LLMProvider`            | `@veryfront/ext-llm-anthropic`         | Network (Anthropic API)      |
+| `LLMProvider`            | `@veryfront/ext-llm-google`            | Network (Google AI API)      |
 
 ## Documentation Rule
 
