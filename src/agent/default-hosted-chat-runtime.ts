@@ -29,7 +29,7 @@ import {
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./hosted-chat-runtime-tool-assembly.ts";
-import type { HostedProjectMcpServerConfig } from "./hosted-project-remote-tool-source.ts";
+import type { AgentServiceMcpServerConfig } from "./agent-service-mcp-server-config.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
@@ -45,7 +45,7 @@ export type DefaultHostedChatRuntimeConfig = {
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
-  mcpServers?: readonly HostedProjectMcpServerConfig[];
+  mcpServers?: readonly AgentServiceMcpServerConfig[];
 };
 
 export type DefaultHostedChatRuntimeLogger = {

@@ -17,9 +17,9 @@ import {
   fetchLatestConversationUserText,
   updateDefaultResearchArtifacts,
 } from "./default-research-artifact-support.ts";
+import { type AgentServiceMcpServerConfig } from "./agent-service-mcp-server-config.ts";
 import {
   createHostedProjectRemoteToolSources,
-  type HostedProjectMcpServerConfig,
   type HostedProjectRemoteToolSourceMutationHandler,
   type HostedProjectRemoteToolSourcePrepareToolInput,
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
@@ -59,7 +59,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
-  mcpServers?: readonly HostedProjectMcpServerConfig[];
+  mcpServers?: readonly AgentServiceMcpServerConfig[];
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;

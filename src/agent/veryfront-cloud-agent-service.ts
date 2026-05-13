@@ -60,7 +60,7 @@ import {
   fetchDefaultHostedProjectSteering,
 } from "./default-hosted-project-steering-refresh.ts";
 import { type HostedProjectSkillIdsContext } from "./hosted-project-steering-adapter.ts";
-import type { HostedProjectMcpServerConfig } from "./hosted-project-remote-tool-source.ts";
+import type { AgentServiceMcpServerConfig } from "./agent-service-mcp-server-config.ts";
 import type { RuntimeLoadSkillToolContext } from "./runtime-load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "./runtime-project-skill-catalog.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
@@ -115,11 +115,11 @@ export type NodeVeryfrontCloudAgentServiceAgentSource = "auto" | "code" | "markd
 
 export type VeryfrontMcpServerKind = "api" | "studio";
 
-export type NodeVeryfrontCloudAgentServiceMcpServer = HostedProjectMcpServerConfig;
+export type NodeVeryfrontCloudAgentServiceMcpServer = AgentServiceMcpServerConfig;
 
 export function veryfrontMcpServer(
   kind: VeryfrontMcpServerKind = "api",
-): HostedProjectMcpServerConfig {
+): AgentServiceMcpServerConfig {
   if (kind === "studio") {
     return { kind: "veryfront-studio" };
   }

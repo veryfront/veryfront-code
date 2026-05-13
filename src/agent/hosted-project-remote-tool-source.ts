@@ -8,9 +8,13 @@ import {
   type RemoteToolSource,
   type ToolExecutionContext,
 } from "#veryfront/tool";
+import {
+  type AgentServiceMcpServerConfig,
+  createAgentServiceRemoteMcpConfig,
+  defaultAgentServiceMcpServers,
+} from "./agent-service-mcp-server-config.ts";
 import { toChildRunToolInputRecord } from "./child-run-execution-support.ts";
-import { buildStudioMcpHeaders } from "./live-studio-mcp-tools.ts";
-import { clientAllowsStudioMcp, type RuntimeClientProfile } from "./runtime-client-profile.ts";
+import type { RuntimeClientProfile } from "./runtime-client-profile.ts";
 import { getConfirmedProjectContextSwitchId } from "./project-context.ts";
 import {
   getProjectSteeringMutation,
@@ -26,31 +30,6 @@ export type HostedProjectRemoteToolSourceMutationHandler = (
 export type HostedProjectRemoteToolSourceProjectSwitchHandler = (
   projectId: string,
 ) => Promise<void> | void;
-
-export type HostedProjectVeryfrontApiMcpServerConfig = {
-  kind: "veryfront-api";
-  id?: string;
-};
-
-export type HostedProjectVeryfrontStudioMcpServerConfig = {
-  kind: "veryfront-studio";
-  id?: string;
-};
-
-export type HostedProjectGenericMcpServerConfig = {
-  kind?: "generic";
-  id?: string;
-  endpoint: RemoteMCPToolSourceConfig["endpoint"];
-  headers?: RemoteMCPToolSourceConfig["headers"];
-  fetch?: RemoteMCPToolSourceConfig["fetch"];
-  listMethod?: RemoteMCPToolSourceConfig["listMethod"];
-  callMethod?: RemoteMCPToolSourceConfig["callMethod"];
-};
-
-export type HostedProjectMcpServerConfig =
-  | HostedProjectVeryfrontApiMcpServerConfig
-  | HostedProjectVeryfrontStudioMcpServerConfig
-  | HostedProjectGenericMcpServerConfig;
 
 export type HostedProjectRemoteToolSourcePrepareToolInput = (input: {
   toolName: string;
@@ -213,86 +192,13 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     authToken: string;
     apiMcpUrl: string;
     studioMcpUrl?: string | null;
-    mcpServers?: readonly HostedProjectMcpServerConfig[];
+    mcpServers?: readonly AgentServiceMcpServerConfig[];
     clientProfile?: RuntimeClientProfile | null;
     getProjectId: () => string | null | undefined;
     conversationId?: string;
     createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
     onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   };
-
-function defaultHostedProjectMcpServers(): HostedProjectMcpServerConfig[] {
-  return [{ kind: "veryfront-api" }];
-}
-
-export function createHostedProjectGenericRemoteMcpConfig(
-  server: HostedProjectGenericMcpServerConfig,
-): RemoteMCPToolSourceConfig {
-  const config: RemoteMCPToolSourceConfig = {
-    endpoint: server.endpoint,
-  };
-
-  if (server.id !== undefined) config.id = server.id;
-  if (server.headers !== undefined) config.headers = server.headers;
-  if (server.fetch !== undefined) config.fetch = server.fetch;
-  if (server.listMethod !== undefined) config.listMethod = server.listMethod;
-  if (server.callMethod !== undefined) config.callMethod = server.callMethod;
-
-  return config;
-}
-
-export function createHostedProjectVeryfrontApiRemoteMcpConfig(
-  input: Pick<CreateHostedProjectRemoteToolSourcesInput, "apiMcpUrl" | "authToken"> & {
-    defaultSourceId?: string;
-  },
-  server: HostedProjectVeryfrontApiMcpServerConfig,
-): RemoteMCPToolSourceConfig {
-  return {
-    id: server.id ?? input.defaultSourceId ?? "veryfront-mcp",
-    endpoint: input.apiMcpUrl,
-    headers: {
-      Authorization: `Bearer ${input.authToken}`,
-    },
-  };
-}
-
-function createVeryfrontStudioRemoteMcpConfig(
-  input: Pick<
-    CreateHostedProjectRemoteToolSourcesInput,
-    "authToken" | "clientProfile" | "conversationId" | "getProjectId" | "studioMcpUrl"
-  >,
-  server: HostedProjectVeryfrontStudioMcpServerConfig,
-): RemoteMCPToolSourceConfig | null {
-  if (!input.studioMcpUrl || !clientAllowsStudioMcp(input.clientProfile)) {
-    return null;
-  }
-
-  return {
-    id: server.id ?? "studio-mcp",
-    endpoint: input.studioMcpUrl,
-    headers: () =>
-      buildStudioMcpHeaders(
-        input.authToken,
-        input.getProjectId() ?? null,
-        input.conversationId,
-      ),
-  };
-}
-
-function createRemoteMcpConfig(
-  input: CreateHostedProjectRemoteToolSourcesInput,
-  server: HostedProjectMcpServerConfig,
-): RemoteMCPToolSourceConfig | null {
-  if (server.kind === "veryfront-api") {
-    return createHostedProjectVeryfrontApiRemoteMcpConfig(input, server);
-  }
-
-  if (server.kind === "veryfront-studio") {
-    return createVeryfrontStudioRemoteMcpConfig(input, server);
-  }
-
-  return createHostedProjectGenericRemoteMcpConfig(server);
-}
 
 function createHostedProjectRemoteToolSourceFromConfig(
   input: CreateHostedProjectRemoteToolSourcesInput,
@@ -327,10 +233,18 @@ export function createHostedProjectRemoteToolSources(
 ): RemoteToolSource[] {
   const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
   const sources: RemoteToolSource[] = [];
-  const mcpServers = input.mcpServers ?? defaultHostedProjectMcpServers();
+  const mcpServers = input.mcpServers ?? defaultAgentServiceMcpServers();
 
   for (const server of mcpServers) {
-    const remoteConfig = createRemoteMcpConfig(input, server);
+    const remoteConfig = createAgentServiceRemoteMcpConfig({
+      server,
+      authToken: input.authToken,
+      apiMcpUrl: input.apiMcpUrl,
+      studioMcpUrl: input.studioMcpUrl,
+      clientProfile: input.clientProfile,
+      getProjectId: input.getProjectId,
+      conversationId: input.conversationId,
+    });
     if (!remoteConfig) {
       continue;
     }
