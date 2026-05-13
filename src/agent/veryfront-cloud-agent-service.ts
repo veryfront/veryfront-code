@@ -39,7 +39,10 @@ import {
 } from "./agent-service-bootstrap.ts";
 import { loadAgentServiceEnvFiles } from "./agent-service-env-files.ts";
 import { createHostedFormInputTool } from "./hosted-form-input-tool.ts";
-import { createHostedAgentProjectSteering } from "./hosted-agent-project-steering.ts";
+import {
+  createHostedAgentProjectSteering,
+  type HostedAgentProjectSteering,
+} from "./hosted-agent-project-steering.ts";
 import { type HostedChatRuntimeCreationResult } from "./hosted-chat-runtime-contract.ts";
 import type { HostedConversationRootRunContext } from "./conversation-root-run-lifecycle.ts";
 import { type AgentRuntimeMessage } from "./agent-runtime-message-adapter.ts";
@@ -64,10 +67,7 @@ import type { AgentServiceMcpServerConfig } from "./agent-service-mcp-server-con
 import type { RuntimeLoadSkillToolContext } from "./runtime-load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "./runtime-project-skill-catalog.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
-import {
-  loadRuntimeAgentMarkdownDefinitionFromFile,
-  resolveRuntimeAgentDefinitionsDir,
-} from "./runtime-agent-definition-files.ts";
+import { listRuntimeAgentMarkdownDefinitionIds } from "./runtime-agent-definition-files.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
 import {
   buildVeryfrontCloudRuntimeInstructions,
@@ -131,7 +131,11 @@ type AgentServicePathOption = string | URL;
 
 export type NodeVeryfrontCloudAgentServiceOptions = {
   serviceName: string;
-  agentId: string;
+  /**
+   * Default agent served by requests that do not provide an agent id. When
+   * omitted, the service selects the only discovered code or markdown agent.
+   */
+  agentId?: string;
   /**
    * Project/discovery root. Defaults to the process cwd when neither baseDir
    * nor an entrypoint URL is provided.
@@ -309,13 +313,6 @@ function createNodeVeryfrontCloudAgentServiceContext(
   ): TResult | Promise<TResult> {
     return infrastructure.tracer.trace(operationName, operation);
   }
-  const projectSteering = createHostedAgentProjectSteering({
-    baseDir: resolveBaseDir(options),
-    agentId: options.agentId,
-    getApiUrl: () => infrastructure.getConfig().VERYFRONT_API_URL,
-    logger: infrastructure.logger,
-    trace,
-  });
 
   return {
     options,
@@ -323,7 +320,8 @@ function createNodeVeryfrontCloudAgentServiceContext(
     projectDir: resolveProjectDir(options),
     infrastructure,
     trace,
-    projectSteering,
+    defaultAgentId: null as string | null,
+    projectSteeringByAgentId: new Map<string, HostedAgentProjectSteering>(),
     tracker: createDetachedRunTracker<AgUiResumeValue>(),
     discoveryResult: null as DiscoveryResult | null,
     agentConfig: null as RuntimeAgentMarkdownDefinition | null,
@@ -350,27 +348,16 @@ async function createRuntimeAgentDefinitionFromCodeAgent(
 
 function getMarkdownAgentConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
+  agentId: string,
 ): RuntimeAgentMarkdownDefinition {
-  return context.projectSteering.getAgentConfig();
+  return getProjectSteering(context, agentId).getAgentConfig();
 }
 
 function loadMarkdownAgentConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
   agentId: string,
 ): RuntimeAgentMarkdownDefinition {
-  if (agentId === context.options.agentId) {
-    return getMarkdownAgentConfig(context);
-  }
-
-  const agentsDir = resolveRuntimeAgentDefinitionsDir({
-    baseDir: resolveBaseDir(context.options),
-    id: agentId,
-  });
-
-  return loadRuntimeAgentMarkdownDefinitionFromFile({
-    agentsDir,
-    id: agentId,
-  });
+  return getMarkdownAgentConfig(context, agentId);
 }
 
 async function resolveAgentConfig(
@@ -426,11 +413,102 @@ async function discoverProjectPrimitives(
   context.discoveryResult = await discoverAll(discoveryOptions);
 }
 
+function getDiscoveredCodeAgentIds(context: NodeVeryfrontCloudAgentServiceContext): string[] {
+  return [...(context.discoveryResult?.agents.keys() ?? [])].sort((left, right) =>
+    left.localeCompare(right)
+  );
+}
+
+function getDiscoveredMarkdownAgentIds(context: NodeVeryfrontCloudAgentServiceContext): string[] {
+  return listRuntimeAgentMarkdownDefinitionIds({
+    baseDir: resolveBaseDir(context.options),
+  });
+}
+
+function describeAgentIdCandidates(input: {
+  codeAgentIds: string[];
+  markdownAgentIds: string[];
+}): string {
+  const ids = [...new Set([...input.codeAgentIds, ...input.markdownAgentIds])]
+    .sort((left, right) => left.localeCompare(right));
+
+  return ids.length > 0 ? ids.join(", ") : "none";
+}
+
+function resolveSingleAgentId(input: {
+  codeAgentIds: string[];
+  markdownAgentIds: string[];
+  source: NodeVeryfrontCloudAgentServiceAgentSource;
+}): string | null {
+  if (input.source === "code") {
+    return input.codeAgentIds.length === 1 ? input.codeAgentIds[0] ?? null : null;
+  }
+
+  if (input.source === "markdown") {
+    return input.markdownAgentIds.length === 1 ? input.markdownAgentIds[0] ?? null : null;
+  }
+
+  const candidateIds = [...new Set([...input.codeAgentIds, ...input.markdownAgentIds])];
+  return candidateIds.length === 1 ? candidateIds[0] ?? null : null;
+}
+
+function resolveDefaultAgentId(context: NodeVeryfrontCloudAgentServiceContext): string {
+  if (context.options.agentId) {
+    return context.options.agentId;
+  }
+
+  const source = context.options.agentSource ?? "auto";
+  const codeAgentIds = getDiscoveredCodeAgentIds(context);
+  const markdownAgentIds = getDiscoveredMarkdownAgentIds(context);
+  const agentId = resolveSingleAgentId({ codeAgentIds, markdownAgentIds, source });
+
+  if (agentId) {
+    return agentId;
+  }
+
+  throw new Error(
+    [
+      "agentId is required when agent discovery does not resolve to exactly one agent.",
+      `Discovered agents: ${describeAgentIdCandidates({ codeAgentIds, markdownAgentIds })}.`,
+    ].join(" "),
+  );
+}
+
 async function initializeNodeVeryfrontCloudAgentServiceContext(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): Promise<void> {
   await discoverProjectPrimitives(context);
-  context.agentConfig = await resolveAgentConfig(context, context.options.agentId);
+  context.defaultAgentId = resolveDefaultAgentId(context);
+  context.agentConfig = await resolveAgentConfig(context, context.defaultAgentId);
+}
+
+function getDefaultAgentId(context: NodeVeryfrontCloudAgentServiceContext): string {
+  if (!context.defaultAgentId) {
+    throw new Error("Agent service context has not been initialized.");
+  }
+
+  return context.defaultAgentId;
+}
+
+function getProjectSteering(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  agentId: string = getDefaultAgentId(context),
+): HostedAgentProjectSteering {
+  const cachedProjectSteering = context.projectSteeringByAgentId.get(agentId);
+  if (cachedProjectSteering) {
+    return cachedProjectSteering;
+  }
+
+  const projectSteering = createHostedAgentProjectSteering({
+    baseDir: resolveBaseDir(context.options),
+    agentId,
+    getApiUrl: () => context.infrastructure.getConfig().VERYFRONT_API_URL,
+    logger: context.infrastructure.logger,
+    trace: context.trace,
+  });
+
+  context.projectSteeringByAgentId.set(agentId, projectSteering);
+  return projectSteering;
 }
 
 function getDiscoveredHostTools(): HostToolSet {
@@ -444,7 +522,7 @@ function getProjectInstructions(
   lookup: RuntimeProjectSteeringLookup,
 ): Promise<string> {
   return context.trace("chat.getProjectInstructions", async () => {
-    return await context.projectSteering.getProjectInstructions(lookup);
+    return await getProjectSteering(context).getProjectInstructions(lookup);
   });
 }
 
@@ -453,7 +531,7 @@ function getSkillsConfig(
   lookup: RuntimeProjectSteeringLookup,
 ): Promise<RuntimeSkillDefinition[]> {
   return context.trace("chat.getSkillsConfig", async () => {
-    return await context.projectSteering.getSkillsConfig(lookup);
+    return await getProjectSteering(context).getSkillsConfig(lookup);
   });
 }
 
@@ -461,14 +539,14 @@ function createLoadSkillTool(
   context: NodeVeryfrontCloudAgentServiceContext,
   toolContext: RuntimeLoadSkillToolContext,
 ) {
-  return context.projectSteering.createLoadSkillTool(toolContext);
+  return getProjectSteering(context).createLoadSkillTool(toolContext);
 }
 
 async function refreshProjectSkillIds(
   context: NodeVeryfrontCloudAgentServiceContext,
   skillContext: HostedProjectSkillIdsContext,
 ): Promise<void> {
-  await context.projectSteering.refreshProjectSkillIds(skillContext);
+  await getProjectSteering(context).refreshProjectSkillIds(skillContext);
 }
 
 function setFilteredTraceAttributes(
@@ -682,7 +760,7 @@ async function prepareChatExecution(
 
   setPrepareChatExecutionStartAttributes(context, { projectId, userId });
 
-  const agentConfig = await resolveAgentConfig(context, req.agentId ?? context.options.agentId);
+  const agentConfig = await resolveAgentConfig(context, req.agentId ?? getDefaultAgentId(context));
   const {
     effectiveMessages,
     rootRunContext,

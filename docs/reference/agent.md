@@ -277,7 +277,6 @@ import { startAgentService, veryfrontMcpServer } from "veryfront/agent";
 
 await startAgentService({
   serviceName: "support-agent",
-  agentId: "support",
   mcpServers: [veryfrontMcpServer()],
 });
 ```
@@ -285,6 +284,9 @@ await startAgentService({
 By default, discovery is rooted at the process cwd. Pass `baseDir` only when the
 service may start from another working directory. `entrypointUrl` is a
 convenience fallback for deriving `baseDir` from an entry module URL.
+If the service discovers exactly one code or markdown agent, that agent becomes
+the default automatically. Set `agentId` when the service exposes multiple
+agents or when direct `/api/runs` requests should use a specific default.
 
 Remote MCP servers are configured as an explicit list. Use normal MCP server
 configs for third-party servers, and use `veryfrontMcpServer()` helpers for
@@ -294,7 +296,6 @@ trusted Studio-capable clients:
 ```ts
 await startAgentService({
   serviceName: "support-agent",
-  agentId: "support",
   mcpServers: [
     veryfrontMcpServer(),
     veryfrontMcpServer("studio"),
@@ -325,11 +326,11 @@ available from discovery; set `agentSource: "markdown"` to force markdown
 definitions. Use `veryfront.config.ts` `ai.<primitive>.discovery.paths` for
 non-standard project paths.
 
-The `agentId` option selects the default agent for direct `/api/runs` requests.
+The optional `agentId` option selects the default agent for direct `/api/runs` requests.
 Control-plane runtime invocations can target any discovered code or markdown
-agent by setting `run.agentId` in the `/api/control-plane/agents/stream`
-payload. This lets one deployed service expose multiple project agents while
-keeping direct chat integrations on a predictable default.
+agent by setting `run.agentId` in the `/api/runs` payload. This lets one
+deployed service expose multiple project agents while keeping direct chat
+integrations on a predictable default.
 
 For a conversations/control-plane host composition that combines
 `runHostedLifecycle()` with the public durable-run helpers, see
