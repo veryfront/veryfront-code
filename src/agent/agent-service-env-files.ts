@@ -1,20 +1,20 @@
 import { cwd as getCwd, env as getProcessEnv, setEnv } from "#veryfront/platform/compat/process.ts";
 import { load as loadDotenv } from "#veryfront/platform/compat/std/dotenv.ts";
 
-const DEFAULT_HOSTED_AGENT_SERVICE_ENV_FILES = [".env", ".env.local"] as const;
+const DEFAULT_AGENT_SERVICE_ENV_FILES = [".env", ".env.local"] as const;
 
-export type HostedAgentServiceEnvFileLoadResult = {
+export type AgentServiceEnvFileLoadResult = {
   loadedFiles: string[];
   loadedVariables: number;
 };
 
-export type HostedAgentServiceEnvFileLoadOptions = {
+export type AgentServiceEnvFileLoadOptions = {
   cwd?: string;
   files?: readonly string[];
 };
 
-export type AgentServiceEnvFileLoadResult = HostedAgentServiceEnvFileLoadResult;
-export type AgentServiceEnvFileLoadOptions = HostedAgentServiceEnvFileLoadOptions;
+export type HostedAgentServiceEnvFileLoadResult = AgentServiceEnvFileLoadResult;
+export type HostedAgentServiceEnvFileLoadOptions = AgentServiceEnvFileLoadOptions;
 
 function joinEnvPath(cwd: string, file: string): string {
   if (file.startsWith("/") || file.startsWith("./") || file.startsWith("../")) {
@@ -24,11 +24,11 @@ function joinEnvPath(cwd: string, file: string): string {
   return `${cwd.replace(/\/$/, "")}/${file}`;
 }
 
-export async function loadHostedAgentServiceEnvFiles(
-  options: HostedAgentServiceEnvFileLoadOptions = {},
-): Promise<HostedAgentServiceEnvFileLoadResult> {
+export async function loadAgentServiceEnvFiles(
+  options: AgentServiceEnvFileLoadOptions = {},
+): Promise<AgentServiceEnvFileLoadResult> {
   const cwd = options.cwd ?? getCwd();
-  const files = options.files ?? DEFAULT_HOSTED_AGENT_SERVICE_ENV_FILES;
+  const files = options.files ?? DEFAULT_AGENT_SERVICE_ENV_FILES;
   const protectedKeys = new Set(Object.keys(getProcessEnv()));
   const loadedFiles: string[] = [];
   let loadedVariables = 0;
@@ -57,8 +57,4 @@ export async function loadHostedAgentServiceEnvFiles(
   return { loadedFiles, loadedVariables };
 }
 
-export async function loadAgentServiceEnvFiles(
-  options: AgentServiceEnvFileLoadOptions = {},
-): Promise<AgentServiceEnvFileLoadResult> {
-  return loadHostedAgentServiceEnvFiles(options);
-}
+export const loadHostedAgentServiceEnvFiles = loadAgentServiceEnvFiles;

@@ -24,6 +24,10 @@ export function isHostedServiceAuthError(
   return error instanceof HostedServiceAuthError;
 }
 
+export const AgentServiceAuthError = HostedServiceAuthError;
+export type AgentServiceAuthError = HostedServiceAuthError;
+export type AgentServiceAuthErrorCode = HostedServiceAuthErrorCode;
+
 export type HostedServiceAuthenticatedRequest = {
   authToken: string;
   userId: string;
@@ -90,6 +94,18 @@ export type HostedServiceAuth = {
   ) => Promise<HostedServiceProjectAccessResult>;
 };
 
+export type AgentServiceAuthenticatedRequest = HostedServiceAuthenticatedRequest;
+export type AgentServiceJwtError = HostedServiceJwtError;
+export type AgentServiceJwtResult = HostedServiceJwtResult;
+export type AgentServiceProjectAccessError = HostedServiceProjectAccessError;
+export type AgentServiceProjectAccessResult = HostedServiceProjectAccessResult;
+export type AgentServiceAuthConfig = HostedServiceAuthConfig;
+export type AgentServiceAuthLogger = HostedServiceAuthLogger;
+export type AgentServiceAuthTrace = HostedServiceAuthTrace;
+export type AgentServiceAuthFetch = HostedServiceAuthFetch;
+export type AgentServiceAuthOptions = HostedServiceAuthOptions;
+export type AgentServiceAuth = HostedServiceAuth;
+
 let cachedPublicKeyInput: string | undefined;
 let cachedPublicKeyPromise: Promise<KeyLike> | undefined;
 
@@ -127,6 +143,8 @@ export function getHostedServiceTokenFromRequest(request: Request): string | nul
 
   return null;
 }
+
+export const getAgentServiceTokenFromRequest = getHostedServiceTokenFromRequest;
 
 function makeUnauthenticatedError(message: string): HostedServiceJwtError {
   return {
@@ -395,3 +413,6 @@ export function createHostedServiceAuth(
     verifyProjectAccess,
   };
 }
+
+export const createAgentServiceAuth = createHostedServiceAuth;
+export const isAgentServiceAuthError = isHostedServiceAuthError;

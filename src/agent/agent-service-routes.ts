@@ -20,7 +20,7 @@ import { executeHostedDurableChatRun } from "./hosted-durable-chat-run-start.ts"
 import {
   type HostedServiceAuthenticatedRequest,
   HostedServiceAuthError,
-} from "./hosted-service-auth.ts";
+} from "./agent-service-auth.ts";
 import { createRequestAuthCache } from "./request-auth-cache.ts";
 import { isResponseLike } from "./response-like.ts";
 import type { AgUiRuntimeRequest } from "./runtime-ag-ui-contract.ts";
@@ -29,31 +29,46 @@ export type HostedAgentServiceRoutesLogger = {
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+export type AgentServiceRoutesLogger = HostedAgentServiceRoutesLogger;
+
 export type HostedAgentServiceRoutesTrace = <TResult>(
   operationName: string,
   operation: () => Promise<TResult>,
 ) => Promise<TResult>;
+
+export type AgentServiceRoutesTrace = HostedAgentServiceRoutesTrace;
 
 export type HostedAgentServiceActiveSpanAttributes = Record<
   string,
   string | number | boolean | readonly (string | number | boolean)[] | null | undefined
 >;
 
+export type AgentServiceActiveSpanAttributes = HostedAgentServiceActiveSpanAttributes;
+
 export type HostedAgentServiceStreamExecutionInput<TExecution extends object> = TExecution & {
   requestAbortSignal: AbortSignal;
   agUiInput: AgUiRuntimeRequest;
 };
+
+export type AgentServiceStreamExecutionInput<TExecution extends object> =
+  HostedAgentServiceStreamExecutionInput<TExecution>;
 
 export type HostedAgentServiceDetachedExecutionInput<TExecution extends object> = {
   execution: TExecution;
   abortSignal: AbortSignal;
 };
 
+export type AgentServiceDetachedExecutionInput<TExecution extends object> =
+  HostedAgentServiceDetachedExecutionInput<TExecution>;
+
 export type HostedAgentServiceDetachedCleanupInput<TExecution extends object> = {
   execution: TExecution;
   runId: string;
   conversationId: string;
 };
+
+export type AgentServiceDetachedCleanupInput<TExecution extends object> =
+  HostedAgentServiceDetachedCleanupInput<TExecution>;
 
 export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   forwardedConfigNamespace?: string;
@@ -84,6 +99,9 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   logger?: HostedAgentServiceRoutesLogger;
 };
 
+export type AgentServiceRouteSetOptions<TExecution extends object> =
+  HostedAgentServiceRouteSetOptions<TExecution>;
+
 export type HostedAgentServiceRouteSet<TExecution extends object> = {
   routes: AgentServiceRoute[];
   authenticateAgUiRequest: (
@@ -109,6 +127,10 @@ export type HostedAgentServiceRouteSet<TExecution extends object> = {
     runId: string | undefined;
   }) => Promise<Response>;
 };
+
+export type AgentServiceRouteSet<TExecution extends object> = HostedAgentServiceRouteSet<
+  TExecution
+>;
 
 function defaultTrace<TResult>(
   _operationName: string,
@@ -363,3 +385,5 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     handleDurableChatRunCancelRequest,
   };
 }
+
+export const createAgentServiceRouteSet = createHostedAgentServiceRouteSet;

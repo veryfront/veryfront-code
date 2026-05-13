@@ -332,7 +332,7 @@ export {
   startNodeHostedAgentService,
   type StartNodeHostedAgentServiceOptions,
   type StartNodeHostedAgentServiceResult,
-} from "./hosted-agent-service-runtime.ts";
+} from "./agent-service-runtime.ts";
 export {
   createNodeVeryfrontCloudAgentServiceRuntime,
   type NodeVeryfrontCloudAgentServiceMcpOptions,
@@ -352,7 +352,7 @@ export {
   hostedAgentServiceConfigSchema,
   parseAgentServiceConfig,
   parseHostedAgentServiceConfig,
-} from "./hosted-agent-service-config.ts";
+} from "./agent-service-config.ts";
 export {
   type AgentServiceEnvFileLoadOptions,
   type AgentServiceEnvFileLoadResult,
@@ -360,7 +360,7 @@ export {
   type HostedAgentServiceEnvFileLoadResult,
   loadAgentServiceEnvFiles,
   loadHostedAgentServiceEnvFiles,
-} from "./hosted-agent-service-env-files.ts";
+} from "./agent-service-env-files.ts";
 export {
   initializeNodeAgentServiceOpenTelemetry,
   type InitializeNodeAgentServiceTelemetryOptions,
@@ -380,7 +380,7 @@ export {
   type ResolveNodeAgentServiceTelemetryConfigOptions,
   resolveNodeHostedAgentServiceTelemetryConfig,
   type ResolveNodeHostedAgentServiceTelemetryConfigOptions,
-} from "./node-hosted-agent-service-telemetry.ts";
+} from "./node-agent-service-telemetry.ts";
 export {
   createNodeAgentServiceRuntimeInfrastructure,
   type CreateNodeAgentServiceRuntimeInfrastructureOptions,
@@ -388,7 +388,7 @@ export {
   type CreateNodeHostedAgentServiceRuntimeInfrastructureOptions,
   type NodeAgentServiceRuntimeInfrastructure,
   type NodeHostedAgentServiceRuntimeInfrastructure,
-} from "./node-hosted-agent-service-runtime-infrastructure.ts";
+} from "./node-agent-service-runtime-infrastructure.ts";
 export {
   type AgentServiceBootstrapExit,
   type AgentServiceTraceContext,
@@ -528,7 +528,7 @@ export {
   type HostedAgentServiceRoutesTrace as AgentServiceRoutesTrace,
   type HostedAgentServiceStreamExecutionInput,
   type HostedAgentServiceStreamExecutionInput as AgentServiceStreamExecutionInput,
-} from "./hosted-agent-service-routes.ts";
+} from "./agent-service-routes.ts";
 export {
   createHostedRuntimeStateResolver,
   type CreateHostedRuntimeStateResolverOptions,
@@ -1724,4 +1724,4 @@ export {
   type HostedServiceProjectAccessResult as AgentServiceProjectAccessResult,
   isHostedServiceAuthError,
   isHostedServiceAuthError as isAgentServiceAuthError,
-} from "./hosted-service-auth.ts";
+} from "./agent-service-auth.ts";

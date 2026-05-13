@@ -5,7 +5,7 @@ import {
   createHostedAgentServiceRuntime,
   startNodeAgentService,
   startNodeHostedAgentService,
-} from "./hosted-agent-service-runtime.ts";
+} from "./agent-service-runtime.ts";
 
 function createLogger() {
   return {
@@ -16,7 +16,7 @@ function createLogger() {
   };
 }
 
-describe("agent/hosted-agent-service-runtime", () => {
+describe("agent/agent-service-runtime", () => {
   it("exposes agent service aliases without the hosted prefix for developer-facing APIs", async () => {
     const bundle = createAgentServiceRuntime({
       serviceName: "test-agent-service",
@@ -44,7 +44,7 @@ describe("agent/hosted-agent-service-runtime", () => {
     assertEquals(ready.status, 200);
   });
 
-  it("assembles hosted service auth, routes, lifecycle, and runtime shell", async () => {
+  it("assembles agent service auth, routes, lifecycle, and runtime shell", async () => {
     const bundle = createHostedAgentServiceRuntime({
       serviceName: "test-agent-service",
       getConfig: () => ({

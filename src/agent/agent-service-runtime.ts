@@ -11,18 +11,18 @@ import {
   type DetachedRunTracker,
 } from "./detached-run-tracker.ts";
 import {
-  createHostedAgentServiceRouteSet,
-  type HostedAgentServiceActiveSpanAttributes,
-  type HostedAgentServiceDetachedCleanupInput,
-  type HostedAgentServiceDetachedExecutionInput,
-  type HostedAgentServiceRouteSet,
-  type HostedAgentServiceStreamExecutionInput,
-} from "./hosted-agent-service-routes.ts";
+  type AgentServiceActiveSpanAttributes,
+  type AgentServiceDetachedCleanupInput,
+  type AgentServiceDetachedExecutionInput,
+  type AgentServiceRouteSet,
+  type AgentServiceStreamExecutionInput,
+  createAgentServiceRouteSet,
+} from "./agent-service-routes.ts";
 import {
-  createHostedServiceAuth,
-  type HostedServiceAuth,
-  type HostedServiceAuthConfig,
-} from "./hosted-service-auth.ts";
+  type AgentServiceAuth,
+  type AgentServiceAuthConfig,
+  createAgentServiceAuth,
+} from "./agent-service-auth.ts";
 import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
 import type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
@@ -34,7 +34,7 @@ import {
 } from "./agent-service-server.ts";
 import type { VeryfrontServiceServerLogger } from "../server/service-server.ts";
 
-export type HostedAgentServiceRuntimeConfig = HostedServiceAuthConfig & {
+export type HostedAgentServiceRuntimeConfig = AgentServiceAuthConfig & {
   PORT: number;
   ALLOWED_ORIGINS: string[];
 };
@@ -65,16 +65,16 @@ export type CreateHostedAgentServiceRuntimeOptions<
   forwardedConfigNamespace?: string;
   logger: HostedAgentServiceRuntimeLogger;
   trace?: HostedAgentServiceRuntimeTrace;
-  setActiveSpanAttributes?: (attributes: HostedAgentServiceActiveSpanAttributes) => void;
+  setActiveSpanAttributes?: (attributes: AgentServiceActiveSpanAttributes) => void;
   prepareExecution: (req: ParsedHostedChatRequest) => Promise<TExecution>;
   streamExecutionToAgUiResponse: (
-    input: HostedAgentServiceStreamExecutionInput<TExecution>,
+    input: AgentServiceStreamExecutionInput<TExecution>,
   ) => Promise<Response> | Response;
   startDetachedExecution: (
-    input: HostedAgentServiceDetachedExecutionInput<TExecution>,
+    input: AgentServiceDetachedExecutionInput<TExecution>,
   ) => Promise<void>;
   cleanupExecution?: (
-    input: HostedAgentServiceDetachedCleanupInput<TExecution>,
+    input: AgentServiceDetachedCleanupInput<TExecution>,
   ) => Promise<void>;
   tracker?: DetachedRunTracker<AgUiResumeValue>;
   drainTimeoutMs?: number;
@@ -91,8 +91,8 @@ export type HostedAgentServiceRuntimeBundle<
 > = {
   config: TConfig;
   tracker: DetachedRunTracker<AgUiResumeValue>;
-  auth: HostedServiceAuth;
-  routeSet: HostedAgentServiceRouteSet<TExecution>;
+  auth: AgentServiceAuth;
+  routeSet: AgentServiceRouteSet<TExecution>;
   routes: AgentServiceRoute[];
   lifecycle: DetachedRunShutdownLifecycle;
   runtime: AgentServiceRuntime;
@@ -152,21 +152,21 @@ function defaultTrace<TResult>(
   return operation();
 }
 
-export function createHostedAgentServiceRuntime<
+export function createAgentServiceRuntime<
   TExecution extends object,
-  TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
 >(
-  options: CreateHostedAgentServiceRuntimeOptions<TExecution, TConfig>,
-): HostedAgentServiceRuntimeBundle<TExecution, TConfig> {
+  options: CreateAgentServiceRuntimeOptions<TExecution, TConfig>,
+): AgentServiceRuntimeBundle<TExecution, TConfig> {
   const config = options.getConfig();
   const tracker = options.tracker ?? createDetachedRunTracker<AgUiResumeValue>();
   const trace = options.trace ?? defaultTrace;
-  const auth = createHostedServiceAuth({
+  const auth = createAgentServiceAuth({
     getConfig: options.getConfig,
     logger: options.logger,
     trace,
   });
-  const routeSet = createHostedAgentServiceRouteSet({
+  const routeSet = createAgentServiceRouteSet({
     forwardedConfigNamespace: options.forwardedConfigNamespace,
     authenticateRequest: auth.authenticateRequest,
     verifyProjectAccess: (projectId, authToken) => auth.verifyProjectAccess(projectId, authToken),
@@ -213,22 +213,22 @@ export function createHostedAgentServiceRuntime<
   };
 }
 
-export function createAgentServiceRuntime<
-  TExecution extends object,
-  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
->(
-  options: CreateAgentServiceRuntimeOptions<TExecution, TConfig>,
-): AgentServiceRuntimeBundle<TExecution, TConfig> {
-  return createHostedAgentServiceRuntime(options);
-}
-
-export async function startNodeHostedAgentService<
+export function createHostedAgentServiceRuntime<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
 >(
-  options: StartNodeHostedAgentServiceOptions<TExecution, TConfig>,
-): Promise<StartNodeHostedAgentServiceResult<TExecution, TConfig>> {
-  const bundle = createHostedAgentServiceRuntime(options);
+  options: CreateHostedAgentServiceRuntimeOptions<TExecution, TConfig>,
+): HostedAgentServiceRuntimeBundle<TExecution, TConfig> {
+  return createAgentServiceRuntime(options);
+}
+
+export async function startNodeAgentService<
+  TExecution extends object,
+  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+>(
+  options: StartNodeAgentServiceOptions<TExecution, TConfig>,
+): Promise<StartNodeAgentServiceResult<TExecution, TConfig>> {
+  const bundle = createAgentServiceRuntime(options);
   const nodeServer = await startNodeAgentServiceServer({
     runtime: bundle.runtime,
     serviceName: options.serviceName,
@@ -246,13 +246,13 @@ export async function startNodeHostedAgentService<
   };
 }
 
-export async function startNodeAgentService<
+export async function startNodeHostedAgentService<
   TExecution extends object,
-  TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
+  TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
 >(
-  options: StartNodeAgentServiceOptions<TExecution, TConfig>,
-): Promise<StartNodeAgentServiceResult<TExecution, TConfig>> {
-  return startNodeHostedAgentService(options);
+  options: StartNodeHostedAgentServiceOptions<TExecution, TConfig>,
+): Promise<StartNodeHostedAgentServiceResult<TExecution, TConfig>> {
+  return startNodeAgentService(options);
 }
 
 export async function startAgentServiceRuntime<

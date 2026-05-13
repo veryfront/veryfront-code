@@ -42,7 +42,7 @@ import {
   toMirroredAgentServiceStreamPart,
   toMirroredHostedStreamPart,
 } from "./index.ts";
-import { HostedServiceAuthError } from "./hosted-service-auth.ts";
+import { HostedServiceAuthError } from "./agent-service-auth.ts";
 
 Deno.test("agent-service boundary aliases point at hosted compatibility exports", () => {
   assertEquals(createAgentServiceRouteSet, createHostedAgentServiceRouteSet);

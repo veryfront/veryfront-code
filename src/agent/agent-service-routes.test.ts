@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
-import { createHostedAgentServiceRouteSet } from "./hosted-agent-service-routes.ts";
-import type { HostedServiceAuthenticatedRequest } from "./hosted-service-auth.ts";
+import { createHostedAgentServiceRouteSet } from "./agent-service-routes.ts";
+import type { HostedServiceAuthenticatedRequest } from "./agent-service-auth.ts";
 import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
 
 function createDevToken(payload: Record<string, unknown>): string {
@@ -88,7 +88,7 @@ function createRouteSet(input: {
   return { routeSet, tracker, preparedRequests, streamInputs };
 }
 
-Deno.test("hosted agent service routes expose the default hosted paths", () => {
+Deno.test("agent service routes expose the default paths", () => {
   const { routeSet } = createRouteSet();
 
   assertEquals(routeSet.routes.map((route) => `${route.method} ${route.path}`), [
@@ -100,7 +100,7 @@ Deno.test("hosted agent service routes expose the default hosted paths", () => {
   ]);
 });
 
-Deno.test("hosted agent service routes require auth for AG-UI streams", async () => {
+Deno.test("agent service routes require auth for AG-UI streams", async () => {
   const { routeSet } = createRouteSet();
   const response = await routeSet.handleAgUiRequest(
     new Request("https://agent.example.test/api/ag-ui", {
@@ -114,7 +114,7 @@ Deno.test("hosted agent service routes require auth for AG-UI streams", async ()
   assertEquals(await response.json(), { errorCode: "UNAUTHENTICATED" });
 });
 
-Deno.test("hosted agent service routes stream prepared AG-UI execution", async () => {
+Deno.test("agent service routes stream prepared AG-UI execution", async () => {
   const streamResponse = new Response("ok", { status: 201 });
   const { routeSet, preparedRequests, streamInputs } = createRouteSet({ streamResponse });
   const response = await routeSet.handleAgUiRequest(
@@ -126,7 +126,7 @@ Deno.test("hosted agent service routes stream prepared AG-UI execution", async (
   assertEquals(streamInputs, [{ executionId: "exec-1", agUiRunId: "run-1" }]);
 });
 
-Deno.test("hosted agent service routes preserve control-plane target agent ids", async () => {
+Deno.test("agent service routes preserve control-plane target agent ids", async () => {
   const { routeSet, preparedRequests } = createRouteSet();
   const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
     request: createAuthenticatedRequest(
@@ -140,7 +140,7 @@ Deno.test("hosted agent service routes preserve control-plane target agent ids",
   assertEquals(preparedRequests[0]?.agentId, "builder");
 });
 
-Deno.test("hosted agent service routes enforce durable root lineage", async () => {
+Deno.test("agent service routes enforce durable root lineage", async () => {
   const { routeSet } = createRouteSet();
   const response = await routeSet.handleDurableChatRunExecuteRequest({
     request: createAuthenticatedRequest("/api/runs", {
@@ -153,7 +153,7 @@ Deno.test("hosted agent service routes enforce durable root lineage", async () =
   assertEquals(await response.json(), { errorCode: "DURABLE_CHAT_ROOT_REQUIRES_CONVERSATION" });
 });
 
-Deno.test("hosted agent service routes cancel AG-UI runs", async () => {
+Deno.test("agent service routes cancel AG-UI runs", async () => {
   const { routeSet } = createRouteSet();
   const response = await routeSet.handleDurableChatRunCancelRequest({
     request: createAuthenticatedRequest("/api/runs/run-1", {}, "DELETE"),

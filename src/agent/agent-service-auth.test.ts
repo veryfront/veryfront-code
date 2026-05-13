@@ -11,7 +11,7 @@ import {
   getHostedServiceTokenFromRequest,
   HostedServiceAuthError,
   type HostedServiceAuthFetch,
-} from "./hosted-service-auth.ts";
+} from "./agent-service-auth.ts";
 
 type JwtFixture = {
   token: string;
@@ -83,8 +83,8 @@ function getOnlyFetchCall(calls: FetchCall[]): FetchCall {
   return call;
 }
 
-describe("agent/hosted-service-auth", () => {
-  it("creates typed hosted service auth errors", () => {
+describe("agent/agent-service-auth", () => {
+  it("creates typed agent service auth errors", () => {
     const unauthenticated = new HostedServiceAuthError(401, "Token required");
     assertEquals(unauthenticated.name, "HostedServiceAuthError");
     assertEquals(unauthenticated.statusCode, 401);
@@ -246,7 +246,7 @@ describe("agent/hosted-service-auth", () => {
     assertEquals(result.error.message, "Invalid token format");
   });
 
-  it("authenticates requests into hosted service auth context", async () => {
+  it("authenticates requests into agent service auth context", async () => {
     const fixture = await createRs256JwtFixture({ userId: "user-1" });
     const request = new Request("https://agent.test/api/ag-ui", {
       headers: { authorization: `Bearer ${fixture.token}` },

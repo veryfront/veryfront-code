@@ -1,5 +1,5 @@
 import type { Tool } from "#veryfront/tool";
-import { HostedServiceAuthError, isHostedServiceAuthError } from "./hosted-service-auth.ts";
+import { HostedServiceAuthError, isHostedServiceAuthError } from "./agent-service-auth.ts";
 import {
   listRuntimeBuiltinSkillReferences,
   readRuntimeBuiltinSkill,
