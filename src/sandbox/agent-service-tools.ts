@@ -13,14 +13,15 @@ const SANDBOX_WORKING_DIRECTORY = "/workspace";
 const SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN =
   /^\s*(?:mkdir -p \/tmp\/bash-tool\s*&&\s*)?cd\s+"\/workspace"\s*&&\s*/i;
 
-export interface HostedSandboxJobClient {
+export interface AgentServiceSandboxJobClient {
   startCommandJob(command: string): Promise<CommandJob>;
   getCommandJob(jobId: string): Promise<CommandJob>;
   getCommandJobOutput(jobId: string): Promise<CommandJobOutput>;
   cancelCommandJob(jobId: string): Promise<CommandJob>;
 }
 
-export interface HostedSandboxClient extends BashToolSandboxLike, HostedSandboxJobClient {
+export interface AgentServiceSandboxClient
+  extends BashToolSandboxLike, AgentServiceSandboxJobClient {
   ensure(): Promise<void>;
   close(): Promise<void>;
   readonly isActive: boolean;
@@ -28,15 +29,15 @@ export interface HostedSandboxClient extends BashToolSandboxLike, HostedSandboxJ
   readonly url: string | null;
 }
 
-export interface HostedSandboxClientOptions extends LazySandboxOptions {}
+export interface AgentServiceSandboxClientOptions extends LazySandboxOptions {}
 
-export interface HostedSandboxToolsOptions extends HostedSandboxClientOptions {
+export interface AgentServiceSandboxToolsOptions extends AgentServiceSandboxClientOptions {
   createBashTool: CreateSandboxBashTool;
 }
 
-export interface HostedSandboxToolsResult {
+export interface AgentServiceSandboxToolsResult {
   tools: SandboxShellToolSet;
-  sandbox: HostedSandboxClient;
+  sandbox: AgentServiceSandboxClient;
   closeSandbox: () => Promise<void>;
 }
 
@@ -80,9 +81,9 @@ function normalizeSandboxWriteFile(file: unknown): { path: string; content: stri
   };
 }
 
-export function createHostedSandboxClient(
-  input: HostedSandboxClientOptions = {},
-): HostedSandboxClient {
+export function createAgentServiceSandboxClient(
+  input: AgentServiceSandboxClientOptions = {},
+): AgentServiceSandboxClient {
   const getProjectId = input.getProjectId ?? (() => input.projectId);
   const sandbox = new LazySandbox({ ...input, getProjectId });
 
@@ -132,10 +133,10 @@ const getCommandJobIdInputSchema = defineSchema((v) =>
   })
 );
 
-export async function createHostedSandboxTools(
-  input: HostedSandboxToolsOptions,
-): Promise<HostedSandboxToolsResult> {
-  const sandbox = createHostedSandboxClient(input);
+export async function createAgentServiceSandboxTools(
+  input: AgentServiceSandboxToolsOptions,
+): Promise<AgentServiceSandboxToolsResult> {
+  const sandbox = createAgentServiceSandboxClient(input);
   const shellTools = await createSandboxShellTools(sandbox, input.createBashTool);
 
   const tools: SandboxShellToolSet = {
@@ -171,3 +172,12 @@ export async function createHostedSandboxTools(
     closeSandbox: () => sandbox.close(),
   };
 }
+
+export type HostedSandboxJobClient = AgentServiceSandboxJobClient;
+export type HostedSandboxClient = AgentServiceSandboxClient;
+export type HostedSandboxClientOptions = AgentServiceSandboxClientOptions;
+export type HostedSandboxToolsOptions = AgentServiceSandboxToolsOptions;
+export type HostedSandboxToolsResult = AgentServiceSandboxToolsResult;
+
+export const createHostedSandboxClient = createAgentServiceSandboxClient;
+export const createHostedSandboxTools = createAgentServiceSandboxTools;

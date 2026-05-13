@@ -9,7 +9,7 @@ import {
   createHostedSandboxTools,
 } from "./index.ts";
 
-Deno.test("agent-service sandbox aliases point at hosted compatibility exports", () => {
+Deno.test("hosted sandbox compatibility exports point at agent-service factories", () => {
   assertEquals(createAgentServiceSandboxClient, createHostedSandboxClient);
   assertEquals(createAgentServiceSandboxTools, createHostedSandboxTools);
 });

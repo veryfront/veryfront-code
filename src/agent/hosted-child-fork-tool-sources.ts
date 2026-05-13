@@ -6,9 +6,9 @@ import {
   type RemoteToolSource,
 } from "#veryfront/tool";
 import {
-  createHostedSandboxTools,
-  type HostedSandboxToolsOptions,
-  type HostedSandboxToolsResult,
+  type AgentServiceSandboxToolsOptions,
+  type AgentServiceSandboxToolsResult,
+  createAgentServiceSandboxTools,
 } from "#veryfront/sandbox";
 import {
   createLiveStudioMcpTools,
@@ -64,13 +64,10 @@ export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
   & PrepareDefaultHostedChildForkToolSourcesInput
   & {
     apiUrl: string;
-    createBashTool: HostedSandboxToolsOptions["createBashTool"];
-    createHostedSandboxTools?: (
-      input: HostedSandboxToolsOptions,
-    ) => Promise<HostedSandboxToolsResult>;
+    createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
     createAgentServiceSandboxTools?: (
-      input: HostedSandboxToolsOptions,
-    ) => Promise<HostedSandboxToolsResult>;
+      input: AgentServiceSandboxToolsOptions,
+    ) => Promise<AgentServiceSandboxToolsResult>;
   };
 
 export async function prepareDefaultHostedChildForkToolSources(
@@ -150,13 +147,12 @@ export async function prepareDefaultHostedChildForkSandboxToolSources(
   const {
     apiUrl,
     createBashTool,
-    createHostedSandboxTools: createHostedSandboxToolsOverride,
     createAgentServiceSandboxTools: createAgentServiceSandboxToolsOverride,
     globalTools,
     ...toolSourceInput
   } = input;
   const createSandboxTools = createAgentServiceSandboxToolsOverride ??
-    createHostedSandboxToolsOverride ?? createHostedSandboxTools;
+    createAgentServiceSandboxTools;
   const sandboxResult = await createSandboxTools({
     authToken: input.authToken,
     apiUrl,

@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { HostedSandboxToolsOptions } from "#veryfront/sandbox";
-import { createHostedSandboxTools } from "#veryfront/sandbox";
+import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
+import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
@@ -138,7 +138,7 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
   mcp?: NodeVeryfrontCloudAgentServiceMcpOptions;
   forwardedConfigNamespace?: string;
-  createBashTool?: HostedSandboxToolsOptions["createBashTool"];
+  createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;
   drainTimeoutMs?: number;
@@ -150,7 +150,7 @@ export type VeryfrontCloudAgentServiceOptions = NodeVeryfrontCloudAgentServiceOp
 type ResolvedNodeVeryfrontCloudAgentServiceOptions =
   & NodeVeryfrontCloudAgentServiceOptions
   & {
-    createBashTool: HostedSandboxToolsOptions["createBashTool"];
+    createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
   };
 
 export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
@@ -239,7 +239,7 @@ function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTar
 }
 
 async function loadDefaultCreateBashTool(): Promise<
-  HostedSandboxToolsOptions["createBashTool"]
+  AgentServiceSandboxToolsOptions["createBashTool"]
 > {
   const { createBashTool } = await import("bash-tool");
   return createBashTool;
@@ -499,7 +499,7 @@ function createInvokeAgentTool(
     }),
     refreshProjectSkillIds: (projectSkillContext) =>
       refreshProjectSkillIds(context, projectSkillContext),
-    createHostedSandboxTools,
+    createAgentServiceSandboxTools,
     createLiveStudioTools: createLiveStudioMcpTools,
     createRemoteToolSource: createRemoteMCPToolSource,
     createToolsFromRemoteDefinitions,

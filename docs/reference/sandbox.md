@@ -184,9 +184,9 @@ Options for a lazily-provisioned sandbox session.
 | `heartbeatIntervalMs?` | `number`                            | Background heartbeat interval for active sessions. Defaults to 30000.                                                                                                                |
 | `heartbeatGraceMs?`    | `number`                            | Minimum gap between non-forced heartbeats. Defaults to 5000.                                                                                                                         |
 
-### `HostedSandboxToolsOptions`
+### `AgentServiceSandboxToolsOptions`
 
-Options for creating hosted sandbox tools.
+Options for creating agent-service sandbox tools.
 
 | Property         | Type                                | Description                                                               |
 | ---------------- | ----------------------------------- | ------------------------------------------------------------------------- |
