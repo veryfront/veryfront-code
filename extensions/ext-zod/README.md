@@ -2,7 +2,7 @@
 
 > **Type:** Validation | **Contract:** `SchemaValidator`
 
-Veryfront extension that provides the **SchemaValidator** contract backed by [zod](https://zod.dev/). Once loaded, any module that calls `defineSchema((v) => v.object({...}))` resolves through this extension's zod-powered adapter.
+Provides schema-first runtime validation for Veryfront, backed by [Zod](https://zod.dev/). Once loaded, any module that calls `defineSchema((v) => v.object({...}))` resolves through this extension's Zod-powered adapter.
 
 ## How It Works
 

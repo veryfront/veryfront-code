@@ -2,7 +2,7 @@
 
 > **Type:** Auth | **Contract:** `AuthProvider`
 
-Veryfront extension that registers the `AuthProvider` contract, backed by [`jose`](https://github.com/panva/jose). Provides HMAC-based JWT sign / verify (HS256 by default), remote-JWKS verification, and protected-header decoding.
+Provides JWT authentication for Veryfront applications — HMAC-based sign/verify (HS256 by default), remote-JWKS verification, and protected-header decoding, backed by [`jose`](https://github.com/panva/jose).
 
 ## Installation
 

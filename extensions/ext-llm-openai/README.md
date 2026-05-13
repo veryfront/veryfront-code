@@ -2,7 +2,7 @@
 
 > **Type:** LLM Provider | **Contract:** `LLMProvider:openai`
 
-Veryfront extension that registers the OpenAI provider into the `LLMProviderRegistry`, enabling `openai/*` models for chat, embeddings, and the Responses API.
+Provides OpenAI models for Veryfront agents and chat, enabling `openai/*` models for chat, embeddings, and the Responses API via the `LLMProviderRegistry`.
 
 ## Installation
 

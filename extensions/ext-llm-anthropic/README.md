@@ -2,7 +2,7 @@
 
 > **Type:** LLM Provider | **Contract:** `LLMProvider:anthropic`
 
-Veryfront extension that registers the **Anthropic** provider into the core `LLMProviderRegistry`. Once loaded, any model string prefixed with `anthropic/` (e.g. `anthropic/claude-sonnet-4-6`) is routed through this provider.
+Provides Anthropic Claude models for Veryfront agents and chat. Once loaded, any model string prefixed with `anthropic/` (e.g. `anthropic/claude-sonnet-4-6`) is routed through this provider via the `LLMProviderRegistry`.
 
 ## Configuration
 

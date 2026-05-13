@@ -2,7 +2,7 @@
 
 > **Type:** Observability | **Contract:** `TracingExporter`
 
-Veryfront extension that registers the `TracingExporter` contract, backed by the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans over OTLP / HTTP to any OTel-compatible collector.
+Provides distributed tracing for Veryfront via the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans over OTLP/HTTP to any OTel-compatible collector.
 
 ## Installation
 

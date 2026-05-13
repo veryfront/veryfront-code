@@ -2,12 +2,14 @@
 
 > **Type:** Build Tool | **Contracts:** `Bundler`, `ModuleLexer`
 
-Veryfront extension that registers two contracts:
+Provides ESM bundling and module analysis for Veryfront's runtime build pipeline and module-graph analysis, backed by esbuild and es-module-lexer.
+
+Registers two contracts:
 
 - **`Bundler`** — esbuild-backed module bundler (`EsbuildBundler`)
 - **`ModuleLexer`** — es-module-lexer-backed ESM scanner (`EsModuleLexer`)
 
-These are the default implementations Veryfront expects for both the runtime build pipeline and module-graph analysis. Without this extension, both surfaces throw an install-suggestion error.
+Without this extension, both surfaces throw an install-suggestion error.
 
 ## Installation
 
