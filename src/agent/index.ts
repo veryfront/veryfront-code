@@ -607,10 +607,12 @@ export {
   resolveHostedRuntimeThinkingOverride,
 } from "./hosted-runtime-request-config.ts";
 export {
+  buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   parseRuntimeAgentRunInvocation,
   parseRuntimeAgentRunInvocationOrError,
   type RuntimeAgentContextItem,
   RuntimeAgentContextItemSchema,
+  type RuntimeAgentControlPlaneStreamRequest,
   RuntimeAgentIdSchema,
   type RuntimeAgentProjectContext,
   RuntimeAgentProjectContextSchema,

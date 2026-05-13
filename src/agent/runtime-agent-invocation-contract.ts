@@ -311,6 +311,34 @@ export type RuntimeAgentRunInvocation = InferSchema<
   ReturnType<typeof getRuntimeAgentRunInvocationSchema>
 >;
 
+export type RuntimeAgentControlPlaneStreamRequest = {
+  agentId: RuntimeAgentRunContext["agentId"];
+  threadId: RuntimeAgentRunContext["conversationId"];
+  runId: RuntimeAgentRunContext["runId"];
+  parentRunId?: Exclude<RuntimeAgentRunContext["parentRunId"], null | undefined>;
+  messages: RuntimeAgentRunInvocation["messages"];
+  tools: RuntimeAgentRunInvocation["tools"];
+  context: RuntimeAgentRunInvocation["context"];
+  agentSource?: RuntimeAgentRunInvocation["agentSource"];
+  forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
+};
+
+export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
+  input: RuntimeAgentRunInvocation,
+): RuntimeAgentControlPlaneStreamRequest {
+  return {
+    agentId: input.run.agentId,
+    threadId: input.run.conversationId,
+    runId: input.run.runId,
+    ...(input.run.parentRunId ? { parentRunId: input.run.parentRunId } : {}),
+    messages: input.messages,
+    tools: input.tools,
+    context: input.context,
+    ...(input.agentSource ? { agentSource: input.agentSource } : {}),
+    ...(input.forwardedProps ? { forwardedProps: input.forwardedProps } : {}),
+  };
+}
+
 export async function parseRuntimeAgentRunInvocation(
   request: Request,
 ): Promise<RuntimeAgentRunInvocation> {
