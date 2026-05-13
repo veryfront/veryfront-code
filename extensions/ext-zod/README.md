@@ -1,6 +1,6 @@
 # @veryfront/ext-zod
 
-> **Type:** Validation | **Contract:** `SchemaValidator` | **Built-in**
+> **Category:** Validation | **Contract:** `SchemaValidator` | **Built-in**
 
 Provides schema-first runtime validation for Veryfront, backed by [Zod](https://zod.dev/). Once loaded, any module that calls `defineSchema((v) => v.object({...}))` resolves through this extension's Zod-powered adapter.
 

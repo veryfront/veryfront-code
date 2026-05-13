@@ -1,6 +1,6 @@
 # @veryfront/ext-bundler-esbuild
 
-> **Type:** Build Tool | **Contracts:** `Bundler`, `ModuleLexer` | **Built-in**
+> **Category:** Build Pipeline | **Contracts:** `Bundler`, `ModuleLexer` | **Built-in**
 
 Provides ESM bundling and module analysis for Veryfront's runtime build pipeline and module-graph analysis, backed by esbuild and es-module-lexer.
 
