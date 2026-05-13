@@ -34,12 +34,14 @@ Learn Veryfront Code from the ground up: pages, routing, AI agents, and deployme
 | [Chat UI](./chat-ui.md)                                 | Pre-built chat components and React hooks for chat interfaces.                      |
 | [Workflows](./workflows.md)                             | DAG-based multi-step workflows with branching and parallelism.                      |
 | [Multi-Agent](./multi-agent.md)                         | Agent composition, delegation, and agent-as-tool patterns.                          |
+| [Skills](./skills.md)                                   | Project-level agent capabilities as SKILL.md files with tool restrictions.          |
 
 ## Infrastructure
 
 | Guide                              | Description                                                                                       |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------- |
 | [Jobs & Cron Jobs](./jobs.md)      | Create one-off jobs, schedule cron jobs, inspect events, and work with batch summaries.           |
+| [Tasks](./tasks.md)                | Define background task functions that run locally or as cloud jobs.                               |
 | [Providers](./providers.md)        | Unified model interface for local, Veryfront Cloud, and direct provider runtimes.                 |
 | [Middleware](./middleware.md)      | CORS, rate limiting, logging, and custom middleware pipelines.                                    |
 | [OAuth](./oauth.md)                | OAuth 2.0 helpers with a built-in provider catalog.                                               |
