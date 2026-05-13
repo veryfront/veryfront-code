@@ -6,6 +6,7 @@ import { toolRegistry } from "#veryfront/tool";
 import { agentRegistry } from "./composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
+  startNodeVeryfrontCloudAgentService,
   veryfrontMcpServer,
 } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
@@ -170,6 +171,7 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime defaults discovery to cwd
       const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
         serviceName: "cwd-agent-test",
         agentId: "veryfront",
+        signals: [],
         env: {
           NODE_ENV: "test",
           VERYFRONT_API_URL: "https://api.example.com",
@@ -207,6 +209,73 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime accepts entrypointUrl for
   });
 });
 
+Deno.test("startNodeVeryfrontCloudAgentService registers the service with the control plane", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = [];
+    globalThis.fetch = (input, init) => {
+      calls.push({ url: input.toString(), init });
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            service: {
+              id: "22222222-2222-4222-a222-222222222222",
+              service_name: "registered-service-test",
+              service_key: "registered-service-test:key",
+              scope_kind: "project",
+              scope_key: "11111111-1111-4111-a111-111111111111",
+              project_id: "11111111-1111-4111-a111-111111111111",
+              agent_id: "support",
+              base_url: "https://agent.example.com",
+              invoke_url: "https://agent.example.com/api/runs",
+              status: "active",
+              capabilities: null,
+              metadata: null,
+              version: "0.1.0",
+              runtime: "node",
+              region: null,
+              last_heartbeat_at: "2026-05-13T00:00:00.000Z",
+              created_at: "2026-05-13T00:00:00.000Z",
+              updated_at: "2026-05-13T00:00:00.000Z",
+            },
+          }),
+          { status: 201, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    };
+
+    try {
+      const bundle = await startNodeVeryfrontCloudAgentService({
+        serviceName: "registered-service-test",
+        agentId: "support",
+        entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+        signals: [],
+        env: {
+          NODE_ENV: "test",
+          VERYFRONT_API_URL: "https://api.example.com",
+          VERYFRONT_API_TOKEN: "token-1",
+          VERYFRONT_PROJECT_ID: "11111111-1111-4111-a111-111111111111",
+          VERYFRONT_AGENT_SERVICE_URL: "https://agent.example.com",
+          VERYFRONT_AGENT_SERVICE_KEY: "registered-service-test:key",
+          VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
+          VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: "60000",
+          PORT: "0",
+          ALLOWED_ORIGINS: "https://studio.example.com",
+        },
+      });
+      await bundle.nodeServer.stop();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assertEquals(calls.length, 1);
+    assertEquals(calls[0]?.url, "https://api.example.com/agent-runtimes/push-services");
+    assertEquals(new Headers(calls[0]?.init?.headers).get("Authorization"), "Bearer token-1");
+    assertEquals(JSON.parse(String(calls[0]?.init?.body)).scope_kind, "project");
+  });
+});
+
 Deno.test("veryfrontMcpServer creates explicit Veryfront MCP server configs", () => {
   assertEquals(veryfrontMcpServer(), { kind: "veryfront-api" });
   assertEquals(veryfrontMcpServer("studio"), { kind: "veryfront-studio" });
@@ -241,6 +310,7 @@ Deno.test({
         agentSource: "code",
         entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
         createBashTool,
+        signals: [],
         env: {
           NODE_ENV: "test",
           VERYFRONT_API_URL: "https://api.example.com",
@@ -272,6 +342,7 @@ Deno.test({
         agentSource: "code",
         entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
         createBashTool,
+        signals: [],
         env: {
           NODE_ENV: "test",
           VERYFRONT_API_URL: "https://api.example.com",
@@ -303,6 +374,7 @@ Deno.test({
         agentSource: "code",
         entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
         createBashTool,
+        signals: [],
         env: {
           NODE_ENV: "test",
           VERYFRONT_API_URL: "https://api.example.com",

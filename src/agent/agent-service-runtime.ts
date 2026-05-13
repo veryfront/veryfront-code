@@ -28,6 +28,7 @@ import type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
 import {
   type AgentServiceServer,
+  type AgentServiceServerLifecycle,
   type NodeAgentServiceServer,
   startAgentServiceServer,
   startNodeAgentServiceServer,
@@ -110,6 +111,7 @@ export type StartNodeHostedAgentServiceOptions<
   bindAddress?: string;
   hardShutdownTimeoutMs?: number;
   signals?: readonly NodeJS.Signals[];
+  lifecycle?: AgentServiceServerLifecycle;
 };
 
 export type StartNodeAgentServiceOptions<
@@ -124,6 +126,7 @@ export type StartAgentServiceRuntimeOptions<
   bindAddress?: string;
   hardShutdownTimeoutMs?: number;
   signals?: readonly NodeJS.Signals[];
+  lifecycle?: AgentServiceServerLifecycle;
 };
 
 export type StartNodeHostedAgentServiceResult<
@@ -150,6 +153,26 @@ function defaultTrace<TResult>(
   operation: () => Promise<TResult>,
 ): Promise<TResult> {
   return operation();
+}
+
+function combineAgentServiceLifecycle(
+  primary: AgentServiceServerLifecycle,
+  secondary: AgentServiceServerLifecycle | undefined,
+): AgentServiceServerLifecycle {
+  if (!secondary) {
+    return primary;
+  }
+
+  return {
+    setShuttingDown: () => {
+      primary.setShuttingDown?.();
+      secondary.setShuttingDown?.();
+    },
+    stop: async () => {
+      await primary.stop?.();
+      await secondary.stop?.();
+    },
+  };
 }
 
 export function createAgentServiceRuntime<
@@ -232,7 +255,7 @@ export async function startNodeAgentService<
   const nodeServer = await startNodeAgentServiceServer({
     runtime: bundle.runtime,
     serviceName: options.serviceName,
-    lifecycle: bundle.lifecycle,
+    lifecycle: combineAgentServiceLifecycle(bundle.lifecycle, options.lifecycle),
     port: bundle.config.PORT,
     bindAddress: options.bindAddress,
     signals: options.signals,
@@ -265,7 +288,7 @@ export async function startAgentServiceRuntime<
   const server = await startAgentServiceServer({
     runtime: bundle.runtime,
     serviceName: options.serviceName,
-    lifecycle: bundle.lifecycle,
+    lifecycle: combineAgentServiceLifecycle(bundle.lifecycle, options.lifecycle),
     port: bundle.config.PORT,
     bindAddress: options.bindAddress,
     signals: options.signals,

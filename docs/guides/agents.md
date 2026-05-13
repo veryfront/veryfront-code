@@ -191,6 +191,21 @@ await startAgentService({
 });
 ```
 
+To let the Veryfront control plane discover this separately deployed push
+runtime, set the control-plane connection environment variables. The default
+registration mode is `auto`: registration runs only when a token and public
+service URL are present.
+
+```bash
+VERYFRONT_API_URL=https://api.example.com
+VERYFRONT_API_TOKEN=<TOKEN>
+VERYFRONT_PROJECT_ID=<PROJECT_ID>
+VERYFRONT_AGENT_SERVICE_URL=https://agent.example.com
+```
+
+Use `VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled` when startup must fail if the
+service cannot register. Use `disabled` to opt out.
+
 Use the lower-level helpers when a service needs custom tools, a custom
 server adapter, or a different control-plane integration.
 

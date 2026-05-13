@@ -85,6 +85,11 @@ import {
   startNodeAgentService,
   type StartNodeAgentServiceResult,
 } from "./agent-service-runtime.ts";
+import type { AgentServiceServerLifecycle } from "./agent-service-server.ts";
+import {
+  createAgentServiceRegistrationLifecycle,
+  resolveAgentServiceRegistrationInput,
+} from "./agent-service-registration.ts";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
 import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
@@ -158,6 +163,7 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   processTarget?: NodeVeryfrontCloudAgentServiceProcessTarget;
   drainTimeoutMs?: number;
   hardShutdownTimeoutMs?: number;
+  signals?: readonly NodeJS.Signals[];
 };
 
 export type VeryfrontCloudAgentServiceOptions = NodeVeryfrontCloudAgentServiceOptions;
@@ -837,6 +843,58 @@ function createPreparedExecutionRuntimeOptions(
   });
 }
 
+function resolveAgentServiceRuntimeName(): string {
+  if (Reflect.get(globalThis, "Bun")) {
+    return "bun";
+  }
+  if (Reflect.get(globalThis, "Deno")) {
+    return "deno";
+  }
+  return "node";
+}
+
+function getAgentServiceVersion(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): string | undefined {
+  return context.options.env?.npm_package_version;
+}
+
+async function createControlPlaneRegistrationLifecycle(
+  context: NodeVeryfrontCloudAgentServiceContext,
+): Promise<AgentServiceServerLifecycle | undefined> {
+  const config = context.infrastructure.getConfig();
+  const registrationInput = await resolveAgentServiceRegistrationInput({
+    config,
+    serviceName: context.options.serviceName,
+    agentId: getDefaultAgentId(context),
+    version: getAgentServiceVersion(context),
+    runtime: resolveAgentServiceRuntimeName(),
+  });
+
+  if (!registrationInput) {
+    return undefined;
+  }
+
+  try {
+    const lifecycle = await createAgentServiceRegistrationLifecycle({
+      ...registrationInput,
+      logger: context.infrastructure.logger,
+    });
+    return {
+      stop: () => lifecycle.stop(),
+    };
+  } catch (error) {
+    if (config.VERYFRONT_AGENT_SERVICE_REGISTRATION === "enabled") {
+      throw error;
+    }
+
+    context.infrastructure.logger.warn("Agent service registration skipped", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
+}
+
 function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): CreateAgentServiceRuntimeOptions<NodeVeryfrontCloudAgentServicePreparedExecution> {
@@ -895,10 +953,18 @@ export async function startNodeVeryfrontCloudAgentService(
   const resolvedOptions = await resolveNodeVeryfrontCloudAgentServiceOptions(options);
   const context = createNodeVeryfrontCloudAgentServiceContext(resolvedOptions);
   await initializeNodeVeryfrontCloudAgentServiceContext(context);
-  return await startNodeAgentService({
-    ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
-    hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
-  });
+  const registrationLifecycle = await createControlPlaneRegistrationLifecycle(context);
+  try {
+    return await startNodeAgentService({
+      ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
+      lifecycle: registrationLifecycle,
+      signals: options.signals,
+      hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
+    });
+  } catch (error) {
+    await registrationLifecycle?.stop?.();
+    throw error;
+  }
 }
 
 export async function startAgentService(
@@ -933,10 +999,18 @@ export async function startAgentService(
       __registerTraceContextGetter(getter);
     },
     start: async () => {
-      await startAgentServiceRuntime({
-        ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
-        hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
-      });
+      const registrationLifecycle = await createControlPlaneRegistrationLifecycle(context);
+      try {
+        await startAgentServiceRuntime({
+          ...createNodeVeryfrontCloudAgentServiceRuntimeOptions(context),
+          lifecycle: registrationLifecycle,
+          signals: options.signals,
+          hardShutdownTimeoutMs: options.hardShutdownTimeoutMs ?? DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS,
+        });
+      } catch (error) {
+        await registrationLifecycle?.stop?.();
+        throw error;
+      }
     },
     onStartupError: (error) => {
       console.error("Error in server startup:", error);

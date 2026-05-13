@@ -23,6 +23,7 @@ import {
   AgUiResumeSignalSchema,
   AgUiRuntimeRequestSchema,
   buildAgUiBrowserFinalizeResponse,
+  createAgentServiceRegistrationLifecycle,
   createAgentServiceRuntime,
   createAgUiBrowserEncoderState,
   createAgUiCancelHandler,
@@ -56,6 +57,7 @@ import {
   parseRuntimeAgentRunInvocation,
   parseRuntimeAgentRunInvocationOrError,
   registerAgent,
+  resolveAgentServiceRegistrationInput,
   runHostedChildLifecycle,
   runHostedLifecycle,
   RunResumeSessionManager,
@@ -313,6 +315,22 @@ await startAgentService({
 If `mcpServers` is omitted, the Veryfront Cloud preset includes
 `veryfrontMcpServer()` by default. Pass `mcpServers: []` to run without remote
 MCP tools.
+
+Control-plane registration is convention-first and explicit through environment
+variables. In `auto` mode, `startAgentService()` registers the service only when
+`VERYFRONT_API_TOKEN` and `VERYFRONT_AGENT_SERVICE_URL` are present. Set
+`VERYFRONT_PROJECT_ID` to register a project-scoped runtime service, or omit it
+for a global runtime service. Set `VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled`
+to require registration during startup, or `disabled` to opt out. The registered
+push service heartbeats until the service shuts down.
+
+```bash
+VERYFRONT_API_URL=https://api.example.com
+VERYFRONT_API_TOKEN=<TOKEN>
+VERYFRONT_PROJECT_ID=<PROJECT_ID>
+VERYFRONT_AGENT_SERVICE_URL=https://agent.example.com
+VERYFRONT_AGENT_SERVICE_REGISTRATION=auto
+```
 
 `createNodeVeryfrontCloudAgentServiceRuntime()` returns the same runtime bundle
 without starting a server, which is useful for tests and custom host shells.
@@ -888,17 +906,32 @@ process entrypoint.
 
 Run the default cross-runtime bootstrap for a Veryfront Cloud agent service. The
 helper loads `.env` files, initializes OpenTelemetry where supported, registers
-trace-context logging, starts the service server, and handles startup failures
-through the provided process target.
+trace-context logging, optionally registers and heartbeats the push runtime
+service with the control plane, starts the service server, and handles startup
+failures through the provided process target.
 
 ### `parseAgentServiceConfig(env)`
 
 Parse the default agent service environment contract. The helper
-validates API URL, node environment, port, durable feature flags, OAuth public
-key, Studio MCP URL, allowed origins, and OpenTelemetry endpoint flags, and it
+validates API URL, token and project registration settings, public agent
+service URL, node environment, port, durable feature flags, OAuth public key,
+Studio MCP URL, allowed origins, and OpenTelemetry endpoint flags, and it
 derives the Veryfront API MCP URL from `VERYFRONT_API_URL`.
 
 `parseHostedAgentServiceConfig()` remains available as a compatibility alias.
+
+### `resolveAgentServiceRegistrationInput(options)`
+
+Resolve the control-plane push runtime registration payload from parsed agent
+service config. The helper returns `null` in `auto` mode unless both
+`VERYFRONT_API_TOKEN` and `VERYFRONT_AGENT_SERVICE_URL` are available. In
+`enabled` mode, missing required settings fail startup.
+
+### `createAgentServiceRegistrationLifecycle(options)`
+
+Register a push runtime service with `/agent-runtimes/push-services` and keep it
+healthy by posting heartbeats to the returned service id. The lifecycle exposes
+`stop()` so service hosts can clear heartbeat timers during graceful shutdown.
 
 ### `loadAgentServiceEnvFiles(options)`
 
@@ -1123,6 +1156,7 @@ Clear all stored messages from memory.
 | `createAgUiRunErrorEvent`                                             | Create a `RunError` AG-UI SSE event                                      |
 | `createAgUiSseErrorResponse`                                          | Create an AG-UI SSE error `Response`                                     |
 | `createAgUiResumeHandler`                                             | Create a POST handler for hosted AG-UI run resume values                 |
+| `createAgentServiceRegistrationLifecycle`                             | Register and heartbeat a push runtime service with the control plane     |
 | `createAgentServiceRuntime`                                           | Create an agent service runtime with default service routes              |
 | `createAgentServiceRouteSet`                                          | Create default agent-service route handlers                              |
 | `createDefaultAgentServiceProjectSteeringRefresh`                     | Create the default agent-service project steering refresh callback       |
@@ -1142,6 +1176,7 @@ Clear all stored messages from memory.
 | `parseAgentServiceChatRequestFromRequest`                             | Parse the agent-service chat request body and auth context               |
 | `loadRuntimeAgentMarkdownDefinitionFromFile`                          | Load and parse a markdown agent definition from an agents directory      |
 | `parseAgentServiceConfig`                                             | Parse default agent service environment config                           |
+| `resolveAgentServiceRegistrationInput`                                | Resolve push runtime registration input from service config              |
 | `resolveNodeAgentServiceTelemetryConfig`                              | Resolve Node service OpenTelemetry config from environment               |
 | `prepareVeryfrontCloudAgentServiceChatExecution`                      | Prepare agent-service chat execution with Veryfront Cloud defaults       |
 | `normalizeAgUiRuntimeMessages`                                        | Normalize runtime AG-UI messages into package `Message[]`                |
