@@ -3,11 +3,11 @@ import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import type { CreateSandboxBashTool, SandboxShellToolSet } from "./shell-tools.ts";
 import {
-  createHostedSandboxClient,
-  createHostedSandboxTools,
+  createAgentServiceSandboxClient,
+  createAgentServiceSandboxTools,
   createProjectScopedExecOptions,
   unwrapSandboxWorkingDirectoryCommand,
-} from "./hosted-tools.ts";
+} from "./agent-service-tools.ts";
 import {
   clearSandboxEnv,
   type FetchCall,
@@ -83,7 +83,7 @@ async function executeStartCommandJob(
   return await execute({ command });
 }
 
-describe("sandbox/hosted-tools", () => {
+describe("sandbox/agent-service-tools", () => {
   beforeEach(() => {
     fetchCalls = [];
     fetchResponses = [];
@@ -97,7 +97,7 @@ describe("sandbox/hosted-tools", () => {
   it("creates shell tools and async command job tools", async () => {
     mockFetch([]);
 
-    const { tools } = await createHostedSandboxTools({
+    const { tools } = await createAgentServiceSandboxTools({
       authToken: "test-token",
       apiUrl: "https://api.example.com",
       projectId: "project-123",
@@ -124,7 +124,7 @@ describe("sandbox/hosted-tools", () => {
     ]);
 
     let projectId = "project-1";
-    const sandbox = createHostedSandboxClient({
+    const sandbox = createAgentServiceSandboxClient({
       authToken: "test-token",
       apiUrl: "https://api.example.com",
       getProjectId: () => projectId,
@@ -169,7 +169,7 @@ describe("sandbox/hosted-tools", () => {
       jsonResponse(createJobPayload()),
     ]);
 
-    const { tools } = await createHostedSandboxTools({
+    const { tools } = await createAgentServiceSandboxTools({
       authToken: "test-token",
       apiUrl: "https://api.example.com",
       projectId: "project-123",

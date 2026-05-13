@@ -1,5 +1,8 @@
-import type { HostedSandboxToolsOptions, HostedSandboxToolsResult } from "#veryfront/sandbox";
-import { createHostedSandboxTools } from "#veryfront/sandbox";
+import type {
+  AgentServiceSandboxToolsOptions,
+  AgentServiceSandboxToolsResult,
+} from "#veryfront/sandbox";
+import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
@@ -112,7 +115,7 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     logger: DefaultHostedInvokeAgentLogger;
     trace: DefaultHostedInvokeAgentTrace;
     setTraceAttributes: (attributes: DefaultHostedInvokeAgentTraceAttributes) => void;
-    createBashTool: HostedSandboxToolsOptions["createBashTool"];
+    createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
     resolveModelId: (model: string) => string;
     resolveProvider: (modelId: string) => string;
     resolveProviderOptions?: (
@@ -125,12 +128,9 @@ export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedIn
     defaultModel?: string;
     defaultMaxSteps?: number;
     resolveChildAgentId?: (input: DefaultHostedInvokeAgentInput) => string;
-    createHostedSandboxTools?: (
-      input: HostedSandboxToolsOptions,
-    ) => Promise<HostedSandboxToolsResult>;
     createAgentServiceSandboxTools?: (
-      input: HostedSandboxToolsOptions,
-    ) => Promise<HostedSandboxToolsResult>;
+      input: AgentServiceSandboxToolsOptions,
+    ) => Promise<AgentServiceSandboxToolsResult>;
     createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
     createToolsFromRemoteDefinitions?: typeof createToolsFromRemoteDefinitions;
     createLiveStudioTools?: Parameters<typeof prepareDefaultHostedChildForkSandboxToolSources>[0][
@@ -228,7 +228,7 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
     logger: options.logger,
     createBashTool: options.createBashTool,
     createAgentServiceSandboxTools: options.createAgentServiceSandboxTools ??
-      options.createHostedSandboxTools ?? createHostedSandboxTools,
+      createAgentServiceSandboxTools,
     createLiveStudioTools: options.createLiveStudioTools ?? createLiveStudioMcpTools,
     createRemoteToolSource: options.createRemoteToolSource ?? createRemoteMCPToolSource,
     createToolsFromRemoteDefinitions: options.createToolsFromRemoteDefinitions ??

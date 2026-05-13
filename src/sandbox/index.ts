@@ -47,20 +47,20 @@ export {
   type SandboxShellToolSet,
 } from "./shell-tools.ts";
 export {
+  type AgentServiceSandboxClient,
+  type AgentServiceSandboxClientOptions,
+  type AgentServiceSandboxJobClient,
+  type AgentServiceSandboxToolsOptions,
+  type AgentServiceSandboxToolsResult,
+  createAgentServiceSandboxClient,
+  createAgentServiceSandboxTools,
   createHostedSandboxClient,
-  createHostedSandboxClient as createAgentServiceSandboxClient,
   createHostedSandboxTools,
-  createHostedSandboxTools as createAgentServiceSandboxTools,
   createProjectScopedExecOptions,
   type HostedSandboxClient,
-  type HostedSandboxClient as AgentServiceSandboxClient,
   type HostedSandboxClientOptions,
-  type HostedSandboxClientOptions as AgentServiceSandboxClientOptions,
   type HostedSandboxJobClient,
-  type HostedSandboxJobClient as AgentServiceSandboxJobClient,
   type HostedSandboxToolsOptions,
-  type HostedSandboxToolsOptions as AgentServiceSandboxToolsOptions,
   type HostedSandboxToolsResult,
-  type HostedSandboxToolsResult as AgentServiceSandboxToolsResult,
   unwrapSandboxWorkingDirectoryCommand,
-} from "./hosted-tools.ts";
+} from "./agent-service-tools.ts";

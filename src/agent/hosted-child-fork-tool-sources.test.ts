@@ -1,10 +1,10 @@
 import { assertEquals, assertRejects } from "@std/assert";
 import type {
+  AgentServiceSandboxToolsOptions,
+  AgentServiceSandboxToolsResult,
   CommandJob,
   CommandJobOutput,
   CreateSandboxBashTool,
-  HostedSandboxToolsOptions,
-  HostedSandboxToolsResult,
 } from "#veryfront/sandbox";
 import type {
   RemoteMCPToolSourceConfig,
@@ -92,9 +92,9 @@ function commandJobOutput(): CommandJobOutput {
 }
 
 function createSandboxToolsResult(input: {
-  tools?: HostedSandboxToolsResult["tools"];
+  tools?: AgentServiceSandboxToolsResult["tools"];
   closeSandbox: () => Promise<void>;
-}): HostedSandboxToolsResult {
+}): AgentServiceSandboxToolsResult {
   return {
     tools: input.tools ?? {},
     sandbox: {
@@ -213,7 +213,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources rethrows abort errors", asyn
 
 Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools and returns runtime cleanup", async () => {
   const fixtures = createRemoteSourceFixtures();
-  const sandboxToolInputs: HostedSandboxToolsOptions[] = [];
+  const sandboxToolInputs: AgentServiceSandboxToolsOptions[] = [];
   let sandboxClosed = false;
   const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
 
@@ -233,7 +233,7 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools 
     },
     createBashTool,
     createRemoteToolSource: fixtures.createRemoteToolSource,
-    createHostedSandboxTools: (sandboxInput) => {
+    createAgentServiceSandboxTools: (sandboxInput) => {
       sandboxToolInputs.push(sandboxInput);
       return Promise.resolve(
         createSandboxToolsResult({
@@ -285,7 +285,7 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when s
     createLiveStudioTools: () => {
       throw new Error("studio unavailable");
     },
-    createHostedSandboxTools: () =>
+    createAgentServiceSandboxTools: () =>
       Promise.resolve(
         createSandboxToolsResult({
           closeSandbox: () => {
