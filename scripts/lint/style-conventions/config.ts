@@ -1,4 +1,4 @@
-import type { ParserPlugin } from "@babel/parser";
+import type { ParserPlugin } from "npm:@babel/parser@7.29.2";
 import type { RuleId } from "./types.ts";
 
 export interface IdentifierCasingReplacement {

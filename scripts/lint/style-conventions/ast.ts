@@ -1,4 +1,4 @@
-import { parse, type ParserPlugin } from "@babel/parser";
+import { parse, type ParserPlugin } from "npm:@babel/parser@7.29.2";
 import { BASE_TS_PLUGINS } from "./config.ts";
 import type { AstNodeLike } from "./types.ts";
 
