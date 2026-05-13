@@ -1,6 +1,6 @@
 # @veryfront/ext-auth-jwt
 
-> **Type:** Auth | **Contract:** `AuthProvider`
+> **Type:** Auth | **Contract:** `AuthProvider` | **Optional**
 
 Provides JWT authentication for Veryfront applications — HMAC-based sign/verify (HS256 by default), remote-JWKS verification, and protected-header decoding, backed by [`jose`](https://github.com/panva/jose).
 

@@ -2,51 +2,54 @@
 
 First-party extension packages that provide pluggable capabilities to the Veryfront framework through the [contract-based extension system](../docs/guides/extensions.md).
 
-Each extension registers one or more **contracts** — typed interfaces that the framework resolves lazily at first use. If an extension is missing, Veryfront throws an actionable error with the install command.
+Each extension registers one or more **contracts** — typed interfaces that the framework resolves lazily at first use. Extensions are either **built-in** (auto-loaded by the framework) or **optional** (user-installed when needed).
 
 ## Extension Catalog
 
 ### AI / LLM
 
-| Package | Contract | Type | Description |
-|---------|----------|------|-------------|
-| [`@veryfront/ext-llm-anthropic`](./ext-llm-anthropic) | `LLMProvider:anthropic` | LLM Provider | Anthropic Claude models via `@anthropic-ai/sdk` |
-| [`@veryfront/ext-llm-google`](./ext-llm-google) | `LLMProvider:google` | LLM Provider | Google Gemini models via `@google/generative-ai` |
-| [`@veryfront/ext-llm-openai`](./ext-llm-openai) | `LLMProvider:openai` | LLM Provider | OpenAI models via `openai` SDK |
+| Package | Contract | Type | Required | Description |
+|---------|----------|------|----------|-------------|
+| [`@veryfront/ext-llm-anthropic`](./ext-llm-anthropic) | `LLMProvider:anthropic` | LLM Provider | Built-in | Anthropic Claude models via `@anthropic-ai/sdk` |
+| [`@veryfront/ext-llm-google`](./ext-llm-google) | `LLMProvider:google` | LLM Provider | Built-in | Google Gemini models via `@google/generative-ai` |
+| [`@veryfront/ext-llm-openai`](./ext-llm-openai) | `LLMProvider:openai` | LLM Provider | Built-in | OpenAI models via `openai` SDK |
 
 ### Security
 
-| Package | Contract | Type | Description |
-|---------|----------|------|-------------|
-| [`@veryfront/ext-auth-jwt`](./ext-auth-jwt) | `AuthProvider` | Auth | JWT sign/verify (HS256) and remote JWKS validation via `jose` |
+| Package | Contract | Type | Required | Description |
+|---------|----------|------|----------|-------------|
+| [`@veryfront/ext-auth-jwt`](./ext-auth-jwt) | `AuthProvider` | Auth | Optional | JWT sign/verify (HS256) and remote JWKS validation via `jose` |
 
 ### Build Pipeline
 
-| Package | Contract | Type | Description |
-|---------|----------|------|-------------|
-| [`@veryfront/ext-bundler-esbuild`](./ext-bundler-esbuild) | `Bundler`, `ModuleLexer` | Build Tool | ESM bundling and module analysis via `esbuild` and `es-module-lexer` |
-| [`@veryfront/ext-parser-babel`](./ext-parser-babel) | `CodeParser` | Build Tool | AST parsing, traversal, and code generation via Babel |
-| [`@veryfront/ext-css-tailwind`](./ext-css-tailwind) | `CSSProcessor` | Build Tool | Tailwind CSS v4 compilation with dynamic plugin loading |
+| Package | Contract | Type | Required | Description |
+|---------|----------|------|----------|-------------|
+| [`@veryfront/ext-bundler-esbuild`](./ext-bundler-esbuild) | `Bundler`, `ModuleLexer` | Build Tool | Built-in | ESM bundling and module analysis via `esbuild` and `es-module-lexer` |
+| [`@veryfront/ext-parser-babel`](./ext-parser-babel) | `CodeParser` | Build Tool | Built-in | AST parsing, traversal, and code generation via Babel |
+| [`@veryfront/ext-css-tailwind`](./ext-css-tailwind) | `CSSProcessor` | Build Tool | Built-in | Tailwind CSS v4 compilation with dynamic plugin loading |
 
 ### Content
 
-| Package | Contract | Type | Description |
-|---------|----------|------|-------------|
-| [`@veryfront/ext-transform-mdx`](./ext-transform-mdx) | `ContentTransformer` | Content | MDX and Markdown compilation via unified/remark/rehype |
+| Package | Contract | Type | Required | Description |
+|---------|----------|------|----------|-------------|
+| [`@veryfront/ext-transform-mdx`](./ext-transform-mdx) | `ContentTransformer` | Content | Built-in | MDX and Markdown compilation via unified/remark/rehype |
 
 ### Validation
 
-| Package | Contract | Type | Description |
-|---------|----------|------|-------------|
-| [`@veryfront/ext-zod`](./ext-zod) | `SchemaValidator` | Validation | Schema-first validation DSL backed by Zod |
+| Package | Contract | Type | Required | Description |
+|---------|----------|------|----------|-------------|
+| [`@veryfront/ext-zod`](./ext-zod) | `SchemaValidator` | Validation | Built-in | Schema-first validation DSL backed by Zod |
 
 ### Infrastructure
 
-| Package | Contract | Type | Description |
-|---------|----------|------|-------------|
-| [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore` | Cache | Redis-backed token and cache persistence |
-| [`@veryfront/ext-tracing-opentelemetry`](./ext-tracing-opentelemetry) | `TracingExporter` | Observability | OpenTelemetry trace export via OTLP/HTTP |
-| [`@veryfront/ext-node-compatibility`](./ext-node-compatibility) | `NodeCompat` | Runtime | SQLite persistence and document text extraction (Kreuzberg) |
+| Package | Contract | Type | Required | Description |
+|---------|----------|------|----------|-------------|
+| [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore` | Cache | Optional | Redis-backed token and cache persistence |
+| [`@veryfront/ext-tracing-opentelemetry`](./ext-tracing-opentelemetry) | `TracingExporter` | Observability | Optional | OpenTelemetry trace export via OTLP/HTTP |
+| [`@veryfront/ext-node-compatibility`](./ext-node-compatibility) | `NodeCompat` | Runtime | Built-in | SQLite persistence and document text extraction (Kreuzberg) |
+
+> **Built-in** extensions are auto-loaded by `createBuiltinExtensions()` at app bootstrap — no configuration needed.
+> **Optional** extensions must be installed and added to `veryfront.config.ts`. Without them, the framework falls back gracefully or throws an install-suggestion error at first use of the missing contract.
 
 ## Architecture
 

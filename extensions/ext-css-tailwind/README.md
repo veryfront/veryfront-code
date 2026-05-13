@@ -1,6 +1,6 @@
 # @veryfront/ext-css-tailwind
 
-> **Type:** Build Tool | **Contract:** `CSSProcessor`
+> **Type:** Build Tool | **Contract:** `CSSProcessor` | **Built-in**
 
 Provides Tailwind CSS v4 compilation for Veryfront. Compiles stylesheets at render time and supports dynamic plugin loading from CDN.
 

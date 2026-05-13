@@ -1,6 +1,6 @@
 # @veryfront/ext-llm-openai
 
-> **Type:** LLM Provider | **Contract:** `LLMProvider:openai`
+> **Type:** LLM Provider | **Contract:** `LLMProvider:openai` | **Built-in**
 
 Provides OpenAI models for Veryfront agents and chat, enabling `openai/*` models for chat, embeddings, and the Responses API via the `LLMProviderRegistry`.
 

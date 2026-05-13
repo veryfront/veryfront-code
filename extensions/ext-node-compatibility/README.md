@@ -1,6 +1,6 @@
 # @veryfront/ext-node-compatibility
 
-> **Type:** Runtime | **Contract:** `NodeCompat`
+> **Type:** Runtime | **Contract:** `NodeCompat` | **Built-in**
 
 Provides Node.js compatibility shims for Veryfront — SQLite-backed persistence and document text extraction (PDF, DOCX, images) via Kreuzberg.
 

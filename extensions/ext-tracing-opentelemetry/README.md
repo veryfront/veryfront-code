@@ -1,6 +1,6 @@
 # @veryfront/ext-tracing-opentelemetry
 
-> **Type:** Observability | **Contract:** `TracingExporter`
+> **Type:** Observability | **Contract:** `TracingExporter` | **Optional**
 
 Provides distributed tracing for Veryfront via the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans over OTLP/HTTP to any OTel-compatible collector.
 

@@ -1,6 +1,6 @@
 # @veryfront/ext-parser-babel
 
-> **Type:** Build Tool | **Contract:** `CodeParser`
+> **Type:** Build Tool | **Contract:** `CodeParser` | **Built-in**
 
 Provides JavaScript/TypeScript AST parsing, traversal, and code generation for Veryfront, backed by `@babel/parser`, `@babel/traverse`, `@babel/generator`, and `@babel/types`. Used by the transform pipeline and Studio Navigator.
 

@@ -1,6 +1,6 @@
 # @veryfront/ext-transform-mdx
 
-> **Type:** Content | **Contract:** `ContentTransformer`
+> **Type:** Content | **Contract:** `ContentTransformer` | **Built-in**
 
 Provides MDX and Markdown compilation for Veryfront, backed by [`@mdx-js/mdx`](https://github.com/mdx-js/mdx) and the [`unified`](https://unifiedjs.com/) ecosystem. Compiles content into runtime React bundles with sanitized HTML output, frontmatter extraction, and heading collection.
 
