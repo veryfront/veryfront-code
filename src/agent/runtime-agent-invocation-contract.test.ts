@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertInstanceOf, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   parseRuntimeAgentRunInvocation,
   parseRuntimeAgentRunInvocationOrError,
   RuntimeAgentRunInvocationSchema,
@@ -155,6 +156,39 @@ describe("agent/runtime-agent-invocation-contract", () => {
         },
       }))
     );
+  });
+
+  it("builds the control-plane stream request from a runtime invocation", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        agentServiceId: "veryfront-platform-agent",
+        agentId: "builder",
+        conversationId,
+        runId: "run_child_1",
+        messageId,
+        inputAnchorMessageId,
+        requestedByUserId: userId,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+        },
+        parentRunId: "run_root_1",
+      },
+    }));
+
+    const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+
+    assertEquals(request, {
+      agentId: "builder",
+      threadId: conversationId,
+      runId: "run_child_1",
+      parentRunId: "run_root_1",
+      messages: parsed.messages,
+      tools: parsed.tools,
+      context: parsed.context,
+      agentSource: parsed.agentSource,
+      forwardedProps: parsed.forwardedProps,
+    });
   });
 
   it("parses runtime agent invocation request bodies through the public helper", async () => {
