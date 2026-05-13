@@ -273,11 +273,12 @@ durable-run, and prepared-execution wiring, use
 agent behavior in `agents/<agent-id>.md` or `agents/<agent-id>.ts`:
 
 ```ts
-import { startAgentService } from "veryfront/agent";
+import { startAgentService, veryfrontMcpServer } from "veryfront/agent";
 
 await startAgentService({
   serviceName: "support-agent",
   agentId: "support",
+  mcpServers: [veryfrontMcpServer()],
 });
 ```
 
@@ -285,17 +286,32 @@ By default, discovery is rooted at the process cwd. Pass `baseDir` only when the
 service may start from another working directory. `entrypointUrl` is a
 convenience fallback for deriving `baseDir` from an entry module URL.
 
-Studio MCP tools are opt-in because they are Studio/control-plane specific:
+Remote MCP servers are configured as an explicit list. Use normal MCP server
+configs for third-party servers, and use `veryfrontMcpServer()` helpers for
+Veryfront-owned control-plane servers. Studio MCP tools are still gated to
+trusted Studio-capable clients:
 
 ```ts
 await startAgentService({
   serviceName: "support-agent",
   agentId: "support",
-  mcp: {
-    studio: true,
-  },
+  mcpServers: [
+    veryfrontMcpServer(),
+    veryfrontMcpServer("studio"),
+    {
+      id: "linear",
+      endpoint: process.env.LINEAR_MCP_URL,
+      headers: {
+        Authorization: `Bearer ${process.env.LINEAR_API_KEY}`,
+      },
+    },
+  ],
 });
 ```
+
+If `mcpServers` is omitted, the Veryfront Cloud preset includes
+`veryfrontMcpServer()` by default. Pass `mcpServers: []` to run without remote
+MCP tools.
 
 `createNodeVeryfrontCloudAgentServiceRuntime()` returns the same runtime bundle
 without starting a server, which is useful for tests and custom host shells.
@@ -850,8 +866,8 @@ conventions and `veryfront.config.ts` discovery settings as a Veryfront project.
 It can use a code agent from `agents/*.ts` or fall back to a markdown-backed
 `agents/*.md` definition, uses the default service config and project-steering
 adapter, wires local tools (`form_input`, `load_skill`, `sleep`, discovered
-project tools, and `invoke_agent`), sandbox tools, Veryfront API MCP tools,
-opt-in Studio MCP tools, prepared chat execution, AG-UI streaming, and detached
+project tools, and `invoke_agent`), sandbox tools, explicit remote MCP servers,
+prepared chat execution, AG-UI streaming, and detached
 durable-run execution.
 
 Hosts provide the service name and agent id. Discovery defaults to cwd; hosts
@@ -879,7 +895,7 @@ through the provided process target.
 Parse the default agent service environment contract. The helper
 validates API URL, node environment, port, durable feature flags, OAuth public
 key, Studio MCP URL, allowed origins, and OpenTelemetry endpoint flags, and it
-derives the hosted MCP URL from `VERYFRONT_API_URL`.
+derives the Veryfront API MCP URL from `VERYFRONT_API_URL`.
 
 `parseHostedAgentServiceConfig()` remains available as a compatibility alias.
 

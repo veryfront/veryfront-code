@@ -120,6 +120,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   const result = await prepareDefaultHostedChildForkToolSources({
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     studioMcpUrl: "https://studio.example/mcp",
     clientProfile: trustedStudioProfile,
     getProjectId: () => "project-1",
@@ -145,8 +146,8 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   assertEquals(
     fixtures.createdConfigs.map((config) => [config.id, config.endpoint]),
     [
-      ["studio-mcp-live-tools", "https://studio.example/mcp"],
       ["veryfront-mcp-fork", "https://api.example/mcp"],
+      ["studio-mcp-live-tools", "https://studio.example/mcp"],
     ],
   );
 
@@ -171,6 +172,7 @@ Deno.test("prepareDefaultHostedChildForkToolSources reports Studio setup failure
   const result = await prepareDefaultHostedChildForkToolSources({
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-studio" }],
     getProjectId: () => "project-1",
     createLiveStudioTools: () => {
       throw new Error("studio unavailable");
@@ -221,6 +223,7 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources merges sandbox tools 
     authToken: "token-1",
     apiUrl: "https://api.example",
     apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     studioMcpUrl: "https://studio.example/mcp",
     clientProfile: trustedStudioProfile,
     getProjectId: () => "project-1",
@@ -280,6 +283,7 @@ Deno.test("prepareDefaultHostedChildForkSandboxToolSources closes sandbox when s
     authToken: "token-1",
     apiUrl: "https://api.example",
     apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-studio" }],
     getProjectId: () => "project-1",
     createBashTool,
     createLiveStudioTools: () => {

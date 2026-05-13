@@ -60,6 +60,7 @@ import {
   fetchDefaultHostedProjectSteering,
 } from "./default-hosted-project-steering-refresh.ts";
 import { type HostedProjectSkillIdsContext } from "./hosted-project-steering-adapter.ts";
+import type { HostedProjectMcpServerConfig } from "./hosted-project-remote-tool-source.ts";
 import type { RuntimeLoadSkillToolContext } from "./runtime-load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "./runtime-project-skill-catalog.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
@@ -112,13 +113,19 @@ export type NodeVeryfrontCloudAgentServiceProcessTarget =
 
 export type NodeVeryfrontCloudAgentServiceAgentSource = "auto" | "code" | "markdown";
 
-export type NodeVeryfrontCloudAgentServiceMcpOptions = {
-  /**
-   * Opt in to Studio UI/control-plane MCP tools for trusted Studio-capable clients.
-   * API MCP tools remain part of the Veryfront Cloud service preset.
-   */
-  studio?: boolean;
-};
+export type VeryfrontMcpServerKind = "api" | "studio";
+
+export type NodeVeryfrontCloudAgentServiceMcpServer = HostedProjectMcpServerConfig;
+
+export function veryfrontMcpServer(
+  kind: VeryfrontMcpServerKind = "api",
+): HostedProjectMcpServerConfig {
+  if (kind === "studio") {
+    return { kind: "veryfront-studio" };
+  }
+
+  return { kind: "veryfront-api" };
+}
 
 type AgentServicePathOption = string | URL;
 
@@ -136,7 +143,11 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
    */
   entrypointUrl?: AgentServicePathOption;
   agentSource?: NodeVeryfrontCloudAgentServiceAgentSource;
-  mcp?: NodeVeryfrontCloudAgentServiceMcpOptions;
+  /**
+   * Remote MCP servers available to the runtime. Defaults to the Veryfront API
+   * MCP server. Pass [] to run without remote MCP tools.
+   */
+  mcpServers?: readonly NodeVeryfrontCloudAgentServiceMcpServer[];
   forwardedConfigNamespace?: string;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   env?: CreateNodeAgentServiceRuntimeInfrastructureOptions["env"];
@@ -236,6 +247,12 @@ function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTar
     return undefined;
   }
   return process;
+}
+
+function resolveMcpServers(
+  options: Pick<NodeVeryfrontCloudAgentServiceOptions, "mcpServers">,
+): readonly NodeVeryfrontCloudAgentServiceMcpServer[] {
+  return options.mcpServers ?? [veryfrontMcpServer()];
 }
 
 async function loadDefaultCreateBashTool(): Promise<
@@ -465,12 +482,12 @@ function getInvokeAgentConfig(
   context: NodeVeryfrontCloudAgentServiceContext,
 ): DefaultHostedInvokeAgentConfig {
   const config = context.infrastructure.getConfig();
-  const studioMcpUrl = context.options.mcp?.studio ? config.VERYFRONT_STUDIO_MCP_URL : "";
 
   return {
     apiUrl: config.VERYFRONT_API_URL,
     apiMcpUrl: config.VERYFRONT_MCP_URL,
-    studioMcpUrl,
+    studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
+    mcpServers: resolveMcpServers(context.options),
     enableDurableInvokeAgent: config.VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT,
   };
 }
@@ -550,8 +567,8 @@ function createAgentRuntime(
     config: {
       apiUrl: config.VERYFRONT_API_URL,
       apiMcpUrl: config.VERYFRONT_MCP_URL,
-      studioMcpUrl: context.options.mcp?.studio ? config.VERYFRONT_STUDIO_MCP_URL : "",
-      studioMcpEnabled: context.options.mcp?.studio ?? false,
+      studioMcpUrl: config.VERYFRONT_STUDIO_MCP_URL,
+      mcpServers: resolveMcpServers(context.options),
     },
     buildLocalTools: (taskContext) => buildLocalTools(context, options, taskContext),
     refreshSystem,

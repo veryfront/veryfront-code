@@ -335,13 +335,15 @@ export {
 } from "./agent-service-runtime.ts";
 export {
   createNodeVeryfrontCloudAgentServiceRuntime,
-  type NodeVeryfrontCloudAgentServiceMcpOptions,
+  type NodeVeryfrontCloudAgentServiceMcpServer,
   type NodeVeryfrontCloudAgentServiceOptions,
   type NodeVeryfrontCloudAgentServicePreparedExecution,
   type NodeVeryfrontCloudAgentServiceProcessTarget,
   startAgentService,
   startNodeVeryfrontCloudAgentService,
   type VeryfrontCloudAgentServiceOptions,
+  veryfrontMcpServer,
+  type VeryfrontMcpServerKind,
 } from "./veryfront-cloud-agent-service.ts";
 export {
   type AgentServiceConfig,

@@ -28,6 +28,7 @@ import { startHostedChildForkRuntimeWithHostTools } from "./hosted-child-fork-ru
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
 } from "./hosted-child-fork-tool-sources.ts";
+import type { HostedProjectMcpServerConfig } from "./hosted-project-remote-tool-source.ts";
 import { executeHostedChildForkToolInput } from "./hosted-child-fork-execution-runner.ts";
 import { createHostedChildInvokeTool } from "./hosted-child-invoke-tool.ts";
 import {
@@ -78,6 +79,7 @@ export type DefaultHostedInvokeAgentConfig = {
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
+  mcpServers?: readonly HostedProjectMcpServerConfig[];
   enableDurableInvokeAgent?: boolean;
 };
 
@@ -219,6 +221,7 @@ async function prepareForkToolSources<TContext extends DefaultHostedInvokeAgentC
     apiUrl: config.apiUrl,
     apiMcpUrl: config.apiMcpUrl,
     studioMcpUrl: config.studioMcpUrl,
+    mcpServers: config.mcpServers,
     clientProfile: options.context.clientProfile,
     getProjectId: () => options.context.projectId || null,
     conversationId: options.context.conversationId,

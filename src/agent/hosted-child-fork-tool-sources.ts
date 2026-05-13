@@ -14,6 +14,11 @@ import {
   createLiveStudioMcpTools,
   type LiveStudioMcpToolsOptions,
 } from "./live-studio-mcp-tools.ts";
+import type { HostedProjectMcpServerConfig } from "./hosted-project-remote-tool-source.ts";
+import {
+  createHostedProjectGenericRemoteMcpConfig,
+  createHostedProjectVeryfrontApiRemoteMcpConfig,
+} from "./hosted-project-remote-tool-source.ts";
 import type { RuntimeClientProfile } from "./runtime-client-profile.ts";
 import {
   type HostedChildProjectSwitchHandler,
@@ -31,13 +36,13 @@ export type HostedChildForkToolSourcesLogger = {
 export type PrepareDefaultHostedChildForkToolSourcesInput = {
   authToken: string;
   apiMcpUrl: string;
+  mcpServers?: readonly HostedProjectMcpServerConfig[];
   getProjectId: () => string | null | undefined;
   studioMcpUrl?: string | null;
   clientProfile?: RuntimeClientProfile | null;
   conversationId?: string;
   globalTools?: HostToolSet;
   abortSignal?: AbortSignal;
-  apiSourceId?: string;
   onConfirmedStudioProjectSwitch?: HostedChildProjectSwitchHandler;
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   createToolsFromRemoteDefinitions?: typeof createToolsFromRemoteDefinitions;
@@ -70,26 +75,59 @@ export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
     ) => Promise<AgentServiceSandboxToolsResult>;
   };
 
+function defaultChildForkMcpServers(): HostedProjectMcpServerConfig[] {
+  return [{ kind: "veryfront-api" }];
+}
+
 export async function prepareDefaultHostedChildForkToolSources(
   input: PrepareDefaultHostedChildForkToolSourcesInput,
 ): Promise<DefaultHostedChildForkToolSourcesResult> {
+  throwIfAborted(input.abortSignal);
+
   let closeStudioMcpTools: (() => Promise<void>) | undefined;
   let studioMcpTools: HostToolSet = {};
+  let remoteMcpTools: HostToolSet = {};
   const createLiveStudioTools = input.createLiveStudioTools ?? createLiveStudioMcpTools;
+  const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
+  const materializeRemoteTools = input.createToolsFromRemoteDefinitions ??
+    createToolsFromRemoteDefinitions;
 
   try {
-    const studioTools = await createLiveStudioTools({
-      authToken: input.authToken,
-      clientProfile: input.clientProfile,
-      getProjectId: input.getProjectId,
-      studioMcpUrl: input.studioMcpUrl,
-      ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-      ...(input.createRemoteToolSource
-        ? { createRemoteToolSource: input.createRemoteToolSource }
-        : {}),
-    });
-    studioMcpTools = studioTools.tools;
-    closeStudioMcpTools = studioTools.close;
+    const mcpServers = input.mcpServers ?? defaultChildForkMcpServers();
+    for (const server of mcpServers) {
+      if (server.kind === "veryfront-studio") {
+        const studioTools = await createLiveStudioTools({
+          authToken: input.authToken,
+          clientProfile: input.clientProfile,
+          getProjectId: input.getProjectId,
+          studioMcpUrl: input.studioMcpUrl,
+          ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+          ...(input.createRemoteToolSource
+            ? { createRemoteToolSource: input.createRemoteToolSource }
+            : {}),
+        });
+        studioMcpTools = {
+          ...studioMcpTools,
+          ...studioTools.tools,
+        };
+        closeStudioMcpTools = studioTools.close;
+        continue;
+      }
+
+      const remoteConfig = server.kind === "veryfront-api"
+        ? createHostedProjectVeryfrontApiRemoteMcpConfig({
+          authToken: input.authToken,
+          apiMcpUrl: input.apiMcpUrl,
+          defaultSourceId: "veryfront-mcp-fork",
+        }, server)
+        : createHostedProjectGenericRemoteMcpConfig(server);
+      const remoteSource = createRemoteToolSource(remoteConfig);
+      const definitions = await remoteSource.listTools();
+      remoteMcpTools = {
+        ...remoteMcpTools,
+        ...materializeRemoteTools(remoteSource, definitions),
+      };
+    }
   } catch (error) {
     if (input.abortSignal?.aborted || input.isAbortError?.(error)) {
       throw error;
@@ -108,19 +146,6 @@ export async function prepareDefaultHostedChildForkToolSources(
 
   throwIfAborted(input.abortSignal);
 
-  const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
-  const materializeRemoteTools = input.createToolsFromRemoteDefinitions ??
-    createToolsFromRemoteDefinitions;
-  const apiMcpSource = createRemoteToolSource({
-    id: input.apiSourceId ?? "veryfront-mcp-fork",
-    endpoint: input.apiMcpUrl,
-    headers: {
-      Authorization: `Bearer ${input.authToken}`,
-    },
-  });
-  const apiMcpDefinitions = await apiMcpSource.listTools();
-  const apiMcpTools = materializeRemoteTools(apiMcpSource, apiMcpDefinitions);
-
   if (input.onConfirmedStudioProjectSwitch) {
     wrapHostedChildProjectSwitchTool({
       tools: studioMcpTools,
@@ -133,7 +158,7 @@ export async function prepareDefaultHostedChildForkToolSources(
   return {
     ok: true,
     forkTools: buildDefaultHostedChildForkToolSet(
-      apiMcpTools,
+      remoteMcpTools,
       studioMcpTools,
       input.globalTools ?? {},
     ),

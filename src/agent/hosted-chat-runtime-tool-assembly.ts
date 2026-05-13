@@ -19,6 +19,7 @@ import {
 } from "./default-research-artifact-support.ts";
 import {
   createHostedProjectRemoteToolSources,
+  type HostedProjectMcpServerConfig,
   type HostedProjectRemoteToolSourceMutationHandler,
   type HostedProjectRemoteToolSourcePrepareToolInput,
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
@@ -58,7 +59,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
-  studioMcpEnabled?: boolean;
+  mcpServers?: readonly HostedProjectMcpServerConfig[];
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
@@ -121,7 +122,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     authToken: input.taskContext.authToken,
     apiMcpUrl: input.apiMcpUrl,
     studioMcpUrl: input.studioMcpUrl,
-    studioMcpEnabled: input.studioMcpEnabled,
+    mcpServers: input.mcpServers,
     clientProfile: input.taskContext.clientProfile,
     createRemoteToolSource: input.createRemoteToolSource ?? createRemoteMCPToolSource,
     defaultProjectId: () => activeProjectId(input.taskContext),

@@ -29,6 +29,7 @@ import {
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
 } from "./hosted-chat-runtime-tool-assembly.ts";
+import type { HostedProjectMcpServerConfig } from "./hosted-project-remote-tool-source.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
@@ -44,7 +45,7 @@ export type DefaultHostedChatRuntimeConfig = {
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
-  studioMcpEnabled?: boolean;
+  mcpServers?: readonly HostedProjectMcpServerConfig[];
 };
 
 export type DefaultHostedChatRuntimeLogger = {
@@ -154,7 +155,7 @@ async function buildToolAssembly(
     apiUrl: input.config.apiUrl,
     apiMcpUrl: input.config.apiMcpUrl,
     studioMcpUrl: input.config.studioMcpUrl,
-    studioMcpEnabled: input.config.studioMcpEnabled,
+    mcpServers: input.config.mcpServers,
     conversationId: input.options.conversationId,
     allowedToolNames: input.options.allowedTools ?? null,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
