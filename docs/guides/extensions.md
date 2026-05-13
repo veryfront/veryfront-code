@@ -12,12 +12,12 @@ Veryfront's extension system uses a **contract-based architecture**: core define
 
 ## Concepts
 
-| Term | Description |
-| --- | --- |
-| **Contract** | A TypeScript interface (e.g., `CacheStore`, `AuthProvider`) that defines a capability's API surface. |
-| **Extension** | A module that implements one or more contracts and declares its system requirements. |
-| **Factory** | A function that accepts optional config and returns an `Extension` object. |
-| **Capability** | A declared system resource requirement (filesystem, network, env vars). |
+| Term           | Description                                                                                          |
+| -------------- | ---------------------------------------------------------------------------------------------------- |
+| **Contract**   | A TypeScript interface (e.g., `CacheStore`, `AuthProvider`) that defines a capability's API surface. |
+| **Extension**  | A module that implements one or more contracts and declares its system requirements.                 |
+| **Factory**    | A function that accepts optional config and returns an `Extension` object.                           |
+| **Capability** | A declared system resource requirement (filesystem, network, env vars).                              |
 
 ## Quickstart: scaffold an extension
 
@@ -72,15 +72,15 @@ interface Extension {
 }
 ```
 
-| Field | Required | Description |
-| --- | --- | --- |
-| `name` | Yes | Unique identifier (lowercase, hyphens). |
-| `version` | Yes | Semver string. |
-| `capabilities` | Yes | System resources the extension needs (can be empty `[]`). |
-| `provides` | No | Static contract implementations (registered before `setup` runs). |
-| `setup` | No | Async initialization. Connect to services, register dynamic contracts. |
-| `teardown` | No | Cleanup. Close connections, flush buffers. Runs in reverse load order. |
-| `extends` | No | Compose other extensions as a preset. |
+| Field          | Required | Description                                                            |
+| -------------- | -------- | ---------------------------------------------------------------------- |
+| `name`         | Yes      | Unique identifier (lowercase, hyphens).                                |
+| `version`      | Yes      | Semver string.                                                         |
+| `capabilities` | Yes      | System resources the extension needs (can be empty `[]`).              |
+| `provides`     | No       | Static contract implementations (registered before `setup` runs).      |
+| `setup`        | No       | Async initialization. Connect to services, register dynamic contracts. |
+| `teardown`     | No       | Cleanup. Close connections, flush buffers. Runs in reverse load order. |
+| `extends`      | No       | Compose other extensions as a preset.                                  |
 
 ## Providing contracts
 
@@ -98,7 +98,7 @@ const extJwt: ExtensionFactory = (config?) => {
   const provider = createAuthProvider(config);
 
   return {
-    name: "ext-jwt",
+    name: "ext-auth-jwt",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "AuthProvider" },
@@ -123,7 +123,7 @@ const extRedis: ExtensionFactory = () => {
   let store: RedisStore | null = null;
 
   return {
-    name: "ext-redis",
+    name: "ext-cache-redis",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "TokenCacheStore" },
@@ -133,14 +133,14 @@ const extRedis: ExtensionFactory = () => {
     async setup(ctx) {
       const url = ctx.config.redisUrl as string | undefined;
       if (!url) {
-        ctx.logger.info("[ext-redis] No REDIS_URL, skipping");
+        ctx.logger.info("[ext-cache-redis] No REDIS_URL, skipping");
         return;
       }
 
       store = new RedisStore(url);
       await store.connect();
       ctx.provide("TokenCacheStore", store);
-      ctx.logger.info("[ext-redis] TokenCacheStore registered");
+      ctx.logger.info("[ext-cache-redis] TokenCacheStore registered");
     },
 
     async teardown() {
@@ -159,19 +159,19 @@ Extensions can depend on contracts provided by other extensions. Declare the dep
 
 ```ts
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { AIProviderRegistry } from "veryfront/extensions/interfaces";
-import { AIProviderRegistryName } from "veryfront/extensions/interfaces";
+import type { LLMProviderRegistry } from "veryfront/extensions/interfaces";
+import { LLMProviderRegistryName } from "veryfront/extensions/interfaces";
 
 const extMyProvider: ExtensionFactory = () => {
-  let registry: AIProviderRegistry | undefined;
+  let registry: LLMProviderRegistry | undefined;
 
   return {
     name: "ext-my-provider",
     version: "0.1.0",
-    capabilities: [{ type: "contract", name: "AIProvider:my-provider" }],
+    capabilities: [{ type: "contract", name: "LLMProvider:my-provider" }],
 
     setup(ctx) {
-      registry = ctx.require<AIProviderRegistry>(AIProviderRegistryName);
+      registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
       registry.register(myProvider);
     },
 
@@ -189,13 +189,13 @@ The `capabilities: [{ type: "contract", name: "..." }]` declaration tells the to
 
 ### ExtensionContext API
 
-| Method | Description |
-| --- | --- |
-| `ctx.get<T>(contract)` | Resolve a contract. Returns `undefined` if not registered. |
-| `ctx.require<T>(contract)` | Resolve a contract. Throws if not registered. |
-| `ctx.provide<T>(contract, impl)` | Register a contract implementation. |
-| `ctx.config` | Read-only access to the project's resolved config. |
-| `ctx.logger` | Structured logger (`debug`, `info`, `warn`, `error`). |
+| Method                           | Description                                                |
+| -------------------------------- | ---------------------------------------------------------- |
+| `ctx.get<T>(contract)`           | Resolve a contract. Returns `undefined` if not registered. |
+| `ctx.require<T>(contract)`       | Resolve a contract. Throws if not registered.              |
+| `ctx.provide<T>(contract, impl)` | Register a contract implementation.                        |
+| `ctx.config`                     | Read-only access to the project's resolved config.         |
+| `ctx.logger`                     | Structured logger (`debug`, `info`, `warn`, `error`).      |
 
 ## Declaring capabilities
 
@@ -210,39 +210,41 @@ capabilities: [
   { type: "env:read", keys: ["DATABASE_URL", "API_KEY"] },
   { type: "process:spawn", commands: ["esbuild"] },
   { type: "contract", name: "CacheStore" },
-]
+];
 ```
 
-| Type | Scoping | Deno flag |
-| --- | --- | --- |
-| `fs:read` | `paths: string[]` | `--allow-read=<paths>` |
-| `fs:write` | `paths: string[]` | `--allow-write=<paths>` |
-| `net:outbound` | `hosts: string[]` | `--allow-net=<hosts>` |
-| `net:listen` | `ports: number[]` | `--allow-net=localhost:<port>` |
-| `env:read` | `keys: string[]` | `--allow-env=<keys>` |
-| `process:spawn` | `commands: string[]` | `--allow-run=<commands>` |
-| `native:ffi` | (none) | `--allow-ffi` |
-| `contract` | `name: string` | (ordering hint, not a permission) |
+| Type            | Scoping              | Deno flag                         |
+| --------------- | -------------------- | --------------------------------- |
+| `fs:read`       | `paths: string[]`    | `--allow-read=<paths>`            |
+| `fs:write`      | `paths: string[]`    | `--allow-write=<paths>`           |
+| `net:outbound`  | `hosts: string[]`    | `--allow-net=<hosts>`             |
+| `net:listen`    | `ports: number[]`    | `--allow-net=localhost:<port>`    |
+| `env:read`      | `keys: string[]`     | `--allow-env=<keys>`              |
+| `process:spawn` | `commands: string[]` | `--allow-run=<commands>`          |
+| `native:ffi`    | (none)               | `--allow-ffi`                     |
+| `contract`      | `name: string`       | (ordering hint, not a permission) |
 
 ## Available contracts
 
 These are the built-in contracts your extension can implement or consume:
 
-| Contract | Description | Default package |
-| --- | --- | --- |
-| `AuthProvider` | JWT sign/verify/decode | `@veryfront/ext-jwt` |
-| `CacheStore` | Key-value cache with TTL | `@veryfront/ext-redis` |
-| `TokenCacheStore` | Proxy-grade cache with stats | `@veryfront/ext-redis` |
-| `DatabaseClient` | SQL query/execute | `@veryfront/ext-postgres` |
-| `Bundler` | JS/TS bundling and transforms | `@veryfront/ext-esbuild` |
-| `CSSProcessor` | CSS compilation and utilities | `@veryfront/ext-tailwind` |
-| `ContentTransformer` | MDX/markdown to HTML/React | `@veryfront/ext-mdx` |
-| `SchemaValidator` | Runtime validation (schemas) | `@veryfront/ext-zod` |
-| `TracingExporter` | OpenTelemetry span export | `@veryfront/ext-opentelemetry` |
-| `AIProviderRegistry` | LLM provider registry | `@veryfront/ext-openai` |
-| `EmbeddingProvider` | Vector embeddings | `@veryfront/ext-embeddings` |
-| `CodeParser` | AST parsing and transforms | `@veryfront/ext-babel` |
-| `NodeCompat` | Node.js compatibility shims | `@veryfront/ext-node-compat` |
+| Contract              | Description                   | Default package                                |
+| --------------------- | ----------------------------- | ---------------------------------------------- |
+| `AuthProvider`        | JWT sign/verify/decode        | `@veryfront/ext-auth-jwt`                      |
+| `CacheStore`          | Key-value cache with TTL      | `@veryfront/ext-cache-redis`                   |
+| `TokenCacheStore`     | Proxy-grade cache with stats  | `@veryfront/ext-cache-redis`                   |
+| `DatabaseClient`      | SQL query/execute             | `@veryfront/ext-postgres`                      |
+| `Bundler`             | JS/TS bundling and transforms | `@veryfront/ext-bundler-esbuild`               |
+| `ModuleLexer`         | ESM import/export analysis    | `@veryfront/ext-bundler-esbuild`               |
+| `CSSProcessor`        | CSS compilation and utilities | `@veryfront/ext-css-tailwind`                  |
+| `ContentTransformer`  | MDX/markdown to HTML/React    | `@veryfront/ext-transform-mdx`                 |
+| `SchemaValidator`     | Runtime validation (schemas)  | `@veryfront/ext-zod`                           |
+| `TracingExporter`     | OpenTelemetry span export     | `@veryfront/ext-tracing-opentelemetry`         |
+| `LLMProviderRegistry` | LLM provider registry         | `@veryfront/ext-llm-openai`                    |
+| `LLMProvider:*`       | Individual LLM providers      | `@veryfront/ext-llm-{anthropic,google,openai}` |
+| `EmbeddingProvider`   | Vector embeddings             | `@veryfront/ext-llm-google`                    |
+| `CodeParser`          | AST parsing and transforms    | `@veryfront/ext-parser-babel`                  |
+| `NodeCompat`          | Node.js compatibility shims   | `@veryfront/ext-node-compatibility`            |
 
 Contract interfaces are importable from `veryfront/extensions/interfaces`:
 
@@ -275,12 +277,12 @@ The `veryfront.extension: true` flag enables auto-discovery. Installed packages 
 
 Extensions are discovered from four sources, in priority order:
 
-| Priority | Source | Location |
-| --- | --- | --- |
-| 1 (highest) | Config | `veryfront.config.ts` `extensions` array |
-| 2 | Package | Installed packages with `veryfront.extension: true` |
-| 3 | Project | `extensions/<name>/src/index.ts` in your project |
-| 4 (lowest) | Local file | `*.extension.ts` files in project root |
+| Priority    | Source     | Location                                            |
+| ----------- | ---------- | --------------------------------------------------- |
+| 1 (highest) | Config     | `veryfront.config.ts` `extensions` array            |
+| 2           | Package    | Installed packages with `veryfront.extension: true` |
+| 3           | Project    | `extensions/<name>/src/index.ts` in your project    |
+| 4 (lowest)  | Local file | `*.extension.ts` files in project root              |
 
 When multiple extensions provide the same contract via static `provides`, the higher-priority source wins. Contracts registered dynamically via `ctx.provide()` in `setup()` are not subject to priority arbitration, so prefer static `provides` when possible. You can explicitly disable a discovered extension:
 
@@ -288,7 +290,7 @@ When multiple extensions provide the same contract via static `provides`, the hi
 // veryfront.config.ts
 export default {
   extensions: [
-    { name: "ext-redis", enabled: false },
+    { name: "ext-cache-redis", enabled: false },
     myCustomCache(),
   ],
 };
@@ -300,9 +302,9 @@ Bundle multiple extensions into a single installable unit:
 
 ```ts
 import type { ExtensionFactory } from "veryfront/extensions";
-import extEsbuild from "@veryfront/ext-esbuild";
-import extTailwind from "@veryfront/ext-tailwind";
-import extMdx from "@veryfront/ext-mdx";
+import extEsbuild from "@veryfront/ext-bundler-esbuild";
+import extTailwind from "@veryfront/ext-css-tailwind";
+import extMdx from "@veryfront/ext-transform-mdx";
 
 const presetWeb: ExtensionFactory = (config?) => ({
   name: "preset-web",
@@ -328,7 +330,7 @@ Pass configuration to extensions through the config array or through project con
 
 ```ts
 // veryfront.config.ts
-import extRedis from "@veryfront/ext-redis";
+import extRedis from "@veryfront/ext-cache-redis";
 
 export default {
   extensions: [
@@ -526,18 +528,18 @@ During development, changes to `veryfront.config.ts` trigger a full teardown, re
 
 The extension system provides clear errors with actionable suggestions:
 
-| Error | When |
-| --- | --- |
-| `missing-extension` | `resolve()` called for an unregistered contract. Includes recommended package. |
-| `extension-validation` | Extension shape is invalid, import fails, or factory throws. |
-| `extension-circular-dependency` | Cyclic dependency detected in extends or contract graph. |
-| `extension-conflict` | Multiple extensions at the same priority provide the same contract. |
+| Error                           | When                                                                           |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| `missing-extension`             | `resolve()` called for an unregistered contract. Includes recommended package. |
+| `extension-validation`          | Extension shape is invalid, import fails, or factory throws.                   |
+| `extension-circular-dependency` | Cyclic dependency detected in extends or contract graph.                       |
+| `extension-conflict`            | Multiple extensions at the same priority provide the same contract.            |
 
 When a required contract is missing, the error message suggests which package to install:
 
 ```
 ✖ Missing extension for contract "AuthProvider".
-  Install it with: deno add @veryfront/ext-jwt
+  Install it with: deno add @veryfront/ext-auth-jwt
 ```
 
 ## Publishing extensions
