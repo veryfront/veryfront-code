@@ -6,6 +6,11 @@ import {
   type RemoteToolSource,
 } from "#veryfront/tool";
 import {
+  type AgentServiceMcpServerConfig,
+  createAgentServiceRemoteMcpConfig,
+  defaultAgentServiceMcpServers,
+} from "./agent-service-mcp-server-config.ts";
+import {
   type AgentServiceSandboxToolsOptions,
   type AgentServiceSandboxToolsResult,
   createAgentServiceSandboxTools,
@@ -14,11 +19,6 @@ import {
   createLiveStudioMcpTools,
   type LiveStudioMcpToolsOptions,
 } from "./live-studio-mcp-tools.ts";
-import type { HostedProjectMcpServerConfig } from "./hosted-project-remote-tool-source.ts";
-import {
-  createHostedProjectGenericRemoteMcpConfig,
-  createHostedProjectVeryfrontApiRemoteMcpConfig,
-} from "./hosted-project-remote-tool-source.ts";
 import type { RuntimeClientProfile } from "./runtime-client-profile.ts";
 import {
   type HostedChildProjectSwitchHandler,
@@ -36,7 +36,7 @@ export type HostedChildForkToolSourcesLogger = {
 export type PrepareDefaultHostedChildForkToolSourcesInput = {
   authToken: string;
   apiMcpUrl: string;
-  mcpServers?: readonly HostedProjectMcpServerConfig[];
+  mcpServers?: readonly AgentServiceMcpServerConfig[];
   getProjectId: () => string | null | undefined;
   studioMcpUrl?: string | null;
   clientProfile?: RuntimeClientProfile | null;
@@ -75,10 +75,6 @@ export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
     ) => Promise<AgentServiceSandboxToolsResult>;
   };
 
-function defaultChildForkMcpServers(): HostedProjectMcpServerConfig[] {
-  return [{ kind: "veryfront-api" }];
-}
-
 export async function prepareDefaultHostedChildForkToolSources(
   input: PrepareDefaultHostedChildForkToolSourcesInput,
 ): Promise<DefaultHostedChildForkToolSourcesResult> {
@@ -93,7 +89,7 @@ export async function prepareDefaultHostedChildForkToolSources(
     createToolsFromRemoteDefinitions;
 
   try {
-    const mcpServers = input.mcpServers ?? defaultChildForkMcpServers();
+    const mcpServers = input.mcpServers ?? defaultAgentServiceMcpServers();
     for (const server of mcpServers) {
       if (server.kind === "veryfront-studio") {
         const studioTools = await createLiveStudioTools({
@@ -114,13 +110,15 @@ export async function prepareDefaultHostedChildForkToolSources(
         continue;
       }
 
-      const remoteConfig = server.kind === "veryfront-api"
-        ? createHostedProjectVeryfrontApiRemoteMcpConfig({
-          authToken: input.authToken,
-          apiMcpUrl: input.apiMcpUrl,
-          defaultSourceId: "veryfront-mcp-fork",
-        }, server)
-        : createHostedProjectGenericRemoteMcpConfig(server);
+      const remoteConfig = createAgentServiceRemoteMcpConfig({
+        server,
+        authToken: input.authToken,
+        apiMcpUrl: input.apiMcpUrl,
+        defaultSourceId: "veryfront-mcp-fork",
+      });
+      if (!remoteConfig) {
+        continue;
+      }
       const remoteSource = createRemoteToolSource(remoteConfig);
       const definitions = await remoteSource.listTools();
       remoteMcpTools = {

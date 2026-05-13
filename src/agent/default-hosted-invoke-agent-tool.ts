@@ -28,7 +28,7 @@ import { startHostedChildForkRuntimeWithHostTools } from "./hosted-child-fork-ru
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
 } from "./hosted-child-fork-tool-sources.ts";
-import type { HostedProjectMcpServerConfig } from "./hosted-project-remote-tool-source.ts";
+import type { AgentServiceMcpServerConfig } from "./agent-service-mcp-server-config.ts";
 import { executeHostedChildForkToolInput } from "./hosted-child-fork-execution-runner.ts";
 import { createHostedChildInvokeTool } from "./hosted-child-invoke-tool.ts";
 import {
@@ -79,7 +79,7 @@ export type DefaultHostedInvokeAgentConfig = {
   apiUrl: string;
   apiMcpUrl: string;
   studioMcpUrl?: string | null;
-  mcpServers?: readonly HostedProjectMcpServerConfig[];
+  mcpServers?: readonly AgentServiceMcpServerConfig[];
   enableDurableInvokeAgent?: boolean;
 };
 
