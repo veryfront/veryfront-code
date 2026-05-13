@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
@@ -22,11 +22,11 @@ async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<v
   }
 }
 
-function writeMarkdownAgentDefinition(rootDir: string): void {
+function writeMarkdownAgentDefinition(rootDir: string, id = "veryfront"): void {
   const agentsDir = resolve(rootDir, "agents");
   Deno.mkdirSync(agentsDir, { recursive: true });
   Deno.writeTextFileSync(
-    resolve(agentsDir, "veryfront.md"),
+    resolve(agentsDir, `${id}.md`),
     `---
 name: Veryfront
 model: openai/gpt-5.4
@@ -115,6 +115,49 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent 
     const liveness = await bundle.runtime.request("http://localhost/liveness");
     assertEquals(liveness.status, 200);
     assertEquals(await liveness.text(), "OK");
+  });
+});
+
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime defaults to the single markdown agent", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+
+    const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+      serviceName: "single-markdown-agent-test",
+      entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+      env: {
+        NODE_ENV: "test",
+        VERYFRONT_API_URL: "https://api.example.com",
+        PORT: "3146",
+        ALLOWED_ORIGINS: "https://studio.example.com",
+      },
+    });
+
+    assertEquals(bundle.runtime.contract.defaultAgentId, "support");
+    assertEquals(getRuntimeAgent(bundle, "support").config.model, "openai/gpt-5.4");
+  });
+});
+
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime requires agentId for multiple markdown agents", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    writeMarkdownAgentDefinition(rootDir, "writer");
+
+    await assertRejects(
+      () =>
+        createNodeVeryfrontCloudAgentServiceRuntime({
+          serviceName: "multi-markdown-agent-test",
+          entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+          env: {
+            NODE_ENV: "test",
+            VERYFRONT_API_URL: "https://api.example.com",
+            PORT: "3147",
+            ALLOWED_ORIGINS: "https://studio.example.com",
+          },
+        }),
+      Error,
+      "agentId is required",
+    );
   });
 });
 
@@ -209,6 +252,36 @@ Deno.test({
       assertEquals(bundle.runtime.contract.defaultAgentId, "support");
       assertEquals(getRuntimeAgent(bundle, "support").config.system, "Help users from code.");
       assertEquals(toolRegistry.has("echo"), true);
+    });
+  },
+});
+
+Deno.test({
+  name: "createNodeVeryfrontCloudAgentServiceRuntime defaults to the single code agent",
+  // Code primitive discovery invokes the esbuild-backed transpiler, which starts
+  // an esbuild child process. This matches the sanitizer policy in
+  // src/discovery/transpiler.test.ts.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withTempDir(async (rootDir) => {
+      writeCodeAgentDefinition(rootDir);
+
+      const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+        serviceName: "single-code-agent-test",
+        agentSource: "code",
+        entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
+        createBashTool,
+        env: {
+          NODE_ENV: "test",
+          VERYFRONT_API_URL: "https://api.example.com",
+          PORT: "3148",
+          ALLOWED_ORIGINS: "https://studio.example.com",
+        },
+      });
+
+      assertEquals(bundle.runtime.contract.defaultAgentId, "support");
+      assertEquals(getRuntimeAgent(bundle, "support").config.system, "Help users from code.");
     });
   },
 });

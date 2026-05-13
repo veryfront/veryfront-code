@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
 import { z } from "zod";
 import {
@@ -17,6 +17,14 @@ export const resolveRuntimeAgentDefinitionsDirInputSchema = z.object({
 
 export type ResolveRuntimeAgentDefinitionsDirInput = z.infer<
   typeof resolveRuntimeAgentDefinitionsDirInputSchema
+>;
+
+export const listRuntimeAgentMarkdownDefinitionIdsInputSchema = z.object({
+  baseDir: z.string().min(1),
+});
+
+export type ListRuntimeAgentMarkdownDefinitionIdsInput = z.infer<
+  typeof listRuntimeAgentMarkdownDefinitionIdsInputSchema
 >;
 
 export const loadRuntimeAgentMarkdownDefinitionFromFileInputSchema = z.object({
@@ -40,25 +48,60 @@ function hasRuntimeAgentDefinitionFile(path: string, fileName: string): boolean 
   return existsSync(resolve(path, fileName));
 }
 
+function getRuntimeAgentDefinitionsDirCandidates(baseDir: string): string[] {
+  const firstCandidate = resolve(baseDir, "agents");
+  const sourceLayoutCandidate = resolve(baseDir, "../agents");
+  const candidates = [
+    firstCandidate,
+    sourceLayoutCandidate,
+    resolve(baseDir, "../../agents"),
+    resolve(baseDir, "../../../agents"),
+  ];
+
+  return [...new Set(candidates)];
+}
+
 export function resolveRuntimeAgentDefinitionsDir(
   input: ResolveRuntimeAgentDefinitionsDirInput,
 ): string {
   const parsedInput = resolveRuntimeAgentDefinitionsDirInputSchema.parse(input);
   const fileName = getRuntimeAgentDefinitionFileName(parsedInput);
-  const firstCandidate = resolve(parsedInput.baseDir, "agents");
+  const candidates = getRuntimeAgentDefinitionsDirCandidates(parsedInput.baseDir);
   const sourceLayoutCandidate = resolve(parsedInput.baseDir, "../agents");
-  const candidates = [
-    firstCandidate,
-    sourceLayoutCandidate,
-    resolve(parsedInput.baseDir, "../../agents"),
-    resolve(parsedInput.baseDir, "../../../agents"),
-  ];
   const fallbackCandidate = basename(parsedInput.baseDir) === "src"
     ? sourceLayoutCandidate
-    : firstCandidate;
+    : resolve(parsedInput.baseDir, "agents");
 
   return candidates.find((candidate) => hasRuntimeAgentDefinitionFile(candidate, fileName)) ??
     fallbackCandidate;
+}
+
+export function listRuntimeAgentMarkdownDefinitionIds(
+  input: ListRuntimeAgentMarkdownDefinitionIdsInput,
+): string[] {
+  const parsedInput = listRuntimeAgentMarkdownDefinitionIdsInputSchema.parse(input);
+  const ids = new Set<string>();
+
+  for (const dir of getRuntimeAgentDefinitionsDirCandidates(parsedInput.baseDir)) {
+    if (!existsSync(dir)) {
+      continue;
+    }
+
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      const parseResult = runtimeAgentDefinitionFileNameSchema.safeParse(entry.name);
+      if (!parseResult.success) {
+        continue;
+      }
+
+      ids.add(parseResult.data.slice(0, -".md".length));
+    }
+  }
+
+  return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
 export function resolveRuntimeAgentMarkdownDefinitionFilePath(
