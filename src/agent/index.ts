@@ -346,6 +346,21 @@ export {
   type VeryfrontMcpServerKind,
 } from "./veryfront-cloud-agent-service.ts";
 export {
+  type AgentPushRuntimeServiceRest,
+  type AgentServiceRegistrationConfig,
+  agentServiceRegistrationConfigSchema,
+  type AgentServiceRegistrationLifecycle,
+  type AgentServiceRegistrationLogger,
+  type AgentServiceRegistrationMode,
+  createAgentServiceRegistrationLifecycle,
+  type CreateAgentServiceRegistrationLifecycleOptions,
+  type RegisterAgentPushRuntimeServiceRequest,
+  resolveAgentServiceRegistrationInput,
+  type ResolveAgentServiceRegistrationInputOptions,
+  type ResolvedAgentServiceRegistrationInput,
+  resolvedAgentServiceRegistrationInputSchema,
+} from "./agent-service-registration.ts";
+export {
   type AgentServiceConfig,
   type AgentServiceConfigInput,
   agentServiceConfigSchema,

@@ -110,7 +110,7 @@ describe(
           `${tempDir}/tools/write-report.ts`,
           [
             'import { tool } from "veryfront/tool";',
-            'import { defineSchema } from "#veryfront/schemas/index.ts";',
+            'import { defineSchema } from "veryfront/schemas";',
             "",
             "export default tool({",
             '  id: "write-report",',
@@ -144,7 +144,7 @@ describe(
           `${tempDir}/tools/write-report.ts`,
           [
             'import { tool } from "veryfront/tool";',
-            'import { defineSchema } from "#veryfront/schemas/index.ts";',
+            'import { defineSchema } from "veryfront/schemas";',
             "",
             "export default tool({",
             '  id: "tool_2024_01",',
@@ -178,7 +178,7 @@ describe(
           `${tempDir}/tools/write-report.ts`,
           [
             'import { tool } from "veryfront/tool";',
-            'import { defineSchema } from "#veryfront/schemas/index.ts";',
+            'import { defineSchema } from "veryfront/schemas";',
             "",
             "const generated = tool({",
             '  description: "Write a markdown report",',
