@@ -237,13 +237,12 @@ Deno.test("createHostedProjectRemoteToolSource skips mutation callbacks for fail
   assertEquals(mutationCount, 0);
 });
 
-Deno.test("createHostedProjectRemoteToolSources keeps Studio MCP opt-in", async () => {
+Deno.test("createHostedProjectRemoteToolSources defaults to the Veryfront API MCP server", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
     studioMcpUrl: "https://studio.example/mcp",
-    studioMcpEnabled: false,
     clientProfile: {
       id: "veryfront-studio",
       type: "web",
@@ -268,7 +267,7 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
     studioMcpUrl: "https://studio.example/mcp",
-    studioMcpEnabled: true,
+    mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     clientProfile: {
       id: "veryfront-studio",
       type: "web",
@@ -301,7 +300,7 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
     studioMcpUrl: "https://studio.example/mcp",
-    studioMcpEnabled: true,
+    mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     clientProfile: {
       id: "veryfront-cli",
       type: "cli",
@@ -316,6 +315,53 @@ Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated St
   assertEquals(blockedSources.map((source) => source.id), ["veryfront-mcp"]);
 });
 
+Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists", async () => {
+  const configs: RemoteMCPToolSourceConfig[] = [];
+  let activeProjectId = "project-1";
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [
+      { kind: "veryfront-api" },
+      { kind: "veryfront-studio" },
+      {
+        id: "linear",
+        endpoint: "https://linear.example/mcp",
+        headers: { Authorization: "Bearer linear-token" },
+      },
+    ],
+    studioMcpUrl: "https://studio.example/mcp",
+    clientProfile: {
+      id: "veryfront-studio",
+      type: "web",
+      trusted: true,
+      capabilities: ["ui_panels"],
+    },
+    getProjectId: () => activeProjectId,
+    conversationId: "conversation-1",
+    createRemoteToolSource: (config) => {
+      configs.push(config);
+      return createRemoteSource({ id: config.id, tools: [projectFileTool("update_file")] });
+    },
+  });
+
+  assertEquals(sources.map((source) => source.id), ["veryfront-mcp", "studio-mcp", "linear"]);
+  assertEquals(configs.map((config) => config.endpoint), [
+    "https://api.example/mcp",
+    "https://studio.example/mcp",
+    "https://linear.example/mcp",
+  ]);
+  assertEquals(configs[0]?.headers, { Authorization: "Bearer token-1" });
+  assertEquals(configs[2]?.headers, { Authorization: "Bearer linear-token" });
+
+  activeProjectId = "project-2";
+  assertEquals(await resolveTestHeaders(configs[1]?.headers), {
+    Authorization: "Bearer token-1",
+    "x-conversation-id": "conversation-1",
+    "x-project-id": "project-2",
+  });
+});
+
 Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy to created sources", async () => {
   const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
   const switchedProjects: string[] = [];
@@ -324,7 +370,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
     authToken: "token-1",
     apiMcpUrl: "https://api.example/mcp",
     studioMcpUrl: "https://studio.example/mcp",
-    studioMcpEnabled: true,
+    mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     clientProfile: {
       id: "veryfront-studio",
       type: "web",

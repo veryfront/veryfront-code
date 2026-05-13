@@ -80,7 +80,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
     apiUrl: "https://api.example.com",
     apiMcpUrl: "https://api.example.com/mcp",
     studioMcpUrl: "https://studio.example.com/mcp",
-    studioMcpEnabled: true,
+    mcpServers: [{ kind: "veryfront-api" }, { kind: "veryfront-studio" }],
     conversationId: "conversation-1",
     allowedToolNames: ["sleep", "create_file", "studio_open_project"],
     projectScopedRemoteToolOptions: {

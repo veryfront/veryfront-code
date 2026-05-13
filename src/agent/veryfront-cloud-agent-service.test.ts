@@ -4,7 +4,10 @@ import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import { toolRegistry } from "#veryfront/tool";
 import { agentRegistry } from "./composition/index.ts";
-import { createNodeVeryfrontCloudAgentServiceRuntime } from "./veryfront-cloud-agent-service.ts";
+import {
+  createNodeVeryfrontCloudAgentServiceRuntime,
+  veryfrontMcpServer,
+} from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
 async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
@@ -159,6 +162,11 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime accepts entrypointUrl for
     assertEquals(bundle.runtime.contract.defaultAgentId, "veryfront");
     assertEquals(getRuntimeAgent(bundle, "veryfront").config.model, "openai/gpt-5.4");
   });
+});
+
+Deno.test("veryfrontMcpServer creates explicit Veryfront MCP server configs", () => {
+  assertEquals(veryfrontMcpServer(), { kind: "veryfront-api" });
+  assertEquals(veryfrontMcpServer("studio"), { kind: "veryfront-studio" });
 });
 
 Deno.test({
