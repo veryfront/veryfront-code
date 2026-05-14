@@ -72,6 +72,10 @@ describe("agent/runtime/model-resolution", () => {
       resolveConfiguredAgentModel("gpt-5.2"),
       "openai/gpt-5.2",
     );
+    assertEquals(
+      resolveConfiguredAgentModel("kimi-k2.5"),
+      "moonshotai/kimi-k2.5",
+    );
   });
 
   it("upgrades auto/local models to the default Veryfront cloud model when bootstrap is present", () => {
@@ -94,6 +98,24 @@ describe("agent/runtime/model-resolution", () => {
     );
   });
 
+  it("routes catalog Gemini and Kimi models through veryfront-cloud when only hosted bootstrap is available", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+
+    assertEquals(
+      resolveRuntimeModel("google-ai-studio/gemini-2.5-flash"),
+      "veryfront-cloud/google-ai-studio/gemini-2.5-flash",
+    );
+    assertEquals(
+      resolveRuntimeModel("moonshotai/kimi-k2.5"),
+      "veryfront-cloud/moonshotai/kimi-k2.5",
+    );
+    assertEquals(
+      resolveRuntimeModel("kimi-k2.5"),
+      "veryfront-cloud/moonshotai/kimi-k2.5",
+    );
+  });
+
   it("keeps explicit provider models unchanged when native credentials are configured", () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
     setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
@@ -102,6 +124,17 @@ describe("agent/runtime/model-resolution", () => {
     assertEquals(
       resolveRuntimeModel("openai/gpt-5.4"),
       "openai/gpt-5.4",
+    );
+  });
+
+  it("routes explicit Gemini models through the direct Google provider when native credentials are configured", () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_runtime");
+    setEnv("VERYFRONT_PROJECT_SLUG", "demo-project");
+    setEnv("GOOGLE_API_KEY", "google-test");
+
+    assertEquals(
+      resolveRuntimeModel("google-ai-studio/gemini-2.5-flash"),
+      "google/gemini-2.5-flash",
     );
   });
 
