@@ -139,6 +139,53 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime defaults to the single ma
   });
 });
 
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime derives serviceName from project manifest", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    Deno.writeTextFileSync(
+      resolve(rootDir, "package.json"),
+      JSON.stringify({ name: "support-agent-service" }),
+    );
+
+    const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+      entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+      env: {
+        NODE_ENV: "test",
+        VERYFRONT_API_URL: "https://api.example.com",
+        PORT: "3149",
+        ALLOWED_ORIGINS: "https://studio.example.com",
+      },
+    });
+
+    assertEquals(bundle.runtime.contract.serviceName, "support-agent-service");
+    assertEquals(bundle.runtime.contract.defaultAgentId, "support");
+  });
+});
+
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime lets env override manifest serviceName", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir, "support");
+    Deno.writeTextFileSync(
+      resolve(rootDir, "deno.json"),
+      JSON.stringify({ name: "manifest-agent-service" }),
+    );
+
+    const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+      entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+      env: {
+        NODE_ENV: "test",
+        VERYFRONT_API_URL: "https://api.example.com",
+        VERYFRONT_AGENT_SERVICE_NAME: "env-agent-service",
+        PORT: "3150",
+        ALLOWED_ORIGINS: "https://studio.example.com",
+      },
+    });
+
+    assertEquals(bundle.runtime.contract.serviceName, "env-agent-service");
+    assertEquals(bundle.runtime.contract.defaultAgentId, "support");
+  });
+});
+
 Deno.test("createNodeVeryfrontCloudAgentServiceRuntime requires agentId for multiple markdown agents", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");
