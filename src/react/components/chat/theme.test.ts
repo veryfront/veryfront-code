@@ -15,6 +15,7 @@ Deno.test("chat variant helpers return configured defaults and overrides", () =>
     ),
   );
   assert(theme.messageVariants({ role: undefined }).includes("max-w-none"));
+  assertEquals(theme.messageVariants({ role: null }), "");
 
   const button = theme.chatButtonVariants({
     variant: "ghost",
