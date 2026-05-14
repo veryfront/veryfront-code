@@ -17,6 +17,11 @@ describe("getModelMaxOutputTokens", () => {
     assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.2"), 16_384);
   });
 
+  it("uses Gemini limits for direct Google runtime model ids", () => {
+    assertEquals(getModelMaxOutputTokens("google/gemini-2.5-pro"), 65_536);
+    assertEquals(getModelMaxOutputTokens("google/gemini-2.5-flash"), 8_192);
+  });
+
   it("returns undefined for unknown models", () => {
     assertEquals(getModelMaxOutputTokens("unknown/model"), undefined);
   });
