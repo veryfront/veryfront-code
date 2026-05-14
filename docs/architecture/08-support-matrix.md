@@ -54,12 +54,13 @@ These contracts are backed by first-party extension packages. A contract is requ
 
 | Contract                 | Package                                | Availability | Required by                             | Runtime requirement          |
 | ------------------------ | -------------------------------------- | ------------ | --------------------------------------- | ---------------------------- |
-| `SchemaValidator`        | `@veryfront/ext-zod`                   | Built-in     | Schema-backed runtime validation        | None (pure JS)               |
+| `SchemaValidator`        | `@veryfront/ext-schema-zod`            | Built-in     | Schema-backed runtime validation        | None (pure JS)               |
 | `Bundler`, `ModuleLexer` | `@veryfront/ext-bundler-esbuild`       | Built-in     | Build, import analysis, module bundling | esbuild binary               |
 | `CSSProcessor`           | `@veryfront/ext-css-tailwind`          | Built-in     | Tailwind CSS processing                 | Network (esm.sh for plugins) |
-| `ContentProcessor`       | `@veryfront/ext-transform-mdx`         | Built-in     | MDX or Markdown content compilation     | None (unified ecosystem)     |
+| `ContentProcessor`       | `@veryfront/ext-content-mdx`           | Built-in     | MDX or Markdown content compilation     | None (unified ecosystem)     |
 | `CodeParser`             | `@veryfront/ext-parser-babel`          | Built-in     | AST parsing or build-time code analysis | None (Babel)                 |
-| `NodeCompat`             | `@veryfront/ext-node-compatibility`    | Built-in     | Node compatibility or document parsing  | FS (SQLite, WASM)            |
+| `DocumentExtractor`      | `@veryfront/ext-document-kreuzberg`    | Built-in     | Document text extraction                | FS (WASM/native extraction)  |
+| `SqliteStore`            | `@veryfront/ext-db-sqlite`             | Built-in     | SQLite-backed persistence               | FS (SQLite)                  |
 | `LLMProvider`            | `@veryfront/ext-llm-openai`            | Built-in     | OpenAI provider selection               | Network (OpenAI API)         |
 | `LLMProvider`            | `@veryfront/ext-llm-anthropic`         | Built-in     | Anthropic provider selection            | Network (Anthropic API)      |
 | `LLMProvider`            | `@veryfront/ext-llm-google`            | Built-in     | Google provider selection               | Network (Google AI API)      |

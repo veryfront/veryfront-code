@@ -1,15 +1,15 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { MCPTool } from "veryfront/mcp";
 import { generateCommandSchema, generateSchema } from "../../commands/schema/command.ts";
 import type { CommandCategory } from "../../help/types.ts";
 import { VERSION } from "#cli/utils";
 
-const getSchemaInput = defineSchema((v) =>
+const getSchemaInput = lazySchema(defineSchema((v) =>
   v.object({
     command: v.string().optional().describe("Get schema for a specific command"),
     category: v.string().optional().describe("Filter by category"),
   })
-)();
+));
 
 const vfGetSchema: MCPTool = {
   name: "vf_get_schema",
@@ -26,7 +26,7 @@ const vfGetSchema: MCPTool = {
   },
 };
 
-const getProjectInfoInput = defineSchema((v) => v.object({}))();
+const getProjectInfoInput = lazySchema(defineSchema((v) => v.object({})));
 
 const vfGetProjectInfo: MCPTool = {
   name: "vf_get_project_info",

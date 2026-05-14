@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getOAuthProviderConfigSchema = defineSchema((v) =>
@@ -97,10 +97,10 @@ export type AuthorizationUrlOptions = InferSchema<
 export type TokenExchangeOptions = InferSchema<ReturnType<typeof getTokenExchangeOptionsSchema>>;
 
 // Backward compat aliases
-export const OAuthProviderConfigSchema = getOAuthProviderConfigSchema();
-export const OAuthServiceConfigSchema = getOAuthServiceConfigSchema();
-export const OAuthTokensSchema = getOAuthTokensSchema();
-export const OAuthStateSchema = getOAuthStateSchema();
-export const TokenExchangeResultSchema = getTokenExchangeResultSchema();
-export const AuthorizationUrlOptionsSchema = getAuthorizationUrlOptionsSchema();
-export const TokenExchangeOptionsSchema = getTokenExchangeOptionsSchema();
+export const OAuthProviderConfigSchema = lazySchema(getOAuthProviderConfigSchema);
+export const OAuthServiceConfigSchema = lazySchema(getOAuthServiceConfigSchema);
+export const OAuthTokensSchema = lazySchema(getOAuthTokensSchema);
+export const OAuthStateSchema = lazySchema(getOAuthStateSchema);
+export const TokenExchangeResultSchema = lazySchema(getTokenExchangeResultSchema);
+export const AuthorizationUrlOptionsSchema = lazySchema(getAuthorizationUrlOptionsSchema);
+export const TokenExchangeOptionsSchema = lazySchema(getTokenExchangeOptionsSchema);

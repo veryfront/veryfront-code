@@ -2,7 +2,7 @@
  * Generate command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { generateCommand } from "./index.ts";
 import { showLogo } from "#cli/utils";
 import { createArgParser } from "#cli/shared/args";
@@ -18,7 +18,7 @@ const getGenerateArgsSchema = defineSchema((v) =>
   })
 );
 
-const GenerateArgsSchema = getGenerateArgsSchema();
+const GenerateArgsSchema = lazySchema(getGenerateArgsSchema);
 
 export const parseGenerateArgs = createArgParser(GenerateArgsSchema, {
   type: { keys: ["type"], type: "string", positional: 0 },

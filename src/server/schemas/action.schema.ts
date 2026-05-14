@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 /** Action payload from client for RSC server actions */
@@ -12,4 +12,4 @@ export const getActionPayloadSchema = defineSchema((v) =>
 export type ActionPayload = InferSchema<ReturnType<typeof getActionPayloadSchema>>;
 
 // Backward compat alias
-export const ActionPayloadSchema = getActionPayloadSchema();
+export const ActionPayloadSchema = lazySchema(getActionPayloadSchema);

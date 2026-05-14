@@ -2,7 +2,7 @@ import type { Agent, AgentMessage as Message, AgentResponse } from "#veryfront/a
 import { fromError } from "#veryfront/errors/veryfront-error.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   getAgent as getRegisteredAgent,
@@ -18,7 +18,7 @@ const getRawHistoryPartSchema = defineSchema((v) =>
     type: v.string(),
   }).passthrough()
 );
-const _rawHistoryPartSchema = getRawHistoryPartSchema();
+const _rawHistoryPartSchema = lazySchema(getRawHistoryPartSchema);
 
 const getChannelAttachmentSchema = defineSchema((v) =>
   v.object({
@@ -62,7 +62,7 @@ const getChannelInvokeRequestWireSchema = defineSchema((v) =>
 );
 
 export const getChannelInvokeRequestSchema = getChannelInvokeRequestWireSchema;
-export const ChannelInvokeRequestSchema = getChannelInvokeRequestSchema();
+export const ChannelInvokeRequestSchema = lazySchema(getChannelInvokeRequestSchema);
 
 export const getChannelAssistantsRequestSchema = defineSchema((v) =>
   v.object({
@@ -71,7 +71,7 @@ export const getChannelAssistantsRequestSchema = defineSchema((v) =>
     platform: v.literal("slack"),
   })
 );
-export const ChannelAssistantsRequestSchema = getChannelAssistantsRequestSchema();
+export const ChannelAssistantsRequestSchema = lazySchema(getChannelAssistantsRequestSchema);
 
 export const getChannelAssistantSchema = defineSchema((v) =>
   v.object({
@@ -81,14 +81,14 @@ export const getChannelAssistantSchema = defineSchema((v) =>
     model: v.string().nullable().optional(),
   })
 );
-export const ChannelAssistantSchema = getChannelAssistantSchema();
+export const ChannelAssistantSchema = lazySchema(getChannelAssistantSchema);
 
 export const getChannelAssistantsResponseSchema = defineSchema((v) =>
   v.object({
     assistants: v.array(getChannelAssistantSchema()),
   })
 );
-export const ChannelAssistantsResponseSchema = getChannelAssistantsResponseSchema();
+export const ChannelAssistantsResponseSchema = lazySchema(getChannelAssistantsResponseSchema);
 
 const getChannelTextPartSchema = defineSchema((v) =>
   v.object({
@@ -96,7 +96,7 @@ const getChannelTextPartSchema = defineSchema((v) =>
     text: v.string(),
   })
 );
-const channelTextPartSchema = getChannelTextPartSchema();
+const channelTextPartSchema = lazySchema(getChannelTextPartSchema);
 
 const getChannelToolCallPartSchema = defineSchema((v) =>
   v.object({
@@ -107,7 +107,7 @@ const getChannelToolCallPartSchema = defineSchema((v) =>
     state: v.enum(["streaming", "pending", "completed", "error"]),
   })
 );
-const channelToolCallPartSchema = getChannelToolCallPartSchema();
+const channelToolCallPartSchema = lazySchema(getChannelToolCallPartSchema);
 
 const getChannelToolResultPartSchema = defineSchema((v) =>
   v.object({
@@ -117,7 +117,7 @@ const getChannelToolResultPartSchema = defineSchema((v) =>
     is_error: v.boolean().optional(),
   })
 );
-const channelToolResultPartSchema = getChannelToolResultPartSchema();
+const channelToolResultPartSchema = lazySchema(getChannelToolResultPartSchema);
 
 const getChannelReasoningPartSchema = defineSchema((v) =>
   v.object({
@@ -125,7 +125,7 @@ const getChannelReasoningPartSchema = defineSchema((v) =>
     text: v.string(),
   })
 );
-const channelReasoningPartSchema = getChannelReasoningPartSchema();
+const channelReasoningPartSchema = lazySchema(getChannelReasoningPartSchema);
 
 const getChannelErrorPartSchema = defineSchema((v) =>
   v.object({
@@ -134,7 +134,7 @@ const getChannelErrorPartSchema = defineSchema((v) =>
     message: v.string(),
   })
 );
-const _channelErrorPartSchema = getChannelErrorPartSchema();
+const _channelErrorPartSchema = lazySchema(getChannelErrorPartSchema);
 
 export const getChannelResponsePartSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
@@ -145,7 +145,7 @@ export const getChannelResponsePartSchema = defineSchema((v) =>
     getChannelErrorPartSchema(),
   ])
 );
-export const ChannelResponsePartSchema = getChannelResponsePartSchema();
+export const ChannelResponsePartSchema = lazySchema(getChannelResponsePartSchema);
 
 export const getChannelInvokeResponseSchema = defineSchema((v) =>
   v.object({
@@ -162,7 +162,7 @@ export const getChannelInvokeResponseSchema = defineSchema((v) =>
     }).optional(),
   })
 );
-export const ChannelInvokeResponseSchema = getChannelInvokeResponseSchema();
+export const ChannelInvokeResponseSchema = lazySchema(getChannelInvokeResponseSchema);
 
 export type ChannelInvokeRequest = InferSchema<ReturnType<typeof getChannelInvokeRequestSchema>>;
 export type ChannelInvokeResponse = InferSchema<ReturnType<typeof getChannelInvokeResponseSchema>>;

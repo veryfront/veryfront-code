@@ -43,7 +43,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isSchemaLike(value: unknown): value is Schema<unknown> {
   if (!isRecord(value)) return false;
   if (typeof value.parse !== "function") return false;
-  // Contract Schema<T> brand from the ext-zod adapter.
+  // Contract Schema<T> brand from the ext-schema-zod adapter.
   if ("__zod" in value) return true;
   // defineSchema wrapper without a brand yet — match on the contract surface.
   if ("_output" in value && typeof value.safeParse === "function") return true;

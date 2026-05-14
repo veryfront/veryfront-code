@@ -2,7 +2,7 @@
  * MCP Tools for Veryfront Dev Server
  **************************/
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import {
   type DevError,
@@ -48,7 +48,7 @@ const getGetErrorsInput = defineSchema((v) =>
     ),
   })
 );
-const getErrorsInput = getGetErrorsInput();
+const getErrorsInput = lazySchema(getGetErrorsInput);
 
 type GetErrorsInput = InferSchema<ReturnType<typeof getGetErrorsInput>>;
 
@@ -89,7 +89,7 @@ const getGetLogsInput = defineSchema((v) =>
     ),
   })
 );
-const getLogsInput = getGetLogsInput();
+const getLogsInput = lazySchema(getGetLogsInput);
 
 type GetLogsInput = InferSchema<ReturnType<typeof getGetLogsInput>>;
 
@@ -118,7 +118,7 @@ const getClearCacheInput = defineSchema((v) =>
     ),
   })
 );
-const clearCacheInput = getClearCacheInput();
+const clearCacheInput = lazySchema(getClearCacheInput);
 
 type ClearCacheInput = InferSchema<ReturnType<typeof getClearCacheInput>>;
 
@@ -159,7 +159,7 @@ export const vfClearCache: MCPTool<ClearCacheInput, ClearCacheOutput> = {
 };
 
 const getGetStatusInput = defineSchema((v) => v.object({}));
-const getStatusInput = getGetStatusInput();
+const getStatusInput = lazySchema(getGetStatusInput);
 
 type GetStatusInput = InferSchema<ReturnType<typeof getGetStatusInput>>;
 
@@ -214,7 +214,7 @@ const getClearErrorsInput = defineSchema((v) =>
     ),
   })
 );
-const clearErrorsInput = getClearErrorsInput();
+const clearErrorsInput = lazySchema(getClearErrorsInput);
 
 type ClearErrorsInput = InferSchema<ReturnType<typeof getClearErrorsInput>>;
 

@@ -4,7 +4,7 @@ import { isDeno } from "../runtime.ts";
 import { MemoryKv } from "./memory-adapter.ts";
 import { SqliteKv } from "./sqlite-adapter.ts";
 import type { Kv, SqliteDatabase } from "./types.ts";
-import type { NodeCompat } from "#veryfront/extensions/compat/node-compat.ts";
+import type { SqliteStore } from "#veryfront/extensions/compat/native-services.ts";
 
 interface GlobalWithDenoKv {
   Deno?: {
@@ -26,20 +26,20 @@ export async function openKv(path?: string): Promise<Kv> {
     }
   }
 
-  const nodeCompat = tryResolve<NodeCompat>("NodeCompat");
-  if (nodeCompat?.openSqliteDatabase) {
+  const sqliteStore = tryResolve<SqliteStore>("SqliteStore");
+  if (sqliteStore?.openSqliteDatabase) {
     try {
-      const db = await nodeCompat.openSqliteDatabase(path);
-      // NodeCompatSqliteDatabase is structurally identical to SqliteDatabase;
+      const db = await sqliteStore.openSqliteDatabase(path);
+      // Extension SqliteDatabase is structurally identical to SqliteDatabase;
       // cast to satisfy the SqliteKv constructor's nominal type check.
       return new SqliteKv(db as unknown as SqliteDatabase);
     } catch (error) {
-      serverLogger.debug("NodeCompat.openSqliteDatabase failed, using memory KV:", error);
+      serverLogger.debug("SqliteStore.openSqliteDatabase failed, using memory KV:", error);
     }
   } else {
     serverLogger.debug(
-      "NodeCompat extension not registered — SQLite KV unavailable. " +
-        "Install @veryfront/ext-node-compatibility to enable SQLite-backed KV.",
+      "SqliteStore extension not registered. SQLite KV unavailable. " +
+        "Install @veryfront/ext-db-sqlite to enable SQLite-backed KV.",
     );
   }
 

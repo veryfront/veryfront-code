@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const ISSUE_PREFIXES = ["ISSUE", "TASK", "PLAN"] as const;
@@ -7,25 +7,25 @@ const ISSUE_ID_BODY = `(${ISSUE_PREFIXES.join("|")})-(\\d{3,})`;
 export const ISSUE_ID_PATTERN = new RegExp(`^${ISSUE_ID_BODY}$`);
 
 export const getIssueStateSchema = defineSchema((v) => v.enum(["open", "closed"]));
-export const issueStateSchema = getIssueStateSchema();
+export const issueStateSchema = lazySchema(getIssueStateSchema);
 
 export const getIssuePrefixSchema = defineSchema((v) => v.enum(ISSUE_PREFIXES));
-export const issuePrefixSchema = getIssuePrefixSchema();
+export const issuePrefixSchema = lazySchema(getIssuePrefixSchema);
 
 export const getIssueIdSchema = defineSchema((v) =>
   v.string()
     .regex(ISSUE_ID_PATTERN, "Issue ID must be in format PREFIX-NNN (e.g., ISSUE-001, TASK-042)")
 );
-export const issueIdSchema = getIssueIdSchema();
+export const issueIdSchema = lazySchema(getIssueIdSchema);
 
 export const getLabelSchema = defineSchema((v) => v.string().min(1).max(50));
-export const labelSchema = getLabelSchema();
+export const labelSchema = lazySchema(getLabelSchema);
 
 export const getIsoDateSchema = defineSchema((v) =>
   v.string()
     .refine((val: string) => !Number.isNaN(Date.parse(val)), "Must be a valid ISO 8601 date string")
 );
-export const isoDateSchema = getIsoDateSchema();
+export const isoDateSchema = lazySchema(getIsoDateSchema);
 
 export const getIssueMetadataSchema = defineSchema((v) =>
   v.object({
@@ -39,7 +39,7 @@ export const getIssueMetadataSchema = defineSchema((v) =>
     updated_at: getIsoDateSchema(),
   })
 );
-export const issueMetadataSchema = getIssueMetadataSchema();
+export const issueMetadataSchema = lazySchema(getIssueMetadataSchema);
 
 export const getIssueSchema = defineSchema((v) =>
   v.object({
@@ -48,7 +48,7 @@ export const getIssueSchema = defineSchema((v) =>
     path: v.string(),
   })
 );
-export const issueSchema = getIssueSchema();
+export const issueSchema = lazySchema(getIssueSchema);
 
 export const getCreateIssueSchema = defineSchema((v) =>
   v.object({
@@ -60,7 +60,7 @@ export const getCreateIssueSchema = defineSchema((v) =>
     prefix: getIssuePrefixSchema().optional(),
   })
 );
-export const createIssueSchema = getCreateIssueSchema();
+export const createIssueSchema = lazySchema(getCreateIssueSchema);
 
 export const getUpdateIssueSchema = defineSchema((v) =>
   v.object({
@@ -72,7 +72,7 @@ export const getUpdateIssueSchema = defineSchema((v) =>
     assignees: v.array(v.string()).optional(),
   })
 );
-export const updateIssueSchema = getUpdateIssueSchema();
+export const updateIssueSchema = lazySchema(getUpdateIssueSchema);
 
 export const getListIssuesSchema = defineSchema((v) =>
   v.object({
@@ -86,7 +86,7 @@ export const getListIssuesSchema = defineSchema((v) =>
     limit: v.number().positive().optional(),
   })
 );
-export const listIssuesSchema = getListIssuesSchema();
+export const listIssuesSchema = lazySchema(getListIssuesSchema);
 
 export const getListIssuesResultSchema = defineSchema((v) =>
   v.object({
@@ -94,7 +94,7 @@ export const getListIssuesResultSchema = defineSchema((v) =>
     total: v.number(),
   })
 );
-export const listIssuesResultSchema = getListIssuesResultSchema();
+export const listIssuesResultSchema = lazySchema(getListIssuesResultSchema);
 
 // Inferred types
 export type IssueState = InferSchema<ReturnType<typeof getIssueStateSchema>>;

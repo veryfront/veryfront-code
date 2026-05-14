@@ -8,6 +8,8 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { LayoutComponentCache } from "./utils/component-loader.ts";
 import { applyLayoutsESM, applyLayoutsFunctionBody } from "./utils/applicator.ts";
 import { resolveAppComponentPath } from "./utils/app-resolver.ts";
@@ -365,25 +367,15 @@ export class LayoutApplicator {
     appPath: string,
   ): Promise<BundledReact.ComponentType<Record<string, unknown>> | null> {
     try {
-      const { compile } = await import("@mdx-js/mdx");
-      const { getRehypePlugins, getRemarkPlugins } = await import(
-        "#veryfront/transforms/plugins/plugin-loader.ts"
-      );
-
       const body = source.trim().startsWith("---") ? extract(source).body : source;
 
-      const [remarkPlugins, rehypePlugins] = await Promise.all([
-        getRemarkPlugins(),
-        getRehypePlugins(),
-      ]);
-
-      const compiled = await compile(body, {
-        jsx: true,
-        jsxRuntime: "automatic",
-        jsxImportSource: "react",
-        development: this.mode === "development",
-        remarkPlugins,
-        rehypePlugins,
+      const processor = resolveContract<ContentProcessor>("ContentProcessor");
+      const compiled = await processor.compileMdx({
+        projectDir: this.projectDir,
+        content: body,
+        filePath: appPath,
+        mode: this.mode,
+        target: "server",
       });
 
       const { loadComponentFromSource } = await import(
@@ -391,7 +383,7 @@ export class LayoutApplicator {
       );
 
       return await loadComponentFromSource(
-        String(compiled),
+        compiled.compiledCode,
         appPath.replace(/\.mdx?$/, ".jsx"),
         this.projectDir,
         this.adapter,

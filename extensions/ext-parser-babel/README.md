@@ -1,8 +1,8 @@
 # @veryfront/ext-parser-babel
 
-> **Category:** Build Pipeline | **Contract:** `CodeParser` | **Built-in**
+> **Category:** Build | **Contract:** `CodeParser` | **Built-in**
 
-Provides JavaScript/TypeScript AST parsing, traversal, and code generation for Veryfront, backed by `@babel/parser`, `@babel/traverse`, `@babel/generator`, and `@babel/types`. Used by the transform pipeline and Studio Navigator.
+Provides JavaScript/TypeScript AST parsing, traversal, and JSX source-position injection for Veryfront, backed by `@babel/parser`, `@babel/traverse`, `@babel/generator`, and `@babel/types`. Used by the transform pipeline and Studio Navigator.
 
 ## Registration
 

@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getRuntimeClientTypeSchema = defineSchema((v) =>
@@ -24,11 +24,11 @@ export const getRuntimeClientProfileSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeClientTypeSchema() */
-export const runtimeClientTypeSchema = getRuntimeClientTypeSchema();
+export const runtimeClientTypeSchema = lazySchema(getRuntimeClientTypeSchema);
 /** @deprecated Use getRuntimeClientCapabilitySchema() */
-export const runtimeClientCapabilitySchema = getRuntimeClientCapabilitySchema();
+export const runtimeClientCapabilitySchema = lazySchema(getRuntimeClientCapabilitySchema);
 /** @deprecated Use getRuntimeClientProfileSchema() */
-export const runtimeClientProfileSchema = getRuntimeClientProfileSchema();
+export const runtimeClientProfileSchema = lazySchema(getRuntimeClientProfileSchema);
 
 export type RuntimeClientType = InferSchema<ReturnType<typeof getRuntimeClientTypeSchema>>;
 export type RuntimeClientCapability = InferSchema<

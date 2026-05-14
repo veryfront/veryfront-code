@@ -2,7 +2,7 @@
  * Install/Uninstall command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { installCommand } from "./install.ts";
 import { uninstallCommand } from "./uninstall.ts";
 import { CommonArgs, createArgParser, parseArgsOrThrow } from "#cli/shared/args";
@@ -16,7 +16,7 @@ const getInstallArgsSchema = defineSchema((v) =>
   })
 );
 
-const InstallArgsSchema = getInstallArgsSchema();
+const InstallArgsSchema = lazySchema(getInstallArgsSchema);
 
 export const parseInstallArgs = createArgParser(InstallArgsSchema, {
   target: { keys: ["target", "t"], type: "string" },

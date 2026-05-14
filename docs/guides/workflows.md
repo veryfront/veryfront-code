@@ -86,7 +86,7 @@ All three analysis steps run at the same time. The `"compile"` step waits for al
 ```ts
 parallel("race-check", steps, { strategy: "race" }); // First to finish wins
 parallel("best-effort", steps, { strategy: "allSettled" }); // Continue even if some fail
-parallel("all-required", steps, { strategy: "all" }); // Default — all must succeed
+parallel("all-required", steps, { strategy: "all" }); // Default: all must succeed
 ```
 
 ## Branching
@@ -193,14 +193,17 @@ map("process", (ctx) => ctx.input.urls, [
 
 ```ts
 import { step, workflow } from "veryfront/workflow";
-import { z } from "zod";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getPipelineInput = defineSchema((v) => v.object({ topic: v.string() }));
+const getPipelineOutput = defineSchema((v) => v.object({ article: v.string() }));
 
 export default workflow({
   id: "pipeline",
   description: "Content generation pipeline",
   version: "1.0.0",
-  inputSchema: z.object({ topic: z.string() }),
-  outputSchema: z.object({ article: z.string() }),
+  inputSchema: lazySchema(getPipelineInput),
+  outputSchema: lazySchema(getPipelineOutput),
   timeout: "30m",
   retry: { maxAttempts: 3, backoff: "exponential" },
   steps: ({ input }) => [
@@ -263,9 +266,9 @@ export default function PipelineDashboard() {
 
 ## Next
 
-- [Multi-Agent](./multi-agent.md) — compose agents in workflows and tools
-- [Providers](./providers.md) — configure the LLM providers that power your agents
+- [Multi-Agent](./multi-agent.md): compose agents in workflows and tools
+- [Providers](./providers.md): configure the LLM providers that power your agents
 
 ## Related
 
-- [`veryfront/workflow`](../reference/workflow.md) — workflow API reference
+- [`veryfront/workflow`](../reference/workflow.md): workflow API reference

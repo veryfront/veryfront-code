@@ -16,9 +16,7 @@ describe("build/renderer/utils/plugin-utils", () => {
     it("should flatten nested plugin arrays", () => {
       const pluginA = () => {};
       const pluginB = () => {};
-      const result = normalizePlugins(
-        [[pluginA], [pluginB]] as unknown as import("unified").PluggableList,
-      );
+      const result = normalizePlugins([[pluginA], [pluginB]]);
 
       assertEquals(result, [pluginA, pluginB]);
     });
@@ -26,9 +24,7 @@ describe("build/renderer/utils/plugin-utils", () => {
     it("should pass through a flat array of plugins", () => {
       const pluginA = () => {};
       const pluginB = () => {};
-      const result = normalizePlugins(
-        [pluginA, pluginB] as unknown as import("unified").PluggableList,
-      );
+      const result = normalizePlugins([pluginA, pluginB]);
 
       assertEquals(result, [pluginA, pluginB]);
     });

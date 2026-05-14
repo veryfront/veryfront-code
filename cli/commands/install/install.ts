@@ -5,7 +5,7 @@
 import { dirname, join } from "veryfront/platform/path";
 import { cwd as getCwd } from "veryfront/platform";
 import { exists, mkdir, writeTextFile } from "veryfront/platform";
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { bold, dim, multiSelect, type MultiSelectOption, muted, success, warning } from "#cli/ui";
 import { detectAITools, formatDetectionHint } from "./detect.ts";
@@ -31,7 +31,7 @@ const getTargetFlagSchema = defineSchema((v) =>
     .refine((arr) => arr.length > 0, { message: "No valid targets specified" })
 );
 
-const TargetFlagSchema = getTargetFlagSchema();
+const TargetFlagSchema = lazySchema(getTargetFlagSchema);
 
 export function parseTargetFlag(target: string): AIToolId[] {
   return TargetFlagSchema.parse(target);
@@ -39,7 +39,7 @@ export function parseTargetFlag(target: string): AIToolId[] {
 
 const getAIToolIdArraySchema = defineSchema((v) => v.array(AIToolIdSchema).min(1));
 
-const AIToolIdArraySchema = getAIToolIdArraySchema();
+const AIToolIdArraySchema = lazySchema(getAIToolIdArraySchema);
 
 export async function installTargets(
   targets: AIToolId[],

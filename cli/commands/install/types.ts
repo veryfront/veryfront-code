@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 
 export const getAIToolIdSchema = defineSchema((v) =>
@@ -12,7 +12,7 @@ export const getAIToolIdSchema = defineSchema((v) =>
   ])
 );
 
-export const AIToolIdSchema = getAIToolIdSchema();
+export const AIToolIdSchema = lazySchema(getAIToolIdSchema);
 
 export type AIToolId = InferSchema<ReturnType<typeof getAIToolIdSchema>>;
 
@@ -26,7 +26,7 @@ export const getAIToolSchema = defineSchema((v) =>
   })
 );
 
-export const AIToolSchema = getAIToolSchema();
+export const AIToolSchema = lazySchema(getAIToolSchema);
 
 export type AITool = InferSchema<ReturnType<typeof getAIToolSchema>>;
 
@@ -40,11 +40,11 @@ const getBaseCommandOptionsSchema = defineSchema((v) =>
 );
 
 export const getInstallOptionsSchema = getBaseCommandOptionsSchema;
-export const InstallOptionsSchema = getInstallOptionsSchema();
+export const InstallOptionsSchema = lazySchema(getInstallOptionsSchema);
 export type InstallOptions = InferSchema<ReturnType<typeof getInstallOptionsSchema>>;
 
 export const getUninstallOptionsSchema = getBaseCommandOptionsSchema;
-export const UninstallOptionsSchema = getUninstallOptionsSchema();
+export const UninstallOptionsSchema = lazySchema(getUninstallOptionsSchema);
 export type UninstallOptions = InferSchema<ReturnType<typeof getUninstallOptionsSchema>>;
 
 export const getDetectOptionsSchema = defineSchema((v) =>
@@ -53,6 +53,6 @@ export const getDetectOptionsSchema = defineSchema((v) =>
   })
 );
 
-export const DetectOptionsSchema = getDetectOptionsSchema();
+export const DetectOptionsSchema = lazySchema(getDetectOptionsSchema);
 
 export type DetectOptions = InferSchema<ReturnType<typeof getDetectOptionsSchema>>;

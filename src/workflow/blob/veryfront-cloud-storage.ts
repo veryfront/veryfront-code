@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { agentLogger as logger } from "#veryfront/utils";
 import { API_ERROR, CONFIG_INVALID, INVALID_ARGUMENT } from "#veryfront/errors";
@@ -59,10 +59,10 @@ const getBlobMetadataSchema = defineSchema((v) =>
   })
 );
 
-const UploadCreateResponseSchema = getUploadCreateResponseSchema();
-const UploadMetadataResponseSchema = getUploadMetadataResponseSchema();
-const UploadSignedUrlResponseSchema = getUploadSignedUrlResponseSchema();
-const BlobMetadataSchema = getBlobMetadataSchema();
+const UploadCreateResponseSchema = lazySchema(getUploadCreateResponseSchema);
+const UploadMetadataResponseSchema = lazySchema(getUploadMetadataResponseSchema);
+const UploadSignedUrlResponseSchema = lazySchema(getUploadSignedUrlResponseSchema);
+const BlobMetadataSchema = lazySchema(getBlobMetadataSchema);
 
 type UploadMetadataResponse = InferSchema<ReturnType<typeof getUploadMetadataResponseSchema>>;
 type BlobMetadata = InferSchema<ReturnType<typeof getBlobMetadataSchema>>;

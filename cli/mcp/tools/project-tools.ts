@@ -2,7 +2,7 @@
  * MCP tools for project discovery and analysis.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { FileSystem } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
@@ -35,7 +35,7 @@ const getListRoutesInput = defineSchema((v) =>
     ),
   })
 );
-const listRoutesInput = getListRoutesInput();
+const listRoutesInput = lazySchema(getListRoutesInput);
 
 type ListRoutesInput = InferSchema<ReturnType<typeof getListRoutesInput>>;
 
@@ -79,7 +79,7 @@ const getGetProjectContextInput = defineSchema((v) =>
     ),
   })
 );
-const getProjectContextInput = getGetProjectContextInput();
+const getProjectContextInput = lazySchema(getGetProjectContextInput);
 
 type GetProjectContextInput = InferSchema<ReturnType<typeof getGetProjectContextInput>>;
 
@@ -197,7 +197,7 @@ const getGetComponentTreeInput = defineSchema((v) =>
     ),
   })
 );
-const getComponentTreeInput = getGetComponentTreeInput();
+const getComponentTreeInput = lazySchema(getGetComponentTreeInput);
 
 type GetComponentTreeInput = InferSchema<ReturnType<typeof getGetComponentTreeInput>>;
 
@@ -303,7 +303,7 @@ const getListLocalProjectsInput = defineSchema((v) =>
     ),
   })
 );
-const listLocalProjectsInput = getListLocalProjectsInput();
+const listLocalProjectsInput = lazySchema(getListLocalProjectsInput);
 
 type ListLocalProjectsInput = InferSchema<ReturnType<typeof getListLocalProjectsInput>>;
 

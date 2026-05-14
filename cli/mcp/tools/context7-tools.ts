@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { MCPTool } from "veryfront/mcp";
 import { createContext7ToolSource } from "veryfront/tool";
 
@@ -30,7 +30,7 @@ const c7ResolveLibrary: MCPTool<
     idempotentHint: true,
     openWorldHint: true,
   },
-  inputSchema: defineSchema((v) =>
+  inputSchema: lazySchema(defineSchema((v) =>
     v.object({
       libraryName: v
         .string()
@@ -43,7 +43,7 @@ const c7ResolveLibrary: MCPTool<
           "The question or task you need help with. Used to rank results by relevance.",
         ),
     })
-  )(),
+  )),
   execute: async (input) => {
     if (!isContext7Available()) {
       return {
@@ -78,7 +78,7 @@ const c7QueryDocs: MCPTool<
     idempotentHint: true,
     openWorldHint: true,
   },
-  inputSchema: defineSchema((v) =>
+  inputSchema: lazySchema(defineSchema((v) =>
     v.object({
       libraryId: v
         .string()
@@ -91,7 +91,7 @@ const c7QueryDocs: MCPTool<
           "The question or task you need help with. Be specific and include relevant details.",
         ),
     })
-  )(),
+  )),
   execute: async (input) => {
     if (!isContext7Available()) {
       return {

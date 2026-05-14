@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
@@ -21,7 +21,7 @@ export const getUpArgsSchema = defineSchema((v) =>
   })
 );
 
-export const UpArgsSchema = getUpArgsSchema();
+export const UpArgsSchema = lazySchema(getUpArgsSchema);
 
 export type UpOptions = InferSchema<ReturnType<typeof getUpArgsSchema>>;
 

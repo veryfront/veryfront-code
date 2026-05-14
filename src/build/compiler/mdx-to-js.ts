@@ -1,7 +1,8 @@
-import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "#veryfront/utils";
 import * as esbuild from "veryfront/extensions/bundler";
 import { extract } from "#std/front-matter/yaml.ts";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
@@ -42,7 +43,7 @@ async function extractFrontmatter(
   if (!match?.[1]) return { frontmatter: {}, content: mdxContent };
 
   try {
-    const { parse } = await import("std/yaml/parse.ts");
+    const { parse } = await import("@std/yaml/parse");
     const parsed = parse(match[1]);
     const frontmatter = (parsed && typeof parsed === "object" ? parsed : {}) as MDXFrontmatter;
 
@@ -83,11 +84,13 @@ export async function compileMDXToJS(
 
   const contentWithoutImports = content.replace(/import\s+.*?from\s+['"].*?['"];?\s*/g, "");
 
-  const compiled = await compileMdx(contentWithoutImports, {
-    jsx: true,
-    jsxRuntime: "automatic",
-    jsxImportSource: "react",
-    development: options.mode === "development",
+  const processor = resolveContract<ContentProcessor>("ContentProcessor");
+  const compiled = await processor.compileMdx({
+    projectDir: options.projectDir,
+    content: contentWithoutImports,
+    filePath: mdxPath,
+    mode: options.mode,
+    target: "server",
   });
 
   const componentStubs = imports
@@ -100,7 +103,7 @@ export async function compileMDXToJS(
     })
     .join("\n");
 
-  const compiledBody = String(compiled.value)
+  const compiledBody = compiled.compiledCode
     .replace(/export\s+{\s*\w+\s+as\s+default\s*}/g, "")
     .replace(/export\s+default\s+/g, "");
 

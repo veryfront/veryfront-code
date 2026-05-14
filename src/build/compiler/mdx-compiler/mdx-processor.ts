@@ -1,8 +1,6 @@
-import { compile as compileMdx, type CompileOptions as MDXCompileOptions } from "@mdx-js/mdx";
-import { getRehypePlugins, getRemarkPlugins } from "#veryfront/transforms/plugins/plugin-loader.ts";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import type { CompileOptions } from "./types.ts";
-
-type MDXPluggable = NonNullable<MDXCompileOptions["remarkPlugins"]>[number];
 
 interface ProcessedMDX {
   code: string;
@@ -10,24 +8,15 @@ interface ProcessedMDX {
 }
 
 export async function compileMDX(content: string, options: CompileOptions): Promise<ProcessedMDX> {
-  const [remarkPlugins, rehypePlugins] = await Promise.all([
-    getRemarkPlugins(),
-    getRehypePlugins(),
-  ]);
-
-  const compiled = await compileMdx(content, {
-    outputFormat: "program",
-    jsx: true,
-    jsxRuntime: "automatic",
-    jsxImportSource: "react",
-    development: options.mode === "development",
-    remarkPlugins: remarkPlugins as MDXPluggable[],
-    rehypePlugins: rehypePlugins as MDXPluggable[],
+  const processor = resolveContract<ContentProcessor>("ContentProcessor");
+  const compiled = await processor.compileMdx({
+    projectDir: options.projectDir,
+    content,
+    mode: options.mode,
+    target: "server",
   });
 
-  const code = String(compiled.value);
-
-  return { code, imports: extractImports(code) };
+  return { code: compiled.compiledCode, imports: extractImports(compiled.compiledCode) };
 }
 
 function extractImports(code: string): string[] {

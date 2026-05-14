@@ -1,4 +1,5 @@
-import { z } from "zod";
+import { defineSchema } from "../../schemas/define.ts";
+import { lazySchema } from "../../schemas/lazy.ts";
 import {
   createHostedProjectSteeringAdapter,
   type HostedProjectSkillIdsContext,
@@ -20,19 +21,28 @@ import type { RuntimeProjectSteeringLookup } from "../runtime/project-skill-cata
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 
-const runtimeAgentFileIdSchema = z.string().min(1).regex(/^[A-Za-z0-9._-]+$/);
-const runtimeAgentDefinitionFileNameSchema = z.string().min(1).regex(/^[A-Za-z0-9._-]+\.md$/);
+export type HostedAgentProjectSteeringOptionsData = {
+  baseDir: string;
+  agentId: string;
+  fileName?: string;
+  skillsDir?: string;
+};
 
-export const hostedAgentProjectSteeringOptionsSchema = z.object({
-  baseDir: z.string().min(1),
-  agentId: runtimeAgentFileIdSchema,
-  fileName: runtimeAgentDefinitionFileNameSchema.optional(),
-  skillsDir: z.string().min(1).optional(),
-});
+export const hostedAgentProjectSteeringOptionsSchema = lazySchema(
+  defineSchema<HostedAgentProjectSteeringOptionsData>((v) => {
+    const runtimeAgentFileIdSchema = v.string().min(1).regex(/^[A-Za-z0-9._-]+$/);
+    const runtimeAgentDefinitionFileNameSchema = v.string().min(1).regex(
+      /^[A-Za-z0-9._-]+\.md$/,
+    );
 
-export type HostedAgentProjectSteeringOptionsData = z.infer<
-  typeof hostedAgentProjectSteeringOptionsSchema
->;
+    return v.object({
+      baseDir: v.string().min(1),
+      agentId: runtimeAgentFileIdSchema,
+      fileName: runtimeAgentDefinitionFileNameSchema.optional(),
+      skillsDir: v.string().min(1).optional(),
+    });
+  }),
+);
 
 export type HostedAgentProjectSteeringLogger = HostedProjectSteeringLogger & {
   error?: (message: string, metadata?: Record<string, unknown>) => void;

@@ -1,7 +1,7 @@
 /**
  * Contract interface for schema validation.
  *
- * Default implementation: `@veryfront/ext-zod`
+ * Default implementation: `@veryfront/ext-schema-zod`
  *
  * The interface exposes a small DSL (inspired by zod) that lets core modules
  * declare validation schemas without importing zod directly. Schemas are

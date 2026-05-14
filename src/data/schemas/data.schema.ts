@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 /** Context passed to data fetching functions */
@@ -62,9 +62,9 @@ export type CacheEntry<T = unknown> = InferSchema<ReturnType<typeof getCacheEntr
 };
 
 // Backward compat aliases
-export const DataContextSchema = getDataContextSchema();
-export const RedirectSchema = getRedirectSchema();
-export const DataResultSchema = getDataResultSchema();
-export const StaticPathEntrySchema = getStaticPathEntrySchema();
-export const StaticPathsResultSchema = getStaticPathsResultSchema();
-export const CacheEntrySchema = getCacheEntrySchema();
+export const DataContextSchema = lazySchema(getDataContextSchema);
+export const RedirectSchema = lazySchema(getRedirectSchema);
+export const DataResultSchema = lazySchema(getDataResultSchema);
+export const StaticPathEntrySchema = lazySchema(getStaticPathEntrySchema);
+export const StaticPathsResultSchema = lazySchema(getStaticPathsResultSchema);
+export const CacheEntrySchema = lazySchema(getCacheEntrySchema);

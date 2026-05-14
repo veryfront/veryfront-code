@@ -6,7 +6,7 @@
     "extension": true,
     "capabilities": [
       { "type": "contract", "name": "AuthProvider" },
-      { "type": "network", "host": "*" }
+      { "type": "net:outbound", "hosts": ["*"] }
     ]
   },
   "imports": {

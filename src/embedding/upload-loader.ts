@@ -1,12 +1,12 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import type { NodeCompat } from "#veryfront/extensions/compat/node-compat.ts";
+import type { DocumentExtractor } from "#veryfront/extensions/compat/native-services.ts";
 
 /**
  * Extracts plain text from various upload formats.
  *
  * Text and CSV are handled inline (CSV uses a RAG-optimized format that
  * denormalizes headers into every row). All other formats (PDF, DOCX, XLSX,
- * PPTX, HTML, RTF, EPUB, etc.) are delegated to the `NodeCompat` extension
+ * PPTX, HTML, RTF, EPUB, etc.) are delegated to the `DocumentExtractor` extension
  * contract, which owns kreuzberg and the Worker isolation on Deno.
  *
  * @example
@@ -20,7 +20,7 @@ export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise
     return extractCSV(buffer);
   }
 
-  // Plain text and markdown — no extraction needed
+  // Plain text and markdown, no extraction needed.
   if (
     mimeType === "text/plain" ||
     mimeType === "text/markdown" ||
@@ -29,17 +29,17 @@ export async function loadUpload(buffer: ArrayBuffer, mimeType: string): Promise
     return new TextDecoder().decode(buffer);
   }
 
-  // Everything else (PDF, DOCX, XLSX, PPTX, HTML, XML, etc.) → NodeCompat.
+  // Everything else (PDF, DOCX, XLSX, PPTX, HTML, XML, etc.) uses DocumentExtractor.
   // Synchronous registry check so the missing-extension error surfaces
   // directly from `loadUpload()` rather than through a spawned Worker.
-  const nodeCompat = tryResolve<NodeCompat>("NodeCompat");
-  if (!nodeCompat?.extractInWorker) {
+  const extractor = tryResolve<DocumentExtractor>("DocumentExtractor");
+  if (!extractor?.extractInWorker) {
     throw new Error(
-      "Document extraction requires the NodeCompat extension. " +
-        "Install @veryfront/ext-node-compatibility and add it to your extensions configuration.",
+      "Document extraction requires a DocumentExtractor extension. " +
+        "Install @veryfront/ext-document-kreuzberg and add it to your extensions configuration.",
     );
   }
-  return nodeCompat.extractInWorker(buffer, mimeType);
+  return extractor.extractInWorker(buffer, mimeType);
 }
 
 function extractCSV(buffer: ArrayBuffer): string {

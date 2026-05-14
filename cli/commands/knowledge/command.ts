@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 type SafeParseResult<T> = { success: true; data: T } | {
   success: false;
@@ -115,7 +115,7 @@ const getKnowledgeIngestArgsSchema = defineSchema((v) =>
   })
 );
 
-const KnowledgeIngestArgsSchema = getKnowledgeIngestArgsSchema();
+const KnowledgeIngestArgsSchema = lazySchema(getKnowledgeIngestArgsSchema);
 
 export type KnowledgeIngestOptions = InferSchema<ReturnType<typeof getKnowledgeIngestArgsSchema>>;
 

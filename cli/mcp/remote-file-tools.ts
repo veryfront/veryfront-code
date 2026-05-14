@@ -9,7 +9,7 @@
  * API Base: Configurable via VERYFRONT_API_BASE_URL (default: https://api.veryfront.com)
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "./tools.ts";
 import { getEnvironmentConfig } from "veryfront/config";
@@ -176,7 +176,7 @@ const getRemoteListFilesInput = defineSchema((v) =>
     ),
   })
 );
-const remoteListFilesInput = getRemoteListFilesInput();
+const remoteListFilesInput = lazySchema(getRemoteListFilesInput);
 
 type RemoteListFilesInput = InferSchema<ReturnType<typeof getRemoteListFilesInput>>;
 
@@ -231,7 +231,7 @@ const getRemoteGetFileInput = defineSchema((v) =>
     branch: v.string().optional().describe("Branch name (omit for main branch)"),
   })
 );
-const remoteGetFileInput = getRemoteGetFileInput();
+const remoteGetFileInput = lazySchema(getRemoteGetFileInput);
 
 type RemoteGetFileInput = InferSchema<ReturnType<typeof getRemoteGetFileInput>>;
 
@@ -280,7 +280,7 @@ const getRemoteUpdateFileInput = defineSchema((v) =>
     branch: v.string().optional().describe("Branch name (omit for main branch)"),
   })
 );
-const remoteUpdateFileInput = getRemoteUpdateFileInput();
+const remoteUpdateFileInput = lazySchema(getRemoteUpdateFileInput);
 
 type RemoteUpdateFileInput = InferSchema<ReturnType<typeof getRemoteUpdateFileInput>>;
 
@@ -337,7 +337,7 @@ const getRemoteDeleteFileInput = defineSchema((v) =>
     branch: v.string().optional().describe("Branch name (omit for main branch)"),
   })
 );
-const remoteDeleteFileInput = getRemoteDeleteFileInput();
+const remoteDeleteFileInput = lazySchema(getRemoteDeleteFileInput);
 
 type RemoteDeleteFileInput = InferSchema<ReturnType<typeof getRemoteDeleteFileInput>>;
 
@@ -382,7 +382,7 @@ const getRemoteSearchFilesInput = defineSchema((v) =>
     branch: v.string().optional().describe("Branch name (omit for main branch)"),
   })
 );
-const remoteSearchFilesInput = getRemoteSearchFilesInput();
+const remoteSearchFilesInput = lazySchema(getRemoteSearchFilesInput);
 
 type RemoteSearchFilesInput = InferSchema<ReturnType<typeof getRemoteSearchFilesInput>>;
 
@@ -439,7 +439,7 @@ const getRemoteMoveFileInput = defineSchema((v) =>
     branch: v.string().optional().describe("Branch name (omit for main branch)"),
   })
 );
-const remoteMoveFileInput = getRemoteMoveFileInput();
+const remoteMoveFileInput = lazySchema(getRemoteMoveFileInput);
 
 type RemoteMoveFileInput = InferSchema<ReturnType<typeof getRemoteMoveFileInput>>;
 
@@ -496,7 +496,7 @@ const getRemoteListBranchesInput = defineSchema((v) =>
     ),
   })
 );
-const remoteListBranchesInput = getRemoteListBranchesInput();
+const remoteListBranchesInput = lazySchema(getRemoteListBranchesInput);
 
 type RemoteListBranchesInput = InferSchema<ReturnType<typeof getRemoteListBranchesInput>>;
 
@@ -538,7 +538,7 @@ const getRemoteCreateBranchInput = defineSchema((v) =>
     ),
   })
 );
-const remoteCreateBranchInput = getRemoteCreateBranchInput();
+const remoteCreateBranchInput = lazySchema(getRemoteCreateBranchInput);
 
 type RemoteCreateBranchInput = InferSchema<ReturnType<typeof getRemoteCreateBranchInput>>;
 
@@ -578,7 +578,7 @@ const getRemoteMergeBranchInput = defineSchema((v) =>
     ),
   })
 );
-const remoteMergeBranchInput = getRemoteMergeBranchInput();
+const remoteMergeBranchInput = lazySchema(getRemoteMergeBranchInput);
 
 type RemoteMergeBranchInput = InferSchema<ReturnType<typeof getRemoteMergeBranchInput>>;
 
@@ -631,7 +631,7 @@ const getRemoteDeleteBranchInput = defineSchema((v) =>
     branch_id: v.string().describe("Branch ID to delete"),
   })
 );
-const remoteDeleteBranchInput = getRemoteDeleteBranchInput();
+const remoteDeleteBranchInput = lazySchema(getRemoteDeleteBranchInput);
 
 type RemoteDeleteBranchInput = InferSchema<ReturnType<typeof getRemoteDeleteBranchInput>>;
 
@@ -677,7 +677,7 @@ const getRemoteCreateProjectInput = defineSchema((v) =>
     is_public: v.boolean().optional().describe("Whether the project is public (default: false)"),
   })
 );
-const remoteCreateProjectInput = getRemoteCreateProjectInput();
+const remoteCreateProjectInput = lazySchema(getRemoteCreateProjectInput);
 
 type RemoteCreateProjectInput = InferSchema<ReturnType<typeof getRemoteCreateProjectInput>>;
 
@@ -719,7 +719,7 @@ const getRemoteCloneProjectInput = defineSchema((v) =>
     ),
   })
 );
-const remoteCloneProjectInput = getRemoteCloneProjectInput();
+const remoteCloneProjectInput = lazySchema(getRemoteCloneProjectInput);
 
 type RemoteCloneProjectInput = InferSchema<ReturnType<typeof getRemoteCloneProjectInput>>;
 

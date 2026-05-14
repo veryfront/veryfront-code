@@ -1,0 +1,20 @@
+{
+  "name": "@veryfront/ext-db-sqlite",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "veryfront": {
+    "extension": true,
+    "capabilities": [
+      { "type": "contract", "name": "SqliteStore" },
+      { "type": "fs:read" },
+      { "type": "fs:write" }
+    ]
+  },
+  "imports": {
+    "better-sqlite3": "npm:better-sqlite3@9.6.0",
+    "@types/better-sqlite3": "npm:@types/better-sqlite3@7.6.13"
+  },
+  "tasks": {
+    "test": "deno test --no-check --allow-all src/"
+  }
+}

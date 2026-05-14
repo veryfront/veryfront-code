@@ -2,7 +2,7 @@
  * Lock command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { lockCommand } from "./command.ts";
 import { createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -19,7 +19,7 @@ const getLockArgsSchema = defineSchema((v) =>
   })
 );
 
-const LockArgsSchema = getLockArgsSchema();
+const LockArgsSchema = lazySchema(getLockArgsSchema);
 
 const parseLockArgs = createArgParser(LockArgsSchema, {
   projectDir: { keys: ["project"], type: "string" },

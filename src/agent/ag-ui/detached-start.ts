@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 import { streamDataStreamEvents } from "../data-stream.ts";
@@ -88,9 +88,9 @@ export const getAgUiDetachedStartAcceptedSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAgUiDetachedStartRequestSchema() */
-export const AgUiDetachedStartRequestSchema = getAgUiDetachedStartRequestSchema();
+export const AgUiDetachedStartRequestSchema = lazySchema(getAgUiDetachedStartRequestSchema);
 /** @deprecated Use getAgUiDetachedStartAcceptedSchema() */
-export const AgUiDetachedStartAcceptedSchema = getAgUiDetachedStartAcceptedSchema();
+export const AgUiDetachedStartAcceptedSchema = lazySchema(getAgUiDetachedStartAcceptedSchema);
 
 export type AgUiDetachedStartRequest = InferSchema<
   ReturnType<typeof getAgUiDetachedStartRequestSchema>

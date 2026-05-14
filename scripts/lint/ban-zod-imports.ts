@@ -1,4 +1,4 @@
-import { walk } from "@std/fs";
+import { walk } from "jsr:@std/fs";
 
 export interface IllegalImport {
   path: string;
@@ -7,7 +7,7 @@ export interface IllegalImport {
 
 export function shouldCheckZodImportPath(path: string): boolean {
   const normalized = path.replaceAll("\\", "/").replace(/^\.\//, "");
-  if (normalized.startsWith("extensions/ext-zod/")) return false;
+  if (normalized.startsWith("extensions/ext-schema-zod/")) return false;
   if (normalized.startsWith("cli/templates/")) return false;
   return normalized.startsWith("src/") || normalized.startsWith("cli/");
 }
@@ -67,7 +67,7 @@ if (import.meta.main) {
         /^\.\/projects(?:\/|$)/,
         /^\.\/data(?:\/|$)/,
         /^\.\/cli\/templates(?:\/|$)/,
-        /^\.\/extensions\/(?!ext-zod(?:\/|$))/,
+        /^\.\/extensions\/(?!ext-schema-zod(?:\/|$))/,
       ],
     })
   ) {

@@ -1,6 +1,6 @@
 # @veryfront/ext-cache-redis
 
-> **Category:** Infrastructure | **Contract:** `TokenCacheStore` | **Optional**
+> **Category:** Storage | **Contract:** `TokenCacheStore` | **Optional**
 
 Provides Redis-backed token and cache persistence for Veryfront. Used by the proxy to persist OAuth tokens across processes — the in-memory fallback works for a single-process dev server but loses tokens on restart and doesn't share across workers.
 

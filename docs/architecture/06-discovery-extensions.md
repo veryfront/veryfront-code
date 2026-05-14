@@ -113,7 +113,8 @@ graph TB
         EmbeddingProvider["EmbeddingProvider"]
         CodeParser["CodeParser"]
         SchemaValidator["SchemaValidator"]
-        NodeCompat["NodeCompat"]
+        DocumentExtractor["DocumentExtractor"]
+        SqliteStore["SqliteStore"]
     end
 
     subgraph ContractSystem["Contract System"]
@@ -157,7 +158,7 @@ The extension system currently provides:
 - **Contract Registry:** The runtime registry is currently a small in-memory contract map with `register()`, `resolve()`, `tryResolve()`, and `reset()`.
 - **Recommendations:** Some contract names map to recommended first-party extension packages via `getRecommendation()`, which is used to improve missing-contract errors.
 
-Current first-party extension packages: `@veryfront/ext-zod` (SchemaValidator), `@veryfront/ext-llm-anthropic` (LLMProvider), `@veryfront/ext-llm-google` (LLMProvider), `@veryfront/ext-llm-openai` (LLMProvider), `@veryfront/ext-auth-jwt` (AuthProvider), `@veryfront/ext-bundler-esbuild` (Bundler + ModuleLexer), `@veryfront/ext-cache-redis` (TokenCacheStore), `@veryfront/ext-css-tailwind` (CSSProcessor), `@veryfront/ext-node-compatibility` (NodeCompat), `@veryfront/ext-parser-babel` (CodeParser), `@veryfront/ext-tracing-opentelemetry` (TracingExporter), `@veryfront/ext-transform-mdx` (ContentProcessor).
+Current first-party extension packages: `@veryfront/ext-schema-zod` (SchemaValidator), `@veryfront/ext-llm-anthropic` (LLMProvider), `@veryfront/ext-llm-google` (LLMProvider), `@veryfront/ext-llm-openai` (LLMProvider), `@veryfront/ext-auth-jwt` (AuthProvider), `@veryfront/ext-bundler-esbuild` (Bundler + ModuleLexer), `@veryfront/ext-cache-redis` (TokenCacheStore), `@veryfront/ext-css-tailwind` (CSSProcessor), `@veryfront/ext-document-kreuzberg` (DocumentExtractor), `@veryfront/ext-db-sqlite` (SqliteStore), `@veryfront/ext-parser-babel` (CodeParser), `@veryfront/ext-tracing-opentelemetry` (TracingExporter), `@veryfront/ext-content-mdx` (ContentProcessor).
 
 ---
 

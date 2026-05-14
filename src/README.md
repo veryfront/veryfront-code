@@ -644,7 +644,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 **Exports**: `#veryfront/schemas`
 
-- `defineSchema` DSL backed by `@veryfront/ext-zod`
+- `defineSchema` DSL backed by `@veryfront/ext-schema-zod`
 - Common cross-module validators (email, URL, pagination)
 - Primitive validators (non-empty string, positive int)
 - Schema-first type inference pattern

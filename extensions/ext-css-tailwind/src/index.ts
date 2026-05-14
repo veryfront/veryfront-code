@@ -59,7 +59,7 @@ const extTailwind: ExtensionFactory = () => {
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "CSSProcessor" },
-      { type: "net", hosts: ["esm.sh"] },
+      { type: "net:outbound", hosts: ["esm.sh"] },
     ],
     setup(ctx) {
       installTailwindPluginShims();

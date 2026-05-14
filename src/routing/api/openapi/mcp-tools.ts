@@ -10,7 +10,7 @@
 import { dynamicTool } from "#veryfront/tool";
 import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { logger as baseLogger } from "#veryfront/utils";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import type { OpenAPIOperation, OpenAPIParameter, OpenAPISpec } from "./types.ts";
 
@@ -87,7 +87,7 @@ function buildToolDescription(operation: OpenAPIOperation, method: string, path:
 }
 
 function buildInputSchema(operation: OpenAPIOperation): Schema<unknown> {
-  return defineSchema((v) => {
+  return lazySchema(defineSchema((v) => {
     const shape: Record<string, Schema<unknown>> = {};
     const params = operation.parameters ?? [];
 
@@ -104,7 +104,7 @@ function buildInputSchema(operation: OpenAPIOperation): Schema<unknown> {
     }
 
     return v.object(shape);
-  })();
+  }));
 }
 
 function addParamGroup(

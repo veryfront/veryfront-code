@@ -2,7 +2,7 @@
  * Analyze chunks command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { cwd } from "veryfront/platform";
 import { analyzeChunksCommand } from "./command.ts";
 import { showLogo } from "#cli/utils";
@@ -16,7 +16,7 @@ const getAnalyzeChunksArgsSchema = defineSchema((v) =>
   })
 );
 
-const AnalyzeChunksArgsSchema = getAnalyzeChunksArgsSchema();
+const AnalyzeChunksArgsSchema = lazySchema(getAnalyzeChunksArgsSchema);
 
 export const parseAnalyzeChunksArgs = createArgParser(AnalyzeChunksArgsSchema, {
   projectDir: CommonArgs.projectDir,

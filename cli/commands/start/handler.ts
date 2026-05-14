@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { startCommand } from "./command.ts";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -15,7 +15,7 @@ const getStartArgsSchema = defineSchema((v) =>
   })
 );
 
-const StartArgsSchema = getStartArgsSchema();
+const StartArgsSchema = lazySchema(getStartArgsSchema);
 
 export const parseStartArgs = createArgParser(StartArgsSchema, {
   port: { keys: ["port", "p"], type: "number" },

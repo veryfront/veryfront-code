@@ -2,7 +2,7 @@
  * Transforms Plugins
  *
  * `getRemarkPlugins` / `getRehypePlugins` are thin shims that resolve the
- * `ContentProcessor` contract (default implementation: `@veryfront/ext-transform-mdx`).
+ * `ContentProcessor` contract (default implementation: `@veryfront/ext-content-mdx`).
  * The actual plugin modules (remark-headings, remark-mdx-utils, rehype-mermaid,
  * rehype-node-positions) now live inside the extension.
  *

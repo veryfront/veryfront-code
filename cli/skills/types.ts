@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 
 export const getSkillManifestSchema = defineSchema((v) =>
@@ -24,7 +24,7 @@ export const getSkillManifestSchema = defineSchema((v) =>
       .optional(),
   })
 );
-export const SkillManifestSchema = getSkillManifestSchema();
+export const SkillManifestSchema = lazySchema(getSkillManifestSchema);
 
 export type SkillManifest = InferSchema<ReturnType<typeof getSkillManifestSchema>>;
 

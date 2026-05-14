@@ -16,22 +16,28 @@
  * Token needs `contents: write` permission.
  */
 
-import { parseLock, parseNameVersion, purl } from "../lib/deno-lock.ts";
+import {
+  canonicalNpmKey,
+  npmNameFromSpecifier,
+  parseLock,
+  parseNameVersion,
+  purl,
+} from "../lib/deno-lock.ts";
 
-interface ResolvedDependency {
+export interface ResolvedDependency {
   package_url: string;
   relationship: "direct" | "indirect";
   scope: "runtime" | "development";
   dependencies?: string[];
 }
 
-interface Manifest {
+export interface Manifest {
   name: string;
   file: { source_location: string };
   resolved: Record<string, ResolvedDependency>;
 }
 
-interface Snapshot {
+export interface Snapshot {
   version: 0;
   sha: string;
   ref: string;
@@ -47,6 +53,172 @@ const DETECTOR = {
   url: "https://github.com/veryfront/veryfront-code",
 } as const;
 
+type NpmEntries = NonNullable<ReturnType<typeof parseLock>["npm"]>;
+
+export interface ManifestGenerationOptions {
+  workspaceMembers?: string[];
+}
+
+function buildVersionsByName(npm: NpmEntries): Map<string, string[]> {
+  const keysByName = new Map<string, string[]>();
+  for (const key of Object.keys(npm).sort()) {
+    const nv = parseNameVersion(key);
+    if (!nv) continue;
+    const keys = keysByName.get(nv.name) ?? [];
+    keys.push(key);
+    keysByName.set(nv.name, keys);
+  }
+  return keysByName;
+}
+
+function buildSpecifierToNpmKey(
+  specifiers: Record<string, string>,
+  npm: NpmEntries,
+): Map<string, string> {
+  const npmKeys = new Set(Object.keys(npm));
+  const keyBySpecifier = new Map<string, string>();
+  for (const [specifier, resolvedVersion] of Object.entries(specifiers)) {
+    const name = npmNameFromSpecifier(specifier);
+    if (!name) continue;
+    const exactKey = `${name}@${resolvedVersion}`;
+    if (npmKeys.has(exactKey)) {
+      keyBySpecifier.set(specifier, exactKey);
+      continue;
+    }
+
+    const fallback = Object.keys(npm).find((key) => {
+      const nv = parseNameVersion(key);
+      return nv?.name === name && nv.version === resolvedVersion;
+    });
+    if (fallback) keyBySpecifier.set(specifier, fallback);
+  }
+  return keyBySpecifier;
+}
+
+function resolveDepKeys(
+  depKey: string,
+  npm: NpmEntries,
+  keysByName: Map<string, string[]>,
+): string[] {
+  if (npm[depKey]) return [depKey];
+
+  const canonical = canonicalNpmKey(depKey);
+  if (canonical) {
+    return Object.keys(npm)
+      .filter((key) => canonicalNpmKey(key) === canonical)
+      .sort();
+  }
+
+  return [...(keysByName.get(depKey) ?? [])].sort();
+}
+
+function collectReachableNpmKeys(
+  directKeys: string[],
+  npm: NpmEntries,
+  keysByName: Map<string, string[]>,
+): string[] {
+  const seen = new Set<string>();
+  const queue = [...directKeys].sort();
+
+  for (let index = 0; index < queue.length; index++) {
+    const key = queue[index];
+    if (seen.has(key) || !npm[key]) continue;
+    seen.add(key);
+
+    const dependencies = [...(npm[key].dependencies ?? [])].sort();
+    for (const depKey of dependencies) {
+      for (const resolvedKey of resolveDepKeys(depKey, npm, keysByName)) {
+        if (!seen.has(resolvedKey)) queue.push(resolvedKey);
+      }
+    }
+  }
+
+  return [...seen].sort((a, b) => {
+    const left = canonicalNpmKey(a) ?? a;
+    const right = canonicalNpmKey(b) ?? b;
+    return left.localeCompare(right) || a.localeCompare(b);
+  });
+}
+
+function dependencyEdges(
+  key: string,
+  npm: NpmEntries,
+  keysByName: Map<string, string[]>,
+): Pick<ResolvedDependency, "dependencies"> {
+  const dependencies = new Set<string>();
+  for (const depKey of npm[key]?.dependencies ?? []) {
+    for (const resolvedKey of resolveDepKeys(depKey, npm, keysByName)) {
+      const nv = parseNameVersion(resolvedKey);
+      if (nv) dependencies.add(purl(nv.name, nv.version));
+    }
+  }
+
+  const sorted = [...dependencies].sort();
+  return sorted.length ? { dependencies: sorted } : {};
+}
+
+export function manifestsFromLock(
+  lockText: string,
+  _ctx: { sha: string; ref: string; correlator: string; runId: string },
+  options: ManifestGenerationOptions = {},
+): Record<string, Manifest> {
+  const lock = parseLock(lockText);
+  const npm = lock.npm ?? {};
+  const manifests: Record<string, Manifest> = {};
+
+  const keysByName = buildVersionsByName(npm);
+  const specifierToKey = buildSpecifierToNpmKey(lock.specifiers ?? {}, npm);
+
+  const addManifest = (sourceLocation: string, directSpecifiers: string[]) => {
+    const directKeys = directSpecifiers
+      .map((specifier) => specifierToKey.get(specifier))
+      .filter((key): key is string => typeof key === "string");
+    const reachable = collectReachableNpmKeys(directKeys, npm, keysByName);
+    const directCanonical = new Set(
+      directKeys
+        .map((key) => canonicalNpmKey(key))
+        .filter((key): key is string => typeof key === "string"),
+    );
+    const resolved: Record<string, ResolvedDependency> = {};
+
+    for (const key of reachable) {
+      const nv = parseNameVersion(key);
+      if (!nv) continue;
+      const canonical = `${nv.name}@${nv.version}`;
+      resolved[canonical] = {
+        package_url: purl(nv.name, nv.version),
+        relationship: directCanonical.has(canonical) ? "direct" : "indirect",
+        scope: "runtime",
+        ...dependencyEdges(key, npm, keysByName),
+      };
+    }
+
+    manifests[sourceLocation] = {
+      name: sourceLocation,
+      file: { source_location: sourceLocation },
+      resolved,
+    };
+  };
+
+  const workspaceDependencies = lock.workspace?.dependencies ??
+    Object.keys(lock.specifiers ?? {});
+  addManifest("deno.json", workspaceDependencies);
+  const memberDependencies = new Map(Object.entries(lock.workspace?.members ?? {}));
+  for (const memberPath of options.workspaceMembers ?? []) {
+    if (!memberDependencies.has(memberPath)) {
+      memberDependencies.set(memberPath, { dependencies: [] });
+    }
+  }
+
+  for (const [memberPath, member] of [...memberDependencies].sort(([left], [right]) =>
+    left.localeCompare(right)
+  )) {
+    addManifest(`${memberPath}/deno.json`, member.dependencies ?? []);
+  }
+
+  return manifests;
+}
+
 export function snapshotFromLock(
   lockText: string,
   ctx: {
@@ -55,60 +227,9 @@ export function snapshotFromLock(
     correlator: string;
     runId: string;
   },
+  options: ManifestGenerationOptions = {},
 ): Snapshot {
-  const lock = parseLock(lockText);
-  const npm = lock.npm ?? {};
-  const directKeys = new Set<string>();
-  for (const [spec, resolvedVersion] of Object.entries(lock.specifiers ?? {})) {
-    if (!spec.startsWith("npm:")) continue;
-    const bare = spec.slice("npm:".length);
-    const lastAt = bare.lastIndexOf("@");
-    if (lastAt <= 0) continue;
-    const name = bare.slice(0, lastAt);
-    directKeys.add(`${name}@${resolvedVersion}`);
-  }
-
-  // Deno v5 lockfiles use bare child names ("zod") instead of "zod@x.y.z" for
-  // most transitive edges. Build a name → versions index so we can resolve
-  // them. When a name has multiple resolved versions we emit edges to all of
-  // them — over-approximating preserves reachability for vuln correlation.
-  const versionsByName = new Map<string, Set<string>>();
-  for (const key of Object.keys(npm)) {
-    const nv = parseNameVersion(key);
-    if (!nv) continue;
-    let versions = versionsByName.get(nv.name);
-    if (!versions) {
-      versions = new Set();
-      versionsByName.set(nv.name, versions);
-    }
-    versions.add(nv.version);
-  }
-
-  function resolveDepEdge(depKey: string): string[] {
-    const qualified = parseNameVersion(depKey);
-    if (qualified) return [purl(qualified.name, qualified.version)];
-    const versions = versionsByName.get(depKey);
-    if (!versions) return [];
-    return [...versions].map((v) => purl(depKey, v));
-  }
-
-  const resolved: Record<string, ResolvedDependency> = {};
-  for (const [key, info] of Object.entries(npm)) {
-    const nv = parseNameVersion(key);
-    if (!nv) continue;
-
-    const deps: string[] = [];
-    for (const depKey of info.dependencies ?? []) {
-      for (const purlStr of resolveDepEdge(depKey)) deps.push(purlStr);
-    }
-
-    resolved[`${nv.name}@${nv.version}`] = {
-      package_url: purl(nv.name, nv.version),
-      relationship: directKeys.has(key) ? "direct" : "indirect",
-      scope: "runtime",
-      ...(deps.length ? { dependencies: deps } : {}),
-    };
-  }
+  const manifests = manifestsFromLock(lockText, ctx, options);
 
   return {
     version: 0,
@@ -117,13 +238,7 @@ export function snapshotFromLock(
     job: { correlator: ctx.correlator, id: ctx.runId },
     detector: DETECTOR,
     scanned: new Date().toISOString(),
-    manifests: {
-      "deno.lock": {
-        name: "deno.lock",
-        file: { source_location: "deno.lock" },
-        resolved,
-      },
-    },
+    manifests,
   };
 }
 
@@ -131,6 +246,19 @@ function requireEnv(name: string): string {
   const v = Deno.env.get(name);
   if (!v) throw new Error(`Missing required env var: ${name}`);
   return v;
+}
+
+function normalizeWorkspaceMemberPath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+}
+
+function workspaceMembersFromDenoConfig(config: { workspace?: unknown }): string[] {
+  if (!Array.isArray(config.workspace)) return [];
+  return config.workspace
+    .filter((entry): entry is string => typeof entry === "string")
+    .map(normalizeWorkspaceMemberPath)
+    .filter((entry) => entry.length > 0)
+    .sort();
 }
 
 if (import.meta.main) {
@@ -144,10 +272,18 @@ if (import.meta.main) {
   }`;
 
   const lockText = await Deno.readTextFile("deno.lock");
-  const snapshot = snapshotFromLock(lockText, { sha, ref, correlator, runId });
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+  const snapshot = snapshotFromLock(
+    lockText,
+    { sha, ref, correlator, runId },
+    { workspaceMembers: workspaceMembersFromDenoConfig(denoConfig) },
+  );
 
-  const componentCount = Object.keys(snapshot.manifests["deno.lock"].resolved)
-    .length;
+  const componentCount = Object.values(snapshot.manifests)
+    .reduce(
+      (total, manifest) => total + Object.keys(manifest.resolved).length,
+      0,
+    );
 
   const res = await fetch(
     `https://api.github.com/repos/${repo}/dependency-graph/snapshots`,

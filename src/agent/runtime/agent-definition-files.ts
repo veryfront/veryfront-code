@@ -1,41 +1,68 @@
+import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import { z } from "zod";
+import { defineSchema } from "../../schemas/define.ts";
+import { lazySchema } from "../../schemas/lazy.ts";
 import {
   parseRuntimeAgentMarkdownDefinition,
   type RuntimeAgentMarkdownDefinition,
 } from "./agent-definition.ts";
 
-const runtimeAgentDefinitionFileNameSchema = z.string().min(1).regex(/^[A-Za-z0-9._-]+\.md$/);
-const runtimeAgentDefinitionFileIdSchema = z.string().min(1).regex(/^[A-Za-z0-9._-]+$/);
+export type ResolveRuntimeAgentDefinitionsDirInput = {
+  baseDir: string;
+  id: string;
+  fileName?: string;
+};
 
-export const resolveRuntimeAgentDefinitionsDirInputSchema = z.object({
-  baseDir: z.string().min(1),
-  id: runtimeAgentDefinitionFileIdSchema,
-  fileName: runtimeAgentDefinitionFileNameSchema.optional(),
-});
+export type ListRuntimeAgentMarkdownDefinitionIdsInput = {
+  baseDir: string;
+};
 
-export type ResolveRuntimeAgentDefinitionsDirInput = z.infer<
-  typeof resolveRuntimeAgentDefinitionsDirInputSchema
->;
+export type LoadRuntimeAgentMarkdownDefinitionFromFileInput = {
+  agentsDir: string;
+  id: string;
+  fileName?: string;
+};
 
-export const listRuntimeAgentMarkdownDefinitionIdsInputSchema = z.object({
-  baseDir: z.string().min(1),
-});
+function runtimeAgentDefinitionFileName(v: SchemaValidator): Schema<string> {
+  return v.string().min(1).regex(/^[A-Za-z0-9._-]+\.md$/);
+}
 
-export type ListRuntimeAgentMarkdownDefinitionIdsInput = z.infer<
-  typeof listRuntimeAgentMarkdownDefinitionIdsInputSchema
->;
+function runtimeAgentDefinitionFileId(v: SchemaValidator): Schema<string> {
+  return v.string().min(1).regex(/^[A-Za-z0-9._-]+$/);
+}
 
-export const loadRuntimeAgentMarkdownDefinitionFromFileInputSchema = z.object({
-  agentsDir: z.string().min(1),
-  id: runtimeAgentDefinitionFileIdSchema,
-  fileName: runtimeAgentDefinitionFileNameSchema.optional(),
-});
+const runtimeAgentDefinitionFileNameSchema = lazySchema(
+  defineSchema<string>(runtimeAgentDefinitionFileName),
+);
 
-export type LoadRuntimeAgentMarkdownDefinitionFromFileInput = z.infer<
-  typeof loadRuntimeAgentMarkdownDefinitionFromFileInputSchema
->;
+export const resolveRuntimeAgentDefinitionsDirInputSchema = lazySchema(
+  defineSchema<ResolveRuntimeAgentDefinitionsDirInput>((v) =>
+    v.object({
+      baseDir: v.string().min(1),
+      id: runtimeAgentDefinitionFileId(v),
+      fileName: runtimeAgentDefinitionFileName(v).optional(),
+    })
+  ),
+);
+
+export const listRuntimeAgentMarkdownDefinitionIdsInputSchema = lazySchema(
+  defineSchema<ListRuntimeAgentMarkdownDefinitionIdsInput>((v) =>
+    v.object({
+      baseDir: v.string().min(1),
+    })
+  ),
+);
+
+export const loadRuntimeAgentMarkdownDefinitionFromFileInputSchema = lazySchema(
+  defineSchema<LoadRuntimeAgentMarkdownDefinitionFromFileInput>((v) =>
+    v.object({
+      agentsDir: v.string().min(1),
+      id: runtimeAgentDefinitionFileId(v),
+      fileName: runtimeAgentDefinitionFileName(v).optional(),
+    })
+  ),
+);
 
 function getRuntimeAgentDefinitionFileName(input: {
   id: string;

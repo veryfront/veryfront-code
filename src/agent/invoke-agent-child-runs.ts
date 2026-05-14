@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { appendConversationRunEvents, isIgnorableConversationRunAppendError } from "./durable.ts";
 
@@ -23,7 +23,9 @@ export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getInvokeAgentChildRunLifecycleValueSchema() */
-export const InvokeAgentChildRunLifecycleValueSchema = getInvokeAgentChildRunLifecycleValueSchema();
+export const InvokeAgentChildRunLifecycleValueSchema = lazySchema(
+  getInvokeAgentChildRunLifecycleValueSchema,
+);
 
 export type InvokeAgentChildRunLifecycleValue = InferSchema<
   ReturnType<typeof getInvokeAgentChildRunLifecycleValueSchema>
@@ -43,7 +45,9 @@ export const getInvokeAgentChildRunStateDeltaSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getInvokeAgentChildRunStateDeltaSchema() */
-export const InvokeAgentChildRunStateDeltaSchema = getInvokeAgentChildRunStateDeltaSchema();
+export const InvokeAgentChildRunStateDeltaSchema = lazySchema(
+  getInvokeAgentChildRunStateDeltaSchema,
+);
 
 export type InvokeAgentChildRunStateDelta = InferSchema<
   ReturnType<typeof getInvokeAgentChildRunStateDeltaSchema>
@@ -58,8 +62,9 @@ export const getInvokeAgentChildRunLifecycleCustomEventSchema = defineSchema((v)
 );
 
 /** @deprecated Use getInvokeAgentChildRunLifecycleCustomEventSchema() */
-export const InvokeAgentChildRunLifecycleCustomEventSchema =
-  getInvokeAgentChildRunLifecycleCustomEventSchema();
+export const InvokeAgentChildRunLifecycleCustomEventSchema = lazySchema(
+  getInvokeAgentChildRunLifecycleCustomEventSchema,
+);
 
 export type InvokeAgentChildRunLifecycleCustomEvent = InferSchema<
   ReturnType<typeof getInvokeAgentChildRunLifecycleCustomEventSchema>

@@ -1,6 +1,6 @@
 # @veryfront/ext-llm-anthropic
 
-> **Category:** AI / LLM | **Contract:** `LLMProvider` | **Built-in**
+> **Category:** LLM | **Contract:** `LLMProvider` | **Built-in**
 
 Provides Anthropic Claude models for Veryfront agents and chat. Once loaded, any model string prefixed with `anthropic/` (e.g. `anthropic/claude-sonnet-4-6`) is routed through this provider via the `LLMProviderRegistry`.
 

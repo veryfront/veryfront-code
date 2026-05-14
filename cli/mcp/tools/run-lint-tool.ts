@@ -5,7 +5,7 @@
  * Reuses parseLintJsonOutput from the CLI lint command.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "../tools.ts";
 import { type LintResult, parseLintJsonOutput } from "../../commands/lint/command.ts";
@@ -17,7 +17,7 @@ const getRunLintInput = defineSchema((v) =>
     ),
   })
 );
-const runLintInput = getRunLintInput();
+const runLintInput = lazySchema(getRunLintInput);
 
 type RunLintInput = InferSchema<ReturnType<typeof getRunLintInput>>;
 

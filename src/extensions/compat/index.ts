@@ -1,12 +1,13 @@
 /**
- * Compat category barrel — Node/Deno compatibility surfaces (sqlite, kreuzberg).
+ * Compat category barrel — optional native runtime services.
  *
  * @module extensions/compat
  */
 
 export type {
+  DocumentExtractor,
   KreuzbergExtractor,
-  NodeCompat,
-  NodeCompatSqliteDatabase,
+  SqliteDatabase,
   SqliteStatement,
-} from "./node-compat.ts";
+  SqliteStore,
+} from "./native-services.ts";

@@ -6,7 +6,7 @@ import type {
   ChildRunAuditToolCall,
   ChildRunAuditToolResult,
 } from "./protocol.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
 const NATIVE_TEXT_ATTACHMENT_EXTENSIONS = [
@@ -304,7 +304,7 @@ export const getChatRequestContextSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getChatRequestContextSchema() */
-export const chatRequestContextSchema = getChatRequestContextSchema();
+export const chatRequestContextSchema = lazySchema(getChatRequestContextSchema);
 
 export type ChatRequestContext = InferSchema<ReturnType<typeof getChatRequestContextSchema>>;
 
@@ -372,14 +372,14 @@ export const getMessageMetadataSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getMessageMetadataSchema() */
-export const messageMetadataSchema = getMessageMetadataSchema();
+export const messageMetadataSchema = lazySchema(getMessageMetadataSchema);
 
 export const getChatUiMessageRoleSchema = defineSchema((v) =>
   v.enum(["system", "user", "assistant"])
 );
 
 /** @deprecated Use getChatUiMessageRoleSchema() */
-export const chatUiMessageRoleSchema = getChatUiMessageRoleSchema();
+export const chatUiMessageRoleSchema = lazySchema(getChatUiMessageRoleSchema);
 
 export const getChatToolPartStateSchema = defineSchema((v) =>
   v.enum([
@@ -397,7 +397,7 @@ export const getChatToolPartStateSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getChatToolPartStateSchema() */
-export const chatToolPartStateSchema = getChatToolPartStateSchema();
+export const chatToolPartStateSchema = lazySchema(getChatToolPartStateSchema);
 
 const getToolApprovalSchema = defineSchema((v) =>
   v.object({
@@ -517,7 +517,7 @@ export const getChatUiMessagePartSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getChatUiMessagePartSchema() */
-export const chatUiMessagePartSchema = getChatUiMessagePartSchema();
+export const chatUiMessagePartSchema = lazySchema(getChatUiMessagePartSchema);
 
 export const getChatUiMessageSchema = defineSchema((v) =>
   v.object({
@@ -529,12 +529,12 @@ export const getChatUiMessageSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getChatUiMessageSchema() */
-export const chatUiMessageSchema = getChatUiMessageSchema();
+export const chatUiMessageSchema = lazySchema(getChatUiMessageSchema);
 
 export const getChatUiMessagesSchema = defineSchema((v) => v.array(getChatUiMessageSchema()));
 
 /** @deprecated Use getChatUiMessagesSchema() */
-export const chatUiMessagesSchema = getChatUiMessagesSchema();
+export const chatUiMessagesSchema = lazySchema(getChatUiMessagesSchema);
 
 function hasExtension(filename: string | undefined, extensions: readonly string[]) {
   const normalizedFilename = filename?.toLowerCase() ?? "";

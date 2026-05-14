@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 const integrationNames = [
@@ -55,7 +55,7 @@ const integrationNames = [
 ] as const;
 
 export const getIntegrationNameSchema = defineSchema((v) => v.enum(integrationNames));
-export const IntegrationNameSchema = getIntegrationNameSchema();
+export const IntegrationNameSchema = lazySchema(getIntegrationNameSchema);
 
 export const getEnvVarSchema = defineSchema((v) =>
   v.object({
@@ -68,7 +68,7 @@ export const getEnvVarSchema = defineSchema((v) =>
     default: v.string().optional(),
   })
 );
-export const EnvVarSchema = getEnvVarSchema();
+export const EnvVarSchema = lazySchema(getEnvVarSchema);
 
 export const getOAuthFieldSchema = defineSchema((v) =>
   v.object({
@@ -80,7 +80,7 @@ export const getOAuthFieldSchema = defineSchema((v) =>
     default: v.string().optional(),
   })
 );
-export const OAuthFieldSchema = getOAuthFieldSchema();
+export const OAuthFieldSchema = lazySchema(getOAuthFieldSchema);
 
 export const getOAuthConfigSchema = defineSchema((v) =>
   v.object({
@@ -110,7 +110,7 @@ export const getOAuthConfigSchema = defineSchema((v) =>
     docsUrl: v.string().optional(),
   })
 );
-export const OAuthConfigSchema = getOAuthConfigSchema();
+export const OAuthConfigSchema = lazySchema(getOAuthConfigSchema);
 
 export const getIntegrationEndpointParamSchema = defineSchema((v) =>
   v.object({
@@ -121,7 +121,7 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     default: v.unknown().optional(),
   })
 );
-export const IntegrationEndpointParamSchema = getIntegrationEndpointParamSchema();
+export const IntegrationEndpointParamSchema = lazySchema(getIntegrationEndpointParamSchema);
 
 export const getIntegrationEndpointBodyFieldSchema = defineSchema((v) =>
   v.object({
@@ -131,7 +131,7 @@ export const getIntegrationEndpointBodyFieldSchema = defineSchema((v) =>
     default: v.unknown().optional(),
   })
 );
-export const IntegrationEndpointBodyFieldSchema = getIntegrationEndpointBodyFieldSchema();
+export const IntegrationEndpointBodyFieldSchema = lazySchema(getIntegrationEndpointBodyFieldSchema);
 
 export const getIntegrationEndpointSchema = defineSchema((v) =>
   v.object({
@@ -145,7 +145,7 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
     response: v.object({ transform: v.string().optional() }).optional(),
   })
 );
-export const IntegrationEndpointSchema = getIntegrationEndpointSchema();
+export const IntegrationEndpointSchema = lazySchema(getIntegrationEndpointSchema);
 
 export const getIntegrationToolSchema = defineSchema((v) =>
   v.object({
@@ -157,7 +157,7 @@ export const getIntegrationToolSchema = defineSchema((v) =>
     endpoint: getIntegrationEndpointSchema().optional(),
   })
 );
-export const IntegrationToolSchema = getIntegrationToolSchema();
+export const IntegrationToolSchema = lazySchema(getIntegrationToolSchema);
 
 export const getIntegrationPromptSchema = defineSchema((v) =>
   v.object({
@@ -168,7 +168,7 @@ export const getIntegrationPromptSchema = defineSchema((v) =>
     icon: v.string().optional(),
   })
 );
-export const IntegrationPromptSchema = getIntegrationPromptSchema();
+export const IntegrationPromptSchema = lazySchema(getIntegrationPromptSchema);
 
 export const getIntegrationConfigSchema = defineSchema((v) =>
   v.object({
@@ -193,7 +193,7 @@ export const getIntegrationConfigSchema = defineSchema((v) =>
     category: v.string().optional(),
   })
 );
-export const IntegrationConfigSchema = getIntegrationConfigSchema();
+export const IntegrationConfigSchema = lazySchema(getIntegrationConfigSchema);
 
 export type IntegrationName = InferSchema<ReturnType<typeof getIntegrationNameSchema>>;
 export type EnvVarConfig = InferSchema<ReturnType<typeof getEnvVarSchema>>;

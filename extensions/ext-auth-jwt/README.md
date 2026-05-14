@@ -1,8 +1,8 @@
 # @veryfront/ext-auth-jwt
 
-> **Category:** Security | **Contract:** `AuthProvider` | **Optional**
+> **Category:** Auth | **Contract:** `AuthProvider` | **Optional**
 
-Provides JWT authentication for Veryfront applications — HMAC-based sign/verify (HS256 by default), remote-JWKS verification, and protected-header decoding, backed by [`jose`](https://github.com/panva/jose).
+Provides JWT authentication for Veryfront applications: HMAC-based sign/verify (HS256 by default), remote JWKS verification, PEM public-key verification, and protected-header decoding, backed by [`jose`](https://github.com/panva/jose).
 
 ## Installation
 
@@ -27,20 +27,21 @@ export default defineConfig({
 ```ts
 extJwt({
   secret: "...",                  // overrides JWT_SECRET when set
-  jwksResolverFactory: (url) => /* custom JWKS resolver — test seam */,
+  jwksResolverFactory: (url) => /* custom JWKS resolver for tests */,
 });
 ```
 
-Both fields are optional. `jwksResolverFactory` is primarily a test seam — production callers should leave it unset so `createRemoteJWKSet` resolves the real JWKS URL.
+Both fields are optional. `jwksResolverFactory` is primarily a test seam. Production callers should leave it unset so `createRemoteJWKSet` resolves the real JWKS URL.
 
 ## Provided contract
 
-`AuthProvider` — supports:
+`AuthProvider` supports:
 
-- `sign(payload, options)` — HS256 JWT signing using the configured / env secret.
-- `verify(token, options)` — symmetric verification using the same secret.
-- `verifyWithJwks(token, jwksUrl, options)` — remote-JWKS verification, with the JWKS document cached per URL by `createRemoteJWKSet`.
-- `decodeHeader(token)` — read `kid`, `alg`, etc. without verifying the signature.
+- `sign(payload, options)`: HS256 JWT signing using the configured or env secret.
+- `verify(token, options)`: symmetric verification using the same secret.
+- `verifyWithJwks(token, jwksUrl, options)`: remote JWKS verification, with the JWKS document cached per URL by `createRemoteJWKSet`.
+- `verifyWithPublicKey(token, publicKeyPem, options)`: PEM public-key verification for configured issuer keys.
+- `decode(token)`: read `kid`, `alg`, etc. without verifying the signature.
 
 ## Capabilities
 

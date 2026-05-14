@@ -75,3 +75,14 @@ export {
   EXTENSION_VALIDATION_ERROR,
   MISSING_EXTENSION_ERROR,
 } from "./errors.ts";
+
+// Sandbox
+export type {
+  CreateSandboxShellToolsInput,
+  SandboxShellClient,
+  SandboxShellToolDefinition,
+  SandboxShellToolExecute,
+  SandboxShellToolSet,
+  SandboxShellToolsProvider,
+} from "./sandbox/index.ts";
+export { SandboxShellToolsProviderName } from "./sandbox/index.ts";

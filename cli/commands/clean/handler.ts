@@ -2,7 +2,7 @@
  * Clean command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { cleanCommand } from "./command.ts";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
@@ -18,7 +18,7 @@ const getCleanArgsSchema = defineSchema((v) =>
   })
 );
 
-const CleanArgsSchema = getCleanArgsSchema();
+const CleanArgsSchema = lazySchema(getCleanArgsSchema);
 
 const parseCleanArgs = createArgParser(CleanArgsSchema, {
   projectDir: CommonArgs.projectDir,

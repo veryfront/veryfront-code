@@ -117,6 +117,9 @@ function createMockAuthProvider(options: MockAuthOptions = {}): AuthProvider {
       if (!payload) throw new Error("Token not recognized by JWKS");
       return payload;
     },
+    verifyWithPublicKey(): Promise<TokenPayload> {
+      return Promise.reject(new Error("Public key verification not configured"));
+    },
     decode(token: string): TokenHeader | undefined {
       const parts = token.split(".");
       if (parts.length !== 3) return undefined;

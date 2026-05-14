@@ -74,7 +74,7 @@ const extRedis: ExtensionFactory = () => {
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "TokenCacheStore" },
-      { type: "net", hosts: ["*"] },
+      { type: "net:outbound", hosts: ["*"] },
     ],
 
     async setup(ctx) {

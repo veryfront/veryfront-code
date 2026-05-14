@@ -2,7 +2,7 @@
  * MCP tools for scaffolding and conventions.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -83,15 +83,17 @@ export function ${componentName}({ children }: ${componentName}Props) {
 
 function generateToolTemplate(name: string): string {
   return `import { tool } from "veryfront/tool";
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getParameters = defineSchema((v) => v.object({
+  // Add your parameters here
+  input: v.string().describe("Input parameter"),
+}));
 
 export default tool({
   id: "${name}",
   description: "Description of what this tool does",
-  parameters: defineSchema((v) => v.object({
-    // Add your parameters here
-    input: v.string().describe("Input parameter"),
-  }))(),
+  parameters: lazySchema(getParameters),
   execute: async ({ input }) => {
     // Implement your tool logic here
     return { result: input };
@@ -126,14 +128,16 @@ export default agent({
 
 function generatePromptTemplate(name: string): string {
   return `import { prompt } from "veryfront/prompt";
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getArgsSchema = defineSchema((v) => v.object({
+  input: v.string().describe("User input"),
+}));
 
 export default prompt({
   id: "${name}",
   description: "Description of this prompt template",
-  argsSchema: defineSchema((v) => v.object({
-    input: v.string().describe("User input"),
-  }))(),
+  argsSchema: lazySchema(getArgsSchema),
   getContent: ({ input }) => [
     { role: "system", content: "Role: describe what this assistant should do and its limits." },
     { role: "user", content: input },
@@ -162,7 +166,7 @@ const getScaffoldInput = defineSchema((v) =>
     ),
   })
 );
-const scaffoldInput = getScaffoldInput();
+const scaffoldInput = lazySchema(getScaffoldInput);
 
 type ScaffoldInput = InferSchema<ReturnType<typeof getScaffoldInput>>;
 type ScaffoldType = ScaffoldInput["type"];
@@ -275,7 +279,7 @@ const getGetConventionsInput = defineSchema((v) =>
       .describe("Specific topic to get conventions for"),
   })
 );
-const getConventionsInput = getGetConventionsInput();
+const getConventionsInput = lazySchema(getGetConventionsInput);
 
 type GetConventionsInput = InferSchema<ReturnType<typeof getGetConventionsInput>>;
 
@@ -379,12 +383,16 @@ const CONVENTIONS: Record<string, Convention> = {
         explanation: "Tools in dedicated directory with descriptive names",
       },
       {
-        good: `export const searchTool = {
+        good: `const getParameters = defineSchema((v) => v.object({
+  query: v.string(),
+}));
+
+export const searchTool = {
   name: "search_docs",
-  parameters: defineSchema((v) => v.object({ query: v.string() }))(),
+  parameters: lazySchema(getParameters),
   execute: async ({ query }) => { /* ... */ }
 };`,
-        explanation: "Tool with defineSchema and typed execute function",
+        explanation: "Tool with lazy schema parameters and typed execute function",
       },
     ],
   },

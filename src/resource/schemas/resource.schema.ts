@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getCachePolicySchema = defineSchema((v) =>
@@ -13,8 +13,8 @@ export const getMcpConfigSchema = defineSchema((v) =>
 );
 
 // Backward-compat aliases
-export const cachePolicySchema = getCachePolicySchema();
-export const McpConfigSchema = getMcpConfigSchema();
+export const cachePolicySchema = lazySchema(getCachePolicySchema);
+export const McpConfigSchema = lazySchema(getMcpConfigSchema);
 
 // Inferred types
 export type CachePolicy = InferSchema<ReturnType<typeof getCachePolicySchema>>;

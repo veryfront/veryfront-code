@@ -18,7 +18,7 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { isDeno } from "./runtime.ts";
 import { dynamicImport } from "./dynamic-import.ts";
-import type { NodeCompat } from "#veryfront/extensions/compat/node-compat.ts";
+import type { DocumentExtractor } from "#veryfront/extensions/compat/native-services.ts";
 
 function resolve(pkg: string, version: string): string {
   return isDeno ? `npm:${pkg}@${version}` : pkg;
@@ -43,12 +43,13 @@ export function importClaudeAgentSDK(): Promise<OpaqueModule> {
 /**
  * Lazily import kreuzberg document extraction.
  *
- * Delegates to the `NodeCompat` extension contract (`@veryfront/ext-node-compatibility`)
+ * Delegates to the `DocumentExtractor` extension contract
+ * (`@veryfront/ext-document-kreuzberg`)
  * when available. Without the extension, throws an actionable error instructing
- * the user to install `ext-node-compatibility`.
+ * the user to install `ext-document-kreuzberg`.
  *
  * Node/Bun path: `@kreuzberg/node` resolved from the project's node_modules at
- * runtime — the extension handles that dynamic import internally.
+ * runtime. The extension handles that dynamic import internally.
  */
 export async function importKreuzberg(): Promise<{
   extractBytes: (
@@ -56,12 +57,12 @@ export async function importKreuzberg(): Promise<{
     mimeType: string,
   ) => Promise<{ content: string }>;
 }> {
-  const nodeCompat = tryResolve<NodeCompat>("NodeCompat");
-  if (nodeCompat?.importKreuzberg) {
-    return nodeCompat.importKreuzberg();
+  const extractor = tryResolve<DocumentExtractor>("DocumentExtractor");
+  if (extractor?.importKreuzberg) {
+    return extractor.importKreuzberg();
   }
   throw new Error(
-    "Document extraction requires the NodeCompat extension. " +
-      "Install @veryfront/ext-node-compatibility and add it to your extensions configuration.",
+    "Document extraction requires a DocumentExtractor extension. " +
+      "Install @veryfront/ext-document-kreuzberg and add it to your extensions configuration.",
   );
 }

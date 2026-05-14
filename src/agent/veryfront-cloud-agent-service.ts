@@ -1,9 +1,16 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { z } from "zod";
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
+import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
+import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
+import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
+import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import {
+  type SandboxShellToolsProvider,
+  SandboxShellToolsProviderName,
+} from "#veryfront/extensions/sandbox/index.ts";
 import {
   createRemoteMCPToolSource,
   createToolsFromRemoteDefinitions,
@@ -210,10 +217,6 @@ const PROJECT_CONFIG_FILES = [
   "veryfront.config.ts",
   "veryfront.config.mjs",
 ];
-const ProjectManifestNameSchema = z.object({
-  name: z.string().trim().min(1).optional(),
-}).passthrough();
-
 function pathOptionToPath(pathOption: AgentServicePathOption): string {
   return pathOption instanceof URL ? fileURLToPath(pathOption) : pathOption;
 }
@@ -274,12 +277,12 @@ function readProjectManifestName(projectDir: string): string | null {
     }
 
     try {
-      const parsed = ProjectManifestNameSchema.parse(
-        JSON.parse(readFileSync(filePath, "utf8")),
-      );
-      if (parsed.name) {
-        return parsed.name;
-      }
+      const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
+      const name = (parsed as { name?: unknown }).name;
+      if (typeof name !== "string") continue;
+      const trimmedName = name.trim();
+      if (trimmedName) return trimmedName;
     } catch {
       continue;
     }
@@ -323,18 +326,48 @@ function resolveMcpServers(
 async function loadDefaultCreateBashTool(): Promise<
   AgentServiceSandboxToolsOptions["createBashTool"]
 > {
-  const { createBashTool } = await import("bash-tool");
-  return createBashTool;
+  const provider = tryResolve<SandboxShellToolsProvider>(SandboxShellToolsProviderName);
+  if (provider) return provider;
+
+  try {
+    const { createBashSandboxShellToolsProvider } = await import(
+      "../../extensions/ext-sandbox-shell-tools/src/index.ts"
+    );
+    return createBashSandboxShellToolsProvider;
+  } catch (error) {
+    throw MISSING_EXTENSION_ERROR.create({
+      message:
+        'Missing extension for contract "SandboxShellToolsProvider". Enable ext-sandbox-shell-tools or pass createBashTool explicitly.',
+      detail:
+        `Veryfront cloud agent sandbox shell tools require a SandboxShellToolsProvider implementation: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+    });
+  }
 }
 
 async function resolveNodeVeryfrontCloudAgentServiceOptions(
   options: NodeVeryfrontCloudAgentServiceOptions,
 ): Promise<ResolvedNodeVeryfrontCloudAgentServiceOptions> {
+  await ensureDefaultSchemaValidator();
+  await ensureDefaultAuthProvider();
   return {
     ...options,
     serviceName: resolveServiceName(options),
     createBashTool: options.createBashTool ?? await loadDefaultCreateBashTool(),
   };
+}
+
+async function ensureDefaultSchemaValidator(): Promise<void> {
+  if (tryResolve<SchemaValidator>("SchemaValidator")) return;
+  const { createZodAdapter } = await import("../../extensions/ext-schema-zod/src/adapter.ts");
+  register<SchemaValidator>("SchemaValidator", createZodAdapter());
+}
+
+async function ensureDefaultAuthProvider(): Promise<void> {
+  if (tryResolve<AuthProvider>("AuthProvider")) return;
+  const { createAuthProvider } = await import("../../extensions/ext-auth-jwt/src/index.ts");
+  register<AuthProvider>("AuthProvider", createAuthProvider({}));
 }
 
 function resolveEnvironment(

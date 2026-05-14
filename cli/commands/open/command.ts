@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { createArgParser } from "#cli/shared/args";
 
@@ -10,7 +10,7 @@ export const getOpenArgsSchema = defineSchema((v) =>
   })
 );
 
-export const OpenArgsSchema = getOpenArgsSchema();
+export const OpenArgsSchema = lazySchema(getOpenArgsSchema);
 
 export type OpenOptions = InferSchema<ReturnType<typeof getOpenArgsSchema>>;
 

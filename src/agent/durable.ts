@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 const AGENT_RUN_API_TIMEOUT_MS = 15_000;
@@ -40,7 +40,7 @@ export const getConversationRunTargetsSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getConversationRunTargetsSchema() */
-export const ConversationRunTargetsSchema = getConversationRunTargetsSchema();
+export const ConversationRunTargetsSchema = lazySchema(getConversationRunTargetsSchema);
 
 export type ConversationRunTargets = InferSchema<
   ReturnType<typeof getConversationRunTargetsSchema>
@@ -76,7 +76,7 @@ export const getConversationRunStatusSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getConversationRunStatusSchema() */
-export const ConversationRunStatusSchema = getConversationRunStatusSchema();
+export const ConversationRunStatusSchema = lazySchema(getConversationRunStatusSchema);
 
 export interface ConversationRunProjection {
   runId: string;
@@ -140,7 +140,7 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getConversationRunProjectionSchema() */
-export const ConversationRunProjectionSchema = getConversationRunProjectionSchema();
+export const ConversationRunProjectionSchema = lazySchema(getConversationRunProjectionSchema);
 export type ActiveConversationRunStatus = Extract<
   ConversationRunProjection["status"],
   "pending" | "running" | "waiting_for_tool"
@@ -233,7 +233,9 @@ export const getCreateConversationRunAcceptedSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getCreateConversationRunAcceptedSchema() */
-export const CreateConversationRunAcceptedSchema = getCreateConversationRunAcceptedSchema();
+export const CreateConversationRunAcceptedSchema = lazySchema(
+  getCreateConversationRunAcceptedSchema,
+);
 
 export const getCompleteConversationRunResponseSchema = defineSchema((v) =>
   v.object({
@@ -247,7 +249,9 @@ export const getCompleteConversationRunResponseSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getCompleteConversationRunResponseSchema() */
-export const CompleteConversationRunResponseSchema = getCompleteConversationRunResponseSchema();
+export const CompleteConversationRunResponseSchema = lazySchema(
+  getCompleteConversationRunResponseSchema,
+);
 
 export interface AppendConversationRunEventsResponse {
   latestEventId: number;
@@ -305,8 +309,9 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAppendConversationRunEventsResponseSchema() */
-export const AppendConversationRunEventsResponseSchema =
-  getAppendConversationRunEventsResponseSchema();
+export const AppendConversationRunEventsResponseSchema = lazySchema(
+  getAppendConversationRunEventsResponseSchema,
+);
 
 const DEFAULT_MAX_CONVERSATION_RUN_BATCH_BYTES = 512 * 1024;
 

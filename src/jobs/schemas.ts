@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
 export const getJobStatusSchema = defineSchema((v) =>
@@ -334,35 +334,44 @@ export const getPaginatedCronJobsResponseSchema = defineSchema((v) =>
 );
 
 // Backward-compat aliases
-export const JobStatusSchema = getJobStatusSchema();
-export const CronJobStatusSchema = getCronJobStatusSchema();
-export const JobKindSchema = getJobKindSchema();
-export const ReservedJobTargetFamilySchema = getReservedJobTargetFamilySchema();
-export const PageInfoSchema = getPageInfoSchema();
-export const KnowledgeIngestFileResultSchema = getKnowledgeIngestFileResultSchema();
-export const KnowledgeIngestSkippedFileResultSchema = getKnowledgeIngestSkippedFileResultSchema();
-export const KnowledgeIngestFailedFileResultSchema = getKnowledgeIngestFailedFileResultSchema();
-export const KnowledgeIngestJobResultMetadataSchema = getKnowledgeIngestJobResultMetadataSchema();
-export const KnowledgeIngestJobResultCountsSchema = getKnowledgeIngestJobResultCountsSchema();
-export const KnowledgeIngestJobResultSchema = getKnowledgeIngestJobResultSchema();
-export const JobResultSchema = getJobResultSchema();
-export const JobResultSummarySchema = getJobResultSummarySchema();
-export const JobSchema = getJobSchema();
-export const JobListItemSchema = getJobListItemSchema();
-export const PaginatedJobsResponseSchema = getPaginatedJobsResponseSchema();
-export const JobEventSchema = getJobEventSchema();
-export const JobEventsResponseSchema = getJobEventsResponseSchema();
-export const JobLogsResponseSchema = getJobLogsResponseSchema();
-export const KnowledgeIngestBatchSourceSchema = getKnowledgeIngestBatchSourceSchema();
-export const KnowledgeIngestBatchSourceWithMessageSchema =
-  getKnowledgeIngestBatchSourceWithMessageSchema();
-export const JobBatchStatusCountsSchema = getJobBatchStatusCountsSchema();
-export const JobBatchResultSchema = getJobBatchResultSchema();
-export const JobBatchSchema = getJobBatchSchema();
-export const JobTargetDefinitionSchema = getJobTargetDefinitionSchema();
-export const JobTargetDefinitionsResponseSchema = getJobTargetDefinitionsResponseSchema();
-export const CronJobSchema = getCronJobSchema();
-export const PaginatedCronJobsResponseSchema = getPaginatedCronJobsResponseSchema();
+export const JobStatusSchema = lazySchema(getJobStatusSchema);
+export const CronJobStatusSchema = lazySchema(getCronJobStatusSchema);
+export const JobKindSchema = lazySchema(getJobKindSchema);
+export const ReservedJobTargetFamilySchema = lazySchema(getReservedJobTargetFamilySchema);
+export const PageInfoSchema = lazySchema(getPageInfoSchema);
+export const KnowledgeIngestFileResultSchema = lazySchema(getKnowledgeIngestFileResultSchema);
+export const KnowledgeIngestSkippedFileResultSchema = lazySchema(
+  getKnowledgeIngestSkippedFileResultSchema,
+);
+export const KnowledgeIngestFailedFileResultSchema = lazySchema(
+  getKnowledgeIngestFailedFileResultSchema,
+);
+export const KnowledgeIngestJobResultMetadataSchema = lazySchema(
+  getKnowledgeIngestJobResultMetadataSchema,
+);
+export const KnowledgeIngestJobResultCountsSchema = lazySchema(
+  getKnowledgeIngestJobResultCountsSchema,
+);
+export const KnowledgeIngestJobResultSchema = lazySchema(getKnowledgeIngestJobResultSchema);
+export const JobResultSchema = lazySchema(getJobResultSchema);
+export const JobResultSummarySchema = lazySchema(getJobResultSummarySchema);
+export const JobSchema = lazySchema(getJobSchema);
+export const JobListItemSchema = lazySchema(getJobListItemSchema);
+export const PaginatedJobsResponseSchema = lazySchema(getPaginatedJobsResponseSchema);
+export const JobEventSchema = lazySchema(getJobEventSchema);
+export const JobEventsResponseSchema = lazySchema(getJobEventsResponseSchema);
+export const JobLogsResponseSchema = lazySchema(getJobLogsResponseSchema);
+export const KnowledgeIngestBatchSourceSchema = lazySchema(getKnowledgeIngestBatchSourceSchema);
+export const KnowledgeIngestBatchSourceWithMessageSchema = lazySchema(
+  getKnowledgeIngestBatchSourceWithMessageSchema,
+);
+export const JobBatchStatusCountsSchema = lazySchema(getJobBatchStatusCountsSchema);
+export const JobBatchResultSchema = lazySchema(getJobBatchResultSchema);
+export const JobBatchSchema = lazySchema(getJobBatchSchema);
+export const JobTargetDefinitionSchema = lazySchema(getJobTargetDefinitionSchema);
+export const JobTargetDefinitionsResponseSchema = lazySchema(getJobTargetDefinitionsResponseSchema);
+export const CronJobSchema = lazySchema(getCronJobSchema);
+export const PaginatedCronJobsResponseSchema = lazySchema(getPaginatedCronJobsResponseSchema);
 
 // Inferred types
 export type JobStatus = InferSchema<ReturnType<typeof getJobStatusSchema>>;

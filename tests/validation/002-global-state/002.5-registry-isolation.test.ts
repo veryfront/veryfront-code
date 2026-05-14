@@ -12,7 +12,7 @@
 import "../../_helpers/contract-init.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd";
-import { z } from "zod";
+import { defineSchema } from "../../../src/schemas/define.ts";
 import { agentRegistry } from "../../../src/agent/composition/composition.ts";
 import { runWithCacheKeyContext } from "../../../src/cache/cache-key-builder.ts";
 import { promptRegistry } from "../../../src/prompt/registry.ts";
@@ -29,7 +29,7 @@ function createMockTool(id: string, projectMarker: string): Tool {
     id,
     type: "function",
     description: `Tool from ${projectMarker}`,
-    inputSchema: z.object({ input: z.string() }),
+    inputSchema: defineSchema((v) => v.object({ input: v.string() }))(),
     execute: () => Promise.resolve({ result: projectMarker }),
   };
 }
@@ -47,7 +47,7 @@ function createMockResource(id: string, projectMarker: string): Resource {
     id,
     pattern: `/${projectMarker}/:id`,
     description: `Resource from ${projectMarker}`,
-    paramsSchema: z.object({ id: z.string() }),
+    paramsSchema: defineSchema((v) => v.object({ id: v.string() }))(),
     load: () => Promise.resolve({ data: projectMarker }),
   };
 }

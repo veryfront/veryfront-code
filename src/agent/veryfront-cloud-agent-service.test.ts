@@ -1,7 +1,10 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
+import { register, unregister } from "#veryfront/extensions/contracts.ts";
+import { SandboxShellToolsProviderName } from "#veryfront/extensions/sandbox/index.ts";
 import { toolRegistry } from "#veryfront/tool";
 import { agentRegistry } from "./composition/index.ts";
 import {
@@ -11,8 +14,16 @@ import {
 } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
-async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
+async function withTempDir(
+  fn: (dir: string) => Promise<void> | void,
+  options: { registerSandboxProvider?: boolean } = {},
+): Promise<void> {
   const dir = Deno.makeTempDirSync();
+  if (options.registerSandboxProvider ?? true) {
+    registerTestSandboxShellToolsProvider();
+  } else {
+    unregister(SandboxShellToolsProviderName);
+  }
   try {
     await fn(dir);
   } finally {
@@ -20,6 +31,7 @@ async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<v
     Deno.removeSync(dir, { recursive: true });
     agentRegistry.clearAll();
     toolRegistry.clearAll();
+    unregister(SandboxShellToolsProviderName);
   }
 }
 
@@ -65,12 +77,12 @@ function writeCodeAgentDefinition(
     resolve(toolsDir, "echo.ts"),
     [
       'import { tool } from "veryfront/tool";',
-      'import { z } from "zod";',
+      'import { defineSchema } from "veryfront/schemas";',
       "",
       "export default tool({",
       '  id: "echo",',
       '  description: "Echo input",',
-      "  inputSchema: z.object({ text: z.string() }),",
+      "  inputSchema: defineSchema((v) => v.object({ text: v.string() }))(),",
       "  execute: ({ text }) => ({ text }),",
       "});",
       "",
@@ -79,6 +91,10 @@ function writeCodeAgentDefinition(
 }
 
 const createBashTool: CreateSandboxBashTool = () => Promise.resolve({ tools: {} });
+
+function registerTestSandboxShellToolsProvider(): void {
+  register(SandboxShellToolsProviderName, createBashTool);
+}
 
 function getRuntimeAgent(
   bundle: Awaited<ReturnType<typeof createNodeVeryfrontCloudAgentServiceRuntime>>,
@@ -117,6 +133,26 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime loads the markdown agent 
     assertEquals(liveness.status, 200);
     assertEquals(await liveness.text(), "OK");
   });
+});
+
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime can load default sandbox shell tools without pre-registered extensions", async () => {
+  await withTempDir(async (rootDir) => {
+    writeMarkdownAgentDefinition(rootDir);
+
+    const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+      serviceName: "veryfront-agent-test",
+      agentId: "veryfront",
+      entrypointUrl: pathToFileURL(resolve(rootDir, "main.ts")),
+      env: {
+        NODE_ENV: "test",
+        VERYFRONT_API_URL: "https://api.example.com",
+        PORT: "3141",
+        ALLOWED_ORIGINS: "https://studio.example.com",
+      },
+    });
+
+    assertEquals(bundle.runtime.contract.defaultAgentId, "veryfront");
+  }, { registerSandboxProvider: false });
 });
 
 Deno.test("createNodeVeryfrontCloudAgentServiceRuntime defaults to the single markdown agent", async () => {

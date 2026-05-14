@@ -32,6 +32,7 @@ export interface AgentServiceSandboxClient
 export interface AgentServiceSandboxClientOptions extends LazySandboxOptions {}
 
 export interface AgentServiceSandboxToolsOptions extends AgentServiceSandboxClientOptions {
+  /** Sandbox shell tools provider. Kept as createBashTool for caller compatibility. */
   createBashTool: CreateSandboxBashTool;
 }
 

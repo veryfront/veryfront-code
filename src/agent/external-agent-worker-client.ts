@@ -1,82 +1,171 @@
-import { z } from "zod";
+import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import { defineSchema } from "../schemas/define.ts";
+import { lazySchema } from "../schemas/lazy.ts";
 
-export const ExternalAgentWorkerSchema = z.object({
-  id: z.string().uuid(),
-  project_id: z.string().uuid(),
-  implementation_kind: z.string(),
-  worker_key: z.string(),
-  display_name: z.string().nullable().optional(),
-  status: z.string().optional(),
-  metadata: z.unknown().nullable().optional(),
-  last_heartbeat_at: z.string().nullable().optional(),
-  created_at: z.string().optional(),
-  updated_at: z.string().optional(),
-});
+export interface ExternalAgentWorker {
+  id: string;
+  project_id: string;
+  implementation_kind: string;
+  worker_key: string;
+  display_name?: string | null;
+  status?: string;
+  metadata?: unknown | null;
+  last_heartbeat_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
 
-const ExternalAgentWorkerRequestMessageSchema = z.object({
-  id: z.string(),
-  role: z.string(),
-  parts: z.array(z.object({ type: z.string() }).passthrough()).default([]),
-  metadata: z.record(z.string(), z.unknown()).optional(),
-  createdAt: z.string().optional(),
-});
+export interface ExternalAgentWorkerRequestSnapshot {
+  messages: Array<{
+    id: string;
+    role: string;
+    parts: Array<{ type: string } & Record<string, unknown>>;
+    metadata?: Record<string, unknown>;
+    createdAt?: string;
+  }>;
+  tools: unknown[];
+  context: unknown[];
+  forwardedProps?: Record<string, unknown>;
+  traceContext?: unknown;
+}
 
-export const ExternalAgentWorkerRequestSnapshotSchema = z.object({
-  messages: z.array(ExternalAgentWorkerRequestMessageSchema),
-  tools: z.array(z.unknown()).default([]),
-  context: z.array(z.unknown()).default([]),
-  forwardedProps: z.record(z.string(), z.unknown()).optional(),
-  traceContext: z.unknown().optional(),
-});
+export interface ExternalAgentWorkerSession {
+  id: string;
+  run_id: string;
+  implementation_kind: string;
+  worker_id: string | null;
+  session_key: string;
+  status: string;
+  metadata?: unknown | null;
+  created_at?: string;
+  updated_at?: string;
+  ended_at?: string | null;
+}
 
-export const ExternalAgentWorkerSessionSchema = z.object({
-  id: z.string().uuid(),
-  run_id: z.string(),
-  implementation_kind: z.string(),
-  worker_id: z.string().uuid().nullable(),
-  session_key: z.string(),
-  status: z.string(),
-  metadata: z.unknown().nullable().optional(),
-  created_at: z.string().optional(),
-  updated_at: z.string().optional(),
-  ended_at: z.string().nullable().optional(),
-});
+export interface ExternalAgentWorkerRun {
+  run_id: string;
+  conversation_id: string;
+  message_id: string;
+  project_id: string | null;
+  agent_id: string;
+  status: string;
+  request_snapshot: ExternalAgentWorkerRequestSnapshot | null;
+  source_target_kind?: string | null;
+  source_target_environment_id?: string | null;
+  source_target_branch_id?: string | null;
+  source_target_release_version?: string | null;
+  runtime_target_kind?: string | null;
+  runtime_target_environment_id?: string | null;
+  runtime_target_branch_id?: string | null;
+  latest_event_id: number;
+  latest_external_event_sequence: number;
+  lease_owner: string | null;
+  lease_expires_at: string | null;
+  worker_session: ExternalAgentWorkerSession | null;
+}
 
-export const ExternalAgentWorkerRunSchema = z.object({
-  run_id: z.string(),
-  conversation_id: z.string().uuid(),
-  message_id: z.string().uuid(),
-  project_id: z.string().uuid().nullable(),
-  agent_id: z.string(),
-  status: z.string(),
-  request_snapshot: ExternalAgentWorkerRequestSnapshotSchema.nullable(),
-  source_target_kind: z.string().nullable().optional(),
-  source_target_environment_id: z.string().uuid().nullable().optional(),
-  source_target_branch_id: z.string().uuid().nullable().optional(),
-  source_target_release_version: z.string().nullable().optional(),
-  runtime_target_kind: z.string().nullable().optional(),
-  runtime_target_environment_id: z.string().uuid().nullable().optional(),
-  runtime_target_branch_id: z.string().uuid().nullable().optional(),
-  latest_event_id: z.number(),
-  latest_external_event_sequence: z.number(),
-  lease_owner: z.string().nullable(),
-  lease_expires_at: z.string().nullable(),
-  worker_session: ExternalAgentWorkerSessionSchema.nullable().default(null),
-});
+function externalAgentWorker(v: SchemaValidator): Schema<ExternalAgentWorker> {
+  return v.object({
+    id: v.string().uuid(),
+    project_id: v.string().uuid(),
+    implementation_kind: v.string(),
+    worker_key: v.string(),
+    display_name: v.string().nullable().optional(),
+    status: v.string().optional(),
+    metadata: v.unknown().nullable().optional(),
+    last_heartbeat_at: v.string().nullable().optional(),
+    created_at: v.string().optional(),
+    updated_at: v.string().optional(),
+  });
+}
 
-const RegisterExternalAgentWorkerResponseSchema = z.object({
-  worker: ExternalAgentWorkerSchema,
-  token: z.string().min(1),
-});
+export const ExternalAgentWorkerSchema = lazySchema(
+  defineSchema<ExternalAgentWorker>(externalAgentWorker),
+);
 
-export type ExternalAgentWorker = z.infer<typeof ExternalAgentWorkerSchema>;
-export type ExternalAgentWorkerRequestSnapshot = z.infer<
-  typeof ExternalAgentWorkerRequestSnapshotSchema
->;
-export type ExternalAgentWorkerRun = z.infer<typeof ExternalAgentWorkerRunSchema>;
-export type ExternalAgentWorkerSession = z.infer<
-  typeof ExternalAgentWorkerSessionSchema
->;
+function externalAgentWorkerRequestMessage(
+  v: SchemaValidator,
+): Schema<ExternalAgentWorkerRequestSnapshot["messages"][number]> {
+  return v.object({
+    id: v.string(),
+    role: v.string(),
+    parts: v.array(v.object({ type: v.string() }).passthrough()).default([]),
+    metadata: v.record(v.string(), v.unknown()).optional(),
+    createdAt: v.string().optional(),
+  });
+}
+
+function externalAgentWorkerRequestSnapshot(
+  v: SchemaValidator,
+): Schema<ExternalAgentWorkerRequestSnapshot> {
+  return v.object({
+    messages: v.array(externalAgentWorkerRequestMessage(v)),
+    tools: v.array(v.unknown()).default([]),
+    context: v.array(v.unknown()).default([]),
+    forwardedProps: v.record(v.string(), v.unknown()).optional(),
+    traceContext: v.unknown().optional(),
+  });
+}
+
+export const ExternalAgentWorkerRequestSnapshotSchema = lazySchema(
+  defineSchema<ExternalAgentWorkerRequestSnapshot>(externalAgentWorkerRequestSnapshot),
+);
+
+function externalAgentWorkerSession(v: SchemaValidator): Schema<ExternalAgentWorkerSession> {
+  return v.object({
+    id: v.string().uuid(),
+    run_id: v.string(),
+    implementation_kind: v.string(),
+    worker_id: v.string().uuid().nullable(),
+    session_key: v.string(),
+    status: v.string(),
+    metadata: v.unknown().nullable().optional(),
+    created_at: v.string().optional(),
+    updated_at: v.string().optional(),
+    ended_at: v.string().nullable().optional(),
+  });
+}
+
+export const ExternalAgentWorkerSessionSchema = lazySchema(
+  defineSchema<ExternalAgentWorkerSession>(externalAgentWorkerSession),
+);
+
+function externalAgentWorkerRun(v: SchemaValidator): Schema<ExternalAgentWorkerRun> {
+  return v.object({
+    run_id: v.string(),
+    conversation_id: v.string().uuid(),
+    message_id: v.string().uuid(),
+    project_id: v.string().uuid().nullable(),
+    agent_id: v.string(),
+    status: v.string(),
+    request_snapshot: externalAgentWorkerRequestSnapshot(v).nullable(),
+    source_target_kind: v.string().nullable().optional(),
+    source_target_environment_id: v.string().uuid().nullable().optional(),
+    source_target_branch_id: v.string().uuid().nullable().optional(),
+    source_target_release_version: v.string().nullable().optional(),
+    runtime_target_kind: v.string().nullable().optional(),
+    runtime_target_environment_id: v.string().uuid().nullable().optional(),
+    runtime_target_branch_id: v.string().uuid().nullable().optional(),
+    latest_event_id: v.number(),
+    latest_external_event_sequence: v.number(),
+    lease_owner: v.string().nullable(),
+    lease_expires_at: v.string().nullable(),
+    worker_session: externalAgentWorkerSession(v).nullable().default(null),
+  });
+}
+
+export const ExternalAgentWorkerRunSchema = lazySchema(
+  defineSchema<ExternalAgentWorkerRun>(externalAgentWorkerRun),
+);
+
+const RegisterExternalAgentWorkerResponseSchema = lazySchema(
+  defineSchema<{ worker: ExternalAgentWorker; token: string }>((v) =>
+    v.object({
+      worker: externalAgentWorker(v),
+      token: v.string().min(1),
+    })
+  ),
+);
 
 export interface ExternalAgentWorkerClientOptions {
   apiUrl: string;
@@ -146,12 +235,12 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
     this.#fetch = options.fetch ?? fetch;
   }
 
-  async #request<S extends z.ZodTypeAny>(
+  async #request<T>(
     path: string,
-    schema: S,
+    schema: Schema<T>,
     init: RequestInit = {},
     options: { workerId?: string } = {},
-  ): Promise<z.output<S>> {
+  ): Promise<T> {
     const token = options.workerId
       ? this.#workerTokensByWorkerId.get(options.workerId) ?? this.#authToken
       : this.#authToken;
@@ -197,7 +286,11 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   async heartbeatWorker(workerId: string): Promise<ExternalAgentWorker> {
     const response = await this.#request(
       `/agent-workers/workers/${encodeURIComponent(workerId)}/heartbeat`,
-      z.object({ worker: ExternalAgentWorkerSchema }),
+      lazySchema(
+        defineSchema<{ worker: ExternalAgentWorker }>((v) =>
+          v.object({ worker: externalAgentWorker(v) })
+        ),
+      ),
       { method: "POST" },
       { workerId },
     );
@@ -209,7 +302,11 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   ): Promise<ExternalAgentWorkerRun | null> {
     const response = await this.#request(
       `/agent-workers/workers/${encodeURIComponent(input.workerId)}/claim`,
-      z.object({ run: ExternalAgentWorkerRunSchema.nullable() }),
+      lazySchema(
+        defineSchema<{ run: ExternalAgentWorkerRun | null }>((v) =>
+          v.object({ run: externalAgentWorkerRun(v).nullable() })
+        ),
+      ),
       {
         method: "POST",
         body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
@@ -226,7 +323,11 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
         encodeURIComponent(input.runId)
       }/lease`,
-      z.object({ run: ExternalAgentWorkerRunSchema.nullable() }),
+      lazySchema(
+        defineSchema<{ run: ExternalAgentWorkerRun | null }>((v) =>
+          v.object({ run: externalAgentWorkerRun(v).nullable() })
+        ),
+      ),
       {
         method: "POST",
         body: JSON.stringify({ lease_duration_seconds: input.leaseDurationSeconds }),
@@ -243,7 +344,11 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       `/agent-workers/workers/${encodeURIComponent(input.workerId)}/runs/${
         encodeURIComponent(input.runId)
       }/session`,
-      z.object({ session: ExternalAgentWorkerSessionSchema }),
+      lazySchema(
+        defineSchema<{ session: ExternalAgentWorkerSession }>((v) =>
+          v.object({ session: externalAgentWorkerSession(v) })
+        ),
+      ),
       {
         method: "PUT",
         body: JSON.stringify({
@@ -262,7 +367,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
       `/conversations/${encodeURIComponent(input.conversationId)}/runs/${
         encodeURIComponent(input.runId)
       }/events`,
-      z.unknown(),
+      lazySchema(defineSchema((v) => v.unknown())),
       {
         method: "POST",
         body: JSON.stringify({
@@ -276,7 +381,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   async completeRun(input: CompleteExternalAgentWorkerRunInput): Promise<void> {
     await this.#request(
       `/runs/${encodeURIComponent(input.runId)}/complete`,
-      z.unknown(),
+      lazySchema(defineSchema((v) => v.unknown())),
       {
         method: "POST",
         body: JSON.stringify({

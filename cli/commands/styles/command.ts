@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { getConfig } from "veryfront/config";
 import {
@@ -35,7 +35,7 @@ const getStyleArtifactBuildConfigSchema = defineSchema((v) =>
   })
 );
 
-const StyleArtifactBuildConfigSchema = getStyleArtifactBuildConfigSchema();
+const StyleArtifactBuildConfigSchema = lazySchema(getStyleArtifactBuildConfigSchema);
 
 type StyleArtifactBuildConfig = InferSchema<ReturnType<typeof getStyleArtifactBuildConfigSchema>>;
 

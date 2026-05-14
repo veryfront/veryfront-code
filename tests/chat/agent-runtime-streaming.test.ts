@@ -5,7 +5,7 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
 import { tool } from "../../src/tool/factory.ts";
 import { type AgentConfig, type Message } from "../../src/agent/types.ts";
 import type { ModelRuntime } from "../../src/provider/types.ts";
-import { z } from "zod";
+import { defineSchema } from "../../src/schemas/define.ts";
 
 function assert(condition: unknown, message?: string): void {
   if (!condition) throw new Error(message || "Assertion failed");
@@ -321,7 +321,7 @@ describe("AgentRuntime streaming", () => {
           "repeat-id": tool({
             id: "repeat-id",
             description: "Echoes the provided value",
-            inputSchema: z.object({ value: z.number() }),
+            inputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
             execute: async ({ value }) => {
               executedValues.push(value);
               return { seen: value };

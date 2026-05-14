@@ -9,12 +9,8 @@
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import type {
-  ExtensionContext,
-  ExtensionLogger,
-  TokenCacheEntry,
-  TokenCacheStore,
-} from "veryfront/extensions";
+import type { ExtensionContext, ExtensionLogger } from "veryfront/extensions";
+import type { TokenCacheEntry, TokenCacheStore } from "veryfront/extensions/cache";
 import factory, { RedisTokenCacheStore } from "./index.ts";
 import { createStubClientFactory } from "./test-utils.ts";
 

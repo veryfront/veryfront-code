@@ -5,12 +5,16 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "./llm/index.
 import { OpenAIProvider } from "../../extensions/ext-llm-openai/src/index.ts";
 import { AnthropicProvider } from "../../extensions/ext-llm-anthropic/src/index.ts";
 import { GoogleProvider } from "../../extensions/ext-llm-google/src/index.ts";
+import extJwt from "../../extensions/ext-auth-jwt/src/index.ts";
 import extEsbuild from "../../extensions/ext-bundler-esbuild/src/index.ts";
 import extBabel from "../../extensions/ext-parser-babel/src/index.ts";
-import extMdx from "../../extensions/ext-transform-mdx/src/index.ts";
+import extMdx from "../../extensions/ext-content-mdx/src/index.ts";
 import extTailwind from "../../extensions/ext-css-tailwind/src/index.ts";
-import extNodeCompat from "../../extensions/ext-node-compatibility/src/index.ts";
-import extZod from "../../extensions/ext-zod/src/index.ts";
+import extDocumentKreuzberg from "../../extensions/ext-document-kreuzberg/src/index.ts";
+import extDbSqlite from "../../extensions/ext-db-sqlite/src/index.ts";
+import extSandboxShellTools from "../../extensions/ext-sandbox-shell-tools/src/index.ts";
+import extZod from "../../extensions/ext-schema-zod/src/index.ts";
+import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
 type BuiltinLLMProviderDefinition = {
   extensionName: string;
@@ -62,6 +66,12 @@ export function ensureBuiltinLLMProviders(): LLMProviderRegistry {
   return registry;
 }
 
+export function ensureBuiltinSchemaValidator(): void {
+  if (!tryResolve("SchemaValidator")) {
+    register("SchemaValidator", createZodAdapter());
+  }
+}
+
 function createBuiltinLLMProviderExtension(
   definition: BuiltinLLMProviderDefinition,
 ): ResolvedExtension {
@@ -95,13 +105,18 @@ function createBuiltinLLMProviderExtension(
 
 export function createBuiltinExtensions(): ResolvedExtension[] {
   return [
-    // ext-zod registers SchemaValidator. Listed FIRST so any subsequent
+    // ext-schema-zod registers SchemaValidator. Listed FIRST so any subsequent
     // builtin whose setup() builds schemas via defineSchema() finds the
     // contract resolved.
     {
       source: "builtin",
-      origin: "veryfront/ext-zod",
+      origin: "veryfront/ext-schema-zod",
       extension: extZod(),
+    },
+    {
+      source: "builtin",
+      origin: "veryfront/ext-auth-jwt",
+      extension: extJwt(),
     },
     {
       source: "builtin",
@@ -115,7 +130,7 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-transform-mdx",
+      origin: "veryfront/ext-content-mdx",
       extension: extMdx(),
     },
     {
@@ -125,8 +140,18 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-node-compatibility",
-      extension: extNodeCompat(),
+      origin: "veryfront/ext-document-kreuzberg",
+      extension: extDocumentKreuzberg(),
+    },
+    {
+      source: "builtin",
+      origin: "veryfront/ext-db-sqlite",
+      extension: extDbSqlite(),
+    },
+    {
+      source: "builtin",
+      origin: "veryfront/ext-sandbox-shell-tools",
+      extension: extSandboxShellTools(),
     },
     ...BUILTIN_LLM_PROVIDERS.map(createBuiltinLLMProviderExtension),
   ];

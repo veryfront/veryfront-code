@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 /** Context used for generating cache keys in multi-project environments */
@@ -14,4 +14,4 @@ export const getCacheKeyContextSchema = defineSchema((v) =>
 export type CacheKeyContext = InferSchema<ReturnType<typeof getCacheKeyContextSchema>>;
 
 // Backward compat alias
-export const CacheKeyContextSchema = getCacheKeyContextSchema();
+export const CacheKeyContextSchema = lazySchema(getCacheKeyContextSchema);

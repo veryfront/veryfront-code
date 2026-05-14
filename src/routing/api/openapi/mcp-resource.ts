@@ -1,5 +1,5 @@
 import { resource } from "#veryfront/resource";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { OpenAPISpec } from "./types.ts";
 
 export function createOpenAPIResource(
@@ -9,7 +9,7 @@ export function createOpenAPIResource(
     pattern: "openapi://spec",
     description:
       "OpenAPI specification for this project's API routes. Use this to understand available endpoints, their parameters, request/response schemas, and authentication requirements.",
-    paramsSchema: defineSchema((v) => v.object({}))(),
+    paramsSchema: lazySchema(defineSchema((v) => v.object({}))),
     load: async () => {
       const spec = await getSpec();
 

@@ -1,6 +1,6 @@
 # @veryfront/ext-llm-google
 
-> **Category:** AI / LLM | **Contract:** `LLMProvider` | **Built-in**
+> **Category:** LLM | **Contract:** `LLMProvider` | **Built-in**
 
 Provides Google Gemini models for Veryfront agents and chat, enabling `google/*` models for chat and embeddings via the `LLMProviderRegistry`.
 

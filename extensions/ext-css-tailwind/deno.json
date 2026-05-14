@@ -6,7 +6,7 @@
     "extension": true,
     "capabilities": [
       { "type": "contract", "name": "CSSProcessor" },
-      { "type": "net", "hosts": ["esm.sh"] }
+      { "type": "net:outbound", "hosts": ["esm.sh"] }
     ]
   },
   "imports": {
