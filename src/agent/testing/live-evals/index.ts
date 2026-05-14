@@ -10,7 +10,11 @@ export {
   type LiveEvalRuntime,
   type RuntimePerformanceSummary,
 } from "./performance.ts";
-export { buildLiveEvalRequestBody, type BuildLiveEvalRequestBodyInput } from "./request.ts";
+export {
+  buildLiveEvalRequestBody,
+  type BuildLiveEvalRequestBodyInput,
+  type LiveEvalRequestBody,
+} from "./request.ts";
 export {
   buildLiveEvalCaseTagSummary,
   buildLiveEvalRuntimeSummary,
@@ -28,3 +32,16 @@ export {
   createSkippedEvalResult,
   type LiveEvalResultRecord,
 } from "./result.ts";
+export {
+  containsSkillLoad,
+  countStepStartedEvents,
+  createLiveEvalCaseSupport,
+  hasFinished,
+  type LiveEvalCase,
+  type LiveEvalContext,
+  type LiveEvalProjectFile,
+  type LiveEvalProjectFileReaderInput,
+  type LiveEvalRunnerConfig,
+  liveEvalRunnerInternals,
+  type PreparedLiveEvalInput,
+} from "./runner.ts";
