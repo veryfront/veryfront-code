@@ -72,6 +72,8 @@ const REACT_BOUNDARY_IMPORTS = new Set([
   "react/jsx-runtime",
 ]);
 
+const EXACT_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;
+
 function hashFromIntegrity(
   integrity: string | undefined,
 ): { alg: string; content: string } | undefined {
@@ -163,7 +165,7 @@ function parseNpmPackageSpec(
 
   const name = packageSpec.slice(0, versionIndex);
   const version = packageSpec.slice(versionIndex + 1);
-  if (!name || !version) return null;
+  if (!name || !EXACT_SEMVER_RE.test(version)) return null;
   return { name, version };
 }
 

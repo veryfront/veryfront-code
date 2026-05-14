@@ -202,6 +202,14 @@ describe("componentsFromLock", () => {
     );
   });
 
+  it("ignores non-exact esm.sh deps query packages", () => {
+    const components = componentsFromEsmShImports({
+      "main": "https://esm.sh/main@1.0.0?deps=range-only@^1,latest-tag@latest",
+    });
+
+    assertEquals(components.map((component) => component.name), ["main"]);
+  });
+
   it("plans an aggregate SBOM plus one SBOM per workspace manifest", () => {
     const lock = JSON.stringify({
       version: "5",
