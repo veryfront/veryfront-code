@@ -104,7 +104,7 @@ Deno.test("init handler: returns 401 when getUserId returns empty string", async
   assertEquals(response.status, 401);
 });
 
-Deno.test("init handler: returns 500 when oauth is not configured", async () => {
+Deno.test("init handler: returns 503 when oauth is not configured", async () => {
   const handler = createOAuthInitHandler(TEST_CONFIG, {
     env: makeEnv(),
     envReader: () => undefined,
@@ -113,11 +113,33 @@ Deno.test("init handler: returns 500 when oauth is not configured", async () => 
 
   const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
 
-  assertEquals(response.status, 500);
+  // SEC-009: misconfiguration is Service Unavailable, not a generic 500.
+  assertEquals(response.status, 503);
   assertEquals(await response.json(), {
     error: "Test Provider OAuth not configured",
-    details: "Missing TEST_CLIENT_ID or TEST_CLIENT_SECRET",
   });
+});
+
+Deno.test("init handler: not-configured response does not leak env var names (SEC-009)", async () => {
+  const handler = createOAuthInitHandler(TEST_CONFIG, {
+    env: makeEnv(),
+    envReader: () => undefined,
+    getUserId: () => "alice",
+  });
+
+  const response = await handler(new Request("http://localhost:3000/api/auth/test-provider"));
+
+  assertEquals(response.status, 503);
+
+  const bodyText = await response.text();
+  // Internal env var names must NOT appear in the response body.
+  assertEquals(bodyText.includes(TEST_CONFIG.clientIdEnvVar), false);
+  assertEquals(bodyText.includes(TEST_CONFIG.clientSecretEnvVar), false);
+  // The body still surfaces a generic "not configured" message to the caller.
+  assertEquals(bodyText.includes("not configured"), true);
+
+  const body = JSON.parse(bodyText) as Record<string, unknown>;
+  assertEquals("details" in body, false);
 });
 
 Deno.test("init handler: stores state with userId and redirects to the provider", async () => {
