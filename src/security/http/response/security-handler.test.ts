@@ -228,7 +228,7 @@ describe("security/http/response/security-handler", () => {
       assert(b.includes("'nonce-nonce-bbb'"), "second nonce embedded");
     });
 
-    it("default CSP should contain all 13 directives", () => {
+    it("default CSP should contain all 14 directives", () => {
       const result = buildCSP(false, "n", null);
       const directives = [
         "default-src",
@@ -242,12 +242,41 @@ describe("security/http/response/security-handler", () => {
         "media-src",
         "object-src",
         "frame-src",
+        "frame-ancestors",
         "base-uri",
         "form-action",
       ];
       for (const d of directives) {
         assert(result.includes(d), `default CSP must include ${d}`);
       }
+    });
+
+    it("default CSP should set frame-ancestors 'none' for non-veryfront domains", () => {
+      const result = buildCSP(false, "n", null, null, undefined, false);
+      const sources = parseDirectiveSources(result, "frame-ancestors");
+      assertEquals(sources, ["'none'"], "frame-ancestors should be 'none' for customer apps");
+    });
+
+    it("default CSP should allow Studio embedding when isVeryfrontDomain is true", () => {
+      const result = buildCSP(false, "n", null, null, undefined, true);
+      const sources = parseDirectiveSources(result, "frame-ancestors");
+      assert(sources.includes("'self'"), "frame-ancestors should allow 'self'");
+      assert(
+        sources.some((s) => s.includes("veryfront.com")),
+        "frame-ancestors should allow veryfront.com",
+      );
+      assert(
+        sources.some((s) => s.includes("veryfront.org")),
+        "frame-ancestors should allow veryfront.org",
+      );
+      assert(
+        sources.some((s) => s.includes("veryfront.dev")),
+        "frame-ancestors should allow veryfront.dev",
+      );
+      assert(
+        !sources.includes("'none'"),
+        "frame-ancestors must not be 'none' for veryfront-hosted apps",
+      );
     });
 
     it("default CSP should allow WebSocket connections for HMR", () => {
@@ -480,9 +509,37 @@ describe("security/http/response/security-handler", () => {
       assertEquals(headers.has("X-Frame-Options"), false);
     });
 
-    it("should not set X-Frame-Options when isVeryfrontDomain is true", () => {
+    it("should set X-Frame-Options DENY even when isVeryfrontDomain is true (SEC-007)", () => {
+      // Legacy clickjacking control. Modern browsers ignore X-Frame-Options
+      // when frame-ancestors is set (which it is for veryfront-hosted apps),
+      // so DENY here is a safe fallback that still permits Studio embedding
+      // in modern browsers via the CSP allowlist.
       const headers = applyHeaders({ isVeryfrontDomain: true });
-      assertEquals(headers.has("X-Frame-Options"), false);
+      assertEquals(headers.get("X-Frame-Options"), "DENY");
+    });
+
+    it("should set CSP frame-ancestors with veryfront origins when isVeryfrontDomain is true (SEC-007)", () => {
+      const headers = applyHeaders({ isVeryfrontDomain: true });
+      const csp = headers.get("Content-Security-Policy");
+      assert(csp !== null, "CSP header should be present");
+      assert(
+        csp.includes("frame-ancestors"),
+        "frame-ancestors directive must be present",
+      );
+      assert(
+        csp.includes("veryfront.com"),
+        "frame-ancestors should allow Studio embedding",
+      );
+    });
+
+    it("should set CSP frame-ancestors 'none' for non-veryfront domains (SEC-007)", () => {
+      const headers = applyHeaders({ isVeryfrontDomain: false });
+      const csp = headers.get("Content-Security-Policy");
+      assert(csp !== null, "CSP header should be present");
+      assert(
+        csp.includes("frame-ancestors 'none'"),
+        "frame-ancestors should be 'none' for customer apps",
+      );
     });
 
     it("should set HSTS in production", () => {
