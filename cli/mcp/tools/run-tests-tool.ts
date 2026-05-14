@@ -62,22 +62,34 @@ export async function executeTests(
 
   const child = cmd.spawn();
   const timeoutMs = input.timeout ?? 300000;
+  const outputPromise = child.output();
 
-  const result = await Promise.race([
-    child.output(),
-    new Promise<never>((_, reject) => {
-      const timer = setTimeout(() => {
-        try {
-          child.kill();
-        } catch {
-          // Process may have already exited
-        }
-        reject(new Error(`Test execution timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      // Don't prevent process exit while waiting
-      Deno.unrefTimer(timer);
-    }),
-  ]);
+  let timerId: number | undefined;
+  const timeoutResult = "timeout";
+  const timeoutPromise = new Promise<typeof timeoutResult>((resolve) => {
+    timerId = setTimeout(() => {
+      resolve(timeoutResult);
+    }, timeoutMs);
+    // Don't prevent process exit while waiting
+    Deno.unrefTimer(timerId);
+  });
+
+  const result = await Promise.race([outputPromise, timeoutPromise]);
+
+  if (timerId !== undefined) {
+    clearTimeout(timerId);
+  }
+
+  if (result === timeoutResult) {
+    try {
+      child.kill();
+    } catch {
+      // Process may have already exited
+    }
+
+    await outputPromise.catch(() => undefined);
+    throw new Error(`Test execution timed out after ${timeoutMs}ms`);
+  }
 
   const stdout = new TextDecoder().decode(result.stdout);
   const stderr = new TextDecoder().decode(result.stderr);
