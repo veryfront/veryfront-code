@@ -16,6 +16,25 @@ export {
 } from "./agent-tester.ts";
 
 export {
+  createDurableRunCanaryApiClient,
+  createDurableRunCanaryRunner,
+  type DurableRunCanaryApiClient,
+  type DurableRunCanaryApiConfig,
+  type DurableRunCanaryCase,
+  type DurableRunCanaryCreateRootRunInput,
+  type DurableRunCanaryMessage,
+  type DurableRunCanaryPreparedCase,
+  type DurableRunCanaryResult,
+  type DurableRunCanaryRunnerConfig,
+  durableRunCanaryRunnerInternals,
+  type DurableRunCanaryRunSummary,
+  type DurableRunCanarySendUserMessageInput,
+  type DurableRunCanaryStartRunInput,
+  getDurableRunCanaryMessageSchema,
+  parseDurableRunCanaryRunSummary,
+} from "./durable-run-canaries/index.ts";
+
+export {
   buildFailureSuffix,
   buildLiveEvalCaseTagSummary,
   buildLiveEvalRequestBody,
