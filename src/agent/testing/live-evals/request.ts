@@ -1,3 +1,19 @@
+export interface LiveEvalRequestBody {
+  threadId: string;
+  runId: string;
+  state: Record<string, string>;
+  tools: unknown[];
+  context: unknown[];
+  forwardedProps?: {
+    veryfront: Record<string, unknown>;
+  };
+  messages: Array<{
+    id: string;
+    role: "user";
+    content: string;
+  }>;
+}
+
 export interface BuildLiveEvalRequestBodyInput {
   testCaseId: string;
   prompt: string;
@@ -11,7 +27,9 @@ export interface BuildLiveEvalRequestBodyInput {
   maxSteps?: number;
 }
 
-export function buildLiveEvalRequestBody(input: BuildLiveEvalRequestBodyInput) {
+export function buildLiveEvalRequestBody(
+  input: BuildLiveEvalRequestBodyInput,
+): LiveEvalRequestBody {
   const veryfront: Record<string, unknown> = {};
   if (input.projectId) {
     veryfront.projectId = input.projectId;
