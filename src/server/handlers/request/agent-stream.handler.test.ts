@@ -21,6 +21,47 @@ import {
   TrackingSessionManager,
 } from "./agent-stream.handler.test-helpers.ts";
 
+function createRuntimeAgentRunInvocationBody() {
+  return JSON.stringify({
+    run: {
+      agentServiceId: "veryfront-platform-agent",
+      agentId: "assistant-1",
+      conversationId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messageId: "10000000-1000-4000-8000-100000000002",
+      inputAnchorMessageId: "10000000-1000-4000-8000-100000000003",
+      requestedByUserId: "10000000-1000-4000-8000-100000000004",
+      project: {
+        projectId: "10000000-1000-4000-8000-100000000005",
+        projectSlug: "incident-responder-cwy27d",
+        runtimeTargetKind: "preview_branch",
+        runtimeTargetBranchId: "10000000-1000-4000-8000-100000000006",
+      },
+      validatedClaims: {
+        subject: "10000000-1000-4000-8000-100000000004",
+        projectId: "10000000-1000-4000-8000-100000000005",
+        projectSlug: "incident-responder-cwy27d",
+        scopes: ["agent:run"],
+      },
+    },
+    messages: [
+      { id: "user-message-1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ],
+    tools: [{
+      name: "studio_focus_component",
+      description: "Focus a component in Studio",
+      inputSchema: {
+        type: "object",
+        properties: {
+          componentId: { type: "string" },
+        },
+      },
+    }],
+    context: [{ type: "text", text: "Current file: app.tsx" }],
+    forwardedProps: { clientId: "veryfront-studio" },
+  });
+}
+
 describe("server/handlers/request/agent-stream.handler", () => {
   it("streams AG-UI events for a valid signed request", async () => {
     let discoveryCalls = 0;
@@ -129,6 +170,82 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertStringIncludes(text, "event: ReasoningMessageStart");
     assertStringIncludes(text, "event: ReasoningMessageContent");
     assertStringIncludes(text, "event: ReasoningMessageEnd");
+  });
+
+  it("streams AG-UI events for the signed runtime agent invocation envelope", async () => {
+    let discoveryCalls = 0;
+    let streamContext: Record<string, unknown> | undefined;
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+      },
+      getAgent: (id) => id === "assistant-1" ? createAgent("assistant-1") : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: async (_messages, context, callbacks) => {
+          streamContext = context;
+          callbacks?.onFinish?.({
+            text: "hello from runtime",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: {
+              promptTokens: 3,
+              completionTokens: 4,
+              totalTokens: 7,
+            },
+            metadata: {
+              finishReason: "stop",
+            },
+          });
+
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+              controller.enqueue(
+                encodeDataStreamEvent({
+                  type: "text-delta",
+                  id: "text-1",
+                  delta: "hello from runtime",
+                }),
+              );
+              controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createRuntimeAgentRunInvocationBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(discoveryCalls, 1);
+    assertEquals(streamContext?.runId, "run_1");
+    assertEquals(streamContext?.threadId, "10000000-1000-4000-8000-100000000001");
+
+    const text = await result.response.text();
+    assertStringIncludes(text, "event: RunStarted");
+    assertStringIncludes(text, "event: TextMessageContent");
+    assertStringIncludes(text, "event: RunFinished");
   });
 
   it("accepts the public control-plane stream route", async () => {

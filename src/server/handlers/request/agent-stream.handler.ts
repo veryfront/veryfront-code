@@ -26,7 +26,12 @@ import {
   agentRunSessionManager,
 } from "#veryfront/internal-agents/session-manager.ts";
 import {
+  buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
+  RuntimeAgentRunInvocationSchema,
+} from "#veryfront/agent/runtime/agent-invocation-contract.ts";
+import {
   getInternalAgentStreamRequestSchema,
+  type InternalAgentStreamRequest,
   type RuntimeAgentSourceContext,
   toRuntimeRunAgentInput,
 } from "#veryfront/internal-agents/schema.ts";
@@ -115,6 +120,18 @@ function setResponseHeader(target: Response, key: string, value: string): Respon
   });
 }
 
+function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamRequest {
+  const internalAgentStreamRequestSchema = getInternalAgentStreamRequestSchema();
+  const invocation = RuntimeAgentRunInvocationSchema.safeParse(rawPayload);
+  if (invocation.success) {
+    return internalAgentStreamRequestSchema.parse(
+      buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation.data),
+    );
+  }
+
+  return internalAgentStreamRequestSchema.parse(rawPayload);
+}
+
 export class AgentStreamHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AgentStreamHandler",
@@ -167,7 +184,7 @@ export class AgentStreamHandler extends BaseHandler {
           req,
           INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
         );
-        const payload = getInternalAgentStreamRequestSchema().parse(JSON.parse(rawBody));
+        const payload = parseAgentStreamPayload(JSON.parse(rawBody));
         await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: payload.runId,
           expectedSurface: "studio",
