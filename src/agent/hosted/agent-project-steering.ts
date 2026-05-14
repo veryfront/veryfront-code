@@ -1,3 +1,4 @@
+import { ensureBuiltinSchemaValidator } from "../../extensions/builtin-extensions.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 import {
@@ -73,6 +74,7 @@ function stringifyError(error: unknown): string {
 export function createHostedAgentProjectSteering(
   options: HostedAgentProjectSteeringOptions,
 ): HostedAgentProjectSteering {
+  ensureBuiltinSchemaValidator();
   const parsedOptions = hostedAgentProjectSteeringOptionsSchema.parse(options);
   const agentsDir = resolveRuntimeAgentDefinitionsDir({
     baseDir: parsedOptions.baseDir,
