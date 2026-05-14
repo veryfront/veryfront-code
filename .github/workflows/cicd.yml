@@ -333,7 +333,7 @@ jobs:
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom --output "dist/sbom-${VERSION}.json"
+        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
 
       - name: Create GitHub pre-release
         env:
@@ -345,7 +345,12 @@ jobs:
           for f in binaries/veryfront-*/veryfront-*; do
             [ -f "$f" ] && BINARIES="$BINARIES $f"
           done
+          SBOMS=""
+          for f in dist/sbom-${VERSION}/*.json; do
+            [ -f "$f" ] && SBOMS="$SBOMS $f"
+          done
           echo "Available binaries: $BINARIES"
+          echo "Available SBOMs: $SBOMS"
 
           # Delete previous rc release if it exists (from earlier merge)
           gh release delete "v${VERSION}" --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
@@ -360,7 +365,7 @@ jobs:
           ```' \
             $BINARIES \
             scripts/install.sh \
-            "dist/sbom-${VERSION}.json"
+            $SBOMS
 
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
@@ -435,7 +440,7 @@ jobs:
       - name: Generate SBOM
         env:
           VERSION: ${{ steps.version.outputs.version }}
-        run: deno task sbom --output "dist/sbom-${VERSION}.json"
+        run: deno task sbom:all --output-dir "dist/sbom-${VERSION}"
 
       - name: Create git tag
         env:
@@ -460,7 +465,12 @@ jobs:
           for f in binaries/veryfront-*/veryfront-*; do
             [ -f "$f" ] && BINARIES="$BINARIES $f"
           done
+          SBOMS=""
+          for f in dist/sbom-${VERSION}/*.json; do
+            [ -f "$f" ] && SBOMS="$SBOMS $f"
+          done
           echo "Available binaries: $BINARIES"
+          echo "Available SBOMs: $SBOMS"
 
           # Clean up rc pre-releases (created by the prerelease job on main pushes)
           gh release list --repo veryfront/veryfront --json tagName -q ".[].tagName" \
@@ -486,7 +496,7 @@ jobs:
               $BINARIES \
               scripts/install.sh \
               scripts/install.ps1 \
-              "dist/sbom-${VERSION}.json"
+              $SBOMS
           fi
 
       - name: Create source repo release
