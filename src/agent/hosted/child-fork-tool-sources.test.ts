@@ -156,6 +156,12 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   assertEquals(switchedProjects, ["project-2"]);
   assertEquals(fixtures.executeCalls, [
     {
+      sourceId: "veryfront-mcp-fork",
+      toolName: "get_tool_access_profile",
+      args: { project_reference: "project-1" },
+      context: undefined,
+    },
+    {
       sourceId: "studio-mcp-live-tools",
       toolName: "studio_open_project",
       args: { project_id: "project-2" },
@@ -164,6 +170,62 @@ Deno.test("prepareDefaultHostedChildForkToolSources loads API, live Studio, and 
   ]);
 
   await result.closeStudioMcpTools?.();
+});
+
+Deno.test("prepareDefaultHostedChildForkToolSources filters API MCP tools with the tool access profile", async () => {
+  const createRemoteToolSource = (config: RemoteMCPToolSourceConfig): RemoteToolSource => ({
+    id: config.id ?? "source",
+    listTools: () =>
+      Promise.resolve([
+        remoteTool("create_server"),
+        remoteTool("delete_server"),
+        remoteTool("update_file"),
+      ]),
+    executeTool: (toolName, args) => {
+      if (toolName === "get_tool_access_profile") {
+        return Promise.resolve({
+          version: 1,
+          freshness: {
+            resolved_at: "2999-01-01T00:00:00.000Z",
+            valid_for_ms: 60_000,
+            fail_closed_on_expiry: true,
+          },
+          families: [
+            {
+              family: "runtime",
+              default_decision: {
+                visibility: "hidden",
+                reason_code: "billing_plan_restriction",
+              },
+              action_overrides: [
+                {
+                  action: "delete_server",
+                  decision: { visibility: "visible", reason_code: "allowed" },
+                },
+              ],
+            },
+          ],
+        });
+      }
+
+      return Promise.resolve({ success: true, project_id: args.project_id });
+    },
+  });
+
+  const result = await prepareDefaultHostedChildForkToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    getProjectId: () => "project-1",
+    createRemoteToolSource,
+  });
+
+  assertEquals(result.ok, true);
+  if (!result.ok) {
+    return;
+  }
+
+  assertEquals(Object.keys(result.forkTools), ["delete_server", "update_file"]);
 });
 
 Deno.test("prepareDefaultHostedChildForkToolSources reports Studio setup failures", async () => {

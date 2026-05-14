@@ -15,6 +15,12 @@ export type ProjectScopedRemoteToolCatalogOptions = {
   defaultProjectId?: ProjectScopedRemoteToolDefaultProjectId;
   allowedToolNames?: ReadonlySet<string> | null;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
+  filterToolDefinitions?: (input: {
+    source: RemoteToolSource;
+    toolDefinitions: readonly ToolDefinition[];
+    activeProjectId: string | null;
+    context?: ToolExecutionContext;
+  }) => Promise<ToolDefinition[]> | ToolDefinition[];
 };
 
 export type ProjectScopedRemoteToolDefinitions = {
@@ -191,7 +197,10 @@ export function createProjectScopedRemoteToolCatalog(
       resolveDefaultProjectId(input.defaultProjectId),
     );
 
-    if (cachedToolDefinitions && cachedProjectId === activeProjectId) {
+    if (
+      !input.filterToolDefinitions && cachedToolDefinitions &&
+      cachedProjectId === activeProjectId
+    ) {
       return {
         activeProjectId,
         toolDefinitions: cachedToolDefinitions,
@@ -199,14 +208,24 @@ export function createProjectScopedRemoteToolCatalog(
     }
 
     const sourceContext = withActiveProjectContext(context, activeProjectId);
-    const toolDefinitions = filterProjectScopedRemoteToolDefinitions(
+    const scopedToolDefinitions = filterProjectScopedRemoteToolDefinitions(
       await input.source.listTools(sourceContext),
       activeProjectId,
       input.projectScopedRemoteToolOptions,
     );
+    const toolDefinitions = input.filterToolDefinitions
+      ? await input.filterToolDefinitions({
+        source: input.source,
+        toolDefinitions: scopedToolDefinitions,
+        activeProjectId,
+        context: sourceContext,
+      })
+      : scopedToolDefinitions;
 
-    cachedProjectId = activeProjectId;
-    cachedToolDefinitions = toolDefinitions;
+    if (!input.filterToolDefinitions) {
+      cachedProjectId = activeProjectId;
+      cachedToolDefinitions = toolDefinitions;
+    }
 
     return {
       activeProjectId,

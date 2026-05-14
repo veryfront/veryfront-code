@@ -2,6 +2,7 @@ import {
   createProjectScopedRemoteToolCatalog,
   createRemoteMCPToolSource,
   isProjectNavigationRemoteTool,
+  type ProjectScopedRemoteToolCatalogOptions,
   type ProjectScopedRemoteToolDefaultProjectId,
   type ProjectScopedRemoteToolOptions,
   type RemoteMCPToolSourceConfig,
@@ -22,6 +23,7 @@ import {
   type ProjectSteeringMutationResult,
   type ProjectSteeringPaths,
 } from "../project-steering-mutation.ts";
+import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
 
 export type HostedProjectRemoteToolSourceMutationHandler = (
   mutation: ProjectSteeringMutationResult,
@@ -51,6 +53,7 @@ export type CreateHostedProjectRemoteToolSourceInput = {
   getActiveBranchId?: () => string | null | undefined;
   allowedToolNames?: ReadonlySet<string> | null;
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
+  filterToolDefinitions?: ProjectScopedRemoteToolCatalogOptions["filterToolDefinitions"];
   prepareToolInput?: HostedProjectRemoteToolSourcePrepareToolInput;
   retryToolName?: string;
   shouldRetryWithTool?: HostedProjectRemoteToolSourceRetryPolicy;
@@ -73,6 +76,7 @@ export function createHostedProjectRemoteToolSource(
     defaultProjectId: input.defaultProjectId,
     allowedToolNames: input.allowedToolNames,
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
+    filterToolDefinitions: input.filterToolDefinitions,
   });
   const retryToolName = input.retryToolName ?? "update_file";
 
@@ -202,6 +206,7 @@ export type CreateHostedProjectRemoteToolSourcesInput =
 
 function createHostedProjectRemoteToolSourceFromConfig(
   input: CreateHostedProjectRemoteToolSourcesInput,
+  server: AgentServiceMcpServerConfig,
   source: RemoteToolSource,
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
 ): RemoteToolSource {
@@ -214,6 +219,17 @@ function createHostedProjectRemoteToolSourceFromConfig(
     ...(input.allowedToolNames !== undefined ? { allowedToolNames: input.allowedToolNames } : {}),
     ...(input.projectScopedRemoteToolOptions !== undefined
       ? { projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions }
+      : {}),
+    ...(server.kind === "veryfront-api"
+      ? {
+        filterToolDefinitions: ({ source, toolDefinitions, activeProjectId, context }) =>
+          filterVeryfrontApiToolDefinitionsWithAccessProfile({
+            source,
+            toolDefinitions,
+            projectId: activeProjectId,
+            context,
+          }),
+      }
       : {}),
     ...(input.prepareToolInput !== undefined ? { prepareToolInput: input.prepareToolInput } : {}),
     ...(input.retryToolName !== undefined ? { retryToolName: input.retryToolName } : {}),
@@ -252,6 +268,7 @@ export function createHostedProjectRemoteToolSources(
     sources.push(
       createHostedProjectRemoteToolSourceFromConfig(
         input,
+        server,
         createRemoteToolSource(remoteConfig),
         server.kind === "veryfront-studio" ? input.onStudioProjectSwitch : undefined,
       ),

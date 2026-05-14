@@ -318,6 +318,13 @@ If `mcpServers` is omitted, the Veryfront Cloud preset includes
 `veryfrontMcpServer()` by default. Pass `mcpServers: []` to run without remote
 MCP tools.
 
+For `veryfrontMcpServer()`, the runtime reads the control-plane
+`tool_access` profile for the active project and filters mapped gated MCP tools
+before exposing them to the model. If the profile is stale or unavailable, the
+runtime hides mapped gated tools and leaves execution-time authorization to the
+API. Third-party MCP servers are not affected by this Veryfront-specific
+visibility profile.
+
 Control-plane registration is convention-first and explicit through environment
 variables. In `auto` mode, `startAgentService()` registers the service only when
 `VERYFRONT_API_TOKEN` and `VERYFRONT_AGENT_SERVICE_URL` are present. Set
