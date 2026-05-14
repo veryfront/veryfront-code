@@ -1,7 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk } from "../../chat/types.ts";
-import type { ToolExecutionDataEvent } from "../tool/types.ts";
+import type { ToolExecutionDataEvent } from "../../tool/types.ts";
 import {
   createHostedChatRuntimeAgentAdapter,
   type HostedChatRuntimeAgentAdapterInput,
@@ -149,6 +149,10 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
       result.toUIMessageStream({ generateMessageId: () => "assistant-message" }),
     );
     await baseReadStarted;
+    const controller = baseController as ReadableStreamDefaultController<Uint8Array> | null;
+    if (controller === null) {
+      throw new Error("Base response stream did not start");
+    }
 
     publishDataEventFrom(capturedInput, {
       type: "tool-progress",
@@ -156,8 +160,8 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
       name: "tool-progress",
       value: { step: 1 },
     });
-    baseController?.enqueue(encoder.encode('data: {"type":"message-finish"}\n\n'));
-    baseController?.close();
+    controller.enqueue(encoder.encode('data: {"type":"message-finish"}\n\n'));
+    controller.close();
 
     assertEquals(await chunksPromise, [
       { type: "start", messageId: "assistant-message" },
