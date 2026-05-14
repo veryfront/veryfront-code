@@ -1,7 +1,9 @@
-import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
+import { afterEach } from "#veryfront/testing/bdd.ts";
 import { join, resolve } from "node:path";
 import { createHostedAgentProjectSteering } from "./agent-project-steering.ts";
+import { reset, tryResolve } from "../../extensions/contracts.ts";
+import type { SchemaValidator } from "../../extensions/schema/index.ts";
 import type { RuntimeProjectFilesFetch } from "../runtime/project-files-client.ts";
 
 function withTempDir(fn: (rootDir: string) => void | Promise<void>): Promise<void> {
@@ -38,6 +40,26 @@ function createJsonResponse(body: unknown): Response {
     headers: { "content-type": "application/json" },
   });
 }
+
+afterEach(() => {
+  reset();
+});
+
+Deno.test("createHostedAgentProjectSteering registers the built-in schema validator when used directly", async () => {
+  await withTempDir((rootDir) => {
+    reset();
+    assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
+
+    const baseDir = writeAgentDefinition({ rootDir, agentId: "writer" });
+    createHostedAgentProjectSteering({
+      baseDir,
+      agentId: "writer",
+      getApiUrl: () => "https://api.example.com",
+    });
+
+    assertEquals(typeof tryResolve<SchemaValidator>("SchemaValidator")?.object, "function");
+  });
+});
 
 Deno.test("createHostedAgentProjectSteering loads and caches markdown agent definitions", async () => {
   await withTempDir((rootDir) => {
