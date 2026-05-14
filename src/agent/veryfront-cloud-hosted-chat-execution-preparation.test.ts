@@ -4,10 +4,10 @@ import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
   HostedChatRuntimeAgent,
   HostedChatRuntimeCreationOptions,
-} from "./hosted-chat-runtime-contract.ts";
-import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
-import type { RuntimeAgentThinkingConfig } from "./runtime-agent-definition.ts";
-import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
+} from "./hosted/chat-runtime-contract.ts";
+import type { ParsedHostedChatRequest } from "./hosted/chat-request-parser.ts";
+import type { RuntimeAgentThinkingConfig } from "./runtime/agent-definition.ts";
+import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 import {
   createVeryfrontCloudHostedChatExecutionRootRunOptions,
   prepareVeryfrontCloudHostedChatExecution,

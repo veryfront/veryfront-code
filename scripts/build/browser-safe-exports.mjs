@@ -16,8 +16,8 @@ export const BROWSER_SAFE_EXPORTS = [
 ];
 
 export const BROWSER_SAFE_DNT_TIMER_MODULES = [
-  "src/agent/hosted-chat-execution-runtime.js",
-  "src/agent/hosted-child-stream-watchdog.js",
+  "src/agent/hosted/chat-execution-runtime.js",
+  "src/agent/hosted/child-stream-watchdog.js",
   "src/chat/final-step-fallback.js",
 ];
 

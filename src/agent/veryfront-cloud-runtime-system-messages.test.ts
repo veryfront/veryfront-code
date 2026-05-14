@@ -3,8 +3,8 @@ import {
   buildVeryfrontCloudRuntimeInstructions,
   createVeryfrontCloudRuntimeSystemMessages,
 } from "./veryfront-cloud-runtime-system-messages.ts";
-import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
-import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
+import type { RuntimeAgentMarkdownDefinition } from "./runtime/agent-definition.ts";
+import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 
 function createAgent(
   overrides: Partial<RuntimeAgentMarkdownDefinition> = {},

@@ -19,26 +19,26 @@ import {
   createDefaultResearchRunArtifactMirrorHandler,
   shouldRetryCreateResearchArtifactAsUpdate,
 } from "./default-research-artifact-support.ts";
-import { createHostedChatRuntimeAgentAdapter } from "./hosted-chat-runtime-agent-adapter.ts";
+import { createHostedChatRuntimeAgentAdapter } from "./hosted/chat-runtime-agent-adapter.ts";
 import type {
   HostedChatRuntimeCreationOptions,
   HostedChatRuntimeCreationResult,
-} from "./hosted-chat-runtime-contract.ts";
+} from "./hosted/chat-runtime-contract.ts";
 import {
   type HostedChatRuntimeToolAssemblyResult,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
-} from "./hosted-chat-runtime-tool-assembly.ts";
-import type { AgentServiceMcpServerConfig } from "./agent-service-mcp-server-config.ts";
+} from "./hosted/chat-runtime-tool-assembly.ts";
+import type { AgentServiceMcpServerConfig } from "./service/mcp-server-config.ts";
 import {
   createHostedRuntimeStateResolver,
   type HostedRuntimeStateResolverContext,
-} from "./hosted-runtime-state-resolver.ts";
+} from "./hosted/runtime-state-resolver.ts";
 import type { ProjectSteeringMutationResult } from "./project-steering-mutation.ts";
 import type {
   RuntimeAgentMarkdownDefinition,
   RuntimeAgentThinkingConfig,
-} from "./runtime-agent-definition.ts";
+} from "./runtime/agent-definition.ts";
 import type { AgentConfig } from "./types.ts";
 
 export type DefaultHostedChatRuntimeConfig = {

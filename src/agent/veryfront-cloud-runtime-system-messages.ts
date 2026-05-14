@@ -2,10 +2,10 @@ import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import {
   createRuntimeAgentSystemMessages,
   type RuntimeAgentMarkdownDefinition,
-} from "./runtime-agent-definition.ts";
-import type { HostedChatRuntimeInstructionsInput } from "./hosted-chat-preparation.ts";
-import { createRuntimePromptBlock } from "./runtime-prompt-block.ts";
-import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
+} from "./runtime/agent-definition.ts";
+import type { HostedChatRuntimeInstructionsInput } from "./hosted/chat-preparation.ts";
+import { createRuntimePromptBlock } from "./runtime/prompt-block.ts";
+import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 
 export type CreateVeryfrontCloudRuntimeSystemMessagesInput = {
   agent: RuntimeAgentMarkdownDefinition;

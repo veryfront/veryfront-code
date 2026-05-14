@@ -2,7 +2,7 @@ import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createChatStreamWatchdog } from "#veryfront/chat/stream-watchdog.ts";
 import type { AgentTraceAttributes } from "./agent-trace-attributes.ts";
-import type { HostedAgentRunTracer } from "./hosted-agent-run-lifecycle.ts";
+import type { HostedAgentRunTracer } from "./hosted/agent-run-lifecycle.ts";
 import { createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions } from "./veryfront-cloud-prepared-hosted-chat-execution-runtime.ts";
 
 function createTracer(): HostedAgentRunTracer {

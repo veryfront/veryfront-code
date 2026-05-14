@@ -6,7 +6,7 @@ import type {
   ToolExecutionContext,
 } from "#veryfront/tool";
 import { buildStudioMcpHeaders, createLiveStudioMcpTools } from "./live-studio-mcp-tools.ts";
-import type { RuntimeClientProfile } from "./runtime-client-profile.ts";
+import type { RuntimeClientProfile } from "./runtime/client-profile.ts";
 
 const trustedStudioProfile: RuntimeClientProfile = {
   id: "veryfront-studio",

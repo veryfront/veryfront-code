@@ -6,7 +6,7 @@ The goal is to make downstream consumers target one explicit AG-UI-aligned input
 
 ## Canonical contract
 
-The canonical runtime contract is defined in [`src/agent/runtime-ag-ui-contract.ts`](../../src/agent/runtime-ag-ui-contract.ts) by [`AgUiRuntimeRequestSchema`](../../src/agent/runtime-ag-ui-contract.ts).
+The canonical runtime contract is defined in [`src/agent/runtime/ag-ui-contract.ts`](../../src/agent/runtime/ag-ui-contract.ts) by [`AgUiRuntimeRequestSchema`](../../src/agent/runtime/ag-ui-contract.ts).
 
 It is based on the AG-UI `RunAgentInput` shape:
 

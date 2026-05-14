@@ -1,8 +1,8 @@
-import { createRuntimeAgentFromMarkdownDefinition } from "../../agent/runtime-agent-markdown-adapter.ts";
+import { createRuntimeAgentFromMarkdownDefinition } from "../../agent/runtime/agent-markdown-adapter.ts";
 import {
   parseRuntimeAgentMarkdownDefinition,
   type RuntimeAgentMarkdownDefinition,
-} from "../../agent/runtime-agent-definition.ts";
+} from "../../agent/runtime/agent-definition.ts";
 import { agentRegistry, registerAgent } from "../../agent/composition/index.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import type { DiscoveryResult, FileDiscoveryContext } from "../types.ts";

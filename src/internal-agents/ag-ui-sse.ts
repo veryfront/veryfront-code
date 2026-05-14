@@ -3,13 +3,13 @@ import type {
   AgUiBrowserEncoderState,
   AgUiBrowserRunFinishedMetadata,
   AgUiRuntimeStreamEvent,
-} from "../agent/ag-ui-browser-encoder.ts";
+} from "../agent/ag-ui/browser-encoder.ts";
 import { parseDataStreamSseEvents } from "#veryfront/agent/data-stream.ts";
 import {
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
-} from "../agent/ag-ui-browser-encoder.ts";
+} from "../agent/ag-ui/browser-encoder.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 

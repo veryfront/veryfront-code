@@ -18,23 +18,23 @@ import { buildExecuteToolTraceAttributes } from "./agent-trace-attributes.ts";
 import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
-} from "./child-run-execution-snapshot.ts";
-import { isChildRunAbortError, throwIfChildRunAborted } from "./child-run-execution-support.ts";
-import type { ConversationRunEvent } from "./conversation-run-events.ts";
-import { createConversationChildLifecycleAdapter } from "./conversation-hosted-lifecycle.ts";
-import { bootstrapHostedChildRun } from "./hosted-child-bootstrap.ts";
-import { createHostedChildExecutionLogWriter } from "./hosted-child-execution-logging.ts";
-import { startHostedChildForkRuntimeWithHostTools } from "./hosted-child-fork-runtime-start.ts";
+} from "./child-run/execution-snapshot.ts";
+import { isChildRunAbortError, throwIfChildRunAborted } from "./child-run/execution-support.ts";
+import type { ConversationRunEvent } from "./conversation/run-events.ts";
+import { createConversationChildLifecycleAdapter } from "./conversation/hosted-lifecycle.ts";
+import { bootstrapHostedChildRun } from "./hosted/child-bootstrap.ts";
+import { createHostedChildExecutionLogWriter } from "./hosted/child-execution-logging.ts";
+import { startHostedChildForkRuntimeWithHostTools } from "./hosted/child-fork-runtime-start.ts";
 import {
   prepareDefaultHostedChildForkSandboxToolSources,
-} from "./hosted-child-fork-tool-sources.ts";
-import type { AgentServiceMcpServerConfig } from "./agent-service-mcp-server-config.ts";
-import { executeHostedChildForkToolInput } from "./hosted-child-fork-execution-runner.ts";
-import { createHostedChildInvokeTool } from "./hosted-child-invoke-tool.ts";
+} from "./hosted/child-fork-tool-sources.ts";
+import type { AgentServiceMcpServerConfig } from "./service/mcp-server-config.ts";
+import { executeHostedChildForkToolInput } from "./hosted/child-fork-execution-runner.ts";
+import { createHostedChildInvokeTool } from "./hosted/child-invoke-tool.ts";
 import {
   runHostedChildExecutionLifecycle,
   shouldSkipHostedChildTerminalPersistence,
-} from "./hosted-child-lifecycle.ts";
+} from "./hosted/child-lifecycle.ts";
 import { createLiveStudioMcpTools } from "./live-studio-mcp-tools.ts";
 import {
   applyAgentProjectContextChange,
@@ -47,21 +47,21 @@ import {
   executeHostedLocalChildInvoke,
   type HostedDurableChildExecutionOptions,
   type HostedDurableChildInvokeResult,
-} from "./hosted-durable-child-fork-execution.ts";
-import type { HostedChildRunIdentifiers } from "./hosted-child-status.ts";
+} from "./hosted/durable-child-fork-execution.ts";
+import type { HostedChildRunIdentifiers } from "./hosted/child-status.ts";
 import {
   DEFAULT_HOSTED_CHILD_AGENT_ID,
   getHostedChildForkToolInputSchema,
   type HostedChildForkRuntimeConfig,
   type HostedChildForkToolInput,
-} from "./hosted-child-tool-input.ts";
+} from "./hosted/child-tool-input.ts";
 import type {
   DefaultHostedChildForkToolAssemblyResult,
   DefaultHostedChildForkToolAssemblySourceResult,
-} from "./hosted-child-requested-tools.ts";
-import { prepareDefaultHostedChildForkToolAssembly } from "./hosted-child-requested-tools.ts";
-import type { RuntimeClientProfile } from "./runtime-client-profile.ts";
-import { withRootOwnedChildResultHint } from "./conversation-delegation-policy.ts";
+} from "./hosted/child-requested-tools.ts";
+import { prepareDefaultHostedChildForkToolAssembly } from "./hosted/child-requested-tools.ts";
+import type { RuntimeClientProfile } from "./runtime/client-profile.ts";
+import { withRootOwnedChildResultHint } from "./conversation/delegation-policy.ts";
 
 export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
   authToken: string;

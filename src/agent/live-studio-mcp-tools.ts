@@ -6,7 +6,7 @@ import {
   type RemoteToolSource,
   type ToolExecutionContext,
 } from "#veryfront/tool";
-import { clientAllowsStudioMcp, type RuntimeClientProfile } from "./runtime-client-profile.ts";
+import { clientAllowsStudioMcp, type RuntimeClientProfile } from "./runtime/client-profile.ts";
 
 export type LiveStudioMcpToolsOptions = {
   authToken: string;

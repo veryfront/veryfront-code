@@ -2,14 +2,14 @@ import {
   resolveVeryfrontCloudGatewayModelId,
   resolveVeryfrontCloudModelThinking,
 } from "#veryfront/provider";
-import type { HostedChatRuntimeCreationResult } from "./hosted-chat-runtime-contract.ts";
+import type { HostedChatRuntimeCreationResult } from "./hosted/chat-runtime-contract.ts";
 import {
   type HostedChatExecutionPreparationInput,
   type HostedChatExecutionPreparationResult,
   type HostedChatExecutionPreparationRootRunOptions,
   prepareHostedChatExecution,
-} from "./hosted-chat-preparation.ts";
-import type { RuntimeAgentThinkingConfig } from "./runtime-agent-definition.ts";
+} from "./hosted/chat-preparation.ts";
+import type { RuntimeAgentThinkingConfig } from "./runtime/agent-definition.ts";
 
 const DEFAULT_PERSIST_LATEST_USER_MESSAGE_OPERATION = "Persist durable root user message";
 const DEFAULT_MISSING_USER_MESSAGE_ERROR_MESSAGE = "DURABLE_CHAT_ROOT_REQUIRES_USER_MESSAGE";

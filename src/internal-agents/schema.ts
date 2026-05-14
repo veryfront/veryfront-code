@@ -11,12 +11,12 @@ import {
   getAgUiRuntimeRequestSchema,
   getAgUiRuntimeRunIdSchema,
   getAgUiRuntimeToolCallSchema,
-} from "#veryfront/agent/runtime-ag-ui-contract.ts";
+} from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/data-stream.ts";
 import {
   getRuntimeAgentSourceContextSchema,
   type RuntimeAgentSourceContext,
-} from "#veryfront/agent/runtime-agent-invocation-contract.ts";
+} from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_FORWARDED_PROPS_BYTES = 65_536;

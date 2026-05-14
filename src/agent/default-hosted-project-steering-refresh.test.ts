@@ -5,8 +5,8 @@ import {
   createDefaultHostedProjectSteeringRefresh,
   fetchDefaultHostedProjectSteering,
 } from "./default-hosted-project-steering-refresh.ts";
-import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
-import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
+import type { RuntimeAgentMarkdownDefinition } from "./runtime/agent-definition.ts";
+import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 
 function createAgent(): RuntimeAgentMarkdownDefinition {
   return {

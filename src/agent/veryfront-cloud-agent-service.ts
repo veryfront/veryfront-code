@@ -30,15 +30,15 @@ import {
   type BootstrapAgentServiceOptions,
   runAgentServiceMain,
   type RunAgentServiceMainOptions,
-} from "./agent-service-bootstrap.ts";
-import { loadAgentServiceEnvFiles } from "./agent-service-env-files.ts";
-import { createHostedFormInputTool } from "./hosted-form-input-tool.ts";
+} from "./service/bootstrap.ts";
+import { loadAgentServiceEnvFiles } from "./service/env-files.ts";
+import { createHostedFormInputTool } from "./hosted/form-input-tool.ts";
 import {
   createHostedAgentProjectSteering,
   type HostedAgentProjectSteering,
-} from "./hosted-agent-project-steering.ts";
-import { type HostedChatRuntimeCreationResult } from "./hosted-chat-runtime-contract.ts";
-import type { HostedConversationRootRunContext } from "./conversation-root-run-lifecycle.ts";
+} from "./hosted/agent-project-steering.ts";
+import { type HostedChatRuntimeCreationResult } from "./hosted/chat-runtime-contract.ts";
+import type { HostedConversationRootRunContext } from "./conversation/root-run-lifecycle.ts";
 import { type AgentRuntimeMessage } from "./agent-runtime-message-adapter.ts";
 import { createLiveStudioMcpTools } from "./live-studio-mcp-tools.ts";
 import {
@@ -47,7 +47,7 @@ import {
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-hosted-chat-runtime.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-hosted-invoke-agent-tool.ts";
-import type { RuntimeClientProfile } from "./runtime-client-profile.ts";
+import type { RuntimeClientProfile } from "./runtime/client-profile.ts";
 import type {
   DefaultHostedInvokeAgentConfig,
   DefaultHostedInvokeAgentContext,
@@ -56,12 +56,12 @@ import {
   createDefaultHostedProjectSteeringRefresh,
   fetchDefaultHostedProjectSteering,
 } from "./default-hosted-project-steering-refresh.ts";
-import { type HostedProjectSkillIdsContext } from "./hosted-project-steering-adapter.ts";
-import type { AgentServiceMcpServerConfig } from "./agent-service-mcp-server-config.ts";
-import type { RuntimeLoadSkillToolContext } from "./runtime-load-skill-tool.ts";
-import type { RuntimeProjectSteeringLookup } from "./runtime-project-skill-catalog.ts";
-import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
-import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
+import { type HostedProjectSkillIdsContext } from "./hosted/project-steering-adapter.ts";
+import type { AgentServiceMcpServerConfig } from "./service/mcp-server-config.ts";
+import type { RuntimeLoadSkillToolContext } from "./runtime/load-skill-tool.ts";
+import type { RuntimeProjectSteeringLookup } from "./runtime/project-skill-catalog.ts";
+import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
+import type { RuntimeAgentMarkdownDefinition } from "./runtime/agent-definition.ts";
 import {
   createRuntimeAgentDefinitionFromAgent,
   describeProjectAgentRuntimeAgentIdCandidates,
@@ -77,7 +77,7 @@ import {
 import {
   createNodeAgentServiceRuntimeInfrastructure,
   type CreateNodeAgentServiceRuntimeInfrastructureOptions,
-} from "./node-agent-service-runtime-infrastructure.ts";
+} from "./service/node-runtime-infrastructure.ts";
 import {
   type AgentServiceRuntimeBundle,
   type AgentServiceRuntimeConfig,
@@ -86,15 +86,15 @@ import {
   startAgentServiceRuntime,
   startNodeAgentService,
   type StartNodeAgentServiceResult,
-} from "./agent-service-runtime.ts";
-import type { AgentServiceServerLifecycle } from "./agent-service-server.ts";
+} from "./service/runtime.ts";
+import type { AgentServiceServerLifecycle } from "./service/server.ts";
 import {
   createAgentServiceRegistrationLifecycle,
   resolveAgentServiceRegistrationInput,
-} from "./agent-service-registration.ts";
+} from "./service/registration.ts";
 import { createDetachedRunTracker } from "./detached-run-tracker.ts";
-import type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
-import type { ParsedHostedChatRequest } from "./hosted-chat-request-parser.ts";
+import type { AgUiResumeValue } from "./ag-ui/tool-shared.ts";
+import type { ParsedHostedChatRequest } from "./hosted/chat-request-parser.ts";
 import type { PreparedHostedChatExecution } from "./prepared-hosted-chat-execution.ts";
 import {
   runPreparedHostedChatExecutionDetached,

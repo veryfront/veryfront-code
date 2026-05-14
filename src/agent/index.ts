@@ -117,7 +117,7 @@ export {
   type WrapHostedChildProjectSwitchToolInput,
   wrapHostedChildSteeringMutationTool,
   type WrapHostedChildSteeringMutationToolInput,
-} from "./hosted-child-steering-tools.ts";
+} from "./hosted/child-steering-tools.ts";
 export {
   filterHostedChatRuntimeLocalTools,
   type HostedChatRuntimeAllowedToolNames,
@@ -126,7 +126,7 @@ export {
   type HostedChatRuntimeToolAssemblyResult as AgentServiceChatRuntimeToolAssemblyResult,
   prepareHostedChatRuntimeToolAssembly,
   type PrepareHostedChatRuntimeToolAssemblyInput,
-} from "./hosted-chat-runtime-tool-assembly.ts";
+} from "./hosted/chat-runtime-tool-assembly.ts";
 export {
   createHostedProjectRemoteToolSource,
   type CreateHostedProjectRemoteToolSourceInput,
@@ -136,7 +136,7 @@ export {
   type HostedProjectRemoteToolSourcePrepareToolInput,
   type HostedProjectRemoteToolSourceProjectSwitchHandler,
   type HostedProjectRemoteToolSourceRetryPolicy,
-} from "./hosted-project-remote-tool-source.ts";
+} from "./hosted/project-remote-tool-source.ts";
 
 export {
   DEFAULT_PROJECT_STEERING_PATHS,
@@ -160,7 +160,7 @@ export {
   runtimeClientProfileSchema,
   type RuntimeClientType,
   runtimeClientTypeSchema,
-} from "./runtime-client-profile.ts";
+} from "./runtime/client-profile.ts";
 export {
   buildStudioMcpHeaders,
   createLiveStudioMcpTools,
@@ -173,7 +173,7 @@ export {
   type PrepareDefaultHostedChildForkSandboxToolSourcesInput,
   prepareDefaultHostedChildForkToolSources,
   type PrepareDefaultHostedChildForkToolSourcesInput,
-} from "./hosted-child-fork-tool-sources.ts";
+} from "./hosted/child-fork-tool-sources.ts";
 
 export {
   clearProjectAgentRuntimeRegistries,
@@ -192,7 +192,7 @@ export {
   createRuntimeAgentFromMarkdownDefinition,
   getRuntimeAgentMarkdownDefinition,
   isRuntimeAgentMarkdownAgent,
-} from "./runtime-agent-markdown-adapter.ts";
+} from "./runtime/agent-markdown-adapter.ts";
 
 export {
   loadRuntimeAgentMarkdownDefinitionFromFile,
@@ -202,7 +202,7 @@ export {
   type ResolveRuntimeAgentDefinitionsDirInput,
   resolveRuntimeAgentDefinitionsDirInputSchema,
   resolveRuntimeAgentMarkdownDefinitionFilePath,
-} from "./runtime-agent-definition-files.ts";
+} from "./runtime/agent-definition-files.ts";
 export {
   createRuntimeAgentSystemMessages,
   type CreateRuntimeAgentSystemMessagesInput,
@@ -217,7 +217,7 @@ export {
   runtimeAgentMarkdownDefinitionSchema,
   type RuntimeAgentThinkingConfig,
   runtimeAgentThinkingConfigSchema,
-} from "./runtime-agent-definition.ts";
+} from "./runtime/agent-definition.ts";
 
 export {
   buildVeryfrontCloudRuntimeInstructions,
@@ -273,7 +273,7 @@ export {
   defineAgentService,
   type DurableRunSink,
   type NormalizedAgentServiceContract,
-} from "./agent-service.ts";
+} from "./service/definition.ts";
 export {
   type AgentServiceServer,
   type AgentServiceServerLifecycle,
@@ -284,7 +284,7 @@ export {
   type StartAgentServiceServerOptions,
   startNodeAgentServiceServer,
   type StartNodeAgentServiceServerOptions,
-} from "./agent-service-server.ts";
+} from "./service/server.ts";
 export {
   createDefaultHostedChatRuntime,
   createDefaultHostedChatRuntime as createDefaultAgentServiceChatRuntime,
@@ -351,7 +351,7 @@ export {
   startNodeHostedAgentService,
   type StartNodeHostedAgentServiceOptions,
   type StartNodeHostedAgentServiceResult,
-} from "./agent-service-runtime.ts";
+} from "./service/runtime.ts";
 export {
   type AgentServiceOptions,
   type AgentServicePreparedExecution,
@@ -381,7 +381,7 @@ export {
   type ResolveAgentServiceRegistrationInputOptions,
   type ResolvedAgentServiceRegistrationInput,
   resolvedAgentServiceRegistrationInputSchema,
-} from "./agent-service-registration.ts";
+} from "./service/registration.ts";
 export {
   type AgentServiceConfig,
   type AgentServiceConfigInput,
@@ -391,7 +391,7 @@ export {
   hostedAgentServiceConfigSchema,
   parseAgentServiceConfig,
   parseHostedAgentServiceConfig,
-} from "./agent-service-config.ts";
+} from "./service/config.ts";
 export {
   type AgentServiceEnvFileLoadOptions,
   type AgentServiceEnvFileLoadResult,
@@ -399,7 +399,7 @@ export {
   type HostedAgentServiceEnvFileLoadResult,
   loadAgentServiceEnvFiles,
   loadHostedAgentServiceEnvFiles,
-} from "./agent-service-env-files.ts";
+} from "./service/env-files.ts";
 export {
   initializeNodeAgentServiceOpenTelemetry,
   type InitializeNodeAgentServiceTelemetryOptions,
@@ -419,7 +419,7 @@ export {
   type ResolveNodeAgentServiceTelemetryConfigOptions,
   resolveNodeHostedAgentServiceTelemetryConfig,
   type ResolveNodeHostedAgentServiceTelemetryConfigOptions,
-} from "./node-agent-service-telemetry.ts";
+} from "./service/node-telemetry.ts";
 export {
   createNodeAgentServiceRuntimeInfrastructure,
   type CreateNodeAgentServiceRuntimeInfrastructureOptions,
@@ -427,7 +427,7 @@ export {
   type CreateNodeHostedAgentServiceRuntimeInfrastructureOptions,
   type NodeAgentServiceRuntimeInfrastructure,
   type NodeHostedAgentServiceRuntimeInfrastructure,
-} from "./node-agent-service-runtime-infrastructure.ts";
+} from "./service/node-runtime-infrastructure.ts";
 export {
   type AgentServiceBootstrapExit,
   type AgentServiceTraceContext,
@@ -436,7 +436,7 @@ export {
   type BootstrapAgentServiceOptions,
   runAgentServiceMain,
   type RunAgentServiceMainOptions,
-} from "./agent-service-bootstrap.ts";
+} from "./service/bootstrap.ts";
 export {
   type AbortRejectionEvent,
   type AbortRejectionEventTarget,
@@ -464,7 +464,7 @@ export {
   type ParseAgUiSseResponseOptions,
   type ParsedAgUiSseRun,
   stringifyAgUiSseEvent,
-} from "./ag-ui-sse-parser.ts";
+} from "./ag-ui/sse-parser.ts";
 export {
   type AgUiRuntimeHandlerConfig,
   type AgUiRuntimeHandlerConfigWithAgent,
@@ -473,7 +473,7 @@ export {
   type AgUiRuntimeHandlerOptions,
   type AgUiRuntimeLifecycleContext,
   createAgUiRuntimeHandler,
-} from "./ag-ui-runtime-handler.ts";
+} from "./ag-ui/runtime-handler.ts";
 export {
   type AgUiForwardedConfigOptions,
   createAgUiRuntimeContextMap,
@@ -483,7 +483,7 @@ export {
   parseAgUiContextNullableString,
   parseAgUiContextSchema,
   parseAgUiContextString,
-} from "./ag-ui-forwarded-context.ts";
+} from "./ag-ui/forwarded-context.ts";
 export {
   type AgUiRuntimeContextItem,
   type AgUiRuntimeInjectedTool,
@@ -496,7 +496,7 @@ export {
   normalizeAgUiBrowserRuntimeRequest,
   parseAgUiRuntimeRequest,
   parseAgUiRuntimeRequestOrError,
-} from "./runtime-ag-ui-contract.ts";
+} from "./runtime/ag-ui-contract.ts";
 export {
   type AgentTraceAttributes,
   type AgentTraceAttributeValue,
@@ -513,7 +513,7 @@ export {
   type HostedChatRuntimeAgentAdapterInput,
   type HostedChatRuntimeAgentAdapterRunner,
   type HostedChatRuntimeAgentAdapterWarning,
-} from "./hosted-chat-runtime-agent-adapter.ts";
+} from "./hosted/chat-runtime-agent-adapter.ts";
 
 export {
   createHostedAgentRunSpanController,
@@ -525,7 +525,7 @@ export {
   type HostedAgentRunSpanFinalState,
   type HostedAgentRunTracer,
   type HostedRootRunLifecycleRuntimeAdapter,
-} from "./hosted-agent-run-lifecycle.ts";
+} from "./hosted/agent-run-lifecycle.ts";
 
 export type {
   HostedChatRuntimeAgent,
@@ -546,7 +546,7 @@ export type {
   HostedChatRuntimeStreamResult as AgentServiceChatRuntimeStreamResult,
   HostedChatRuntimeToUiMessageStreamOptions,
   HostedChatRuntimeToUiMessageStreamOptions as AgentServiceChatRuntimeToUiMessageStreamOptions,
-} from "./hosted-chat-runtime-contract.ts";
+} from "./hosted/chat-runtime-contract.ts";
 
 export {
   createHostedAgentServiceRouteSet,
@@ -567,7 +567,7 @@ export {
   type HostedAgentServiceRoutesTrace as AgentServiceRoutesTrace,
   type HostedAgentServiceStreamExecutionInput,
   type HostedAgentServiceStreamExecutionInput as AgentServiceStreamExecutionInput,
-} from "./agent-service-routes.ts";
+} from "./service/routes.ts";
 export {
   createHostedRuntimeStateResolver,
   type CreateHostedRuntimeStateResolverOptions,
@@ -576,7 +576,7 @@ export {
   type HostedRuntimeStateResolverResult,
   type HostedRuntimeSystemRefresh,
   type HostedRuntimeSystemRefreshInput,
-} from "./hosted-runtime-state-resolver.ts";
+} from "./hosted/runtime-state-resolver.ts";
 export {
   executeHostedDurableChatRun,
   type ExecuteHostedDurableChatRunInput,
@@ -587,7 +587,7 @@ export {
   type HostedDurableRunStartCleanupInput,
   type HostedDurableRunStartExecutionInput,
   resolveHostedDurableRunSetupErrorResponse,
-} from "./hosted-durable-chat-run-start.ts";
+} from "./hosted/durable-chat-run-start.ts";
 export {
   buildParsedHostedChatRequest,
   buildParsedHostedChatRequest as buildParsedAgentServiceChatRequest,
@@ -606,7 +606,7 @@ export {
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest,
   parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     as parseRuntimeAgentRunInvocationAgentServiceChatRequestFromRequest,
-} from "./hosted-chat-request-parser.ts";
+} from "./hosted/chat-request-parser.ts";
 export {
   buildParsedHostedAgUiRequest,
   buildParsedHostedAgUiRequest as buildParsedAgentServiceAgUiRequest,
@@ -624,7 +624,7 @@ export {
   hostedAgUiChatForwardedConfigSchema as agentServiceAgUiChatForwardedConfigSchema,
   type ParsedHostedAgUiRequest,
   type ParsedHostedAgUiRequest as ParsedAgentServiceAgUiRequest,
-} from "./hosted-ag-ui-chat-request.ts";
+} from "./hosted/ag-ui-chat-request.ts";
 export {
   buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation,
   buildHostedChatRequestFromRuntimeAgentInvocation,
@@ -634,7 +634,7 @@ export {
   hostedChatRequestSchema,
   hostedChatRuntimeOverridesSchema,
   hostedDurableRootRunDescriptorSchema,
-} from "./hosted-chat-request.ts";
+} from "./hosted/chat-request.ts";
 export {
   getForwardedHostedModelId,
   getForwardedHostedRuntimeOverrides,
@@ -644,7 +644,7 @@ export {
   resolveHostedRuntimeRequestConfig,
   type ResolveHostedRuntimeRequestConfigInput,
   resolveHostedRuntimeThinkingOverride,
-} from "./hosted-runtime-request-config.ts";
+} from "./hosted/runtime-request-config.ts";
 export {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   parseRuntimeAgentRunInvocation,
@@ -672,8 +672,8 @@ export {
   type RuntimeAgentValidatedClaims,
   RuntimeAgentValidatedClaimsSchema,
   validateRuntimeAgentTargetSelection,
-} from "./runtime-agent-invocation-contract.ts";
-export { normalizeAgUiRuntimeMessages } from "./ag-ui-runtime-support.ts";
+} from "./runtime/agent-invocation-contract.ts";
+export { normalizeAgUiRuntimeMessages } from "./ag-ui/runtime-support.ts";
 export {
   type AgUiBrowserEncodedEvent,
   type AgUiBrowserEncoderState,
@@ -683,12 +683,12 @@ export {
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
-} from "./ag-ui-browser-encoder.ts";
+} from "./ag-ui/browser-encoder.ts";
 export {
   type AgUiBrowserChunkEncoder,
   createAgUiBrowserChunkEncoder,
   type CreateAgUiBrowserChunkEncoderOptions,
-} from "./ag-ui-browser-chunk-encoder.ts";
+} from "./ag-ui/browser-chunk-encoder.ts";
 export {
   type AgUiChatUiChunkBrowserEncoder,
   createAgUiChatUiChunkBrowserEncoder,
@@ -699,39 +699,39 @@ export {
   getAgUiChatUiMessageMetadataFromChunk,
   getAgUiChatUiMessageUsageMetadata,
   normalizeChatUiMessageChunkToAgUiRuntimeEvent,
-} from "./ag-ui-chat-ui-chunk-browser-encoder.ts";
+} from "./ag-ui/chat-ui-chunk-browser-encoder.ts";
 export {
   type AgUiRuntimeEventEncoder,
   createAgUiRuntimeEventEncoder,
   type CreateAgUiRuntimeEventEncoderOptions,
-} from "./ag-ui-runtime-event-encoder.ts";
+} from "./ag-ui/runtime-event-encoder.ts";
 export {
   type AgUiRuntimeChatStreamEncoder,
   type AgUiRuntimeChatStreamEncoderState,
   createAgUiRuntimeChatStreamEncoder,
   type CreateAgUiRuntimeChatStreamEncoderOptions,
-} from "./ag-ui-runtime-chat-stream-encoder.ts";
+} from "./ag-ui/runtime-chat-stream-encoder.ts";
 export {
   type AgUiBrowserFinalizeTracker,
   createAgUiBrowserFinalizeTracker,
   type CreateAgUiBrowserFinalizeTrackerOptions,
-} from "./ag-ui-browser-finalize-tracker.ts";
+} from "./ag-ui/browser-finalize-tracker.ts";
 export {
   type AgUiChunkEncoderBridge,
   createAgUiChunkEncoderBridge,
   type CreateAgUiChunkEncoderBridgeOptions,
-} from "./ag-ui-chunk-encoder-bridge.ts";
+} from "./ag-ui/chunk-encoder-bridge.ts";
 export {
   type AgUiBrowserResponseEncoder,
   type AgUiBrowserResponseExecution,
   type AgUiBrowserResponseRequestState,
   createAgUiBrowserResponseStream,
   type CreateAgUiBrowserResponseStreamInput,
-} from "./ag-ui-browser-response-stream.ts";
+} from "./ag-ui/browser-response-stream.ts";
 export {
   createAgUiRuntimeBrowserResponse,
   type CreateAgUiRuntimeBrowserResponseInput,
-} from "./ag-ui-runtime-browser-response.ts";
+} from "./ag-ui/runtime-browser-response.ts";
 export {
   type ChatUiMessageStreamFinish,
   type ChatUiMessageStreamFinishPart,
@@ -743,11 +743,11 @@ export {
   type ToolExecutionDataEventBridgeStreamInput,
   type ToolExecutionDataEventPublisher,
 } from "./tool-execution-data-event-bridge.ts";
-export { flattenSystemInstructions, withRuntimeToolInventory } from "./runtime-tool-inventory.ts";
+export { flattenSystemInstructions, withRuntimeToolInventory } from "./runtime/tool-inventory.ts";
 export {
   createAgUiTrackedBrowserResponse,
   type CreateAgUiTrackedBrowserResponseInput,
-} from "./ag-ui-tracked-browser-response.ts";
+} from "./ag-ui/tracked-browser-response.ts";
 export {
   type AgentRuntimeForkStepRunner,
   applyPartToStreamedStepState,
@@ -787,7 +787,7 @@ export {
   buildHostedChildForkInstructions,
   HOSTED_CHILD_FORK_INSTRUCTIONS_BASE,
   type HostedChildForkInstructionsContext,
-} from "./hosted-child-fork-instructions.ts";
+} from "./hosted/child-fork-instructions.ts";
 export {
   DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS,
   DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS,
@@ -799,7 +799,7 @@ export {
   executeHostedChildForkWithPreparedTools,
   type ExecuteHostedChildForkWithPreparedToolsInput,
   type HostedChildForkExecutionInstrumentation,
-} from "./hosted-child-fork-execution-runner.ts";
+} from "./hosted/child-fork-execution-runner.ts";
 export {
   createHostedChildForkRunContext,
   createHostedDurableChildForkRunContext,
@@ -817,7 +817,7 @@ export {
   type HostedChildForkToolResultSnapshot,
   type HostedDurableChildForkRunContext,
   type HostedDurableChildForkRunContextInput,
-} from "./hosted-child-fork-run-context.ts";
+} from "./hosted/child-fork-run-context.ts";
 export {
   executeHostedChildForkStream,
   type ExecuteHostedChildForkStreamInput,
@@ -829,11 +829,11 @@ export {
   type HostedChildForkStreamHandlingState,
   type HostedChildForkStreamLogger,
   type HostedChildForkStreamTraceInput,
-} from "./hosted-child-fork-stream-execution.ts";
+} from "./hosted/child-fork-stream-execution.ts";
 export {
   type ConversationRunContext,
   createConversationRunContext,
-} from "./conversation-run-context.ts";
+} from "./conversation/run-context.ts";
 export {
   type ConversationRootRunContext,
   type ConversationRootRunDescriptor,
@@ -841,7 +841,7 @@ export {
   createConversationRootRunStartAdapter,
   prepareConversationRootRunContext,
   startConversationRootRun,
-} from "./conversation-root-run-context.ts";
+} from "./conversation/root-run-context.ts";
 export {
   type ConversationRootRunLifecycle,
   type HostedConversationRootRunContext,
@@ -855,7 +855,7 @@ export {
   type PrepareHostedConversationRootRunContextInput,
   type PrepareHostedConversationRootRunContextInput
     as PrepareAgentServiceConversationRootRunContextInput,
-} from "./conversation-root-run-lifecycle.ts";
+} from "./conversation/root-run-lifecycle.ts";
 export {
   bootstrapConversationAgentRun,
   type BootstrapConversationAgentRunResult,
@@ -872,7 +872,7 @@ export {
   persistConversationUserMessage,
   type PersistConversationUserMessageFailure,
   persistLatestConversationUserMessage,
-} from "./conversation-bootstrap.ts";
+} from "./conversation/bootstrap.ts";
 export {
   buildHostedDurableChildInvokeFailureResult,
   type BuildHostedDurableChildInvokeFailureResultInput,
@@ -896,14 +896,14 @@ export {
   type HostedDurableChildSuccess,
   type HostedDurableChildTerminalFailure,
   type HostedLocalChildInvokeTraceRecorder,
-} from "./hosted-durable-child-fork-execution.ts";
+} from "./hosted/durable-child-fork-execution.ts";
 export {
   bootstrapHostedChildRun,
   type BootstrapHostedChildRunInput,
   type BootstrapHostedChildRunResult,
   buildHostedChildConversationBody,
   type HostedChildConversationBodyInput,
-} from "./hosted-child-bootstrap.ts";
+} from "./hosted/child-bootstrap.ts";
 export {
   type ConversationChildLifecycleContext,
   type ConversationHostedLifecycleFinalizeInput,
@@ -911,7 +911,7 @@ export {
   createConversationHostedLifecycleAdapter,
   type CreateConversationHostedLifecycleAdapterOptions,
   createConversationHostedStreamLifecycleAdapter,
-} from "./conversation-hosted-lifecycle.ts";
+} from "./conversation/hosted-lifecycle.ts";
 export {
   CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_CODE,
   CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_CODE,
@@ -928,12 +928,12 @@ export {
   resolveConversationHostedTerminalState,
   type ResolveConversationHostedTerminalStateInput,
   toConversationHostedTerminalState,
-} from "./conversation-hosted-terminal.ts";
+} from "./conversation/hosted-terminal.ts";
 export {
   getConversationRunEventJsonByteLength,
   normalizeConversationRunEvent,
   normalizeConversationRunEvents,
-} from "./conversation-run-event-normalization.ts";
+} from "./conversation/run-event-normalization.ts";
 export {
   type ConversationRunEvent,
   ConversationRunEventEncoder,
@@ -941,31 +941,31 @@ export {
   conversationRunEventTypes,
   encodeConversationRunEvents,
   normalizeEncodedConversationRunEvents,
-} from "./conversation-run-events.ts";
+} from "./conversation/run-events.ts";
 export {
   prepareConversationRunChunkEvents,
   prepareConversationRunExternalEvents,
   prepareConversationRunStreamEvents,
   toConversationRunStreamEvent,
-} from "./conversation-run-event-preparation.ts";
+} from "./conversation/run-event-preparation.ts";
 export {
   type ConversationRunMirror,
   type ConversationRunMirrorRetryScheduledState,
   type ConversationRunMirrorSnapshot,
   type ConversationRunMirrorStoppedState,
   createConversationRunMirror,
-} from "./conversation-run-mirror.ts";
+} from "./conversation/run-mirror.ts";
 export {
   appendMissingChildRunToolCalls,
   appendMissingChildRunToolResults,
   buildChildRunExhaustedStepBudgetErrorMessage,
-} from "./child-run-final-step-support.ts";
+} from "./child-run/final-step-support.ts";
 export {
   formatChildRunStreamPartError,
   isChildRunAbortError,
   throwIfChildRunAborted,
   toChildRunToolInputRecord,
-} from "./child-run-execution-support.ts";
+} from "./child-run/execution-support.ts";
 export {
   type AgentRuntimeMessage,
   AgentRuntimeMessageConversionError,
@@ -981,11 +981,11 @@ export {
   resolveRuntimeMessageFileUrls,
   type RuntimeFileUrlResolver,
   type RuntimeFileUrlResolverInput,
-} from "./runtime-message-file-url-refresh.ts";
+} from "./runtime/message-file-url-refresh.ts";
 export {
   prepareAgentRuntimeMessagesFromUiMessages,
   type PrepareAgentRuntimeMessagesFromUiMessagesOptions,
-} from "./runtime-message-preparation.ts";
+} from "./runtime/message-preparation.ts";
 export {
   type HostedChatExecutionPreparationInput,
   type HostedChatExecutionPreparationResult,
@@ -1007,19 +1007,19 @@ export {
   prepareHostedChatRuntimeMessages as prepareAgentServiceChatRuntimeMessages,
   type PrepareHostedChatRuntimeMessagesOptions,
   type PrepareHostedChatRuntimeMessagesOptions as PrepareAgentServiceChatRuntimeMessagesOptions,
-} from "./hosted-chat-preparation.ts";
+} from "./hosted/chat-preparation.ts";
 export {
   getRuntimeUploadUrl,
   type RuntimeUploadUrlClientOptions,
   type RuntimeUploadUrlFetch,
   type RuntimeUploadUrlOptions,
-} from "./runtime-upload-url-client.ts";
+} from "./runtime/upload-url-client.ts";
 export {
   type ChildRunExecutionBufferCleanupInput,
   type ChildRunExecutionResourceFinalizeInput,
   closeChildRunExecutionBuffers,
   finalizeChildRunExecutionResources,
-} from "./child-run-execution-cleanup.ts";
+} from "./child-run/execution-cleanup.ts";
 export {
   createHostedChildPendingToolLifecycle,
   createHostedChildPendingToolLifecycleLogger,
@@ -1032,7 +1032,7 @@ export {
   type HostedChildPendingToolLifecycleLogger,
   type HostedChildPendingToolLifecycleLogWriter,
   type HostedChildPendingToolLifecycleUnknownToolLog,
-} from "./hosted-child-pending-tool-lifecycle.ts";
+} from "./hosted/child-pending-tool-lifecycle.ts";
 export {
   composeAbortSignals,
   HOSTED_CHILD_STREAM_TIMEOUT_TOKEN,
@@ -1042,7 +1042,7 @@ export {
   resolveHostedChildPromiseWithTimeout,
   resolveHostedChildStreamWatchdogState,
   withHostedChildStreamIdleTimeout,
-} from "./hosted-child-stream-watchdog.ts";
+} from "./hosted/child-stream-watchdog.ts";
 export {
   DEFAULT_HOSTED_CHILD_AGENT_ID,
   type HostedChildForkRuntimeConfig,
@@ -1051,13 +1051,13 @@ export {
   resolveHostedChildForkRuntimeConfig,
   type ResolveHostedChildForkRuntimeConfigInput,
   resolveHostedChildForkThinkingOverride,
-} from "./hosted-child-tool-input.ts";
+} from "./hosted/child-tool-input.ts";
 
 export {
   createHostedChildInvokeTool,
   type CreateHostedChildInvokeToolOptions,
   type HostedChildInvokeFailure,
-} from "./hosted-child-invoke-tool.ts";
+} from "./hosted/child-invoke-tool.ts";
 export {
   createDefaultHostedInvokeAgentTool,
   createDefaultHostedInvokeAgentTool as createDefaultAgentServiceInvokeAgentTool,
@@ -1103,7 +1103,7 @@ export {
   selectDefaultHostedChildForkRuntimeTools,
   selectHostedChildForkRuntimeTools,
   shouldPruneSandboxToolsFromHostedChildRequest,
-} from "./hosted-child-requested-tools.ts";
+} from "./hosted/child-requested-tools.ts";
 export {
   getHostedChildWrittenArtifactPath,
   type HostedChildFileWriteFallbackLogger,
@@ -1114,7 +1114,7 @@ export {
   isHostedChildTextProjectArtifactPrompt,
   normalizeHostedChildArtifactPath,
   withHostedChildRerunnableFileWriteFallbacks,
-} from "./hosted-child-artifact-support.ts";
+} from "./hosted/child-artifact-support.ts";
 export {
   buildDefaultResearchArtifactPathReminder,
   buildDefaultResearchArtifactPaths,
@@ -1173,7 +1173,7 @@ export {
   SLASH_COMMAND_ARTIFACT_REMINDER,
   SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE,
   withRootOwnedChildResultHint,
-} from "./conversation-delegation-policy.ts";
+} from "./conversation/delegation-policy.ts";
 export {
   listRuntimeBuiltinSkillReferenceFiles,
   listRuntimeBuiltinSkillReferences,
@@ -1185,7 +1185,7 @@ export {
   resolveRuntimeBuiltinSkillReferenceFilePath,
   resolveRuntimeBuiltinSkillsDir,
   type RuntimeBuiltinSkillEntriesResult,
-} from "./runtime-builtin-skill-files.ts";
+} from "./runtime/builtin-skill-files.ts";
 export {
   createRuntimeProjectFilesClient,
   getRuntimeProjectFile,
@@ -1201,7 +1201,7 @@ export {
   type RuntimeProjectFilesClientOptions,
   type RuntimeProjectFilesFetch,
   type RuntimeProjectFilesTrace,
-} from "./runtime-project-files-client.ts";
+} from "./runtime/project-files-client.ts";
 export {
   createHostedAgentProjectSteering,
   createHostedAgentProjectSteering as createAgentServiceProjectSteering,
@@ -1214,7 +1214,7 @@ export {
   type HostedAgentProjectSteeringOptionsData,
   type HostedAgentProjectSteeringOptionsData as AgentServiceProjectSteeringOptionsData,
   hostedAgentProjectSteeringOptionsSchema,
-} from "./hosted-agent-project-steering.ts";
+} from "./hosted/agent-project-steering.ts";
 export {
   createHostedProjectSteeringAdapter,
   type HostedProjectSkillIdsContext,
@@ -1222,7 +1222,7 @@ export {
   type HostedProjectSteeringAdapter,
   type HostedProjectSteeringAdapterOptions,
   type HostedProjectSteeringLogger,
-} from "./hosted-project-steering-adapter.ts";
+} from "./hosted/project-steering-adapter.ts";
 export {
   createRuntimeProjectSkillLoader,
   type RuntimeLoadedProjectSkill,
@@ -1230,7 +1230,7 @@ export {
   type RuntimeProjectSkillLoader,
   type RuntimeProjectSkillLoaderLogger,
   type RuntimeProjectSkillLoaderOptions,
-} from "./runtime-project-skill-loader.ts";
+} from "./runtime/project-skill-loader.ts";
 export {
   getRuntimeProjectInstructions,
   getRuntimeProjectSkillCatalog,
@@ -1238,16 +1238,16 @@ export {
   type RuntimeProjectInstructionsOptions,
   type RuntimeProjectSkillCatalogOptions,
   type RuntimeProjectSteeringLookup,
-} from "./runtime-project-skill-catalog.ts";
+} from "./runtime/project-skill-catalog.ts";
 export {
   createRuntimePromptBlock,
   type RuntimePromptBlockOptions,
-} from "./runtime-prompt-block.ts";
+} from "./runtime/prompt-block.ts";
 export {
   buildRuntimeAvailableSkillsPromptBlock,
   formatRuntimeSkillMetadata,
   MAX_RUNTIME_SKILL_PROMPT_ENTRIES,
-} from "./runtime-skill-prompt.ts";
+} from "./runtime/skill-prompt.ts";
 export {
   buildRuntimeLoadedSkillResponse,
   buildRuntimeSkillDefinition,
@@ -1261,7 +1261,7 @@ export {
   type RuntimeSkillFrontmatter,
   RuntimeSkillFrontmatterSchema,
   type RuntimeSkillMetadataLogger,
-} from "./runtime-skill-metadata.ts";
+} from "./runtime/skill-metadata.ts";
 export {
   createRuntimeLoadSkillTool,
   RUNTIME_LOAD_SKILL_CONTINUATION_NOTE,
@@ -1274,7 +1274,7 @@ export {
   type RuntimeLoadSkillToolMessages,
   type RuntimeLoadSkillToolOptions,
   type RuntimeLoadSkillToolOutput,
-} from "./runtime-load-skill-tool.ts";
+} from "./runtime/load-skill-tool.ts";
 export {
   buildHostedChildCompletedLog,
   buildHostedChildErrorLog,
@@ -1284,14 +1284,14 @@ export {
   type HostedChildExecutionLogLevel,
   type HostedChildExecutionLogWriter,
   writeHostedChildExecutionLogEntry,
-} from "./hosted-child-execution-logging.ts";
+} from "./hosted/child-execution-logging.ts";
 export {
   buildChildRunResultSummary,
   buildRootOwnedChildRunResultHint,
   buildRootOwnedChildRunResultText,
   summarizeChildRunResultText,
   summarizeChildRunResultValue,
-} from "./child-run-result-summary.ts";
+} from "./child-run/result-summary.ts";
 export {
   buildChildRunExecutionSnapshot,
   buildChildRunFailureResult,
@@ -1306,7 +1306,7 @@ export {
   type ChildRunToolCallSnapshot,
   type ChildRunToolResultSnapshot,
   getChildRunSnapshotUsage,
-} from "./child-run-execution-snapshot.ts";
+} from "./child-run/execution-snapshot.ts";
 export {
   type ConversationRunChunkMirror,
   type ConversationRunChunkMirrorApiOptions,
@@ -1321,11 +1321,11 @@ export {
   type HostedConversationRunChunkMirrorInstrumentation,
   type HostedConversationRunChunkMirrorOptions,
   type HostedConversationRunChunkMirrorTraceAttributes,
-} from "./conversation-run-chunk-mirror.ts";
+} from "./conversation/run-chunk-mirror.ts";
 export {
   type ConversationRunStreamMirror,
   createConversationRunStreamMirror,
-} from "./conversation-run-stream-mirror.ts";
+} from "./conversation/run-stream-mirror.ts";
 export {
   buildDetachedFallbackChunks,
   type BuildDetachedFallbackChunksInput,
@@ -1337,7 +1337,7 @@ export {
   type BuildFinalizedMessageStateInput,
   type DetachedFallbackMessageState,
   type FinalizedMessageState,
-} from "./hosted-finalized-message.ts";
+} from "./hosted/finalized-message.ts";
 export {
   type BootstrappedHostedChatExecutionRuntime,
   cleanupAfterHostedChatExecutionFinalization,
@@ -1357,7 +1357,7 @@ export {
   type HostedChatExecutionRuntimeBootstrap,
   type HostedChatExecutionRuntimeLogger,
   toHostedChatExecutionFinalState,
-} from "./hosted-chat-execution-runtime.ts";
+} from "./hosted/chat-execution-runtime.ts";
 export {
   type PreparedHostedChatExecution,
   type PreparedHostedChatExecution as PreparedAgentServiceChatExecution,
@@ -1402,13 +1402,13 @@ export {
   type HostedDetachedFinalizationState,
   type HostedResponseFinalizationState,
   type HostedTerminalError,
-} from "./hosted-stream-finalization.ts";
+} from "./hosted/stream-finalization.ts";
 export {
   getEmptyHostedFinalizedMessageTerminalError,
   getHostedStreamErrorText,
   type HostedStreamTerminalError,
   shouldFailEmptyHostedFinalizedMessage,
-} from "./hosted-stream-terminal-error.ts";
+} from "./hosted/stream-terminal-error.ts";
 export {
   type ActiveConversationRunStatus,
   appendConversationRunEvents,
@@ -1491,7 +1491,7 @@ export {
   runHostedChildExecutionLifecycle,
   runHostedChildLifecycle,
   shouldSkipHostedChildTerminalPersistence,
-} from "./hosted-child-lifecycle.ts";
+} from "./hosted/child-lifecycle.ts";
 export {
   appendHostedChildMirrorChunk,
   appendHostedChildMirrorChunk as appendAgentServiceChildMirrorChunk,
@@ -1513,20 +1513,20 @@ export {
   isAlreadyMirroredHostedChunk as isAlreadyMirroredAgentServiceChunk,
   toMirroredHostedStreamPart,
   toMirroredHostedStreamPart as toMirroredAgentServiceStreamPart,
-} from "./hosted-child-mirror.ts";
+} from "./hosted/child-mirror.ts";
 export {
   convertCompactedProviderMessagesToChildForkRuntimeMessages,
   type HostedChildForkRuntimeStepMessages,
   type HostedChildForkRuntimeStepSystemResolver,
   prepareHostedChildForkRuntimeStepMessages,
   type PrepareHostedChildForkRuntimeStepMessagesInput,
-} from "./hosted-child-fork-step-message-preparation.ts";
+} from "./hosted/child-fork-step-message-preparation.ts";
 export {
   type HostedChildRunStatusMonitor,
   type StartedHostedChildForkRuntime,
   startHostedChildForkRuntimeWithHostTools,
   type StartHostedChildForkRuntimeWithHostToolsInput,
-} from "./hosted-child-fork-runtime-start.ts";
+} from "./hosted/child-fork-runtime-start.ts";
 export {
   type HostedChildRunIdentifiers,
   type HostedChildSameTurnRetryBlockSignal,
@@ -1539,7 +1539,7 @@ export {
   type MonitorHostedChildRunStatusInput,
   resolveHostedChildTerminalErrorCode,
   shouldBlockHostedChildSameTurnRetry,
-} from "./hosted-child-status.ts";
+} from "./hosted/child-status.ts";
 export {
   type HostedLifecycleAdapter,
   type HostedLifecycleExecution,
@@ -1547,13 +1547,13 @@ export {
   type HostedLifecycleRunResult,
   type HostedLifecycleTerminalState,
   runHostedLifecycle,
-} from "./hosted-lifecycle.ts";
+} from "./hosted/lifecycle.ts";
 export {
   type HostedResponseStreamHeartbeat,
   type HostedResponseStreamHeartbeatState,
   type HostedResponseStreamWriter,
   runHostedResponseStreamWithHeartbeat,
-} from "./hosted-response-stream.ts";
+} from "./hosted/response-stream.ts";
 export {
   mergeToolCallInput,
   mergeToolInputDelta,
@@ -1617,8 +1617,8 @@ export {
   createAgUiDetachedStartHandler,
   executeAgUiDetachedStart,
   type ExecuteAgUiDetachedStartInput,
-} from "./ag-ui-detached-start.ts";
-export type { AgUiResumeValue } from "./ag-ui-tool-shared.ts";
+} from "./ag-ui/detached-start.ts";
+export type { AgUiResumeValue } from "./ag-ui/tool-shared.ts";
 export {
   createDetachedRunShutdownLifecycle,
   createDetachedRunTracker,
@@ -1636,7 +1636,7 @@ export {
   AgUiResumeSignalSchema,
   createAgUiCancelHandler,
   createAgUiResumeHandler,
-} from "./ag-ui-run-control.ts";
+} from "./ag-ui/run-control.ts";
 export {
   type AgUiSseEvent,
   createAgUiRunErrorEvent,
@@ -1645,7 +1645,7 @@ export {
   normalizeAgUiMessages,
   parseAgUiRequest,
   parseAgUiRequestOrError,
-} from "./ag-ui-host-support.ts";
+} from "./ag-ui/host-support.ts";
 export {
   type AgUiContextItem,
   type AgUiHandlerConfigWithAgent,
@@ -1654,13 +1654,13 @@ export {
   type AgUiRequest,
   AgUiRequestSchema,
   createAgUiHandler,
-} from "./ag-ui-handler.ts";
+} from "./ag-ui/handler.ts";
 export {
   createHostedFormInputTool,
   createHostedFormInputTool as createAgentServiceFormInputTool,
   type HostedFormInputToolContext,
   type HostedFormInputToolContext as AgentServiceFormInputToolContext,
-} from "./hosted-form-input-tool.ts";
+} from "./hosted/form-input-tool.ts";
 export {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
@@ -1763,4 +1763,4 @@ export {
   type HostedServiceProjectAccessResult as AgentServiceProjectAccessResult,
   isHostedServiceAuthError,
   isHostedServiceAuthError as isAgentServiceAuthError,
-} from "./agent-service-auth.ts";
+} from "./service/auth.ts";

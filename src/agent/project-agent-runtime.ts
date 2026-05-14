@@ -10,11 +10,11 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearMCPRegistry } from "#veryfront/mcp";
 import { workflowRegistry } from "#veryfront/workflow/registry.ts";
 import { agentRegistry } from "./composition/index.ts";
-import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
+import type { RuntimeAgentMarkdownDefinition } from "./runtime/agent-definition.ts";
 import {
   getRuntimeAgentMarkdownDefinition,
   isRuntimeAgentMarkdownAgent,
-} from "./runtime-agent-markdown-adapter.ts";
+} from "./runtime/agent-markdown-adapter.ts";
 import type { Agent, AgentConfig } from "./types.ts";
 
 export type ProjectAgentRuntimeAgentSource = "auto" | "code" | "markdown";

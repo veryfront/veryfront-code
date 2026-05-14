@@ -5,7 +5,7 @@ import type {
   SchemaValidator,
   ValidationIssue,
 } from "#veryfront/extensions/schema/index.ts";
-import { getAgUiRuntimeRunIdSchema } from "./runtime-ag-ui-contract.ts";
+import { getAgUiRuntimeRunIdSchema } from "./runtime/ag-ui-contract.ts";
 import { RunResumeSessionManager } from "./runtime/index.ts";
 
 const TOOL_CALL_ID_SCHEMA = (v: SchemaValidator) => v.string().min(1).max(128);

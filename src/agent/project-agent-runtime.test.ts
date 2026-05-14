@@ -15,7 +15,7 @@ import {
   getProjectAgentRuntimeAgentIdCandidates,
   resolveSingleProjectAgentRuntimeAgentId,
 } from "./project-agent-runtime.ts";
-import { createRuntimeAgentFromMarkdownDefinition } from "./runtime-agent-markdown-adapter.ts";
+import { createRuntimeAgentFromMarkdownDefinition } from "./runtime/agent-markdown-adapter.ts";
 
 async function withTempDir(fn: (dir: string) => Promise<void> | void): Promise<void> {
   const dir = Deno.makeTempDirSync();
