@@ -56,7 +56,7 @@ export class TracingManager {
   }
 
   private async initializeTracer(config: TracingConfig): Promise<void> {
-    // Use the shim API — delegates to the real SDK when ext-tracing-opentelemetry is wired.
+    // Use the shim API — delegates to the real SDK when ext-observability-opentelemetry is wired.
     const shimApi = await import("./api-shim.ts");
     const api: OpenTelemetryAPI = {
       trace: {
@@ -79,7 +79,7 @@ export class TracingManager {
 
     this.state.tracer = api.trace.getTracer(config.serviceName ?? "veryfront", VERSION);
 
-    // No-op propagator used only when ext-tracing-opentelemetry is NOT installed.
+    // No-op propagator used only when ext-observability-opentelemetry is NOT installed.
     // When the extension is active, it registers W3CTraceContextPropagator
     // on the shim directly; we intentionally do NOT wrap shimApi.propagation
     // here (doing so would cause infinite recursion when the global

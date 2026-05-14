@@ -1,7 +1,7 @@
 /****
  * OpenTelemetry OTLP tracing for proxy.
  *
- * Uses the core api-shim for in-process tracing; when ext-tracing-opentelemetry
+ * Uses the core api-shim for in-process tracing; when ext-observability-opentelemetry
  * is loaded, the shim delegates to the real SDK provider.
  *
  * Env: OTEL_TRACES_ENABLED, OTEL_SERVICE_NAME, OTEL_EXPORTER_OTLP_ENDPOINT,
@@ -71,7 +71,7 @@ export async function initializeOTLPWithApis(): Promise<void> {
   }
 
   try {
-    // The shim's provider is wired by ext-tracing-opentelemetry via bootstrap.ts.
+    // The shim's provider is wired by ext-observability-opentelemetry via bootstrap.ts.
     // We simply get a tracer from the shim — it delegates to the real SDK
     // when the extension is active, otherwise returns the no-op tracer.
     tracer = shimTrace.getTracer(config.serviceName);

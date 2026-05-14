@@ -27,7 +27,7 @@ export async function ensureOtelInstruments(): Promise<void> {
   if (!isDeno) return;
 
   try {
-    // The metrics API is injected by ext-tracing-opentelemetry via setGlobalMetricsAPI().
+    // The metrics API is injected by ext-observability-opentelemetry via setGlobalMetricsAPI().
     // When the extension is not active, the meter is unavailable and we return.
     const metricsApi = getGlobalMetricsAPI();
     if (!metricsApi) return;

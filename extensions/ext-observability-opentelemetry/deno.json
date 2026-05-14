@@ -1,5 +1,5 @@
 {
-  "name": "@veryfront/ext-tracing-opentelemetry",
+  "name": "@veryfront/ext-observability-opentelemetry",
   "version": "0.1.0",
   "exports": "./src/index.ts",
   "veryfront": {
@@ -32,7 +32,7 @@
     "@std/assert": "jsr:@std/assert@1",
     "@std/testing/bdd": "jsr:@std/testing@1/bdd",
     "veryfront/extensions": "../../src/extensions/index.ts",
-    "veryfront/extensions/tracing": "../../src/extensions/tracing/index.ts"
+    "veryfront/extensions/observability": "../../src/extensions/observability/index.ts"
   },
   "tasks": {
     "test": "deno test --no-check --allow-all src/"

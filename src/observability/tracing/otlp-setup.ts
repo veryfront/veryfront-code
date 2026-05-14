@@ -1,7 +1,7 @@
 /**************************
  * OpenTelemetry OTLP Setup
  *
- * Thin wrapper that delegates to the `ext-tracing-opentelemetry` extension via the
+ * Thin wrapper that delegates to the `ext-observability-opentelemetry` extension via the
  * `TracingExporter` contract.  When the extension is not installed, all span
  * operations silently no-op.
  *
@@ -79,15 +79,15 @@ export async function initializeOTLP(): Promise<void> {
     logger.debug("Already initialized");
     return;
   }
-  // Actual provider setup is handled by ext-tracing-opentelemetry via bootstrap.
+  // Actual provider setup is handled by ext-observability-opentelemetry via bootstrap.
   // This is kept for backward compatibility.
   initialized = true;
-  logger.debug("OTLP setup delegated to ext-tracing-opentelemetry extension");
+  logger.debug("OTLP setup delegated to ext-observability-opentelemetry extension");
 }
 
 export async function shutdownOTLP(): Promise<void> {
   // Actual shutdown is handled by the extension loader teardown.
-  logger.debug("OTLP shutdown delegated to ext-tracing-opentelemetry extension");
+  logger.debug("OTLP shutdown delegated to ext-observability-opentelemetry extension");
 }
 
 export function isOTLPEnabled(): boolean {

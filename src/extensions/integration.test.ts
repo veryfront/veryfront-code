@@ -22,7 +22,7 @@ import {
   getTracer,
   setGlobalTracerProvider,
 } from "#veryfront/observability/tracing/api-shim.ts";
-import type { TracingExporter } from "./tracing/tracing-exporter.ts";
+import type { TracingExporter } from "./observability/tracing-exporter.ts";
 
 const noopLogger = {
   debug: () => {},
@@ -191,7 +191,7 @@ describe("extensions/integration", () => {
     await loader.teardownAll();
   });
 
-  it("ext-tracing-opentelemetry: TracingExporter registers and returns a real tracer", async () => {
+  it("ext-observability-opentelemetry: TracingExporter registers and returns a real tracer", async () => {
     _resetShimForTests();
 
     let shimProvider: { getTracer(name: string): unknown } | null = null;
@@ -232,7 +232,7 @@ describe("extensions/integration", () => {
       },
     };
 
-    const otelExt = makeExt("ext-tracing-opentelemetry", {
+    const otelExt = makeExt("ext-observability-opentelemetry", {
       provides: { TracingExporter: exporterStub },
       async setup(ctx) {
         await exporterStub.start(ctx.config);

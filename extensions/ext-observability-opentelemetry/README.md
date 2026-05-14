@@ -1,31 +1,31 @@
-# @veryfront/ext-tracing-opentelemetry
+# @veryfront/ext-observability-opentelemetry
 
 > **Category:** Observability | **Contracts:** `TracingExporter`, `NodeTelemetryProvider` | **Optional**
 
-Provides distributed tracing and Node telemetry bootstrap for Veryfront via the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans over OTLP/HTTP to any OTel-compatible collector.
+Provides distributed tracing, the OpenTelemetry metrics API bridge, and Node telemetry bootstrap for Veryfront via the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans over OTLP/HTTP to any OpenTelemetry-compatible collector.
 
 ## Installation
 
 Add the extension to your project's `veryfront.config.ts`:
 
 ```ts
-import extOpenTelemetry from "@veryfront/ext-tracing-opentelemetry";
+import extOpenTelemetry from "@veryfront/ext-observability-opentelemetry";
 
 export default defineConfig({
   extensions: [extOpenTelemetry()],
 });
 ```
 
-## Environment Variables
+## Environment variables
 
 The extension reads the standard OpenTelemetry env vars at setup time:
 
 | Variable                      | Required         | Description                                                       |
 | ----------------------------- | ---------------- | ----------------------------------------------------------------- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes (for export) | Collector URL, e.g. `http://localhost:4318/v1/traces`             |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes (for export) | Collector URL, e.g. `http://localhost:4318`                       |
 | `OTEL_EXPORTER_OTLP_HEADERS`  | No               | Comma-separated `key=value` pairs (commonly used for auth tokens) |
 | `OTEL_SERVICE_NAME`           | No               | Service name attached to spans                                    |
-| `OTEL_TRACES_ENABLED`         | No               | Set to `false` to disable tracing without removing the extension  |
+| `OTEL_TRACES_ENABLED`         | No               | Set to `true` to enable trace export                              |
 
 Explicit config under `ctx.config.otel` wins over env vars.
 
@@ -42,13 +42,13 @@ config = {
   otel: {
     serviceName: "my-app",
     serviceVersion: "1.0.0",
-    endpoint: "http://collector:4318/v1/traces",
+    endpoint: "http://collector:4318",
     headers: { authorization: "Bearer <token>" },
   },
 };
 ```
 
-## Provided contract
+## Provided contracts
 
 `TracingExporter`: Veryfront's core shim calls `getProvider()` to wire the SDK's `TracerProvider` into framework-emitted spans. Spans are batched and exported by the SDK's `BatchSpanProcessor`; `export(spans)` on the contract is intentionally a no-op because the SDK owns the export pipeline.
 

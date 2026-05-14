@@ -63,7 +63,7 @@ Extension availability is separate from contract requirement:
 
 | Package | Contract | Description |
 |---------|----------|-------------|
-| [`@veryfront/ext-tracing-opentelemetry`](./ext-tracing-opentelemetry) | `TracingExporter`, `NodeTelemetryProvider` | OpenTelemetry trace export and Node telemetry bootstrap |
+| [`@veryfront/ext-observability-opentelemetry`](./ext-observability-opentelemetry) | `TracingExporter`, `NodeTelemetryProvider` | OpenTelemetry trace export, metrics API bridge, and Node telemetry bootstrap |
 
 ### Sandbox
 
