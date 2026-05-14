@@ -39,6 +39,14 @@ function navigationTool(name: string): ToolDefinition {
   };
 }
 
+function simpleTool(name: string): ToolDefinition {
+  return {
+    name,
+    description: `${name} description`,
+    parameters: { type: "object", properties: {} },
+  };
+}
+
 function createRemoteSource(input: {
   id?: string;
   tools: ToolDefinition[];
@@ -260,6 +268,94 @@ Deno.test("createHostedProjectRemoteToolSources defaults to the Veryfront API MC
   assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
 });
 
+Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools with the tool access profile", async () => {
+  const executed: Array<{ toolName: string; args: unknown }> = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [
+          simpleTool("create_server"),
+          simpleTool("delete_server"),
+          simpleTool("update_file"),
+        ],
+        execute: (toolName, args) => {
+          executed.push({ toolName, args });
+          if (toolName === "get_tool_access_profile") {
+            return {
+              version: 1,
+              freshness: {
+                resolved_at: "2999-01-01T00:00:00.000Z",
+                valid_for_ms: 60_000,
+                fail_closed_on_expiry: true,
+              },
+              families: [
+                {
+                  family: "runtime",
+                  default_decision: {
+                    visibility: "hidden",
+                    reason_code: "billing_plan_restriction",
+                  },
+                  action_overrides: [
+                    {
+                      action: "delete_server",
+                      decision: { visibility: "visible", reason_code: "allowed" },
+                    },
+                  ],
+                },
+              ],
+            };
+          }
+          return { ok: true };
+        },
+      }),
+  });
+
+  assertEquals(
+    (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
+    ["delete_server", "update_file"],
+  );
+  assertEquals(executed, [
+    {
+      toolName: "get_tool_access_profile",
+      args: { project_reference: "project-1" },
+    },
+  ]);
+});
+
+Deno.test("createHostedProjectRemoteToolSources fails closed for mapped API tools when profile resolution fails", async () => {
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [
+          simpleTool("create_invite"),
+          simpleTool("delete_member"),
+          simpleTool("update_file"),
+        ],
+        execute: (toolName) => {
+          if (toolName === "get_tool_access_profile") {
+            throw new Error("profile unavailable");
+          }
+          return { ok: true };
+        },
+      }),
+  });
+
+  assertEquals(
+    (await sources[0]?.listTools({ projectId: "project-1" }))?.map((tool) => tool.name),
+    ["update_file"],
+  );
+});
+
 Deno.test("createHostedProjectRemoteToolSources builds API and explicit gated Studio MCP sources", async () => {
   const configs: RemoteMCPToolSourceConfig[] = [];
   let activeProjectId = "project-1";
@@ -413,6 +509,11 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
   await sources[1]?.executeTool("studio_open_project", { project_id: "project-2" });
 
   assertEquals(executed, [
+    {
+      toolName: "get_tool_access_profile",
+      args: { project_reference: "project-1" },
+      context: { projectId: "project-1" },
+    },
     {
       toolName: "update_file",
       args: { path: "AGENTS.md", prepared: true, project_reference: "project-1" },

@@ -28,6 +28,7 @@ import {
   buildDefaultHostedChildForkToolSet,
   type DefaultHostedChildForkToolAssemblySourceResult,
 } from "./child-requested-tools.ts";
+import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
 
 export type HostedChildForkToolSourcesLogger = {
   error: (message: string, metadata?: Record<string, unknown>) => void;
@@ -120,7 +121,14 @@ export async function prepareDefaultHostedChildForkToolSources(
         continue;
       }
       const remoteSource = createRemoteToolSource(remoteConfig);
-      const definitions = await remoteSource.listTools();
+      const rawDefinitions = await remoteSource.listTools();
+      const definitions = server.kind === "veryfront-api"
+        ? await filterVeryfrontApiToolDefinitionsWithAccessProfile({
+          source: remoteSource,
+          toolDefinitions: rawDefinitions,
+          projectId: input.getProjectId() ?? null,
+        })
+        : rawDefinitions;
       remoteMcpTools = {
         ...remoteMcpTools,
         ...materializeRemoteTools(remoteSource, definitions),
