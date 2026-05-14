@@ -1,8 +1,8 @@
 # @veryfront/ext-tracing-opentelemetry
 
-> **Category:** Observability | **Contract:** `TracingExporter` | **Optional**
+> **Category:** Observability | **Contracts:** `TracingExporter`, `NodeTelemetryProvider` | **Optional**
 
-Provides distributed tracing for Veryfront via the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans over OTLP/HTTP to any OTel-compatible collector.
+Provides distributed tracing and Node telemetry bootstrap for Veryfront via the [OpenTelemetry JS SDK](https://github.com/open-telemetry/opentelemetry-js). Exports trace spans over OTLP/HTTP to any OTel-compatible collector.
 
 ## Installation
 
@@ -22,7 +22,7 @@ The extension reads the standard OpenTelemetry env vars at setup time:
 
 | Variable                      | Required         | Description                                                       |
 | ----------------------------- | ---------------- | ----------------------------------------------------------------- |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes (for export) | Collector URL — e.g. `http://localhost:4318/v1/traces`            |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Yes (for export) | Collector URL, e.g. `http://localhost:4318/v1/traces`             |
 | `OTEL_EXPORTER_OTLP_HEADERS`  | No               | Comma-separated `key=value` pairs (commonly used for auth tokens) |
 | `OTEL_SERVICE_NAME`           | No               | Service name attached to spans                                    |
 | `OTEL_TRACES_ENABLED`         | No               | Set to `false` to disable tracing without removing the extension  |
@@ -50,9 +50,11 @@ config = {
 
 ## Provided contract
 
-`TracingExporter` — Veryfront's core shim calls `getProvider()` to wire the SDK's `TracerProvider` into framework-emitted spans. Spans are batched and exported by the SDK's `BatchSpanProcessor`; `export(spans)` on the contract is intentionally a no-op (the SDK owns the export pipeline).
+`TracingExporter`: Veryfront's core shim calls `getProvider()` to wire the SDK's `TracerProvider` into framework-emitted spans. Spans are batched and exported by the SDK's `BatchSpanProcessor`; `export(spans)` on the contract is intentionally a no-op because the SDK owns the export pipeline.
 
 `start(config)` constructs the provider + OTLP HTTP exporter; `shutdown()` flushes and shuts down the provider.
+
+`NodeTelemetryProvider`: the Node agent service calls `initialize(options)` when telemetry is enabled. The provider starts `NodeSDK`, configures sampling, attaches HTTP/Express/fs auto-instrumentation, and registers shutdown handling.
 
 ## Capabilities
 

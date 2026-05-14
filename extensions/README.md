@@ -63,7 +63,7 @@ Extension availability is separate from contract requirement:
 
 | Package | Contract | Description |
 |---------|----------|-------------|
-| [`@veryfront/ext-tracing-opentelemetry`](./ext-tracing-opentelemetry) | `TracingExporter` | OpenTelemetry trace export via OTLP/HTTP |
+| [`@veryfront/ext-tracing-opentelemetry`](./ext-tracing-opentelemetry) | `TracingExporter`, `NodeTelemetryProvider` | OpenTelemetry trace export and Node telemetry bootstrap |
 
 ### Sandbox
 
@@ -107,6 +107,7 @@ Veryfront treats contracts as required at the call site, not at the package list
 | `AuthProvider` | Auth signing or verification is configured | User-installed extension |
 | `TokenCacheStore` | Redis-backed token cache is configured | User-installed extension |
 | `TracingExporter` | OTLP tracing export is configured | User-installed extension |
+| `NodeTelemetryProvider` | Node agent service telemetry is enabled | Auto-enabled agent service extension |
 
 ## Architecture
 

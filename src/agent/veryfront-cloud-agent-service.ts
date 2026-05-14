@@ -8,6 +8,10 @@ import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import {
+  type NodeTelemetryProvider,
+  NodeTelemetryProviderName,
+} from "#veryfront/extensions/tracing/index.ts";
+import {
   type SandboxShellToolsProvider,
   SandboxShellToolsProviderName,
 } from "#veryfront/extensions/sandbox/index.ts";
@@ -351,6 +355,7 @@ async function resolveNodeVeryfrontCloudAgentServiceOptions(
 ): Promise<ResolvedNodeVeryfrontCloudAgentServiceOptions> {
   await ensureDefaultSchemaValidator();
   await ensureDefaultAuthProvider();
+  await ensureDefaultNodeTelemetryProvider();
   return {
     ...options,
     serviceName: resolveServiceName(options),
@@ -368,6 +373,17 @@ async function ensureDefaultAuthProvider(): Promise<void> {
   if (tryResolve<AuthProvider>("AuthProvider")) return;
   const { createAuthProvider } = await import("../../extensions/ext-auth-jwt/src/index.ts");
   register<AuthProvider>("AuthProvider", createAuthProvider({}));
+}
+
+async function ensureDefaultNodeTelemetryProvider(): Promise<void> {
+  if (tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName)) return;
+  const { OpenTelemetryNodeTelemetryProvider } = await import(
+    "../../extensions/ext-tracing-opentelemetry/src/index.ts"
+  );
+  register<NodeTelemetryProvider>(
+    NodeTelemetryProviderName,
+    new OpenTelemetryNodeTelemetryProvider(),
+  );
 }
 
 function resolveEnvironment(

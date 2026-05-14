@@ -12,11 +12,6 @@ export interface CoreSourceDependencyIssue {
 }
 
 const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set([
-  "@opentelemetry/auto-instrumentations-node",
-  "@opentelemetry/exporter-trace-otlp-http",
-  "@opentelemetry/resources",
-  "@opentelemetry/sdk-node",
-  "@opentelemetry/sdk-trace-base",
   "@types/react",
   "@types/react-dom",
   "class-variance-authority",
