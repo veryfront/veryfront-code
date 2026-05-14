@@ -284,8 +284,6 @@
     "react-dom/client": "https://esm.sh/react-dom@19.2.4/client?external=react&target=es2022&deps=csstype@3.2.3",
     "react/jsx-runtime": "https://esm.sh/react@19.2.4/jsx-runtime?external=react&target=es2022&deps=csstype@3.2.3",
     "react/jsx-dev-runtime": "https://esm.sh/react@19.2.4/jsx-dev-runtime?external=react&target=es2022&deps=csstype@3.2.3",
-    "class-variance-authority": "npm:class-variance-authority@0.7.1",
-    "tailwind-merge": "npm:tailwind-merge@3.5.0",
     "veryfront/schemas": "./src/schemas/index.ts",
     "veryfront/chat/conversation": "./src/chat/conversation.ts",
     "veryfront/chat/message-prep": "./src/chat/message-prep.ts",

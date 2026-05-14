@@ -8,8 +8,6 @@
  */
 
 import { type ClassValue, clsx } from "#veryfront/utils/clsx.ts";
-import { twMerge } from "tailwind-merge";
-export { cva, type VariantProps } from "class-variance-authority";
 
 // ---------------------------------------------------------------------------
 // CSS Custom Property tokens
@@ -209,21 +207,58 @@ export function mergeThemes<T>(
 }
 
 /**
- * Utility to combine and merge Tailwind class names.
+ * Utility to combine class names.
  */
 export function cn(...inputs: ClassValue[]): string {
-  return twMerge(clsx(inputs));
+  return clsx(inputs);
 }
 
 // ---------------------------------------------------------------------------
-// CVA Variant Definitions
+// Variant definitions
 // ---------------------------------------------------------------------------
 
-import { cva } from "class-variance-authority";
+type VariantMap = Record<string, Record<string, ClassValue>>;
 
-type CvaReturn = ReturnType<typeof cva>;
+type VariantOptions<TVariants extends VariantMap> =
+  & {
+    [TKey in keyof TVariants]?: keyof TVariants[TKey] | null | undefined;
+  }
+  & {
+    class?: ClassValue;
+    className?: ClassValue;
+  };
 
-export const messageVariants: CvaReturn = cva("", {
+type VariantClassFunction<TVariants extends VariantMap> = (
+  options?: VariantOptions<TVariants>,
+) => string;
+
+function variantClasses<TVariants extends VariantMap>(
+  base: ClassValue,
+  config: {
+    variants: TVariants;
+    defaultVariants?: Partial<
+      {
+        [TKey in keyof TVariants]: keyof TVariants[TKey] | null | undefined;
+      }
+    >;
+  },
+): VariantClassFunction<TVariants> {
+  return (options = {}) => {
+    const classes: ClassValue[] = [base];
+
+    for (const [variantName, variantValues] of Object.entries(config.variants)) {
+      const selected = options[variantName] ??
+        config.defaultVariants?.[variantName];
+      if (selected === null || selected === undefined) continue;
+      classes.push(variantValues[String(selected)]);
+    }
+
+    classes.push(options.class, options.className);
+    return cn(classes);
+  };
+}
+
+export const messageVariants = variantClasses("", {
   variants: {
     role: {
       user:
@@ -239,7 +274,7 @@ export const messageVariants: CvaReturn = cva("", {
   },
 });
 
-export const chatButtonVariants: CvaReturn = cva(
+export const chatButtonVariants = variantClasses(
   [
     "inline-flex items-center justify-center gap-2 whitespace-nowrap",
     "font-medium rounded-full transition-all duration-150",
@@ -273,7 +308,7 @@ export const chatButtonVariants: CvaReturn = cva(
   },
 );
 
-export const chatContainerVariants: CvaReturn = cva("flex flex-col overflow-hidden", {
+export const chatContainerVariants = variantClasses("flex flex-col overflow-hidden", {
   variants: {
     variant: {
       default: "h-full bg-[var(--background)]",

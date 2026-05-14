@@ -202,12 +202,10 @@ export {
   chatButtonVariants,
   chatContainerVariants,
   cn,
-  cva,
   defaultAgentTheme,
   defaultChatTheme,
   mergeThemes,
   messageVariants,
-  type VariantProps,
 } from "./components/chat/theme.ts";
 export {
   ColorModeProvider,
