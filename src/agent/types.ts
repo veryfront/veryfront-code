@@ -68,6 +68,10 @@ export interface AgentSuggestions {
 
 export interface AgentConfig {
   id?: string;
+  /** Human-readable display name for registry and control-plane listings. */
+  name?: string;
+  /** Optional summary shown in registry and control-plane listings. */
+  description?: string;
   /**
    * Optional model string in "provider/model" format.
    *

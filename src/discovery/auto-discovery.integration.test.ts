@@ -265,5 +265,38 @@ describe(
         await Deno.remove(tempDir, { recursive: true });
       }
     });
+    it("discovers markdown agents from agents directory", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-markdown-agent-" });
+
+      try {
+        await Deno.mkdir(`${tempDir}/agents`, { recursive: true });
+        await Deno.writeTextFile(
+          `${tempDir}/agents/support.md`,
+          [
+            "---",
+            "name: Support",
+            "description: Helps users",
+            "model: openai/gpt-5.4",
+            "max-steps: 4",
+            "---",
+            "",
+            "Help users from markdown.",
+          ].join("\n"),
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+        });
+
+        const discoveredAgent = result.agents.get("support");
+        assertExists(discoveredAgent);
+        assertEquals(discoveredAgent.config.system, "Help users from markdown.");
+        assertEquals(discoveredAgent.config.model, "openai/gpt-5.4");
+        assertEquals(discoveredAgent.config.maxSteps, 4);
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
   },
 );

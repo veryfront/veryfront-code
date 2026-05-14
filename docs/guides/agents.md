@@ -30,6 +30,21 @@ export default agent({
 
 The `id` is how you reference the agent later with `getAgent("assistant")`.
 
+You can also define an agent with markdown when the agent only needs persona, model, and step configuration:
+
+```md
+---
+name: Support
+description: Helps users with support questions
+model: openai/gpt-5.4
+max-steps: 6
+---
+
+You are a support assistant. Answer clearly and ask for missing details before acting.
+```
+
+The file path provides the agent id. For example, `agents/support.md` registers `support` and can be invoked through the same project runtime and control-plane surfaces as `agents/support.ts`.
+
 ## Add tools
 
 Agents call tools to take actions or fetch data. Reference tools by name — the framework resolves them from the `tools/` directory:
@@ -230,6 +245,8 @@ integrations on a predictable default.
 | Property              | Type                                                                                                   | Description                                                                  |
 | --------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
 | `id`                  | `string`                                                                                               | Unique identifier used with `getAgent()`                                     |
+| `name`                | `string`                                                                                               | Human-readable display name for listings                                     |
+| `description`         | `string`                                                                                               | Optional summary for listings                                                |
 | `model`               | `string`                                                                                               | Optional provider/model override. Omit or use `"auto"` for runtime defaults. |
 | `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run              |

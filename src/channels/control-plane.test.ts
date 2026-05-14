@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { Agent, AgentSuggestions } from "#veryfront/agent";
+import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill, skillRegistry } from "#veryfront/skill/registry.ts";
@@ -296,6 +297,37 @@ describe("channels/control-plane", () => {
             name: "researcher",
             description: null,
             model: null,
+            version: null,
+            skills: [],
+          }],
+        }),
+      );
+    });
+
+    it("returns markdown-defined runtime agents from the same registry contract", async () => {
+      const markdownAgent = createRuntimeAgentFromMarkdownDefinition({
+        id: "support",
+        name: "Support",
+        description: "Helps users",
+        model: "openai/gpt-5.4",
+        maxSteps: 4,
+        instructions: "Help users from markdown.",
+      });
+
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) => id === "support" ? markdownAgent : undefined,
+        getAllAgentIds: () => ["support"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "support",
+            name: "Support",
+            description: "Helps users",
+            model: "openai/gpt-5.4",
             version: null,
             skills: [],
           }],
