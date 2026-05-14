@@ -195,6 +195,7 @@ Set environment variables in `.env` files or your deployment platform:
 | `VERYFRONT_PROJECT_ID`                          | Project id used for project-scoped agent service registration                                                                            |
 | `VERYFRONT_PROJECT_SLUG`                        | Project slug used by Veryfront Cloud-aware features                                                                                      |
 | `VERYFRONT_API_URL`                             | Override the hosted API URL for self-hosted API deployments                                                                              |
+| `VERYFRONT_AGENT_SERVICE_NAME`                  | Optional agent service name. Defaults to the nearest project manifest name, then `veryfront-agent-service`                               |
 | `VERYFRONT_AGENT_SERVICE_URL`                   | Public URL for a separately deployed agent service that should register with the control plane                                           |
 | `VERYFRONT_AGENT_SERVICE_KEY`                   | Optional stable key for this agent service instance. Defaults to a deterministic key derived from service name, agent id, scope, and URL |
 | `VERYFRONT_AGENT_SERVICE_REGISTRATION`          | Agent service registration mode: `auto`, `enabled`, or `disabled`. Defaults to `auto`                                                    |

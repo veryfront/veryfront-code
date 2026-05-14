@@ -278,14 +278,16 @@ agent behavior in `agents/<agent-id>.md` or `agents/<agent-id>.ts`:
 import { startAgentService, veryfrontMcpServer } from "veryfront/agent";
 
 await startAgentService({
-  serviceName: "support-agent",
   mcpServers: [veryfrontMcpServer()],
 });
 ```
 
-By default, discovery is rooted at the process cwd. Pass `baseDir` only when the
-service may start from another working directory. `entrypointUrl` is a
-convenience fallback for deriving `baseDir` from an entry module URL.
+By default, discovery is rooted at the process cwd and the service name comes
+from `VERYFRONT_AGENT_SERVICE_NAME`, the nearest `package.json` or `deno.json`
+`name`, or `veryfront-agent-service`. Pass `serviceName` only when code should
+override that convention. Pass `baseDir` only when the service may start from
+another working directory. `entrypointUrl` is a convenience fallback for
+deriving `baseDir` from an entry module URL.
 If the service discovers exactly one code or markdown agent, that agent becomes
 the default automatically. Set `agentId` when the service exposes multiple
 agents or when direct `/api/runs` requests should use a specific default.
@@ -889,11 +891,13 @@ project tools, and `invoke_agent`), sandbox tools, explicit remote MCP servers,
 prepared chat execution, AG-UI streaming, and detached
 durable-run execution.
 
-Hosts provide the service name and agent id. Discovery defaults to cwd; hosts
-can pass `baseDir` when cwd is not the project root, or `entrypointUrl` when it
-is more convenient to derive the base directory from a module URL. Use this
-helper when tests or custom hosts need the runtime bundle without starting the
-service server.
+Hosts can provide the service name and agent id. The service name defaults to
+`VERYFRONT_AGENT_SERVICE_NAME`, then the nearest `package.json` or `deno.json`
+`name`, then `veryfront-agent-service`. Discovery defaults to cwd; hosts can
+pass `baseDir` when cwd is not the project root, or `entrypointUrl` when it is
+more convenient to derive the base directory from a module URL. Use this helper
+when tests or custom hosts need the runtime bundle without starting the service
+server.
 
 ### `startNodeVeryfrontCloudAgentService(options)`
 
@@ -902,9 +906,9 @@ server and graceful shutdown handling. This helper remains available for
 Node-specific hosts; use `startAgentService()` for the default cross-runtime
 process entrypoint.
 
-### `startAgentService(options)`
+### `startAgentService(options?)`
 
-Run the default cross-runtime bootstrap for a Veryfront Cloud agent service. The
+Run the default cross-runtime bootstrap for a Veryfront agent service. The
 helper loads `.env` files, initializes OpenTelemetry where supported, registers
 trace-context logging, optionally registers and heartbeats the push runtime
 service with the control plane, starts the service server, and handles startup

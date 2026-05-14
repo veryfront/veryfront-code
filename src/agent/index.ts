@@ -334,6 +334,9 @@ export {
   type StartNodeHostedAgentServiceResult,
 } from "./agent-service-runtime.ts";
 export {
+  type AgentServiceOptions,
+  type AgentServicePreparedExecution,
+  type AgentServiceProcessTarget,
   createNodeVeryfrontCloudAgentServiceRuntime,
   type NodeVeryfrontCloudAgentServiceMcpServer,
   type NodeVeryfrontCloudAgentServiceOptions,

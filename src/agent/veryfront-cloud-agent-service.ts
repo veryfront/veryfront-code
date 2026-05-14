@@ -1,6 +1,7 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { z } from "zod";
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import {
@@ -135,7 +136,12 @@ export function veryfrontMcpServer(
 type AgentServicePathOption = string | URL;
 
 export type NodeVeryfrontCloudAgentServiceOptions = {
-  serviceName: string;
+  /**
+   * Stable service identity used by the control plane and service runtime.
+   * Defaults to VERYFRONT_AGENT_SERVICE_NAME, then the nearest project
+   * package.json or deno.json name, then "veryfront-agent-service".
+   */
+  serviceName?: string;
   /**
    * Default agent served by requests that do not provide an agent id. When
    * omitted, the service selects the only discovered code or markdown agent.
@@ -167,11 +173,13 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
 };
 
 export type VeryfrontCloudAgentServiceOptions = NodeVeryfrontCloudAgentServiceOptions;
+export type AgentServiceOptions = NodeVeryfrontCloudAgentServiceOptions;
 
 type ResolvedNodeVeryfrontCloudAgentServiceOptions =
-  & NodeVeryfrontCloudAgentServiceOptions
+  & Omit<NodeVeryfrontCloudAgentServiceOptions, "createBashTool" | "serviceName">
   & {
     createBashTool: AgentServiceSandboxToolsOptions["createBashTool"];
+    serviceName: string;
   };
 
 export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
@@ -182,6 +190,8 @@ export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChat
   messages: PreparedHostedChatExecution["messages"];
   rootRunContext: HostedConversationRootRunContext;
 };
+export type AgentServicePreparedExecution = NodeVeryfrontCloudAgentServicePreparedExecution;
+export type AgentServiceProcessTarget = NodeVeryfrontCloudAgentServiceProcessTarget;
 
 type NodeVeryfrontCloudAgentServiceContext = ReturnType<
   typeof createNodeVeryfrontCloudAgentServiceContext
@@ -193,12 +203,16 @@ type ChildRunContext = DefaultHostedInvokeAgentContext & {
 const DEFAULT_FORWARDED_CONFIG_NAMESPACE = "veryfront";
 const DEFAULT_DRAIN_TIMEOUT_MS = 15_000;
 const DEFAULT_HARD_SHUTDOWN_TIMEOUT_MS = 20_000;
+const DEFAULT_AGENT_SERVICE_NAME = "veryfront-agent-service";
 const DEFAULT_PROJECT_NAVIGATION_TOOL_NAMES = ["studio_open_project"];
 const PROJECT_CONFIG_FILES = [
   "veryfront.config.js",
   "veryfront.config.ts",
   "veryfront.config.mjs",
 ];
+const ProjectManifestNameSchema = z.object({
+  name: z.string().trim().min(1).optional(),
+}).passthrough();
 
 function pathOptionToPath(pathOption: AgentServicePathOption): string {
   return pathOption instanceof URL ? fileURLToPath(pathOption) : pathOption;
@@ -252,6 +266,47 @@ function resolveProjectDir(
   return candidates.find(hasDiscoveryRoot) ?? baseDir;
 }
 
+function readProjectManifestName(projectDir: string): string | null {
+  for (const fileName of ["package.json", "deno.json"]) {
+    const filePath = resolve(projectDir, fileName);
+    if (!existsSync(filePath)) {
+      continue;
+    }
+
+    try {
+      const parsed = ProjectManifestNameSchema.parse(
+        JSON.parse(readFileSync(filePath, "utf8")),
+      );
+      if (parsed.name) {
+        return parsed.name;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function resolveServiceName(
+  options: Pick<
+    NodeVeryfrontCloudAgentServiceOptions,
+    "baseDir" | "entrypointUrl" | "env" | "processTarget" | "projectDir" | "serviceName"
+  >,
+): string {
+  if (options.serviceName?.trim()) {
+    return options.serviceName.trim();
+  }
+
+  const env = resolveEnvironment(options);
+  const envServiceName = env.VERYFRONT_AGENT_SERVICE_NAME?.trim();
+  if (envServiceName) {
+    return envServiceName;
+  }
+
+  return readProjectManifestName(resolveProjectDir(options)) ?? DEFAULT_AGENT_SERVICE_NAME;
+}
+
 function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTarget | undefined {
   if (typeof process === "undefined") {
     return undefined;
@@ -277,6 +332,7 @@ async function resolveNodeVeryfrontCloudAgentServiceOptions(
 ): Promise<ResolvedNodeVeryfrontCloudAgentServiceOptions> {
   return {
     ...options,
+    serviceName: resolveServiceName(options),
     createBashTool: options.createBashTool ?? await loadDefaultCreateBashTool(),
   };
 }
@@ -939,7 +995,7 @@ function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
 }
 
 export async function createNodeVeryfrontCloudAgentServiceRuntime(
-  options: NodeVeryfrontCloudAgentServiceOptions,
+  options: NodeVeryfrontCloudAgentServiceOptions = {},
 ): Promise<AgentServiceRuntimeBundle<NodeVeryfrontCloudAgentServicePreparedExecution>> {
   const resolvedOptions = await resolveNodeVeryfrontCloudAgentServiceOptions(options);
   const context = createNodeVeryfrontCloudAgentServiceContext(resolvedOptions);
@@ -948,7 +1004,7 @@ export async function createNodeVeryfrontCloudAgentServiceRuntime(
 }
 
 export async function startNodeVeryfrontCloudAgentService(
-  options: NodeVeryfrontCloudAgentServiceOptions,
+  options: NodeVeryfrontCloudAgentServiceOptions = {},
 ): Promise<StartNodeAgentServiceResult<NodeVeryfrontCloudAgentServicePreparedExecution>> {
   const resolvedOptions = await resolveNodeVeryfrontCloudAgentServiceOptions(options);
   const context = createNodeVeryfrontCloudAgentServiceContext(resolvedOptions);
@@ -968,7 +1024,7 @@ export async function startNodeVeryfrontCloudAgentService(
 }
 
 export async function startAgentService(
-  options: NodeVeryfrontCloudAgentServiceOptions,
+  options: NodeVeryfrontCloudAgentServiceOptions = {},
 ): Promise<void> {
   const processTarget = options.processTarget ?? resolveDefaultProcessTarget();
   let getRuntimeTraceContext: NonNullable<BootstrapAgentServiceOptions["getTraceContext"]> =

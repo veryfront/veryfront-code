@@ -186,9 +186,7 @@ lives in `agents/<agent-id>.md` or a discovered code agent such as
 ```ts
 import { startAgentService } from "veryfront/agent";
 
-await startAgentService({
-  serviceName: "support-agent",
-});
+await startAgentService();
 ```
 
 To let the Veryfront control plane discover this separately deployed push
@@ -202,6 +200,10 @@ VERYFRONT_API_TOKEN=<TOKEN>
 VERYFRONT_PROJECT_ID=<PROJECT_ID>
 VERYFRONT_AGENT_SERVICE_URL=https://agent.example.com
 ```
+
+The service name defaults to `VERYFRONT_AGENT_SERVICE_NAME`, then the nearest
+`package.json` or `deno.json` `name`, then `veryfront-agent-service`. Pass
+`serviceName` only when code should override that convention.
 
 Use `VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled` when startup must fail if the
 service cannot register. Use `disabled` to opt out.
