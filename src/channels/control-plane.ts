@@ -45,34 +45,32 @@ export const getRuntimeAgentSkillSchema = defineSchema((v) =>
 );
 export const RuntimeAgentSkillSchema = getRuntimeAgentSkillSchema();
 
-export const getRuntimeAgentSuggestionSchema = defineSchema((v) =>
-  v.discriminatedUnion("type", [
+export const getRuntimeSuggestionSchema = defineSchema((v) =>
+  v.union([
+    v.object({
+      type: v.literal("prompt"),
+      title: v.string().min(1),
+      prompt: v.string().min(1),
+    }).strict(),
     v.object({
       id: v.string().min(1),
       type: v.literal("prompt"),
-      title: v.string().min(1),
-      description: v.string().optional(),
-      prompt: v.string().min(1),
-    }),
+    }).strict(),
     v.object({
-      id: v.string().min(1),
       type: v.literal("task"),
-      title: v.string().min(1),
-      description: v.string().optional(),
-      task: v.string().min(1),
-      prompt: v.string().min(1).optional(),
-    }),
+      id: v.string().min(1),
+    }).strict(),
   ])
 );
-export const RuntimeAgentSuggestionSchema = getRuntimeAgentSuggestionSchema();
+export const RuntimeSuggestionSchema = getRuntimeSuggestionSchema();
 
-export const getRuntimeAgentSuggestionsSchema = defineSchema((v) =>
+export const getRuntimeSuggestionsSchema = defineSchema((v) =>
   v.object({
     welcomeMessage: v.string().min(1).optional(),
-    suggestions: v.array(getRuntimeAgentSuggestionSchema()),
+    suggestions: v.array(getRuntimeSuggestionSchema()),
   })
 );
-export const RuntimeAgentSuggestionsSchema = getRuntimeAgentSuggestionsSchema();
+export const RuntimeSuggestionsSchema = getRuntimeSuggestionsSchema();
 
 export const getRuntimeAgentSchema = defineSchema((v) =>
   v.object({
@@ -82,7 +80,7 @@ export const getRuntimeAgentSchema = defineSchema((v) =>
     model: v.string().nullable().optional(),
     version: v.string().nullable().optional(),
     skills: v.array(getRuntimeAgentSkillSchema()).optional(),
-    suggestions: getRuntimeAgentSuggestionsSchema().optional(),
+    suggestions: getRuntimeSuggestionsSchema().optional(),
   })
 );
 export const RuntimeAgentSchema = getRuntimeAgentSchema();
@@ -127,11 +125,11 @@ export type ControlPlaneAgentsListRequest = InferSchema<
   ReturnType<typeof getControlPlaneAgentsListRequestSchema>
 >;
 export type RuntimeAgentSkill = InferSchema<ReturnType<typeof getRuntimeAgentSkillSchema>>;
-export type RuntimeAgentSuggestion = InferSchema<
-  ReturnType<typeof getRuntimeAgentSuggestionSchema>
+export type RuntimeSuggestion = InferSchema<
+  ReturnType<typeof getRuntimeSuggestionSchema>
 >;
-export type RuntimeAgentSuggestions = InferSchema<
-  ReturnType<typeof getRuntimeAgentSuggestionsSchema>
+export type RuntimeSuggestions = InferSchema<
+  ReturnType<typeof getRuntimeSuggestionsSchema>
 >;
 export type RuntimeAgent = InferSchema<ReturnType<typeof getRuntimeAgentSchema>>;
 export type RuntimeAgentListResponse = InferSchema<
@@ -305,7 +303,7 @@ function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
   const rawConfig = agent.config as unknown as Record<string, unknown>;
   const suggestionsParseResult = rawConfig.suggestions === undefined
     ? null
-    : RuntimeAgentSuggestionsSchema.safeParse(rawConfig.suggestions);
+    : RuntimeSuggestionsSchema.safeParse(rawConfig.suggestions);
   const suggestions = suggestionsParseResult?.success ? suggestionsParseResult.data : undefined;
 
   return RuntimeAgentSchema.parse({

@@ -15,10 +15,15 @@ const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
   "google-ai-studio/gemini-2.5-flash": 8_192,
 };
 
+const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {
+  "google/gemini-2.5-pro": "google-ai-studio/gemini-2.5-pro",
+  "google/gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
+};
+
 /** Look up max output tokens for a model, stripping the `veryfront-cloud/` prefix. */
 export function getModelMaxOutputTokens(modelString: string): number | undefined {
   const normalized = modelString.startsWith("veryfront-cloud/")
     ? modelString.slice("veryfront-cloud/".length)
     : modelString;
-  return MODEL_MAX_OUTPUT_TOKENS[normalized];
+  return MODEL_MAX_OUTPUT_TOKENS[MODEL_MAX_OUTPUT_TOKEN_ALIASES[normalized] ?? normalized];
 }

@@ -9,7 +9,19 @@ import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 
 export const AUTO_AGENT_MODEL = "auto";
 
-const HOSTED_PROVIDER_NAMES = new Set(["anthropic", "google", "openai"]);
+const HOSTED_PROVIDER_NAMES = new Set([
+  "anthropic",
+  "google",
+  "google-ai-studio",
+  "moonshotai",
+  "openai",
+]);
+const DIRECT_CREDENTIAL_PROVIDER_ALIASES: Record<string, string> = {
+  "google-ai-studio": "google",
+};
+const DIRECT_RUNTIME_PROVIDER_ALIASES: Record<string, string> = {
+  "google-ai-studio": "google",
+};
 const LEGACY_MODEL_ALIASES: Record<string, string> = {
   opus: "anthropic/claude-opus-4-6",
   sonnet: "anthropic/claude-sonnet-4-6",
@@ -25,6 +37,7 @@ const LEGACY_MODEL_ALIASES: Record<string, string> = {
   "gemini-3.1-pro": "google-ai-studio/gemini-2.5-pro",
   "gemini-2.5-pro": "google-ai-studio/gemini-2.5-pro",
   "gemini-2.5-flash": "google-ai-studio/gemini-2.5-flash",
+  "kimi-k2.5": "moonshotai/kimi-k2.5",
 };
 
 export function normalizeAgentModelConfig(model?: string): string {
@@ -46,7 +59,7 @@ export function resolveConfiguredAgentModel(model?: string): string {
 }
 
 function hasDirectProviderCredentials(provider: string): boolean {
-  switch (provider) {
+  switch (DIRECT_CREDENTIAL_PROVIDER_ALIASES[provider] ?? provider) {
     case "anthropic":
       return Boolean(getAnthropicEnvConfig().apiKey);
     case "google":
@@ -92,7 +105,8 @@ export function resolveRuntimeModel(model?: string): string {
   }
 
   if (!isVeryfrontCloudEnabled() || hasDirectProviderCredentials(provider)) {
-    return configuredModel;
+    const runtimeProvider = DIRECT_RUNTIME_PROVIDER_ALIASES[provider] ?? provider;
+    return `${runtimeProvider}/${modelId}`;
   }
 
   return `veryfront-cloud/${provider}/${modelId}`;

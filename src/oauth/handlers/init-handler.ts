@@ -45,12 +45,17 @@ function resolveAppUrl(baseUrl: string | undefined, env: EnvironmentConfig): str
 }
 
 function createNotConfiguredResponse(config: OAuthServiceConfig): Response {
+  // SEC-009: Do NOT leak internal env var names in the HTTP response body.
+  // Operators still need the diagnostic, so log the missing env var names
+  // server-side via the existing logger.
+  logger.error("OAuth provider not configured", {
+    serviceId: config.serviceId,
+    displayName: config.displayName,
+    missingVars: [config.clientIdEnvVar, config.clientSecretEnvVar],
+  });
   return Response.json(
-    {
-      error: `${config.displayName} OAuth not configured`,
-      details: `Missing ${config.clientIdEnvVar} or ${config.clientSecretEnvVar}`,
-    },
-    { status: 500 },
+    { error: `${config.displayName} OAuth not configured` },
+    { status: 503 },
   );
 }
 

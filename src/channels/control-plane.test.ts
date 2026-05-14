@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import type { Agent, AgentSuggestions } from "#veryfront/agent";
+import type { Agent, Suggestions } from "#veryfront/agent";
 import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -93,7 +93,7 @@ function createAgent(overrides: {
   model?: string;
   version?: string;
   skills?: true | string[];
-  suggestions?: AgentSuggestions;
+  suggestions?: Suggestions;
 } = {}): Agent {
   return {
     id: overrides.id ?? "agent-1",
@@ -387,19 +387,17 @@ describe("channels/control-plane", () => {
                 welcomeMessage: "How can I help you?",
                 suggestions: [
                   {
-                    id: "plan-work",
                     type: "prompt",
                     title: "Plan work",
-                    description: "Turn an idea into clear next steps",
                     prompt: "Help me turn this idea into a concrete plan.",
                   },
                   {
-                    id: "research-topic",
+                    type: "prompt",
+                    id: "project-planning-prompt",
+                  },
+                  {
                     type: "task",
-                    title: "Research a topic",
-                    description: "Compare sources and summarize what matters",
-                    task: "Research this topic and summarize the key findings",
-                    prompt: "Research this topic and summarize the key findings.",
+                    id: "research-topic",
                   },
                 ],
               },
@@ -422,19 +420,17 @@ describe("channels/control-plane", () => {
               welcomeMessage: "How can I help you?",
               suggestions: [
                 {
-                  id: "plan-work",
                   type: "prompt",
                   title: "Plan work",
-                  description: "Turn an idea into clear next steps",
                   prompt: "Help me turn this idea into a concrete plan.",
                 },
                 {
-                  id: "research-topic",
+                  type: "prompt",
+                  id: "project-planning-prompt",
+                },
+                {
                   type: "task",
-                  title: "Research a topic",
-                  description: "Compare sources and summarize what matters",
-                  task: "Research this topic and summarize the key findings",
-                  prompt: "Research this topic and summarize the key findings.",
+                  id: "research-topic",
                 },
               ],
             },
@@ -454,6 +450,53 @@ describe("channels/control-plane", () => {
                 ...createAgent({ id }).config,
                 suggestions: {
                   welcomeMessage: "How can I help you?",
+                },
+              } as unknown as Agent["config"],
+            }
+            : undefined,
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals(
+        response,
+        RuntimeAgentListResponseSchema.parse({
+          agents: [{
+            id: "assistant",
+            name: "Support",
+            description: "Helps with support questions",
+            model: "anthropic/claude-sonnet-4-6",
+            version: "2.0.0",
+            skills: [],
+          }],
+        }),
+      );
+    });
+
+    it("omits legacy suggestion payloads with unsupported fields", async () => {
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant"
+            ? {
+              ...createAgent({ id }),
+              config: {
+                ...createAgent({ id }).config,
+                suggestions: {
+                  suggestions: [
+                    {
+                      id: "plan-work",
+                      type: "prompt",
+                      title: "Plan work",
+                      description: "Turn an idea into clear next steps",
+                      prompt: "Help me turn this idea into a concrete plan.",
+                    },
+                    {
+                      id: "research-topic",
+                      type: "task",
+                      title: "Research a topic",
+                      task: "Research this topic and summarize the key findings",
+                    },
+                  ],
                 },
               } as unknown as Agent["config"],
             }

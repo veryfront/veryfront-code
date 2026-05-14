@@ -87,8 +87,6 @@ export type {
   AgentResponse,
   AgentStatus,
   AgentStreamResult,
-  AgentSuggestion,
-  AgentSuggestions,
   EdgeConfig,
   MemoryConfig,
   Message as AgentMessage,
@@ -103,6 +101,8 @@ export type {
   RuntimeStateRequest,
   RuntimeStateResolver,
   StreamToolCall,
+  Suggestion,
+  Suggestions,
   ToolCall,
   ToolCallPart,
   ToolCallPartWithArgs,
@@ -174,6 +174,19 @@ export {
   prepareDefaultHostedChildForkToolSources,
   type PrepareDefaultHostedChildForkToolSourcesInput,
 } from "./hosted/child-fork-tool-sources.ts";
+
+export {
+  clearProjectAgentRuntimeRegistries,
+  createRuntimeAgentDefinitionFromAgent,
+  describeProjectAgentRuntimeAgentIdCandidates,
+  discoverProjectAgentRuntime,
+  type DiscoverProjectAgentRuntimeInput,
+  doesProjectAgentRuntimeAgentMatchSource,
+  getProjectAgentRuntimeAgentIdCandidates,
+  type ProjectAgentRuntimeAgentIdCandidates,
+  type ProjectAgentRuntimeAgentSource,
+  resolveSingleProjectAgentRuntimeAgentId,
+} from "./project-agent-runtime.ts";
 
 export {
   createRuntimeAgentFromMarkdownDefinition,
