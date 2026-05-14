@@ -247,8 +247,10 @@ function variantClasses<TVariants extends VariantMap>(
     const classes: ClassValue[] = [base];
 
     for (const [variantName, variantValues] of Object.entries(config.variants)) {
-      const selected = options[variantName] ??
-        config.defaultVariants?.[variantName];
+      const option = options[variantName];
+      const selected = Object.hasOwn(options, variantName) && option !== undefined
+        ? option
+        : config.defaultVariants?.[variantName];
       if (selected === null || selected === undefined) continue;
       classes.push(variantValues[String(selected)]);
     }
