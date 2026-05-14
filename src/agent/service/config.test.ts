@@ -1,6 +1,6 @@
-import "#veryfront/schemas/_test-setup.ts";
+import { reset } from "../../extensions/contracts.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   agentServiceConfigSchema,
   parseAgentServiceConfig,
@@ -8,6 +8,16 @@ import {
 } from "./config.ts";
 
 describe("agent/agent-service-config", () => {
+  afterEach(() => {
+    reset();
+  });
+
+  it("registers the built-in schema validator when used directly", () => {
+    const config = parseAgentServiceConfig({});
+
+    assertEquals(config.VERYFRONT_API_URL, "https://api.veryfront.com");
+  });
+
   it("exposes agent service aliases without the hosted prefix", () => {
     const config = parseAgentServiceConfig({
       VERYFRONT_API_URL: "https://api.example.com",
