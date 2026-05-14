@@ -30,6 +30,8 @@ Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and `tests/b
 
 | Script | Task | Purpose |
 |--------|------|---------|
+| `audit-core-deps.ts` | `lint:core-deps` | Prevents root `npm:` literals and direct third-party imports from leaking into core source |
+| `audit-deps.ts` | `lint:deps` | Checks dependency import pins across root and extension manifests |
 | `ban-console.ts` | `lint:ban-console` | Lints for inappropriate console usage |
 | `ban-deep-imports.ts` | `lint:ban-deep-imports` | Prevents deep imports from internal modules |
 | `ban-internal-root-imports.ts` | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules |
@@ -39,6 +41,17 @@ Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and `tests/b
 | `validate-architecture.ts` | `validate:architecture` | Validates module dependency boundaries |
 | `check-doc-links.ts` | `docs:check-links` | Validates documentation links |
 | `check-coverage.ts` | `coverage:report` | Validates test coverage thresholds |
+
+## Dependency visibility
+
+Use `deno task sbom:all --output-dir dist/dependency-sboms` to generate
+segregated CycloneDX SBOMs for core, CLI, each extension, and the aggregate
+workspace. The same output includes `dependencies-by-manifest.json`, which is
+the fastest way to inspect dependencies grouped by boundary.
+
+The security audit workflow uploads those files as the `dependency-sboms`
+artifact. It also runs `lint:deps` and `lint:core-deps` so dependency pins and
+core dependency boundaries are checked together.
 
 ## Root-level scripts
 

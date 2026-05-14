@@ -296,9 +296,6 @@
     "strict": true,
     "noImplicitAny": true,
     "noUncheckedIndexedAccess": true,
-    "types": [
-      "npm:@types/react@19.2.14"
-    ],
     "lib": [
       "deno.window",
       "dom",
@@ -431,14 +428,5 @@
     "semiColons": true,
     "singleQuote": false,
     "proseWrap": "preserve"
-  },
-  "allowScripts": {
-    "allow": [
-      "npm:sharp@0.33.5",
-      "npm:onnxruntime-node@1.21.0"
-    ],
-    "deny": [
-      "npm:protobufjs@7.5.4"
-    ]
   }
 }

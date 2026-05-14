@@ -11,17 +11,20 @@ export interface CoreSourceDependencyIssue {
   specifier: string;
 }
 
+export interface RootNpmSpecifierLiteralIssue {
+  path: string;
+  value: string;
+}
+
 const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set([
   "@types/react",
   "@types/react-dom",
-  "class-variance-authority",
   "react",
   "react-dom",
   "react-dom/client",
   "react-dom/server",
   "react/jsx-dev-runtime",
   "react/jsx-runtime",
-  "tailwind-merge",
 ]);
 
 function isThirdPartyImportTarget(target: string): boolean {
@@ -112,6 +115,48 @@ export function findCoreThirdPartyImports(
   return issues;
 }
 
+function formatJsonPathProperty(property: string): string {
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(property)) return `.${property}`;
+  return `[${JSON.stringify(property)}]`;
+}
+
+function collectRootNpmSpecifierLiterals(
+  value: unknown,
+  path: string,
+  issues: RootNpmSpecifierLiteralIssue[],
+): void {
+  if (typeof value === "string") {
+    if (value.startsWith("npm:")) {
+      issues.push({ path, value });
+    }
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) =>
+      collectRootNpmSpecifierLiterals(entry, `${path}[${index}]`, issues)
+    );
+    return;
+  }
+
+  if (!value || typeof value !== "object") return;
+
+  for (const [property, entry] of Object.entries(value)) {
+    const nextPath = path
+      ? `${path}${formatJsonPathProperty(property)}`
+      : property;
+    collectRootNpmSpecifierLiterals(entry, nextPath, issues);
+  }
+}
+
+export function findRootNpmSpecifierLiterals(
+  config: unknown,
+): RootNpmSpecifierLiteralIssue[] {
+  const issues: RootNpmSpecifierLiteralIssue[] = [];
+  collectRootNpmSpecifierLiterals(config, "", issues);
+  return issues;
+}
+
 export function findCoreThirdPartySourceImports(
   files: Array<{ path: string; content: string }>,
   options: { allowedSpecifiers?: ReadonlySet<string> } = {},
@@ -188,16 +233,29 @@ async function readCoreSourceFiles(): Promise<
 
 if (import.meta.main) {
   const config = JSON.parse(await Deno.readTextFile("deno.json"));
+  const rootNpmLiteralIssues = findRootNpmSpecifierLiterals(config);
   const importMapIssues = findCoreThirdPartyImports(config);
   const sourceIssues = findCoreThirdPartySourceImports(
     await readCoreSourceFiles(),
   );
 
-  if (importMapIssues.length === 0 && sourceIssues.length === 0) {
+  if (
+    rootNpmLiteralIssues.length === 0 && importMapIssues.length === 0 &&
+    sourceIssues.length === 0
+  ) {
     console.log(
       "No disallowed third-party imports found in core deno.json or source files.",
     );
     Deno.exit(0);
+  }
+
+  if (rootNpmLiteralIssues.length > 0) {
+    console.error(
+      `${rootNpmLiteralIssues.length} npm specifier literal(s) in root deno.json:`,
+    );
+    for (const issue of rootNpmLiteralIssues) {
+      console.error(`  ${issue.path}: ${issue.value}`);
+    }
   }
 
   if (importMapIssues.length > 0) {
