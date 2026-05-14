@@ -27,6 +27,37 @@ describe("server/dev-server/error-overlay/html-template", () => {
       assertEquals(script.includes("action: 'runtimeError'"), true);
       assertEquals(script.includes("url: window.location.href"), true);
     });
+
+    it("should use vfStudioTargetOrigin (not wildcard) for chatMessage postMessage (SEC-004)", () => {
+      const script = generateRuntimeScript();
+      // chatMessage (the Fix-in-Veryfront action triggered from the runtime
+      // overlay) must target a validated parent origin, never '*'.
+      assertEquals(
+        script.includes(
+          "postMessage({ action: 'chatMessage', prompt: prompt }, vfStudioTargetOrigin())",
+        ),
+        true,
+      );
+      assertEquals(
+        script.includes("postMessage({ action: 'chatMessage', prompt: prompt }, '*')"),
+        false,
+      );
+    });
+
+    it("should embed vfStudioTargetOrigin helper with veryfront allowlist hosts (SEC-004)", () => {
+      const script = generateRuntimeScript();
+      // Helper must encode the same allowlist used by isFromStudio in the studio bridge.
+      assertEquals(script.includes("function vfStudioTargetOrigin()"), true);
+      assertEquals(script.includes("'localhost'"), true);
+      assertEquals(script.includes("'.veryfront.org'"), true);
+      assertEquals(script.includes("'veryfront.org'"), true);
+      assertEquals(script.includes("'.veryfront.com'"), true);
+      assertEquals(script.includes("'veryfront.com'"), true);
+      assertEquals(script.includes("'.veryfront.dev'"), true);
+      assertEquals(script.includes("'veryfront.dev'"), true);
+      // Falls back to window.location.origin for untrusted embedders.
+      assertEquals(script.includes("return window.location.origin"), true);
+    });
   });
 
   describe("generateErrorHTML", () => {
@@ -130,6 +161,48 @@ describe("server/dev-server/error-overlay/html-template", () => {
       assertEquals(html.includes("vf-fix-btn"), true);
       assertEquals(html.includes('"my-project"'), true);
       assertEquals(html.includes("chatMessage"), true);
+    });
+
+    it("should use vfStudioTargetOrigin (not wildcard) for chatMessage postMessage (SEC-004)", () => {
+      const html = generateErrorHTML(
+        { type: "runtime", error: new Error("fail"), file: "src/app.tsx" },
+        undefined,
+        "my-project",
+      );
+      // The chatMessage postMessage must target a validated parent origin derived
+      // from document.referrer, never '*'. Error context (stack traces, prompts)
+      // must not leak to cross-origin embedders, but a legitimate Studio embed
+      // running on a different origin (e.g. veryfront-hosted Studio embedding a
+      // localhost dev app) must still receive the message.
+      assertEquals(
+        html.includes(
+          "postMessage({ action: 'chatMessage', prompt: prompt }, vfStudioTargetOrigin())",
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes("postMessage({ action: 'chatMessage', prompt: prompt }, '*')"),
+        false,
+      );
+    });
+
+    it("should embed vfStudioTargetOrigin helper with veryfront allowlist hosts (SEC-004)", () => {
+      const html = generateErrorHTML(
+        { type: "runtime", error: new Error("fail"), file: "src/app.tsx" },
+        undefined,
+        "my-project",
+      );
+      // Helper must encode the same allowlist used by isFromStudio in the studio bridge.
+      assertEquals(html.includes("function vfStudioTargetOrigin()"), true);
+      assertEquals(html.includes("'localhost'"), true);
+      assertEquals(html.includes("'.veryfront.org'"), true);
+      assertEquals(html.includes("'veryfront.org'"), true);
+      assertEquals(html.includes("'.veryfront.com'"), true);
+      assertEquals(html.includes("'veryfront.com'"), true);
+      assertEquals(html.includes("'.veryfront.dev'"), true);
+      assertEquals(html.includes("'veryfront.dev'"), true);
+      // Falls back to window.location.origin for untrusted embedders.
+      assertEquals(html.includes("return window.location.origin"), true);
     });
 
     it("should not include 'Fix in Veryfront' button when projectSlug is not provided", () => {
