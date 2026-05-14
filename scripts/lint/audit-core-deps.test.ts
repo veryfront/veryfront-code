@@ -3,6 +3,7 @@ import { describe, it } from "jsr:@std/testing/bdd";
 import {
   findCoreThirdPartyImports,
   findCoreThirdPartySourceImports,
+  findRootNpmSpecifierLiterals,
 } from "./audit-core-deps.ts";
 
 describe("findCoreThirdPartyImports", () => {
@@ -53,6 +54,48 @@ describe("findCoreThirdPartyImports", () => {
       { specifier: "unified", target: "npm:unified@11.0.5" },
       { specifier: "zod", target: "npm:zod@4.3.6" },
     ]);
+  });
+});
+
+describe("findRootNpmSpecifierLiterals", () => {
+  it("flags npm specifier literals anywhere in root deno.json", () => {
+    const issues = findRootNpmSpecifierLiterals({
+      imports: {
+        zod: "npm:zod@4.3.6",
+      },
+      compilerOptions: {
+        types: ["npm:@types/react@19.2.14"],
+      },
+      allowScripts: {
+        allow: ["npm:sharp@0.33.5"],
+        deny: ["npm:protobufjs@7.5.4"],
+      },
+    });
+
+    assertEquals(issues, [
+      { path: "imports.zod", value: "npm:zod@4.3.6" },
+      {
+        path: "compilerOptions.types[0]",
+        value: "npm:@types/react@19.2.14",
+      },
+      { path: "allowScripts.allow[0]", value: "npm:sharp@0.33.5" },
+      { path: "allowScripts.deny[0]", value: "npm:protobufjs@7.5.4" },
+    ]);
+  });
+
+  it("ignores jsr, local, remote, and non-specifier strings", () => {
+    const issues = findRootNpmSpecifierLiterals({
+      imports: {
+        "#std/path": "jsr:@std/path",
+        react: "https://esm.sh/react@19.2.4",
+        local: "./src/local.ts",
+      },
+      tasks: {
+        build: "deno task build:npm",
+      },
+    });
+
+    assertEquals(issues, []);
   });
 });
 
