@@ -47,16 +47,27 @@ import type { EdgeConfig, MemoryConfig } from "./schemas/index.ts";
 export type Suggestion =
   | {
     type: "prompt";
+    id?: never;
     title: string;
     prompt: string;
+    description?: never;
+    task?: never;
   }
   | {
     id: string;
     type: "prompt";
+    title?: never;
+    prompt?: never;
+    description?: never;
+    task?: never;
   }
   | {
     id: string;
     type: "task";
+    title?: never;
+    prompt?: never;
+    description?: never;
+    task?: never;
   };
 
 export interface Suggestions {
