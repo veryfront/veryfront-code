@@ -45,6 +45,7 @@
     "./markdown": "./src/markdown/index.ts",
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
+    "./agent/testing": "./src/agent/testing/index.ts",
     "./agent/conversation-bootstrap": "./src/agent/conversation/bootstrap.ts",
     "./agent/durable": "./src/agent/durable.ts",
     "./agent/invoke-agent-child-runs": "./src/agent/invoke-agent-child-runs.ts",

@@ -6,8 +6,16 @@
  *   deno run -A scripts/build/generate-integrations-module.ts
  */
 
+import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+import { register, tryResolve } from "../../src/extensions/contracts.ts";
+import type { SchemaValidator } from "../../src/extensions/schema/index.ts";
 import { IntegrationConfigSchema } from "../../src/integrations/schema.ts";
 import type { IntegrationConfig } from "../../src/integrations/schema.ts";
+import { formatGeneratedModuleEntries } from "./integrations-module-format.ts";
+
+if (!tryResolve<SchemaValidator>("SchemaValidator")) {
+  register<SchemaValidator>("SchemaValidator", createZodAdapter());
+}
 
 const integrationsDir = "./cli/templates/integrations";
 const dataPath = "./src/integrations/_data.ts";
@@ -41,7 +49,10 @@ for await (const entry of Deno.readDir(integrationsDir)) {
 
     if (!result.success) {
       errors.push(
-        `${entry.name}: ${result.error.issues.map((i) => `${i.path.join(".")} — ${i.message}`).join(", ")}`,
+        `${entry.name}: ${
+          result.error.issues.map((i) => `${i.path.join(".")} — ${i.message}`)
+            .join(", ")
+        }`,
       );
       continue;
     }
@@ -53,7 +64,9 @@ for await (const entry of Deno.readDir(integrationsDir)) {
         const svg = await Deno.readTextFile(`${dirPath}/${result.data.icon}`);
         icons.push([result.data.name, svg]);
       } catch {
-        errors.push(`${entry.name}: icon "${result.data.icon}" declared but file not found`);
+        errors.push(
+          `${entry.name}: icon "${result.data.icon}" declared but file not found`,
+        );
       }
     }
   } catch { /* no connector.json */ }
@@ -68,13 +81,15 @@ if (errors.length > 0) {
 connectors.sort((a, b) => a.name.localeCompare(b.name));
 icons.sort((a, b) => a[0].localeCompare(b[0]));
 
-const connectorLines = connectors
-  .map((c) => `  ${JSON.stringify(c)}`)
-  .join(",\n");
+const connectorLines = formatGeneratedModuleEntries(
+  connectors.map((c) => `  ${JSON.stringify(c)}`),
+);
 
-const iconLines = icons
-  .map(([name, svg]) => `  ${JSON.stringify(name)}: ${JSON.stringify(svg)}`)
-  .join(",\n");
+const iconLines = formatGeneratedModuleEntries(
+  icons.map(([name, svg]) =>
+    `  ${JSON.stringify(name)}: ${JSON.stringify(svg)}`
+  ),
+);
 
 await Deno.writeTextFile(
   dataPath,
@@ -82,11 +97,11 @@ await Deno.writeTextFile(
 import type { IntegrationConfig } from "./schema.ts";
 
 export const connectors: IntegrationConfig[] = [
-${connectorLines},
+${connectorLines}
 ];
 
 export const icons: Record<string, string> = {
-${iconLines},
+${iconLines}
 };
 `,
 );
