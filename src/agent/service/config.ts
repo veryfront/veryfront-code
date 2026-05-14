@@ -1,3 +1,4 @@
+import { ensureBuiltinSchemaValidator } from "../../extensions/builtin-extensions.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 
@@ -95,6 +96,7 @@ export type HostedAgentServiceConfigInput = AgentServiceConfigInput;
 export function parseAgentServiceConfig(
   input: AgentServiceConfigInput,
 ): AgentServiceConfig {
+  ensureBuiltinSchemaValidator();
   return agentServiceConfigSchema.parse(input);
 }
 
