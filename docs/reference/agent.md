@@ -859,6 +859,18 @@ Project discovery uses this helper for `agents/*.md`, so markdown-defined
 agents are listed and invoked through the same registry and control-plane paths
 as code-defined agents.
 
+### `discoverProjectAgentRuntime(options)`
+
+Discover a project runtime's agent-facing primitives from `veryfront.config.ts`
+and the conventional `agents/`, `tools/`, `skills/`, `resources/`, `prompts/`,
+`workflows/`, and `tasks/` directories. The helper clears stale runtime
+registries before discovery, so project-agent runtimes and separately deployed
+agent services use the same discovery and default-agent selection semantics.
+
+Use `getProjectAgentRuntimeAgentIdCandidates()` plus
+`resolveSingleProjectAgentRuntimeAgentId()` when a host needs the convention
+where exactly one code or markdown agent becomes the default agent.
+
 ### `filterAgentTraceAttributes(attributes)`
 
 Filter an unknown attribute record down to OpenTelemetry-safe agent trace
@@ -1189,6 +1201,9 @@ Clear all stored messages from memory.
 | `parseAgentServiceChatRequestFromRequest`                             | Parse the agent-service chat request body and auth context               |
 | `loadRuntimeAgentMarkdownDefinitionFromFile`                          | Load and parse a markdown agent definition from an agents directory      |
 | `createRuntimeAgentFromMarkdownDefinition`                            | Convert a markdown agent definition into a runtime agent                 |
+| `discoverProjectAgentRuntime`                                         | Discover project agents and primitives for runtime hosts                 |
+| `getProjectAgentRuntimeAgentIdCandidates`                             | Split discovered runtime agents into code and markdown candidates        |
+| `resolveSingleProjectAgentRuntimeAgentId`                             | Resolve the single default runtime agent for a source policy             |
 | `parseAgentServiceConfig`                                             | Parse default agent service environment config                           |
 | `resolveAgentServiceRegistrationInput`                                | Resolve push runtime registration input from service config              |
 | `resolveNodeAgentServiceTelemetryConfig`                              | Resolve Node service OpenTelemetry config from environment               |
