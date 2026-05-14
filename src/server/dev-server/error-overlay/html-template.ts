@@ -32,6 +32,22 @@ export function generateRuntimeScript(): string {
         .replace(/'/g, '&#39;');
     }
 
+    // Derive the parent's likely origin from document.referrer, validated against
+    // the Studio allowlist (mirrors isFromStudio in studio/bridge/bridge-messaging.ts).
+    // Falls back to window.location.origin so untrusted embedders silently drop the message.
+    function vfStudioTargetOrigin() {
+      try {
+        var ref = new URL(document.referrer || '');
+        var host = ref.hostname;
+        var validStudio = host === 'localhost' ||
+          host.endsWith('.veryfront.org') || host === 'veryfront.org' ||
+          host.endsWith('.veryfront.com') || host === 'veryfront.com' ||
+          host.endsWith('.veryfront.dev') || host === 'veryfront.dev';
+        if (validStudio) return ref.origin;
+      } catch (_) { /* referrer absent or unparseable */ }
+      return window.location.origin;
+    }
+
     window.showErrorOverlay = function(errorInfo) {
       const existing = document.getElementById('veryfront-error-overlay');
       if (existing) existing.remove();
@@ -180,7 +196,7 @@ export function generateRuntimeScript(): string {
               (loc ? ' in ' + bt + loc + bt : '') +
               '\\n\\n' + bt + rawMessage + bt;
             if (window.parent !== window) {
-              window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, window.location.origin);
+              window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, vfStudioTargetOrigin());
             } else {
               window.open('https://veryfront.com/projects/' + window.__VF_PROJECT_SLUG__ + '?prompt=' + encodeURIComponent(prompt));
             }
@@ -371,6 +387,21 @@ export function generateErrorHTML(
     projectSlug
       ? `
     (function() {
+      // Derive the parent's likely origin from document.referrer, validated against
+      // the Studio allowlist (mirrors isFromStudio in studio/bridge/bridge-messaging.ts).
+      // Falls back to window.location.origin so untrusted embedders silently drop the message.
+      function vfStudioTargetOrigin() {
+        try {
+          var ref = new URL(document.referrer || '');
+          var host = ref.hostname;
+          var validStudio = host === 'localhost' ||
+            host.endsWith('.veryfront.org') || host === 'veryfront.org' ||
+            host.endsWith('.veryfront.com') || host === 'veryfront.com' ||
+            host.endsWith('.veryfront.dev') || host === 'veryfront.dev';
+          if (validStudio) return ref.origin;
+        } catch (_) { /* referrer absent or unparseable */ }
+        return window.location.origin;
+      }
       var slug = ${jsonForScript(projectSlug)};
       var errorName = ${jsonForScript(errorInfo.error.name)};
       var errorMessage = ${jsonForScript(errorInfo.error.message)};
@@ -386,7 +417,7 @@ export function generateErrorHTML(
             (loc ? ' in ' + bt + loc + bt : '') +
             '\\n\\n' + bt + errorMessage + bt;
           if (window.parent !== window) {
-            window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, window.location.origin);
+            window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, vfStudioTargetOrigin());
           } else {
             window.open('https://veryfront.com/projects/' + slug + '?prompt=' + encodeURIComponent(prompt));
           }
