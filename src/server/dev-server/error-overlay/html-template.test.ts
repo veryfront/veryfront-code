@@ -132,6 +132,26 @@ describe("server/dev-server/error-overlay/html-template", () => {
       assertEquals(html.includes("chatMessage"), true);
     });
 
+    it("should use explicit origin (not wildcard) for chatMessage postMessage (SEC-004)", () => {
+      const html = generateErrorHTML(
+        { type: "runtime", error: new Error("fail"), file: "src/app.tsx" },
+        undefined,
+        "my-project",
+      );
+      // The chatMessage postMessage must target window.location.origin, never '*'.
+      // Error context (stack traces, prompts) must not leak to cross-origin embedders.
+      assertEquals(
+        html.includes(
+          "postMessage({ action: 'chatMessage', prompt: prompt }, window.location.origin)",
+        ),
+        true,
+      );
+      assertEquals(
+        html.includes("postMessage({ action: 'chatMessage', prompt: prompt }, '*')"),
+        false,
+      );
+    });
+
     it("should not include 'Fix in Veryfront' button when projectSlug is not provided", () => {
       const html = generateErrorHTML(
         { type: "runtime", error: new Error("fail") },

@@ -180,7 +180,7 @@ export function generateRuntimeScript(): string {
               (loc ? ' in ' + bt + loc + bt : '') +
               '\\n\\n' + bt + rawMessage + bt;
             if (window.parent !== window) {
-              window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, '*');
+              window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, window.location.origin);
             } else {
               window.open('https://veryfront.com/projects/' + window.__VF_PROJECT_SLUG__ + '?prompt=' + encodeURIComponent(prompt));
             }
@@ -386,7 +386,7 @@ export function generateErrorHTML(
             (loc ? ' in ' + bt + loc + bt : '') +
             '\\n\\n' + bt + errorMessage + bt;
           if (window.parent !== window) {
-            window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, '*');
+            window.parent.postMessage({ action: 'chatMessage', prompt: prompt }, window.location.origin);
           } else {
             window.open('https://veryfront.com/projects/' + slug + '?prompt=' + encodeURIComponent(prompt));
           }
