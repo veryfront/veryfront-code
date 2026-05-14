@@ -2,11 +2,12 @@
  * ext-tracing-opentelemetry — TracingExporter implementation backed by the
  * official OpenTelemetry JS SDK.
  *
- * Provides the `TracingExporter` contract:
+ * Provides the `TracingExporter` and `NodeTelemetryProvider` contracts:
  *  - `start(config)` — builds the SDK provider + OTLP HTTP exporter
  *  - `export(spans)` — no-op (SDK handles export via BatchSpanProcessor)
  *  - `shutdown()` — flushes + shuts down the provider
  *  - `getProvider()` — returns the SDK TracerProvider for shim wiring
+ *  - `initialize(options)` — starts NodeSDK auto-instrumentation
  *
  * Configuration is read from `ctx.config` (see `OtlpExtConfig`) and falls
  * back to standard OTEL environment variables.
@@ -15,12 +16,24 @@
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { SpanData, TracingExporter } from "veryfront/extensions/tracing";
+import type {
+  NodeTelemetryInitializeOptions,
+  NodeTelemetryProvider,
+  SpanData,
+  TracingExporter,
+} from "veryfront/extensions/tracing";
 
 import { metrics, trace } from "@opentelemetry/api";
+import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
-import { BasicTracerProvider, BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
+import { NodeSDK } from "@opentelemetry/sdk-node";
+import {
+  BasicTracerProvider,
+  BatchSpanProcessor,
+  ParentBasedSampler,
+  TraceIdRatioBasedSampler,
+} from "@opentelemetry/sdk-trace-base";
 import { OTLPTraceExporter } from "@opentelemetry/exporter-trace-otlp-http";
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic-conventions";
@@ -176,6 +189,61 @@ class OtlpTracingExporter implements TracingExporter {
   }
 }
 
+class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
+  private sdk: NodeSDK | null = null;
+
+  async initialize(options: NodeTelemetryInitializeOptions): Promise<boolean> {
+    const resource = resourceFromAttributes({
+      "service.name": options.serviceName,
+      "service.version": options.serviceVersion,
+      "deployment.environment": options.deploymentEnvironment,
+    });
+    const traceExporter = new OTLPTraceExporter({ headers: options.exporterHeaders });
+
+    const sdk = new NodeSDK({
+      resource,
+      sampler: new ParentBasedSampler({
+        root: new TraceIdRatioBasedSampler(options.samplingRatio),
+      }),
+      spanProcessor: new BatchSpanProcessor(traceExporter, {
+        maxExportBatchSize: 100,
+        scheduledDelayMillis: 500,
+      }),
+      instrumentations: [
+        getNodeAutoInstrumentations({
+          "@opentelemetry/instrumentation-fs": { enabled: options.instrumentation.fs },
+          "@opentelemetry/instrumentation-http": { enabled: options.instrumentation.http },
+          "@opentelemetry/instrumentation-express": { enabled: options.instrumentation.express },
+        }),
+      ],
+    });
+
+    sdk.start();
+    this.sdk = sdk;
+
+    options.logger?.info("OpenTelemetry initialized", {
+      serviceName: options.serviceName,
+      samplingRatio: options.samplingRatio,
+    });
+
+    options.processTarget?.on("SIGTERM", async () => {
+      await this.shutdown();
+      options.logger?.info("OpenTelemetry shutdown complete");
+    });
+
+    return true;
+  }
+
+  async shutdown(): Promise<void> {
+    if (!this.sdk) return;
+    try {
+      await this.sdk.shutdown();
+    } finally {
+      this.sdk = null;
+    }
+  }
+}
+
 /**
  * Default export — the ext-tracing-opentelemetry extension factory.
  *
@@ -184,12 +252,14 @@ class OtlpTracingExporter implements TracingExporter {
  */
 const extOpenTelemetry: ExtensionFactory = () => {
   const exporterImpl = new OtlpTracingExporter();
+  const nodeTelemetryProvider = new OpenTelemetryNodeTelemetryProvider();
 
   return {
     name: "ext-tracing-opentelemetry",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "TracingExporter" },
+      { type: "contract", name: "NodeTelemetryProvider" },
       { type: "net:outbound", hosts: ["*"] },
       {
         type: "env:read",
@@ -204,13 +274,15 @@ const extOpenTelemetry: ExtensionFactory = () => {
     async setup(ctx) {
       await exporterImpl.start(ctx.config);
       ctx.provide("TracingExporter", exporterImpl);
+      ctx.provide("NodeTelemetryProvider", nodeTelemetryProvider);
       ctx.logger.info("[ext-tracing-opentelemetry] TracingExporter registered");
     },
     async teardown() {
+      await nodeTelemetryProvider.shutdown();
       await exporterImpl.shutdown();
     },
   };
 };
 
 export default extOpenTelemetry;
-export { OtlpTracingExporter };
+export { OpenTelemetryNodeTelemetryProvider, OtlpTracingExporter };

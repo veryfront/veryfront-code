@@ -15,6 +15,7 @@ const recommendations = new Map<string, string>([
   ["DocumentExtractor", "@veryfront/ext-document-kreuzberg"],
   ["AuthProvider", "@veryfront/ext-auth-jwt"],
   ["TracingExporter", "@veryfront/ext-tracing-opentelemetry"],
+  ["NodeTelemetryProvider", "@veryfront/ext-tracing-opentelemetry"],
   ["LLMProvider:openai", "@veryfront/ext-llm-openai"],
   ["LLMProvider:anthropic", "@veryfront/ext-llm-anthropic"],
   ["LLMProvider:google", "@veryfront/ext-llm-google"],

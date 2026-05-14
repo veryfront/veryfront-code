@@ -1,6 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  initializeNodeAgentServiceOpenTelemetry,
   resolveNodeAgentServiceTelemetryConfig,
   resolveNodeHostedAgentServiceTelemetryConfig,
 } from "./node-telemetry.ts";
@@ -82,5 +83,46 @@ describe("agent/node-agent-service-telemetry", () => {
     assertEquals(config.enabled, false);
     assertEquals(config.samplingRatio, 1);
     assertEquals(config.exporterHeaders, { Authorization: "Basic dXNlcjpwYXNz" });
+  });
+
+  it("delegates enabled telemetry initialization to a NodeTelemetryProvider", async () => {
+    const calls: unknown[] = [];
+    const result = await initializeNodeAgentServiceOpenTelemetry({
+      enabled: true,
+      serviceName: "agent-service",
+      serviceVersion: "1.2.3",
+      deploymentEnvironment: "production",
+      samplingRatio: 0.5,
+      exporterHeaders: { "x-api-key": "redacted" },
+      instrumentation: {
+        http: true,
+        express: false,
+        fs: true,
+      },
+      telemetryProvider: {
+        initialize(options) {
+          calls.push(options);
+          return Promise.resolve(true);
+        },
+      },
+    });
+
+    assertEquals(result, true);
+    assertEquals(calls, [
+      {
+        serviceName: "agent-service",
+        serviceVersion: "1.2.3",
+        deploymentEnvironment: "production",
+        samplingRatio: 0.5,
+        exporterHeaders: { "x-api-key": "redacted" },
+        instrumentation: {
+          http: true,
+          express: false,
+          fs: true,
+        },
+        logger: undefined,
+        processTarget: undefined,
+      },
+    ]);
   });
 });

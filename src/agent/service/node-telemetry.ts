@@ -1,12 +1,18 @@
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import {
+  type NodeTelemetryInitializeOptions,
+  type NodeTelemetryInstrumentationConfig,
+  type NodeTelemetryLogger,
+  type NodeTelemetryProcessTarget,
+  type NodeTelemetryProvider,
+  NodeTelemetryProviderName,
+} from "#veryfront/extensions/tracing/index.ts";
+
 export type NodeHostedAgentServiceTelemetryEnv = Record<string, string | undefined>;
 
 export type NodeAgentServiceTelemetryEnv = NodeHostedAgentServiceTelemetryEnv;
 
-export type NodeHostedAgentServiceInstrumentationConfig = {
-  http: boolean;
-  express: boolean;
-  fs: boolean;
-};
+export type NodeHostedAgentServiceInstrumentationConfig = NodeTelemetryInstrumentationConfig;
 
 export type NodeAgentServiceInstrumentationConfig = NodeHostedAgentServiceInstrumentationConfig;
 
@@ -32,16 +38,11 @@ export type ResolveNodeHostedAgentServiceTelemetryConfigOptions = {
 export type ResolveNodeAgentServiceTelemetryConfigOptions =
   ResolveNodeHostedAgentServiceTelemetryConfigOptions;
 
-export type NodeHostedAgentServiceTelemetryLogger = {
-  info(message: string, metadata?: Record<string, unknown>): void;
-  error(message: string, metadata?: Record<string, unknown>): void;
-};
+export type NodeHostedAgentServiceTelemetryLogger = NodeTelemetryLogger;
 
 export type NodeAgentServiceTelemetryLogger = NodeHostedAgentServiceTelemetryLogger;
 
-export type NodeHostedAgentServiceTelemetryProcessTarget = {
-  on(event: "SIGTERM", listener: () => void | Promise<void>): unknown;
-};
+export type NodeHostedAgentServiceTelemetryProcessTarget = NodeTelemetryProcessTarget;
 
 export type NodeAgentServiceTelemetryProcessTarget = NodeHostedAgentServiceTelemetryProcessTarget;
 
@@ -50,6 +51,7 @@ export type InitializeNodeHostedAgentServiceTelemetryOptions =
   & {
     logger?: NodeHostedAgentServiceTelemetryLogger;
     processTarget?: NodeHostedAgentServiceTelemetryProcessTarget;
+    telemetryProvider?: NodeTelemetryProvider;
   };
 
 export type InitializeNodeAgentServiceTelemetryOptions =
@@ -159,54 +161,29 @@ export async function initializeNodeHostedAgentServiceOpenTelemetry(
   }
 
   try {
-    const { NodeSDK } = await import("@opentelemetry/sdk-node");
-    const { resourceFromAttributes } = await import("@opentelemetry/resources");
-    const { BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler } = await import(
-      "@opentelemetry/sdk-trace-base"
-    );
-    const { OTLPTraceExporter } = await import("@opentelemetry/exporter-trace-otlp-http");
-    const { getNodeAutoInstrumentations } = await import(
-      "@opentelemetry/auto-instrumentations-node"
-    );
+    const telemetryProvider = options.telemetryProvider ??
+      tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName);
+    if (!telemetryProvider) {
+      logError(
+        options.logger,
+        "Failed to initialize OpenTelemetry",
+        'Missing extension for contract "NodeTelemetryProvider"',
+      );
+      return false;
+    }
 
-    const resource = resourceFromAttributes({
-      "service.name": options.serviceName,
-      "service.version": options.serviceVersion,
-      "deployment.environment": options.deploymentEnvironment,
-    });
-    const traceExporter = new OTLPTraceExporter({ headers: options.exporterHeaders });
-
-    const sdk = new NodeSDK({
-      resource,
-      sampler: new ParentBasedSampler({
-        root: new TraceIdRatioBasedSampler(options.samplingRatio),
-      }),
-      spanProcessor: new BatchSpanProcessor(traceExporter, {
-        maxExportBatchSize: 100,
-        scheduledDelayMillis: 500,
-      }),
-      instrumentations: [
-        getNodeAutoInstrumentations({
-          "@opentelemetry/instrumentation-fs": { enabled: options.instrumentation.fs },
-          "@opentelemetry/instrumentation-http": { enabled: options.instrumentation.http },
-          "@opentelemetry/instrumentation-express": { enabled: options.instrumentation.express },
-        }),
-      ],
-    });
-
-    sdk.start();
-
-    logInfo(options.logger, "OpenTelemetry initialized", {
+    const initializeOptions: NodeTelemetryInitializeOptions = {
       serviceName: options.serviceName,
+      serviceVersion: options.serviceVersion,
+      deploymentEnvironment: options.deploymentEnvironment,
       samplingRatio: options.samplingRatio,
-    });
+      exporterHeaders: options.exporterHeaders,
+      instrumentation: options.instrumentation,
+      logger: options.logger,
+      processTarget: options.processTarget,
+    };
 
-    options.processTarget?.on("SIGTERM", async () => {
-      await sdk.shutdown();
-      logInfo(options.logger, "OpenTelemetry shutdown complete");
-    });
-
-    return true;
+    return await telemetryProvider.initialize(initializeOptions);
   } catch (error) {
     logError(options.logger, "Failed to initialize OpenTelemetry", error);
     return false;

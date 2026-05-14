@@ -26,6 +26,10 @@ describe("ext-tracing-opentelemetry factory", () => {
       ext.capabilities.some((c) => c.type === "contract" && c.name === "TracingExporter"),
       true,
     );
+    assertEquals(
+      ext.capabilities.some((c) => c.type === "contract" && c.name === "NodeTelemetryProvider"),
+      true,
+    );
   });
 });
 
@@ -48,6 +52,7 @@ describe("ext-tracing-opentelemetry TracingExporter", () => {
     await ext.setup?.(ctx as any);
 
     assertEquals(provided.has("TracingExporter"), true);
+    assertEquals(provided.has("NodeTelemetryProvider"), true);
 
     const exporter = provided.get("TracingExporter") as {
       getProvider: () => unknown;
@@ -60,6 +65,12 @@ describe("ext-tracing-opentelemetry TracingExporter", () => {
     assertEquals(typeof exporter.getProvider, "function");
     assertEquals(typeof exporter.shutdown, "function");
     assertEquals(typeof exporter.export, "function");
+
+    const nodeTelemetryProvider = provided.get("NodeTelemetryProvider") as {
+      initialize: (options: unknown) => Promise<boolean>;
+    };
+    assertExists(nodeTelemetryProvider);
+    assertEquals(typeof nodeTelemetryProvider.initialize, "function");
 
     // getProvider() must return a non-null TracerProvider
     const provider = exporter.getProvider();
