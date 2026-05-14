@@ -260,22 +260,23 @@ describe("security/http/response/security-handler", () => {
     it("default CSP should allow Studio embedding when isVeryfrontDomain is true", () => {
       const result = buildCSP(false, "n", null, null, undefined, true);
       const sources = parseDirectiveSources(result, "frame-ancestors");
-      assert(sources.includes("'self'"), "frame-ancestors should allow 'self'");
-      assert(
-        sources.some((s) => s.includes("veryfront.com")),
-        "frame-ancestors should allow veryfront.com",
+      // Only explicit Studio hosts — no wildcards. Tenant project domains
+      // (`{slug}.preview.veryfront.com` etc.) must NOT be able to embed
+      // each other (tenant-vs-tenant clickjacking).
+      assertEquals(
+        sources,
+        [
+          "'self'",
+          "https://veryfront.com",
+          "https://studio.veryfront.com",
+          "https://veryfront.org",
+          "https://studio.veryfront.org",
+        ],
+        "frame-ancestors must be the explicit Studio allowlist",
       );
       assert(
-        sources.some((s) => s.includes("veryfront.org")),
-        "frame-ancestors should allow veryfront.org",
-      );
-      assert(
-        sources.some((s) => s.includes("veryfront.dev")),
-        "frame-ancestors should allow veryfront.dev",
-      );
-      assert(
-        !sources.includes("'none'"),
-        "frame-ancestors must not be 'none' for veryfront-hosted apps",
+        !sources.some((s) => s.includes("*")),
+        "frame-ancestors must not include wildcard host patterns",
       );
     });
 
@@ -522,13 +523,17 @@ describe("security/http/response/security-handler", () => {
       const headers = applyHeaders({ isVeryfrontDomain: true });
       const csp = headers.get("Content-Security-Policy");
       assert(csp !== null, "CSP header should be present");
-      assert(
-        csp.includes("frame-ancestors"),
-        "frame-ancestors directive must be present",
-      );
-      assert(
-        csp.includes("veryfront.com"),
-        "frame-ancestors should allow Studio embedding",
+      const frameAncestors = parseDirectiveSources(csp, "frame-ancestors");
+      assertEquals(
+        frameAncestors,
+        [
+          "'self'",
+          "https://veryfront.com",
+          "https://studio.veryfront.com",
+          "https://veryfront.org",
+          "https://studio.veryfront.org",
+        ],
+        "frame-ancestors must be the explicit Studio allowlist (no wildcards, no tenant subdomains)",
       );
     });
 

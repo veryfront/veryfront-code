@@ -19,15 +19,20 @@ export function generateNonce(): string {
  * `frame-ancestors` allowlist for pages served from veryfront-managed
  * domains so the Studio preview iframe still works while non-Studio
  * embedders are blocked.
+ *
+ * Only explicit Studio hosts are listed — wildcards like `*.veryfront.com`
+ * are intentionally excluded because tenant project domains
+ * (`{slug}.preview.veryfront.com`, etc.) live under the same suffix and
+ * would otherwise be allowed to iframe each other (tenant-vs-tenant
+ * clickjacking). Dev hosts (`veryfront.dev`) are omitted because dev mode
+ * skips the default CSP entirely.
  */
 const VERYFRONT_FRAME_ANCESTORS = [
   "'self'",
   "https://veryfront.com",
-  "https://*.veryfront.com",
+  "https://studio.veryfront.com",
   "https://veryfront.org",
-  "https://*.veryfront.org",
-  "https://veryfront.dev",
-  "https://*.veryfront.dev",
+  "https://studio.veryfront.org",
 ];
 
 /**
