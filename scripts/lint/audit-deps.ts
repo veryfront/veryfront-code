@@ -30,6 +30,12 @@ export interface ImportMapManifest {
 // definition of "pinned". Allows pre-release suffixes (e.g., 1.2.3-rc.1).
 const EXACT_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;
 
+function packageVersionFromSpec(packageSpec: string): string | null {
+  const versionIndex = packageSpec.lastIndexOf("@");
+  if (versionIndex <= 0) return null;
+  return packageSpec.slice(versionIndex + 1);
+}
+
 /**
  * Inspect an https:// import target. Returns null when the target is fine
  * (or non-https, which is handled elsewhere). Reports:
@@ -78,6 +84,24 @@ export function auditEsmShPin(
       severity: "error",
       message: `esm.sh URL not pinned to exact x.y.z (got "${ver}")`,
     };
+  }
+
+  const url = new URL(target);
+  for (const depsValue of url.searchParams.getAll("deps")) {
+    for (const depSpec of depsValue.split(",")) {
+      const dep = decodeURIComponent(depSpec.trim());
+      const depVersion = packageVersionFromSpec(dep);
+      if (!depVersion || !EXACT_SEMVER_RE.test(depVersion)) {
+        return {
+          specifier,
+          target,
+          severity: "error",
+          message: depVersion
+            ? `esm.sh deps not pinned to exact x.y.z (got "${depVersion}")`
+            : "esm.sh deps missing version pin",
+        };
+      }
+    }
   }
   return null;
 }

@@ -1,6 +1,8 @@
 import { assertEquals, assertThrows } from "#std/assert";
 import { describe, it } from "jsr:@std/testing/bdd";
 import {
+  componentsForManifestBoundary,
+  componentsFromEsmShImports,
   componentsFromLock,
   componentsFromLockForManifest,
   dependencyIndexForAllManifests,
@@ -128,20 +130,101 @@ describe("componentsFromLock", () => {
     );
   });
 
+  it("can emit lock and esm.sh components for one workspace manifest boundary", () => {
+    const lock = JSON.stringify({
+      version: "5",
+      specifiers: {
+        "npm:bash-tool@1.3.16": "1.3.16",
+      },
+      npm: {
+        "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
+      },
+      workspace: {
+        dependencies: [],
+        members: {
+          "extensions/ext-css-tailwind": {
+            dependencies: ["npm:bash-tool@1.3.16"],
+          },
+        },
+      },
+    });
+
+    const components = componentsForManifestBoundary(
+      lock,
+      "extensions/ext-css-tailwind/deno.json",
+      {
+        manifestImportsByPath: {
+          "extensions/ext-css-tailwind/deno.json": {
+            tailwindcss: "https://esm.sh/tailwindcss@4.2.2",
+          },
+        },
+      },
+    );
+
+    assertEquals(components.map((component) => component.name), [
+      "bash-tool",
+      "tailwindcss",
+    ]);
+  });
+
+  it("emits npm package components from esm.sh import aliases", () => {
+    const components = componentsFromEsmShImports({
+      "@types/react": "https://esm.sh/@types/react@19.2.14?deps=csstype@3.2.3",
+      "react/jsx-runtime":
+        "https://esm.sh/react@19.2.4/jsx-runtime?external=react&target=es2022",
+      "react": "https://esm.sh/react@19.2.4?target=es2022",
+      "std/path": "jsr:@std/path@1.2.3",
+    });
+
+    assertEquals(
+      components.map((component) => ({
+        name: component.name,
+        version: component.version,
+        purl: component.purl,
+      })),
+      [
+        {
+          name: "@types/react",
+          version: "19.2.14",
+          purl: "pkg:npm/%40types/react@19.2.14",
+        },
+        {
+          name: "csstype",
+          version: "3.2.3",
+          purl: "pkg:npm/csstype@3.2.3",
+        },
+        {
+          name: "react",
+          version: "19.2.4",
+          purl: "pkg:npm/react@19.2.4",
+        },
+      ],
+    );
+  });
+
+  it("ignores non-exact esm.sh deps query packages", () => {
+    const components = componentsFromEsmShImports({
+      "main": "https://esm.sh/main@1.0.0?deps=range-only@^1,latest-tag@latest",
+    });
+
+    assertEquals(components.map((component) => component.name), ["main"]);
+  });
+
   it("plans an aggregate SBOM plus one SBOM per workspace manifest", () => {
     const lock = JSON.stringify({
       version: "5",
       specifiers: {
-        "npm:react@19.2.4": "19.2.4",
         "npm:bash-tool@1.3.16": "1.3.16",
       },
       npm: {
-        "react@19.2.4": { integrity: "sha512-react", dependencies: [] },
         "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
       },
       workspace: {
-        dependencies: ["npm:react@19.2.4"],
+        dependencies: [],
         members: {
+          "extensions/ext-css-tailwind": {
+            dependencies: [],
+          },
           "extensions/ext-sandbox-shell-tools": {
             dependencies: ["npm:bash-tool@1.3.16"],
           },
@@ -153,8 +236,22 @@ describe("componentsFromLock", () => {
       outputDir: "dist/sbom-0.1.519",
       workspaceMembers: [
         "cli",
+        "extensions/ext-css-tailwind",
         "extensions/ext-sandbox-shell-tools",
       ],
+      reactImports: {
+        react: "https://esm.sh/react@19.2.4?target=es2022",
+        "react-dom":
+          "https://esm.sh/react-dom@19.2.4?external=react&target=es2022",
+        "react/jsx-runtime":
+          "https://esm.sh/react@19.2.4/jsx-runtime?deps=csstype@3.2.3&external=react&target=es2022",
+      },
+      manifestImportsByPath: {
+        "extensions/ext-css-tailwind/deno.json": {
+          tailwindcss: "https://esm.sh/tailwindcss@4.2.2",
+          "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.2.2/plugin",
+        },
+      },
     });
 
     assertEquals(
@@ -163,6 +260,8 @@ describe("componentsFromLock", () => {
         "dist/sbom-0.1.519/all.json",
         "dist/sbom-0.1.519/core.json",
         "dist/sbom-0.1.519/cli.json",
+        "dist/sbom-0.1.519/react.json",
+        "dist/sbom-0.1.519/ext-css-tailwind.json",
         "dist/sbom-0.1.519/ext-sandbox-shell-tools.json",
       ],
     );
@@ -172,35 +271,44 @@ describe("componentsFromLock", () => {
         "veryfront",
         "veryfront:deno.json",
         "veryfront:cli/deno.json",
+        "veryfront:react",
+        "veryfront:extensions/ext-css-tailwind/deno.json",
         "veryfront:extensions/ext-sandbox-shell-tools/deno.json",
       ],
     );
     assertEquals(outputs[0].components.map((component) => component.name), [
       "bash-tool",
+      "csstype",
       "react",
+      "react-dom",
+      "tailwindcss",
     ]);
-    assertEquals(outputs[1].components.map((component) => component.name), [
-      "react",
-    ]);
+    assertEquals(outputs[1].components, []);
     assertEquals(outputs[2].components, []);
     assertEquals(outputs[3].components.map((component) => component.name), [
+      "csstype",
+      "react",
+      "react-dom",
+    ]);
+    assertEquals(outputs[4].components.map((component) => component.name), [
+      "tailwindcss",
+    ]);
+    assertEquals(outputs[5].components.map((component) => component.name), [
       "bash-tool",
     ]);
   });
 
-  it("builds a dependency index grouped by core, cli, and extension manifests", () => {
+  it("builds a dependency index grouped by core, cli, react, and extension manifests", () => {
     const lock = JSON.stringify({
       version: "5",
       specifiers: {
-        "npm:react@19.2.4": "19.2.4",
         "npm:bash-tool@1.3.16": "1.3.16",
       },
       npm: {
-        "react@19.2.4": { integrity: "sha512-react", dependencies: [] },
         "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
       },
       workspace: {
-        dependencies: ["npm:react@19.2.4"],
+        dependencies: [],
         members: {
           "extensions/ext-sandbox-shell-tools": {
             dependencies: ["npm:bash-tool@1.3.16"],
@@ -214,6 +322,9 @@ describe("componentsFromLock", () => {
         "cli",
         "extensions/ext-sandbox-shell-tools",
       ],
+      reactImports: {
+        react: "https://esm.sh/react@19.2.4?target=es2022",
+      },
     });
 
     assertEquals(
@@ -226,12 +337,17 @@ describe("componentsFromLock", () => {
         {
           sourceLocation: "deno.json",
           group: "core",
-          componentNames: ["react"],
+          componentNames: [],
         },
         {
           sourceLocation: "cli/deno.json",
           group: "cli",
           componentNames: [],
+        },
+        {
+          sourceLocation: "react",
+          group: "react",
+          componentNames: ["react"],
         },
         {
           sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",

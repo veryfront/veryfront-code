@@ -52,6 +52,31 @@ describe("auditEsmShPin", () => {
     );
   });
 
+  it("accepts exact deps query pins", () => {
+    assertEquals(
+      auditEsmShPin("https://esm.sh/react@19.2.4?deps=csstype@3.2.3"),
+      null,
+    );
+  });
+
+  it("rejects range deps query pins", () => {
+    const issue = auditEsmShPin("https://esm.sh/react@19.2.4?deps=foo@^1");
+    assertEquals(issue?.severity, "error");
+    assertEquals(
+      issue?.message,
+      'esm.sh deps not pinned to exact x.y.z (got "^1")',
+    );
+  });
+
+  it("rejects tag deps query pins", () => {
+    const issue = auditEsmShPin("https://esm.sh/react@19.2.4?deps=foo@latest");
+    assertEquals(issue?.severity, "error");
+    assertEquals(
+      issue?.message,
+      'esm.sh deps not pinned to exact x.y.z (got "latest")',
+    );
+  });
+
   it("rejects scoped packages with major-only pins", () => {
     const issue = auditEsmShPin(
       "https://esm.sh/@types/react@19?deps=csstype@3.2.3",

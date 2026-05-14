@@ -29,7 +29,8 @@ These are the runtime capability profiles currently modeled by the framework.
 
 ## Capability Boundaries
 
-This matrix separates open-core framework support from capabilities that depend on a backing API or cloud bootstrap.
+This matrix separates open-core framework support from capabilities that depend
+on a backing API or cloud bootstrap.
 
 | Capability                                                            | Current support shape                             | Notes                                                                                 |
 | --------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -50,7 +51,9 @@ This matrix separates open-core framework support from capabilities that depend 
 
 ## Extension Contract Matrix
 
-These contracts are backed by first-party extension packages. A contract is required only when a feature resolves it. Built-in packages are auto-enabled by core bootstrap; optional packages must be configured by the project.
+These contracts are backed by first-party extension packages. A contract is
+required only when a feature resolves it. Built-in packages are auto-enabled by
+core bootstrap; optional packages must be configured by the project.
 
 | Contract                 | Package                                      | Availability | Required by                             | Runtime requirement          |
 | ------------------------ | -------------------------------------------- | ------------ | --------------------------------------- | ---------------------------- |
@@ -69,6 +72,20 @@ These contracts are backed by first-party extension packages. A contract is requ
 | `NodeTelemetryProvider`  | `@veryfront/ext-observability-opentelemetry` | Built-in     | Node OpenTelemetry SDK bootstrap        | Network (OTLP endpoint)      |
 | `TokenCacheStore`        | `@veryfront/ext-cache-redis`                 | Optional     | Redis-backed token cache                | Network (Redis)              |
 
+## Dependency boundaries
+
+Veryfront tracks third-party dependency ownership by boundary.
+
+| Boundary  | Source                                       | SBOM output                                 | Notes                                                                                      |
+| --------- | -------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Core      | Root `deno.json` and `src/`                  | `core.json`                                 | The root framework boundary. `src/` is not renamed to `core`; `core` is a reporting label. |
+| CLI       | `cli/deno.json`                              | `cli.json`                                  | Command-line runtime boundary.                                                             |
+| React     | Root React import aliases and esm.sh deps    | `react.json`                                | Tracks React and React DOM separately from core until React has a dedicated package split. |
+| Extension | `extensions/ext-*/deno.json`                 | One file per extension package              | Each extension owns its npm and supported esm.sh dependencies.                             |
+| Aggregate | `deno.lock` plus boundary-specific manifests | `all.json`, `dependencies-by-manifest.json` | Use this view for full supply-chain inventory.                                             |
+
 ## Documentation Rule
 
-When a feature depends on a backing API, managed service, or cloud bootstrap, docs should say so directly instead of implying the open-core runtime provides the full managed behavior by itself.
+When a feature depends on a backing API, managed service, or cloud bootstrap,
+docs should say so directly instead of implying the open-core runtime provides
+the full managed behavior by itself.
