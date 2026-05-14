@@ -82,78 +82,23 @@ The current codebase already provides useful foundations:
 
 These are a starting point, not a complete performance harness.
 
-## Phase 1 deliverables
+## Benchmark harness
 
-1. **Scenario contract** in `benchmarks/scenarios/`
-2. **Benchmark docs** in `benchmarks/README.md`
-3. **Browser perf harness** for canonical routes ✅
-4. **Server/load harness** for canonical routes ✅
-5. **Veryfront vs Next.js comparison apps**
-6. **Machine-readable result artifacts** ✅ + markdown summary
+The benchmark harness, scenario contracts, comparison apps, and command
+surface live in a separate repository:
+[**veryfront/veryfront-benchmarks**](https://github.com/veryfront/veryfront-benchmarks).
 
-## Comparison policy
+That repo owns:
 
-Phase 1 comparisons must:
+- the scenario contract and canonical scenarios
+- the browser and server/load harnesses
+- the Veryfront vs Next.js comparison apps
+- the comparison policy and machine-readable result format
+- the agent-facing perf loop scripts
 
-- use the same scenario contract
-- use the same host machine or container class
-- use production mode only
-- report both **cold** and **warm** request behavior where supported
-- use the same warmup and run-count policy
-- store raw outputs for review
-- report framework deltas explicitly
-
-## Planned command surface
-
-These command names are the target command surface for the benchmark harness:
-
-- `deno task bench:browser`
-- `deno task bench:server`
-- `deno task bench:compare:local`
-- `deno task perf:bench`
-- `deno task perf:loop`
-- `PLAYWRIGHT_PROJECT=production-host deno task bench:browser`
-- `PLAYWRIGHT_PROJECT=preview-host deno task bench:browser`
-
-Current implementation status:
-
-- `deno task bench:browser` ✅ initial local browser harness
-- `deno task bench:server` ✅ initial local server/load harness
-- `deno task bench:compare:local` ✅ initial local comparison/report generator
-
-The initial harness also accepts direct flags:
-
-- `deno task bench:browser -- --framework veryfront --runtime preview-host --project blank`
-- `deno task bench:browser -- --framework nextjs --runtime production-host --project blank`
-- `deno task bench:server -- --framework veryfront --runtime production-host --requests 50 --concurrency 10`
-- `deno task bench:browser -- --framework veryfront --runtime production-host --project blank --request-mode warm`
-- `deno task bench:server -- --framework nextjs --runtime production-host --project blank --request-mode warm`
-- `deno task bench:browser -- --framework veryfront --runtime production-host --project blank --request-mode cold --profiling`
-- `deno task bench:compare:local -- --runtime production-host --project blank`
-
-Warm request mode semantics:
-
-- **cold**: measure the first request/navigation
-- **warm**: issue one same-scenario warm-up request/navigation first, then
-  measure the next request/navigation
-
-Profiling semantics:
-
-- benchmark request-phase profiling is **opt-in**
-- pass `--profiling` on `bench:browser` or `bench:server` when you want
-  per-phase `/_metrics` deltas for diagnosis
-- keep profiling off for cleaner headline benchmark numbers
-
-## Agent-facing performance loop
-
-For iterative performance work, use the TypeScript/Deno perf scripts
-under `benchmarks/`:
-
-- `deno task perf:bench`
-  - runs correctness gates, refreshes benchmarks, and writes a summary artifact
-- `deno task perf:loop -- --runs 3`
-  - repeats the Veryfront benchmark lane, picks the best run, and prints
-    parseable `METRIC ...` lines for agent iteration
+This repo retains the **strategy, principles, and metric definitions** above
+so the core codebase can document what we measure and why without coupling
+to the harness implementation.
 
 ## Out of scope for phase 1
 
