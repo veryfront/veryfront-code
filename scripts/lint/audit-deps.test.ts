@@ -1,10 +1,17 @@
 import { assertEquals } from "#std/assert";
 import { describe, it } from "jsr:@std/testing/bdd";
-import { auditEsmShPin, auditNpmPin } from "./audit-deps.ts";
+import {
+  auditDependencyImports,
+  auditEsmShPin,
+  auditNpmPin,
+} from "./audit-deps.ts";
 
 describe("auditEsmShPin", () => {
   it("accepts exact x.y.z pins", () => {
-    assertEquals(auditEsmShPin("https://esm.sh/react@19.2.4?target=es2022"), null);
+    assertEquals(
+      auditEsmShPin("https://esm.sh/react@19.2.4?target=es2022"),
+      null,
+    );
   });
 
   it("rejects major-only pins", () => {
@@ -46,7 +53,9 @@ describe("auditEsmShPin", () => {
   });
 
   it("rejects scoped packages with major-only pins", () => {
-    const issue = auditEsmShPin("https://esm.sh/@types/react@19?deps=csstype@3.2.3");
+    const issue = auditEsmShPin(
+      "https://esm.sh/@types/react@19?deps=csstype@3.2.3",
+    );
     assertEquals(issue?.severity, "error");
   });
 });
@@ -96,5 +105,34 @@ describe("auditNpmPin", () => {
   it("returns null for non-npm targets", () => {
     assertEquals(auditNpmPin("https://esm.sh/react@19.2.4"), null);
     assertEquals(auditNpmPin("jsr:@std/assert@1.0.0"), null);
+  });
+});
+
+describe("auditDependencyImports", () => {
+  it("audits root and extension import maps with source locations", () => {
+    const issues = auditDependencyImports([
+      {
+        sourceLocation: "deno.json",
+        imports: {
+          "react": "npm:react@19.2.4",
+        },
+      },
+      {
+        sourceLocation: "extensions/ext-example/deno.json",
+        imports: {
+          "zod": "npm:zod@4",
+        },
+      },
+    ]);
+
+    assertEquals(issues, [
+      {
+        sourceLocation: "extensions/ext-example/deno.json",
+        specifier: "zod",
+        target: "npm:zod@4",
+        severity: "error",
+        message: 'Unpinned npm version — specify exact x.y.z (got "4")',
+      },
+    ]);
   });
 });

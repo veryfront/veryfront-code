@@ -3,6 +3,8 @@ import { describe, it } from "jsr:@std/testing/bdd";
 import {
   componentsFromLock,
   componentsFromLockForManifest,
+  dependencyIndexForAllManifests,
+  sbomOutputsForAllManifests,
   SUPPORTED_LOCK_VERSIONS,
 } from "./generate-sbom.ts";
 
@@ -123,6 +125,120 @@ describe("componentsFromLock", () => {
         "extensions/ext-sandbox-shell-tools/deno.json",
       ).map((component) => component.name),
       ["bash-tool"],
+    );
+  });
+
+  it("plans an aggregate SBOM plus one SBOM per workspace manifest", () => {
+    const lock = JSON.stringify({
+      version: "5",
+      specifiers: {
+        "npm:react@19.2.4": "19.2.4",
+        "npm:bash-tool@1.3.16": "1.3.16",
+      },
+      npm: {
+        "react@19.2.4": { integrity: "sha512-react", dependencies: [] },
+        "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
+      },
+      workspace: {
+        dependencies: ["npm:react@19.2.4"],
+        members: {
+          "extensions/ext-sandbox-shell-tools": {
+            dependencies: ["npm:bash-tool@1.3.16"],
+          },
+        },
+      },
+    });
+
+    const outputs = sbomOutputsForAllManifests(lock, {
+      outputDir: "dist/sbom-0.1.519",
+      workspaceMembers: [
+        "cli",
+        "extensions/ext-sandbox-shell-tools",
+      ],
+    });
+
+    assertEquals(
+      outputs.map((output) => output.path),
+      [
+        "dist/sbom-0.1.519/all.json",
+        "dist/sbom-0.1.519/core.json",
+        "dist/sbom-0.1.519/cli.json",
+        "dist/sbom-0.1.519/ext-sandbox-shell-tools.json",
+      ],
+    );
+    assertEquals(
+      outputs.map((output) => output.componentName),
+      [
+        "veryfront",
+        "veryfront:deno.json",
+        "veryfront:cli/deno.json",
+        "veryfront:extensions/ext-sandbox-shell-tools/deno.json",
+      ],
+    );
+    assertEquals(outputs[0].components.map((component) => component.name), [
+      "bash-tool",
+      "react",
+    ]);
+    assertEquals(outputs[1].components.map((component) => component.name), [
+      "react",
+    ]);
+    assertEquals(outputs[2].components, []);
+    assertEquals(outputs[3].components.map((component) => component.name), [
+      "bash-tool",
+    ]);
+  });
+
+  it("builds a dependency index grouped by core, cli, and extension manifests", () => {
+    const lock = JSON.stringify({
+      version: "5",
+      specifiers: {
+        "npm:react@19.2.4": "19.2.4",
+        "npm:bash-tool@1.3.16": "1.3.16",
+      },
+      npm: {
+        "react@19.2.4": { integrity: "sha512-react", dependencies: [] },
+        "bash-tool@1.3.16": { integrity: "sha512-shell", dependencies: [] },
+      },
+      workspace: {
+        dependencies: ["npm:react@19.2.4"],
+        members: {
+          "extensions/ext-sandbox-shell-tools": {
+            dependencies: ["npm:bash-tool@1.3.16"],
+          },
+        },
+      },
+    });
+
+    const index = dependencyIndexForAllManifests(lock, {
+      workspaceMembers: [
+        "cli",
+        "extensions/ext-sandbox-shell-tools",
+      ],
+    });
+
+    assertEquals(
+      index.manifests.map((manifest) => ({
+        sourceLocation: manifest.sourceLocation,
+        group: manifest.group,
+        componentNames: manifest.components.map((component) => component.name),
+      })),
+      [
+        {
+          sourceLocation: "deno.json",
+          group: "core",
+          componentNames: ["react"],
+        },
+        {
+          sourceLocation: "cli/deno.json",
+          group: "cli",
+          componentNames: [],
+        },
+        {
+          sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
+          group: "extension",
+          componentNames: ["bash-tool"],
+        },
+      ],
     );
   });
 });

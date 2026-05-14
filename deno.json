@@ -359,7 +359,7 @@
     "lint:wildcard-exports": "deno run --allow-read scripts/lint/ban-wildcard-exports.ts",
     "lint:deps": "deno run --allow-read scripts/lint/audit-deps.ts",
     "lint:barrel-jsdoc": "deno run --allow-read scripts/lint/check-barrel-jsdoc.ts",
-    "test:scripts": "deno test --config=scripts/test.deno.json --no-check --allow-read scripts/build/generate-sbom.test.ts scripts/lint/audit-core-deps.test.ts scripts/lint/audit-deps.test.ts scripts/security/submit-dependency-snapshot.test.ts",
+    "test:scripts": "deno test --config=scripts/test.deno.json --no-check --allow-read scripts/build/generate-sbom.test.ts scripts/lint/audit-core-deps.test.ts scripts/lint/audit-deps.test.ts scripts/security/audit-npm.test.ts scripts/security/submit-dependency-snapshot.test.ts",
     "test:cross-runtime": "deno run --allow-all src/platform/compat/cross-runtime.test.ts",
     "test:node": "node ./tests/node/run-tests.mjs 'src/**/*.test.ts'",
     "test:bun": "node ./tests/bun/run-tests.mjs src/",
@@ -385,6 +385,7 @@
     "start-split": "deno task generate && deno run --allow-all cli/main.ts serve --split",
     "start-split:binary": "deno task generate && deno run --allow-all cli/main.ts serve --split --binary",
     "sbom": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts",
+    "sbom:all": "deno run --allow-read --allow-write scripts/build/generate-sbom.ts --all-manifests",
     "submit-deps": "deno run --allow-read --allow-env --allow-net=api.github.com scripts/security/submit-dependency-snapshot.ts",
     "audit": "deno run --allow-read --allow-run --allow-write scripts/security/audit-npm.ts"
   },

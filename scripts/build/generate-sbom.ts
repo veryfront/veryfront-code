@@ -3,6 +3,8 @@
  *
  * Usage: deno run --allow-read --allow-write scripts/build/generate-sbom.ts [--output path]
  *        deno run --allow-read --allow-write scripts/build/generate-sbom.ts \
+ *          --all-manifests --output-dir dist/sbom
+ *        deno run --allow-read --allow-write scripts/build/generate-sbom.ts \
  *          --manifest extensions/ext-sandbox-shell-tools/deno.json \
  *          --output dist/sbom-ext-sandbox-shell-tools.json
  *
@@ -17,7 +19,10 @@ import {
   purl,
   SUPPORTED_LOCK_VERSIONS,
 } from "../lib/deno-lock.ts";
-import { manifestsFromLock } from "../security/submit-dependency-snapshot.ts";
+import {
+  type ManifestGenerationOptions,
+  manifestsFromLock,
+} from "../security/submit-dependency-snapshot.ts";
 
 export { SUPPORTED_LOCK_VERSIONS };
 
@@ -27,6 +32,28 @@ export interface CycloneDXComponent {
   version: string;
   purl: string;
   hashes?: Array<{ alg: string; content: string }>;
+}
+
+export interface SbomOutput {
+  path: string;
+  componentName: string;
+  components: CycloneDXComponent[];
+}
+
+export interface DependencyIndexManifest {
+  sourceLocation: string;
+  group: "core" | "cli" | "extension" | "workspace";
+  componentCount: number;
+  components: Array<{
+    name: string;
+    version: string;
+    purl: string;
+  }>;
+}
+
+export interface DependencyIndex {
+  generatedBy: string;
+  manifests: DependencyIndexManifest[];
 }
 
 function hashFromIntegrity(
@@ -58,7 +85,7 @@ export function componentsFromLock(lockText: string): CycloneDXComponent[] {
       ...(hash ? { hashes: [hash] } : {}),
     });
   }
-  return components;
+  return sortComponents(components);
 }
 
 function parsePurlNameVersion(
@@ -112,22 +139,138 @@ export function componentsFromLockForManifest(
   );
 }
 
-if (import.meta.main) {
-  const args = parseArgs(Deno.args, {
-    string: ["manifest", "output"],
-    default: { output: "dist/sbom.json" },
+function sortComponents(
+  components: CycloneDXComponent[],
+): CycloneDXComponent[] {
+  return components.toSorted((a, b) =>
+    a.name.localeCompare(b.name) || a.version.localeCompare(b.version)
+  );
+}
+
+function normalizeWorkspaceMemberPath(path: string): string {
+  return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+}
+
+function workspaceMembersFromDenoConfig(
+  config: { workspace?: unknown },
+): string[] {
+  if (!Array.isArray(config.workspace)) return [];
+  return config.workspace
+    .filter((entry): entry is string => typeof entry === "string")
+    .map(normalizeWorkspaceMemberPath)
+    .filter((entry) => entry.length > 0)
+    .sort();
+}
+
+function outputFileNameForManifest(manifestPath: string): string {
+  if (manifestPath === "deno.json") return "core.json";
+  if (manifestPath === "cli/deno.json") return "cli.json";
+  const extensionMatch = manifestPath.match(
+    /^extensions\/([^/]+)\/deno\.json$/,
+  );
+  if (extensionMatch) return `${extensionMatch[1]}.json`;
+  return `${
+    manifestPath.replace(/\/deno\.json$/, "").replaceAll("/", "-")
+  }.json`;
+}
+
+function joinOutputPath(outputDir: string, fileName: string): string {
+  return `${outputDir.replace(/\/+$/, "")}/${fileName}`;
+}
+
+export function sbomOutputsForAllManifests(
+  lockText: string,
+  options: ManifestGenerationOptions & { outputDir: string },
+): SbomOutput[] {
+  const manifests = manifestsFromLock(lockText, {
+    sha: "local",
+    ref: "local",
+    correlator: "local",
+    runId: "local",
+  }, { workspaceMembers: options.workspaceMembers });
+
+  const manifestPaths = Object.keys(manifests).sort((left, right) => {
+    if (left === "deno.json") return -1;
+    if (right === "deno.json") return 1;
+    if (left === "cli/deno.json") return -1;
+    if (right === "cli/deno.json") return 1;
+    return left.localeCompare(right);
   });
 
-  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
-  const lockText = await Deno.readTextFile("deno.lock");
-  const components = args.manifest
-    ? componentsFromLockForManifest(lockText, args.manifest)
-    : componentsFromLock(lockText);
-  const componentName = args.manifest
-    ? `${denoConfig.name ?? "veryfront"}:${args.manifest}`
-    : denoConfig.name ?? "veryfront";
+  return [
+    {
+      path: joinOutputPath(options.outputDir, "all.json"),
+      componentName: "veryfront",
+      components: componentsFromLock(lockText),
+    },
+    ...manifestPaths.map((manifestPath) => ({
+      path: joinOutputPath(
+        options.outputDir,
+        outputFileNameForManifest(manifestPath),
+      ),
+      componentName: `veryfront:${manifestPath}`,
+      components: componentsFromLockForManifest(lockText, manifestPath),
+    })),
+  ];
+}
 
-  const sbom = {
+function manifestGroup(
+  manifestPath: string,
+): DependencyIndexManifest["group"] {
+  if (manifestPath === "deno.json") return "core";
+  if (manifestPath === "cli/deno.json") return "cli";
+  if (manifestPath.startsWith("extensions/")) return "extension";
+  return "workspace";
+}
+
+function manifestPathsFromLock(
+  lockText: string,
+  options: ManifestGenerationOptions = {},
+): string[] {
+  const manifests = manifestsFromLock(lockText, {
+    sha: "local",
+    ref: "local",
+    correlator: "local",
+    runId: "local",
+  }, { workspaceMembers: options.workspaceMembers });
+
+  return Object.keys(manifests).sort((left, right) => {
+    if (left === "deno.json") return -1;
+    if (right === "deno.json") return 1;
+    if (left === "cli/deno.json") return -1;
+    if (right === "cli/deno.json") return 1;
+    return left.localeCompare(right);
+  });
+}
+
+export function dependencyIndexForAllManifests(
+  lockText: string,
+  options: ManifestGenerationOptions = {},
+): DependencyIndex {
+  return {
+    generatedBy: "generate-sbom",
+    manifests: manifestPathsFromLock(lockText, options).map((manifestPath) => {
+      const components = componentsFromLockForManifest(lockText, manifestPath);
+      return {
+        sourceLocation: manifestPath,
+        group: manifestGroup(manifestPath),
+        componentCount: components.length,
+        components: components.map((component) => ({
+          name: component.name,
+          version: component.version,
+          purl: component.purl,
+        })),
+      };
+    }),
+  };
+}
+
+function buildSbom(
+  denoConfig: { name?: string; version?: string },
+  componentName: string,
+  components: CycloneDXComponent[],
+) {
+  return {
     bomFormat: "CycloneDX",
     specVersion: "1.5",
     version: 1,
@@ -140,7 +283,7 @@ if (import.meta.main) {
         name: componentName,
         version: denoConfig.version ?? "0.0.0",
       },
-      tools: [{ name: "generate-sbom", version: "1.1.0" }],
+      tools: [{ name: "generate-sbom", version: "1.2.0" }],
     },
     components: components.map((c) => ({
       "bom-ref": `${c.name}@${c.version}`,
@@ -153,13 +296,64 @@ if (import.meta.main) {
       },
     ],
   };
+}
 
-  const outputPath = args.output;
+async function writeSbom(outputPath: string, sbom: unknown): Promise<void> {
   const outputDir = outputPath.substring(0, outputPath.lastIndexOf("/"));
   if (outputDir) {
     await Deno.mkdir(outputDir, { recursive: true });
   }
   await Deno.writeTextFile(outputPath, JSON.stringify(sbom, null, 2) + "\n");
+}
+
+if (import.meta.main) {
+  const args = parseArgs(Deno.args, {
+    boolean: ["all-manifests"],
+    string: ["manifest", "output", "output-dir"],
+    default: { output: "dist/sbom.json", "output-dir": "dist/sbom" },
+  });
+
+  const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+  const lockText = await Deno.readTextFile("deno.lock");
+
+  if (args["all-manifests"]) {
+    const workspaceMembers = workspaceMembersFromDenoConfig(denoConfig);
+    const outputs = sbomOutputsForAllManifests(lockText, {
+      outputDir: args["output-dir"],
+      workspaceMembers,
+    });
+    await writeSbom(
+      joinOutputPath(args["output-dir"], "dependencies-by-manifest.json"),
+      dependencyIndexForAllManifests(lockText, { workspaceMembers }),
+    );
+    console.log(
+      `✅ Generated dependency index: ${
+        joinOutputPath(args["output-dir"], "dependencies-by-manifest.json")
+      }`,
+    );
+    for (const output of outputs) {
+      await writeSbom(
+        output.path,
+        buildSbom(denoConfig, output.componentName, output.components),
+      );
+      console.log(
+        `✅ Generated SBOM: ${output.path}`,
+      );
+      console.log(
+        `   ${output.components.length} components, CycloneDX 1.5 format`,
+      );
+    }
+    Deno.exit(0);
+  }
+
+  const components = args.manifest
+    ? componentsFromLockForManifest(lockText, args.manifest)
+    : componentsFromLock(lockText);
+  const componentName = args.manifest
+    ? `${denoConfig.name ?? "veryfront"}:${args.manifest}`
+    : denoConfig.name ?? "veryfront";
+  const outputPath = args.output;
+  await writeSbom(outputPath, buildSbom(denoConfig, componentName, components));
 
   console.log(`✅ Generated SBOM: ${outputPath}`);
   console.log(`   ${components.length} components, CycloneDX 1.5 format`);
