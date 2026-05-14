@@ -150,6 +150,64 @@ describe("internal-agents/schema", () => {
     assertEquals(parsed.context, [{ description: "Current file", value: "src/main.ts" }]);
   });
 
+  it("accepts canonical runtime invocation payloads posted by the API executor", () => {
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
+      run: {
+        agentServiceId: "veryfront-platform-agent",
+        agentId: "incident-responder",
+        conversationId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        messageId: "10000000-1000-4000-8000-100000000002",
+        inputAnchorMessageId: "10000000-1000-4000-8000-100000000002",
+        requestedByUserId: "10000000-1000-4000-8000-100000000003",
+        project: {
+          projectId: "10000000-1000-4000-8000-100000000004",
+          projectSlug: "incident-responder-cwy27d",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetEnvironmentId: null,
+          runtimeTargetBranchId: "10000000-1000-4000-8000-100000000005",
+        },
+        validatedClaims: {
+          subject: "10000000-1000-4000-8000-100000000003",
+          projectId: "10000000-1000-4000-8000-100000000004",
+          projectSlug: "incident-responder-cwy27d",
+          scopes: [],
+        },
+      },
+      messages: [{
+        id: "msg_1",
+        role: "user",
+        parts: [{ type: "text", text: "hi" }],
+      }],
+      tools: [{
+        name: "studio_search_files",
+        description: "Search files",
+        inputSchema: { type: "object", properties: { query: { type: "string" } } },
+      }],
+      context: [{ type: "text", text: "Current project context" }],
+      agentSource: { type: "branch", branch: "main" },
+      forwardedProps: { runtimeOverrides: { allowedTools: ["studio_search_files"] } },
+    });
+
+    assertEquals(internalRequest.agentId, "incident-responder");
+    assertEquals(internalRequest.threadId, "10000000-1000-4000-8000-100000000001");
+    assertEquals(internalRequest.runId, "run_1");
+    assertEquals(internalRequest.messages, [{
+      id: "msg_1",
+      role: "user",
+      parts: [{ type: "text", text: "hi" }],
+    }]);
+    assertEquals(internalRequest.tools[0], {
+      name: "studio_search_files",
+      description: "Search files",
+      inputSchema: { type: "object", properties: { query: { type: "string" } } },
+    });
+    assertEquals(
+      toRuntimeRunAgentInput(internalRequest).threadId,
+      "10000000-1000-4000-8000-100000000001",
+    );
+  });
+
   it("normalizes legacy internal stream payloads into the canonical runtime input", () => {
     const internalRequest = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",

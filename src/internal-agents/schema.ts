@@ -14,6 +14,8 @@ import {
 } from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/data-stream.ts";
 import {
+  buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
+  getRuntimeAgentRunInvocationSchema,
   getRuntimeAgentSourceContextSchema,
   type RuntimeAgentSourceContext,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
@@ -55,7 +57,7 @@ export const getInternalAgentCompatibilityMessageSchema = defineSchema((v) =>
   })
 );
 
-export const getInternalAgentStreamRequestSchema = defineSchema((v) =>
+export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) =>
   v.object({
     agentId: getAgentIdSchema(),
     threadId: v.string().uuid(),
@@ -77,6 +79,17 @@ export const getInternalAgentStreamRequestSchema = defineSchema((v) =>
     ),
   })
 );
+
+export const getInternalAgentStreamRequestSchema = defineSchema((v) => {
+  const controlPlaneStreamRequestSchema = getInternalAgentControlPlaneStreamRequestSchema();
+
+  return v.union([
+    controlPlaneStreamRequestSchema,
+    getRuntimeAgentRunInvocationSchema()
+      .transform(buildRuntimeAgentControlPlaneStreamRequestFromInvocation)
+      .pipe(controlPlaneStreamRequestSchema),
+  ]);
+});
 
 type RuntimeMessage = AgUiRuntimeMessage;
 type InternalAgentCompatibilityMessage = InferSchema<

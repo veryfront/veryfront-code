@@ -275,6 +275,136 @@ describe("server/handlers/request/agent-stream.handler", () => {
     });
   });
 
+  it("accepts canonical runtime invocation payloads from the API executor", async () => {
+    let streamContext: Record<string, unknown> | undefined;
+    let streamMessages: Array<Record<string, unknown>> | undefined;
+    let injectedToolSchema: unknown;
+
+    const inputSchema = {
+      type: "object",
+      properties: {
+        query: { type: "string" },
+      },
+      required: ["query"],
+    };
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "incident-responder" ? createAgent("incident-responder") : undefined,
+      getAllAgentIds: () => ["incident-responder"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (_agent, mergedTools) => {
+        const tools = mergedTools as Record<string, { inputSchemaJson?: unknown }> | undefined;
+        injectedToolSchema = tools?.studio_search_files?.inputSchemaJson;
+
+        return {
+          stream: async (messages, context, callbacks) => {
+            streamMessages = messages as Array<Record<string, unknown>>;
+            streamContext = context;
+            callbacks?.onFinish?.({
+              text: "hello from runtime",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: {
+                promptTokens: 2,
+                completionTokens: 3,
+                totalTokens: 5,
+              },
+              metadata: {
+                finishReason: "stop",
+              },
+            });
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.enqueue(
+                  encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+                controller.enqueue(
+                  encodeDataStreamEvent({
+                    type: "text-delta",
+                    id: "text-1",
+                    delta: "hello from runtime",
+                  }),
+                );
+                controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+                controller.close();
+              },
+            });
+          },
+        };
+      },
+    });
+
+    const body = JSON.stringify({
+      run: {
+        agentServiceId: "veryfront-platform-agent",
+        agentId: "incident-responder",
+        conversationId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        messageId: "20000000-2000-4000-8000-200000000001",
+        inputAnchorMessageId: "20000000-2000-4000-8000-200000000001",
+        requestedByUserId: "30000000-3000-4000-8000-300000000001",
+        project: {
+          projectId: "40000000-4000-4000-8000-400000000001",
+          projectSlug: "incident-responder-cwy27d",
+          runtimeTargetKind: "preview_branch",
+          runtimeTargetBranchId: "50000000-5000-4000-8000-500000000001",
+        },
+      },
+      messages: [
+        {
+          id: "msg_1",
+          role: "user",
+          parts: [{ type: "text", text: "hi" }],
+        },
+      ],
+      tools: [
+        {
+          name: "studio_search_files",
+          description: "Search files",
+          inputSchema,
+        },
+      ],
+      context: [{ type: "text", text: "Current file: app.tsx" }],
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["studio_search_files"],
+        },
+      },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, { requestId: "run_1" });
+
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/agents/stream", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-veryfront-control-plane-jws": jws,
+        },
+        body,
+      }),
+      createCtx(publicKeyPem),
+    );
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(streamContext, {
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      context: [{ type: "text", text: "Current file: app.tsx" }],
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["studio_search_files"],
+        },
+      },
+    });
+    assertEquals(streamMessages?.[0]?.role, "user");
+    assertEquals(injectedToolSchema, inputSchema);
+  });
+
   it("passes runtime integration tool allowlists from forwarded props into the runtime agent config", async () => {
     let capturedAllowedTools: string[] | undefined;
 
