@@ -1,9 +1,9 @@
 /**
  * Contract interface for Node.js OpenTelemetry runtime bootstrap.
  *
- * Default implementation: `@veryfront/ext-tracing-opentelemetry`
+ * Default implementation: `@veryfront/ext-observability-opentelemetry`
  *
- * @module extensions/tracing/node-telemetry-provider
+ * @module extensions/observability/node-telemetry-provider
  */
 
 export const NodeTelemetryProviderName = "NodeTelemetryProvider";

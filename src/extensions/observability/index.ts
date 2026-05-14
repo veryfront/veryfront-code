@@ -1,7 +1,7 @@
 /**
- * Tracing category barrel: tracing and Node telemetry contracts.
+ * Observability category barrel: tracing and Node telemetry contracts.
  *
- * @module extensions/tracing
+ * @module extensions/observability
  */
 
 export type { SpanData, TracerProvider, TracingExporter } from "./tracing-exporter.ts";

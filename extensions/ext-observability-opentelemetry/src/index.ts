@@ -1,18 +1,18 @@
 /**
- * ext-tracing-opentelemetry — TracingExporter implementation backed by the
+ * ext-observability-opentelemetry: OpenTelemetry observability extension backed by the
  * official OpenTelemetry JS SDK.
  *
  * Provides the `TracingExporter` and `NodeTelemetryProvider` contracts:
- *  - `start(config)` — builds the SDK provider + OTLP HTTP exporter
- *  - `export(spans)` — no-op (SDK handles export via BatchSpanProcessor)
- *  - `shutdown()` — flushes + shuts down the provider
- *  - `getProvider()` — returns the SDK TracerProvider for shim wiring
- *  - `initialize(options)` — starts NodeSDK auto-instrumentation
+ *  - `start(config)`: builds the SDK provider and OTLP HTTP exporter
+ *  - `export(spans)`: no-op, the SDK handles export via BatchSpanProcessor
+ *  - `shutdown()`: flushes and shuts down the provider
+ *  - `getProvider()`: returns the SDK TracerProvider for shim wiring
+ *  - `initialize(options)`: starts NodeSDK auto-instrumentation
  *
  * Configuration is read from `ctx.config` (see `OtlpExtConfig`) and falls
  * back to standard OTEL environment variables.
  *
- * @module extensions/ext-tracing-opentelemetry
+ * @module extensions/ext-observability-opentelemetry
  */
 
 import type { ExtensionFactory } from "veryfront/extensions";
@@ -21,7 +21,7 @@ import type {
   NodeTelemetryProvider,
   SpanData,
   TracingExporter,
-} from "veryfront/extensions/tracing";
+} from "veryfront/extensions/observability";
 
 import { metrics, trace } from "@opentelemetry/api";
 import { getNodeAutoInstrumentations } from "@opentelemetry/auto-instrumentations-node";
@@ -40,7 +40,7 @@ import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from "@opentelemetry/semantic
 
 /**
  * The TracerProvider interface as expected by the core shim.
- * Using structural typing — the real SDK provider satisfies this shape.
+ * Using structural typing because the real SDK provider satisfies this shape.
  */
 interface ShimTracerProvider {
   getTracer(name: string, version?: string): unknown;
@@ -245,7 +245,7 @@ class OpenTelemetryNodeTelemetryProvider implements NodeTelemetryProvider {
 }
 
 /**
- * Default export — the ext-tracing-opentelemetry extension factory.
+ * Default export for the ext-observability-opentelemetry extension factory.
  *
  * Produces an extension that registers a `TracingExporter` contract
  * implementation backed by the OpenTelemetry JS SDK.
@@ -255,7 +255,7 @@ const extOpenTelemetry: ExtensionFactory = () => {
   const nodeTelemetryProvider = new OpenTelemetryNodeTelemetryProvider();
 
   return {
-    name: "ext-tracing-opentelemetry",
+    name: "ext-observability-opentelemetry",
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "TracingExporter" },
@@ -275,7 +275,7 @@ const extOpenTelemetry: ExtensionFactory = () => {
       await exporterImpl.start(ctx.config);
       ctx.provide("TracingExporter", exporterImpl);
       ctx.provide("NodeTelemetryProvider", nodeTelemetryProvider);
-      ctx.logger.info("[ext-tracing-opentelemetry] TracingExporter registered");
+      ctx.logger.info("[ext-observability-opentelemetry] TracingExporter registered");
     },
     async teardown() {
       await nodeTelemetryProvider.shutdown();

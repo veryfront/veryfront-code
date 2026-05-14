@@ -6,7 +6,7 @@ import {
   type NodeTelemetryProcessTarget,
   type NodeTelemetryProvider,
   NodeTelemetryProviderName,
-} from "#veryfront/extensions/tracing/index.ts";
+} from "#veryfront/extensions/observability/index.ts";
 
 export type NodeHostedAgentServiceTelemetryEnv = Record<string, string | undefined>;
 

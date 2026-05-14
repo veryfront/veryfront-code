@@ -10,7 +10,7 @@ import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import {
   type NodeTelemetryProvider,
   NodeTelemetryProviderName,
-} from "#veryfront/extensions/tracing/index.ts";
+} from "#veryfront/extensions/observability/index.ts";
 import {
   type SandboxShellToolsProvider,
   SandboxShellToolsProviderName,
@@ -378,7 +378,7 @@ async function ensureDefaultAuthProvider(): Promise<void> {
 async function ensureDefaultNodeTelemetryProvider(): Promise<void> {
   if (tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName)) return;
   const { OpenTelemetryNodeTelemetryProvider } = await import(
-    "../../extensions/ext-tracing-opentelemetry/src/index.ts"
+    "../../extensions/ext-observability-opentelemetry/src/index.ts"
   );
   register<NodeTelemetryProvider>(
     NodeTelemetryProviderName,

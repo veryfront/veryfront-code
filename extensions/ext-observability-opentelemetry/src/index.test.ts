@@ -1,7 +1,7 @@
 /**
- * ext-tracing-opentelemetry extension tests.
+ * ext-observability-opentelemetry extension tests.
  *
- * @module extensions/ext-tracing-opentelemetry/test
+ * @module extensions/ext-observability-opentelemetry/test
  */
 
 import { assertEquals, assertExists } from "@std/assert";
@@ -16,10 +16,10 @@ const noopLogger = {
   error: () => {},
 };
 
-describe("ext-tracing-opentelemetry factory", () => {
-  it("produces an Extension with name ext-tracing-opentelemetry", () => {
+describe("ext-observability-opentelemetry factory", () => {
+  it("produces an Extension with name ext-observability-opentelemetry", () => {
     const ext = factory();
-    assertEquals(ext.name, "ext-tracing-opentelemetry");
+    assertEquals(ext.name, "ext-observability-opentelemetry");
     assertEquals(ext.version, "0.1.0");
     assertEquals(Array.isArray(ext.capabilities), true);
     assertEquals(
@@ -33,7 +33,7 @@ describe("ext-tracing-opentelemetry factory", () => {
   });
 });
 
-describe("ext-tracing-opentelemetry TracingExporter", () => {
+describe("ext-observability-opentelemetry TracingExporter", () => {
   it("registers TracingExporter on setup", async () => {
     const provided = new Map<string, unknown>();
 

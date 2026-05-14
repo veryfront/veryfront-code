@@ -242,11 +242,12 @@ These are first-party contracts your extension can implement or consume. Some im
 | `LLMProvider`               | Individual LLM provider              | `@veryfront/ext-llm-{anthropic,google,openai}` |
 | `LLMProviderRegistry`       | LLM provider registry                | (built in)                                     |
 | `ModuleLexer`               | ESM import/export analysis           | `@veryfront/ext-bundler-esbuild`               |
+| `NodeTelemetryProvider`     | Node OpenTelemetry bootstrap         | `@veryfront/ext-observability-opentelemetry`   |
 | `SandboxShellToolsProvider` | Sandbox shell tool creation          | `@veryfront/ext-sandbox-shell-tools`           |
 | `SchemaValidator`           | Schema validation DSL                | `@veryfront/ext-schema-zod`                    |
 | `SqliteStore`               | SQLite-backed persistence            | `@veryfront/ext-db-sqlite`                     |
 | `TokenCacheStore`           | Proxy-grade cache with stats         | `@veryfront/ext-cache-redis`                   |
-| `TracingExporter`           | OpenTelemetry span export            | `@veryfront/ext-tracing-opentelemetry`         |
+| `TracingExporter`           | OpenTelemetry span export            | `@veryfront/ext-observability-opentelemetry`   |
 
 Contract interfaces are importable from category entrypoints:
 
