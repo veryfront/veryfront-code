@@ -5,7 +5,7 @@
   "veryfront": {
     "extension": true,
     "capabilities": [
-      { "type": "contract", "name": "ContentTransformer" }
+      { "type": "contract", "name": "ContentProcessor" }
     ]
   },
   "imports": {

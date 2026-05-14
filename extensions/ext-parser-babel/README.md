@@ -4,9 +4,9 @@
 
 Provides JavaScript/TypeScript AST parsing, traversal, and code generation for Veryfront, backed by `@babel/parser`, `@babel/traverse`, `@babel/generator`, and `@babel/types`. Used by the transform pipeline and Studio Navigator.
 
-## Installation
+## Registration
 
-Add the extension to your project's `veryfront.config.ts`:
+This extension is auto-enabled by core bootstrap. Add it to `veryfront.config.ts` only when you need to override the built-in registration:
 
 ```ts
 import extBabel from "@veryfront/ext-parser-babel";

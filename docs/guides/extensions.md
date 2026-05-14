@@ -226,7 +226,7 @@ capabilities: [
 
 ## Available contracts
 
-These are the built-in contracts your extension can implement or consume:
+These are first-party contracts your extension can implement or consume. Some default implementations are auto-enabled by core bootstrap, while optional contracts are required only when a feature resolves them.
 
 | Contract              | Description                   | Default package                                |
 | --------------------- | ----------------------------- | ---------------------------------------------- |
@@ -237,11 +237,11 @@ These are the built-in contracts your extension can implement or consume:
 | `Bundler`             | JS/TS bundling and transforms | `@veryfront/ext-bundler-esbuild`               |
 | `ModuleLexer`         | ESM import/export analysis    | `@veryfront/ext-bundler-esbuild`               |
 | `CSSProcessor`        | CSS compilation and utilities | `@veryfront/ext-css-tailwind`                  |
-| `ContentTransformer`  | MDX/markdown to HTML/React    | `@veryfront/ext-transform-mdx`                 |
+| `ContentProcessor`    | MDX/markdown processing       | `@veryfront/ext-transform-mdx`                 |
 | `SchemaValidator`     | Runtime validation (schemas)  | `@veryfront/ext-zod`                           |
 | `TracingExporter`     | OpenTelemetry span export     | `@veryfront/ext-tracing-opentelemetry`         |
-| `LLMProviderRegistry` | LLM provider registry          | (built-in, created by framework)                |
-| `LLMProvider`          | Individual LLM provider        | `@veryfront/ext-llm-{anthropic,google,openai}` |
+| `LLMProviderRegistry` | LLM provider registry         | (built-in, created by framework)               |
+| `LLMProvider`         | Individual LLM provider       | `@veryfront/ext-llm-{anthropic,google,openai}` |
 | `EmbeddingProvider`   | Vector embeddings             | `@veryfront/ext-llm-google`                    |
 | `CodeParser`          | AST parsing and transforms    | `@veryfront/ext-parser-babel`                  |
 | `NodeCompat`          | Node.js compatibility shims   | `@veryfront/ext-node-compatibility`            |

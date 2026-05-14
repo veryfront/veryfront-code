@@ -115,7 +115,7 @@ export function createBuiltinExtensions(): ResolvedExtension[] {
     },
     {
       source: "builtin",
-      origin: "veryfront/ext-mdx",
+      origin: "veryfront/ext-transform-mdx",
       extension: extMdx(),
     },
     {

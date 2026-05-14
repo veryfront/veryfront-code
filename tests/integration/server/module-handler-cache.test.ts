@@ -8,7 +8,7 @@ import { getAdapter } from "#veryfront/platform/adapters/detect.ts";
 import { ResponseBuilder } from "#veryfront/security/index.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { getConfig } from "#veryfront/config";
-import { registerExtMdx } from "../../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
+import { registerExtMdx } from "../../../src/transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 
 async function setupProject(): Promise<string> {
   const dir = await makeTempDir({ prefix: "vf_module_cache_" });

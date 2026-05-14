@@ -1,6 +1,9 @@
 import { compile } from "@mdx-js/mdx";
 import type { Pluggable } from "unified";
-import type { ContentCompileOptions, ContentRuntimeBundle } from "veryfront/extensions/transform";
+import type {
+  ContentCompileOptions,
+  ContentProcessingResult,
+} from "veryfront/extensions/transform";
 import { extractFrontmatter } from "veryfront/transforms/frontmatter";
 import { rewriteBodyImports, rewriteCompiledImports } from "veryfront/transforms/import-rewriter";
 import { getRehypePlugins, getRemarkPlugins } from "../plugins/plugin-loader.ts";
@@ -8,7 +11,7 @@ import { rehypeNodePositions } from "../plugins/rehype-node-positions.ts";
 
 type PluggableList = Pluggable[];
 
-export async function compileMdx(options: ContentCompileOptions): Promise<ContentRuntimeBundle> {
+export async function compileMdx(options: ContentCompileOptions): Promise<ContentProcessingResult> {
   const {
     projectDir,
     content,

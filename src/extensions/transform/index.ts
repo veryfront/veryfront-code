@@ -1,15 +1,15 @@
 /**
- * Content category barrel — content transformer (MDX/Markdown) contract.
+ * Content category barrel for the MDX/Markdown content processor contract.
  *
  * @module extensions/transform
  */
 
 // Type aliases (unions / shape aliases)
-export type { CompilationMode, CompilationTarget, ContentPlugin } from "./content-transformer.ts";
+export type { CompilationMode, CompilationTarget, ContentPlugin } from "./content-processor.ts";
 
 // Interfaces
 export type {
   ContentCompileOptions,
-  ContentRuntimeBundle,
-  ContentTransformer,
-} from "./content-transformer.ts";
+  ContentProcessingResult,
+  ContentProcessor,
+} from "./content-processor.ts";

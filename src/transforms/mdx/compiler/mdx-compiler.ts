@@ -3,8 +3,8 @@ import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
 import type {
   CompilationMode,
   CompilationTarget,
-  ContentRuntimeBundle,
-  ContentTransformer,
+  ContentProcessingResult,
+  ContentProcessor,
 } from "#veryfront/extensions/transform/index.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
@@ -20,13 +20,13 @@ export function compileMDXRuntime(
   target: CompilationTarget = "server",
   baseUrl?: string,
   studioEmbed?: boolean,
-): Promise<ContentRuntimeBundle> {
+): Promise<ContentProcessingResult> {
   return withSpan(
     "transforms.compileMDXRuntime",
     async () => {
       try {
-        const transformer = resolveContract<ContentTransformer>("ContentTransformer");
-        return await transformer.compileMdx({
+        const processor = resolveContract<ContentProcessor>("ContentProcessor");
+        return await processor.compileMdx({
           mode,
           projectDir,
           content,

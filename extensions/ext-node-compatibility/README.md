@@ -4,9 +4,9 @@
 
 Provides Node.js compatibility shims for Veryfront — SQLite-backed persistence and document text extraction (PDF, DOCX, images) via Kreuzberg.
 
-## Installation
+## Registration
 
-Add the extension to your project's `veryfront.config.ts`:
+This extension is auto-enabled by core bootstrap. Add it to `veryfront.config.ts` only when you need to override the built-in registration:
 
 ```ts
 import extNodeCompat from "@veryfront/ext-node-compatibility";
@@ -26,7 +26,7 @@ export default defineConfig({
 
 ## When you need this
 
-- The Veryfront proxy / KV layer falls back to in-memory storage without this extension. Install it for persistent local development storage or any production deployment that doesn't have an external KV backing.
+- The Veryfront proxy / KV layer falls back to in-memory storage when this contract is unavailable. Use this extension for persistent local development storage or any production deployment that does not have an external KV backing.
 - Document upload and text-extraction features (PDF, DOCX, images, etc.) are unavailable without it.
 
 ## Capabilities

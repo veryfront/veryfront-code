@@ -4,9 +4,9 @@
 
 Provides Google Gemini models for Veryfront agents and chat, enabling `google/*` models for chat and embeddings via the `LLMProviderRegistry`.
 
-## Installation
+## Registration
 
-Add the extension to your project's `veryfront.config.ts`:
+This extension is auto-enabled by core bootstrap. Add it to `veryfront.config.ts` only when you need to override the built-in registration:
 
 ```ts
 import extGoogle from "@veryfront/ext-llm-google";
@@ -25,7 +25,7 @@ export default defineConfig({
 
 ## Usage
 
-Once installed, use `google/*` model strings anywhere Veryfront expects a model identifier:
+Once credentials are configured, use `google/*` model strings anywhere Veryfront expects a model identifier:
 
 ```ts
 const response = await ai.chat("google/gemini-2.5-pro", {
