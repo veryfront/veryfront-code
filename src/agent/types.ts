@@ -44,26 +44,24 @@ export type ModelString = string;
 // Import for use in AgentConfig
 import type { EdgeConfig, MemoryConfig } from "./schemas/index.ts";
 
-export type AgentSuggestion =
+export type Suggestion =
   | {
-    id: string;
     type: "prompt";
     title: string;
-    description?: string;
     prompt: string;
   }
   | {
     id: string;
+    type: "prompt";
+  }
+  | {
+    id: string;
     type: "task";
-    title: string;
-    description?: string;
-    task: string;
-    prompt?: string;
   };
 
-export interface AgentSuggestions {
+export interface Suggestions {
   welcomeMessage?: string;
-  suggestions: AgentSuggestion[];
+  suggestions: Suggestion[];
 }
 
 export interface AgentConfig {
@@ -125,7 +123,7 @@ export interface AgentConfig {
    * and registers the skill tools.
    */
   skills?: true | string[];
-  suggestions?: AgentSuggestions;
+  suggestions?: Suggestions;
   /** Set to false to disable the default security middleware */
   security?: false;
 }
