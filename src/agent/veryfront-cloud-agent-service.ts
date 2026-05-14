@@ -68,8 +68,11 @@ import type { AgentServiceMcpServerConfig } from "./agent-service-mcp-server-con
 import type { RuntimeLoadSkillToolContext } from "./runtime-load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "./runtime-project-skill-catalog.ts";
 import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
-import { listRuntimeAgentMarkdownDefinitionIds } from "./runtime-agent-definition-files.ts";
 import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
+import {
+  getRuntimeAgentMarkdownDefinition,
+  isRuntimeAgentMarkdownAgent,
+} from "./runtime-agent-markdown-adapter.ts";
 import {
   buildVeryfrontCloudRuntimeInstructions,
 } from "./veryfront-cloud-runtime-system-messages.ts";
@@ -400,8 +403,8 @@ async function createRuntimeAgentDefinitionFromCodeAgent(
 ): Promise<RuntimeAgentMarkdownDefinition> {
   return {
     id: codeAgent.id,
-    name: codeAgent.id,
-    description: "",
+    name: codeAgent.config.name ?? codeAgent.id,
+    description: codeAgent.config.description ?? "",
     instructions: await resolveAgentSystem(codeAgent.config.system),
     model: codeAgent.config.model,
     maxSteps: codeAgent.config.maxSteps,
@@ -434,7 +437,7 @@ async function resolveAgentConfig(
   const source = context.options.agentSource ?? "auto";
   const codeAgent = getAgent(agentId);
 
-  if (source !== "markdown" && codeAgent) {
+  if (source !== "markdown" && codeAgent && !isRuntimeAgentMarkdownAgent(codeAgent)) {
     const agentConfig = await createRuntimeAgentDefinitionFromCodeAgent(codeAgent);
     context.agentConfigs.set(agentConfig.id, agentConfig);
     return agentConfig;
@@ -442,6 +445,14 @@ async function resolveAgentConfig(
 
   if (source === "code") {
     throw new Error(`Code agent "${agentId}" was not discovered.`);
+  }
+
+  const discoveredMarkdownDefinition = codeAgent
+    ? getRuntimeAgentMarkdownDefinition(codeAgent)
+    : null;
+  if (discoveredMarkdownDefinition) {
+    context.agentConfigs.set(discoveredMarkdownDefinition.id, discoveredMarkdownDefinition);
+    return discoveredMarkdownDefinition;
   }
 
   const agentConfig = loadMarkdownAgentConfig(context, agentId);
@@ -476,15 +487,17 @@ async function discoverProjectPrimitives(
 }
 
 function getDiscoveredCodeAgentIds(context: NodeVeryfrontCloudAgentServiceContext): string[] {
-  return [...(context.discoveryResult?.agents.keys() ?? [])].sort((left, right) =>
-    left.localeCompare(right)
-  );
+  return [...(context.discoveryResult?.agents.entries() ?? [])]
+    .filter(([, discoveredAgent]) => !isRuntimeAgentMarkdownAgent(discoveredAgent))
+    .map(([id]) => id)
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function getDiscoveredMarkdownAgentIds(context: NodeVeryfrontCloudAgentServiceContext): string[] {
-  return listRuntimeAgentMarkdownDefinitionIds({
-    baseDir: resolveBaseDir(context.options),
-  });
+  return [...(context.discoveryResult?.agents.entries() ?? [])]
+    .filter(([, discoveredAgent]) => isRuntimeAgentMarkdownAgent(discoveredAgent))
+    .map(([id]) => id)
+    .sort((left, right) => left.localeCompare(right));
 }
 
 function describeAgentIdCandidates(input: {

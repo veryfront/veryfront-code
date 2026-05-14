@@ -77,7 +77,7 @@ flowchart TD
 
 The discovery engine follows a convention-over-configuration approach:
 
-1. **Scan:** Each primitive type has a convention-based directory (`tools/`, `agents/`, `workflows/`, etc.). Files matching `**/*.ts` and `**/*.tsx` are collected. Note: test files in discovery directories will be imported -- place tests outside these directories or use separate test directories.
+1. **Scan:** Each primitive type has a convention-based directory (`tools/`, `agents/`, `workflows/`, etc.). Files matching `**/*.ts` and `**/*.tsx` are collected. Agent discovery also accepts `agents/**/*.md` persona definitions and converts them into runtime agents. Note: test files in discovery directories will be imported -- place tests outside these directories or use separate test directories.
 2. **Process:** TypeScript files are transpiled via esbuild, dynamically imported, and their exports (default or named) are extracted.
 3. **Validate:** Each handler validates that the export is a valid instance of its type (e.g., a `Tool` with an `execute` function and `inputSchema`). IDs are derived from the handler's `getId()` method or fall back to the export/file name.
 4. **Register:** Valid primitives are registered in project-scoped registries. Registration makes them available to agents, the MCP server, and the workflow engine.

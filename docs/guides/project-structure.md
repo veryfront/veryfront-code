@@ -65,12 +65,12 @@ my-app/
 
 The `app/` directory contains pages and API routes for the default app router. The file path maps directly to the URL:
 
-| File | URL |
-|------|-----|
-| `app/page.tsx` | `/` |
-| `app/about/page.tsx` | `/about` |
+| File                       | URL           |
+| -------------------------- | ------------- |
+| `app/page.tsx`             | `/`           |
+| `app/about/page.tsx`       | `/about`      |
 | `app/blog/[slug]/page.tsx` | `/blog/:slug` |
-| `app/api/users/route.ts` | `/api/users` |
+| `app/api/users/route.ts`   | `/api/users`  |
 
 Pages use `page.tsx` (or `page.mdx`). API routes use `route.ts`. Layouts use `layout.tsx`.
 
@@ -96,16 +96,16 @@ These directories are scanned automatically at startup.
 For TypeScript-based primitives, files with a default export are registered.
 For skills, directories containing `SKILL.md` are registered.
 
-| Directory | Purpose | Import |
-|-----------|---------|--------|
-| `agents/` | AI agent definitions | `veryfront/agent` |
-| `tools/` | Tool definitions with Zod schemas | `veryfront/tool` |
-| `prompts/` | Prompt templates | `veryfront/prompt` |
-| `workflows/` | Multi-step workflow DAGs | `veryfront/workflow` |
-| `resources/` | MCP-exposable resources | `veryfront/resource` |
-| `skills/` | Skill packs for agent skill tools | Enabled via `agent({ skills: ... })` |
+| Directory    | Purpose                           | Import                               |
+| ------------ | --------------------------------- | ------------------------------------ |
+| `agents/`    | AI agent definitions              | `veryfront/agent`                    |
+| `tools/`     | Tool definitions with Zod schemas | `veryfront/tool`                     |
+| `prompts/`   | Prompt templates                  | `veryfront/prompt`                   |
+| `workflows/` | Multi-step workflow DAGs          | `veryfront/workflow`                 |
+| `resources/` | MCP-exposable resources           | `veryfront/resource`                 |
+| `skills/`    | Skill packs for agent skill tools | Enabled via `agent({ skills: ... })` |
 
-The filename becomes the ID for TypeScript primitives. For example, `agents/assistant.ts` registers as `"assistant"` and can be retrieved with `getAgent("assistant")`.
+The filename becomes the ID for TypeScript primitives. For example, `agents/assistant.ts` registers as `"assistant"` and can be retrieved with `getAgent("assistant")`. Agent discovery also supports `agents/assistant.md` for markdown-defined agents that use frontmatter for metadata and the markdown body as the system instructions.
 
 For skills, the directory name is the skill ID. For example, `skills/incident-response/SKILL.md` registers as `"incident-response"`.
 
@@ -132,24 +132,24 @@ export default defineConfig({
 
 These directories aren't auto-discovered but follow standard conventions:
 
-| Directory | Purpose |
-|-----------|---------|
-| `components/` | Shared React components |
-| `lib/` | Shared utilities and business logic |
-| `content/` | Static content (MDX, JSON, YAML) |
-| `public/` | Static assets served at root path |
-| `styles/` | Global CSS files |
-| `middleware/` | Custom middleware functions |
+| Directory     | Purpose                             |
+| ------------- | ----------------------------------- |
+| `components/` | Shared React components             |
+| `lib/`        | Shared utilities and business logic |
+| `content/`    | Static content (MDX, JSON, YAML)    |
+| `public/`     | Static assets served at root path   |
+| `styles/`     | Global CSS files                    |
+| `middleware/` | Custom middleware functions         |
 
 ## Special files
 
-| File | Purpose |
-|------|---------|
-| `app/layout.tsx` | Root layout wrapping all pages |
-| `app/error.tsx` | Error boundary for the app |
-| `app/not-found.tsx` | Custom 404 page |
-| `veryfront.config.ts` | Framework configuration |
-| `package.json` | Dependencies and metadata |
+| File                  | Purpose                        |
+| --------------------- | ------------------------------ |
+| `app/layout.tsx`      | Root layout wrapping all pages |
+| `app/error.tsx`       | Error boundary for the app     |
+| `app/not-found.tsx`   | Custom 404 page                |
+| `veryfront.config.ts` | Framework configuration        |
+| `package.json`        | Dependencies and metadata      |
 
 ## Why flat?
 

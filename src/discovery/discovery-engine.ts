@@ -26,6 +26,7 @@ import {
   toolHandler,
   workflowHandler,
 } from "./handlers/index.ts";
+import { discoverRuntimeAgentMarkdownDefinitions } from "./handlers/runtime-agent-markdown-handler.ts";
 import { filenameToId } from "./discovery-utils.ts";
 import { join } from "#veryfront/compat/path";
 
@@ -178,6 +179,7 @@ export async function discoverAll(config: DiscoveryConfig): Promise<DiscoveryRes
   // Discover agents
   for (const dir of config.agentDirs ?? ["agents"]) {
     await discoverItems(`${baseDir}/${dir}`, result, context, agentHandler, config.verbose);
+    await discoverRuntimeAgentMarkdownDefinitions(`${baseDir}/${dir}`, result, context);
   }
 
   // Discover resources

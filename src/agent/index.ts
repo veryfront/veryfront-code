@@ -176,6 +176,12 @@ export {
 } from "./hosted-child-fork-tool-sources.ts";
 
 export {
+  createRuntimeAgentFromMarkdownDefinition,
+  getRuntimeAgentMarkdownDefinition,
+  isRuntimeAgentMarkdownAgent,
+} from "./runtime-agent-markdown-adapter.ts";
+
+export {
   loadRuntimeAgentMarkdownDefinitionFromFile,
   type LoadRuntimeAgentMarkdownDefinitionFromFileInput,
   loadRuntimeAgentMarkdownDefinitionFromFileInputSchema,

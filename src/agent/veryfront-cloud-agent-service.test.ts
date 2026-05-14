@@ -186,6 +186,53 @@ Deno.test("createNodeVeryfrontCloudAgentServiceRuntime lets env override manifes
   });
 });
 
+Deno.test("createNodeVeryfrontCloudAgentServiceRuntime uses configured markdown agent paths", async () => {
+  await withTempDir(async (rootDir) => {
+    const agentsDir = resolve(rootDir, "crew");
+    Deno.mkdirSync(agentsDir, { recursive: true });
+    Deno.writeTextFileSync(
+      resolve(agentsDir, "support.md"),
+      `---
+name: Support
+model: openai/gpt-5.4
+max-steps: 6
+---
+
+Help users from configured markdown.
+`,
+    );
+    Deno.writeTextFileSync(
+      resolve(rootDir, "veryfront.config.ts"),
+      [
+        "export default {",
+        "  ai: {",
+        '    agents: { discovery: { paths: ["crew"] } },',
+        "  },",
+        "};",
+        "",
+      ].join("\n"),
+    );
+
+    const bundle = await createNodeVeryfrontCloudAgentServiceRuntime({
+      serviceName: "configured-markdown-agent-test",
+      entrypointUrl: pathToFileURL(resolve(rootDir, "src", "main.ts")),
+      createBashTool,
+      signals: [],
+      env: {
+        NODE_ENV: "test",
+        VERYFRONT_API_URL: "https://api.example.com",
+        PORT: "3151",
+        ALLOWED_ORIGINS: "https://studio.example.com",
+      },
+    });
+
+    assertEquals(bundle.runtime.contract.defaultAgentId, "support");
+    const runtimeAgent = getRuntimeAgent(bundle, "support");
+    assertEquals(runtimeAgent.config.system, "Help users from configured markdown.");
+    assertEquals(runtimeAgent.config.maxSteps, 6);
+  });
+});
+
 Deno.test("createNodeVeryfrontCloudAgentServiceRuntime requires agentId for multiple markdown agents", async () => {
   await withTempDir(async (rootDir) => {
     writeMarkdownAgentDefinition(rootDir, "support");

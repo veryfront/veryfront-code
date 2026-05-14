@@ -480,6 +480,8 @@ when bootstrap credentials are present.
 | Property                 | Type                                                                                                                                                | Description                                                                          |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `id?`                    | `string`                                                                                                                                            | Unique identifier (auto-generated if omitted)                                        |
+| `name?`                  | `string`                                                                                                                                            | Human-readable display name for listings                                             |
+| `description?`           | `string`                                                                                                                                            | Optional summary for listings                                                        |
 | `model?`                 | `ModelString`                                                                                                                                       | Provider/model override. Omit or use `"auto"` for runtime defaults.                  |
 | `system`                 | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code>                                                                | System prompt — string, function, or async function                                  |
 | `tools?`                 | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code>                                                                                  | Tools available to the agent                                                         |
@@ -850,6 +852,13 @@ frontmatter plus body with `parseRuntimeAgentMarkdownDefinition()`. This keeps
 file loading, traversal-prone file-name validation, and markdown parsing
 consistent across separately deployed agents.
 
+### `createRuntimeAgentFromMarkdownDefinition(definition)`
+
+Convert a parsed markdown agent definition into a normal runtime `Agent`.
+Project discovery uses this helper for `agents/*.md`, so markdown-defined
+agents are listed and invoked through the same registry and control-plane paths
+as code-defined agents.
+
 ### `filterAgentTraceAttributes(attributes)`
 
 Filter an unknown attribute record down to OpenTelemetry-safe agent trace
@@ -1179,6 +1188,7 @@ Clear all stored messages from memory.
 | `initializeNodeAgentServiceOpenTelemetry`                             | Initialize Node OpenTelemetry for an agent service                       |
 | `parseAgentServiceChatRequestFromRequest`                             | Parse the agent-service chat request body and auth context               |
 | `loadRuntimeAgentMarkdownDefinitionFromFile`                          | Load and parse a markdown agent definition from an agents directory      |
+| `createRuntimeAgentFromMarkdownDefinition`                            | Convert a markdown agent definition into a runtime agent                 |
 | `parseAgentServiceConfig`                                             | Parse default agent service environment config                           |
 | `resolveAgentServiceRegistrationInput`                                | Resolve push runtime registration input from service config              |
 | `resolveNodeAgentServiceTelemetryConfig`                              | Resolve Node service OpenTelemetry config from environment               |
