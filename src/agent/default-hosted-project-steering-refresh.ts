@@ -7,12 +7,12 @@ import type {
   DefaultHostedChatRuntimeSystemRefreshInput,
   DefaultHostedChatRuntimeTaskContext,
 } from "./default-hosted-chat-runtime.ts";
-import type { HostedChatRuntimePreparationSteering } from "./hosted-chat-preparation.ts";
-import type { RuntimeAgentMarkdownDefinition } from "./runtime-agent-definition.ts";
-import type { RuntimeSkillDefinition } from "./runtime-skill-metadata.ts";
+import type { HostedChatRuntimePreparationSteering } from "./hosted/chat-preparation.ts";
+import type { RuntimeAgentMarkdownDefinition } from "./runtime/agent-definition.ts";
+import type { RuntimeSkillDefinition } from "./runtime/skill-metadata.ts";
 import { selectProviderCompatibleToolNames } from "./runtime/provider-tool-compat.ts";
-import { flattenSystemInstructions, withRuntimeToolInventory } from "./runtime-tool-inventory.ts";
-import type { HostedChatRuntimeInstructionsInput } from "./hosted-chat-preparation.ts";
+import { flattenSystemInstructions, withRuntimeToolInventory } from "./runtime/tool-inventory.ts";
+import type { HostedChatRuntimeInstructionsInput } from "./hosted/chat-preparation.ts";
 
 export type DefaultHostedProjectSteeringRefreshLogger = {
   error(message: string, metadata?: Record<string, unknown>): void;

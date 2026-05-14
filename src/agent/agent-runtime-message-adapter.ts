@@ -7,7 +7,7 @@ import {
   type ProviderModelMessage,
   type UploadedFileReference,
 } from "../chat/types.ts";
-import { toChildRunToolInputRecord } from "./child-run-execution-support.ts";
+import { toChildRunToolInputRecord } from "./child-run/execution-support.ts";
 
 type StructuredProviderPart = Exclude<ProviderModelMessage["content"], string>[number];
 

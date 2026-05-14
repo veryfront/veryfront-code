@@ -4,7 +4,7 @@ import {
   type AgentResponse,
   AgentRuntime,
 } from "#veryfront/agent";
-import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui-runtime-support.ts";
+import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";

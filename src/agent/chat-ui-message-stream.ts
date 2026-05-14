@@ -5,7 +5,7 @@ import type {
   ChatUiMessageChunk,
   MessageMetadata,
 } from "../chat/types.ts";
-import { createAgUiRuntimeChatStreamEncoder } from "./ag-ui-runtime-chat-stream-encoder.ts";
+import { createAgUiRuntimeChatStreamEncoder } from "./ag-ui/runtime-chat-stream-encoder.ts";
 import {
   mergeToolInputDelta,
   parseToolInputObject,

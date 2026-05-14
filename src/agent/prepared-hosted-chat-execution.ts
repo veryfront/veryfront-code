@@ -1,12 +1,12 @@
 import type { AgentTraceAttributes } from "./agent-trace-attributes.ts";
-import { createAgUiChatUiTrackedBrowserResponse } from "./ag-ui-chat-ui-chunk-browser-encoder.ts";
+import { createAgUiChatUiTrackedBrowserResponse } from "./ag-ui/chat-ui-chunk-browser-encoder.ts";
 import {
   type BootstrappedHostedChatExecutionRuntime,
   createBootstrappedHostedChatExecutionRuntime,
   type CreateBootstrappedHostedChatExecutionRuntimeInput,
-} from "./hosted-chat-execution-runtime.ts";
-import { runHostedLifecycle } from "./hosted-lifecycle.ts";
-import type { AgUiRuntimeRequest } from "./runtime-ag-ui-contract.ts";
+} from "./hosted/chat-execution-runtime.ts";
+import { runHostedLifecycle } from "./hosted/lifecycle.ts";
+import type { AgUiRuntimeRequest } from "./runtime/ag-ui-contract.ts";
 
 export type PreparedHostedChatExecution =
   & Omit<

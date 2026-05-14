@@ -1,10 +1,10 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { ChatUiMessageChunk, MessageMetadata } from "../chat/types.ts";
-import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./hosted-agent-run-lifecycle.ts";
-import type { HostedChatRuntimeToUiMessageStreamOptions } from "./hosted-chat-runtime-contract.ts";
-import type { HostedConversationRootRunContext } from "./conversation-root-run-lifecycle.ts";
-import type { AgUiRuntimeRequest } from "./runtime-ag-ui-contract.ts";
+import type { HostedAgentRunSpan, HostedAgentRunTracer } from "./hosted/agent-run-lifecycle.ts";
+import type { HostedChatRuntimeToUiMessageStreamOptions } from "./hosted/chat-runtime-contract.ts";
+import type { HostedConversationRootRunContext } from "./conversation/root-run-lifecycle.ts";
+import type { AgUiRuntimeRequest } from "./runtime/ag-ui-contract.ts";
 import {
   type PreparedHostedChatExecution,
   type PreparedHostedChatExecutionRuntimeOptions,

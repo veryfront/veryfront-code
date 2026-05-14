@@ -1,7 +1,7 @@
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { isErroredToolExecutionResult, type RemoteToolSource } from "#veryfront/tool";
-import { toChildRunToolInputRecord } from "./child-run-execution-support.ts";
-import { isHostedChildCreateFileAlreadyExistsResult } from "./hosted-child-artifact-support.ts";
+import { toChildRunToolInputRecord } from "./child-run/execution-support.ts";
+import { isHostedChildCreateFileAlreadyExistsResult } from "./hosted/child-artifact-support.ts";
 import {
   buildDefaultResearchArtifactPathReminder,
   buildDefaultResearchArtifactPaths,

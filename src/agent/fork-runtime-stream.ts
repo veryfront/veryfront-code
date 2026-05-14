@@ -9,7 +9,7 @@ import {
 import { isRecord } from "#veryfront/chat/conversation.ts";
 import { safeJsonParse } from "#veryfront/chat/provider-errors.ts";
 import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
-import type { AgUiRuntimeStreamEvent } from "./ag-ui-browser-encoder.ts";
+import type { AgUiRuntimeStreamEvent } from "./ag-ui/browser-encoder.ts";
 import {
   mergeToolInputDelta,
   parseToolInputObject,
@@ -19,7 +19,7 @@ import {
 import {
   HOSTED_CHILD_STREAM_TIMEOUT_TOKEN,
   resolveHostedChildPromiseWithTimeout,
-} from "./hosted-child-stream-watchdog.ts";
+} from "./hosted/child-stream-watchdog.ts";
 import { getForkRuntimeAllowedToolNames } from "./provider-native-tool-inventory.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "./schemas/index.ts";

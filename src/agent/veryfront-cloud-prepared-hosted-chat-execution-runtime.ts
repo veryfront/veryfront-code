@@ -1,7 +1,7 @@
 import { createChatStreamWatchdog } from "#veryfront/chat/stream-watchdog.ts";
 import { getVeryfrontCloudProviderFromModelId } from "#veryfront/provider";
 import type { AgentTraceAttributes } from "./agent-trace-attributes.ts";
-import type { HostedChatExecutionRuntimeLogger } from "./hosted-chat-execution-runtime.ts";
+import type { HostedChatExecutionRuntimeLogger } from "./hosted/chat-execution-runtime.ts";
 import type { PreparedHostedChatExecutionRuntimeOptions } from "./prepared-hosted-chat-execution.ts";
 
 export type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput = {
