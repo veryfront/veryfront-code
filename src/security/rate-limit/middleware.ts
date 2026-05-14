@@ -123,11 +123,18 @@ export function createRateLimiter(
       applyRateLimitHeaders(response, headers);
       return response;
     } catch (error) {
-      logger.error("Rate limiting error", {
+      // Fail closed: if the rate-limit store throws (e.g. Redis outage), reject
+      // the request with 503 instead of letting it through. Failing open would
+      // silently disable rate limiting and expose brute-force, scraping, and
+      // credential-stuffing surfaces during transient store failures.
+      logger.error("Rate limiting error — failing closed", {
         error: error instanceof Error ? error.message : String(error),
       });
 
-      return next(request);
+      return new Response("Service temporarily unavailable", {
+        status: 503,
+        headers: { "Retry-After": "60" },
+      });
     }
   };
 }

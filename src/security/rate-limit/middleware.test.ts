@@ -3,6 +3,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createRateLimiter, RateLimitPresets } from "./middleware.ts";
 import { MemoryRateLimitStore } from "./memory-store.ts";
+import type { RateLimitStore } from "./types.ts";
 
 function createNext(): () => Promise<Response> {
   return () => Promise.resolve(new Response("OK"));
@@ -224,5 +225,37 @@ describe("Rate Limiting Middleware", () => {
       assertEquals(response.status, 200);
       assertEquals(response.headers.get("X-RateLimit-Limit"), "10");
     });
+  });
+
+  it("should fail closed with 503 when store throws (SEC-001)", async () => {
+    // Simulate a store outage (e.g. Redis down). The middleware must NOT
+    // call next() in the catch branch — that would silently bypass rate
+    // limiting and reopen brute-force / scraping / credential-stuffing
+    // surfaces. Expect a 503 with Retry-After: 60 instead.
+    const failingStore: RateLimitStore = {
+      increment: () => Promise.reject(new Error("store unavailable")),
+      get: () => Promise.reject(new Error("store unavailable")),
+      reset: () => Promise.reject(new Error("store unavailable")),
+      resetAll: () => Promise.reject(new Error("store unavailable")),
+    };
+
+    const limiter = createRateLimiter({
+      maxRequests: 5,
+      windowMs: 60000,
+      strategy: "fixed-window",
+      store: failingStore,
+    });
+
+    let nextCalled = false;
+    const next = () => {
+      nextCalled = true;
+      return Promise.resolve(new Response("OK"));
+    };
+
+    const response = await limiter(createRequest(), next);
+
+    assertEquals(response.status, 503);
+    assertEquals(response.headers.get("Retry-After"), "60");
+    assertEquals(nextCalled, false, "next() must not be invoked when the store fails");
   });
 });
