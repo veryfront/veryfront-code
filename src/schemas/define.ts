@@ -5,23 +5,17 @@
  * `SchemaValidator` extension contract on first call and materializes the
  * schema via the provided factory. This indirection lets core modules declare
  * schemas without importing zod directly — a real validator (typically
- * `@veryfront/ext-zod`) must be registered in the contract registry before
+ * `@veryfront/ext-schema-zod`) must be registered in the contract registry before
  * the schema is first accessed.
  *
  * @module schemas/define
  */
 
-import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
+import { resolve } from "#veryfront/extensions/contracts.ts";
 import type { Schema, SchemaFactory, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
-import { createZodAdapter } from "../../extensions/ext-zod/src/adapter.ts";
 
 export function resolveSchemaValidator(): SchemaValidator {
-  const existing = tryResolve<SchemaValidator>("SchemaValidator");
-  if (existing) return existing;
-
-  const fallback = createZodAdapter();
-  register<SchemaValidator>("SchemaValidator", fallback);
-  return fallback;
+  return resolve<SchemaValidator>("SchemaValidator");
 }
 
 /**
@@ -29,7 +23,7 @@ export function resolveSchemaValidator(): SchemaValidator {
  *
  * @param factory - Receives a `SchemaValidator` and returns a `Schema<T>`.
  * @returns A zero-arg getter that caches and returns the built schema.
- * Installs the default zod-backed validator when no contract is registered.
+ * Requires a SchemaValidator extension to be registered before first use.
  *
  * @example
  * ```ts

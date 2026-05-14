@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { register, reset, resolve, tryResolve } from "./contracts.ts";
+import { register, reset, resolve, tryResolve, unregister } from "./contracts.ts";
 
 describe("extensions/contracts", () => {
   afterEach(() => {
@@ -55,6 +55,16 @@ describe("extensions/contracts", () => {
       register("CSSProcessor", { v: 1 });
       register("CSSProcessor", { v: 2 });
       assertEquals(resolve<{ v: number }>("CSSProcessor").v, 2);
+    });
+  });
+
+  describe("unregister()", () => {
+    it("removes one registration", () => {
+      register("Bundler", {});
+      register("CacheStore", {});
+      unregister("Bundler");
+      assertEquals(tryResolve("Bundler"), undefined);
+      assertEquals(tryResolve("CacheStore"), {});
     });
   });
 

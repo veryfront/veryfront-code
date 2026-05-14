@@ -134,8 +134,6 @@ await build({
 		dependencies: {
 			"@types/react": "^19.0.0",
 			"@types/react-dom": "^19.0.0",
-			"ai": "^6.0.13",
-			"bash-tool": "^1.3.16",
 			"ws": "^8.18.0",
 			"@kreuzberg/node": "^4.4.2",
 		},

@@ -3,7 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { register, tryResolve } from "veryfront/extensions/contracts";
 import type { SchemaValidator } from "veryfront/extensions/schema";
-import { createZodAdapter } from "../../extensions/ext-zod/src/adapter.ts";
+import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 import { defineSchema } from "veryfront/schemas";
 import {
   type ArgSpec,

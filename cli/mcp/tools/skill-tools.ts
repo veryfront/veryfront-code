@@ -2,7 +2,7 @@
  * MCP tools for skill discovery and reference loading.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
@@ -63,13 +63,13 @@ async function getSkillReferences(skillName: string): Promise<string[] | undefin
   return references.length ? references : undefined;
 }
 
-const getSkillsInput = defineSchema((v) =>
+const getSkillsInput = lazySchema(defineSchema((v) =>
   v.object({
     name: v.string().optional().describe(
       "Specific skill name to get full content for (omit for list of all skills)",
     ),
   })
-)();
+));
 
 type GetSkillsInput = InferSchema<typeof getSkillsInput>;
 
@@ -159,12 +159,12 @@ export const vfGetSkills: MCPTool<GetSkillsInput, GetSkillsResult> = {
     ),
 };
 
-const getSkillReferenceInput = defineSchema((v) =>
+const getSkillReferenceInput = lazySchema(defineSchema((v) =>
   v.object({
     skill: v.string().describe("Skill name"),
     reference: v.string().describe("Reference file path (e.g., 'references/ROUTES.md')"),
   })
-)();
+));
 
 type GetSkillReferenceInput = InferSchema<typeof getSkillReferenceInput>;
 

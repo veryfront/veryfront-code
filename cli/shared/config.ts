@@ -5,7 +5,7 @@
  * @module cli/shared/config
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { createFileSystem, cwd, getEnv } from "veryfront/platform";
@@ -24,7 +24,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
     apiUrl: v.string().optional(),
   })
 );
-export const VeryfrontConfigSchema = getVeryfrontConfigSchema();
+export const VeryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
 export type VeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;
 
 export const getResolvedConfigSchema = defineSchema((v) =>
@@ -34,7 +34,7 @@ export const getResolvedConfigSchema = defineSchema((v) =>
     projectSlug: v.string(),
   })
 );
-export const ResolvedConfigSchema = getResolvedConfigSchema();
+export const ResolvedConfigSchema = lazySchema(getResolvedConfigSchema);
 export type ResolvedConfig = InferSchema<ReturnType<typeof getResolvedConfigSchema>>;
 
 export async function readConfigFile(projectDir: string): Promise<VeryfrontConfig | null> {
@@ -190,7 +190,7 @@ export const getApiErrorSchema = defineSchema((v) =>
     code: v.string().optional(),
   })
 );
-export const ApiErrorSchema = getApiErrorSchema();
+export const ApiErrorSchema = lazySchema(getApiErrorSchema);
 export type ApiError = InferSchema<ReturnType<typeof getApiErrorSchema>>;
 
 export function createApiClient(config: ResolvedConfig): ApiClient {

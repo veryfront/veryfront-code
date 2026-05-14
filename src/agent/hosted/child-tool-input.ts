@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { withDefaultResearchArtifactPath } from "../default-research-artifact-policy.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
@@ -26,7 +26,7 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getHostedChildForkToolInputSchema() */
-export const hostedChildForkToolInputSchema = getHostedChildForkToolInputSchema();
+export const hostedChildForkToolInputSchema = lazySchema(getHostedChildForkToolInputSchema);
 
 export type HostedChildForkToolInput = InferSchema<
   ReturnType<typeof getHostedChildForkToolInputSchema>

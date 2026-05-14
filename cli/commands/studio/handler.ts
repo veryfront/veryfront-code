@@ -2,7 +2,7 @@
  * Studio command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import { studioCommand } from "./index.ts";
@@ -15,7 +15,7 @@ const getStudioArgsSchema = defineSchema((v) =>
   })
 );
 
-const StudioArgsSchema = getStudioArgsSchema();
+const StudioArgsSchema = lazySchema(getStudioArgsSchema);
 
 export const parseStudioArgs = createArgParser(StudioArgsSchema, {
   project: { keys: ["project"], type: "string", positional: 0 },

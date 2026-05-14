@@ -7,7 +7,7 @@
  * @module cli/commands/merge
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
@@ -28,7 +28,7 @@ export const getMergeArgsSchema = defineSchema((v) =>
   })
 );
 
-export const MergeArgsSchema = getMergeArgsSchema();
+export const MergeArgsSchema = lazySchema(getMergeArgsSchema);
 
 /**
  * Merge command options (inferred from schema)

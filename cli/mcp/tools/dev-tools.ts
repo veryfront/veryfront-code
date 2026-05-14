@@ -2,7 +2,7 @@
  * MCP tools for development workflow (HMR, preview, debug, flywheel).
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { getEnvironmentConfig } from "veryfront/config";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -25,7 +25,7 @@ const getHotReloadInput = defineSchema((v) =>
       ),
   })
 );
-const hotReloadInput = getHotReloadInput();
+const hotReloadInput = lazySchema(getHotReloadInput);
 
 type HotReloadInput = InferSchema<ReturnType<typeof getHotReloadInput>>;
 
@@ -72,7 +72,7 @@ const getGetDebugContextInput = defineSchema((v) =>
       .describe("Project slug to check (for multi-project mode)"),
   })
 );
-const getDebugContextInput = getGetDebugContextInput();
+const getDebugContextInput = lazySchema(getGetDebugContextInput);
 
 type GetDebugContextInput = InferSchema<ReturnType<typeof getGetDebugContextInput>>;
 
@@ -140,7 +140,7 @@ const getTriggerHmrInput = defineSchema((v) =>
     ),
   })
 );
-const triggerHmrInput = getTriggerHmrInput();
+const triggerHmrInput = lazySchema(getTriggerHmrInput);
 
 type TriggerHmrInput = InferSchema<ReturnType<typeof getTriggerHmrInput>>;
 
@@ -200,7 +200,7 @@ const getPreviewRouteInput = defineSchema((v) =>
       ),
   })
 );
-const previewRouteInput = getPreviewRouteInput();
+const previewRouteInput = lazySchema(getPreviewRouteInput);
 
 type PreviewRouteInput = InferSchema<ReturnType<typeof getPreviewRouteInput>>;
 
@@ -290,7 +290,7 @@ const getWaitForReadyInput = defineSchema((v) =>
       .describe("Polling interval in milliseconds (defaults to 500)"),
   })
 );
-const waitForReadyInput = getWaitForReadyInput();
+const waitForReadyInput = lazySchema(getWaitForReadyInput);
 
 type WaitForReadyInput = InferSchema<ReturnType<typeof getWaitForReadyInput>>;
 
@@ -354,7 +354,7 @@ const getGetFlywheelStatusInput = defineSchema((v) =>
     ),
   })
 );
-const getFlywheelStatusInput = getGetFlywheelStatusInput();
+const getFlywheelStatusInput = lazySchema(getGetFlywheelStatusInput);
 
 type GetFlywheelStatusInput = InferSchema<ReturnType<typeof getGetFlywheelStatusInput>>;
 

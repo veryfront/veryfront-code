@@ -6,10 +6,10 @@
     "extension": true,
     "capabilities": [
       { "type": "contract", "name": "TracingExporter" },
-      { "type": "net", "hosts": ["*"] },
+      { "type": "net:outbound", "hosts": ["*"] },
       {
-        "type": "env",
-        "vars": [
+        "type": "env:read",
+        "keys": [
           "OTEL_EXPORTER_OTLP_ENDPOINT",
           "OTEL_EXPORTER_OTLP_HEADERS",
           "OTEL_SERVICE_NAME",

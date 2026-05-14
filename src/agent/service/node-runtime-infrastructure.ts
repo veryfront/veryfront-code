@@ -1,4 +1,4 @@
-import * as api from "@opentelemetry/api";
+import * as api from "#veryfront/observability/tracing/api-shim.ts";
 import {
   createOpenTelemetryServiceTracer,
   type ServiceTracerAttributes,

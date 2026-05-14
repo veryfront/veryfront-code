@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { isUuid, toConversationPartsFromUiMessage } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
@@ -30,7 +30,7 @@ export const getConversationRecordSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getConversationRecordSchema() */
-export const ConversationRecordSchema = getConversationRecordSchema();
+export const ConversationRecordSchema = lazySchema(getConversationRecordSchema);
 
 export const getConversationMessageRecordSchema = defineSchema((v) =>
   v.object({
@@ -39,7 +39,7 @@ export const getConversationMessageRecordSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getConversationMessageRecordSchema() */
-export const ConversationMessageRecordSchema = getConversationMessageRecordSchema();
+export const ConversationMessageRecordSchema = lazySchema(getConversationMessageRecordSchema);
 
 export type ConversationMessageRecord = InferSchema<
   ReturnType<typeof getConversationMessageRecordSchema>

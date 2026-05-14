@@ -1,8 +1,8 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 
 export const getServerModeSchema = defineSchema((v) => v.enum(["combined", "proxy", "production"]));
-export const ServerModeSchema = getServerModeSchema();
+export const ServerModeSchema = lazySchema(getServerModeSchema);
 export type ServerMode = InferSchema<ReturnType<typeof getServerModeSchema>>;
 
 export interface ParsedArgs {

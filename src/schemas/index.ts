@@ -4,7 +4,7 @@
  * plus the `defineSchema` lazy-factory helper.
  *
  * `defineSchema` resolves the `SchemaValidator` contract on first use. The
- * default zod-backed implementation lives in `@veryfront/ext-zod` and is
+ * default zod-backed implementation lives in `@veryfront/ext-schema-zod` and is
  * registered at app bootstrap by `createBuiltinExtensions()`. Tests that
  * exercise schemas without going through full bootstrap import
  * `./_test-setup.ts` to register the adapter directly.
@@ -13,6 +13,7 @@
  */
 
 export { defineSchema } from "./define.ts";
+export { lazySchema } from "./lazy.ts";
 
 export {
   isOptionalSchema as schemaIsOptional,

@@ -1,8 +1,8 @@
 /**
- * ext-auth-jwt — AuthProvider implementation backed by `jose`.
+ * ext-auth-jwt: AuthProvider implementation backed by `jose`.
  *
  * Provides the `AuthProvider` contract: sign / verify (HS256 by default),
- * verify-with-remote-JWKS, and decode-header.
+ * remote-JWKS verification, public-key verification, and header decoding.
  *
  * @module extensions/ext-auth-jwt
  */
@@ -10,6 +10,7 @@
 import {
   createRemoteJWKSet,
   decodeProtectedHeader,
+  importSPKI,
   type JWTPayload,
   jwtVerify,
   type KeyLike,
@@ -81,12 +82,23 @@ function createAuthProvider(config: ExtJwtConfig): AuthProvider {
   // internal key cache with cooldown/rotation semantics, so reusing the
   // same resolver is required for the cache to be effective.
   const jwksResolvers = new Map<string, JwksResolver>();
+  const publicKeys = new Map<string, Promise<KeyLike>>();
 
   function getJwksResolver(jwksUrl: string): JwksResolver {
     const existing = jwksResolvers.get(jwksUrl);
     if (existing) return existing;
     const created = jwksResolverFactory(jwksUrl);
     jwksResolvers.set(jwksUrl, created);
+    return created;
+  }
+
+  function getPublicKey(publicKeyPem: string, algorithm: string): Promise<KeyLike> {
+    const cacheKey = `${algorithm}:${publicKeyPem}`;
+    const existing = publicKeys.get(cacheKey);
+    if (existing) return existing;
+
+    const created = importSPKI(publicKeyPem, algorithm);
+    publicKeys.set(cacheKey, created);
     return created;
   }
 
@@ -134,6 +146,22 @@ function createAuthProvider(config: ExtJwtConfig): AuthProvider {
       return payload as TokenPayload;
     },
 
+    async verifyWithPublicKey(
+      token: string,
+      publicKeyPem: string,
+      options?: VerifyOptions,
+    ): Promise<TokenPayload> {
+      const algorithms = options?.algorithms ?? ["RS256"];
+      const algorithm = algorithms[0] ?? "RS256";
+      const publicKey = await getPublicKey(publicKeyPem, algorithm);
+      const { algorithms: _algorithms, ...rest } = options ?? {};
+      const { payload } = await jwtVerify(token, publicKey, {
+        ...rest,
+        algorithms,
+      });
+      return payload as TokenPayload;
+    },
+
     decode(token: string): TokenHeader | undefined {
       try {
         return decodeProtectedHeader(token) as TokenHeader;
@@ -159,7 +187,7 @@ const extJwt: ExtensionFactory = (config?: unknown) => {
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "AuthProvider" },
-      { type: "network", host: "*" },
+      { type: "net:outbound", hosts: ["*"] },
     ],
     provides: {
       AuthProvider: provider,

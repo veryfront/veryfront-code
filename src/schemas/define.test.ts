@@ -1,16 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { register, reset, tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "./define.ts";
-import { createZodAdapter } from "../../extensions/ext-zod/src/adapter.ts";
+import { lazySchema } from "./lazy.ts";
+import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
 
 /**
  * `defineSchema` resolves the SchemaValidator contract on first call. App
- * bootstrap registers the zod adapter via ext-zod, and the schema layer also
- * installs the same default adapter when public entrypoints materialize
- * schemas before full bootstrap has run.
+ * bootstrap registers the zod adapter via ext-schema-zod.
  */
 describe("defineSchema", () => {
   afterEach(() => {
@@ -20,13 +19,16 @@ describe("defineSchema", () => {
   });
 
   it(
-    "installs the default zod adapter when no SchemaValidator contract is registered",
+    "throws when no SchemaValidator contract is registered",
     () => {
       reset();
       const getSchema = defineSchema((v) => v.object({ id: v.string() }));
       assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
-      assertEquals(getSchema().parse({ id: "abc" }), { id: "abc" });
-      assertEquals(!!tryResolve<SchemaValidator>("SchemaValidator"), true);
+      assertThrows(
+        () => getSchema().parse({ id: "abc" }),
+        Error,
+        "@veryfront/ext-schema-zod",
+      );
     },
   );
 
@@ -63,5 +65,27 @@ describe("defineSchema", () => {
     register<SchemaValidator>("SchemaValidator", createZodAdapter());
     const schema = getSchema();
     assertEquals(schema.parse(true), true);
+  });
+
+  it("imports public schema modules without a registered adapter", async () => {
+    reset();
+    const cacheBust = crypto.randomUUID();
+
+    await import(`../config/schemas/config.schema.ts?lazy-import=${cacheBust}`);
+    await import(`../integrations/schema.ts?lazy-import=${cacheBust}`);
+    await import(`../agent/runtime/load-skill-tool.ts?lazy-import=${cacheBust}`);
+
+    assertEquals(tryResolve<SchemaValidator>("SchemaValidator"), undefined);
+  });
+
+  it("composes lazy schemas through adapter-backed object shapes", () => {
+    reset();
+    register<SchemaValidator>("SchemaValidator", createZodAdapter());
+
+    const getNameSchema = defineSchema((v) => v.string().min(1));
+    const nameSchema = lazySchema(getNameSchema);
+    const getObjectSchema = defineSchema((v) => v.object({ name: nameSchema }));
+
+    assertEquals(getObjectSchema().parse({ name: "Veryfront" }), { name: "Veryfront" });
   });
 });

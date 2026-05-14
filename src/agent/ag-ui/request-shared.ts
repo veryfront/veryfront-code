@@ -2,7 +2,7 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 /**
  * Detects a validation error thrown by a `Schema.parse()` call. Works with
- * both the contract-DSL adapter (ext-zod wraps `ZodError` and sets `issues`)
+ * both the contract-DSL adapter (ext-schema-zod wraps `ZodError` and sets `issues`)
  * and raw zod errors.
  */
 function isSchemaValidationError(

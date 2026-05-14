@@ -15,16 +15,18 @@ import { createGuideAgent, jsonResponse, withMockedFetch } from "./guide-example
 
 // === Guide: tools.mdx ===
 import { tool } from "../../src/tool/index.ts";
-import { z } from "zod";
+import { defineSchema } from "../../src/schemas/define.ts";
 
 describe("Guide: tools.mdx", () => {
   it("should create a tool with inputSchema and execute it", async () => {
     const getWeather = tool({
       description: "Get the current weather for a city",
-      inputSchema: z.object({
-        city: z.string().describe("City name"),
-        units: z.enum(["celsius", "fahrenheit"]).default("celsius"),
-      }),
+      inputSchema: defineSchema((v) =>
+        v.object({
+          city: v.string().describe("City name"),
+          units: v.enum(["celsius", "fahrenheit"]).default("celsius"),
+        })
+      )(),
       execute: async ({ city, units }) => {
         return { temperature: 22, conditions: "sunny", city, units };
       },
@@ -41,7 +43,7 @@ describe("Guide: tools.mdx", () => {
   it("should validate input against schema", async () => {
     const lookup = tool({
       description: "Look up a user by email",
-      inputSchema: z.object({ email: z.string().email() }),
+      inputSchema: defineSchema((v) => v.object({ email: v.string().email() }))(),
       execute: async ({ email }) => ({ email }),
     });
 
@@ -62,7 +64,7 @@ describe("Guide: tools.mdx", () => {
   it("should support inline tool definition", () => {
     const calculate = tool({
       description: "Evaluate a math expression",
-      inputSchema: z.object({ expression: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ expression: v.string() }))(),
       execute: async ({ expression }) => ({ result: expression }),
     });
 
@@ -252,7 +254,7 @@ describe("Guide: workflows.mdx", () => {
   it("should support input schema validation", () => {
     const pipeline = workflow({
       id: "typed-pipeline",
-      inputSchema: z.object({ topic: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ topic: v.string() }))(),
       steps: ({ input }) => [
         step("research", {
           agent: "researcher",
@@ -711,7 +713,7 @@ describe("Guide: mcp-server.mdx", () => {
 
     const customTool = tool({
       description: "A custom tool",
-      inputSchema: z.object({ input: z.string() }),
+      inputSchema: defineSchema((v) => v.object({ input: v.string() }))(),
       execute: async ({ input }) => ({ result: input.toUpperCase() }),
     });
 

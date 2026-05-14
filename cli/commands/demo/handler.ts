@@ -2,7 +2,7 @@
  * Demo command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import type { DemoOptions } from "./index.ts";
@@ -15,7 +15,7 @@ const getDemoArgsSchema = defineSchema((v) =>
   })
 );
 
-const DemoArgsSchema = getDemoArgsSchema();
+const DemoArgsSchema = lazySchema(getDemoArgsSchema);
 
 export const parseDemoArgs = createArgParser(DemoArgsSchema, {
   projectName: { keys: ["project-name"], type: "string", positional: 0 },

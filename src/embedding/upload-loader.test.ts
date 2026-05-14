@@ -103,14 +103,14 @@ describe("upload-loader", () => {
     });
   });
 
-  describe("worker extraction (requires NodeCompat extension)", () => {
+  describe("worker extraction (requires DocumentExtractor extension)", () => {
     // End-to-end kreuzberg extraction tests live in
-    // extensions/ext-node-compatibility/tests/integration.test.ts where the
+    // extensions/ext-document-kreuzberg/src/kreuzberg.integration.test.ts where the
     // extension is registered and @kreuzberg/wasm is available. Core-side,
     // we only assert that `loadUpload` surfaces a clear error when the
     // extension isn't installed — this is the documented fallback behavior.
 
-    it("throws an actionable error when NodeCompat extension is not registered", {
+    it("throws an actionable error when DocumentExtractor extension is not registered", {
       sanitizeResources: false,
       sanitizeOps: false,
     }, async () => {
@@ -120,9 +120,10 @@ describe("upload-loader", () => {
         Error,
       ) as Error;
       assertEquals(
-        err.message.includes("NodeCompat") || err.message.includes("ext-node-compatibility"),
+        err.message.includes("DocumentExtractor") ||
+          err.message.includes("ext-document-kreuzberg"),
         true,
-        `expected actionable NodeCompat error, got: ${err.message}`,
+        `expected actionable DocumentExtractor error, got: ${err.message}`,
       );
     });
   });

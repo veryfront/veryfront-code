@@ -92,7 +92,7 @@ Use the `provides` field when the implementation has no async initialization:
 
 ```ts
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { AuthProvider } from "veryfront/extensions/interfaces";
+import type { AuthProvider } from "veryfront/extensions/auth";
 
 const extJwt: ExtensionFactory = (config?) => {
   const provider = createAuthProvider(config);
@@ -159,8 +159,8 @@ Extensions can depend on contracts provided by other extensions. Declare the dep
 
 ```ts
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { LLMProviderRegistry } from "veryfront/extensions/interfaces";
-import { LLMProviderRegistryName } from "veryfront/extensions/interfaces";
+import type { LLMProviderRegistry } from "veryfront/extensions/llm";
+import { LLMProviderRegistryName } from "veryfront/extensions/llm";
 
 const extMyProvider: ExtensionFactory = () => {
   let registry: LLMProviderRegistry | undefined;
@@ -226,30 +226,32 @@ capabilities: [
 
 ## Available contracts
 
-These are first-party contracts your extension can implement or consume. Some default implementations are auto-enabled by core bootstrap, while optional contracts are required only when a feature resolves them.
+These are first-party contracts your extension can implement or consume. Some implementations are auto-enabled by core bootstrap. Contracts without a default package are extension points for project or third-party providers.
 
-| Contract              | Description                   | Default package                                |
-| --------------------- | ----------------------------- | ---------------------------------------------- |
-| `AuthProvider`        | JWT sign/verify/decode        | `@veryfront/ext-auth-jwt`                      |
-| `CacheStore`          | Key-value cache with TTL      | `@veryfront/ext-cache-redis`                   |
-| `TokenCacheStore`     | Proxy-grade cache with stats  | `@veryfront/ext-cache-redis`                   |
-| `DatabaseClient`      | SQL query/execute             | `@veryfront/ext-postgres`                      |
-| `Bundler`             | JS/TS bundling and transforms | `@veryfront/ext-bundler-esbuild`               |
-| `ModuleLexer`         | ESM import/export analysis    | `@veryfront/ext-bundler-esbuild`               |
-| `CSSProcessor`        | CSS compilation and utilities | `@veryfront/ext-css-tailwind`                  |
-| `ContentProcessor`    | MDX/markdown processing       | `@veryfront/ext-transform-mdx`                 |
-| `SchemaValidator`     | Runtime validation (schemas)  | `@veryfront/ext-zod`                           |
-| `TracingExporter`     | OpenTelemetry span export     | `@veryfront/ext-tracing-opentelemetry`         |
-| `LLMProviderRegistry` | LLM provider registry         | (built-in, created by framework)               |
-| `LLMProvider`         | Individual LLM provider       | `@veryfront/ext-llm-{anthropic,google,openai}` |
-| `EmbeddingProvider`   | Vector embeddings             | `@veryfront/ext-llm-google`                    |
-| `CodeParser`          | AST parsing and transforms    | `@veryfront/ext-parser-babel`                  |
-| `NodeCompat`          | Node.js compatibility shims   | `@veryfront/ext-node-compatibility`            |
+| Contract                    | Description                          | Default package                                |
+| --------------------------- | ------------------------------------ | ---------------------------------------------- |
+| `AuthProvider`              | JWT sign/verify/decode               | `@veryfront/ext-auth-jwt`                      |
+| `Bundler`                   | JS/TS bundling and transforms        | `@veryfront/ext-bundler-esbuild`               |
+| `CacheStore`                | Key-value cache with TTL             | (custom extension)                             |
+| `CodeParser`                | JS/TS AST parsing and JSX annotation | `@veryfront/ext-parser-babel`                  |
+| `ContentProcessor`          | MDX and Markdown compilation         | `@veryfront/ext-content-mdx`                   |
+| `CSSProcessor`              | CSS compilation and utilities        | `@veryfront/ext-css-tailwind`                  |
+| `DatabaseClient`            | SQL query/execute                    | (custom extension)                             |
+| `DocumentExtractor`         | Document text extraction             | `@veryfront/ext-document-kreuzberg`            |
+| `EmbeddingProvider`         | Vector embeddings                    | (custom extension)                             |
+| `LLMProvider`               | Individual LLM provider              | `@veryfront/ext-llm-{anthropic,google,openai}` |
+| `LLMProviderRegistry`       | LLM provider registry                | (built in)                                     |
+| `ModuleLexer`               | ESM import/export analysis           | `@veryfront/ext-bundler-esbuild`               |
+| `SandboxShellToolsProvider` | Sandbox shell tool creation          | `@veryfront/ext-sandbox-shell-tools`           |
+| `SchemaValidator`           | Schema validation DSL                | `@veryfront/ext-schema-zod`                    |
+| `SqliteStore`               | SQLite-backed persistence            | `@veryfront/ext-db-sqlite`                     |
+| `TokenCacheStore`           | Proxy-grade cache with stats         | `@veryfront/ext-cache-redis`                   |
+| `TracingExporter`           | OpenTelemetry span export            | `@veryfront/ext-tracing-opentelemetry`         |
 
-Contract interfaces are importable from `veryfront/extensions/interfaces`:
+Contract interfaces are importable from category entrypoints:
 
 ```ts
-import type { CacheStore } from "veryfront/extensions/interfaces";
+import type { CacheStore } from "veryfront/extensions/cache";
 ```
 
 ## Package metadata
@@ -304,7 +306,7 @@ Bundle multiple extensions into a single installable unit:
 import type { ExtensionFactory } from "veryfront/extensions";
 import extEsbuild from "@veryfront/ext-bundler-esbuild";
 import extTailwind from "@veryfront/ext-css-tailwind";
-import extMdx from "@veryfront/ext-transform-mdx";
+import extMdx from "@veryfront/ext-content-mdx";
 
 const presetWeb: ExtensionFactory = (config?) => ({
   name: "preset-web",
@@ -358,7 +360,7 @@ Test your extension factory and its contract implementation:
 import { assertEquals, assertExists } from "veryfront/testing/assert";
 import { afterEach, describe, it } from "veryfront/testing/bdd";
 import { ExtensionLoader, tryResolve } from "veryfront/extensions";
-import type { CacheStore } from "veryfront/extensions/interfaces";
+import type { CacheStore } from "veryfront/extensions/cache";
 import factory from "./index.ts";
 
 const noopLogger = {
@@ -407,7 +409,7 @@ Here's a complete in-memory cache extension implementing the `CacheStore` contra
 ```ts
 // extensions/memory-cache/src/index.ts
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { CacheStore } from "veryfront/extensions/interfaces";
+import type { CacheStore } from "veryfront/extensions/cache";
 
 interface CacheEntry {
   value: unknown;

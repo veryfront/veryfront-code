@@ -7,7 +7,7 @@
  * @module cli/commands/deploy
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
 import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
@@ -31,7 +31,7 @@ export const getDeployArgsSchema = defineSchema((v) =>
   })
 );
 
-export const DeployArgsSchema = getDeployArgsSchema();
+export const DeployArgsSchema = lazySchema(getDeployArgsSchema);
 
 /**
  * Deploy command options (inferred from schema)

@@ -1,16 +1,21 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "@std/assert";
-import { z } from "zod";
+import { defineSchema } from "../../schemas/define.ts";
 import {
   FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_BLOCK_MESSAGE,
   FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_CONTEXT_KEY,
 } from "../conversation/delegation-policy.ts";
 import { createHostedChildInvokeTool } from "./child-invoke-tool.ts";
 
-const inputSchema = z.object({
-  description: z.string(),
-});
+const inputSchema = defineSchema((v) =>
+  v.object({
+    description: v.string(),
+  })
+)();
 
-type TestInput = z.infer<typeof inputSchema>;
+type TestInput = {
+  description: string;
+};
 
 type TestResult = {
   success: boolean;

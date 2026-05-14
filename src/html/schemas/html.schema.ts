@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getColorSchemeSchema = defineSchema((v) => v.enum(["light", "dark"]));
@@ -80,9 +80,9 @@ export type HTMLGenerationOptions = InferSchema<ReturnType<typeof getHTMLGenerat
 export type HydrationData = InferSchema<ReturnType<typeof getHydrationDataSchema>>;
 
 // Backward compat aliases
-export const colorSchemeSchema = getColorSchemeSchema();
-export const environmentSchema = getEnvironmentSchema();
-export const pageTypeSchema = getPageTypeSchema();
-export const clientModuleStrategySchema = getClientModuleStrategySchema();
-export const HTMLGenerationOptionsSchema = getHTMLGenerationOptionsSchema();
-export const HydrationDataSchema = getHydrationDataSchema();
+export const colorSchemeSchema = lazySchema(getColorSchemeSchema);
+export const environmentSchema = lazySchema(getEnvironmentSchema);
+export const pageTypeSchema = lazySchema(getPageTypeSchema);
+export const clientModuleStrategySchema = lazySchema(getClientModuleStrategySchema);
+export const HTMLGenerationOptionsSchema = lazySchema(getHTMLGenerationOptionsSchema);
+export const HydrationDataSchema = lazySchema(getHydrationDataSchema);

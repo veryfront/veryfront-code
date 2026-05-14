@@ -28,13 +28,15 @@ import {
 ```ts
 import { createMCPServer } from "veryfront/mcp";
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getSearchInput = defineSchema((v) => v.object({ query: v.string() }));
 
 // Tools auto-register with MCP when defined
 tool({
   id: "search",
   description: "Search docs",
-  inputSchema: z.object({ query: z.string() }),
+  inputSchema: lazySchema(getSearchInput),
   execute: async ({ query }) => ({ results: [] }),
 });
 

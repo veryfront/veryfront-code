@@ -18,6 +18,10 @@ export interface DenoLockV5 {
   specifiers?: Record<string, string>;
   npm?: Record<string, { integrity?: string; dependencies?: string[] }>;
   jsr?: Record<string, unknown>;
+  workspace?: {
+    dependencies?: string[];
+    members?: Record<string, { dependencies?: string[] }>;
+  };
 }
 
 /**
@@ -43,6 +47,19 @@ export function parseNameVersion(
   const underscore = version.indexOf("_");
   if (underscore >= 0) version = version.slice(0, underscore);
   return { name, version };
+}
+
+export function canonicalNpmKey(key: string): string | null {
+  const nv = parseNameVersion(key);
+  return nv ? `${nv.name}@${nv.version}` : null;
+}
+
+export function npmNameFromSpecifier(specifier: string): string | null {
+  if (!specifier.startsWith("npm:")) return null;
+  const bare = specifier.slice("npm:".length);
+  const lastAt = bare.lastIndexOf("@");
+  if (lastAt <= 0) return null;
+  return bare.slice(0, lastAt);
 }
 
 /** Build a `pkg:npm/...` Package URL for a name+version pair. */

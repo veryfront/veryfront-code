@@ -36,9 +36,9 @@ Mount the handler on your application-owned MCP route. All auto-discovered tools
 `auth` is a required field. The server fails closed at construction time if
 it is missing. Options:
 
-- `{ type: "bearer", validate }` (recommended for production) — validates a
+- `{ type: "bearer", validate }` (recommended for production): validates a
   bearer token against your own logic.
-- `{ type: "none", allowUnauthenticated: true }` — **local development only**.
+- `{ type: "none", allowUnauthenticated: true }`: **local development only**.
   Must be set explicitly; accepts every request without any check. Do not ship
   this to production.
 
@@ -56,14 +56,16 @@ Tools defined in `tools/` are automatically available via MCP:
 ```ts
 // tools/search-docs.ts
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Search the documentation",
-  inputSchema: z.object({
-    query: z.string().describe("Search query"),
-    limit: z.number().default(10).describe("Max results"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v.string().describe("Search query"),
+      limit: v.number().default(10).describe("Max results"),
+    })
+  )(),
   execute: async ({ query, limit }) => {
     const results = await searchIndex(query, limit);
     return { results };
@@ -118,13 +120,15 @@ For tools, prompts, or resources not in the auto-discovered directories:
 ```ts
 import { registerTool } from "veryfront/mcp";
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getCustomToolInput = defineSchema((v) => v.object({ input: v.string() }));
 
 registerTool(
   "custom-tool",
   tool({
     description: "A custom tool",
-    inputSchema: z.object({ input: z.string() }),
+    inputSchema: lazySchema(getCustomToolInput),
     execute: async ({ input }) => ({ result: input.toUpperCase() }),
   }),
 );
@@ -138,12 +142,12 @@ It is not the same surface as the CLI development server started with `veryfront
 
 ## Next
 
-- [Configuration](./configuration.md) — framework configuration options
-- [Tools](./tools.md) — define the tools MCP exposes
+- [Configuration](./configuration.md): framework configuration options
+- [Tools](./tools.md): define the tools MCP exposes
 
 ## Related
 
-- [`veryfront/mcp`](../reference/mcp.md) — MCP server API reference
-- [`veryfront/tool`](../reference/tool.md) — tool API reference
-- [`veryfront/prompt`](../reference/prompt.md) — prompt API reference
-- [`veryfront/resource`](../reference/resource.md) — resource API reference
+- [`veryfront/mcp`](../reference/mcp.md): MCP server API reference
+- [`veryfront/tool`](../reference/tool.md): tool API reference
+- [`veryfront/prompt`](../reference/prompt.md): prompt API reference
+- [`veryfront/resource`](../reference/resource.md): resource API reference

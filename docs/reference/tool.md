@@ -1,12 +1,12 @@
 ---
 title: "veryfront/tool"
-description: "Define tools with Zod schemas for agents and MCP."
+description: "Define tools with schema-backed inputs for agents and MCP."
 order: 10
 ---
 
 # veryfront/tool
 
-Define tools with Zod schemas for agents and MCP.
+Define tools with schema-backed inputs for agents and MCP.
 
 ## Import
 
@@ -26,12 +26,14 @@ import {
 
 ```ts
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getWeatherInput = defineSchema((v) => v.object({ city: v.string() }));
 
 const weather = tool({
   id: "weather",
   description: "Get current weather for a city",
-  inputSchema: z.object({ city: z.string() }),
+  inputSchema: lazySchema(getWeatherInput),
   execute: async ({ city }) => {
     const res = await fetch(`https://api.weather.com/${city}`);
     return res.json();
@@ -44,12 +46,14 @@ const weather = tool({
 ```ts
 import { tool } from "veryfront/tool";
 import { agent } from "veryfront/agent";
-import { z } from "zod";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getWeatherInput = defineSchema((v) => v.object({ city: v.string() }));
 
 const weather = tool({
   id: "weather",
   description: "Get current weather for a city",
-  inputSchema: z.object({ city: z.string() }),
+  inputSchema: lazySchema(getWeatherInput),
   execute: async ({ city }) => {
     const res = await fetch(`https://api.weather.com/${city}`);
     return res.json();

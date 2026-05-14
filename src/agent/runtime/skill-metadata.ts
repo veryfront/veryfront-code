@@ -1,5 +1,5 @@
 import { extract } from "#std/front-matter/yaml.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 
 function normalizeAllowedTools(value: string | string[] | undefined): string[] {
   if (value === undefined) {
@@ -52,7 +52,7 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeSkillFrontmatterSchema() */
-export const RuntimeSkillFrontmatterSchema = getRuntimeSkillFrontmatterSchema();
+export const RuntimeSkillFrontmatterSchema = lazySchema(getRuntimeSkillFrontmatterSchema);
 
 export type RuntimeSkillDefinition = {
   id: string;

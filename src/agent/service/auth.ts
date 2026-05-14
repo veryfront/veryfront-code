@@ -1,4 +1,5 @@
-import { importSPKI, jwtVerify, type KeyLike } from "jose";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
 
 export type HostedServiceAuthErrorCode =
   | "UNAUTHENTICATED"
@@ -74,11 +75,14 @@ export type HostedServiceAuthFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+export type HostedServiceJwtVerifier = Pick<AuthProvider, "verifyWithPublicKey">;
+
 export type HostedServiceAuthOptions = {
   getConfig: () => HostedServiceAuthConfig;
   logger?: HostedServiceAuthLogger;
   trace?: HostedServiceAuthTrace;
   fetch?: HostedServiceAuthFetch;
+  authProvider?: HostedServiceJwtVerifier;
   projectAccessTimeoutMs?: number;
 };
 
@@ -106,9 +110,6 @@ export type AgentServiceAuthFetch = HostedServiceAuthFetch;
 export type AgentServiceAuthOptions = HostedServiceAuthOptions;
 export type AgentServiceAuth = HostedServiceAuth;
 
-let cachedPublicKeyInput: string | undefined;
-let cachedPublicKeyPromise: Promise<KeyLike> | undefined;
-
 function defaultTrace<TResult>(
   _operationName: string,
   operation: () => Promise<TResult>,
@@ -124,13 +125,10 @@ function getProjectAccessTimeoutMs(options: HostedServiceAuthOptions): number {
   return options.projectAccessTimeoutMs ?? 15_000;
 }
 
-function getPublicKey(publicKeyInput: string): Promise<KeyLike> {
-  if (cachedPublicKeyInput !== publicKeyInput || !cachedPublicKeyPromise) {
-    cachedPublicKeyInput = publicKeyInput;
-    cachedPublicKeyPromise = importSPKI(publicKeyInput, "RS256");
-  }
-
-  return cachedPublicKeyPromise;
+function getAuthProvider(
+  options: HostedServiceAuthOptions,
+): HostedServiceJwtVerifier | undefined {
+  return options.authProvider ?? tryResolve<HostedServiceJwtVerifier>("AuthProvider");
 }
 
 export function getHostedServiceTokenFromRequest(request: Request): string | null {
@@ -269,10 +267,21 @@ export function createHostedServiceAuth(
       }
 
       try {
-        const publicKey = await getPublicKey(config.OAUTH_PUBLIC_KEY);
-        const { payload } = await jwtVerify(token, publicKey, {
+        const authProvider = getAuthProvider(options);
+        if (!authProvider) {
+          return {
+            success: false,
+            error: {
+              statusCode: 500,
+              errorCode: "SERVER_ERROR",
+              message: "JWT auth provider not configured",
+            },
+          };
+        }
+
+        const payload = await authProvider.verifyWithPublicKey(token, config.OAUTH_PUBLIC_KEY, {
           algorithms: ["RS256"],
-        });
+        }) as TokenPayload;
 
         const userId = typeof payload.userId === "string" ? payload.userId : null;
         if (!userId) {

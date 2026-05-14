@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import type {
   RemoteMCPToolSourceConfig,
@@ -5,7 +6,7 @@ import type {
   ToolDefinition,
   ToolExecutionContext,
 } from "#veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "../../schemas/define.ts";
 import {
   filterHostedChatRuntimeLocalTools,
   type HostedChatRuntimeToolAssemblyContext,
@@ -15,7 +16,7 @@ import {
 function localTool(description: string) {
   return {
     description,
-    inputSchema: z.object({}),
+    inputSchema: defineSchema((v) => v.object({}))(),
     execute: () => ({ ok: true }),
   };
 }

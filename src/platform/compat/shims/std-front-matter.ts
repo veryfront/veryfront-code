@@ -1,4 +1,4 @@
-import grayMatterImport from "gray-matter";
+import { parse } from "@std/yaml/parse";
 
 interface FrontMatterResult<T = Record<string, unknown>> {
   attrs: T;
@@ -6,35 +6,27 @@ interface FrontMatterResult<T = Record<string, unknown>> {
   frontMatter: string;
 }
 
-type GrayMatterResult<T> = { data: T; content: string; matter?: string };
-type GrayMatterEngine = { parse: () => never };
-type GrayMatterOptions = { engines?: Record<string, GrayMatterEngine> };
-type GrayMatterFn = <T = Record<string, unknown>>(
-  content: string,
-  options?: GrayMatterOptions,
-) => GrayMatterResult<T>;
-
-const grayMatter = (grayMatterImport as { default?: GrayMatterFn }).default ??
-  (grayMatterImport as GrayMatterFn);
-
-/** Security: override both "js" and "javascript" engine aliases to block eval on untrusted frontmatter */
-const DISABLED_ENGINE: GrayMatterEngine = {
-  parse: () => {
-    throw new Error("JavaScript frontmatter is disabled for security");
-  },
-};
-const SAFE_OPTIONS: GrayMatterOptions = {
-  engines: { js: DISABLED_ENGINE, javascript: DISABLED_ENGINE },
-};
+const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)(?:\r?\n)?---(?:\r?\n|$)([\s\S]*)$/;
 
 export function extract<T = Record<string, unknown>>(
   content: string,
 ): FrontMatterResult<T> {
-  const { data, content: body, matter } = grayMatter<T>(content, SAFE_OPTIONS);
+  const match = content.match(FRONTMATTER_RE);
+  if (!match) {
+    return {
+      attrs: {} as T,
+      body: content,
+      frontMatter: "",
+    };
+  }
+
+  const frontMatter = match[1] ?? "";
+  const parsed = frontMatter.trim() ? parse(frontMatter) : {};
+  const attrs = (parsed && typeof parsed === "object" ? parsed : {}) as T;
   return {
-    attrs: data,
-    body,
-    frontMatter: matter ?? "",
+    attrs,
+    body: match[2] ?? "",
+    frontMatter,
   };
 }
 

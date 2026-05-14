@@ -5,7 +5,7 @@
  * Wraps the same API calls used by the `vf deploy` CLI command.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { getEnvironmentConfig } from "veryfront/config";
@@ -29,7 +29,7 @@ const getTriggerDeployInput = defineSchema((v) =>
     ),
   })
 );
-const triggerDeployInput = getTriggerDeployInput();
+const triggerDeployInput = lazySchema(getTriggerDeployInput);
 
 export type TriggerDeployInput = InferSchema<ReturnType<typeof getTriggerDeployInput>>;
 

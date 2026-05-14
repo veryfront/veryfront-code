@@ -12,7 +12,7 @@ import {
   sleepTool,
   type ToolExecutionContext,
 } from "#veryfront/tool";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { buildExecuteToolTraceAttributes } from "./agent-trace-attributes.ts";
 import type {
@@ -149,14 +149,18 @@ export const getDefaultHostedInvokeAgentSelectionSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getDefaultHostedInvokeAgentSelectionSchema() */
-export const defaultHostedInvokeAgentSelectionSchema = getDefaultHostedInvokeAgentSelectionSchema();
+export const defaultHostedInvokeAgentSelectionSchema = lazySchema(
+  getDefaultHostedInvokeAgentSelectionSchema,
+);
 
 export const getDefaultHostedInvokeAgentInputSchema = defineSchema((v) =>
   getHostedChildForkToolInputSchema().extend(defaultHostedInvokeAgentSelectionFields(v))
 );
 
 /** @deprecated Use getDefaultHostedInvokeAgentInputSchema() */
-export const defaultHostedInvokeAgentInputSchema = getDefaultHostedInvokeAgentInputSchema();
+export const defaultHostedInvokeAgentInputSchema = lazySchema(
+  getDefaultHostedInvokeAgentInputSchema,
+);
 
 export type DefaultHostedInvokeAgentInput = InferSchema<
   ReturnType<typeof getDefaultHostedInvokeAgentInputSchema>

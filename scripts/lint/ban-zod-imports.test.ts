@@ -1,12 +1,12 @@
-import { assertEquals } from "@std/assert";
-import { describe, it } from "@std/testing/bdd";
+import { assertEquals } from "#std/assert";
+import { describe, it } from "jsr:@std/testing/bdd";
 import { findIllegalZodImports, shouldCheckZodImportPath } from "./ban-zod-imports.ts";
 
 describe("findIllegalZodImports", () => {
-  it("flags imports of zod outside extensions/ext-zod", () => {
+  it("flags imports of zod outside extensions/ext-schema-zod", () => {
     const files = [
       { path: "src/foo.ts", content: 'import { z } from "zod";' },
-      { path: "extensions/ext-zod/src/adapter.ts", content: 'import { z } from "zod";' },
+      { path: "extensions/ext-schema-zod/src/adapter.ts", content: 'import { z } from "zod";' },
       { path: "src/bar.ts", content: 'import { defineSchema } from "veryfront/schemas";' },
     ];
     const result = findIllegalZodImports(files);
@@ -71,7 +71,7 @@ describe("findIllegalZodImports", () => {
   it("scans source and cli implementation files only", () => {
     assertEquals(shouldCheckZodImportPath("src/tool/factory.ts"), true);
     assertEquals(shouldCheckZodImportPath("cli/shared/args.ts"), true);
-    assertEquals(shouldCheckZodImportPath("extensions/ext-zod/src/adapter.ts"), false);
+    assertEquals(shouldCheckZodImportPath("extensions/ext-schema-zod/src/adapter.ts"), false);
     assertEquals(shouldCheckZodImportPath("cli/templates/files/ai-agent/tools/search.ts"), false);
     assertEquals(shouldCheckZodImportPath("npm/src/src/tool/factory.ts"), false);
     assertEquals(shouldCheckZodImportPath("projects/demo/tools/search.ts"), false);

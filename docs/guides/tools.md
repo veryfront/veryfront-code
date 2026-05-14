@@ -1,12 +1,12 @@
 ---
 title: "Tools"
-description: "Define tools with Zod schemas that agents can call."
+description: "Define tools with schema-backed inputs that agents can call."
 order: 7
 ---
 
 # Tools
 
-Define tools with Zod schemas that agents can call.
+Define tools with schema-backed inputs that agents can call.
 
 Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
 
@@ -17,14 +17,16 @@ Create a file in `tools/`:
 ```ts
 // tools/get-weather.ts
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Get the current weather for a city",
-  inputSchema: z.object({
-    city: z.string().describe("City name"),
-    units: z.enum(["celsius", "fahrenheit"]).default("celsius"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      city: v.string().describe("City name"),
+      units: v.enum(["celsius", "fahrenheit"]).default("celsius"),
+    })
+  )(),
   execute: async ({ city, units }) => {
     const response = await fetch(`https://api.weather.com/v1?city=${city}&units=${units}`);
     const data = await response.json();
@@ -37,7 +39,7 @@ The filename becomes the tool's ID. This tool registers as `"get-weather"` (hyph
 
 ## How agents use tools
 
-When you add a tool to an agent, the framework sends the Zod schema to the model. The model decides when to call the tool and provides the parameters:
+When you add a tool to an agent, the framework sends the input schema to the model. The model decides when to call the tool and provides the parameters:
 
 ```ts
 // agents/assistant.ts
@@ -54,6 +56,7 @@ In most projects, you can omit `model` and let runtime defaults choose local
 or Veryfront Cloud inference automatically.
 
 When a user asks "What's the weather in Tokyo?", the agent:
+
 1. Sends the question to the model
 2. The model calls `getWeather({ city: "Tokyo" })`
 3. The tool returns `{ temperature: 22, conditions: "sunny" }`
@@ -61,26 +64,28 @@ When a user asks "What's the weather in Tokyo?", the agent:
 
 ## Tool configuration
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `description` | `string` | What the tool does (shown to the model) |
-| `inputSchema` | `z.ZodSchema` | Zod schema for input validation |
-| `execute` | `(params) => Promise<unknown>` | Function that runs when the tool is called |
-| `id` | `string` | Override the auto-generated ID |
+| Property      | Type                           | Description                                |
+| ------------- | ------------------------------ | ------------------------------------------ |
+| `description` | `string`                       | What the tool does (shown to the model)    |
+| `inputSchema` | `Schema<T>`                    | Schema for input validation                |
+| `execute`     | `(params) => Promise<unknown>` | Function that runs when the tool is called |
+| `id`          | `string`                       | Override the auto-generated ID             |
 
 ## Writing good descriptions
 
-The `description` field is what the model reads to decide when to call your tool. Be specific, and use `.describe()` on Zod fields to help the model understand what to pass:
+The `description` field is what the model reads to decide when to call your tool. Be specific, and use `.describe()` on schema fields to help the model understand what to pass:
 
 ```ts
 export default tool({
   description: "Search the product catalog by name, category, or price range",
-  inputSchema: z.object({
-    query: z.string().min(1).describe("Search term"),
-    category: z.string().optional().describe("Filter by category"),
-    maxPrice: z.number().optional().describe("Maximum price in USD"),
-  }),
-  execute: async ({ query, category, maxPrice }) => { /* ... */ },
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v.string().min(1).describe("Search term"),
+      category: v.string().optional().describe("Filter by category"),
+      maxPrice: v.number().optional().describe("Maximum price in USD"),
+    })
+  )(),
+  execute: async ({ query, category, maxPrice }) => {/* ... */},
 });
 ```
 
@@ -117,11 +122,11 @@ export default tool({
 });
 ```
 
-| Context field | Type | Description |
-|---------------|------|-------------|
-| `agentId` | `string` | ID of the agent that called the tool |
-| `projectId` | `string` | Current project identifier |
-| `endUserId` | `string` | End-user identity for per-user token resolution |
+| Context field | Type          | Description                                     |
+| ------------- | ------------- | ----------------------------------------------- |
+| `agentId`     | `string`      | ID of the agent that called the tool            |
+| `projectId`   | `string`      | Current project identifier                      |
+| `endUserId`   | `string`      | End-user identity for per-user token resolution |
 | `blobStorage` | `BlobStorage` | Blob storage access (if configured in workflow) |
 
 Pass context from the API route:
@@ -141,14 +146,16 @@ For one-off tools that don't need auto-discovery, define them inline:
 ```ts
 import { agent } from "veryfront/agent";
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getCalculateInput = defineSchema((v) => v.object({ expression: v.string() }));
 
 export default agent({
   system: "You are a math tutor.",
   tools: {
     calculate: tool({
       description: "Evaluate a math expression",
-      inputSchema: z.object({ expression: z.string() }),
+      inputSchema: lazySchema(getCalculateInput),
       execute: async ({ expression }) => ({ result: eval(expression) }),
     }),
   },
@@ -157,9 +164,9 @@ export default agent({
 
 ## Next
 
-- [Memory & Streaming](./memory-and-streaming.md) — persist conversations across requests
-- [MCP Server](./mcp-server.md) — expose tools over Model Context Protocol
+- [Memory & Streaming](./memory-and-streaming.md): persist conversations across requests
+- [MCP Server](./mcp-server.md): expose tools over Model Context Protocol
 
 ## Related
 
-- [`veryfront/tool`](../reference/tool.md) — tool API reference
+- [`veryfront/tool`](../reference/tool.md): tool API reference

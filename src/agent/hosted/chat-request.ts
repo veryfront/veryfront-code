@@ -1,6 +1,6 @@
 import type { ChatRuntimeOverrides, DurableRootRunDescriptor } from "#veryfront/chat/types.ts";
 import { getChatRequestContextSchema, getChatUiMessagesSchema } from "#veryfront/chat/types.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { RuntimeAgentRunInvocation } from "../runtime/agent-invocation-contract.ts";
 
@@ -21,7 +21,9 @@ export const getHostedDurableRootRunDescriptorSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getHostedDurableRootRunDescriptorSchema() */
-export const hostedDurableRootRunDescriptorSchema = getHostedDurableRootRunDescriptorSchema();
+export const hostedDurableRootRunDescriptorSchema = lazySchema(
+  getHostedDurableRootRunDescriptorSchema,
+);
 
 export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
   v.object({
@@ -32,7 +34,7 @@ export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getHostedChatRuntimeOverridesSchema() */
-export const hostedChatRuntimeOverridesSchema = getHostedChatRuntimeOverridesSchema();
+export const hostedChatRuntimeOverridesSchema = lazySchema(getHostedChatRuntimeOverridesSchema);
 
 export const getHostedChatRequestSchema = defineSchema((v) =>
   v.object({
@@ -47,7 +49,7 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getHostedChatRequestSchema() */
-export const hostedChatRequestSchema = getHostedChatRequestSchema();
+export const hostedChatRequestSchema = lazySchema(getHostedChatRequestSchema);
 
 export type HostedChatRequest = InferSchema<ReturnType<typeof getHostedChatRequestSchema>>;
 export type HostedChatRequestInput = {

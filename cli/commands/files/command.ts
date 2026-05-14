@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 type SafeParseResult<T> = { success: true; data: T } | {
   success: false;
@@ -27,7 +27,7 @@ const getFilesListArgsSchema = defineSchema((v) =>
   })
 );
 
-const FilesListArgsSchema = getFilesListArgsSchema();
+const FilesListArgsSchema = lazySchema(getFilesListArgsSchema);
 
 const getFilesGetArgsSchema = defineSchema((v) =>
   v.object({
@@ -40,7 +40,7 @@ const getFilesGetArgsSchema = defineSchema((v) =>
   })
 );
 
-const FilesGetArgsSchema = getFilesGetArgsSchema();
+const FilesGetArgsSchema = lazySchema(getFilesGetArgsSchema);
 
 const getFilesPutArgsSchema = defineSchema((v) =>
   v.object({
@@ -53,7 +53,7 @@ const getFilesPutArgsSchema = defineSchema((v) =>
   })
 );
 
-const FilesPutArgsSchema = getFilesPutArgsSchema();
+const FilesPutArgsSchema = lazySchema(getFilesPutArgsSchema);
 
 const getFilesDeleteArgsSchema = defineSchema((v) =>
   v.object({
@@ -65,7 +65,7 @@ const getFilesDeleteArgsSchema = defineSchema((v) =>
   })
 );
 
-const FilesDeleteArgsSchema = getFilesDeleteArgsSchema();
+const FilesDeleteArgsSchema = lazySchema(getFilesDeleteArgsSchema);
 
 export type FilesListOptions = InferSchema<ReturnType<typeof getFilesListArgsSchema>>;
 export type FilesGetOptions = InferSchema<ReturnType<typeof getFilesGetArgsSchema>>;

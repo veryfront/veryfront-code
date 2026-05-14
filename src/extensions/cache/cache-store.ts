@@ -1,7 +1,7 @@
 /**
  * Contract interface for key-value cache stores.
  *
- * Default implementation: `@veryfront/ext-cache-redis`
+ * No default first-party implementation is currently shipped.
  *
  * @module extensions/cache/cache-store
  */

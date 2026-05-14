@@ -190,7 +190,16 @@ const extOpenTelemetry: ExtensionFactory = () => {
     version: "0.1.0",
     capabilities: [
       { type: "contract", name: "TracingExporter" },
-      { type: "net", hosts: ["*"] },
+      { type: "net:outbound", hosts: ["*"] },
+      {
+        type: "env:read",
+        keys: [
+          "OTEL_EXPORTER_OTLP_ENDPOINT",
+          "OTEL_EXPORTER_OTLP_HEADERS",
+          "OTEL_SERVICE_NAME",
+          "OTEL_TRACES_ENABLED",
+        ],
+      },
     ],
     async setup(ctx) {
       await exporterImpl.start(ctx.config);

@@ -2,7 +2,7 @@
  * Routes command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { cwd } from "veryfront/platform";
 import { routesCommand } from "./command.ts";
 import { showLogo } from "#cli/utils";
@@ -16,7 +16,7 @@ const getRoutesArgsSchema = defineSchema((v) =>
   })
 );
 
-const RoutesArgsSchema = getRoutesArgsSchema();
+const RoutesArgsSchema = lazySchema(getRoutesArgsSchema);
 
 export const parseRoutesArgs = createArgParser(RoutesArgsSchema, {
   projectDir: CommonArgs.projectDir,

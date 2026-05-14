@@ -1,9 +1,8 @@
-import { compile as compileMdx } from "@mdx-js/mdx";
 import { bundlerLogger as logger } from "#veryfront/utils";
-import type { PluggableList } from "unified";
 import { extract } from "#std/front-matter/yaml.ts";
 import { dirname, join } from "#veryfront/compat/path/index.ts";
-import { getRehypePlugins, getRemarkPlugins } from "#veryfront/transforms/plugins/plugin-loader.ts";
+import { resolve as resolveContract } from "#veryfront/extensions/contracts.ts";
+import type { ContentPlugin, ContentProcessor } from "#veryfront/extensions/content/index.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import { MODULE_NOT_FOUND } from "#veryfront/errors";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
@@ -77,9 +76,6 @@ export function bundleMdx(
       try {
         const { body, frontmatter } = extractFrontmatter(source.content);
 
-        const remarkPlugins = (await getRemarkPlugins()) as unknown as PluggableList;
-        const rehypePlugins = (await getRehypePlugins()) as unknown as PluggableList;
-
         const processedContent = await processImports(
           body,
           source.path,
@@ -109,12 +105,15 @@ export function bundleMdx(
           },
         );
 
-        const compiled = await compileMdx(processedContent, {
+        const processor = resolveContract<ContentProcessor>("ContentProcessor");
+        const compiled = await processor.compileMdx({
+          projectDir: options.projectDir,
+          content: processedContent,
+          frontmatter,
+          filePath: source.path,
+          mode: options.mode,
+          target: "server",
           outputFormat: "function-body",
-          development: options.mode === "development",
-          remarkPlugins: normalizePlugins(remarkPlugins),
-          rehypePlugins: normalizePlugins(rehypePlugins),
-          providerImportSource: undefined,
         });
 
         const slug = getSlugFromPath(source.path);
@@ -129,7 +128,7 @@ export function bundleMdx(
 import React from 'react';
 import { useMDXComponents } from '../shared/components/MDXProvider.tsx';
 
-${String(compiled)}
+${compiled.compiledCode}
 
 export default function MDXContent(props) {
   const components = useMDXComponents();
@@ -183,27 +182,20 @@ export function bundleMDXWithOptions(options: MDXBundleOptions): Promise<MDXBund
       try {
         const { body, frontmatter } = extractFrontmatter(content);
 
-        const defaultRemarkPlugins = (await getRemarkPlugins()) as unknown as PluggableList;
-        const defaultRehypePlugins = (await getRehypePlugins()) as unknown as PluggableList;
-
-        const allRemarkPlugins = [
-          ...normalizePlugins(defaultRemarkPlugins),
-          ...normalizePlugins(remarkPlugins as PluggableList),
-        ];
-        const allRehypePlugins = [
-          ...normalizePlugins(defaultRehypePlugins),
-          ...normalizePlugins(rehypePlugins as PluggableList),
-        ];
-
-        const compiled = await compileMdx(body, {
+        const processor = resolveContract<ContentProcessor>("ContentProcessor");
+        const compiled = await processor.compileMdx({
+          projectDir: options.projectDir,
+          content: body,
+          frontmatter,
+          filePath,
+          mode,
+          target: "server",
           outputFormat: "function-body",
-          development: mode === "development",
-          remarkPlugins: allRemarkPlugins,
-          rehypePlugins: allRehypePlugins,
-          providerImportSource: undefined,
+          remarkPlugins: normalizePlugins(remarkPlugins as ContentPlugin[]),
+          rehypePlugins: normalizePlugins(rehypePlugins as ContentPlugin[]),
         });
 
-        const compiledStr = String(compiled);
+        const compiledStr = compiled.compiledCode;
         const dependencies = extractImports(compiledStr);
 
         const globalKeys = Object.keys(globals);

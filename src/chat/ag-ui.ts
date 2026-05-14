@@ -11,7 +11,7 @@ import {
 } from "./ag-ui-helpers.ts";
 import type { ChatStreamEvent } from "./protocol.ts";
 import type { ChatUiMessage, ChatUiMessagePart } from "./types.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 type JsonPatchOperation = {
@@ -104,7 +104,7 @@ export const getAgUiRunFinishedMetadataSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAgUiRunFinishedMetadataSchema() */
-export const AgUiRunFinishedMetadataSchema = getAgUiRunFinishedMetadataSchema();
+export const AgUiRunFinishedMetadataSchema = lazySchema(getAgUiRunFinishedMetadataSchema);
 
 export const getAgUiSnapshotToolCallSchema = defineSchema((v) =>
   v.object({
@@ -119,7 +119,7 @@ export const getAgUiSnapshotToolCallSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAgUiSnapshotToolCallSchema() */
-export const AgUiSnapshotToolCallSchema = getAgUiSnapshotToolCallSchema();
+export const AgUiSnapshotToolCallSchema = lazySchema(getAgUiSnapshotToolCallSchema);
 
 const getAgUiUserInputContentSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
@@ -174,7 +174,7 @@ export const getAgUiSnapshotMessageSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAgUiSnapshotMessageSchema() */
-export const AgUiSnapshotMessageSchema = getAgUiSnapshotMessageSchema();
+export const AgUiSnapshotMessageSchema = lazySchema(getAgUiSnapshotMessageSchema);
 
 export const getAgUiWireEventNameSchema = defineSchema((v) =>
   v.enum([
@@ -200,7 +200,7 @@ export const getAgUiWireEventNameSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAgUiWireEventNameSchema() */
-export const AgUiWireEventNameSchema = getAgUiWireEventNameSchema();
+export const AgUiWireEventNameSchema = lazySchema(getAgUiWireEventNameSchema);
 
 function parseRuntimeToolInput(rawArguments: string): unknown {
   try {
@@ -515,7 +515,7 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAgUiWireEventSchema() */
-export const AgUiWireEventSchema = getAgUiWireEventSchema();
+export const AgUiWireEventSchema = lazySchema(getAgUiWireEventSchema);
 
 export type AgUiRunFinishedMetadata = InferSchema<
   ReturnType<typeof getAgUiRunFinishedMetadataSchema>

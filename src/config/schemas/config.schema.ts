@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferInput, InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ConfigContext, createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
@@ -620,7 +620,7 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
     })
     .partial()
 );
-export const veryfrontConfigSchema = getVeryfrontConfigSchema();
+export const veryfrontConfigSchema = lazySchema(getVeryfrontConfigSchema);
 
 // Inferred types
 export type VeryfrontConfig = InferSchema<ReturnType<typeof getVeryfrontConfigSchema>>;

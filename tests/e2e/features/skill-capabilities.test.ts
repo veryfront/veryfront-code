@@ -113,13 +113,13 @@ export default agent({
 `,
       "tools/get-weather.ts": `
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Return a deterministic weather report",
-  inputSchema: z.object({
-    city: z.string(),
-  }),
+  inputSchema: defineSchema((v) => v.object({
+    city: v.string(),
+  }))(),
   execute: async ({ city }) => ({
     city,
     forecast: "sunny",
@@ -137,11 +137,11 @@ export default prompt({
 `,
       "resources/project-notes.ts": `
 import { resource } from "veryfront/resource";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default resource({
   description: "Load the current project notes",
-  paramsSchema: z.object({}),
+  paramsSchema: defineSchema((v) => v.object({}))(),
   load: async () => ({
     content: "Notes for launch-plan",
   }),
@@ -421,11 +421,11 @@ export default function Home() {
 `,
       "tools/get-weather.ts": `
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Return a deterministic weather report",
-  inputSchema: z.object({ city: z.string() }),
+  inputSchema: defineSchema((v) => v.object({ city: v.string() }))(),
   execute: async ({ city }) => ({ city, forecast: "clear" }),
 });
 `,
@@ -532,11 +532,11 @@ export const POST = createChatHandler("custom-assistant");
 `,
       "tooling/get-weather.ts": `
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Return a deterministic weather report",
-  inputSchema: z.object({ city: z.string() }),
+  inputSchema: defineSchema((v) => v.object({ city: v.string() }))(),
   execute: async ({ city }) => ({ city, forecast: "windy" }),
 });
 `,

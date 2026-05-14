@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import type { CommandCategory } from "../../help/types.ts";
@@ -10,7 +10,7 @@ const getSchemaArgsSchema = defineSchema((v) =>
   })
 );
 
-const SchemaArgsSchema = getSchemaArgsSchema();
+const SchemaArgsSchema = lazySchema(getSchemaArgsSchema);
 
 const parseSchemaArgs = createArgParser(SchemaArgsSchema, {
   category: { keys: ["category", "c"], type: "string" },

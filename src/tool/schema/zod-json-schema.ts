@@ -4,7 +4,7 @@
  * Historically this module was the in-tree zod-to-JSON-Schema converter.
  * After Phase B2 the conversion lives behind the `SchemaValidator`
  * contract (`toJsonSchema` / `isOptional`) and the zod-aware logic moved
- * to `extensions/ext-zod/src/json-schema.ts`. This file is kept as a
+ * to `extensions/ext-schema-zod/src/json-schema.ts`. This file is kept as a
  * back-compat surface so existing callers (`tool/registry.ts`,
  * `tool/factory.ts`, `workflow/registry.ts`, `routing/api/openapi/...`,
  * `mcp/server.ts`, `cli/mcp/server.ts`) continue to compile.
@@ -23,7 +23,7 @@ import {
   schemaToJsonSchema,
 } from "#veryfront/schemas/json-schema.ts";
 
-/** Detect contract `Schema<T>` (carries a `__zod` brand from the ext-zod adapter). */
+/** Detect contract `Schema<T>` (carries a `__zod` brand from the ext-schema-zod adapter). */
 function isContractSchema(value: unknown): value is Schema<unknown> {
   if (value === null || typeof value !== "object") return false;
   if ("__zod" in value) return true;

@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { DEFAULT_DEV_SERVER_PORT } from "#cli/utils";
 import { serveCommand } from "./command.ts";
 import { ServerModeSchema } from "#cli/shared/types";
@@ -17,7 +17,7 @@ const getServeArgsSchema = defineSchema((v) =>
   })
 );
 
-const ServeArgsSchema = getServeArgsSchema();
+const ServeArgsSchema = lazySchema(getServeArgsSchema);
 
 export const parseServeArgs = createArgParser(ServeArgsSchema, {
   mode: { keys: ["mode", "m"], type: "string" },

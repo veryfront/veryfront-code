@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { extractRequest } from "./request-shared.ts";
 import {
@@ -23,7 +23,7 @@ export const getAgUiResumeSignalSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAgUiResumeSignalSchema() */
-export const AgUiResumeSignalSchema = getAgUiResumeSignalSchema();
+export const AgUiResumeSignalSchema = lazySchema(getAgUiResumeSignalSchema);
 
 export type AgUiResumeSignal = InferSchema<ReturnType<typeof getAgUiResumeSignalSchema>>;
 

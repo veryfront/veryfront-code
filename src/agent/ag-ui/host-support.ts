@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { formatAgUiEvent } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import type { Message } from "../types.ts";
@@ -103,11 +103,11 @@ export const getAgUiRequestSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getAgUiInjectedToolSchema() */
-export const AgUiInjectedToolSchema = getAgUiInjectedToolSchema();
+export const AgUiInjectedToolSchema = lazySchema(getAgUiInjectedToolSchema);
 /** @deprecated Use getAgUiContextItemSchema() */
-export const AgUiContextItemSchema = getAgUiContextItemSchema();
+export const AgUiContextItemSchema = lazySchema(getAgUiContextItemSchema);
 /** @deprecated Use getAgUiRequestSchema() */
-export const AgUiRequestSchema = getAgUiRequestSchema();
+export const AgUiRequestSchema = lazySchema(getAgUiRequestSchema);
 
 export type AgUiInjectedTool = InferSchema<ReturnType<typeof getAgUiInjectedToolSchema>>;
 export type AgUiContextItem = InferSchema<ReturnType<typeof getAgUiContextItemSchema>>;

@@ -1,85 +1,160 @@
-import { z } from "zod";
+import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import { defineSchema } from "../../schemas/define.ts";
+import { lazySchema } from "../../schemas/lazy.ts";
 
-export const agentServiceRegistrationModeSchema = z.enum([
-  "auto",
-  "enabled",
-  "disabled",
-]);
+export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
+export type AgentServiceRegistrationConfig = {
+  VERYFRONT_API_URL: string;
+  VERYFRONT_API_TOKEN?: string;
+  VERYFRONT_PROJECT_ID?: string;
+  VERYFRONT_AGENT_SERVICE_URL?: string;
+  VERYFRONT_AGENT_SERVICE_KEY?: string;
+  VERYFRONT_AGENT_SERVICE_REGISTRATION: AgentServiceRegistrationMode;
+  VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: number;
+  VERYFRONT_AGENT_SERVICE_REGION?: string;
+};
+export type ResolvedAgentServiceRegistrationInput = {
+  apiUrl: string;
+  authToken: string;
+  serviceName: string;
+  serviceKey: string;
+  scopeKind: "global" | "project";
+  projectId?: string;
+  agentId?: string;
+  baseUrl: string;
+  invokeUrl: string;
+  version?: string;
+  runtime?: string;
+  region?: string;
+  heartbeatIntervalMs: number;
+};
+export type AgentPushRuntimeServiceRest = {
+  id: string;
+  service_name: string;
+  service_key: string;
+  scope_kind: "global" | "project";
+  scope_key: string;
+  project_id: string | null;
+  agent_id: string | null;
+  base_url: string;
+  invoke_url: string;
+  status: "active" | "disabled";
+  capabilities?: unknown | null;
+  metadata?: unknown | null;
+  version: string | null;
+  runtime: string | null;
+  region: string | null;
+  last_heartbeat_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+export type RegisterAgentPushRuntimeServiceRequest = {
+  service_name: string;
+  service_key: string;
+  scope_kind: "global" | "project";
+  project_id?: string;
+  agent_id?: string;
+  base_url: string;
+  invoke_url: string;
+  version?: string;
+  runtime?: string;
+  region?: string;
+};
 
-export const agentServiceRegistrationConfigSchema = z.object({
-  VERYFRONT_API_URL: z.string().url(),
-  VERYFRONT_API_TOKEN: z.string().min(1).optional(),
-  VERYFRONT_PROJECT_ID: z.string().min(1).optional(),
-  VERYFRONT_AGENT_SERVICE_URL: z.string().url().optional(),
-  VERYFRONT_AGENT_SERVICE_KEY: z.string().min(1).max(128).optional(),
-  VERYFRONT_AGENT_SERVICE_REGISTRATION: agentServiceRegistrationModeSchema,
-  VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: z.number().positive(),
-  VERYFRONT_AGENT_SERVICE_REGION: z.string().min(1).max(128).optional(),
-});
+function agentServiceRegistrationMode(
+  v: SchemaValidator,
+): Schema<AgentServiceRegistrationMode> {
+  return v.enum(["auto", "enabled", "disabled"] as const);
+}
 
-export const resolvedAgentServiceRegistrationInputSchema = z.object({
-  apiUrl: z.string().url(),
-  authToken: z.string().min(1),
-  serviceName: z.string().min(1).max(128),
-  serviceKey: z.string().min(1).max(128),
-  scopeKind: z.enum(["global", "project"]),
-  projectId: z.string().min(1).optional(),
-  agentId: z.string().min(1).max(128).optional(),
-  baseUrl: z.string().url(),
-  invokeUrl: z.string().url(),
-  version: z.string().min(1).max(128).optional(),
-  runtime: z.string().min(1).max(128).optional(),
-  region: z.string().min(1).max(128).optional(),
-  heartbeatIntervalMs: z.number().positive(),
-});
+export const agentServiceRegistrationModeSchema = lazySchema(
+  defineSchema<AgentServiceRegistrationMode>(agentServiceRegistrationMode),
+);
 
-const agentPushRuntimeServiceRestSchema = z.object({
-  id: z.string().uuid(),
-  service_name: z.string(),
-  service_key: z.string(),
-  scope_kind: z.enum(["global", "project"]),
-  scope_key: z.string(),
-  project_id: z.string().nullable(),
-  agent_id: z.string().nullable(),
-  base_url: z.string().url(),
-  invoke_url: z.string().url(),
-  status: z.enum(["active", "disabled"]),
-  capabilities: z.unknown().nullable(),
-  metadata: z.unknown().nullable(),
-  version: z.string().nullable(),
-  runtime: z.string().nullable(),
-  region: z.string().nullable(),
-  last_heartbeat_at: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
-});
+export const agentServiceRegistrationConfigSchema = lazySchema(
+  defineSchema<AgentServiceRegistrationConfig>((v) =>
+    v.object({
+      VERYFRONT_API_URL: v.string().url(),
+      VERYFRONT_API_TOKEN: v.string().min(1).optional(),
+      VERYFRONT_PROJECT_ID: v.string().min(1).optional(),
+      VERYFRONT_AGENT_SERVICE_URL: v.string().url().optional(),
+      VERYFRONT_AGENT_SERVICE_KEY: v.string().min(1).max(128).optional(),
+      VERYFRONT_AGENT_SERVICE_REGISTRATION: agentServiceRegistrationMode(v),
+      VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: v.number().positive(),
+      VERYFRONT_AGENT_SERVICE_REGION: v.string().min(1).max(128).optional(),
+    })
+  ),
+);
 
-const agentPushRuntimeServiceResponseSchema = z.object({
-  service: agentPushRuntimeServiceRestSchema,
-});
+export const resolvedAgentServiceRegistrationInputSchema = lazySchema(
+  defineSchema<ResolvedAgentServiceRegistrationInput>((v) =>
+    v.object({
+      apiUrl: v.string().url(),
+      authToken: v.string().min(1),
+      serviceName: v.string().min(1).max(128),
+      serviceKey: v.string().min(1).max(128),
+      scopeKind: v.enum(["global", "project"] as const),
+      projectId: v.string().min(1).optional(),
+      agentId: v.string().min(1).max(128).optional(),
+      baseUrl: v.string().url(),
+      invokeUrl: v.string().url(),
+      version: v.string().min(1).max(128).optional(),
+      runtime: v.string().min(1).max(128).optional(),
+      region: v.string().min(1).max(128).optional(),
+      heartbeatIntervalMs: v.number().positive(),
+    })
+  ),
+);
 
-const registerAgentPushRuntimeServiceRequestSchema = z.object({
-  service_name: z.string().min(1).max(128),
-  service_key: z.string().min(1).max(128),
-  scope_kind: z.enum(["global", "project"]),
-  project_id: z.string().optional(),
-  agent_id: z.string().optional(),
-  base_url: z.string().url(),
-  invoke_url: z.string().url(),
-  version: z.string().optional(),
-  runtime: z.string().optional(),
-  region: z.string().optional(),
-});
+function agentPushRuntimeServiceRest(
+  v: SchemaValidator,
+): Schema<AgentPushRuntimeServiceRest> {
+  return v.object({
+    id: v.string().uuid(),
+    service_name: v.string(),
+    service_key: v.string(),
+    scope_kind: v.enum(["global", "project"] as const),
+    scope_key: v.string(),
+    project_id: v.string().nullable(),
+    agent_id: v.string().nullable(),
+    base_url: v.string().url(),
+    invoke_url: v.string().url(),
+    status: v.enum(["active", "disabled"] as const),
+    capabilities: v.unknown().nullable(),
+    metadata: v.unknown().nullable(),
+    version: v.string().nullable(),
+    runtime: v.string().nullable(),
+    region: v.string().nullable(),
+    last_heartbeat_at: v.string().nullable(),
+    created_at: v.string(),
+    updated_at: v.string(),
+  });
+}
 
-export type AgentServiceRegistrationMode = z.infer<typeof agentServiceRegistrationModeSchema>;
-export type AgentServiceRegistrationConfig = z.infer<typeof agentServiceRegistrationConfigSchema>;
-export type ResolvedAgentServiceRegistrationInput = z.infer<
-  typeof resolvedAgentServiceRegistrationInputSchema
->;
-export type AgentPushRuntimeServiceRest = z.infer<typeof agentPushRuntimeServiceRestSchema>;
-export type RegisterAgentPushRuntimeServiceRequest = z.infer<
-  typeof registerAgentPushRuntimeServiceRequestSchema
->;
+const agentPushRuntimeServiceResponseSchema = lazySchema(
+  defineSchema<{ service: AgentPushRuntimeServiceRest }>((v) =>
+    v.object({
+      service: agentPushRuntimeServiceRest(v),
+    })
+  ),
+);
+
+const registerAgentPushRuntimeServiceRequestSchema = lazySchema(
+  defineSchema<RegisterAgentPushRuntimeServiceRequest>((v) =>
+    v.object({
+      service_name: v.string().min(1).max(128),
+      service_key: v.string().min(1).max(128),
+      scope_kind: v.enum(["global", "project"] as const),
+      project_id: v.string().optional(),
+      agent_id: v.string().optional(),
+      base_url: v.string().url(),
+      invoke_url: v.string().url(),
+      version: v.string().optional(),
+      runtime: v.string().optional(),
+      region: v.string().optional(),
+    })
+  ),
+);
 
 export type AgentServiceRegistrationLogger = {
   info?: (message: string, metadata?: Record<string, unknown>) => void;

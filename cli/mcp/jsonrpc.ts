@@ -4,7 +4,7 @@
  * @module cli/mcp/jsonrpc
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 
 /**
@@ -18,7 +18,7 @@ export const getJSONRPCRequestSchema = defineSchema((v) =>
     params: v.unknown().optional(),
   })
 );
-export const JSONRPCRequestSchema = getJSONRPCRequestSchema();
+export const JSONRPCRequestSchema = lazySchema(getJSONRPCRequestSchema);
 
 export type JSONRPCRequest = InferSchema<ReturnType<typeof getJSONRPCRequestSchema>>;
 
@@ -163,7 +163,7 @@ export const getToolsCallParamsSchema = defineSchema((v) =>
     arguments: v.record(v.string(), v.unknown()).optional(),
   })
 );
-export const ToolsCallParamsSchema = getToolsCallParamsSchema();
+export const ToolsCallParamsSchema = lazySchema(getToolsCallParamsSchema);
 
 /**
  * Validate and extract prompts/get params
@@ -173,7 +173,7 @@ export const getPromptsGetParamsSchema = defineSchema((v) =>
     name: v.string(),
   })
 );
-export const PromptsGetParamsSchema = getPromptsGetParamsSchema();
+export const PromptsGetParamsSchema = lazySchema(getPromptsGetParamsSchema);
 
 /**
  * Validate and extract resources/read params
@@ -183,4 +183,4 @@ export const getResourcesReadParamsSchema = defineSchema((v) =>
     uri: v.string(),
   })
 );
-export const ResourcesReadParamsSchema = getResourcesReadParamsSchema();
+export const ResourcesReadParamsSchema = lazySchema(getResourcesReadParamsSchema);

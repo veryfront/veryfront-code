@@ -9,7 +9,7 @@
  */
 
 import { createClient, type RedisClientType } from "redis";
-import type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "veryfront/extensions";
+import type { TokenCacheEntry, TokenCacheStats, TokenCacheStore } from "veryfront/extensions/cache";
 
 const DEFAULT_PREFIX = "vf:token:";
 const DEFAULT_CONNECT_TIMEOUT_MS = 5_000;

@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 const DEFAULT_PROJECT_FILES_TIMEOUT_MS = 15_000;
@@ -35,9 +35,9 @@ const getApiErrorBodySchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeProjectFileSchema() */
-export const runtimeProjectFileSchema = getRuntimeProjectFileSchema();
+export const runtimeProjectFileSchema = lazySchema(getRuntimeProjectFileSchema);
 /** @deprecated Use getRuntimeProjectFileListItemSchema() */
-export const runtimeProjectFileListItemSchema = getRuntimeProjectFileListItemSchema();
+export const runtimeProjectFileListItemSchema = lazySchema(getRuntimeProjectFileListItemSchema);
 
 export type RuntimeProjectFile = InferSchema<ReturnType<typeof getRuntimeProjectFileSchema>>;
 export type RuntimeProjectFileListItem = InferSchema<

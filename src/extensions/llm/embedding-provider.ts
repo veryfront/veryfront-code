@@ -1,7 +1,7 @@
 /**
  * Contract interface for text embedding providers.
  *
- * Default implementation: `@veryfront/ext-embeddings`
+ * No default first-party implementation is currently shipped.
  *
  * @module extensions/llm/embedding-provider
  */

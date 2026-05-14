@@ -1,5 +1,5 @@
 import { extract } from "#std/front-matter/yaml.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import { createRuntimePromptBlock } from "./prompt-block.ts";
@@ -14,7 +14,7 @@ export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentThinkingConfigSchema() */
-export const runtimeAgentThinkingConfigSchema = getRuntimeAgentThinkingConfigSchema();
+export const runtimeAgentThinkingConfigSchema = lazySchema(getRuntimeAgentThinkingConfigSchema);
 
 export type RuntimeAgentThinkingConfig = InferSchema<
   ReturnType<typeof getRuntimeAgentThinkingConfigSchema>
@@ -35,7 +35,9 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
 export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-context -->";
 
 /** @deprecated Use getRuntimeAgentMarkdownDefinitionSchema() */
-export const runtimeAgentMarkdownDefinitionSchema = getRuntimeAgentMarkdownDefinitionSchema();
+export const runtimeAgentMarkdownDefinitionSchema = lazySchema(
+  getRuntimeAgentMarkdownDefinitionSchema,
+);
 
 export type RuntimeAgentMarkdownDefinition = InferSchema<
   ReturnType<typeof getRuntimeAgentMarkdownDefinitionSchema>
@@ -49,8 +51,9 @@ export const getParseRuntimeAgentMarkdownDefinitionInputSchema = defineSchema((v
 );
 
 /** @deprecated Use getParseRuntimeAgentMarkdownDefinitionInputSchema() */
-export const parseRuntimeAgentMarkdownDefinitionInputSchema =
-  getParseRuntimeAgentMarkdownDefinitionInputSchema();
+export const parseRuntimeAgentMarkdownDefinitionInputSchema = lazySchema(
+  getParseRuntimeAgentMarkdownDefinitionInputSchema,
+);
 
 export type ParseRuntimeAgentMarkdownDefinitionInput = InferSchema<
   ReturnType<typeof getParseRuntimeAgentMarkdownDefinitionInputSchema>

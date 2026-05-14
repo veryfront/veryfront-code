@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getRepositoryContextSchema = defineSchema((v) =>
@@ -36,6 +36,6 @@ export type CacheRepositoryOptions = InferSchema<
 >;
 
 // Backward compat aliases
-export const RepositoryContextSchema = getRepositoryContextSchema();
-export const CacheStatsSchema = getCacheStatsSchema();
-export const CacheRepositoryOptionsSchema = getCacheRepositoryOptionsSchema();
+export const RepositoryContextSchema = lazySchema(getRepositoryContextSchema);
+export const CacheStatsSchema = lazySchema(getCacheStatsSchema);
+export const CacheRepositoryOptionsSchema = lazySchema(getCacheRepositoryOptionsSchema);

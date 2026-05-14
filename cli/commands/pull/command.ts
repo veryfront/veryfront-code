@@ -7,7 +7,7 @@
  * @module cli/commands/pull
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { dirname, join, normalize, resolve } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
@@ -42,7 +42,7 @@ export const getPullArgsSchema = defineSchema((v) =>
   })
 );
 
-export const PullArgsSchema = getPullArgsSchema();
+export const PullArgsSchema = lazySchema(getPullArgsSchema);
 
 export type PullArgs = InferSchema<ReturnType<typeof getPullArgsSchema>>;
 

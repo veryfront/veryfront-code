@@ -40,7 +40,7 @@ async function parseManually(content: string): Promise<ParsedContent | null> {
   }
 
   try {
-    const { parse } = await import("std/yaml/parse.ts");
+    const { parse } = await import("@std/yaml/parse");
     const parsed = parse(frontmatterText);
     const frontmatter = (parsed && typeof parsed === "object" ? parsed : {}) as MDXFrontmatter;
 

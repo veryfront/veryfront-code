@@ -7,7 +7,14 @@
 import { assertEquals } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
-import { createLocalJWKSet, exportJWK, generateKeyPair, type JSONWebKeySet, SignJWT } from "jose";
+import {
+  createLocalJWKSet,
+  exportJWK,
+  exportSPKI,
+  generateKeyPair,
+  type JSONWebKeySet,
+  SignJWT,
+} from "jose";
 
 import factory, { type JwksResolver } from "./index.ts";
 
@@ -27,6 +34,7 @@ describe("ext-auth-jwt factory", () => {
     assertEquals(typeof auth.sign, "function");
     assertEquals(typeof auth.verify, "function");
     assertEquals(typeof auth.verifyWithJwks, "function");
+    assertEquals(typeof auth.verifyWithPublicKey, "function");
     assertEquals(typeof auth.decode, "function");
   });
 });
@@ -117,6 +125,32 @@ describe("ext-auth-jwt AuthProvider", () => {
     );
     assertEquals(payload2.sub, "user-jwks");
     assertEquals(factoryCalls, 1);
+  });
+
+  it("verifyWithPublicKey verifies an RS256 token against a PEM public key", async () => {
+    const { privateKey, publicKey } = await generateKeyPair("RS256");
+    const token = await new SignJWT({ sub: "user-public-key", userId: "user-123" })
+      .setProtectedHeader({ alg: "RS256" })
+      .setExpirationTime("1h")
+      .sign(privateKey);
+
+    const ext = factory({ secret: TEST_SECRET });
+    const auth = ext.provides!.AuthProvider as {
+      verifyWithPublicKey: (
+        token: string,
+        publicKeyPem: string,
+        opts?: { algorithms?: string[] },
+      ) => Promise<{ sub: string; userId?: string }>;
+    };
+
+    const payload = await auth.verifyWithPublicKey(
+      token,
+      await exportSPKI(publicKey),
+      { algorithms: ["RS256"] },
+    );
+
+    assertEquals(payload.sub, "user-public-key");
+    assertEquals(payload.userId, "user-123");
   });
 
   it("decode returns the protected header for a well-formed token", async () => {

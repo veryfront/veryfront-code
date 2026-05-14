@@ -5,7 +5,7 @@
 import { dirname, join } from "veryfront/platform/path";
 import { cwd as getCwd } from "veryfront/platform";
 import { exists, readDir, remove } from "veryfront/platform";
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { bold, brand, multiSelect, type MultiSelectOption, muted, success, warning } from "#cli/ui";
 import { AI_TOOLS, getToolById } from "./registry.ts";
@@ -42,7 +42,7 @@ async function isDirEmpty(path: string): Promise<boolean> {
 
 const getAIToolIdArraySchema = defineSchema((v) => v.array(AIToolIdSchema).min(1));
 
-const AIToolIdArraySchema = getAIToolIdArraySchema();
+const AIToolIdArraySchema = lazySchema(getAIToolIdArraySchema);
 
 export async function uninstallTargets(
   targets: AIToolId[],

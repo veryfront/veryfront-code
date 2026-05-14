@@ -5,12 +5,12 @@ import {
   assertStrictEquals,
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { exportSPKI, generateKeyPair, SignJWT } from "jose";
 import {
   createHostedServiceAuth,
   getHostedServiceTokenFromRequest,
   HostedServiceAuthError,
   type HostedServiceAuthFetch,
+  type HostedServiceJwtVerifier,
 } from "./auth.ts";
 
 type JwtFixture = {
@@ -25,12 +25,45 @@ type FetchCall = {
 
 function encodeBase64Url(value: string): string {
   const bytes = new TextEncoder().encode(value);
+  return encodeBase64UrlBytes(bytes);
+}
+
+function encodeBase64UrlBytes(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) {
     binary += String.fromCharCode(byte);
   }
 
   return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function decodeBase64UrlBytes(input: string): Uint8Array {
+  const normalized = input.replace(/-/g, "+").replace(/_/g, "/");
+  const paddingLength = (4 - (normalized.length % 4)) % 4;
+  const binary = atob(`${normalized}${"=".repeat(paddingLength)}`);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function encodeJsonBase64Url(value: Record<string, unknown>): string {
+  return encodeBase64Url(JSON.stringify(value));
+}
+
+function spkiDerToPem(der: ArrayBuffer): string {
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
+  const lines = base64.match(/.{1,64}/g) ?? [];
+  return `-----BEGIN PUBLIC KEY-----\n${lines.join("\n")}\n-----END PUBLIC KEY-----`;
+}
+
+function pemToSpkiDer(publicKeyPem: string): Uint8Array {
+  const base64 = publicKeyPem
+    .replace("-----BEGIN PUBLIC KEY-----", "")
+    .replace("-----END PUBLIC KEY-----", "")
+    .replace(/\s/g, "");
+  return decodeBase64UrlBytes(base64.replace(/\+/g, "-").replace(/\//g, "_"));
 }
 
 function createUnsignedJwt(payload: Record<string, unknown>): string {
@@ -44,18 +77,69 @@ function createUnsignedJwt(payload: Record<string, unknown>): string {
 async function createRs256JwtFixture(
   payload: Record<string, unknown>,
 ): Promise<JwtFixture> {
-  const { privateKey, publicKey } = await generateKeyPair("RS256");
-  const token = await new SignJWT(payload)
-    .setProtectedHeader({ alg: "RS256" })
-    .setIssuedAt()
-    .setExpirationTime("1h")
-    .sign(privateKey);
+  const keyPair = await crypto.subtle.generateKey(
+    {
+      name: "RSASSA-PKCS1-v1_5",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["sign", "verify"],
+  );
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const claims = { ...payload, iat: issuedAt, exp: issuedAt + 3600 };
+  const signingInput = [
+    encodeJsonBase64Url({ alg: "RS256", typ: "JWT" }),
+    encodeJsonBase64Url(claims),
+  ].join(".");
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    keyPair.privateKey,
+    new TextEncoder().encode(signingInput),
+  );
+  const publicKeyDer = await crypto.subtle.exportKey("spki", keyPair.publicKey);
 
   return {
-    token,
-    publicKeyPem: await exportSPKI(publicKey),
+    token: `${signingInput}.${encodeBase64UrlBytes(new Uint8Array(signature))}`,
+    publicKeyPem: spkiDerToPem(publicKeyDer),
   };
 }
+
+const webCryptoAuthProvider: HostedServiceJwtVerifier = {
+  async verifyWithPublicKey(token, publicKeyPem) {
+    const [headerPart, payloadPart, signaturePart] = token.split(".");
+    if (!headerPart || !payloadPart || !signaturePart) {
+      throw new Error("Invalid token");
+    }
+    const header = JSON.parse(new TextDecoder().decode(decodeBase64UrlBytes(headerPart)));
+    if (header?.alg !== "RS256") {
+      throw new Error("Invalid token");
+    }
+    const publicKey = await crypto.subtle.importKey(
+      "spki",
+      pemToSpkiDer(publicKeyPem),
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    const signingInput = `${headerPart}.${payloadPart}`;
+    const valid = await crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      publicKey,
+      decodeBase64UrlBytes(signaturePart),
+      new TextEncoder().encode(signingInput),
+    );
+    if (!valid) {
+      throw new Error("Invalid token");
+    }
+    const payload = JSON.parse(new TextDecoder().decode(decodeBase64UrlBytes(payloadPart)));
+    if (typeof payload?.exp === "number" && payload.exp * 1000 < Date.now()) {
+      throw new Error("expired");
+    }
+    return payload;
+  },
+};
 
 function createFetchMock(response: Response): {
   calls: FetchCall[];
@@ -126,6 +210,7 @@ describe("agent/agent-service-auth", () => {
       email: "user@example.test",
     });
     const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
       getConfig: () => ({
         OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
         NODE_ENV: "production",
@@ -142,9 +227,49 @@ describe("agent/agent-service-auth", () => {
     assertEquals(result.token, fixture.token);
   });
 
+  it("uses an AuthProvider to verify configured public key JWTs", async () => {
+    const calls: Array<{
+      token: string;
+      publicKeyPem: string;
+      options: { algorithms?: string[] } | undefined;
+    }> = [];
+    const auth = createHostedServiceAuth({
+      authProvider: {
+        verifyWithPublicKey(token, publicKeyPem, options) {
+          calls.push({ token, publicKeyPem, options });
+          return Promise.resolve({
+            sub: "user-1",
+            userId: "user-1",
+            email: "user@example.test",
+          });
+        },
+      },
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: "public-key",
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    const result = await auth.verifyJwt("signed-token");
+
+    assertEquals(result.success, true);
+    if (!result.success) throw new Error("Expected JWT verification to succeed");
+    assertEquals(result.userId, "user-1");
+    assertEquals(result.email, "user@example.test");
+    assertEquals(calls, [
+      {
+        token: "signed-token",
+        publicKeyPem: "public-key",
+        options: { algorithms: ["RS256"] },
+      },
+    ]);
+  });
+
   it("returns empty email when a valid JWT has no email claim", async () => {
     const fixture = await createRs256JwtFixture({ userId: "user-1" });
     const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
       getConfig: () => ({
         OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
         NODE_ENV: "production",
@@ -162,6 +287,7 @@ describe("agent/agent-service-auth", () => {
   it("rejects JWTs without a userId", async () => {
     const fixture = await createRs256JwtFixture({ email: "user@example.test" });
     const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
       getConfig: () => ({
         OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
         NODE_ENV: "production",
@@ -252,6 +378,7 @@ describe("agent/agent-service-auth", () => {
       headers: { authorization: `Bearer ${fixture.token}` },
     });
     const auth = createHostedServiceAuth({
+      authProvider: webCryptoAuthProvider,
       getConfig: () => ({
         OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
         NODE_ENV: "production",

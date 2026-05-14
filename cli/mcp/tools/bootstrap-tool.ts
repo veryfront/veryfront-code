@@ -5,7 +5,7 @@
  * project context, coding conventions, current errors, and server status.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { type DevError, getErrorCollector } from "veryfront/observability";
@@ -19,7 +19,7 @@ const getBootstrapInput = defineSchema((v) =>
     ),
   })
 );
-const bootstrapInput = getBootstrapInput();
+const bootstrapInput = lazySchema(getBootstrapInput);
 
 type BootstrapInput = InferSchema<ReturnType<typeof getBootstrapInput>>;
 

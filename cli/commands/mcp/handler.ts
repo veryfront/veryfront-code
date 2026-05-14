@@ -2,7 +2,7 @@
  * MCP command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -12,7 +12,7 @@ const getMCPArgsSchema = defineSchema((v) =>
   })
 );
 
-const MCPArgsSchema = getMCPArgsSchema();
+const MCPArgsSchema = lazySchema(getMCPArgsSchema);
 
 export const parseMCPArgs = createArgParser(MCPArgsSchema, {
   port: { keys: ["port"], type: "number" },

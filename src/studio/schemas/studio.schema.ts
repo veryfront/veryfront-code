@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 export const getLogMethodSchema = defineSchema((v) =>
@@ -251,13 +251,13 @@ export const getMessageFromStudioSchema = defineSchema((v) =>
 );
 
 // Backward-compatible re-exports
-export const logMethodSchema = getLogMethodSchema();
-export const LogMessageSchema = getLogMessageSchema();
-export const navigatorNodeTypeSchema = getNavigatorNodeTypeSchema();
-export const NavigatorNodeSchema = getNavigatorNodeSchema();
-export const ErrorMessageSchema = getErrorMessageSchema();
-export const MessageFromRendererSchema = getMessageFromRendererSchema();
-export const MessageFromStudioSchema = getMessageFromStudioSchema();
+export const logMethodSchema = lazySchema(getLogMethodSchema);
+export const LogMessageSchema = lazySchema(getLogMessageSchema);
+export const navigatorNodeTypeSchema = lazySchema(getNavigatorNodeTypeSchema);
+export const NavigatorNodeSchema = lazySchema(getNavigatorNodeSchema);
+export const ErrorMessageSchema = lazySchema(getErrorMessageSchema);
+export const MessageFromRendererSchema = lazySchema(getMessageFromRendererSchema);
+export const MessageFromStudioSchema = lazySchema(getMessageFromStudioSchema);
 
 // Inferred types
 export type LogMethod = InferSchema<ReturnType<typeof getLogMethodSchema>>;

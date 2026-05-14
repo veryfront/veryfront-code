@@ -1,9 +1,9 @@
-import type { Pluggable, PluggableList } from "unified";
+import type { ContentPlugin } from "#veryfront/extensions/content/index.ts";
 
-export function normalizePlugins(plugins: PluggableList | undefined): Pluggable[] {
+export function normalizePlugins(plugins: ContentPlugin[] | undefined): ContentPlugin[] {
   if (!plugins) return [];
 
-  if (Array.isArray(plugins)) return plugins.flat() as Pluggable[];
+  if (Array.isArray(plugins)) return plugins.flat() as ContentPlugin[];
 
-  return [plugins] as Pluggable[];
+  return [plugins] as ContentPlugin[];
 }

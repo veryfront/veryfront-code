@@ -6,7 +6,7 @@
  * @module issues/mcp
  */
 
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import type { MCPTool } from "#veryfront/mcp/types.ts";
@@ -53,7 +53,7 @@ const getIssuesCreateInput = defineSchema((v) =>
     prefix: getIssuePrefixSchema().optional().describe("ID prefix: ISSUE, TASK, or PLAN"),
   }).merge(getProjectDirSchema())
 );
-const issuesCreateInput = getIssuesCreateInput();
+const issuesCreateInput = lazySchema(getIssuesCreateInput);
 
 type IssuesCreateInput = InferSchema<ReturnType<typeof getIssuesCreateInput>>;
 
@@ -87,7 +87,7 @@ const getIssuesGetInput = defineSchema((_v) =>
     id: getIssueIdSchema().describe("Issue ID (e.g., ISSUE-001, TASK-042)"),
   })
 );
-const issuesGetInput = getIssuesGetInput();
+const issuesGetInput = lazySchema(getIssuesGetInput);
 
 type IssuesGetInput = InferSchema<ReturnType<typeof getIssuesGetInput>>;
 
@@ -121,7 +121,7 @@ const getIssuesUpdateInput = defineSchema((v) =>
     assignees: v.array(v.string()).optional().describe("Assignees to set (replaces existing)"),
   }).merge(getProjectDirSchema())
 );
-const issuesUpdateInput = getIssuesUpdateInput();
+const issuesUpdateInput = lazySchema(getIssuesUpdateInput);
 
 type IssuesUpdateInput = InferSchema<ReturnType<typeof getIssuesUpdateInput>>;
 
@@ -173,7 +173,7 @@ const getIssuesListInput = defineSchema((v) =>
     limit: v.number().optional().describe("Maximum results"),
   }).merge(getProjectDirSchema())
 );
-const issuesListInput = getIssuesListInput();
+const issuesListInput = lazySchema(getIssuesListInput);
 
 type IssuesListInput = InferSchema<ReturnType<typeof getIssuesListInput>>;
 
@@ -213,7 +213,7 @@ const getIssuesCloseInput = defineSchema((_v) =>
     id: getIssueIdSchema().describe("Issue ID to close"),
   })
 );
-const issuesCloseInput = getIssuesCloseInput();
+const issuesCloseInput = lazySchema(getIssuesCloseInput);
 
 type IssuesCloseInput = InferSchema<ReturnType<typeof getIssuesCloseInput>>;
 
@@ -244,7 +244,7 @@ const getIssuesDeleteInput = defineSchema((_v) =>
     id: getIssueIdSchema().describe("Issue ID to delete"),
   })
 );
-const issuesDeleteInput = getIssuesDeleteInput();
+const issuesDeleteInput = lazySchema(getIssuesDeleteInput);
 
 type IssuesDeleteInput = InferSchema<ReturnType<typeof getIssuesDeleteInput>>;
 

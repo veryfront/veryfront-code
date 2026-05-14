@@ -10,9 +10,9 @@ Extension availability is separate from contract requirement:
 - Optional extensions are user-installed and configured when a project needs the feature.
 - A contract becomes required only when a feature or extension resolves it. Missing required contracts throw an install-suggestion error at first use.
 
-## Extension Catalog
+## Extension catalog
 
-### AI / LLM
+### LLM
 
 | Package | Contract | Description |
 |---------|----------|-------------|
@@ -20,39 +20,56 @@ Extension availability is separate from contract requirement:
 | [`@veryfront/ext-llm-google`](./ext-llm-google) | `LLMProvider` | Google Gemini models via `@google/generative-ai` |
 | [`@veryfront/ext-llm-openai`](./ext-llm-openai) | `LLMProvider` | OpenAI models via `openai` SDK |
 
-### Security
+### Auth
 
 | Package | Contract | Description |
 |---------|----------|-------------|
 | [`@veryfront/ext-auth-jwt`](./ext-auth-jwt) | `AuthProvider` | JWT sign/verify (HS256) and remote JWKS validation via `jose` |
 
-### Build Pipeline
+### Build
 
 | Package | Contract | Description |
 |---------|----------|-------------|
 | [`@veryfront/ext-bundler-esbuild`](./ext-bundler-esbuild) | `Bundler`, `ModuleLexer` | ESM bundling and module analysis via `esbuild` and `es-module-lexer` |
-| [`@veryfront/ext-parser-babel`](./ext-parser-babel) | `CodeParser` | AST parsing, traversal, and code generation via Babel |
+| [`@veryfront/ext-parser-babel`](./ext-parser-babel) | `CodeParser` | JS/TS AST parsing, traversal, and JSX source-position injection via Babel |
 | [`@veryfront/ext-css-tailwind`](./ext-css-tailwind) | `CSSProcessor` | Tailwind CSS v4 compilation with dynamic plugin loading |
 
 ### Content
 
 | Package | Contract | Description |
 |---------|----------|-------------|
-| [`@veryfront/ext-transform-mdx`](./ext-transform-mdx) | `ContentProcessor` | MDX and Markdown processing via unified/remark/rehype |
+| [`@veryfront/ext-content-mdx`](./ext-content-mdx) | `ContentProcessor` | MDX and Markdown processing via unified/remark/rehype |
 
-### Validation
+### Document extraction
 
 | Package | Contract | Description |
 |---------|----------|-------------|
-| [`@veryfront/ext-zod`](./ext-zod) | `SchemaValidator` | Schema-first validation DSL backed by Zod |
+| [`@veryfront/ext-document-kreuzberg`](./ext-document-kreuzberg) | `DocumentExtractor` | Document text extraction |
 
-### Infrastructure
+### Schema
+
+| Package | Contract | Description |
+|---------|----------|-------------|
+| [`@veryfront/ext-schema-zod`](./ext-schema-zod) | `SchemaValidator` | Schema validation DSL backed by Zod |
+
+### Storage
 
 | Package | Contract | Description |
 |---------|----------|-------------|
 | [`@veryfront/ext-cache-redis`](./ext-cache-redis) | `TokenCacheStore` | Redis-backed token and cache persistence |
+| [`@veryfront/ext-db-sqlite`](./ext-db-sqlite) | `SqliteStore` | SQLite persistence |
+
+### Observability
+
+| Package | Contract | Description |
+|---------|----------|-------------|
 | [`@veryfront/ext-tracing-opentelemetry`](./ext-tracing-opentelemetry) | `TracingExporter` | OpenTelemetry trace export via OTLP/HTTP |
-| [`@veryfront/ext-node-compatibility`](./ext-node-compatibility) | `NodeCompat` | SQLite persistence and document text extraction (Kreuzberg) |
+
+### Sandbox
+
+| Package | Contract | Description |
+|---------|----------|-------------|
+| [`@veryfront/ext-sandbox-shell-tools`](./ext-sandbox-shell-tools) | `SandboxShellToolsProvider` | Sandbox shell tool creation via `bash-tool` |
 
 ## Auto-enabled core extensions
 
@@ -60,12 +77,14 @@ These extensions are loaded by `createBuiltinExtensions()` during app bootstrap 
 
 | Package | Contracts |
 |---------|-----------|
-| `@veryfront/ext-zod` | `SchemaValidator` |
+| `@veryfront/ext-schema-zod` | `SchemaValidator` |
 | `@veryfront/ext-bundler-esbuild` | `Bundler`, `ModuleLexer` |
 | `@veryfront/ext-parser-babel` | `CodeParser` |
-| `@veryfront/ext-transform-mdx` | `ContentProcessor` |
+| `@veryfront/ext-content-mdx` | `ContentProcessor` |
 | `@veryfront/ext-css-tailwind` | `CSSProcessor` |
-| `@veryfront/ext-node-compatibility` | `NodeCompat` |
+| `@veryfront/ext-document-kreuzberg` | `DocumentExtractor` |
+| `@veryfront/ext-db-sqlite` | `SqliteStore` |
+| `@veryfront/ext-sandbox-shell-tools` | `SandboxShellToolsProvider` |
 | `@veryfront/ext-llm-openai` | `LLMProvider:openai` |
 | `@veryfront/ext-llm-anthropic` | `LLMProvider:anthropic` |
 | `@veryfront/ext-llm-google` | `LLMProvider:google` |
@@ -81,7 +100,9 @@ Veryfront treats contracts as required at the call site, not at the package list
 | `CodeParser` | AST parsing or build-time code analysis runs | Auto-enabled core extension |
 | `ContentProcessor` | MDX or Markdown content compilation runs | Auto-enabled core extension |
 | `CSSProcessor` | Tailwind CSS processing runs | Auto-enabled core extension |
-| `NodeCompat` | Node compatibility, SQLite persistence, or document extraction runs | Auto-enabled core extension |
+| `DocumentExtractor` | Document text extraction runs | Auto-enabled native service extension |
+| `SqliteStore` | SQLite-backed persistence runs | Auto-enabled native service extension |
+| `SandboxShellToolsProvider` | Sandbox shell tools are created | Auto-enabled core extension |
 | `LLMProvider:*` | A matching model provider is selected | Auto-enabled core extension |
 | `AuthProvider` | Auth signing or verification is configured | User-installed extension |
 | `TokenCacheStore` | Redis-backed token cache is configured | User-installed extension |

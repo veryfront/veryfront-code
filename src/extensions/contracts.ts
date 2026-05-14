@@ -31,6 +31,10 @@ export function register<T>(name: string, impl: T): void {
   contracts.set(name, impl);
 }
 
+export function unregister(name: string): void {
+  contracts.delete(name);
+}
+
 export function reset(): void {
   contracts.clear();
 }

@@ -13,13 +13,15 @@
 // This must happen synchronously at the very start to ensure esbuild sees the correct path
 await import("veryfront/platform/esbuild-init");
 
-// Register the default Bundler + ModuleLexer contracts shipped with the
-// binary so bootstrap paths can resolve them without the user having to
-// declare @veryfront/ext-bundler-esbuild as a project extension. User-installed
-// extensions (orchestrated later) can still override these.
+// Register default contracts shipped with the binary so CLI startup and
+// bootstrap paths can resolve them before project extensions load.
 {
   const { register } = await import("veryfront/extensions/contracts");
   const { tryResolve } = await import("veryfront/extensions");
+  if (!tryResolve("SchemaValidator")) {
+    const { createZodAdapter } = await import("@veryfront/ext-schema-zod");
+    register("SchemaValidator", createZodAdapter());
+  }
   if (!tryResolve("Bundler") || !tryResolve("ModuleLexer")) {
     const { EsbuildBundler, EsModuleLexer } = await import("@veryfront/ext-bundler-esbuild");
     if (!tryResolve("Bundler")) register("Bundler", new EsbuildBundler());

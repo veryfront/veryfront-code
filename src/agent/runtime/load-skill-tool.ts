@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { tool } from "#veryfront/tool";
 import type { Tool } from "#veryfront/tool/types.ts";
@@ -82,7 +82,7 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeLoadSkillToolInputSchema() */
-const runtimeLoadSkillToolInputSchema = getRuntimeLoadSkillToolInputSchema();
+const runtimeLoadSkillToolInputSchema = lazySchema(getRuntimeLoadSkillToolInputSchema);
 
 export type RuntimeLoadSkillToolInput = InferSchema<
   ReturnType<typeof getRuntimeLoadSkillToolInputSchema>

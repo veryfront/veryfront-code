@@ -2,7 +2,7 @@
  * MCP tool for production builds.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cwd } from "veryfront/platform";
 import { join } from "veryfront/platform/path";
@@ -42,7 +42,7 @@ const getBuildInput = defineSchema((v) =>
       .describe("Preview the build without writing files to disk. Defaults to false."),
   })
 );
-const buildInput = getBuildInput();
+const buildInput = lazySchema(getBuildInput);
 
 type BuildInput = InferSchema<ReturnType<typeof getBuildInput>>;
 

@@ -1,6 +1,10 @@
 import { assertEquals, assertThrows } from "#std/assert";
 import { describe, it } from "jsr:@std/testing/bdd";
-import { componentsFromLock, SUPPORTED_LOCK_VERSIONS } from "./generate-sbom.ts";
+import {
+  componentsFromLock,
+  componentsFromLockForManifest,
+  SUPPORTED_LOCK_VERSIONS,
+} from "./generate-sbom.ts";
 
 describe("componentsFromLock", () => {
   it("emits a CycloneDX library component per npm package, deduplicated", () => {
@@ -42,7 +46,9 @@ describe("componentsFromLock", () => {
       specifiers: {},
       npm: {
         "@opentelemetry/core@2.6.0": { integrity: "sha512-a" },
-        "@opentelemetry/core@2.6.0_@opentelemetry+api@1.9.0": { integrity: "sha512-a" },
+        "@opentelemetry/core@2.6.0_@opentelemetry+api@1.9.0": {
+          integrity: "sha512-a",
+        },
       },
     });
     assertEquals(componentsFromLock(lock).length, 1);
@@ -69,10 +75,54 @@ describe("componentsFromLock", () => {
 
   it("throws on unsupported lock format", () => {
     const lock = JSON.stringify({ version: "999", npm: {} });
-    assertThrows(() => componentsFromLock(lock), Error, "Unsupported deno.lock version");
+    assertThrows(
+      () => componentsFromLock(lock),
+      Error,
+      "Unsupported deno.lock version",
+    );
   });
 
   it("SUPPORTED_LOCK_VERSIONS lists at least the current format", () => {
     assertEquals(SUPPORTED_LOCK_VERSIONS.includes("5"), true);
+  });
+
+  it("can emit components for one workspace manifest", () => {
+    const lock = JSON.stringify({
+      version: "5",
+      specifiers: {
+        "npm:zod@4.3.6": "4.3.6",
+        "npm:bash-tool@1.3.16":
+          "1.3.16_ai@6.0.182__zod@3.25.76_just-bash@2.14.5",
+      },
+      npm: {
+        "zod@4.3.6": { integrity: "sha512-core", dependencies: [] },
+        "bash-tool@1.3.16_ai@6.0.182__zod@3.25.76_just-bash@2.14.5": {
+          integrity: "sha512-shell",
+          dependencies: [],
+        },
+      },
+      workspace: {
+        dependencies: ["npm:zod@4.3.6"],
+        members: {
+          "extensions/ext-sandbox-shell-tools": {
+            dependencies: ["npm:bash-tool@1.3.16"],
+          },
+        },
+      },
+    });
+
+    assertEquals(
+      componentsFromLockForManifest(lock, "deno.json").map((component) =>
+        component.name
+      ),
+      ["zod"],
+    );
+    assertEquals(
+      componentsFromLockForManifest(
+        lock,
+        "extensions/ext-sandbox-shell-tools/deno.json",
+      ).map((component) => component.name),
+      ["bash-tool"],
+    );
   });
 });

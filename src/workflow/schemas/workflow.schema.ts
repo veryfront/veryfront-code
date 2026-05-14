@@ -4,7 +4,7 @@
  * Schemas for workflow status, nodes, and execution state.
  */
 
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 /**
@@ -223,23 +223,23 @@ export const getParallelStrategySchema = defineSchema((v) =>
 export const getWaitTypeSchema = defineSchema((v) => v.enum(["approval", "event"] as const));
 
 // Backward-compat aliases (consumed by schemas/index.ts and other unmigrated callers)
-export const WorkflowStatusSchema = getWorkflowStatusSchema();
-export const NodeStatusSchema = getNodeStatusSchema();
-export const WorkflowNodeTypeSchema = getWorkflowNodeTypeSchema();
-export const BackoffStrategySchema = getBackoffStrategySchema();
-export const RetryConfigSchema = getRetryConfigSchema();
-export const LoopExecutionContextSchema = getLoopExecutionContextSchema();
-export const NodeStateSchema = getNodeStateSchema();
-export const WorkflowContextSchema = getWorkflowContextSchema();
-export const CheckpointSchema = getCheckpointSchema();
-export const ApprovalStatusSchema = getApprovalStatusSchema();
-export const PendingApprovalSchema = getPendingApprovalSchema();
-export const WorkflowErrorSchema = getWorkflowErrorSchema();
-export const ApprovalDecisionSchema = getApprovalDecisionSchema();
-export const WorkflowJobSchema = getWorkflowJobSchema();
-export const RunFilterSchema = getRunFilterSchema();
-export const ParallelStrategySchema = getParallelStrategySchema();
-export const WaitTypeSchema = getWaitTypeSchema();
+export const WorkflowStatusSchema = lazySchema(getWorkflowStatusSchema);
+export const NodeStatusSchema = lazySchema(getNodeStatusSchema);
+export const WorkflowNodeTypeSchema = lazySchema(getWorkflowNodeTypeSchema);
+export const BackoffStrategySchema = lazySchema(getBackoffStrategySchema);
+export const RetryConfigSchema = lazySchema(getRetryConfigSchema);
+export const LoopExecutionContextSchema = lazySchema(getLoopExecutionContextSchema);
+export const NodeStateSchema = lazySchema(getNodeStateSchema);
+export const WorkflowContextSchema = lazySchema(getWorkflowContextSchema);
+export const CheckpointSchema = lazySchema(getCheckpointSchema);
+export const ApprovalStatusSchema = lazySchema(getApprovalStatusSchema);
+export const PendingApprovalSchema = lazySchema(getPendingApprovalSchema);
+export const WorkflowErrorSchema = lazySchema(getWorkflowErrorSchema);
+export const ApprovalDecisionSchema = lazySchema(getApprovalDecisionSchema);
+export const WorkflowJobSchema = lazySchema(getWorkflowJobSchema);
+export const RunFilterSchema = lazySchema(getRunFilterSchema);
+export const ParallelStrategySchema = lazySchema(getParallelStrategySchema);
+export const WaitTypeSchema = lazySchema(getWaitTypeSchema);
 
 // Inferred types
 export type WorkflowStatus = InferSchema<ReturnType<typeof getWorkflowStatusSchema>>;

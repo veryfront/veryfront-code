@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
@@ -24,7 +24,7 @@ export const getConversationRunEventSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getConversationRunEventSchema() */
-export const ConversationRunEventSchema = getConversationRunEventSchema();
+export const ConversationRunEventSchema = lazySchema(getConversationRunEventSchema);
 
 export type ConversationRunEvent =
   & InferSchema<ReturnType<typeof getConversationRunEventSchema>>

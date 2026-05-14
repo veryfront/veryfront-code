@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, RefinementCtx } from "#veryfront/extensions/schema/index.ts";
 import { parseAgUiJsonRequestOrError } from "../ag-ui/request-shared.ts";
 
@@ -21,12 +21,12 @@ export const getRuntimeAgentRunIdSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentRunIdSchema() */
-export const RuntimeAgentRunIdSchema = getRuntimeAgentRunIdSchema();
+export const RuntimeAgentRunIdSchema = lazySchema(getRuntimeAgentRunIdSchema);
 
 export const getRuntimeAgentToolCallIdSchema = defineSchema((v) => v.string().min(1).max(128));
 
 /** @deprecated Use getRuntimeAgentToolCallIdSchema() */
-export const RuntimeAgentToolCallIdSchema = getRuntimeAgentToolCallIdSchema();
+export const RuntimeAgentToolCallIdSchema = lazySchema(getRuntimeAgentToolCallIdSchema);
 
 export const getRuntimeAgentServiceIdSchema = defineSchema((v) =>
   v.string().min(1).max(128).regex(
@@ -36,12 +36,12 @@ export const getRuntimeAgentServiceIdSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentServiceIdSchema() */
-export const RuntimeAgentServiceIdSchema = getRuntimeAgentServiceIdSchema();
+export const RuntimeAgentServiceIdSchema = lazySchema(getRuntimeAgentServiceIdSchema);
 
 export const getRuntimeAgentIdSchema = defineSchema((v) => v.string().min(1).max(128));
 
 /** @deprecated Use getRuntimeAgentIdSchema() */
-export const RuntimeAgentIdSchema = getRuntimeAgentIdSchema();
+export const RuntimeAgentIdSchema = lazySchema(getRuntimeAgentIdSchema);
 
 export const getRuntimeAgentToolNameSchema = defineSchema((v) =>
   v.string().min(1).max(128).regex(
@@ -51,7 +51,7 @@ export const getRuntimeAgentToolNameSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentToolNameSchema() */
-export const RuntimeAgentToolNameSchema = getRuntimeAgentToolNameSchema();
+export const RuntimeAgentToolNameSchema = lazySchema(getRuntimeAgentToolNameSchema);
 
 const getRuntimeAgentToolJsonSchemaDocumentSchema = defineSchema((v) =>
   v.record(v.string(), v.unknown()).refine(
@@ -74,7 +74,7 @@ export const getRuntimeAgentToolSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentToolSchema() */
-export const RuntimeAgentToolSchema = getRuntimeAgentToolSchema();
+export const RuntimeAgentToolSchema = lazySchema(getRuntimeAgentToolSchema);
 
 export const getRuntimeAgentContextItemSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
@@ -102,7 +102,7 @@ export const getRuntimeAgentContextItemSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentContextItemSchema() */
-export const RuntimeAgentContextItemSchema = getRuntimeAgentContextItemSchema();
+export const RuntimeAgentContextItemSchema = lazySchema(getRuntimeAgentContextItemSchema);
 
 export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
@@ -123,14 +123,14 @@ export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentSourceContextSchema() */
-export const RuntimeAgentSourceContextSchema = getRuntimeAgentSourceContextSchema();
+export const RuntimeAgentSourceContextSchema = lazySchema(getRuntimeAgentSourceContextSchema);
 
 export const getRuntimeAgentTargetKindSchema = defineSchema((v) =>
   v.enum(["production", "environment", "preview_branch"])
 );
 
 /** @deprecated Use getRuntimeAgentTargetKindSchema() */
-export const RuntimeAgentTargetKindSchema = getRuntimeAgentTargetKindSchema();
+export const RuntimeAgentTargetKindSchema = lazySchema(getRuntimeAgentTargetKindSchema);
 
 type RuntimeAgentTargetSelectionInput = {
   runtimeTargetKind?: InferSchema<ReturnType<typeof getRuntimeAgentTargetKindSchema>> | null;
@@ -187,7 +187,7 @@ export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentProjectContextSchema() */
-export const RuntimeAgentProjectContextSchema = getRuntimeAgentProjectContextSchema();
+export const RuntimeAgentProjectContextSchema = lazySchema(getRuntimeAgentProjectContextSchema);
 
 export const getRuntimeAgentValidatedClaimsSchema = defineSchema((v) =>
   v.object({
@@ -199,7 +199,7 @@ export const getRuntimeAgentValidatedClaimsSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentValidatedClaimsSchema() */
-export const RuntimeAgentValidatedClaimsSchema = getRuntimeAgentValidatedClaimsSchema();
+export const RuntimeAgentValidatedClaimsSchema = lazySchema(getRuntimeAgentValidatedClaimsSchema);
 
 export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
   v.object({
@@ -266,7 +266,7 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentRunContextSchema() */
-export const RuntimeAgentRunContextSchema = getRuntimeAgentRunContextSchema();
+export const RuntimeAgentRunContextSchema = lazySchema(getRuntimeAgentRunContextSchema);
 
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({
@@ -286,7 +286,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getRuntimeAgentRunInvocationSchema() */
-export const RuntimeAgentRunInvocationSchema = getRuntimeAgentRunInvocationSchema();
+export const RuntimeAgentRunInvocationSchema = lazySchema(getRuntimeAgentRunInvocationSchema);
 
 export type RuntimeAgentTool = InferSchema<ReturnType<typeof getRuntimeAgentToolSchema>>;
 export type RuntimeAgentContextItem = InferSchema<

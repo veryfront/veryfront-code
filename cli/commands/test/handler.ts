@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { createArgParser, parseArgsOrThrow } from "#cli/shared/args";
 import type { ParsedArgs } from "#cli/shared/types";
 import {
@@ -16,7 +16,7 @@ const getTestArgsSchema = defineSchema((v) =>
   })
 );
 
-const TestArgsSchema = getTestArgsSchema();
+const TestArgsSchema = lazySchema(getTestArgsSchema);
 
 const parseTestArgs = createArgParser(TestArgsSchema, {
   filter: { keys: ["filter"], type: "string", positional: 0 },

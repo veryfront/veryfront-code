@@ -2,7 +2,7 @@
  * MCP tools for catalog browsing and project creation.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
@@ -331,7 +331,7 @@ const USECASES: UsecaseInfo[] = [
 // ============================================================================
 
 const getListExamplesInput = defineSchema((v) => v.object({}));
-const listExamplesInput = getListExamplesInput();
+const listExamplesInput = lazySchema(getListExamplesInput);
 
 type ListExamplesInput = InferSchema<ReturnType<typeof getListExamplesInput>>;
 
@@ -350,7 +350,7 @@ export const vfListExamples: MCPTool<ListExamplesInput, ExampleInfo[]> = {
 // ============================================================================
 
 const getListTemplatesInput = defineSchema((v) => v.object({}));
-const listTemplatesInput = getListTemplatesInput();
+const listTemplatesInput = lazySchema(getListTemplatesInput);
 
 type ListTemplatesInput = InferSchema<ReturnType<typeof getListTemplatesInput>>;
 
@@ -377,7 +377,7 @@ const getListIntegrationsInput = defineSchema((v) =>
       .describe("Filter integrations by category"),
   })
 );
-const listIntegrationsInput = getListIntegrationsInput();
+const listIntegrationsInput = lazySchema(getListIntegrationsInput);
 
 type ListIntegrationsInput = InferSchema<ReturnType<typeof getListIntegrationsInput>>;
 
@@ -400,7 +400,7 @@ export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[
 // ============================================================================
 
 const getListUsecasesInput = defineSchema((v) => v.object({}));
-const listUsecasesInput = getListUsecasesInput();
+const listUsecasesInput = lazySchema(getListUsecasesInput);
 
 type ListUsecasesInput = InferSchema<ReturnType<typeof getListUsecasesInput>>;
 
@@ -444,7 +444,7 @@ const getCreateProjectInput = defineSchema((v) =>
       .describe("Parent directory to create project in (defaults to current directory)"),
   })
 );
-const createProjectInput = getCreateProjectInput();
+const createProjectInput = lazySchema(getCreateProjectInput);
 
 type CreateProjectInput = InferSchema<ReturnType<typeof getCreateProjectInput>>;
 

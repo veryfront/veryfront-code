@@ -2,7 +2,7 @@
  * Doctor command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { cwd } from "veryfront/platform";
 import { doctorCommand } from "./index.ts";
 import { showLogo } from "#cli/utils";
@@ -15,7 +15,7 @@ const getDoctorArgsSchema = defineSchema((v) =>
   })
 );
 
-const DoctorArgsSchema = getDoctorArgsSchema();
+const DoctorArgsSchema = lazySchema(getDoctorArgsSchema);
 
 export const parseDoctorArgs = createArgParser(DoctorArgsSchema, {
   strict: { keys: ["strict", "s"], type: "boolean" },

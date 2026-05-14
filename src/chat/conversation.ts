@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatUiMessage, ChatUiMessagePart, ProviderModelMessage } from "./types.ts";
 
@@ -54,7 +54,7 @@ export const getMessagePartSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getMessagePartSchema() */
-export const messagePartSchema = getMessagePartSchema();
+export const messagePartSchema = lazySchema(getMessagePartSchema);
 
 export type MessagePart = InferSchema<ReturnType<typeof getMessagePartSchema>>;
 
@@ -62,14 +62,14 @@ export const getConversationTypeSchema = defineSchema((v) =>
   v.enum(["chat", "agent_task", "support", "channel", "project_agent"])
 );
 /** @deprecated Use getConversationTypeSchema() */
-export const conversationTypeSchema = getConversationTypeSchema();
+export const conversationTypeSchema = lazySchema(getConversationTypeSchema);
 export type ConversationType = InferSchema<ReturnType<typeof getConversationTypeSchema>>;
 
 export const getMessageStatusSchema = defineSchema((v) =>
   v.enum(["pending", "streaming", "completed", "error", "failed", "cancelled", "stopped"])
 );
 /** @deprecated Use getMessageStatusSchema() */
-export const messageStatusSchema = getMessageStatusSchema();
+export const messageStatusSchema = lazySchema(getMessageStatusSchema);
 export type MessageStatus = InferSchema<ReturnType<typeof getMessageStatusSchema>>;
 
 export const getApiConversationSchema = defineSchema((v) =>
@@ -91,7 +91,7 @@ export const getApiConversationSchema = defineSchema((v) =>
   })
 );
 /** @deprecated Use getApiConversationSchema() */
-export const apiConversationSchema = getApiConversationSchema();
+export const apiConversationSchema = lazySchema(getApiConversationSchema);
 
 export type ApiConversation = InferSchema<ReturnType<typeof getApiConversationSchema>>;
 
@@ -117,7 +117,7 @@ export const getApiMessageSchema = defineSchema((v) =>
   })
 );
 /** @deprecated Use getApiMessageSchema() */
-export const apiMessageSchema = getApiMessageSchema();
+export const apiMessageSchema = lazySchema(getApiMessageSchema);
 
 export type ApiMessage = InferSchema<ReturnType<typeof getApiMessageSchema>>;
 

@@ -2,7 +2,7 @@
  * Dev command handler
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import { isAbsolute, join } from "veryfront/platform/path";
 import { cwd, setEnv } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
@@ -21,7 +21,7 @@ const getDevArgsSchema = defineSchema((v) =>
   })
 );
 
-const DevArgsSchema = getDevArgsSchema();
+const DevArgsSchema = lazySchema(getDevArgsSchema);
 
 export const parseDevArgs = createArgParser(DevArgsSchema, {
   port: { keys: ["port", "p"], type: "number" },

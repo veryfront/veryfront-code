@@ -7,7 +7,7 @@
  * @module cli/commands/push
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { join, relative } from "veryfront/platform/path";
 import { cliLogger } from "#cli/utils";
@@ -42,7 +42,7 @@ export const getPushArgsSchema = defineSchema((v) =>
   })
 );
 
-export const PushArgsSchema = getPushArgsSchema();
+export const PushArgsSchema = lazySchema(getPushArgsSchema);
 
 export type PushArgs = InferSchema<ReturnType<typeof getPushArgsSchema>>;
 

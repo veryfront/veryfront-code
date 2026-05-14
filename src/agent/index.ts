@@ -16,12 +16,14 @@
  * ```ts
  * import { agent } from "veryfront/agent";
  * import { tool } from "veryfront/tool";
- * import { defineSchema } from "veryfront/schemas";
+ * import { defineSchema, lazySchema } from "veryfront/schemas";
+ *
+ * const getSearchInput = defineSchema((v) => v.object({ query: v.string() }));
  *
  * const searchTool = tool({
  *   id: "search",
  *   description: "Search the knowledge base",
- *   inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+ *   inputSchema: lazySchema(getSearchInput),
  *   execute: async ({ query }) => ({ results: [] }),
  * });
  *

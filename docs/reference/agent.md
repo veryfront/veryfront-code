@@ -87,12 +87,14 @@ const assistant = agent({
 ```ts
 import { agent } from "veryfront/agent";
 import { tool } from "veryfront/tool";
-import { z } from "zod";
+import { defineSchema, lazySchema } from "veryfront/schemas";
+
+const getSearchInput = defineSchema((v) => v.object({ query: v.string() }));
 
 const searchTool = tool({
   id: "search",
   description: "Search the knowledge base",
-  inputSchema: z.object({ query: z.string() }),
+  inputSchema: lazySchema(getSearchInput),
   execute: async ({ query }) => ({ results: [] }),
 });
 

@@ -1,5 +1,18 @@
-import type { Tool, ToolExecutionContext } from "#veryfront/tool";
+import type { ToolExecutionContext } from "#veryfront/tool";
 import type { JsonSchema } from "#veryfront/tool/schema/json-schema.ts";
+import type {
+  SandboxShellClient,
+  SandboxShellToolDefinition,
+  SandboxShellToolSet,
+  SandboxShellToolsProvider,
+} from "#veryfront/extensions/sandbox/index.ts";
+
+export type {
+  SandboxShellClient as BashToolSandboxLike,
+  SandboxShellToolDefinition,
+  SandboxShellToolSet,
+  SandboxShellToolsProvider as CreateSandboxBashTool,
+} from "#veryfront/extensions/sandbox/index.ts";
 
 const SANDBOX_WORKING_DIRECTORY = "/workspace";
 const SANDBOX_TOOL_PROMPT =
@@ -14,44 +27,6 @@ const JSON_SCHEMA_TYPES: ReadonlySet<string> = new Set([
   "array",
   "null",
 ]);
-
-type SandboxShellToolExecute = {
-  bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
-}["bivarianceHack"];
-
-export type SandboxShellToolDefinition = {
-  id?: string;
-  type?: Tool["type"];
-  title?: string;
-  description?: string;
-  inputSchema?: unknown;
-  inputSchemaJson?: JsonSchema;
-  parameters?: unknown;
-  providerOptions?: unknown;
-  execute?: Tool["execute"] | SandboxShellToolExecute;
-  mcp?: Tool["mcp"];
-};
-
-export type SandboxShellToolSet = Record<string, SandboxShellToolDefinition>;
-
-export type BashToolSandboxLike = {
-  ensure?: () => Promise<void> | void;
-  executeCommand: (command: string, options?: unknown) => Promise<unknown>;
-  readFile?: (path: string) => Promise<unknown> | unknown;
-  writeFiles?: (files: unknown[]) => Promise<unknown> | unknown;
-};
-
-type CreateBashToolInput = {
-  sandbox: BashToolSandboxLike;
-  destination: string;
-  promptOptions: {
-    toolPrompt: string;
-  };
-};
-
-export type CreateSandboxBashTool = (
-  input: CreateBashToolInput,
-) => Promise<{ tools: Record<string, unknown> }>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -227,10 +202,10 @@ export function renameSandboxFileTools(bashTools: SandboxShellToolSet): SandboxS
 }
 
 export async function createSandboxShellTools(
-  sandbox: BashToolSandboxLike,
-  createBashTool: CreateSandboxBashTool,
+  sandbox: SandboxShellClient,
+  createShellTools: SandboxShellToolsProvider,
 ): Promise<SandboxShellToolSet> {
-  const { tools: bashTools } = await createBashTool({
+  const { tools: bashTools } = await createShellTools({
     sandbox,
     destination: SANDBOX_WORKING_DIRECTORY,
     promptOptions: {

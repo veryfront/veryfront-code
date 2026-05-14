@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { bold, cyan, dim, green, yellow } from "#cli/ui";
 import { join } from "veryfront/platform/path";
@@ -27,7 +27,7 @@ export const getBuildArgsSchema = defineSchema((v) =>
   })
 );
 
-export const BuildArgsSchema = getBuildArgsSchema();
+export const BuildArgsSchema = lazySchema(getBuildArgsSchema);
 
 /**
  * Build command options (inferred from schema)

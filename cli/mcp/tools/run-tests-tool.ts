@@ -5,7 +5,7 @@
  * Reuses parseTestOutput from the CLI test command.
  */
 
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import type { MCPTool } from "veryfront/mcp";
 import { parseTestOutput, type TestResult } from "../../commands/test/command.ts";
@@ -23,7 +23,7 @@ const getRunTestsInput = defineSchema((v) =>
     ),
   })
 );
-const runTestsInput = getRunTestsInput();
+const runTestsInput = lazySchema(getRunTestsInput);
 
 type RunTestsInput = InferSchema<ReturnType<typeof getRunTestsInput>>;
 

@@ -1,7 +1,7 @@
 /**
  * Contract interface for database clients.
  *
- * Default implementation: `@veryfront/ext-postgres`
+ * No default first-party implementation is currently shipped.
  *
  * @module extensions/database/database-client
  */

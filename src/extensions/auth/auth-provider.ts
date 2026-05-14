@@ -54,8 +54,8 @@ export interface TokenHeader {
  * AuthProvider contract interface.
  *
  * Implementations sign, verify, and decode authentication tokens
- * (e.g. JWTs) for request authentication, and verify third-party tokens
- * against a remote JWKS.
+ * (e.g. JWTs), verify third-party tokens against a remote JWKS, and verify
+ * tokens against a configured public key.
  */
 export interface AuthProvider {
   /** Sign a payload into a token string. */
@@ -72,6 +72,18 @@ export interface AuthProvider {
   verifyWithJwks(
     token: string,
     jwksUrl: string,
+    options?: VerifyOptions,
+  ): Promise<TokenPayload>;
+  /**
+   * Verify a token against a PEM-encoded public key.
+   *
+   * Use this for configured issuer keys such as service-to-service JWT
+   * verification. Throws on invalid tokens, unsupported key material, or
+   * algorithm mismatch.
+   */
+  verifyWithPublicKey(
+    token: string,
+    publicKeyPem: string,
     options?: VerifyOptions,
   ): Promise<TokenPayload>;
   /**

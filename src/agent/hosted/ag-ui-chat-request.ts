@@ -1,6 +1,6 @@
 import { mapAgUiRuntimeMessagesToChatUiMessages } from "#veryfront/chat/ag-ui.ts";
 import type { ChatRequestContext, ChatRuntimeOverrides } from "#veryfront/chat/types.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
   createAgUiRuntimeContextMap,
@@ -32,7 +32,9 @@ export const getHostedAgUiChatForwardedConfigSchema = defineSchema((v) =>
 );
 
 /** @deprecated Use getHostedAgUiChatForwardedConfigSchema() */
-export const hostedAgUiChatForwardedConfigSchema = getHostedAgUiChatForwardedConfigSchema();
+export const hostedAgUiChatForwardedConfigSchema = lazySchema(
+  getHostedAgUiChatForwardedConfigSchema,
+);
 
 export type HostedAgUiChatForwardedConfig = InferSchema<
   ReturnType<typeof getHostedAgUiChatForwardedConfigSchema>
@@ -67,7 +69,7 @@ const getHostedValidationErrorBodySchema = defineSchema((v) =>
     .passthrough()
 );
 
-const hostedValidationErrorBodySchema = getHostedValidationErrorBodySchema();
+const hostedValidationErrorBodySchema = lazySchema(getHostedValidationErrorBodySchema);
 
 async function verifyHostedAgUiProjectAccess(input: {
   projectId: string | null;

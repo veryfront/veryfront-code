@@ -1,4 +1,4 @@
-import { defineSchema } from "veryfront/schemas";
+import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 
 type SafeParseResult<T> = { success: true; data: T } | {
@@ -57,7 +57,7 @@ const getUploadListArgsSchema = defineSchema((v) =>
   })
 );
 
-const UploadListArgsSchema = getUploadListArgsSchema();
+const UploadListArgsSchema = lazySchema(getUploadListArgsSchema);
 
 export type UploadListOptions = InferSchema<ReturnType<typeof getUploadListArgsSchema>>;
 
@@ -74,7 +74,7 @@ const getUploadPullArgsSchema = defineSchema((v) =>
   })
 );
 
-const UploadPullArgsSchema = getUploadPullArgsSchema();
+const UploadPullArgsSchema = lazySchema(getUploadPullArgsSchema);
 
 export type UploadPullOptions = InferSchema<ReturnType<typeof getUploadPullArgsSchema>>;
 
@@ -90,7 +90,7 @@ const getUploadPutArgsSchema = defineSchema((v) =>
   })
 );
 
-const UploadPutArgsSchema = getUploadPutArgsSchema();
+const UploadPutArgsSchema = lazySchema(getUploadPutArgsSchema);
 
 export type UploadPutOptions = InferSchema<ReturnType<typeof getUploadPutArgsSchema>>;
 
@@ -104,7 +104,7 @@ const getUploadDeleteArgsSchema = defineSchema((v) =>
   })
 );
 
-const UploadDeleteArgsSchema = getUploadDeleteArgsSchema();
+const UploadDeleteArgsSchema = lazySchema(getUploadDeleteArgsSchema);
 
 export type UploadDeleteOptions = InferSchema<ReturnType<typeof getUploadDeleteArgsSchema>>;
 

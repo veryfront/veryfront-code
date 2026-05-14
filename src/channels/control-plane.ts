@@ -2,7 +2,7 @@ import type { Agent } from "#veryfront/agent";
 import type { HandlerContext } from "#veryfront/types";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 
 const SIGNATURE_SKEW_SECONDS = 5;
@@ -18,12 +18,12 @@ const getCompactJwsHeaderSchema = defineSchema((v) =>
     kid: v.string().optional(),
   })
 );
-const compactJwsHeaderSchema = getCompactJwsHeaderSchema();
+const compactJwsHeaderSchema = lazySchema(getCompactJwsHeaderSchema);
 
 export const getControlPlaneSurfaceSchema = defineSchema((v) =>
   v.enum(["studio", "channels", "a2a", "mcp"])
 );
-export const ControlPlaneSurfaceSchema = getControlPlaneSurfaceSchema();
+export const ControlPlaneSurfaceSchema = lazySchema(getControlPlaneSurfaceSchema);
 
 export const getControlPlaneAgentsListRequestSchema = defineSchema((v) =>
   v.object({
@@ -32,7 +32,9 @@ export const getControlPlaneAgentsListRequestSchema = defineSchema((v) =>
     surface: getControlPlaneSurfaceSchema(),
   })
 );
-export const ControlPlaneAgentsListRequestSchema = getControlPlaneAgentsListRequestSchema();
+export const ControlPlaneAgentsListRequestSchema = lazySchema(
+  getControlPlaneAgentsListRequestSchema,
+);
 
 export const getRuntimeAgentSkillSchema = defineSchema((v) =>
   v.object({
@@ -43,7 +45,7 @@ export const getRuntimeAgentSkillSchema = defineSchema((v) =>
     examples: v.array(v.string()).optional(),
   })
 );
-export const RuntimeAgentSkillSchema = getRuntimeAgentSkillSchema();
+export const RuntimeAgentSkillSchema = lazySchema(getRuntimeAgentSkillSchema);
 
 export const getRuntimeSuggestionSchema = defineSchema((v) =>
   v.union([
@@ -62,7 +64,7 @@ export const getRuntimeSuggestionSchema = defineSchema((v) =>
     }).strict(),
   ])
 );
-export const RuntimeSuggestionSchema = getRuntimeSuggestionSchema();
+export const RuntimeSuggestionSchema = lazySchema(getRuntimeSuggestionSchema);
 
 export const getRuntimeSuggestionsSchema = defineSchema((v) =>
   v.object({
@@ -70,7 +72,7 @@ export const getRuntimeSuggestionsSchema = defineSchema((v) =>
     suggestions: v.array(getRuntimeSuggestionSchema()),
   })
 );
-export const RuntimeSuggestionsSchema = getRuntimeSuggestionsSchema();
+export const RuntimeSuggestionsSchema = lazySchema(getRuntimeSuggestionsSchema);
 
 export const getRuntimeAgentSchema = defineSchema((v) =>
   v.object({
@@ -83,14 +85,14 @@ export const getRuntimeAgentSchema = defineSchema((v) =>
     suggestions: getRuntimeSuggestionsSchema().optional(),
   })
 );
-export const RuntimeAgentSchema = getRuntimeAgentSchema();
+export const RuntimeAgentSchema = lazySchema(getRuntimeAgentSchema);
 
 export const getRuntimeAgentListResponseSchema = defineSchema((v) =>
   v.object({
     agents: v.array(getRuntimeAgentSchema()),
   })
 );
-export const RuntimeAgentListResponseSchema = getRuntimeAgentListResponseSchema();
+export const RuntimeAgentListResponseSchema = lazySchema(getRuntimeAgentListResponseSchema);
 
 const getDispatchClaimsSchema = defineSchema((v) =>
   v.object({
@@ -104,7 +106,7 @@ const getDispatchClaimsSchema = defineSchema((v) =>
     exp: v.number().int(),
   })
 );
-const dispatchClaimsSchema = getDispatchClaimsSchema();
+const dispatchClaimsSchema = lazySchema(getDispatchClaimsSchema);
 
 const getControlPlaneClaimsSchema = defineSchema((v) =>
   v.object({
@@ -118,7 +120,7 @@ const getControlPlaneClaimsSchema = defineSchema((v) =>
     exp: v.number().int(),
   })
 );
-const controlPlaneClaimsSchema = getControlPlaneClaimsSchema();
+const controlPlaneClaimsSchema = lazySchema(getControlPlaneClaimsSchema);
 
 export type ControlPlaneSurface = InferSchema<ReturnType<typeof getControlPlaneSurfaceSchema>>;
 export type ControlPlaneAgentsListRequest = InferSchema<

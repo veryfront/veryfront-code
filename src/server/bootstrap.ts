@@ -7,7 +7,10 @@ import {
   createLLMProviderRegistry,
   LLMProviderRegistryName,
 } from "#veryfront/extensions/llm/index.ts";
-import { createBuiltinExtensions } from "#veryfront/extensions/builtin-extensions.ts";
+import {
+  createBuiltinExtensions,
+  ensureBuiltinSchemaValidator,
+} from "#veryfront/extensions/builtin-extensions.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
 import { getRecommendation } from "#veryfront/extensions/recommendations.ts";
 import type { TracingExporter } from "#veryfront/extensions/tracing/tracing-exporter.ts";
@@ -267,6 +270,7 @@ export async function bootstrap(
   // This must happen before any module imports esbuild
   await initializeEsbuild();
   await ensureEnvLoaded(projectDir, adapter);
+  ensureBuiltinSchemaValidator();
 
   bootstrapLog.debug("Loading config with base adapter");
   let config = await getConfig(projectDir, adapter);

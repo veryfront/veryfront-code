@@ -1,4 +1,4 @@
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 export const getProviderConfigSchema = defineSchema((v) =>
@@ -107,10 +107,10 @@ export type CompletionRequest = InferSchema<ReturnType<typeof getCompletionReque
 export type CompletionResponse = InferSchema<ReturnType<typeof getCompletionResponseSchema>>;
 
 // Backward compat aliases
-export const ProviderConfigSchema = getProviderConfigSchema();
-export const OpenAIConfigSchema = getOpenAIConfigSchema();
-export const AnthropicConfigSchema = getAnthropicConfigSchema();
-export const GoogleConfigSchema = getGoogleConfigSchema();
-export const ProvidersConfigSchema = getProvidersConfigSchema();
-export const CompletionRequestSchema = getCompletionRequestSchema();
-export const CompletionResponseSchema = getCompletionResponseSchema();
+export const ProviderConfigSchema = lazySchema(getProviderConfigSchema);
+export const OpenAIConfigSchema = lazySchema(getOpenAIConfigSchema);
+export const AnthropicConfigSchema = lazySchema(getAnthropicConfigSchema);
+export const GoogleConfigSchema = lazySchema(getGoogleConfigSchema);
+export const ProvidersConfigSchema = lazySchema(getProvidersConfigSchema);
+export const CompletionRequestSchema = lazySchema(getCompletionRequestSchema);
+export const CompletionResponseSchema = lazySchema(getCompletionResponseSchema);
