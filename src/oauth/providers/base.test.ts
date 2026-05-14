@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#std/assert";
+import { assert, assertEquals, assertRejects } from "#std/assert";
 import { OAuthService } from "./base.ts";
 import type { OAuthServiceConfig, OAuthTokens, StoredOAuthState, TokenStore } from "../types.ts";
 
@@ -121,3 +121,52 @@ Deno.test("OAuthService.fetch: absolute endpoint on different origin is rejected
   // Critical assertion: no outbound request was issued.
   assertEquals(captured, []);
 });
+
+/**
+ * Replace globalThis.fetch for the duration of `fn` so that the provider returns
+ * a non-OK response carrying `body` in its payload. SEC-010 verification.
+ */
+async function withErrorFetch(
+  status: number,
+  body: string,
+  fn: () => Promise<unknown>,
+): Promise<void> {
+  const original = globalThis.fetch;
+  globalThis.fetch = ((): Promise<Response> => {
+    return Promise.resolve(
+      new Response(body, {
+        status,
+        headers: { "Content-Type": "text/plain" },
+      }),
+    );
+  }) as typeof fetch;
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+Deno.test(
+  "OAuthService.fetch: provider error body is not leaked into thrown error (SEC-010)",
+  async () => {
+    const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
+    const secret = "internal-secret-error-detail-do-not-expose";
+
+    const thrown = await assertRejects(
+      () => withErrorFetch(500, secret, () => service.fetch<unknown>("user-1", "/v1/me")),
+      Error,
+    );
+
+    const message = thrown instanceof Error ? thrown.message : String(thrown);
+    assert(
+      !message.includes(secret),
+      `Thrown error must not contain raw provider body. Got: ${message}`,
+    );
+    // The sanitized message should still surface the HTTP status for callers.
+    assert(
+      message.includes("500"),
+      `Thrown error should include status code. Got: ${message}`,
+    );
+  },
+);
