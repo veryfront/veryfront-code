@@ -12,7 +12,10 @@ import { visit } from "unist-util-visit";
 import { toString } from "mdast-util-to-string";
 import Slugger from "github-slugger";
 import type { Heading, Root as MdastRoot } from "mdast";
-import type { ContentCompileOptions, ContentRuntimeBundle } from "veryfront/extensions/transform";
+import type {
+  ContentCompileOptions,
+  ContentProcessingResult,
+} from "veryfront/extensions/transform";
 import { extractFrontmatter } from "veryfront/transforms/frontmatter";
 import { isMarkdownPreview } from "veryfront/transforms/md-utils";
 import { rehypeNodePositions } from "../plugins/rehype-node-positions.ts";
@@ -64,7 +67,7 @@ export default function MDContent({ components, params, className, ...props }) {
 
 export async function compileMarkdown(
   options: ContentCompileOptions,
-): Promise<ContentRuntimeBundle> {
+): Promise<ContentProcessingResult> {
   const { content, frontmatter: providedFrontmatter, filePath, studioEmbed } = options;
 
   const { body, frontmatter: extractedFrontmatter } = extractFrontmatter(

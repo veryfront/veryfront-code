@@ -4,9 +4,9 @@
 
 Provides Tailwind CSS v4 compilation for Veryfront. Compiles stylesheets at render time and supports dynamic plugin loading from CDN.
 
-## Installation
+## Registration
 
-Add the extension to your project's `veryfront.config.ts`:
+This extension is auto-enabled by core bootstrap. Add it to `veryfront.config.ts` only when you need to override the built-in registration:
 
 ```ts
 import extTailwind from "@veryfront/ext-css-tailwind";

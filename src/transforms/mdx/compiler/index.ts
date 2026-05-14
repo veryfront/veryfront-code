@@ -10,7 +10,7 @@ export { rewriteBodyImports, rewriteCompiledImports } from "./import-rewriter.ts
 export type {
   CompilationMode,
   CompilationTarget,
-  ContentRuntimeBundle,
+  ContentProcessingResult,
 } from "#veryfront/extensions/transform/index.ts";
 export type { FrontmatterExtractionResult } from "./frontmatter-extractor.ts";
 export type { ImportRewriterConfig } from "./import-rewriter.ts";
@@ -20,7 +20,7 @@ import { compileMarkdownRuntime } from "../../md/compiler/index.ts";
 import type {
   CompilationMode,
   CompilationTarget,
-  ContentRuntimeBundle,
+  ContentProcessingResult,
 } from "#veryfront/extensions/transform/index.ts";
 
 function isMarkdownFile(filePath?: string): boolean {
@@ -36,7 +36,7 @@ export function compileContent(
   target: CompilationTarget = "server",
   baseUrl?: string,
   studioEmbed?: boolean,
-): Promise<ContentRuntimeBundle> {
+): Promise<ContentProcessingResult> {
   if (isMarkdownFile(filePath)) {
     return compileMarkdownRuntime(
       mode,

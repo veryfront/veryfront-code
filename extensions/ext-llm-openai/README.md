@@ -4,9 +4,9 @@
 
 Provides OpenAI models for Veryfront agents and chat, enabling `openai/*` models for chat, embeddings, and the Responses API via the `LLMProviderRegistry`.
 
-## Installation
+## Registration
 
-Add the extension to your project's `veryfront.config.ts`:
+This extension is auto-enabled by core bootstrap. Add it to `veryfront.config.ts` only when you need to override the built-in registration:
 
 ```ts
 import extOpenAI from "@veryfront/ext-llm-openai";
@@ -25,7 +25,7 @@ export default defineConfig({
 
 ## Usage
 
-Once installed, use `openai/*` model strings anywhere Veryfront expects a model identifier:
+Once credentials are configured, use `openai/*` model strings anywhere Veryfront expects a model identifier:
 
 ```ts
 const response = await ai.chat("openai/gpt-4.1", {

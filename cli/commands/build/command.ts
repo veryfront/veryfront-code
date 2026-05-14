@@ -8,7 +8,7 @@ import { handleBuildError } from "./error-handler.ts";
 import { displayBuildSuccess } from "./stats-display.ts";
 import type { BuildOptions } from "./types.ts";
 import { isJsonMode, streamJsonLine } from "../../shared/json-output.ts";
-import { ensureBuiltinContentTransformer } from "../../shared/ensure-content-transformer.ts";
+import { ensureBuiltinContentProcessor } from "../../shared/ensure-content-processor.ts";
 
 export function buildCommand(options: BuildOptions): Promise<void> {
   return withSpan(
@@ -27,7 +27,7 @@ export function buildCommand(options: BuildOptions): Promise<void> {
 
         const adapter = await runtime.get();
         await getConfig(options.projectDir, adapter);
-        ensureBuiltinContentTransformer();
+        ensureBuiltinContentProcessor();
 
         if (isJsonMode()) {
           streamJsonLine({ type: "step", name: "config", status: "completed" });

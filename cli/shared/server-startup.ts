@@ -7,7 +7,7 @@ import {
   type StartProductionServerOptions,
 } from "veryfront/server";
 import type { RuntimeAdapter } from "veryfront/platform";
-import { ensureBuiltinContentTransformer } from "./ensure-content-transformer.ts";
+import { ensureBuiltinContentProcessor } from "./ensure-content-processor.ts";
 
 export interface StartCliProxyModeServerOptions {
   port: number;
@@ -53,7 +53,7 @@ export async function startCliProxyModeServer(
     defaultProjectId: options.defaultProjectId,
     discoveryConfig: buildDiscoveryConfig(options),
   });
-  ensureBuiltinContentTransformer();
+  ensureBuiltinContentProcessor();
   return result;
 }
 
@@ -76,7 +76,7 @@ export async function startCliDevServer(
     signal: options.signal,
   };
   const result = await startDevServer(devOptions);
-  ensureBuiltinContentTransformer();
+  ensureBuiltinContentProcessor();
   return result;
 }
 
@@ -114,6 +114,6 @@ export async function startCliProductionServer(
     // `localProjects` entry is required for the compiled binary to work.
   };
   const result = await startProductionServer(serverOptions);
-  ensureBuiltinContentTransformer();
+  ensureBuiltinContentProcessor();
   return result;
 }

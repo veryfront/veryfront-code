@@ -7,7 +7,7 @@
 import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
 
-import factory, { MdxContentTransformer } from "./index.ts";
+import factory, { MdxContentProcessor } from "./index.ts";
 
 describe("ext-mdx factory", () => {
   it("produces an extension whose name is ext-mdx", () => {
@@ -16,16 +16,16 @@ describe("ext-mdx factory", () => {
     assertEquals(ext.version, "0.1.0");
   });
 
-  it("declares the ContentTransformer contract capability", () => {
+  it("declares the ContentProcessor contract capability", () => {
     const ext = factory();
     const contractCap = ext.capabilities.find((c) => c.type === "contract");
     assertExists(contractCap);
     if (contractCap?.type === "contract") {
-      assertEquals(contractCap.name, "ContentTransformer");
+      assertEquals(contractCap.name, "ContentProcessor");
     }
   });
 
-  it("registers ContentTransformer when setup runs", async () => {
+  it("registers ContentProcessor when setup runs", async () => {
     const ext = factory();
     let registered: unknown = null;
     const ctx = {
@@ -41,13 +41,13 @@ describe("ext-mdx factory", () => {
     };
     await ext.setup?.(ctx as never);
     assertExists(registered);
-    assertEquals(registered instanceof MdxContentTransformer, true);
+    assertEquals(registered instanceof MdxContentProcessor, true);
   });
 });
 
-describe("MdxContentTransformer.compileMarkdown", () => {
+describe("MdxContentProcessor.compileMarkdown", () => {
   it("compiles a trivial markdown document to an ESM module", async () => {
-    const impl = new MdxContentTransformer();
+    const impl = new MdxContentProcessor();
     const result = await impl.compileMarkdown({
       mode: "production",
       projectDir: "/tmp",
@@ -60,7 +60,7 @@ describe("MdxContentTransformer.compileMarkdown", () => {
   });
 
   it("exposes rawHtml for markdown preview consumers", async () => {
-    const impl = new MdxContentTransformer();
+    const impl = new MdxContentProcessor();
     const result = await impl.compileMarkdown({
       mode: "production",
       projectDir: "/tmp",
@@ -71,9 +71,9 @@ describe("MdxContentTransformer.compileMarkdown", () => {
   });
 });
 
-describe("MdxContentTransformer.compileMdx", () => {
+describe("MdxContentProcessor.compileMdx", () => {
   it("compiles trivial mdx content", async () => {
-    const impl = new MdxContentTransformer();
+    const impl = new MdxContentProcessor();
     const result = await impl.compileMdx({
       mode: "production",
       projectDir: "/tmp",

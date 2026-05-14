@@ -29,7 +29,6 @@ import {
   makeTempDir,
   mkdir,
   remove,
-  symlink,
   writeTextFile,
 } from "../../src/platform/compat/fs.ts";
 import { resolve as resolvePath } from "#veryfront/compat/path";
@@ -73,7 +72,8 @@ try {
 export async function registerExtBabelForTests(): Promise<void> {
   try {
     const { register } = await import("../../src/extensions/contracts.ts");
-    const extBabelFactory = (await import("../../extensions/ext-parser-babel/src/index.ts")).default;
+    const extBabelFactory =
+      (await import("../../extensions/ext-parser-babel/src/index.ts")).default;
     const ext = extBabelFactory();
     const noopLogger = {
       debug: () => {},
@@ -136,13 +136,13 @@ export async function registerExtOpenAIForTests(): Promise<void> {
   }
 }
 
-// Register the ext-mdx ContentTransformer contract. Delegates to the same
+// Register the ext-mdx ContentProcessor contract. Delegates to the same
 // helper used by unit-test side-effect imports — must run again after
 // resetAllTestState() or teardownAll().
 export async function registerExtMdxForTests(): Promise<void> {
   try {
     const { registerExtMdx } = await import(
-      "../../src/transforms/mdx/compiler/__tests__/content-transformer-setup.ts"
+      "../../src/transforms/mdx/compiler/__tests__/content-processor-setup.ts"
     );
     await registerExtMdx();
   } catch {
@@ -657,7 +657,7 @@ export class TestContext {
     }
 
     // Materialize ext-mdx into the project's extensions/ dir so that
-    // `discoverProjectExtensions` re-registers ContentTransformer after
+    // `discoverProjectExtensions` re-registers ContentProcessor after
     // bootstrap's teardownAll() wipes the contract registry.
     try {
       const extMdxDir = join(this.projectDir, "extensions", "ext-transform-mdx");

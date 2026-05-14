@@ -1,16 +1,16 @@
 /**
  * Shared test helper: activates the `@veryfront/ext-transform-mdx` extension so core
  * tests that exercise the MDX / Markdown compile paths can resolve the
- * `ContentTransformer` contract.
+ * `ContentProcessor` contract.
  *
  * Importing this module runs `registerExtMdx()` once for its side effect,
  * which covers tests that simply import the helper. Call `registerExtMdx()`
- * again after any operation that resets the contract registry — e.g. after
+ * again after any operation that resets the contract registry. For example, after
  * `bootstrap.setupAll` / `teardownAll` (which wipe registrations via
  * `reset()`), after `startProductionServer` / `startDevServer`, or after
  * `resetAllTestState()` in integration test helpers.
  *
- * @module transforms/mdx/compiler/__tests__/content-transformer-setup
+ * @module transforms/mdx/compiler/__tests__/content-processor-setup
  */
 
 import { register as registerContract } from "#veryfront/extensions/contracts.ts";

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import "../../../transforms/mdx/compiler/__tests__/content-transformer-setup.ts";
+import "../../../transforms/mdx/compiler/__tests__/content-processor-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { compileMDX } from "./mdx-processor.ts";

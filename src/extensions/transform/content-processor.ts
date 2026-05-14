@@ -1,10 +1,10 @@
 /**
- * Contract interface for content transformation pipelines.
+ * Contract interface for content processing pipelines.
  *
  * Default implementation: `@veryfront/ext-transform-mdx`
  *
- * Implementations compile MDX / Markdown source into renderable JavaScript
- * modules. Core's `src/transforms/md/compiler` and
+ * Implementations process MDX / Markdown source into renderable JavaScript
+ * modules plus extracted metadata. Core's `src/transforms/md/compiler` and
  * `src/transforms/mdx/compiler` delegate to the registered implementation;
  * when none is registered, the compile paths throw an actionable install
  * message pointing at `@veryfront/ext-transform-mdx`.
@@ -12,21 +12,21 @@
  * The two compile methods have the same option shape on purpose so a single
  * dispatcher (see `src/transforms/mdx/compiler/index.ts::compileContent`)
  * can route on file extension. Options match the long-standing
- * `compileMDXRuntime` / `compileMarkdownRuntime` signatures — option order
+ * `compileMDXRuntime` / `compileMarkdownRuntime` signatures. Option order
  * and defaults are preserved so the extension boundary is a pure refactor,
  * not a behavior change.
  *
- * @module extensions/transform/content-transformer
+ * @module extensions/transform/content-processor
  */
 
-/** Compilation mode — dev surfaces extra diagnostics. */
+/** Compilation mode. Dev surfaces extra diagnostics. */
 export type CompilationMode = "development" | "production";
 
-/** Where the output is destined — server-side RSC or browser bundle. */
+/** Where the output is destined: server-side RSC or browser bundle. */
 export type CompilationTarget = "browser" | "server";
 
-/** Runtime bundle returned by the compilation pipeline. */
-export interface ContentRuntimeBundle {
+/** Processing result returned by the content pipeline. */
+export interface ContentProcessingResult {
   /** Compiled ESM source containing the default MDX/MD component export. */
   compiledCode: string;
   /** Front-matter extracted from the source document. */
@@ -41,9 +41,9 @@ export interface ContentRuntimeBundle {
   rawHtml?: string;
 }
 
-/** Options for {@link ContentTransformer.compileMdx} and {@link ContentTransformer.compileMarkdown}. */
+/** Options for {@link ContentProcessor.compileMdx} and {@link ContentProcessor.compileMarkdown}. */
 export interface ContentCompileOptions {
-  /** Compilation mode — defaults to "production" when omitted. */
+  /** Compilation mode. Defaults to "production" when omitted. */
   mode?: CompilationMode;
   /** Absolute project root (used for resolving relative import rewrites). */
   projectDir: string;
@@ -53,7 +53,7 @@ export interface ContentCompileOptions {
   frontmatter?: Record<string, unknown>;
   /** Source file path hint (used in error messages + import resolution). */
   filePath?: string;
-  /** Compile target — defaults to "server". */
+  /** Compile target. Defaults to "server". */
   target?: CompilationTarget;
   /** Base URL used when rewriting bare-specifier imports. */
   baseUrl?: string;
@@ -64,27 +64,27 @@ export interface ContentCompileOptions {
 /**
  * Opaque unified-compatible plugin entry. Kept as `unknown[] | unknown` so
  * the contract surface doesn't require consumers to depend on the `unified`
- * package directly — callers cast to the plugin-list shape they need.
+ * package directly. Callers cast to the plugin-list shape they need.
  */
 export type ContentPlugin = unknown | [unknown, ...unknown[]];
 
 /**
- * ContentTransformer contract — compiles MDX/Markdown to runtime-ready JS.
+ * ContentProcessor contract for MDX/Markdown processing.
  *
  * Implementations own the entire pipeline (parser, remark/rehype plugins,
  * MDX compile step, sanitization, HTML wrapping). Core only dispatches by
- * file extension and post-processes the returned bundle.
+ * file extension and post-processes the returned result.
  *
  * `getRemarkPlugins()` / `getRehypePlugins()` are exposed so build-time MDX
  * compilers (which run their own @mdx-js/mdx invocations) can borrow the
  * canonical plugin list without duplicating it. Runtime compile paths
  * should prefer `compileMdx` / `compileMarkdown`.
  */
-export interface ContentTransformer {
-  /** Compile MDX source into a runtime bundle. */
-  compileMdx(options: ContentCompileOptions): Promise<ContentRuntimeBundle>;
-  /** Compile plain Markdown into a runtime bundle. */
-  compileMarkdown(options: ContentCompileOptions): Promise<ContentRuntimeBundle>;
+export interface ContentProcessor {
+  /** Process MDX source into compiled code and extracted metadata. */
+  compileMdx(options: ContentCompileOptions): Promise<ContentProcessingResult>;
+  /** Process plain Markdown into compiled code and extracted metadata. */
+  compileMarkdown(options: ContentCompileOptions): Promise<ContentProcessingResult>;
   /** Return the canonical remark plugin list. */
   getRemarkPlugins(): ContentPlugin[];
   /** Return the canonical rehype plugin list. */

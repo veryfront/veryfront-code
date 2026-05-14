@@ -1,12 +1,12 @@
 # @veryfront/ext-transform-mdx
 
-> **Category:** Content | **Contract:** `ContentTransformer` | **Built-in**
+> **Category:** Content | **Contract:** `ContentProcessor` | **Built-in**
 
-Provides MDX and Markdown compilation for Veryfront, backed by [`@mdx-js/mdx`](https://github.com/mdx-js/mdx) and the [`unified`](https://unifiedjs.com/) ecosystem. Compiles content into runtime React bundles with sanitized HTML output, frontmatter extraction, and heading collection.
+Provides MDX and Markdown processing for Veryfront, backed by [`@mdx-js/mdx`](https://github.com/mdx-js/mdx) and the [`unified`](https://unifiedjs.com/) ecosystem. It returns compiled React modules with sanitized HTML output, frontmatter extraction, and heading collection.
 
-## Installation
+## Registration
 
-Add the extension to your project's `veryfront.config.ts`:
+This extension is auto-enabled by core bootstrap. Add it to `veryfront.config.ts` only when you need to override the built-in registration:
 
 ```ts
 import extMdx from "@veryfront/ext-transform-mdx";
@@ -18,11 +18,11 @@ export default defineConfig({
 
 ## Provided contract
 
-`ContentTransformer` — exposes:
+`ContentProcessor` exposes:
 
-- `compileMdx(options)` — runs `@mdx-js/mdx` through Veryfront's bundled remark + rehype plugin stack and returns compiled ESM, extracted headings, and frontmatter.
-- `compileMarkdown(options)` — runs a unified Markdown pipeline (`remark-parse` → `remark-rehype` → `rehype-sanitize` → `rehype-stringify`) producing sanitized HTML wrapped in a React component.
-- `getRemarkPlugins()` / `getRehypePlugins()` — returns the configured plugin list so callers can build a custom pipeline.
+- `compileMdx(options)` runs `@mdx-js/mdx` through Veryfront's bundled remark + rehype plugin stack and returns compiled ESM, extracted headings, and frontmatter.
+- `compileMarkdown(options)` runs a unified Markdown pipeline (`remark-parse` to `remark-rehype` to `rehype-sanitize` to `rehype-stringify`) producing sanitized HTML wrapped in a React component.
+- `getRemarkPlugins()` / `getRehypePlugins()` returns the configured plugin list so callers can build a custom pipeline.
 
 ## Default plugin stack
 
@@ -39,4 +39,4 @@ No factory options. The extension reads no environment variables and takes no co
 
 ## Behavior when missing
 
-If the extension is not installed and core's MDX or Markdown transformer is invoked, Veryfront throws an actionable install message pointing to `@veryfront/ext-transform-mdx`.
+If the extension is not installed and core's MDX or Markdown processor is invoked, Veryfront throws an actionable install message pointing to `@veryfront/ext-transform-mdx`.

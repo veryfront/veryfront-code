@@ -50,22 +50,22 @@ This matrix separates open-core framework support from capabilities that depend 
 
 ## Extension Contract Matrix
 
-These contracts are backed by first-party extension packages. Without the extension installed, the framework throws an install-suggestion error at first use.
+These contracts are backed by first-party extension packages. A contract is required only when a feature resolves it. Built-in packages are auto-enabled by core bootstrap; optional packages must be configured by the project.
 
-| Contract                 | Package                                | Runtime requirement          |
-| ------------------------ | -------------------------------------- | ---------------------------- |
-| `SchemaValidator`        | `@veryfront/ext-zod`                   | None (pure JS)               |
-| `AuthProvider`           | `@veryfront/ext-auth-jwt`              | None (jose library)          |
-| `Bundler`, `ModuleLexer` | `@veryfront/ext-bundler-esbuild`       | esbuild binary               |
-| `CSSProcessor`           | `@veryfront/ext-css-tailwind`          | Network (esm.sh for plugins) |
-| `ContentTransformer`     | `@veryfront/ext-transform-mdx`         | None (unified ecosystem)     |
-| `CodeParser`             | `@veryfront/ext-parser-babel`          | None (Babel)                 |
-| `TracingExporter`        | `@veryfront/ext-tracing-opentelemetry` | Network (OTLP endpoint)      |
-| `TokenCacheStore`        | `@veryfront/ext-cache-redis`           | Network (Redis)              |
-| `NodeCompat`             | `@veryfront/ext-node-compatibility`    | FS (SQLite, WASM)            |
-| `LLMProvider`            | `@veryfront/ext-llm-openai`            | Network (OpenAI API)         |
-| `LLMProvider`            | `@veryfront/ext-llm-anthropic`         | Network (Anthropic API)      |
-| `LLMProvider`            | `@veryfront/ext-llm-google`            | Network (Google AI API)      |
+| Contract                 | Package                                | Availability | Required by                             | Runtime requirement          |
+| ------------------------ | -------------------------------------- | ------------ | --------------------------------------- | ---------------------------- |
+| `SchemaValidator`        | `@veryfront/ext-zod`                   | Built-in     | Schema-backed runtime validation        | None (pure JS)               |
+| `Bundler`, `ModuleLexer` | `@veryfront/ext-bundler-esbuild`       | Built-in     | Build, import analysis, module bundling | esbuild binary               |
+| `CSSProcessor`           | `@veryfront/ext-css-tailwind`          | Built-in     | Tailwind CSS processing                 | Network (esm.sh for plugins) |
+| `ContentProcessor`       | `@veryfront/ext-transform-mdx`         | Built-in     | MDX or Markdown content compilation     | None (unified ecosystem)     |
+| `CodeParser`             | `@veryfront/ext-parser-babel`          | Built-in     | AST parsing or build-time code analysis | None (Babel)                 |
+| `NodeCompat`             | `@veryfront/ext-node-compatibility`    | Built-in     | Node compatibility or document parsing  | FS (SQLite, WASM)            |
+| `LLMProvider`            | `@veryfront/ext-llm-openai`            | Built-in     | OpenAI provider selection               | Network (OpenAI API)         |
+| `LLMProvider`            | `@veryfront/ext-llm-anthropic`         | Built-in     | Anthropic provider selection            | Network (Anthropic API)      |
+| `LLMProvider`            | `@veryfront/ext-llm-google`            | Built-in     | Google provider selection               | Network (Google AI API)      |
+| `AuthProvider`           | `@veryfront/ext-auth-jwt`              | Optional     | Auth signing or verification            | None (jose library)          |
+| `TracingExporter`        | `@veryfront/ext-tracing-opentelemetry` | Optional     | OTLP tracing export                     | Network (OTLP endpoint)      |
+| `TokenCacheStore`        | `@veryfront/ext-cache-redis`           | Optional     | Redis-backed token cache                | Network (Redis)              |
 
 ## Documentation Rule
 
