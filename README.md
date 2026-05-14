@@ -97,7 +97,6 @@ veryfront/
 ├── extensions/           # First-party extension packages
 ├── docs/                 # Architecture diagrams and guides
 ├── tests/                # Integration and E2E tests
-├── benchmarks/           # Performance benchmarks
 └── scripts/              # Development and build scripts
 ```
 
