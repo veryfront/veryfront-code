@@ -13,12 +13,10 @@ export {
   chatContainerVariants,
   type ChatTheme,
   cn,
-  cva,
   defaultAgentTheme,
   defaultChatTheme,
   mergeThemes,
   messageVariants,
-  type VariantProps,
 } from "./theme.ts";
 
 // ---------------------------------------------------------------------------
