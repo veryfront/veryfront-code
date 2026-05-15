@@ -36,6 +36,8 @@ export {
 
 export {
   buildFailureSuffix,
+  buildLiveEvalCaseMetadata,
+  type BuildLiveEvalCaseMetadataInput,
   buildLiveEvalCaseTagSummary,
   buildLiveEvalRequestBody,
   type BuildLiveEvalRequestBodyInput,
@@ -56,6 +58,8 @@ export {
   createPassedEvalResult,
   createPlainTextPdf,
   createSkippedEvalResult,
+  DEFAULT_LIVE_EVAL_AREA_TAG_RULES,
+  DEFAULT_LIVE_EVAL_OPTIONAL_JUDGE_CASE_PREFIXES,
   deleteLiveEvalConversation,
   deleteLiveEvalProjectFile,
   getLiveEvalProjectFile,
@@ -66,7 +70,10 @@ export {
   type LiveEvalApiContext,
   type LiveEvalCase,
   type LiveEvalCaseMetadata,
+  type LiveEvalCaseMetadataOptions,
   type LiveEvalCaseSelectionInput,
+  type LiveEvalCaseSurface,
+  type LiveEvalCaseTagRule,
   type LiveEvalContext,
   type LiveEvalConversationInput,
   type LiveEvalCreateConversationInput,
@@ -94,4 +101,5 @@ export {
   selectLiveEvalCases,
   submitLiveEvalInputResponse,
   waitForOpenLiveEvalInputRequest,
+  withLiveEvalMetadata,
 } from "./live-evals/index.ts";

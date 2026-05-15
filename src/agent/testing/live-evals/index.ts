@@ -37,6 +37,16 @@ export {
   type RuntimePerformanceSummary,
 } from "./performance.ts";
 export {
+  buildLiveEvalCaseMetadata,
+  type BuildLiveEvalCaseMetadataInput,
+  DEFAULT_LIVE_EVAL_AREA_TAG_RULES,
+  DEFAULT_LIVE_EVAL_OPTIONAL_JUDGE_CASE_PREFIXES,
+  type LiveEvalCaseMetadataOptions,
+  type LiveEvalCaseSurface,
+  type LiveEvalCaseTagRule,
+  withLiveEvalMetadata,
+} from "./metadata.ts";
+export {
   buildLiveEvalRequestBody,
   type BuildLiveEvalRequestBodyInput,
   type LiveEvalRequestBody,
