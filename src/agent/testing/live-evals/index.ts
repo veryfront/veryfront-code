@@ -1,4 +1,10 @@
 export {
+  type LiveEvalCliCaseFactoryInput,
+  type LiveEvalCliCaseGroups,
+  runLiveEvalCli,
+  type RunLiveEvalCliInput,
+} from "./cli-runner.ts";
+export {
   DEFAULT_LIVE_EVAL_ENDPOINT,
   type LiveEvalEnvironment,
   resolveLiveEvalEnvironment,

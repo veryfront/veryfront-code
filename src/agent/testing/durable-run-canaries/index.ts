@@ -1,4 +1,9 @@
 export {
+  type DurableRunCanaryCliCaseFactoryInput,
+  runDurableRunCanaryCli,
+  type RunDurableRunCanaryCliInput,
+} from "./cli-runner.ts";
+export {
   DEFAULT_DURABLE_RUN_CANARY_TIMEOUT_MS,
   type DurableRunCanaryEnvironment,
   resolveDurableRunCanaryEnvironment,
