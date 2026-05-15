@@ -29,19 +29,20 @@ Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and
 
 ## lint/
 
-| Script                         | Task                             | Purpose                                                                                    |
-| ------------------------------ | -------------------------------- | ------------------------------------------------------------------------------------------ |
-| `audit-core-deps.ts`           | `lint:core-deps`                 | Prevents root `npm:` literals and direct third-party imports from leaking into core source |
-| `audit-deps.ts`                | `lint:deps`                      | Checks dependency import pins across root and extension manifests                          |
-| `ban-console.ts`               | `lint:ban-console`               | Lints for inappropriate console usage                                                      |
-| `ban-deep-imports.ts`          | `lint:ban-deep-imports`          | Prevents deep imports from internal modules                                                |
-| `ban-internal-root-imports.ts` | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules                                            |
-| `check-unawaited-promises.ts`  | `lint:check-awaits`              | Detects unawaited async cleanup calls                                                      |
-| `find-duplicate-functions.ts`  | `dupes`                          | Finds exact and near-duplicate functions, plus semantic AST-based matches via `--semantic` |
-| `lint-platform-agnostic.ts`    | `lint:platform`                  | Checks platform-agnostic code boundaries                                                   |
-| `validate-architecture.ts`     | `validate:architecture`          | Validates module dependency boundaries                                                     |
-| `check-doc-links.ts`           | `docs:check-links`               | Validates documentation links                                                              |
-| `check-coverage.ts`            | `coverage:report`                | Validates test coverage thresholds                                                         |
+| Script                           | Task                             | Purpose                                                                                    |
+| -------------------------------- | -------------------------------- | ------------------------------------------------------------------------------------------ |
+| `audit-core-deps.ts`             | `lint:core-deps`                 | Prevents root `npm:` literals and direct third-party imports from leaking into core source |
+| `audit-dependency-boundaries.ts` | `lint:dependency-boundaries`     | Fails when generated dependency boundaries put npm packages in core or CLI                 |
+| `audit-deps.ts`                  | `lint:deps`                      | Checks dependency import pins across root and extension manifests                          |
+| `ban-console.ts`                 | `lint:ban-console`               | Lints for inappropriate console usage                                                      |
+| `ban-deep-imports.ts`            | `lint:ban-deep-imports`          | Prevents deep imports from internal modules                                                |
+| `ban-internal-root-imports.ts`   | `lint:ban-internal-root-imports` | Prevents root-level imports in internal modules                                            |
+| `check-unawaited-promises.ts`    | `lint:check-awaits`              | Detects unawaited async cleanup calls                                                      |
+| `find-duplicate-functions.ts`    | `dupes`                          | Finds exact and near-duplicate functions, plus semantic AST-based matches via `--semantic` |
+| `lint-platform-agnostic.ts`      | `lint:platform`                  | Checks platform-agnostic code boundaries                                                   |
+| `validate-architecture.ts`       | `validate:architecture`          | Validates module dependency boundaries                                                     |
+| `check-doc-links.ts`             | `docs:check-links`               | Validates documentation links                                                              |
+| `check-coverage.ts`              | `coverage:report`                | Validates test coverage thresholds                                                         |
 
 ## Dependency visibility
 
@@ -58,8 +59,9 @@ npm imports from `deno.lock` and supported esm.sh aliases declared by the
 extension manifest.
 
 The security audit workflow uploads those files as the `dependency-sboms`
-artifact. It also runs `lint:deps` and `lint:core-deps` so dependency pins and
-core dependency boundaries are checked together.
+artifact. It also runs `lint:deps`, `lint:core-deps`, and
+`lint:dependency-boundaries` so dependency pins, source imports, and generated
+dependency groups are checked together.
 
 ## Root-level scripts
 

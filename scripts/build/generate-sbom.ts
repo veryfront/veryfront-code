@@ -277,7 +277,7 @@ function normalizeWorkspaceMemberPath(path: string): string {
   return path.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
 }
 
-function workspaceMembersFromDenoConfig(
+export function workspaceMembersFromDenoConfig(
   config: { workspace?: unknown },
 ): string[] {
   if (!Array.isArray(config.workspace)) return [];
@@ -443,7 +443,7 @@ export function dependencyIndexForAllManifests(
   };
 }
 
-async function importsByWorkspaceManifest(
+export async function importsByWorkspaceManifest(
   workspaceMembers: string[],
 ): Promise<Record<string, Record<string, string>>> {
   const importsByManifest: Record<string, Record<string, string>> = {};

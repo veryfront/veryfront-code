@@ -10,6 +10,7 @@ on:
       - "scripts/build/generate-sbom.ts"
       - "scripts/lib/deno-lock.ts"
       - "scripts/lint/audit-core-deps.ts"
+      - "scripts/lint/audit-dependency-boundaries.ts"
       - "scripts/lint/audit-deps.ts"
       - "scripts/security/**"
       - ".github/workflows/security-audit.yml"
@@ -42,6 +43,9 @@ jobs:
 
       - name: Run core dependency lint
         run: deno task lint:core-deps
+
+      - name: Run dependency boundary lint
+        run: deno task lint:dependency-boundaries
 
       - name: Generate separated dependency SBOMs
         run: deno task sbom:all --output-dir dist/dependency-sboms

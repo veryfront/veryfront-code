@@ -31,7 +31,7 @@ jobs:
         run: |
           case "${{ matrix.check }}" in
             format) deno fmt --check ;;
-            lint) deno task lint && deno task lint:core-deps ;;
+            lint) deno task lint && deno task lint:core-deps && deno task lint:dependency-boundaries ;;
             typecheck) deno task typecheck ;;
           esac
 
