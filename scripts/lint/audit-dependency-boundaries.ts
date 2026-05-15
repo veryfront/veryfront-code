@@ -19,6 +19,24 @@ const REACT_BOUNDARY_COMPONENTS = new Set([
   "react-dom",
 ]);
 
+const SENSITIVE_EXTENSION_BOUNDARIES = [
+  {
+    label: "sandbox execution",
+    sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
+    expectedComponents: ["bash-tool", "just-bash"],
+  },
+  {
+    label: "native SQLite storage",
+    sourceLocation: "extensions/ext-db-sqlite/deno.json",
+    expectedComponents: ["@types/better-sqlite3", "better-sqlite3"],
+  },
+  {
+    label: "document extraction",
+    sourceLocation: "extensions/ext-document-kreuzberg/deno.json",
+    expectedComponents: ["@kreuzberg/wasm"],
+  },
+] as const;
+
 function componentNames(
   manifest: DependencyIndexManifest | undefined,
 ): string[] {
@@ -89,6 +107,29 @@ export function auditDependencyBoundaries(
     }
   }
 
+  for (const sensitiveBoundary of SENSITIVE_EXTENSION_BOUNDARIES) {
+    const manifest = manifests.get(sensitiveBoundary.sourceLocation);
+    if (!manifest) {
+      issues.push({
+        boundary: sensitiveBoundary.sourceLocation,
+        message:
+          `sensitive extension ${sensitiveBoundary.label} boundary is missing from dependency index`,
+      });
+      continue;
+    }
+
+    const componentSet = new Set(componentNames(manifest));
+    for (const expectedComponent of sensitiveBoundary.expectedComponents) {
+      if (!componentSet.has(expectedComponent)) {
+        issues.push({
+          boundary: sensitiveBoundary.sourceLocation,
+          message:
+            `sensitive extension ${sensitiveBoundary.label} boundary is missing expected component ${expectedComponent}`,
+        });
+      }
+    }
+  }
+
   return issues;
 }
 
@@ -97,7 +138,6 @@ async function dependencyIndexFromWorkspace(): Promise<DependencyIndex> {
   const workspaceMembers = workspaceMembersFromDenoConfig(denoConfig);
   return dependencyIndexForAllManifests(await Deno.readTextFile("deno.lock"), {
     workspaceMembers,
-    reactImports: denoConfig.imports ?? {},
     manifestImportsByPath: await importsByWorkspaceManifest(workspaceMembers),
   });
 }
