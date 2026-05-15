@@ -27,7 +27,7 @@ export interface LiveEvalConversationInput extends LiveEvalRequestTimeoutInput {
 export interface LiveEvalProjectUploadFixtureInput extends LiveEvalRequestTimeoutInput {
   filePath: string;
   contentType: string;
-  body: BodyInit;
+  body: BodyInit | Uint8Array;
   size?: number;
   pollIntervalMs?: number;
   maxAttempts?: number;
@@ -160,7 +160,10 @@ function createProjectUploadHeaders(
   return uploadHeaders;
 }
 
-function getProjectUploadBodySize(body: BodyInit, explicitSize: number | undefined): number {
+function getProjectUploadBodySize(
+  body: BodyInit | Uint8Array,
+  explicitSize: number | undefined,
+): number {
   if (typeof explicitSize === "number") {
     return explicitSize;
   }
@@ -182,12 +185,15 @@ function getProjectUploadBodySize(body: BodyInit, explicitSize: number | undefin
   throw new Error("Project upload fixtures require size when body length cannot be inferred");
 }
 
-function createProjectUploadBody(body: BodyInit, contentType: string): BodyInit {
+function createProjectUploadBody(body: BodyInit | Uint8Array, contentType: string): BodyInit {
   if (body instanceof Blob) {
     return body;
   }
   if (typeof body === "string") {
     return new Blob([body], { type: contentType });
+  }
+  if (body instanceof Uint8Array) {
+    return new Blob([body.slice()], { type: contentType });
   }
   return body;
 }
