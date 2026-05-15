@@ -1,5 +1,8 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { ensureBuiltinSchemaValidator } from "#veryfront/extensions/builtin-extensions.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+
+ensureBuiltinSchemaValidator();
 
 export interface DurableRunCanaryApiConfig {
   apiUrl: string;
