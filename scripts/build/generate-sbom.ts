@@ -60,6 +60,24 @@ export interface DependencyBoundaryInputs {
   manifestImportsByPath?: Record<string, Record<string, string>>;
 }
 
+export const SENSITIVE_DEPENDENCY_BOUNDARIES = [
+  {
+    label: "sandbox execution",
+    sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
+    expectedComponents: ["bash-tool", "just-bash"],
+  },
+  {
+    label: "native SQLite storage",
+    sourceLocation: "extensions/ext-db-sqlite/deno.json",
+    expectedComponents: ["@types/better-sqlite3", "better-sqlite3"],
+  },
+  {
+    label: "document extraction",
+    sourceLocation: "extensions/ext-document-kreuzberg/deno.json",
+    expectedComponents: ["@kreuzberg/wasm"],
+  },
+] as const;
+
 const EXACT_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;
 
 function hashFromIntegrity(
@@ -425,6 +443,97 @@ export function dependencyIndexForAllManifests(
   };
 }
 
+function boundaryLabel(manifest: DependencyIndexManifest): string {
+  if (manifest.group === "core") return "Core";
+  if (manifest.group === "cli") return "CLI";
+  if (manifest.group === "react") return "React";
+  if (manifest.group === "extension") return "Extension";
+  return "Workspace";
+}
+
+function titleCaseFirst(value: string): string {
+  return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
+}
+
+function markdownTableCell(value: string): string {
+  return value.replaceAll("|", "\\|");
+}
+
+function markdownCode(value: string): string {
+  return `\`${value.replaceAll("`", "\\`")}\``;
+}
+
+function sensitiveBoundaryForSource(
+  sourceLocation: string,
+): typeof SENSITIVE_DEPENDENCY_BOUNDARIES[number] | undefined {
+  return SENSITIVE_DEPENDENCY_BOUNDARIES.find((boundary) =>
+    boundary.sourceLocation === sourceLocation
+  );
+}
+
+function dependencySummaryNote(manifest: DependencyIndexManifest): string {
+  const sensitiveBoundary = sensitiveBoundaryForSource(
+    manifest.sourceLocation,
+  );
+  if (sensitiveBoundary) return `Sensitive: ${sensitiveBoundary.label}`;
+  if (
+    (manifest.group === "core" || manifest.group === "cli") &&
+    manifest.componentCount === 0
+  ) {
+    return "Third-party free";
+  }
+  if (manifest.group === "react") return "React runtime boundary";
+  if (manifest.group === "extension") return "Extension boundary";
+  return "Workspace boundary";
+}
+
+export function dependencySummaryMarkdown(index: DependencyIndex): string {
+  const lines = [
+    "# Dependency summary",
+    "",
+    "Generated from `dependencies-by-manifest.json`.",
+    "",
+    "## Boundaries",
+    "",
+    "| Boundary | Source | Components | Notes |",
+    "| --- | --- | ---: | --- |",
+  ];
+
+  for (const manifest of index.manifests) {
+    lines.push(
+      `| ${boundaryLabel(manifest)} | ${
+        markdownCode(manifest.sourceLocation)
+      } | ${manifest.componentCount} | ${
+        markdownTableCell(dependencySummaryNote(manifest))
+      } |`,
+    );
+  }
+
+  lines.push(
+    "",
+    "## Sensitive boundaries",
+    "",
+    "| Class | Source | Components | Expected packages |",
+    "| --- | --- | ---: | --- |",
+  );
+
+  const manifestsBySource = new Map(
+    index.manifests.map((manifest) => [manifest.sourceLocation, manifest]),
+  );
+  for (const boundary of SENSITIVE_DEPENDENCY_BOUNDARIES) {
+    const manifest = manifestsBySource.get(boundary.sourceLocation);
+    lines.push(
+      `| ${titleCaseFirst(boundary.label)} | ${
+        markdownCode(boundary.sourceLocation)
+      } | ${manifest?.componentCount ?? 0} | ${
+        boundary.expectedComponents.map(markdownCode).join(", ")
+      } |`,
+    );
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
 export async function importsByWorkspaceManifest(
   workspaceMembers: string[],
 ): Promise<Record<string, Record<string, string>>> {
@@ -478,11 +587,18 @@ function buildSbom(
 }
 
 async function writeSbom(outputPath: string, sbom: unknown): Promise<void> {
+  await writeTextOutput(outputPath, JSON.stringify(sbom, null, 2) + "\n");
+}
+
+async function writeTextOutput(
+  outputPath: string,
+  text: string,
+): Promise<void> {
   const outputDir = outputPath.substring(0, outputPath.lastIndexOf("/"));
   if (outputDir) {
     await Deno.mkdir(outputDir, { recursive: true });
   }
-  await Deno.writeTextFile(outputPath, JSON.stringify(sbom, null, 2) + "\n");
+  await Deno.writeTextFile(outputPath, text);
 }
 
 if (import.meta.main) {
@@ -505,16 +621,26 @@ if (import.meta.main) {
       workspaceMembers,
       manifestImportsByPath,
     });
+    const dependencyIndex = dependencyIndexForAllManifests(lockText, {
+      workspaceMembers,
+      manifestImportsByPath,
+    });
     await writeSbom(
       joinOutputPath(args["output-dir"], "dependencies-by-manifest.json"),
-      dependencyIndexForAllManifests(lockText, {
-        workspaceMembers,
-        manifestImportsByPath,
-      }),
+      dependencyIndex,
     );
     console.log(
       `✅ Generated dependency index: ${
         joinOutputPath(args["output-dir"], "dependencies-by-manifest.json")
+      }`,
+    );
+    await writeTextOutput(
+      joinOutputPath(args["output-dir"], "dependency-summary.md"),
+      dependencySummaryMarkdown(dependencyIndex),
+    );
+    console.log(
+      `✅ Generated dependency summary: ${
+        joinOutputPath(args["output-dir"], "dependency-summary.md")
       }`,
     );
     for (const output of outputs) {

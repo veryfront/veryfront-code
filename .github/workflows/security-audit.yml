@@ -54,7 +54,9 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dependency-sboms
-          path: dist/dependency-sboms/*.json
+          path: |
+            dist/dependency-sboms/*.json
+            dist/dependency-sboms/*.md
           retention-days: 14
 
   submit-dependency-snapshot:

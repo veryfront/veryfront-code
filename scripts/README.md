@@ -49,7 +49,8 @@ Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and
 Use `deno task sbom:all --output-dir dist/dependency-sboms` to generate
 segregated CycloneDX SBOMs for core, CLI, React, each extension, and the
 aggregate workspace. The same output includes `dependencies-by-manifest.json`,
-which is the fastest way to inspect dependencies grouped by boundary.
+which is the machine-readable dependency index grouped by boundary, and
+`dependency-summary.md`, which is the fastest human-readable view.
 
 `core.json` maps to the root framework boundary (`deno.json` and `src/`).
 `react.json` maps to `react/deno.json`, which owns the upstream React, React
@@ -59,7 +60,8 @@ SBOMs include npm imports from `deno.lock` and supported esm.sh aliases declared
 by the extension manifest.
 
 The security audit workflow uploads those files as the `dependency-sboms`
-artifact. It also runs `lint:deps`, `lint:core-deps`, and
+artifact. It includes the JSON SBOMs, `dependencies-by-manifest.json`, and
+`dependency-summary.md`. It also runs `lint:deps`, `lint:core-deps`, and
 `lint:dependency-boundaries` so dependency pins, source imports, and generated
 dependency groups are checked together.
 
