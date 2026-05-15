@@ -278,12 +278,12 @@ function normalizeCallToolResult(result: unknown): unknown {
       rawContent.filter((item): item is JsonRpcCallToolContentItem => isRecord(item)),
     );
 
-    if (hasToolExecutionErrorMarker(result)) {
-      return parseJsonText(text) ?? { error: "tool_error", message: text };
-    }
-
     if ("structuredContent" in result) {
       return result.structuredContent;
+    }
+
+    if (hasToolExecutionErrorMarker(result)) {
+      return parseJsonText(text) ?? { error: "tool_error", message: text };
     }
 
     return parseJsonText(text) ?? text;
