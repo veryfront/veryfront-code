@@ -39,25 +39,163 @@
       "id": "search_notion",
       "name": "Search Notion",
       "description": "Search pages and databases in the workspace",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/search",
+        "params": {
+          "Notion-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "Notion API version",
+            "default": "2022-06-28"
+          }
+        },
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Search query text"
+          },
+          "filter": {
+            "type": "object",
+            "description": "Optional Notion search filter"
+          },
+          "sort": {
+            "type": "object",
+            "description": "Optional Notion search sort"
+          },
+          "page_size": {
+            "type": "number",
+            "description": "Maximum results to return",
+            "default": 10
+          },
+          "start_cursor": {
+            "type": "string",
+            "description": "Pagination cursor"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
     },
     {
       "id": "read_page",
       "name": "Read Page",
       "description": "Read the content of a Notion page",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.notion.com/v1/blocks/{pageId}/children",
+        "params": {
+          "Notion-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "Notion API version",
+            "default": "2022-06-28"
+          },
+          "pageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Notion page ID",
+            "required": true
+          },
+          "page_size": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum child blocks to return",
+            "default": 100
+          },
+          "start_cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
     },
     {
       "id": "create_page",
       "name": "Create Page",
       "description": "Create a new page in a database or as a subpage",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/pages",
+        "params": {
+          "Notion-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "Notion API version",
+            "default": "2022-06-28"
+          }
+        },
+        "body": {
+          "parent": {
+            "type": "object",
+            "description": "Notion parent object, e.g. database_id or page_id",
+            "required": true
+          },
+          "properties": {
+            "type": "object",
+            "description": "Page properties",
+            "required": true
+          },
+          "children": {
+            "type": "array",
+            "description": "Optional child blocks"
+          }
+        }
+      }
     },
     {
       "id": "query_database",
       "name": "Query Database",
       "description": "Query a Notion database with filters and sorts",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.notion.com/v1/databases/{databaseId}/query",
+        "params": {
+          "Notion-Version": {
+            "type": "string",
+            "in": "header",
+            "description": "Notion API version",
+            "default": "2022-06-28"
+          },
+          "databaseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Notion database ID",
+            "required": true
+          }
+        },
+        "body": {
+          "filter": {
+            "type": "object",
+            "description": "Optional Notion database filter"
+          },
+          "sorts": {
+            "type": "array",
+            "description": "Optional Notion database sorts"
+          },
+          "page_size": {
+            "type": "number",
+            "description": "Maximum results to return",
+            "default": 10
+          },
+          "start_cursor": {
+            "type": "string",
+            "description": "Pagination cursor"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
     }
   ],
   "prompts": [
@@ -83,5 +221,9 @@
       "icon": "plus"
     }
   ],
-  "suggestedWith": ["gmail", "slack", "calendar"]
+  "suggestedWith": [
+    "gmail",
+    "slack",
+    "calendar"
+  ]
 }

@@ -45,31 +45,164 @@
       "id": "list_bases",
       "name": "List Bases",
       "description": "List all accessible Airtable bases",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.airtable.com/v0/meta/bases",
+        "params": {
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of bases to return",
+            "default": 100
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset from Airtable"
+          }
+        },
+        "response": {
+          "transform": "bases"
+        }
+      }
     },
     {
       "id": "get_base",
       "name": "Get Base",
       "description": "Get schema information for a specific base",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.airtable.com/v0/meta/bases/{baseId}/tables",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_records",
       "name": "List Records",
       "description": "List records from a table with optional filtering",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.airtable.com/v0/{baseId}/{tableIdOrName}",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          },
+          "tableIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table ID or URL-encoded table name",
+            "required": true
+          },
+          "view": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional view name or ID"
+          },
+          "filterByFormula": {
+            "type": "string",
+            "in": "query",
+            "description": "Airtable formula used to filter returned records"
+          },
+          "maxRecords": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum records to return"
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Records per page",
+            "default": 100
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset from Airtable"
+          }
+        },
+        "response": {
+          "transform": "records"
+        }
+      }
     },
     {
       "id": "get_record",
       "name": "Get Record",
       "description": "Get a specific record by ID",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.airtable.com/v0/{baseId}/{tableIdOrName}/{recordId}",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          },
+          "tableIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table ID or URL-encoded table name",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable record ID",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "create_record",
       "name": "Create Record",
       "description": "Create a new record in a table",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.airtable.com/v0/{baseId}/{tableIdOrName}",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          },
+          "tableIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table ID or URL-encoded table name",
+            "required": true
+          }
+        },
+        "body": {
+          "fields": {
+            "type": "object",
+            "description": "Field values for the new record",
+            "required": true
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Allow Airtable to typecast field values",
+            "default": false
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -95,5 +228,9 @@
       "icon": "document"
     }
   ],
-  "suggestedWith": ["gmail", "slack", "notion"]
+  "suggestedWith": [
+    "gmail",
+    "slack",
+    "notion"
+  ]
 }

@@ -8,7 +8,10 @@
     "provider": "figma",
     "authorizationUrl": "https://www.figma.com/oauth",
     "tokenUrl": "https://api.figma.com/v1/oauth/token",
-    "scopes": ["file_content:read"],
+    "scopes": [
+      "file_content:read",
+      "file_comments:write"
+    ],
     "callbackPath": "/api/auth/figma/callback",
     "tokenAuthMethod": "client_secret_basic",
     "requiredApis": [
@@ -45,25 +48,110 @@
       "id": "get_file",
       "name": "Get File",
       "description": "Get detailed information about a Figma file including components and styles",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.figma.com/v1/files/{fileKey}",
+        "params": {
+          "fileKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Figma file key",
+            "required": true
+          },
+          "ids": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated node IDs to include"
+          },
+          "depth": {
+            "type": "number",
+            "in": "query",
+            "description": "Traversal depth for document tree"
+          },
+          "geometry": {
+            "type": "string",
+            "in": "query",
+            "description": "Set to paths to export vector data"
+          },
+          "plugin_data": {
+            "type": "string",
+            "in": "query",
+            "description": "Plugin data namespace to include"
+          }
+        }
+      }
     },
     {
       "id": "get_comments",
       "name": "Get Comments",
       "description": "Get all comments on a Figma file",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.figma.com/v1/files/{fileKey}/comments",
+        "params": {
+          "fileKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Figma file key",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "comments"
+        }
+      }
     },
     {
       "id": "post_comment",
       "name": "Post Comment",
       "description": "Post a comment on a Figma file",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.figma.com/v1/files/{fileKey}/comments",
+        "params": {
+          "fileKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Figma file key",
+            "required": true
+          }
+        },
+        "body": {
+          "message": {
+            "type": "string",
+            "description": "Comment text",
+            "required": true
+          },
+          "client_meta": {
+            "type": "object",
+            "description": "Optional Figma comment position metadata"
+          }
+        }
+      }
     },
     {
       "id": "list_projects",
       "name": "List Projects",
       "description": "List all projects in a team",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.figma.com/v1/teams/{teamId}/projects",
+        "params": {
+          "teamId": {
+            "type": "string",
+            "in": "path",
+            "description": "Figma team ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "projects"
+        }
+      }
     }
   ],
   "prompts": [
@@ -96,5 +184,9 @@
       "icon": "plus"
     }
   ],
-  "suggestedWith": ["linear", "slack", "notion"]
+  "suggestedWith": [
+    "linear",
+    "slack",
+    "notion"
+  ]
 }

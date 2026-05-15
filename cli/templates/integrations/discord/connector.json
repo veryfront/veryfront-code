@@ -8,7 +8,12 @@
     "provider": "discord",
     "authorizationUrl": "https://discord.com/api/oauth2/authorize",
     "tokenUrl": "https://discord.com/api/oauth2/token",
-    "scopes": ["identify", "guilds", "guilds.members.read", "messages.read"],
+    "scopes": [
+      "identify",
+      "guilds",
+      "guilds.members.read",
+      "messages.read"
+    ],
     "callbackPath": "/api/auth/discord/callback",
     "tokenAuthMethod": "body",
     "requiredApis": [
@@ -46,7 +51,29 @@
       "id": "list_guilds",
       "name": "List Guilds",
       "description": "List Discord servers (guilds) the user is a member of",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://discord.com/api/v10/users/@me/guilds",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum guilds to return",
+            "default": 100
+          },
+          "before": {
+            "type": "string",
+            "in": "query",
+            "description": "Return guilds before this guild ID"
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Return guilds after this guild ID"
+          }
+        }
+      }
     },
     {
       "id": "list_channels",
@@ -70,7 +97,11 @@
       "id": "get_user",
       "name": "Get User",
       "description": "Get information about the authenticated Discord user",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://discord.com/api/v10/users/@me"
+      }
     }
   ],
   "prompts": [
@@ -96,5 +127,9 @@
       "icon": "list"
     }
   ],
-  "suggestedWith": ["slack", "github", "notion"]
+  "suggestedWith": [
+    "slack",
+    "github",
+    "notion"
+  ]
 }
