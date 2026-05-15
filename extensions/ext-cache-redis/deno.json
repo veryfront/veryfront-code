@@ -8,7 +8,11 @@
       "provides": ["TokenCacheStore"]
     },
     "capabilities": [
-      { "type": "net:outbound", "hosts": ["*"] }
+      { "type": "net:outbound", "hosts": ["*"] },
+      {
+        "type": "env:read",
+        "keys": ["REDIS_URL", "REDIS_PREFIX", "REDIS_PASSWORD"]
+      }
     ]
   },
   "imports": {

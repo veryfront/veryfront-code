@@ -9,7 +9,9 @@ describe("ext-sandbox-shell-tools", () => {
 
     assertEquals(extension.name, "ext-sandbox-shell-tools");
     assertEquals(extension.contracts?.provides, [SandboxShellToolsProviderName]);
-    assertEquals(extension.capabilities, []);
+    assertEquals(extension.capabilities, [
+      { type: "sandbox:execute", tools: ["bash"] },
+    ]);
   });
 
   it("registers a provider during setup", () => {

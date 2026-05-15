@@ -56,3 +56,5 @@ config = {
 ## Capabilities
 
 - **net `*`:** Redis connection. Narrow to a specific host in your own deployment policy if you're not using a wildcard.
+- **env:** reads `REDIS_URL`, `REDIS_PREFIX`, and `REDIS_PASSWORD` when explicit
+  config is not set.

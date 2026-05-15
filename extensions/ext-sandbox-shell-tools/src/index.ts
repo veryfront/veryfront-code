@@ -30,7 +30,9 @@ const extSandboxShellTools: ExtensionFactory = () => ({
   contracts: {
     provides: [SandboxShellToolsProviderName],
   },
-  capabilities: [],
+  capabilities: [
+    { type: "sandbox:execute", tools: ["bash"] },
+  ],
   setup(ctx) {
     ctx.provide(SandboxShellToolsProviderName, provider);
     ctx.logger.info("[ext-sandbox-shell-tools] Sandbox shell tools provider registered");

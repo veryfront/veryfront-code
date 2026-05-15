@@ -60,6 +60,17 @@ describe("ext-cache-redis extension", () => {
       const ext = factory();
       assertEquals(ext.contracts?.provides, ["TokenCacheStore"]);
     });
+
+    it("declares network and env capabilities", () => {
+      const ext = factory();
+      assertEquals(ext.capabilities, [
+        { type: "net:outbound", hosts: ["*"] },
+        {
+          type: "env:read",
+          keys: ["REDIS_URL", "REDIS_PREFIX", "REDIS_PASSWORD"],
+        },
+      ]);
+    });
   });
 
   describe("RedisTokenCacheStore round-trip", () => {

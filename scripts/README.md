@@ -64,9 +64,10 @@ artifact. It includes the JSON SBOMs, `dependencies-by-manifest.json`, and
 `dependency-summary.md`. It also runs `lint:deps`, `lint:core-deps`, and
 `lint:dependency-boundaries` so dependency pins, source imports, and generated
 dependency groups are checked together. CI also runs `lint:extension-contracts`
-to ensure extension manifests use `veryfront.contracts` instead of
-contract-shaped capabilities, and to keep manifest contract metadata aligned
-with extension factories.
+and `lint:extension-capabilities` to ensure extension manifests use
+`veryfront.contracts` instead of contract-shaped capabilities, keep manifest
+contract and capability metadata aligned with extension factories, and enforce
+explicit capability metadata for sensitive extension boundaries.
 
 ## Root-level scripts
 

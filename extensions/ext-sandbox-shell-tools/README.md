@@ -14,3 +14,9 @@ dependencies.
 This extension is a sensitive sandbox execution boundary. Keep `bash-tool`,
 `just-bash`, and related shell execution dependencies in this extension instead
 of importing them from core, CLI, React, or unrelated extensions.
+
+## Capabilities
+
+- **sandbox `bash`:** Creates shell tools that execute commands through the
+  configured sandbox provider. The extension does not spawn local processes
+  directly, but it exposes command execution inside the sandbox boundary.

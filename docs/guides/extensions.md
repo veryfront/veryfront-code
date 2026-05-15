@@ -247,18 +247,20 @@ capabilities: [
   { type: "net:listen", ports: [3000] },
   { type: "env:read", keys: ["DATABASE_URL", "API_KEY"] },
   { type: "process:spawn", commands: ["esbuild"] },
+  { type: "sandbox:execute", tools: ["bash"] },
 ];
 ```
 
-| Type            | Scoping              | Deno flag                      |
-| --------------- | -------------------- | ------------------------------ |
-| `fs:read`       | `paths: string[]`    | `--allow-read=<paths>`         |
-| `fs:write`      | `paths: string[]`    | `--allow-write=<paths>`        |
-| `net:outbound`  | `hosts: string[]`    | `--allow-net=<hosts>`          |
-| `net:listen`    | `ports: number[]`    | `--allow-net=localhost:<port>` |
-| `env:read`      | `keys: string[]`     | `--allow-env=<keys>`           |
-| `process:spawn` | `commands: string[]` | `--allow-run=<commands>`       |
-| `native:ffi`    | (none)               | `--allow-ffi`                  |
+| Type              | Scoping              | Deno flag                      |
+| ----------------- | -------------------- | ------------------------------ |
+| `fs:read`         | `paths: string[]`    | `--allow-read=<paths>`         |
+| `fs:write`        | `paths: string[]`    | `--allow-write=<paths>`        |
+| `net:outbound`    | `hosts: string[]`    | `--allow-net=<hosts>`          |
+| `net:listen`      | `ports: number[]`    | `--allow-net=localhost:<port>` |
+| `env:read`        | `keys: string[]`     | `--allow-env=<keys>`           |
+| `process:spawn`   | `commands: string[]` | `--allow-run=<commands>`       |
+| `native:ffi`      | (none)               | `--allow-ffi`                  |
+| `sandbox:execute` | `tools: string[]`    | Audit metadata                 |
 
 Use `contracts.provides` and `contracts.requires` for contract metadata. Capabilities describe runtime resources, not contract ownership or dependency order.
 
@@ -274,6 +276,18 @@ Use the same contract metadata in the extension factory and package metadata:
 | Permission       | `capabilities`                   | Depends on the resource | `veryfront.capabilities`       |
 
 CI runs `deno task lint:extension-contracts` to keep these fields aligned. The check fails if a manifest uses `capabilities: [{ type: "contract" }]`, if factory contracts are missing from `veryfront.contracts`, or if manifest and factory contract lists drift.
+
+## Capability checklist
+
+Declare the same capabilities in the extension factory and in `veryfront.capabilities` inside the extension manifest. CI runs `deno task lint:extension-capabilities` to keep those lists aligned and to enforce sensitive extension policies.
+
+| Extension                         | Required capabilities                    | Reason                                     |
+| --------------------------------- | ---------------------------------------- | ------------------------------------------ |
+| `ext-sandbox-shell-tools`         | `sandbox:execute` with `tools: ["bash"]` | Command execution in a sandbox             |
+| `ext-cache-redis`                 | `net:outbound`, `env:read` for `REDIS_*` | External cache connection and env fallback |
+| `ext-db-sqlite`                   | `fs:read`, `fs:write`                    | Native SQLite database access              |
+| `ext-document-kreuzberg`          | `fs:read`                                | Document parsing boundary                  |
+| `ext-observability-opentelemetry` | `net:outbound`, `env:read` for `OTEL_*`  | Telemetry export and collector config      |
 
 ## Available contracts
 
