@@ -37,6 +37,26 @@ describe("integration endpoint specs", () => {
     assertEquals(totalEndpointTools, 53);
   });
 
+  it("adds endpoint specs for the newly configured integration providers", () => {
+    const expectedEndpointCounts = new Map([
+      ["airtable", 5],
+      ["discord", 2],
+      ["figma", 4],
+      ["notion", 4],
+    ]);
+
+    for (const [connectorName, expectedEndpointCount] of expectedEndpointCounts) {
+      const connector = getConnector(connectorName);
+      const endpointTools = connector.tools.filter((tool) => tool.endpoint);
+
+      assertEquals(
+        endpointTools.length,
+        expectedEndpointCount,
+        `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
+      );
+    }
+  });
+
   it("keeps gmail connector tools aligned with scaffolded tool files", async () => {
     const gmail = getConnector("gmail");
     const toolFiles: string[] = [];
