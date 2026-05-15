@@ -18,6 +18,7 @@ import {
 	BROWSER_SAFE_EXPORTS,
 } from "./browser-safe-exports.mjs";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
+import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -134,6 +135,7 @@ await build({
 		dependencies: {
 			"@types/react": "^19.0.0",
 			"@types/react-dom": "^19.0.0",
+			"ai": "^6.0.0",
 			"ws": "^8.18.0",
 			"@kreuzberg/node": "^4.4.2",
 		},
@@ -205,6 +207,11 @@ await build({
 			'(process.argv[1] ?? "").replace',
 			"dnt polyfill process.argv[1] fix",
 		);
+
+		const patchedReactShimCount = normalizeEsmShReactNpmShims("./npm/esm/deps/esm.sh");
+		if (patchedReactShimCount > 0) {
+			console.log(`📝 Patched ${patchedReactShimCount} React ecosystem esm.sh npm shims`);
+		}
 
 		// Keep browser-safe client exports free of dnt Node polyfill imports.
 		// These modules are consumed directly in browser bundles and do not rely on
