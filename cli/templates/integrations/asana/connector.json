@@ -8,7 +8,9 @@
     "provider": "asana",
     "authorizationUrl": "https://app.asana.com/-/oauth_authorize",
     "tokenUrl": "https://app.asana.com/-/oauth_token",
-    "scopes": ["default"],
+    "scopes": [
+      "default"
+    ],
     "callbackPath": "/api/auth/asana/callback",
     "requiredApis": [
       {
@@ -38,31 +40,164 @@
       "id": "list_tasks",
       "name": "List Tasks",
       "description": "List tasks in a project or assigned to a user",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/tasks",
+        "params": {
+          "project": {
+            "type": "string",
+            "in": "query",
+            "description": "Asana project GID to list tasks from"
+          },
+          "assignee": {
+            "type": "string",
+            "in": "query",
+            "description": "Assignee user GID, 'me', or omit when project is provided"
+          },
+          "workspace": {
+            "type": "string",
+            "in": "query",
+            "description": "Workspace GID for assignee-based task lists"
+          },
+          "completed_since": {
+            "type": "string",
+            "in": "query",
+            "description": "Only return tasks completed since this ISO timestamp",
+            "default": "now"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum tasks to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset from Asana"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
     },
     {
       "id": "get_task",
       "name": "Get Task",
       "description": "Get details of a specific task",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/tasks/{taskGid}",
+        "params": {
+          "taskGid": {
+            "type": "string",
+            "in": "path",
+            "description": "Asana task GID",
+            "required": true
+          },
+          "opt_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated task fields to return"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
     },
     {
       "id": "create_task",
       "name": "Create Task",
       "description": "Create a new task in a project",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://app.asana.com/api/1.0/tasks",
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Asana task payload with name, projects, workspace, assignee, notes, due_on, etc.",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
     },
     {
       "id": "update_task",
       "name": "Update Task",
       "description": "Update an existing task",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://app.asana.com/api/1.0/tasks/{taskGid}",
+        "params": {
+          "taskGid": {
+            "type": "string",
+            "in": "path",
+            "description": "Asana task GID",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Asana task fields to update",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
     },
     {
       "id": "list_projects",
       "name": "List Projects",
       "description": "List all projects in the workspace",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/projects",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "query",
+            "description": "Workspace GID to list projects from"
+          },
+          "team": {
+            "type": "string",
+            "in": "query",
+            "description": "Team GID to list projects from"
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived projects",
+            "default": false
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset from Asana"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
     }
   ],
   "prompts": [
@@ -81,5 +216,9 @@
       "icon": "plus"
     }
   ],
-  "suggestedWith": ["slack", "notion", "calendar"]
+  "suggestedWith": [
+    "slack",
+    "notion",
+    "calendar"
+  ]
 }

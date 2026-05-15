@@ -12,6 +12,7 @@
       "Chat.Read",
       "Chat.ReadWrite",
       "ChannelMessage.Send",
+      "Channel.ReadBasic.All",
       "Team.ReadBasic.All",
       "offline_access"
     ],
@@ -45,31 +46,122 @@
       "id": "list_chats",
       "name": "List Chats",
       "description": "List recent Teams chats",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/chats",
+        "params": {
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum chats to return",
+            "default": 50
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
     },
     {
       "id": "get_messages",
       "name": "Get Messages",
       "description": "Get messages from a specific chat",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/chats/{chatId}/messages",
+        "params": {
+          "chatId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Teams chat ID",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return",
+            "default": 50
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
     },
     {
       "id": "send_message",
       "name": "Send Message",
       "description": "Send a message to a chat or channel",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/teams/{teamId}/channels/{channelId}/messages",
+        "params": {
+          "teamId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Teams team ID",
+            "required": true
+          },
+          "channelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Teams channel ID",
+            "required": true
+          }
+        },
+        "body": {
+          "body": {
+            "type": "object",
+            "description": "Chat message body, e.g. {contentType: 'html', content: '<p>Hello</p>'}",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_teams",
       "name": "List Teams",
       "description": "List all joined Teams",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/joinedTeams",
+        "params": {
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum teams to return",
+            "default": 50
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
     },
     {
       "id": "list_channels",
       "name": "List Channels",
       "description": "List channels in a specific Team",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/teams/{teamId}/channels",
+        "params": {
+          "teamId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Teams team ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
     }
   ],
   "prompts": [
@@ -95,5 +187,9 @@
       "icon": "search"
     }
   ],
-  "suggestedWith": ["outlook", "slack", "calendar"]
+  "suggestedWith": [
+    "outlook",
+    "slack",
+    "calendar"
+  ]
 }

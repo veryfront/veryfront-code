@@ -8,7 +8,11 @@
     "provider": "gitlab",
     "authorizationUrl": "https://gitlab.com/oauth/authorize",
     "tokenUrl": "https://gitlab.com/oauth/token",
-    "scopes": ["api", "read_user", "read_repository"],
+    "scopes": [
+      "api",
+      "read_user",
+      "read_repository"
+    ],
     "callbackPath": "/api/auth/gitlab/callback",
     "tokenAuthMethod": "body",
     "requiredApis": [
@@ -39,31 +43,190 @@
       "id": "search_issues",
       "name": "Search Issues",
       "description": "Search for issues across projects",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/issues",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search text for issue title or description"
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Issue state",
+            "default": "opened"
+          },
+          "scope": {
+            "type": "string",
+            "in": "query",
+            "description": "Issue scope such as created_by_me, assigned_to_me, or all",
+            "default": "assigned_to_me"
+          },
+          "labels": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated label names"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Result page",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 20
+          }
+        }
+      }
     },
     {
       "id": "get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific issue",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/{projectId}/issues/{issueIid}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "GitLab numeric project ID or raw namespace/project path",
+            "required": true
+          },
+          "issueIid": {
+            "type": "number",
+            "in": "path",
+            "description": "Project-local issue IID",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "create_issue",
       "name": "Create Issue",
       "description": "Create a new issue in a project",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gitlab.com/api/v4/projects/{projectId}/issues",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "GitLab numeric project ID or raw namespace/project path",
+            "required": true
+          }
+        },
+        "body": {
+          "title": {
+            "type": "string",
+            "description": "Issue title",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Issue description"
+          },
+          "labels": {
+            "type": "string",
+            "description": "Comma-separated labels"
+          },
+          "assignee_ids": {
+            "type": "array",
+            "description": "GitLab user IDs to assign"
+          }
+        }
+      }
     },
     {
       "id": "list_merge_requests",
       "name": "List Merge Requests",
       "description": "List merge requests for a project or across projects",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/merge_requests",
+        "params": {
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "Merge request state",
+            "default": "opened"
+          },
+          "scope": {
+            "type": "string",
+            "in": "query",
+            "description": "Merge request scope such as created_by_me, assigned_to_me, or all",
+            "default": "assigned_to_me"
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search text for merge requests"
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Result page",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 20
+          }
+        }
+      }
     },
     {
       "id": "list_projects",
       "name": "List Projects",
       "description": "List accessible GitLab projects",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects",
+        "params": {
+          "membership": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return projects the user is a member of",
+            "default": true
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search text for projects"
+          },
+          "simple": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return simplified project objects",
+            "default": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Result page",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 20
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -96,5 +259,9 @@
       "icon": "list"
     }
   ],
-  "suggestedWith": ["github", "jira", "slack"]
+  "suggestedWith": [
+    "github",
+    "jira",
+    "slack"
+  ]
 }

@@ -43,31 +43,120 @@
       "id": "list_accounts",
       "name": "List Accounts",
       "description": "List accounts from your Salesforce CRM",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "SOQL query for accounts",
+            "default": "SELECT Id, Name, Type, Industry, Phone, Website FROM Account ORDER BY LastModifiedDate DESC LIMIT 50"
+          }
+        },
+        "response": {
+          "transform": "records"
+        }
+      }
     },
     {
       "id": "get_account",
       "name": "Get Account",
       "description": "Get detailed information about a specific account",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/Account/{accountId}",
+        "params": {
+          "accountId": {
+            "type": "string",
+            "in": "path",
+            "description": "Salesforce Account ID",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_contacts",
       "name": "List Contacts",
       "description": "List contacts from your Salesforce CRM",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "SOQL query for contacts",
+            "default": "SELECT Id, FirstName, LastName, Email, Phone, AccountId FROM Contact ORDER BY LastModifiedDate DESC LIMIT 50"
+          }
+        },
+        "response": {
+          "transform": "records"
+        }
+      }
     },
     {
       "id": "list_opportunities",
       "name": "List Opportunities",
       "description": "List sales opportunities from your Salesforce CRM",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "SOQL query for opportunities",
+            "default": "SELECT Id, Name, StageName, Amount, CloseDate, AccountId FROM Opportunity ORDER BY CloseDate DESC LIMIT 50"
+          }
+        },
+        "response": {
+          "transform": "records"
+        }
+      }
     },
     {
       "id": "create_lead",
       "name": "Create Lead",
       "description": "Create a new lead in Salesforce CRM",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "{{oauth.raw.instance_url}}/services/data/v61.0/sobjects/Lead",
+        "body": {
+          "LastName": {
+            "type": "string",
+            "description": "Lead last name",
+            "required": true
+          },
+          "Company": {
+            "type": "string",
+            "description": "Lead company",
+            "required": true
+          },
+          "FirstName": {
+            "type": "string",
+            "description": "Lead first name"
+          },
+          "Email": {
+            "type": "string",
+            "description": "Lead email address"
+          },
+          "Phone": {
+            "type": "string",
+            "description": "Lead phone number"
+          },
+          "Status": {
+            "type": "string",
+            "description": "Lead status"
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -100,5 +189,9 @@
       "icon": "user"
     }
   ],
-  "suggestedWith": ["gmail", "slack", "calendar"]
+  "suggestedWith": [
+    "gmail",
+    "slack",
+    "calendar"
+  ]
 }

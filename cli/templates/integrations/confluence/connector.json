@@ -8,7 +8,10 @@
     "provider": "atlassian",
     "authorizationUrl": "https://auth.atlassian.com/authorize",
     "tokenUrl": "https://auth.atlassian.com/oauth/token",
-    "scopes": ["read:confluence-content.all", "write:confluence-content"],
+    "scopes": [
+      "read:confluence-content.all",
+      "write:confluence-content"
+    ],
     "callbackPath": "/api/auth/confluence/callback",
     "tokenAuthMethod": "client_secret_post",
     "additionalParams": {
@@ -20,7 +23,11 @@
         "name": "Atlassian OAuth 2.0 App",
         "enableUrl": "https://developer.atlassian.com/console/myapps/"
       }
-    ]
+    ],
+    "additionalAuthParams": {
+      "audience": "api.atlassian.com",
+      "prompt": "consent"
+    }
   },
   "envVars": [
     {
@@ -43,31 +50,199 @@
       "id": "search_content",
       "name": "Search Confluence",
       "description": "Search for pages and blog posts in Confluence",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content/search",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          },
+          "cql": {
+            "type": "string",
+            "in": "query",
+            "description": "Confluence Query Language expression",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum results to return",
+            "default": 25
+          },
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination offset",
+            "default": 0
+          },
+          "expand": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated expansions",
+            "default": "space,version"
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
     },
     {
       "id": "get_page",
       "name": "Get Page",
       "description": "Get the content of a specific Confluence page",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content/{pageId}",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          },
+          "pageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Confluence page ID",
+            "required": true
+          },
+          "expand": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated expansions",
+            "default": "body.storage,version"
+          }
+        }
+      }
     },
     {
       "id": "create_page",
       "name": "Create Page",
       "description": "Create a new page in a Confluence space",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          }
+        },
+        "body": {
+          "type": {
+            "type": "string",
+            "description": "Confluence content type",
+            "default": "page"
+          },
+          "title": {
+            "type": "string",
+            "description": "Page title",
+            "required": true
+          },
+          "space": {
+            "type": "object",
+            "description": "Space object, e.g. {key: 'ENG'}",
+            "required": true
+          },
+          "ancestors": {
+            "type": "array",
+            "description": "Parent page references"
+          },
+          "body": {
+            "type": "object",
+            "description": "Confluence body payload, typically storage representation",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "update_page",
       "name": "Update Page",
       "description": "Update the content of an existing Confluence page",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content/{pageId}",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          },
+          "pageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Confluence page ID",
+            "required": true
+          }
+        },
+        "body": {
+          "type": {
+            "type": "string",
+            "description": "Confluence content type",
+            "default": "page"
+          },
+          "title": {
+            "type": "string",
+            "description": "Page title",
+            "required": true
+          },
+          "version": {
+            "type": "object",
+            "description": "Version object with incremented number",
+            "required": true
+          },
+          "body": {
+            "type": "object",
+            "description": "Updated Confluence body payload",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_spaces",
       "name": "List Spaces",
       "description": "List all accessible Confluence spaces",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/space",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum spaces to return",
+            "default": 25
+          },
+          "start": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination offset",
+            "default": 0
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
     }
   ],
   "prompts": [
@@ -100,5 +275,9 @@
       "icon": "edit"
     }
   ],
-  "suggestedWith": ["jira", "slack", "notion"]
+  "suggestedWith": [
+    "jira",
+    "slack",
+    "notion"
+  ]
 }
