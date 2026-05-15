@@ -80,6 +80,80 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("adds callable endpoint specs for remaining configured OAuth providers", () => {
+    const expectedEndpointCounts = new Map([
+      ["asana", 5],
+      ["gitlab", 5],
+      ["jira", 5],
+      ["confluence", 5],
+      ["salesforce", 5],
+      ["outlook", 5],
+      ["teams", 5],
+      ["discord", 2],
+    ]);
+
+    for (const [connectorName, expectedEndpointCount] of expectedEndpointCounts) {
+      const connector = getConnector(connectorName);
+      const endpointTools = connector.tools.filter((tool) => tool.endpoint);
+
+      assertEquals(
+        endpointTools.length,
+        expectedEndpointCount,
+        `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
+      );
+    }
+  });
+
+  it("keeps remaining OAuth provider endpoints executor-compatible", () => {
+    const asanaListTasks = getTool("asana", "list_tasks");
+    assertEquals(asanaListTasks.endpoint?.url, "https://app.asana.com/api/1.0/tasks");
+    assertEquals(asanaListTasks.endpoint?.params?.project?.in, "query");
+
+    const gitlabGetIssue = getTool("gitlab", "get_issue");
+    assertEquals(
+      gitlabGetIssue.endpoint?.url,
+      "https://gitlab.com/api/v4/projects/{projectId}/issues/{issueIid}",
+    );
+    assertEquals(gitlabGetIssue.endpoint?.params?.issueIid?.required, true);
+
+    const jiraSearchIssues = getTool("jira", "search_issues");
+    assertEquals(
+      jiraSearchIssues.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search",
+    );
+    assertEquals(jiraSearchIssues.endpoint?.body?.jql?.required, true);
+
+    const confluenceGetPage = getTool("confluence", "get_page");
+    assertEquals(
+      confluenceGetPage.endpoint?.url,
+      "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content/{pageId}",
+    );
+    assertEquals(confluenceGetPage.endpoint?.params?.expand?.default, "body.storage,version");
+
+    const salesforceListAccounts = getTool("salesforce", "list_accounts");
+    assertEquals(
+      salesforceListAccounts.endpoint?.url,
+      "{{oauth.raw.instance_url}}/services/data/v61.0/query",
+    );
+    assertStringIncludes(salesforceListAccounts.endpoint?.params?.q?.default as string, "Account");
+
+    const outlookSendEmail = getTool("outlook", "send_email");
+    assertEquals(outlookSendEmail.endpoint?.url, "https://graph.microsoft.com/v1.0/me/sendMail");
+    assertEquals(outlookSendEmail.endpoint?.body?.message?.required, true);
+
+    const teamsListChannels = getTool("teams", "list_channels");
+    assertEquals(
+      teamsListChannels.endpoint?.url,
+      "https://graph.microsoft.com/v1.0/teams/{teamId}/channels",
+    );
+    assertEquals(teamsListChannels.endpoint?.params?.teamId?.required, true);
+    const teams = getConnector("teams");
+    assertEquals(teams.auth.scopes?.includes("Channel.ReadBasic.All"), true);
+
+    const confluence = getConnector("confluence");
+    assertEquals(confluence.auth.additionalAuthParams?.audience, "api.atlassian.com");
+  });
+
   it("keeps newly added static endpoints executor-compatible", () => {
     const hubspotListContacts = getTool("hubspot", "list_contacts");
     assertEquals(
@@ -126,6 +200,52 @@ describe("integration endpoint specs", () => {
     assertEquals(sharepointListFiles.endpoint?.params?.siteId?.required, true);
   });
 
+  it("keeps endpoint path params aligned with URL placeholders", () => {
+    const oauthMetadataTemplate = /{{\s*oauth\.raw\.[A-Za-z0-9_.-]+\s*}}/g;
+
+    for (const connector of connectors) {
+      for (const tool of connector.tools) {
+        const endpoint = tool.endpoint;
+        if (!endpoint) continue;
+
+        const urlWithoutOAuthTemplates = endpoint.url.replace(
+          oauthMetadataTemplate,
+          "https://oauth.example",
+        );
+        const pathParams = Object.entries(endpoint.params ?? {}).filter(([, param]) =>
+          param.in === "path"
+        );
+
+        for (const [paramName] of pathParams) {
+          assertStringIncludes(
+            urlWithoutOAuthTemplates,
+            `{${paramName}}`,
+            `${connector.name}:${
+              tool.id ?? tool.name
+            } declares path param ${paramName} but URL does not contain it`,
+          );
+        }
+
+        for (const placeholder of urlWithoutOAuthTemplates.matchAll(/{([A-Za-z0-9_$.-]+)}/g)) {
+          const placeholderName = placeholder[1]!;
+          assertExists(
+            endpoint.params?.[placeholderName],
+            `${connector.name}:${
+              tool.id ?? tool.name
+            } URL placeholder ${placeholderName} is missing a param definition`,
+          );
+          assertEquals(
+            endpoint.params?.[placeholderName]?.in,
+            "path",
+            `${connector.name}:${
+              tool.id ?? tool.name
+            } URL placeholder ${placeholderName} must be a path param`,
+          );
+        }
+      }
+    }
+  });
+
   it("keeps gmail connector tools aligned with scaffolded tool files", async () => {
     const gmail = getConnector("gmail");
     const toolFiles: string[] = [];
@@ -136,7 +256,10 @@ describe("integration endpoint specs", () => {
       }
     }
 
-    const expectedFiles = gmail.tools.map((tool) => tool.id.replaceAll("_", "-")).sort();
+    const expectedFiles = gmail.tools.map((tool) => {
+      assertExists(tool.id);
+      return tool.id.replaceAll("_", "-");
+    }).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
   });
 
