@@ -93,6 +93,37 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("prefers structuredContent for MCP isError tool results", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "docs",
+      endpoint: "https://mcp.test",
+      headers: { Authorization: "Bearer remote-token" },
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        jsonrpc: "2.0",
+        id: "docs:tools:call:search_docs",
+        result: {
+          isError: true,
+          structuredContent: {
+            error: "authentication_required",
+            integration: "github",
+            connectUrl: "/oauth/github",
+            message: "Authenticate GitHub to continue.",
+          },
+          content: [],
+        },
+      }), async () => await source.executeTool("search_docs", { query: "auth" }));
+
+    assertEquals(result, {
+      error: "authentication_required",
+      integration: "github",
+      connectUrl: "/oauth/github",
+      message: "Authenticate GitHub to continue.",
+    });
+  });
+
   it("normalizes remote MCP tool responses with generic error markers", async () => {
     const source = createRemoteMCPToolSource({
       id: "docs",
