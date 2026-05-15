@@ -1,4 +1,9 @@
 export {
+  DEFAULT_DURABLE_RUN_CANARY_TIMEOUT_MS,
+  type DurableRunCanaryEnvironment,
+  resolveDurableRunCanaryEnvironment,
+} from "./environment.ts";
+export {
   createDurableRunCanaryApiClient,
   createDurableRunCanaryRunner,
   type DurableRunCanaryApiClient,
@@ -16,3 +21,11 @@ export {
   getDurableRunCanaryMessageSchema,
   parseDurableRunCanaryRunSummary,
 } from "./runner.ts";
+
+export {
+  assertCompleted,
+  assertNoMalformedCreateFileToolCalls,
+  collectAssistantText,
+  findAssistantMessage,
+  stringifyUnknown,
+} from "./validation.ts";
