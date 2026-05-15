@@ -44,31 +44,149 @@
       "id": "list_emails",
       "name": "List Emails",
       "description": "List recent emails from inbox or a specific folder",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/{folderId}/messages",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mail folder ID or well-known name",
+            "required": true,
+            "default": "inbox"
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return",
+            "default": 25
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return"
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort expression",
+            "default": "receivedDateTime desc"
+          },
+          "$filter": {
+            "type": "string",
+            "in": "query",
+            "description": "OData filter expression"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
     },
     {
       "id": "get_email",
       "name": "Get Email",
       "description": "Get detailed information about a specific email",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Microsoft Graph message ID",
+            "required": true
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return"
+          }
+        }
+      }
     },
     {
       "id": "send_email",
       "name": "Send Email",
       "description": "Send a new email message",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/sendMail",
+        "body": {
+          "message": {
+            "type": "object",
+            "description": "Microsoft Graph message object with subject, body, toRecipients, etc.",
+            "required": true
+          },
+          "saveToSentItems": {
+            "type": "boolean",
+            "description": "Save sent message to Sent Items",
+            "default": true
+          }
+        }
+      }
     },
     {
       "id": "search_emails",
       "name": "Search Emails",
       "description": "Search emails by query, subject, sender, or date",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/messages",
+        "params": {
+          "$search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search query, e.g. \"subject:roadmap\"",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return",
+            "default": 25
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return"
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
     },
     {
       "id": "list_folders",
       "name": "List Folders",
       "description": "List all mail folders in the mailbox",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders",
+        "params": {
+          "includeHiddenFolders": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Include hidden folders",
+            "default": false
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum folders to return",
+            "default": 100
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
     }
   ],
   "prompts": [
@@ -94,5 +212,9 @@
       "icon": "compose"
     }
   ],
-  "suggestedWith": ["teams", "calendar", "gmail"]
+  "suggestedWith": [
+    "teams",
+    "calendar",
+    "gmail"
+  ]
 }

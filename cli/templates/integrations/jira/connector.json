@@ -48,31 +48,169 @@
       "id": "search_issues",
       "name": "Search Issues",
       "description": "Search Jira issues using JQL (Jira Query Language)",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          }
+        },
+        "body": {
+          "jql": {
+            "type": "string",
+            "description": "Jira Query Language search expression",
+            "required": true
+          },
+          "maxResults": {
+            "type": "number",
+            "description": "Maximum issues to return",
+            "default": 50
+          },
+          "startAt": {
+            "type": "number",
+            "description": "Pagination offset",
+            "default": 0
+          },
+          "fields": {
+            "type": "array",
+            "description": "Issue fields to include"
+          }
+        },
+        "response": {
+          "transform": "issues"
+        }
+      }
     },
     {
       "id": "get_issue",
       "name": "Get Issue",
       "description": "Get detailed information about a specific Jira issue",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          },
+          "issueIdOrKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Jira issue ID or key",
+            "required": true
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated issue fields to include"
+          }
+        }
+      }
     },
     {
       "id": "create_issue",
       "name": "Create Issue",
       "description": "Create a new Jira issue in a project",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          }
+        },
+        "body": {
+          "fields": {
+            "type": "object",
+            "description": "Jira issue fields including project, issuetype, summary, and description",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "update_issue",
       "name": "Update Issue",
       "description": "Update an existing Jira issue (status, fields, etc.)",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          },
+          "issueIdOrKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Jira issue ID or key",
+            "required": true
+          }
+        },
+        "body": {
+          "fields": {
+            "type": "object",
+            "description": "Jira fields to set"
+          },
+          "update": {
+            "type": "object",
+            "description": "Jira update operations"
+          }
+        }
+      }
     },
     {
       "id": "list_projects",
       "name": "List Projects",
       "description": "List all accessible Jira projects",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/search",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search text for project name or key"
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return",
+            "default": 50
+          },
+          "startAt": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination offset",
+            "default": 0
+          }
+        },
+        "response": {
+          "transform": "values"
+        }
+      }
     }
   ],
   "prompts": [
@@ -105,5 +243,9 @@
       "icon": "check"
     }
   ],
-  "suggestedWith": ["github", "slack", "confluence"]
+  "suggestedWith": [
+    "github",
+    "slack",
+    "confluence"
+  ]
 }
