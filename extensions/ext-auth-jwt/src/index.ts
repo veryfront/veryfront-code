@@ -186,7 +186,6 @@ const extJwt: ExtensionFactory = (config?: unknown) => {
     name: "ext-auth-jwt",
     version: "0.1.0",
     capabilities: [
-      { type: "contract", name: "AuthProvider" },
       { type: "net:outbound", hosts: ["*"] },
     ],
     provides: {

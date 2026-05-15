@@ -55,6 +55,9 @@ describe("extension init command", () => {
       assertEquals(indexFile !== undefined, true);
       assertEquals(indexFile!.content.includes('"my-cache"'), true);
       assertEquals(indexFile!.content.includes("ExtensionFactory"), true);
+      assertEquals(indexFile!.content.includes("contracts: {"), true);
+      assertEquals(indexFile!.content.includes("provides: []"), true);
+      assertEquals(indexFile!.content.includes("requires: []"), true);
     });
 
     it("should generate a test file", () => {
@@ -70,6 +73,8 @@ describe("extension init command", () => {
       assertEquals(denoJson !== undefined, true);
       const parsed = JSON.parse(denoJson!.content);
       assertEquals(parsed.veryfront.extension, true);
+      assertEquals(parsed.veryfront.contracts.provides, []);
+      assertEquals(parsed.veryfront.contracts.requires, []);
     });
 
     it("should place files under extensions/<name>/", () => {
@@ -98,7 +103,7 @@ describe("extension init command", () => {
       const files = generateExtensionFiles("my-cache");
       const indexFile = files.find((f) => f.path.endsWith("src/index.ts"));
       const content = indexFile!.content;
-      // The factory takes no args in the scaffold — avoids TS7006 in strict
+      // The factory takes no args in the scaffold. This avoids TS7006 in strict
       // user projects (implicit-any on an unused `config?` parameter).
       assertEquals(content.includes("(config?)"), false);
       assertEquals(content.includes(": ExtensionFactory = ()"), true);

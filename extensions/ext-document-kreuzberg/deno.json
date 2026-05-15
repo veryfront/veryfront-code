@@ -4,8 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
+    "contracts": {
+      "provides": ["DocumentExtractor"]
+    },
     "capabilities": [
-      { "type": "contract", "name": "DocumentExtractor" },
       { "type": "fs:read" }
     ]
   },

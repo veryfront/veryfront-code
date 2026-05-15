@@ -4,10 +4,11 @@ import extBabel, { BabelCodeParser } from "./index.ts";
 import type { CodeParser } from "veryfront/extensions/parser";
 
 describe("ext-parser-babel", () => {
-  it("factory returns a descriptor with the CodeParser capability", () => {
+  it("factory returns a descriptor with the CodeParser contract", () => {
     const ext = extBabel();
     assertEquals(ext.name, "ext-parser-babel");
-    assertEquals(ext.capabilities?.[0], { type: "contract", name: "CodeParser" });
+    assertEquals(ext.contracts?.provides, ["CodeParser"]);
+    assertEquals(ext.capabilities, []);
   });
 
   it("setup registers the CodeParser contract", () => {

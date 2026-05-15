@@ -16,13 +16,10 @@ describe("ext-content-mdx factory", () => {
     assertEquals(ext.version, "0.1.0");
   });
 
-  it("declares the ContentProcessor contract capability", () => {
+  it("declares the ContentProcessor contract", () => {
     const ext = factory();
-    const contractCap = ext.capabilities.find((c) => c.type === "contract");
-    assertExists(contractCap);
-    if (contractCap?.type === "contract") {
-      assertEquals(contractCap.name, "ContentProcessor");
-    }
+    assertEquals(ext.contracts?.provides, ["ContentProcessor"]);
+    assertEquals(ext.capabilities, []);
   });
 
   it("registers ContentProcessor when setup runs", async () => {

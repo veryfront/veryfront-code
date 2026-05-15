@@ -4,10 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
-    "capabilities": [
-      { "type": "contract", "name": "Bundler" },
-      { "type": "contract", "name": "ModuleLexer" }
-    ]
+    "contracts": {
+      "provides": ["Bundler", "ModuleLexer"]
+    },
+    "capabilities": []
   },
   "imports": {
     "esbuild": "npm:esbuild@0.27.4",

@@ -4,8 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
+    "contracts": {
+      "provides": ["TokenCacheStore"]
+    },
     "capabilities": [
-      { "type": "contract", "name": "TokenCacheStore" },
       { "type": "net:outbound", "hosts": ["*"] }
     ]
   },

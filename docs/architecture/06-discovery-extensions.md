@@ -94,7 +94,7 @@ The extension system is a lightweight contract-based runtime for wiring optional
 ```mermaid
 graph TB
     subgraph ExtDef["Extension Definition"]
-        ExtInterface["Extension Interface<br/>{name, version, capabilities,<br/>setup(), teardown(), provides?, extends?}"]
+        ExtInterface["Extension Interface<br/>{name, version, capabilities,<br/>contracts?, setup(), teardown(),<br/>provides?, extends?}"]
         Capability["Capability Declaration<br/>(required runtime features)"]
     end
 
@@ -153,7 +153,7 @@ graph TB
 
 The extension system currently provides:
 
-- **Extension Definitions:** An extension declares `name`, `version`, `capabilities`, and optional `setup()` / `teardown()` hooks, plus optional `provides` and `extends` fields.
+- **Extension Definitions:** An extension declares `name`, `version`, `capabilities`, optional `contracts` metadata for provided and required contracts, optional `setup()` / `teardown()` hooks, plus optional `provides` and `extends` fields.
 - **Extension Context:** `ExtensionContext` exposes `get()`, `require()`, `provide()`, a config bag, and a logger so extensions can register implementations into the runtime.
 - **Contract Registry:** The runtime registry is currently a small in-memory contract map with `register()`, `resolve()`, `tryResolve()`, and `reset()`.
 - **Recommendations:** Some contract names map to recommended first-party extension packages via `getRecommendation()`, which is used to improve missing-contract errors.

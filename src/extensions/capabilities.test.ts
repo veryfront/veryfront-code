@@ -16,13 +16,13 @@ describe("capabilities", () => {
       const caps: Capability[] = [
         { type: "fs:read", paths: ["./src"] },
         { type: "net:outbound", hosts: ["api.example.com"] },
-        { type: "contract", name: "CacheStore" },
+        { type: "custom:metadata", name: "diagnostic" },
       ];
       const lines = formatCapabilities(caps);
       assertEquals(lines.length, 3);
       assertEquals(lines[0], 'fs:read (paths: ["./src"])');
       assertEquals(lines[1], 'net:outbound (hosts: ["api.example.com"])');
-      assertEquals(lines[2], "contract: CacheStore");
+      assertEquals(lines[2], 'custom:metadata (name: "diagnostic")');
     });
 
     it("should handle capabilities with no extra fields", () => {
@@ -79,8 +79,8 @@ describe("capabilities", () => {
       assertEquals(perms, ["--allow-read"]);
     });
 
-    it("should skip contract capabilities", () => {
-      const caps: Capability[] = [{ type: "contract", name: "Bundler" }];
+    it("should skip capabilities without a Deno permission mapping", () => {
+      const caps: Capability[] = [{ type: "custom:metadata", name: "diagnostic" }];
       const perms = mapToDenoPermissions(caps);
       assertEquals(perms, []);
     });

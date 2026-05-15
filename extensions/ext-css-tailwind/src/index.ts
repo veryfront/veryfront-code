@@ -57,8 +57,10 @@ const extTailwind: ExtensionFactory = () => {
   return {
     name: "ext-css-tailwind",
     version: "0.1.0",
+    contracts: {
+      provides: ["CSSProcessor"],
+    },
     capabilities: [
-      { type: "contract", name: "CSSProcessor" },
       { type: "net:outbound", hosts: ["esm.sh"] },
     ],
     setup(ctx) {

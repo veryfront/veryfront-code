@@ -21,10 +21,8 @@ describe("ext-css-tailwind factory", () => {
     const ext = factory();
     assertEquals(ext.name, "ext-css-tailwind");
     assertEquals(ext.version, "0.1.0");
-    assertEquals(
-      ext.capabilities.some((c) => c.type === "contract" && c.name === "CSSProcessor"),
-      true,
-    );
+    assertEquals(ext.contracts?.provides, ["CSSProcessor"]);
+    assertEquals(ext.capabilities, [{ type: "net:outbound", hosts: ["esm.sh"] }]);
   });
 });
 

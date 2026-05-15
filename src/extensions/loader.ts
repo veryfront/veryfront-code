@@ -84,15 +84,11 @@ export class ExtensionLoader {
       const ext = resolved.extension;
       extByName.set(ext.name, resolved);
 
-      if (ext.provides) {
-        for (const contract of Object.keys(ext.provides)) {
-          providerOf.set(contract, ext.name);
-        }
+      for (const contract of providedContractNames(ext)) {
+        providerOf.set(contract, ext.name);
       }
 
-      const contracts = ext.capabilities
-        .filter((c) => c.type === "contract")
-        .map((c) => c.name as string);
+      const contracts = requiredContractNames(ext);
       if (contracts.length > 0) {
         consumesContracts.set(ext.name, contracts);
       }
@@ -168,8 +164,10 @@ export class ExtensionLoader {
       register(name, impl);
     }
 
+    const loadOrder = this.topologicalSort(this.flattenPresets(extensions));
+
     // Check for contract conflicts before loading
-    const conflicts = detectConflicts(extensions);
+    const conflicts = detectConflicts(loadOrder);
     if (conflicts.length > 0) {
       const details = conflicts
         .map((c) => `"${c.contract}" provided by: ${c.providers.map((p) => p.name).join(", ")}`)
@@ -183,9 +181,9 @@ export class ExtensionLoader {
     // provider later in the iteration order cannot overwrite the winning impl
     // via register(). Without this, merged inputs (config -> package ->
     // project -> local-file) silently invert the documented source priority.
-    const contractWinner = selectContractProviders(extensions);
+    const contractWinner = selectContractProviders(loadOrder);
 
-    for (const resolved of extensions) {
+    for (const resolved of loadOrder) {
       const ext = resolved.extension;
 
       const issues = validateExtension(ext);
@@ -209,7 +207,12 @@ export class ExtensionLoader {
         const ctx: ExtensionContext = {
           get: <T>(contract: string) => tryResolve<T>(contract),
           require: <T>(contract: string) => resolveContract<T>(contract),
-          provide: <T>(contract: string, impl: T) => register(contract, impl),
+          provide: <T>(contract: string, impl: T) => {
+            const winner = contractWinner.get(contract);
+            if (!winner || winner === resolved) {
+              register(contract, impl);
+            }
+          },
           config: projectConfig,
           logger: this.logger,
         };
@@ -261,4 +264,19 @@ export class ExtensionLoader {
     // harness in `tests/_helpers/contract-init.ts`).
     if (hadSetupExtensions) reset();
   }
+}
+
+function providedContractNames(ext: Extension): string[] {
+  const names = new Set<string>();
+  for (const contract of Object.keys(ext.provides ?? {})) {
+    names.add(contract);
+  }
+  for (const contract of ext.contracts?.provides ?? []) {
+    names.add(contract);
+  }
+  return [...names];
+}
+
+function requiredContractNames(ext: Extension): string[] {
+  return ext.contracts?.requires ?? [];
 }

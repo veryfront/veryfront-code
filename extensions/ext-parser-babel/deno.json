@@ -4,9 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
-    "capabilities": [
-      { "type": "contract", "name": "CodeParser" }
-    ]
+    "contracts": {
+      "provides": ["CodeParser"]
+    },
+    "capabilities": []
   },
   "imports": {
     "@babel/parser": "npm:@babel/parser@7.29.2",

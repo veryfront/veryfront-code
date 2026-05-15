@@ -11,10 +11,6 @@ import type { Capability, ExtensionLogger } from "./types.ts";
  */
 export function formatCapabilities(capabilities: Capability[]): string[] {
   return capabilities.map((cap) => {
-    if (cap.type === "contract") {
-      return `contract: ${cap.name as string}`;
-    }
-
     const { type, ...rest } = cap;
     const extras = Object.keys(rest);
     if (extras.length === 0) return type;
@@ -53,7 +49,7 @@ const DENO_PERMISSION_MAP: Record<string, PermissionMapping> = {
 
 /**
  * Map capabilities to Deno CLI permission flags.
- * Skips non-system capabilities (e.g., "contract").
+ * Skips capabilities without a Deno permission mapping.
  */
 export function mapToDenoPermissions(capabilities: Capability[]): string[] {
   const seen = new Set<string>();

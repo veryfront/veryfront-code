@@ -84,6 +84,36 @@ describe("parsePackageMetadata()", () => {
     assertEquals(result?.capabilities[1]?.type, "valid");
   });
 
+  it("should parse contract metadata", () => {
+    const result = parsePackageMetadata({
+      veryfront: {
+        extension: true,
+        capabilities: [{ type: "net:outbound", hosts: ["api.example.com"] }],
+        contracts: {
+          provides: ["CacheStore", ""],
+          requires: ["SchemaValidator", 42],
+        },
+      },
+    });
+
+    assertEquals(result?.contracts?.provides, ["CacheStore"]);
+    assertEquals(result?.contracts?.requires, ["SchemaValidator"]);
+  });
+
+  it("should ignore malformed contract metadata", () => {
+    const result = parsePackageMetadata({
+      veryfront: {
+        extension: true,
+        contracts: {
+          provides: ["", 42],
+          requires: "SchemaValidator",
+        },
+      },
+    });
+
+    assertEquals(result?.contracts, undefined);
+  });
+
   it("should treat non-array capabilities as empty", () => {
     const result = parsePackageMetadata({
       veryfront: { extension: true, capabilities: "not-an-array" },

@@ -22,14 +22,10 @@ describe("ext-observability-opentelemetry factory", () => {
     assertEquals(ext.name, "ext-observability-opentelemetry");
     assertEquals(ext.version, "0.1.0");
     assertEquals(Array.isArray(ext.capabilities), true);
-    assertEquals(
-      ext.capabilities.some((c) => c.type === "contract" && c.name === "TracingExporter"),
-      true,
-    );
-    assertEquals(
-      ext.capabilities.some((c) => c.type === "contract" && c.name === "NodeTelemetryProvider"),
-      true,
-    );
+    assertEquals(ext.contracts?.provides, [
+      "TracingExporter",
+      "NodeTelemetryProvider",
+    ]);
   });
 });
 

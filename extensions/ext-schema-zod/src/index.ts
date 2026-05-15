@@ -21,7 +21,10 @@ const extZod: ExtensionFactory = () => {
   return {
     name: "ext-schema-zod",
     version: "0.1.0",
-    capabilities: [{ type: "contract", name: "SchemaValidator" }],
+    contracts: {
+      provides: ["SchemaValidator"],
+    },
+    capabilities: [],
     setup(ctx) {
       ctx.provide("SchemaValidator", impl);
       ctx.logger.info("[ext-schema-zod] SchemaValidator registered");
