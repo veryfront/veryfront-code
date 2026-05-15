@@ -78,8 +78,10 @@ const extDocumentKreuzberg: ExtensionFactory = () => {
   return {
     name: "ext-document-kreuzberg",
     version: "0.1.0",
+    contracts: {
+      provides: ["DocumentExtractor"],
+    },
     capabilities: [
-      { type: "contract", name: "DocumentExtractor" },
       { type: "fs:read" },
     ],
 

@@ -56,12 +56,9 @@ describe("ext-cache-redis extension", () => {
       assertEquals(ext.version.length > 0, true);
     });
 
-    it("declares a TokenCacheStore contract capability", () => {
+    it("declares a TokenCacheStore contract", () => {
       const ext = factory();
-      const hasContract = ext.capabilities.some(
-        (c) => c.type === "contract" && c.name === "TokenCacheStore",
-      );
-      assertEquals(hasContract, true);
+      assertEquals(ext.contracts?.provides, ["TokenCacheStore"]);
     });
   });
 

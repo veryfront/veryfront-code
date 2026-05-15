@@ -23,10 +23,10 @@ const extEsbuild: ExtensionFactory = () => {
   return {
     name: "ext-bundler-esbuild",
     version: "0.1.0",
-    capabilities: [
-      { type: "contract", name: "Bundler" },
-      { type: "contract", name: "ModuleLexer" },
-    ],
+    contracts: {
+      provides: ["Bundler", "ModuleLexer"],
+    },
+    capabilities: [],
     setup(ctx) {
       if (!ctx.get("Bundler")) {
         ctx.provide("Bundler", bundler);

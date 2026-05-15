@@ -8,9 +8,8 @@ describe("ext-sandbox-shell-tools", () => {
     const extension = extSandboxShellTools();
 
     assertEquals(extension.name, "ext-sandbox-shell-tools");
-    assertEquals(extension.capabilities, [
-      { type: "contract", name: SandboxShellToolsProviderName },
-    ]);
+    assertEquals(extension.contracts?.provides, [SandboxShellToolsProviderName]);
+    assertEquals(extension.capabilities, []);
   });
 
   it("registers a provider during setup", () => {

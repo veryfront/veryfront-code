@@ -4,8 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
+    "contracts": {
+      "provides": ["AuthProvider"]
+    },
     "capabilities": [
-      { "type": "contract", "name": "AuthProvider" },
       { "type": "net:outbound", "hosts": ["*"] }
     ]
   },

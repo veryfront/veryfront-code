@@ -37,9 +37,7 @@ export function selectContractProviders(
 ): Map<string, ResolvedExtension> {
   const winner = new Map<string, ResolvedExtension>();
   for (const resolved of extensions) {
-    const provides = resolved.extension.provides;
-    if (!provides) continue;
-    for (const contract of Object.keys(provides)) {
+    for (const contract of providedContractNames(resolved.extension)) {
       const current = winner.get(contract);
       if (
         !current ||
@@ -50,6 +48,30 @@ export function selectContractProviders(
     }
   }
   return winner;
+}
+
+function providedContractNames(extension: Extension): string[] {
+  return [
+    ...Object.keys(extension.provides ?? {}),
+    ...(extension.contracts?.provides ?? []),
+  ];
+}
+
+function validateContractList(
+  field: string,
+  value: unknown,
+  issues: string[],
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    issues.push(`${field} must be an array`);
+    return;
+  }
+  for (let i = 0; i < value.length; i++) {
+    if (typeof value[i] !== "string" || value[i].length === 0) {
+      issues.push(`${field}[${i}] must be a non-empty string`);
+    }
+  }
 }
 
 /**
@@ -93,6 +115,27 @@ export function validateExtension(ext: unknown): string[] {
     }
   }
 
+  if (candidate.contracts !== undefined) {
+    if (
+      typeof candidate.contracts !== "object" ||
+      candidate.contracts === null ||
+      Array.isArray(candidate.contracts)
+    ) {
+      issues.push("contracts must be an object");
+    } else {
+      validateContractList(
+        "contracts.provides",
+        candidate.contracts.provides,
+        issues,
+      );
+      validateContractList(
+        "contracts.requires",
+        candidate.contracts.requires,
+        issues,
+      );
+    }
+  }
+
   return issues;
 }
 
@@ -109,10 +152,7 @@ export function detectConflicts(extensions: ResolvedExtension[]): ConflictInfo[]
   >();
 
   for (const resolved of extensions) {
-    const provides = resolved.extension.provides;
-    if (!provides) continue;
-
-    for (const contract of Object.keys(provides)) {
+    for (const contract of providedContractNames(resolved.extension)) {
       let list = contractProviders.get(contract);
       if (!list) {
         list = [];

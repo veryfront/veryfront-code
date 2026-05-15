@@ -48,7 +48,10 @@ const extMdx: ExtensionFactory = () => {
   return {
     name: "ext-content-mdx",
     version: "0.1.0",
-    capabilities: [{ type: "contract", name: "ContentProcessor" }],
+    contracts: {
+      provides: ["ContentProcessor"],
+    },
+    capabilities: [],
     setup(ctx) {
       ctx.provide("ContentProcessor", impl);
       ctx.logger.info("[ext-content-mdx] ContentProcessor registered");

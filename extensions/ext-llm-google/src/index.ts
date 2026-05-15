@@ -15,7 +15,10 @@ const extGoogle: ExtensionFactory = () => {
   return {
     name: "ext-llm-google",
     version: "0.1.0",
-    capabilities: [{ type: "contract", name: "LLMProvider:google" }],
+    contracts: {
+      requires: [LLMProviderRegistryName],
+    },
+    capabilities: [],
     setup(ctx) {
       const registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
       registry.register(provider);

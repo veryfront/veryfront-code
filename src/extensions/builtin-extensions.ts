@@ -84,7 +84,10 @@ function createBuiltinLLMProviderExtension(
     extension: {
       name: definition.extensionName,
       version: "0.1.0",
-      capabilities: [{ type: "contract", name: `LLMProvider:${provider.id}` }],
+      contracts: {
+        requires: [LLMProviderRegistryName],
+      },
+      capabilities: [],
       setup(ctx) {
         const registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
         didRegister = registerBuiltinLLMProvider(registry, provider);

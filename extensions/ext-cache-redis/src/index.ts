@@ -72,8 +72,10 @@ const extRedis: ExtensionFactory = () => {
   return {
     name: "ext-cache-redis",
     version: "0.1.0",
+    contracts: {
+      provides: ["TokenCacheStore"],
+    },
     capabilities: [
-      { type: "contract", name: "TokenCacheStore" },
       { type: "net:outbound", hosts: ["*"] },
     ],
 

@@ -73,6 +73,41 @@ describe("validateExtension", () => {
     assertEquals(issues.some((i) => i.includes("capabilities[0]")), true);
   });
 
+  it("accepts explicit contract metadata", () => {
+    const issues = validateExtension({
+      name: "test-ext",
+      version: "1.0.0",
+      capabilities: [{ type: "net:outbound", hosts: ["api.example.com"] }],
+      contracts: {
+        provides: ["TokenCacheStore"],
+        requires: ["SchemaValidator"],
+      },
+    });
+
+    assertEquals(issues, []);
+  });
+
+  it("rejects malformed contract metadata", () => {
+    const issues = validateExtension({
+      name: "test-ext",
+      version: "1.0.0",
+      capabilities: [],
+      contracts: {
+        provides: ["TokenCacheStore", ""],
+        requires: [42],
+      },
+    });
+
+    assertEquals(
+      issues.some((issue) => issue.includes("contracts.provides[1]")),
+      true,
+    );
+    assertEquals(
+      issues.some((issue) => issue.includes("contracts.requires[0]")),
+      true,
+    );
+  });
+
   it("rejects null input", () => {
     const issues = validateExtension(null);
     assertEquals(issues.length, 1);
@@ -169,6 +204,34 @@ describe("detectConflicts", () => {
     assertEquals(conflicts.length, 2);
     const contracts = conflicts.map((c) => c.contract).sort();
     assertEquals(contracts, ["Bundler", "CacheStore"]);
+  });
+
+  it("reports conflicts for dynamically provided contracts", () => {
+    const conflicts = detectConflicts([
+      {
+        extension: {
+          name: "ext-a",
+          version: "1.0.0",
+          capabilities: [],
+          contracts: { provides: ["CacheStore"] },
+        },
+        source: "package",
+        origin: "node_modules/ext-a",
+      },
+      {
+        extension: {
+          name: "ext-b",
+          version: "1.0.0",
+          capabilities: [],
+          contracts: { provides: ["CacheStore"] },
+        },
+        source: "package",
+        origin: "node_modules/ext-b",
+      },
+    ]);
+
+    assertEquals(conflicts.length, 1);
+    assertEquals(conflicts[0]?.contract, "CacheStore");
   });
 
   it("returns empty for empty extension list", () => {

@@ -1,16 +1,14 @@
 import { describe, it } from "@std/testing/bdd";
 import { assert, assertEquals } from "@std/assert";
 import extOpenAI, { OpenAIProvider } from "./index.ts";
-import type { LLMProviderRegistry } from "veryfront/extensions/llm";
+import { type LLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
 
 describe("ext-llm-openai", () => {
-  it("factory descriptor advertises the LLMProvider:openai capability", () => {
+  it("factory descriptor requires the LLMProviderRegistry contract", () => {
     const ext = extOpenAI();
     assertEquals(ext.name, "ext-llm-openai");
-    assertEquals(ext.capabilities?.[0], {
-      type: "contract",
-      name: "LLMProvider:openai",
-    });
+    assertEquals(ext.contracts?.requires, [LLMProviderRegistryName]);
+    assertEquals(ext.capabilities, []);
   });
 
   it("setup registers the provider in the LLMProviderRegistry", () => {

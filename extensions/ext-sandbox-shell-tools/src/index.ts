@@ -27,7 +27,10 @@ const provider = createSandboxShellToolsProvider(createBashTool);
 const extSandboxShellTools: ExtensionFactory = () => ({
   name: "ext-sandbox-shell-tools",
   version: "0.1.0",
-  capabilities: [{ type: "contract", name: SandboxShellToolsProviderName }],
+  contracts: {
+    provides: [SandboxShellToolsProviderName],
+  },
+  capabilities: [],
   setup(ctx) {
     ctx.provide(SandboxShellToolsProviderName, provider);
     ctx.logger.info("[ext-sandbox-shell-tools] Sandbox shell tools provider registered");

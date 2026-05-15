@@ -4,9 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
-    "capabilities": [
-      { "type": "contract", "name": "ContentProcessor" }
-    ]
+    "contracts": {
+      "provides": ["ContentProcessor"]
+    },
+    "capabilities": []
   },
   "imports": {
     "@mdx-js/mdx": "npm:@mdx-js/mdx@3.1.1",

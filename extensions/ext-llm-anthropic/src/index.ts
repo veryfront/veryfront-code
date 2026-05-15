@@ -16,7 +16,10 @@ const extAnthropic: ExtensionFactory = () => {
   return {
     name: "ext-llm-anthropic",
     version: "0.1.0",
-    capabilities: [{ type: "contract", name: "LLMProvider:anthropic" }],
+    contracts: {
+      requires: [LLMProviderRegistryName],
+    },
+    capabilities: [],
     setup(ctx) {
       const registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
       registry.register(provider);

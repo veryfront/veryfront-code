@@ -13,6 +13,15 @@ export interface Capability {
   [key: string]: unknown;
 }
 
+export interface ExtensionContractMetadata {
+  /** Contracts this extension registers dynamically during setup(). */
+  provides?: string[];
+  /** Contracts this extension needs before setup() runs. */
+  requires?: string[];
+}
+
+export type PackageContractMetadata = ExtensionContractMetadata;
+
 export interface ExtensionContext {
   get<T>(contract: string): T | undefined;
   require<T>(contract: string): T;
@@ -32,6 +41,7 @@ export interface Extension {
   name: string;
   version: string;
   capabilities: Capability[];
+  contracts?: ExtensionContractMetadata;
   setup?(ctx: ExtensionContext): Promise<void> | void;
   teardown?(): Promise<void> | void;
   provides?: Record<string, unknown>;

@@ -29,8 +29,10 @@ const extDbSqlite: ExtensionFactory = () => {
   return {
     name: "ext-db-sqlite",
     version: "0.1.0",
+    contracts: {
+      provides: ["SqliteStore"],
+    },
     capabilities: [
-      { type: "contract", name: "SqliteStore" },
       { type: "fs:read" },
       { type: "fs:write" },
     ],

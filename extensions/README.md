@@ -167,7 +167,34 @@ The `deno.json` declares:
 - **name**: `@veryfront/ext-<name>`
 - **version**: Semver string
 - **exports**: Entry point (`./src/index.ts`)
-- **veryfront.capabilities**: Contract registrations and runtime permissions
+- **veryfront.contracts**: Contract metadata for discovery and audit
+- **veryfront.capabilities**: Runtime permissions and audit metadata
+
+The extension factory also declares runtime contract metadata:
+
+```ts
+import type { ExtensionFactory } from "veryfront/extensions";
+
+const extCache: ExtensionFactory = () => ({
+  name: "ext-cache-memory",
+  version: "0.1.0",
+  contracts: {
+    provides: ["CacheStore"],
+    requires: [],
+  },
+  capabilities: [],
+  setup(ctx) {
+    ctx.provide("CacheStore", createMemoryCache());
+  },
+});
+
+export default extCache;
+```
+
+Static `provides` entries automatically declare provided contracts. Use
+`contracts.provides` when a contract is registered dynamically in `setup()`.
+Use `contracts.requires` before calling `ctx.require()` for contracts from
+other extensions.
 
 ## Dependency ownership
 

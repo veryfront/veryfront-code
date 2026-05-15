@@ -1,5 +1,5 @@
 /**
- * Extension init command — scaffold a new extension.
+ * Extension init command: scaffold a new extension.
  *
  * @module cli/commands/extension/init-command
  */
@@ -26,7 +26,7 @@ export function validateExtensionName(name: string): string | undefined {
 
 /**
  * Generate the file contents for a new extension scaffold.
- * Does not write to disk — returns file path/content pairs.
+ * Does not write to disk. Returns file path/content pairs.
  */
 export function generateExtensionFiles(name: string): GeneratedFile[] {
   const base = `extensions/${name}`;
@@ -42,6 +42,12 @@ import type { ExtensionFactory } from "veryfront/extensions";
 const ${camelCase(name)}: ExtensionFactory = () => ({
   name: "${name}",
   version: "0.1.0",
+  // Use contracts.provides for dynamic ctx.provide() registrations.
+  // Use contracts.requires before calling ctx.require().
+  contracts: {
+    provides: [],
+    requires: [],
+  },
   capabilities: [],
 
   // Uncomment and modify to provide a contract implementation:
@@ -51,8 +57,8 @@ const ${camelCase(name)}: ExtensionFactory = () => ({
 
   // Uncomment for async setup:
   // async setup(ctx) {
-  //   // ctx.get<T>("ContractName") — consume another contract
-  //   // ctx.provide("ContractName", impl) — register a contract
+  //   // ctx.get<T>("ContractName"): consume another contract
+  //   // ctx.provide("ContractName", impl): register a contract
   // },
 
   // Uncomment for cleanup:
@@ -99,6 +105,10 @@ describe("${name} extension", () => {
       version: "0.1.0",
       veryfront: {
         extension: true,
+        contracts: {
+          provides: [],
+          requires: [],
+        },
         capabilities: [],
       },
     },

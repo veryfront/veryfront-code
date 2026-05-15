@@ -8,7 +8,7 @@
  */
 
 import { join } from "@std/path";
-import type { Capability, ResolvedExtension } from "./types.ts";
+import type { Capability, PackageContractMetadata, ResolvedExtension } from "./types.ts";
 
 /**
  * Metadata extracted from a package.json that declares itself
@@ -17,6 +17,7 @@ import type { Capability, ResolvedExtension } from "./types.ts";
 export interface PackageMetadata {
   isExtension: true;
   capabilities: Capability[];
+  contracts?: PackageContractMetadata;
 }
 
 function isCapability(value: unknown): value is Capability {
@@ -25,6 +26,27 @@ function isCapability(value: unknown): value is Capability {
   }
   const cap = value as Record<string, unknown>;
   return typeof cap.type === "string" && cap.type.length > 0;
+}
+
+function parseStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const entries = value.filter((entry): entry is string =>
+    typeof entry === "string" && entry.length > 0
+  );
+  return entries.length > 0 ? entries : undefined;
+}
+
+function parseContractMetadata(value: unknown): PackageContractMetadata | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const raw = value as Record<string, unknown>;
+  const contracts: PackageContractMetadata = {};
+  const provides = parseStringList(raw.provides);
+  const requires = parseStringList(raw.requires);
+  if (provides) contracts.provides = provides;
+  if (requires) contracts.requires = requires;
+  return provides || requires ? contracts : undefined;
 }
 
 /**
@@ -53,8 +75,11 @@ export function parsePackageMetadata(
   const capabilities: Capability[] = Array.isArray(meta.capabilities)
     ? meta.capabilities.filter(isCapability)
     : [];
+  const contracts = parseContractMetadata(meta.contracts);
 
-  return { isExtension: true, capabilities };
+  return contracts
+    ? { isExtension: true, capabilities, contracts }
+    : { isExtension: true, capabilities };
 }
 
 /**

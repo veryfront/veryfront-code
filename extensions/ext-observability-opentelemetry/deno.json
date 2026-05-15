@@ -4,9 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
+    "contracts": {
+      "provides": ["TracingExporter", "NodeTelemetryProvider"]
+    },
     "capabilities": [
-      { "type": "contract", "name": "TracingExporter" },
-      { "type": "contract", "name": "NodeTelemetryProvider" },
       { "type": "net:outbound", "hosts": ["*"] },
       {
         "type": "env:read",

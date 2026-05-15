@@ -4,9 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
-    "capabilities": [
-      { "type": "contract", "name": "SchemaValidator" }
-    ]
+    "contracts": {
+      "provides": ["SchemaValidator"]
+    },
+    "capabilities": []
   },
   "imports": {
     "zod": "npm:zod@4.3.6",

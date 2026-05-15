@@ -38,7 +38,7 @@ describe("ExtensionLoader", () => {
     it("should sort providers before consumers", () => {
       const provider = makeExt("provider", { provides: { CacheStore: {} } });
       const consumer = makeExt("consumer", {
-        capabilities: [{ type: "contract", name: "CacheStore" }],
+        contracts: { requires: ["CacheStore"] },
       });
 
       const loader = new ExtensionLoader(noopLogger);
@@ -49,6 +49,28 @@ describe("ExtensionLoader", () => {
 
       assertEquals(sorted[0]?.extension.name, "provider");
       assertEquals(sorted[1]?.extension.name, "consumer");
+    });
+
+    it("sorts dynamic contract providers before explicit requires", () => {
+      const provider = makeExt("provider", {
+        contracts: { provides: ["CacheStore"] },
+        setup: (ctx) => ctx.provide("CacheStore", { id: "dynamic" }),
+      });
+      const consumer = makeExt("consumer", {
+        contracts: { requires: ["CacheStore"] },
+        setup: (ctx) => ctx.require("CacheStore"),
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      const sorted = loader.topologicalSort([
+        makeResolved(consumer),
+        makeResolved(provider),
+      ]);
+
+      assertEquals(sorted.map((entry) => entry.extension.name), [
+        "provider",
+        "consumer",
+      ]);
     });
 
     it("should keep original order when no dependencies exist", () => {
@@ -75,11 +97,11 @@ describe("ExtensionLoader", () => {
     it("should throw on circular dependencies", () => {
       const a = makeExt("ext-a", {
         provides: { A: {} },
-        capabilities: [{ type: "contract", name: "B" }],
+        contracts: { requires: ["B"] },
       });
       const b = makeExt("ext-b", {
         provides: { B: {} },
-        capabilities: [{ type: "contract", name: "A" }],
+        contracts: { requires: ["A"] },
       });
 
       const loader = new ExtensionLoader(noopLogger);
@@ -153,6 +175,29 @@ describe("ExtensionLoader", () => {
       const loader = new ExtensionLoader(noopLogger);
       await loader.setupAll([makeResolved(provider), makeResolved(consumer)], {});
       assertEquals((resolved as { id: string }).id, "redis");
+    });
+
+    it("should order setup by explicit contract metadata", async () => {
+      const order: string[] = [];
+      const provider = makeExt("provider", {
+        contracts: { provides: ["CacheStore"] },
+        setup: (ctx) => {
+          order.push("provider");
+          ctx.provide("CacheStore", { id: "dynamic" });
+        },
+      });
+      const consumer = makeExt("consumer", {
+        contracts: { requires: ["CacheStore"] },
+        setup: (ctx) => {
+          const cache = ctx.require<{ id: string }>("CacheStore");
+          order.push(`consumer:${cache.id}`);
+        },
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
+      await loader.setupAll([makeResolved(consumer), makeResolved(provider)], {});
+
+      assertEquals(order, ["provider", "consumer:dynamic"]);
     });
   });
 
@@ -277,6 +322,28 @@ describe("ExtensionLoader", () => {
 
       const loader = new ExtensionLoader(noopLogger);
       // Pass project first to prove order-insensitivity.
+      await loader.setupAll(
+        [
+          makeResolved(projectProvider, "project"),
+          makeResolved(configProvider, "config"),
+        ],
+        {},
+      );
+
+      assertEquals((tryResolve("Cache") as { id: string }).id, "config-impl");
+    });
+
+    it("should keep dynamic ctx.provide() source priority order-insensitive", async () => {
+      const configProvider = makeExt("config-cache", {
+        contracts: { provides: ["Cache"] },
+        setup: (ctx) => ctx.provide("Cache", { id: "config-impl" }),
+      });
+      const projectProvider = makeExt("project-cache", {
+        contracts: { provides: ["Cache"] },
+        setup: (ctx) => ctx.provide("Cache", { id: "project-impl" }),
+      });
+
+      const loader = new ExtensionLoader(noopLogger);
       await loader.setupAll(
         [
           makeResolved(projectProvider, "project"),

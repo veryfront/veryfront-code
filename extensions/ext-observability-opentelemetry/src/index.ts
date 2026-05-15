@@ -257,9 +257,10 @@ const extOpenTelemetry: ExtensionFactory = () => {
   return {
     name: "ext-observability-opentelemetry",
     version: "0.1.0",
+    contracts: {
+      provides: ["TracingExporter", "NodeTelemetryProvider"],
+    },
     capabilities: [
-      { type: "contract", name: "TracingExporter" },
-      { type: "contract", name: "NodeTelemetryProvider" },
       { type: "net:outbound", hosts: ["*"] },
       {
         type: "env:read",

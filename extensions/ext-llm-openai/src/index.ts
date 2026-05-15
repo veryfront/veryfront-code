@@ -16,7 +16,10 @@ const extOpenAI: ExtensionFactory = () => {
   return {
     name: "ext-llm-openai",
     version: "0.1.0",
-    capabilities: [{ type: "contract", name: "LLMProvider:openai" }],
+    contracts: {
+      requires: [LLMProviderRegistryName],
+    },
+    capabilities: [],
     setup(ctx) {
       registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
       registry.register(provider);

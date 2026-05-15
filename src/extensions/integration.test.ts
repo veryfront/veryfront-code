@@ -89,7 +89,7 @@ describe("extensions/integration", () => {
     });
 
     const consumer = makeExt("repo-layer", {
-      capabilities: [{ type: "contract", name: "DatabaseClient" }],
+      contracts: { requires: ["DatabaseClient"] },
       setup: () => {
         order.push("repo-layer");
       },

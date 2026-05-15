@@ -25,15 +25,8 @@ describe("ext-bundler-esbuild factory", () => {
     const ext = factory();
     assertEquals(ext.name, "ext-bundler-esbuild");
     assertEquals(ext.version, "0.1.0");
-    assertEquals(Array.isArray(ext.capabilities), true);
-    assertEquals(
-      ext.capabilities.some((c) => c.type === "contract" && c.name === "Bundler"),
-      true,
-    );
-    assertEquals(
-      ext.capabilities.some((c) => c.type === "contract" && c.name === "ModuleLexer"),
-      true,
-    );
+    assertEquals(ext.contracts?.provides, ["Bundler", "ModuleLexer"]);
+    assertEquals(ext.capabilities, []);
   });
 });
 

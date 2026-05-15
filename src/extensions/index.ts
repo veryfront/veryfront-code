@@ -27,6 +27,7 @@ export type {
   Extension,
   ExtensionConfigEntry,
   ExtensionContext,
+  ExtensionContractMetadata,
   ExtensionFactory,
   ExtensionLogger,
   ExtensionSource,

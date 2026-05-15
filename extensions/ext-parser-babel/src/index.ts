@@ -93,7 +93,10 @@ const extBabel: ExtensionFactory = () => {
   return {
     name: "ext-parser-babel",
     version: "0.1.0",
-    capabilities: [{ type: "contract", name: "CodeParser" }],
+    contracts: {
+      provides: ["CodeParser"],
+    },
+    capabilities: [],
     setup(ctx) {
       ctx.provide("CodeParser", impl);
       ctx.logger.info("[ext-parser-babel] CodeParser registered");

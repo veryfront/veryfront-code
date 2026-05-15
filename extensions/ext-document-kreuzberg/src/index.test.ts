@@ -40,13 +40,10 @@ function buildCtx(
 }
 
 describe("ext-document-kreuzberg extension", () => {
-  it("declares the expected name and capability", () => {
+  it("declares the expected name and contract", () => {
     const ext = factory();
     assertEquals(ext.name, "ext-document-kreuzberg");
-    assertEquals(
-      ext.capabilities.filter((c) => c.type === "contract").map((c) => c.name),
-      ["DocumentExtractor"],
-    );
+    assertEquals(ext.contracts?.provides, ["DocumentExtractor"]);
   });
 
   it("registers DocumentExtractor on setup", () => {

@@ -4,8 +4,10 @@
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
+    "contracts": {
+      "provides": ["SqliteStore"]
+    },
     "capabilities": [
-      { "type": "contract", "name": "SqliteStore" },
       { "type": "fs:read" },
       { "type": "fs:write" }
     ]

@@ -384,7 +384,7 @@ describe("orchestrateExtensions()", () => {
       },
     };
     const custom = stubExt("custom-anthropic", {
-      capabilities: [{ type: "contract", name: "LLMProvider:anthropic" }],
+      contracts: { requires: [LLMProviderRegistryName] },
       setup(ctx) {
         ctx.require<LLMProviderRegistry>(LLMProviderRegistryName).register(customProvider);
       },

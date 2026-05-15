@@ -40,13 +40,10 @@ function buildCtx(
 }
 
 describe("ext-db-sqlite extension", () => {
-  it("declares the expected name and capability", () => {
+  it("declares the expected name and contract", () => {
     const ext = factory();
     assertEquals(ext.name, "ext-db-sqlite");
-    assertEquals(
-      ext.capabilities.filter((c) => c.type === "contract").map((c) => c.name),
-      ["SqliteStore"],
-    );
+    assertEquals(ext.contracts?.provides, ["SqliteStore"]);
   });
 
   it("registers SqliteStore on setup", () => {

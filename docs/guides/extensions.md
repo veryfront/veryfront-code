@@ -1,12 +1,12 @@
 ---
 title: "Extensions"
-description: "Build custom extensions to add capabilities, integrate third-party services, and share reusable functionality."
+description: "Build custom extensions that add focused contracts, integrate third-party services, and share reusable functionality."
 order: 21
 ---
 
 # Extensions
 
-Build custom extensions to add capabilities, integrate third-party services, and share reusable functionality.
+Build custom extensions that add focused contracts, integrate third-party services, and share reusable functionality.
 
 Veryfront's extension system uses a **contract-based architecture**: core defines interfaces (contracts), and extensions provide implementations. This keeps the core lightweight while enabling an open ecosystem of pluggable functionality.
 
@@ -42,6 +42,36 @@ Validate your extension:
 veryfront extension validate extensions/my-cache
 ```
 
+## Enable an extension
+
+Add extension factories to `veryfront.config.ts`:
+
+```ts
+// veryfront.config.ts
+import { defineConfig } from "veryfront";
+import extRedis from "@veryfront/ext-cache-redis";
+
+export default defineConfig({
+  extensions: [
+    extRedis({ url: "redis://localhost:6379", prefix: "myapp:" }),
+  ],
+});
+```
+
+Use a local extension the same way:
+
+```ts
+// veryfront.config.ts
+import { defineConfig } from "veryfront";
+import memoryCache from "./extensions/memory-cache/src/index.ts";
+
+export default defineConfig({
+  extensions: [
+    memoryCache({ maxSize: 500 }),
+  ],
+});
+```
+
 ## Writing an extension
 
 An extension is a module that `export default`s an `ExtensionFactory` (a function returning an `Extension` object):
@@ -49,7 +79,7 @@ An extension is a module that `export default`s an `ExtensionFactory` (a functio
 ```ts
 import type { ExtensionFactory } from "veryfront/extensions";
 
-const myExtension: ExtensionFactory = (config?) => ({
+const myExtension: ExtensionFactory = () => ({
   name: "my-extension",
   version: "1.0.0",
   capabilities: [],
@@ -65,6 +95,10 @@ interface Extension {
   name: string;
   version: string;
   capabilities: Capability[];
+  contracts?: {
+    provides?: string[];
+    requires?: string[];
+  };
   setup?(ctx: ExtensionContext): Promise<void> | void;
   teardown?(): Promise<void> | void;
   provides?: Record<string, unknown>;
@@ -72,15 +106,16 @@ interface Extension {
 }
 ```
 
-| Field          | Required | Description                                                            |
-| -------------- | -------- | ---------------------------------------------------------------------- |
-| `name`         | Yes      | Unique identifier (lowercase, hyphens).                                |
-| `version`      | Yes      | Semver string.                                                         |
-| `capabilities` | Yes      | System resources the extension needs (can be empty `[]`).              |
-| `provides`     | No       | Static contract implementations (registered before `setup` runs).      |
-| `setup`        | No       | Async initialization. Connect to services, register dynamic contracts. |
-| `teardown`     | No       | Cleanup. Close connections, flush buffers. Runs in reverse load order. |
-| `extends`      | No       | Compose other extensions as a preset.                                  |
+| Field          | Required | Description                                                                              |
+| -------------- | -------- | ---------------------------------------------------------------------------------------- |
+| `name`         | Yes      | Unique identifier (lowercase, hyphens).                                                  |
+| `version`      | Yes      | Semver string.                                                                           |
+| `capabilities` | Yes      | System resources the extension needs (can be empty `[]`).                                |
+| `contracts`    | No       | Contract metadata for load ordering, especially dynamic `ctx.provide()` implementations. |
+| `provides`     | No       | Static contract implementations, registered before `setup` runs.                         |
+| `setup`        | No       | Async initialization. Connect to services, register dynamic contracts.                   |
+| `teardown`     | No       | Cleanup. Close connections, flush buffers. Runs in reverse load order.                   |
+| `extends`      | No       | Compose other extensions as a preset.                                                    |
 
 ## Providing contracts
 
@@ -100,9 +135,7 @@ const extJwt: ExtensionFactory = (config?) => {
   return {
     name: "ext-auth-jwt",
     version: "0.1.0",
-    capabilities: [
-      { type: "contract", name: "AuthProvider" },
-    ],
+    capabilities: [],
     provides: {
       AuthProvider: provider,
     },
@@ -125,8 +158,10 @@ const extRedis: ExtensionFactory = () => {
   return {
     name: "ext-cache-redis",
     version: "0.1.0",
+    contracts: {
+      provides: ["TokenCacheStore"],
+    },
     capabilities: [
-      { type: "contract", name: "TokenCacheStore" },
       { type: "net:outbound", hosts: ["*"] },
     ],
 
@@ -155,7 +190,7 @@ export default extRedis;
 
 ## Consuming contracts
 
-Extensions can depend on contracts provided by other extensions. Declare the dependency in `capabilities`, then resolve it in `setup()`:
+Extensions can depend on contracts provided by other extensions. Declare the dependency in `contracts.requires`, then resolve it in `setup()`:
 
 ```ts
 import type { ExtensionFactory } from "veryfront/extensions";
@@ -168,7 +203,10 @@ const extMyProvider: ExtensionFactory = () => {
   return {
     name: "ext-my-provider",
     version: "0.1.0",
-    capabilities: [{ type: "contract", name: "LLMProvider:my-provider" }],
+    contracts: {
+      requires: [LLMProviderRegistryName],
+    },
+    capabilities: [],
 
     setup(ctx) {
       registry = ctx.require<LLMProviderRegistry>(LLMProviderRegistryName);
@@ -185,7 +223,7 @@ const extMyProvider: ExtensionFactory = () => {
 export default extMyProvider;
 ```
 
-The `capabilities: [{ type: "contract", name: "..." }]` declaration tells the topological sort that this extension consumes a contract. When the provider uses a static `provides` field, the sort guarantees providers load before consumers. For contracts registered dynamically via `ctx.provide()`, ensure the provider is listed earlier in the config or has higher source priority.
+The `contracts.requires` declaration tells the topological sort that this extension consumes a contract. Static `provides` entries automatically declare provided contracts. Dynamic providers must list contract names in `contracts.provides` so consumers load after the provider.
 
 ### ExtensionContext API
 
@@ -209,20 +247,20 @@ capabilities: [
   { type: "net:listen", ports: [3000] },
   { type: "env:read", keys: ["DATABASE_URL", "API_KEY"] },
   { type: "process:spawn", commands: ["esbuild"] },
-  { type: "contract", name: "CacheStore" },
 ];
 ```
 
-| Type            | Scoping              | Deno flag                         |
-| --------------- | -------------------- | --------------------------------- |
-| `fs:read`       | `paths: string[]`    | `--allow-read=<paths>`            |
-| `fs:write`      | `paths: string[]`    | `--allow-write=<paths>`           |
-| `net:outbound`  | `hosts: string[]`    | `--allow-net=<hosts>`             |
-| `net:listen`    | `ports: number[]`    | `--allow-net=localhost:<port>`    |
-| `env:read`      | `keys: string[]`     | `--allow-env=<keys>`              |
-| `process:spawn` | `commands: string[]` | `--allow-run=<commands>`          |
-| `native:ffi`    | (none)               | `--allow-ffi`                     |
-| `contract`      | `name: string`       | (ordering hint, not a permission) |
+| Type            | Scoping              | Deno flag                      |
+| --------------- | -------------------- | ------------------------------ |
+| `fs:read`       | `paths: string[]`    | `--allow-read=<paths>`         |
+| `fs:write`      | `paths: string[]`    | `--allow-write=<paths>`        |
+| `net:outbound`  | `hosts: string[]`    | `--allow-net=<hosts>`          |
+| `net:listen`    | `ports: number[]`    | `--allow-net=localhost:<port>` |
+| `env:read`      | `keys: string[]`     | `--allow-env=<keys>`           |
+| `process:spawn` | `commands: string[]` | `--allow-run=<commands>`       |
+| `native:ffi`    | (none)               | `--allow-ffi`                  |
+
+Use `contracts.provides` and `contracts.requires` for contract metadata. Capabilities describe runtime resources, not contract ownership or dependency order.
 
 ## Available contracts
 
@@ -266,15 +304,17 @@ For published extensions (npm/JSR), declare extension metadata in `deno.json` or
   "exports": "./src/index.ts",
   "veryfront": {
     "extension": true,
+    "contracts": {
+      "provides": ["CacheStore"]
+    },
     "capabilities": [
-      { "type": "contract", "name": "CacheStore" },
       { "type": "net:outbound", "hosts": ["*"] }
     ]
   }
 }
 ```
 
-The `veryfront.extension: true` flag enables auto-discovery. Installed packages with this metadata are loaded automatically without explicit config.
+The `veryfront.extension: true` flag enables auto-discovery. Installed packages with this metadata are loaded automatically without explicit config. Package metadata advertises contracts and system capabilities for discovery and audit. Runtime contract metadata still lives in the factory object through `contracts` and `provides`.
 
 ## Discovery and priority
 
@@ -287,7 +327,7 @@ Extensions are discovered from four sources, in priority order:
 | 3           | Project    | `extensions/<name>/src/index.ts` in your project    |
 | 4 (lowest)  | Local file | `*.extension.ts` files in project root              |
 
-When multiple extensions provide the same contract via static `provides`, the higher-priority source wins. Contracts registered dynamically via `ctx.provide()` in `setup()` are not subject to priority arbitration, so prefer static `provides` when possible. You can explicitly disable a discovered extension:
+When multiple extensions provide the same contract, the higher-priority source wins. This applies to static `provides` and dynamic providers that declare `contracts.provides`. You can explicitly disable a discovered extension:
 
 ```ts
 // veryfront.config.ts
@@ -484,9 +524,7 @@ const memoryCache: ExtensionFactory = (config?: unknown) => {
   return {
     name: "memory-cache",
     version: "1.0.0",
-    capabilities: [
-      { type: "contract", name: "CacheStore" },
-    ],
+    capabilities: [],
     provides: {
       CacheStore: cache,
     },
@@ -550,9 +588,10 @@ When a required contract is missing, the error message suggests which package to
 To publish an extension as a package:
 
 1. Set `veryfront.extension: true` in your `deno.json`/`package.json`
-2. List capabilities in the package metadata
-3. Export your factory as the default export
-4. Publish to npm or JSR
+2. List system capabilities in the package metadata
+3. Declare contract metadata in the factory with `contracts` or static `provides`
+4. Export your factory as the default export
+5. Publish to npm or JSR
 
 Users install your package and it's auto-discovered, no config changes needed:
 
@@ -564,6 +603,7 @@ deno add @myorg/ext-custom-cache
 
 - **One contract per extension** - Keep extensions focused. Implement a single contract per package.
 - **Declare all capabilities** - Be explicit about filesystem, network, and env var access.
+- **Declare dynamic contracts** - Use `contracts.provides` for dynamic `ctx.provide()` calls and `contracts.requires` before `ctx.require()`.
 - **Handle missing config gracefully** - Log a warning and skip registration instead of throwing when optional config is absent.
 - **Clean up in teardown** - Close connections, cancel timers, flush buffers.
 - **Use `ctx.logger`** - Structured logging integrates with the project's log pipeline.
