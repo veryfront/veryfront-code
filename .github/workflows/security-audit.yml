@@ -51,6 +51,9 @@ jobs:
       - name: Run extension contract metadata lint
         run: deno task lint:extension-contracts
 
+      - name: Run extension capability policy lint
+        run: deno task lint:extension-capabilities
+
       - name: Generate separated dependency SBOMs
         run: deno task sbom:all --output-dir dist/dependency-sboms
 

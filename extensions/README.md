@@ -219,6 +219,24 @@ inside their named extension boundaries.
 | Native SQLite store | `ext-db-sqlite`           | `better-sqlite3`, `@types/better-sqlite3` | `SqliteStore`, filesystem I/O  |
 | Document extraction | `ext-document-kreuzberg`  | `@kreuzberg/wasm`                         | `DocumentExtractor`, file read |
 
+## Capability policy
+
+Capabilities are part of the supply-chain boundary. Declare the same
+capability list in the extension factory and in `veryfront.capabilities` inside
+the extension manifest. CI runs `deno task lint:extension-capabilities` to
+check for drift and to enforce the sensitive capability policies below.
+
+| Extension                              | Required capabilities                                          | Why it is sensitive                         |
+| -------------------------------------- | -------------------------------------------------------------- | ------------------------------------------- |
+| `ext-sandbox-shell-tools`              | `sandbox:execute` with `tools: ["bash"]`                       | Exposes command execution in a sandbox      |
+| `ext-cache-redis`                      | `net:outbound`, `env:read` for `REDIS_*`                       | Connects to external cache infrastructure   |
+| `ext-db-sqlite`                        | `fs:read`, `fs:write`                                          | Opens native SQLite databases               |
+| `ext-document-kreuzberg`               | `fs:read`                                                      | Parses uploaded or user-provided documents  |
+| `ext-observability-opentelemetry`      | `net:outbound`, `env:read` for `OTEL_*`                        | Exports telemetry and reads collector config |
+
+Use `veryfront.contracts` for contract ownership and dependency ordering. Use
+`veryfront.capabilities` only for runtime resource access and audit metadata.
+
 `deno task lint:dependency-boundaries` fails when one of these sensitive
 boundaries is missing from the generated dependency index or no longer contains
 its expected package components.
