@@ -67,8 +67,28 @@ function getTimestamp(): string {
   return new Date().toISOString().replace("T", " ").replace("Z", "");
 }
 
+// deno-lint-ignore no-control-regex -- intentionally matching control chars to strip them
+const HEADER_LOG_CONTROL_CHARS = /[\r\n\t\x00-\x1f\x7f]/g;
+const HEADER_LOG_MAX_LENGTH = 256;
+
+/**
+ * Strip CR/LF/tab/other control characters and cap length before a user-controlled
+ * header value is written to a log entry. Prevents log injection (CWE-117).
+ *
+ * Exported for direct unit testing — Deno's `Request` constructor rejects CR/LF
+ * in header values, so the helper must be tested without going through `Request`.
+ */
+export function sanitizeHeaderForLog(value: string): string {
+  return value.replace(HEADER_LOG_CONTROL_CHARS, "").slice(0, HEADER_LOG_MAX_LENGTH);
+}
+
+function readHeaderForLog(req: Request, name: string): string | null {
+  const value = req.headers.get(name);
+  return value === null ? null : sanitizeHeaderForLog(value);
+}
+
 function getRemoteAddr(req: Request): string {
-  return req.headers.get("x-forwarded-for") ?? req.headers.get("x-real-ip") ?? "-";
+  return readHeaderForLog(req, "x-forwarded-for") ?? readHeaderForLog(req, "x-real-ip") ?? "-";
 }
 
 function getRequestLogDetails(req: Request): RequestLogDetails {
@@ -76,11 +96,12 @@ function getRequestLogDetails(req: Request): RequestLogDetails {
     method: req.method,
     pathname: new URL(req.url).pathname,
     remoteAddr: getRemoteAddr(req),
-    referer: req.headers.get("referer") ?? undefined,
-    requestId: req.headers.get("x-request-id") ?? undefined,
-    traceId: req.headers.get("x-trace-id") ?? req.headers.get("traceparent") ?? undefined,
-    projectSlug: req.headers.get("x-project-slug") ?? undefined,
-    userAgent: req.headers.get("user-agent") ?? undefined,
+    referer: readHeaderForLog(req, "referer") ?? undefined,
+    requestId: readHeaderForLog(req, "x-request-id") ?? undefined,
+    traceId: readHeaderForLog(req, "x-trace-id") ?? readHeaderForLog(req, "traceparent") ??
+      undefined,
+    projectSlug: readHeaderForLog(req, "x-project-slug") ?? undefined,
+    userAgent: readHeaderForLog(req, "user-agent") ?? undefined,
   };
 }
 
@@ -141,8 +162,8 @@ function formatLog(format: LogFormat, req: Request, status: number, duration: nu
   const { method } = req;
   const remoteAddr = getRemoteAddr(req);
   const timestamp = getTimestamp();
-  const userAgent = req.headers.get("user-agent") ?? "-";
-  const referer = req.headers.get("referer") ?? "-";
+  const userAgent = readHeaderForLog(req, "user-agent") ?? "-";
+  const referer = readHeaderForLog(req, "referer") ?? "-";
   const durationText = formatDuration(duration);
 
   switch (format) {

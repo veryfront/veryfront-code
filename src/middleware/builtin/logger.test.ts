@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { devLogger, logger, prodLogger } from "./logger.ts";
+import { devLogger, logger, prodLogger, sanitizeHeaderForLog } from "./logger.ts";
 
 function makeCtx(
   url = "http://localhost/api/data",
@@ -294,6 +294,68 @@ describe("middleware/builtin/logger", () => {
 
       assertEquals(logs.length, 1);
       assert(getFirstLog(logs).includes("\x1b["));
+    });
+
+    // SEC-011 — long user-agent reaches the logger via a normal Request and
+    // must be truncated to 256 chars in the log output. CRLF cases for the
+    // sanitizer itself are covered in the `sanitizeHeaderForLog` suite below
+    // (Deno's `Request` constructor rejects CR/LF in header values, so the
+    // helper has to be exercised directly).
+    it("should cap user-agent length at 256 characters", async () => {
+      const logs: string[] = [];
+      const mw = logger({ format: "json", log: (msg) => logs.push(msg) });
+
+      const longUa = "A".repeat(1000);
+      await mw(
+        makeCtx("http://localhost/", { "user-agent": longUa }),
+        nextOk,
+      );
+
+      const entry = JSON.parse(getFirstLog(logs));
+      assertEquals(entry.http.userAgent.length, 256);
+      assertEquals(entry.http.userAgent, "A".repeat(256));
+    });
+  });
+
+  // SEC-011 — log injection via unsanitized request headers (CWE-117)
+  describe("sanitizeHeaderForLog", () => {
+    it("strips CR and LF from header values", () => {
+      assertEquals(
+        sanitizeHeaderForLog("evil\r\n[ERROR] fake-audit-line"),
+        "evil[ERROR] fake-audit-line",
+      );
+    });
+
+    it("strips tab characters", () => {
+      assertEquals(sanitizeHeaderForLog("a\tb\tc"), "abc");
+    });
+
+    it("strips C0 control characters and DEL", () => {
+      assertEquals(sanitizeHeaderForLog("\x00\x01\x07x\x1fy\x7fz"), "xyz");
+    });
+
+    it("preserves ordinary printable characters", () => {
+      const ua = "Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0";
+      assertEquals(sanitizeHeaderForLog(ua), ua);
+    });
+
+    it("truncates at 256 characters", () => {
+      const long = "A".repeat(1000);
+      const result = sanitizeHeaderForLog(long);
+      assertEquals(result.length, 256);
+      assertEquals(result, "A".repeat(256));
+    });
+
+    it("handles empty string", () => {
+      assertEquals(sanitizeHeaderForLog(""), "");
+    });
+
+    it("produces output safe to embed in a single log line", () => {
+      const malicious = "ua\r\n[FAKE]\tline";
+      const sanitized = sanitizeHeaderForLog(malicious);
+      assert(!sanitized.includes("\r"), `Sanitized must not contain CR: ${sanitized}`);
+      assert(!sanitized.includes("\n"), `Sanitized must not contain LF: ${sanitized}`);
+      assert(!sanitized.includes("\t"), `Sanitized must not contain tab: ${sanitized}`);
     });
   });
 
