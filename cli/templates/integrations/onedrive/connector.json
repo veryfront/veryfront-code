@@ -45,13 +45,48 @@
       "id": "list_files",
       "name": "List Files",
       "description": "List files and folders in a OneDrive folder",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/root/children",
+        "params": {
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of items to return",
+            "default": 200
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated fields to return"
+          }
+        }
+      }
     },
     {
       "id": "search_files",
       "name": "Search Files",
       "description": "Search for files and folders in OneDrive by name or content",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/root/search(q='{query}')",
+        "params": {
+          "query": {
+            "type": "string",
+            "in": "path",
+            "description": "Search query",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of items to return",
+            "default": 200
+          }
+        }
+      }
     },
     {
       "id": "upload_file",
@@ -63,7 +98,19 @@
       "id": "download_file",
       "name": "Download File",
       "description": "Download file content from OneDrive",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/{itemId}/content",
+        "params": {
+          "itemId": {
+            "type": "string",
+            "in": "path",
+            "description": "OneDrive file item ID",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -96,5 +143,9 @@
       "icon": "upload"
     }
   ],
-  "suggestedWith": ["outlook", "teams", "sharepoint"]
+  "suggestedWith": [
+    "outlook",
+    "teams",
+    "sharepoint"
+  ]
 }

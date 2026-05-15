@@ -12,7 +12,8 @@
       "crm.objects.contacts.read",
       "crm.objects.contacts.write",
       "crm.objects.companies.read",
-      "crm.objects.deals.read"
+      "crm.objects.deals.read",
+      "crm.objects.deals.write"
     ],
     "callbackPath": "/api/auth/hubspot/callback",
     "tokenAuthMethod": "request_body",
@@ -44,31 +45,138 @@
       "id": "list_contacts",
       "name": "List Contacts",
       "description": "List contacts from your HubSpot CRM",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of contacts to return",
+            "default": 100
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Paging cursor from HubSpot"
+          },
+          "properties": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated contact properties to include"
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived contacts",
+            "default": false
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
     },
     {
       "id": "get_contact",
       "name": "Get Contact",
       "description": "Get detailed information about a specific contact",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "HubSpot contact ID",
+            "required": true
+          },
+          "properties": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated contact properties to include"
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived contacts",
+            "default": false
+          }
+        }
+      }
     },
     {
       "id": "create_contact",
       "name": "Create Contact",
       "description": "Create a new contact in HubSpot CRM",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "body": {
+          "properties": {
+            "type": "object",
+            "description": "Contact property values keyed by HubSpot property name",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_deals",
       "name": "List Deals",
       "description": "List sales deals from your HubSpot CRM",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of deals to return",
+            "default": 100
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Paging cursor from HubSpot"
+          },
+          "properties": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated deal properties to include"
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived deals",
+            "default": false
+          }
+        },
+        "response": {
+          "transform": "results"
+        }
+      }
     },
     {
       "id": "create_deal",
       "name": "Create Deal",
       "description": "Create a new deal in HubSpot CRM",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/deals",
+        "body": {
+          "properties": {
+            "type": "object",
+            "description": "Deal property values keyed by HubSpot property name",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -94,5 +202,9 @@
       "icon": "chart"
     }
   ],
-  "suggestedWith": ["gmail", "slack", "calendar"]
+  "suggestedWith": [
+    "gmail",
+    "slack",
+    "calendar"
+  ]
 }

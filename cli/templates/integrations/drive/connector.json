@@ -41,25 +41,126 @@
       "id": "list_files",
       "name": "List Files",
       "description": "List files and folders in a Google Drive folder or root",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional Drive query expression"
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of files to return",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token"
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Partial response field selector",
+            "default": "nextPageToken, files(id, name, mimeType, webViewLink, modifiedTime, size, parents)"
+          }
+        },
+        "response": {
+          "transform": "files"
+        }
+      }
     },
     {
       "id": "get_file",
       "name": "Get File",
       "description": "Get metadata and details about a specific file or folder",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Drive file ID",
+            "required": true
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Partial response field selector",
+            "default": "id, name, mimeType, webViewLink, modifiedTime, size, parents"
+          }
+        }
+      }
     },
     {
       "id": "search_files",
       "name": "Search Files",
       "description": "Search for files and folders using queries",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Drive query expression used to search files",
+            "required": true
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of files to return",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token"
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Partial response field selector",
+            "default": "nextPageToken, files(id, name, mimeType, webViewLink, modifiedTime, size, parents)"
+          }
+        },
+        "response": {
+          "transform": "files"
+        }
+      }
     },
     {
       "id": "create_folder",
       "name": "Create Folder",
       "description": "Create a new folder in Google Drive",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Folder name",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "Google Drive MIME type for folders",
+            "default": "application/vnd.google-apps.folder"
+          },
+          "parents": {
+            "type": "array",
+            "description": "Optional parent folder IDs"
+          }
+        }
+      }
     },
     {
       "id": "upload_file",
@@ -91,7 +192,11 @@
       "icon": "upload"
     }
   ],
-  "suggestedWith": ["gmail", "calendar", "sheets"],
+  "suggestedWith": [
+    "gmail",
+    "calendar",
+    "sheets"
+  ],
   "setupGuide": {
     "title": "Google Drive Integration Setup",
     "steps": [
