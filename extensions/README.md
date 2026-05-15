@@ -179,6 +179,22 @@ the grouped dependency list quickly. The React boundary is owned by
 `react/deno.json`; extensions should keep their own dependencies in their
 extension manifest.
 
+## Sensitive dependency classes
+
+Some extensions own dependencies that need extra review because they execute
+commands, load native modules, or parse untrusted files. Keep these dependencies
+inside their named extension boundaries.
+
+| Class               | Extension                 | Boundary components                       | Capability surface             |
+| ------------------- | ------------------------- | ----------------------------------------- | ------------------------------ |
+| Sandbox execution   | `ext-sandbox-shell-tools` | `bash-tool`, `just-bash`                  | `SandboxShellToolsProvider`    |
+| Native SQLite store | `ext-db-sqlite`           | `better-sqlite3`, `@types/better-sqlite3` | `SqliteStore`, filesystem I/O  |
+| Document extraction | `ext-document-kreuzberg`  | `@kreuzberg/wasm`                         | `DocumentExtractor`, file read |
+
+`deno task lint:dependency-boundaries` fails when one of these sensitive
+boundaries is missing from the generated dependency index or no longer contains
+its expected package components.
+
 ## Creating an Extension
 
 ```bash
