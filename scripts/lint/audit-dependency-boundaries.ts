@@ -3,6 +3,7 @@ import {
   dependencyIndexForAllManifests,
   type DependencyIndexManifest,
   importsByWorkspaceManifest,
+  SENSITIVE_DEPENDENCY_BOUNDARIES,
   workspaceMembersFromDenoConfig,
 } from "../build/generate-sbom.ts";
 
@@ -18,24 +19,6 @@ const REACT_BOUNDARY_COMPONENTS = new Set([
   "react",
   "react-dom",
 ]);
-
-const SENSITIVE_EXTENSION_BOUNDARIES = [
-  {
-    label: "sandbox execution",
-    sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
-    expectedComponents: ["bash-tool", "just-bash"],
-  },
-  {
-    label: "native SQLite storage",
-    sourceLocation: "extensions/ext-db-sqlite/deno.json",
-    expectedComponents: ["@types/better-sqlite3", "better-sqlite3"],
-  },
-  {
-    label: "document extraction",
-    sourceLocation: "extensions/ext-document-kreuzberg/deno.json",
-    expectedComponents: ["@kreuzberg/wasm"],
-  },
-] as const;
 
 function componentNames(
   manifest: DependencyIndexManifest | undefined,
@@ -107,7 +90,7 @@ export function auditDependencyBoundaries(
     }
   }
 
-  for (const sensitiveBoundary of SENSITIVE_EXTENSION_BOUNDARIES) {
+  for (const sensitiveBoundary of SENSITIVE_DEPENDENCY_BOUNDARIES) {
     const manifest = manifests.get(sensitiveBoundary.sourceLocation);
     if (!manifest) {
       issues.push({

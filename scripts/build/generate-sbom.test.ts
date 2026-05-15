@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "#std/assert";
+import { assertEquals, assertStringIncludes, assertThrows } from "#std/assert";
 import { describe, it } from "jsr:@std/testing/bdd";
 import {
   componentsForManifestBoundary,
@@ -6,6 +6,7 @@ import {
   componentsFromLock,
   componentsFromLockForManifest,
   dependencyIndexForAllManifests,
+  dependencySummaryMarkdown,
   sbomOutputsForAllManifests,
   SUPPORTED_LOCK_VERSIONS,
 } from "./generate-sbom.ts";
@@ -359,6 +360,63 @@ describe("componentsFromLock", () => {
           componentNames: ["bash-tool"],
         },
       ],
+    );
+  });
+
+  it("renders a markdown dependency summary with sensitive boundaries highlighted", () => {
+    const summary = dependencySummaryMarkdown({
+      generatedBy: "generate-sbom",
+      manifests: [
+        {
+          sourceLocation: "deno.json",
+          group: "core",
+          componentCount: 0,
+          components: [],
+        },
+        {
+          sourceLocation: "cli/deno.json",
+          group: "cli",
+          componentCount: 0,
+          components: [],
+        },
+        {
+          sourceLocation: "react/deno.json",
+          group: "react",
+          componentCount: 3,
+          components: [
+            {
+              name: "react",
+              version: "19.2.4",
+              purl: "pkg:npm/react@19.2.4",
+            },
+          ],
+        },
+        {
+          sourceLocation: "extensions/ext-sandbox-shell-tools/deno.json",
+          group: "extension",
+          componentCount: 2,
+          components: [
+            {
+              name: "bash-tool",
+              version: "1.3.16",
+              purl: "pkg:npm/bash-tool@1.3.16",
+            },
+          ],
+        },
+      ],
+    });
+
+    assertStringIncludes(
+      summary,
+      "| Core | `deno.json` | 0 | Third-party free |",
+    );
+    assertStringIncludes(
+      summary,
+      "| Extension | `extensions/ext-sandbox-shell-tools/deno.json` | 2 | Sensitive: sandbox execution |",
+    );
+    assertStringIncludes(
+      summary,
+      "| Sandbox execution | `extensions/ext-sandbox-shell-tools/deno.json` | 2 | `bash-tool`, `just-bash` |",
     );
   });
 });
