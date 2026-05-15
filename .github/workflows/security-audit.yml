@@ -48,6 +48,9 @@ jobs:
       - name: Run dependency boundary lint
         run: deno task lint:dependency-boundaries
 
+      - name: Run extension contract metadata lint
+        run: deno task lint:extension-contracts
+
       - name: Generate separated dependency SBOMs
         run: deno task sbom:all --output-dir dist/dependency-sboms
 

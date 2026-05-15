@@ -17,6 +17,7 @@ const extOpenAI: ExtensionFactory = () => {
     name: "ext-llm-openai",
     version: "0.1.0",
     contracts: {
+      provides: ["LLMProvider:openai"],
       requires: [LLMProviderRegistryName],
     },
     capabilities: [],

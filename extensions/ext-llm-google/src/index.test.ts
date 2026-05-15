@@ -7,6 +7,7 @@ describe("ext-llm-google", () => {
   it("factory descriptor requires the LLMProviderRegistry contract", () => {
     const ext = extGoogle();
     assertEquals(ext.name, "ext-llm-google");
+    assertEquals(ext.contracts?.provides, ["LLMProvider:google"]);
     assertEquals(ext.contracts?.requires, [LLMProviderRegistryName]);
     assertEquals(ext.capabilities, []);
   });

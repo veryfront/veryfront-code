@@ -1,0 +1,77 @@
+import { assertEquals } from "#std/assert";
+import { describe, it } from "#std/testing/bdd";
+import {
+  auditExtensionContracts,
+  type ExtensionContractAuditInput,
+} from "./audit-extension-contracts.ts";
+
+function input(
+  overrides: Partial<ExtensionContractAuditInput> = {},
+): ExtensionContractAuditInput {
+  return {
+    manifestPath: "extensions/ext-cache/deno.json",
+    manifestCapabilities: [],
+    manifestContracts: { provides: ["CacheStore"], requires: [] },
+    factoryProvides: ["CacheStore"],
+    factoryRequires: [],
+    ...overrides,
+  };
+}
+
+describe("auditExtensionContracts", () => {
+  it("accepts matching manifest and factory contract metadata", () => {
+    assertEquals(auditExtensionContracts([input()]), []);
+  });
+
+  it("flags contract-shaped capabilities in extension manifests", () => {
+    const issues = auditExtensionContracts([
+      input({
+        manifestCapabilities: [{ type: "contract", name: "CacheStore" }],
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      'extensions/ext-cache/deno.json must not use capability type "contract"; use veryfront.contracts instead',
+    ]);
+  });
+
+  it("flags missing manifest contracts when the factory declares contracts", () => {
+    const issues = auditExtensionContracts([
+      input({
+        manifestContracts: undefined,
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      "extensions/ext-cache/deno.json is missing veryfront.contracts for factory-declared contracts: provides CacheStore",
+    ]);
+  });
+
+  it("flags drift between manifest provides and factory provides", () => {
+    const issues = auditExtensionContracts([
+      input({
+        manifestContracts: { provides: ["OtherStore"], requires: [] },
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      "extensions/ext-cache/deno.json veryfront.contracts.provides differs from factory contracts: manifest OtherStore; factory CacheStore",
+    ]);
+  });
+
+  it("flags drift between manifest requires and factory requires", () => {
+    const issues = auditExtensionContracts([
+      input({
+        manifestContracts: {
+          provides: ["CacheStore"],
+          requires: ["SchemaValidator"],
+        },
+        factoryRequires: ["OtherValidator"],
+      }),
+    ]);
+
+    assertEquals(issues.map((issue) => issue.message), [
+      "extensions/ext-cache/deno.json veryfront.contracts.requires differs from factory contracts: manifest SchemaValidator; factory OtherValidator",
+    ]);
+  });
+});

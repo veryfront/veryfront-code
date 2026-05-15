@@ -7,6 +7,7 @@ describe("ext-llm-openai", () => {
   it("factory descriptor requires the LLMProviderRegistry contract", () => {
     const ext = extOpenAI();
     assertEquals(ext.name, "ext-llm-openai");
+    assertEquals(ext.contracts?.provides, ["LLMProvider:openai"]);
     assertEquals(ext.contracts?.requires, [LLMProviderRegistryName]);
     assertEquals(ext.capabilities, []);
   });

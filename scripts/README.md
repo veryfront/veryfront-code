@@ -63,7 +63,10 @@ The security audit workflow uploads those files as the `dependency-sboms`
 artifact. It includes the JSON SBOMs, `dependencies-by-manifest.json`, and
 `dependency-summary.md`. It also runs `lint:deps`, `lint:core-deps`, and
 `lint:dependency-boundaries` so dependency pins, source imports, and generated
-dependency groups are checked together.
+dependency groups are checked together. CI also runs `lint:extension-contracts`
+to ensure extension manifests use `veryfront.contracts` instead of
+contract-shaped capabilities, and to keep manifest contract metadata aligned
+with extension factories.
 
 ## Root-level scripts
 

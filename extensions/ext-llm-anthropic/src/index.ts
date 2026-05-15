@@ -17,6 +17,7 @@ const extAnthropic: ExtensionFactory = () => {
     name: "ext-llm-anthropic",
     version: "0.1.0",
     contracts: {
+      provides: ["LLMProvider:anthropic"],
       requires: [LLMProviderRegistryName],
     },
     capabilities: [],
