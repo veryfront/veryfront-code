@@ -45,19 +45,102 @@
       "id": "list_spreadsheets",
       "name": "List Spreadsheets",
       "description": "List recent Google Sheets spreadsheets from Drive",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "params": {
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Drive query limited to Google Sheets spreadsheets",
+            "default": "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false"
+          },
+          "pageSize": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of spreadsheets to return",
+            "default": 100
+          },
+          "pageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token"
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Partial response field selector",
+            "default": "nextPageToken, files(id, name, webViewLink, modifiedTime)"
+          }
+        },
+        "response": {
+          "transform": "files"
+        }
+      }
     },
     {
       "id": "get_spreadsheet",
       "name": "Get Spreadsheet",
       "description": "Get spreadsheet metadata including sheet names and properties",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          },
+          "includeGridData": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include grid data",
+            "default": false
+          },
+          "ranges": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Ranges to include when includeGridData is true"
+          }
+        }
+      }
     },
     {
       "id": "read_range",
       "name": "Read Range",
       "description": "Read cell data from a spreadsheet range",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          },
+          "range": {
+            "type": "string",
+            "in": "path",
+            "description": "A1 notation range to read",
+            "required": true
+          },
+          "majorDimension": {
+            "type": "string",
+            "in": "query",
+            "description": "Major dimension for returned values"
+          },
+          "valueRenderOption": {
+            "type": "string",
+            "in": "query",
+            "description": "How values should be rendered"
+          }
+        }
+      }
     },
     {
       "id": "write_range",
@@ -69,7 +152,22 @@
       "id": "create_spreadsheet",
       "name": "Create Spreadsheet",
       "description": "Create a new spreadsheet with optional initial data",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets",
+        "body": {
+          "properties": {
+            "type": "object",
+            "description": "Spreadsheet properties such as title",
+            "required": true
+          },
+          "sheets": {
+            "type": "array",
+            "description": "Optional initial sheet definitions"
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -95,5 +193,9 @@
       "icon": "edit"
     }
   ],
-  "suggestedWith": ["gmail", "calendar", "notion"]
+  "suggestedWith": [
+    "gmail",
+    "calendar",
+    "notion"
+  ]
 }

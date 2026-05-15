@@ -45,25 +45,94 @@
       "id": "list_sites",
       "name": "List SharePoint Sites",
       "description": "List all SharePoint sites the user has access to",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/sites",
+        "params": {
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search term for SharePoint sites",
+            "default": "*"
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of sites to return",
+            "default": 200
+          }
+        },
+        "response": {
+          "transform": "value"
+        }
+      }
     },
     {
       "id": "get_site",
       "name": "Get Site Details",
       "description": "Get detailed information about a specific SharePoint site",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/sites/{siteId}",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "SharePoint site ID",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "list_files",
       "name": "List Files",
       "description": "List files and folders in a SharePoint document library",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/sites/{siteId}/drive/root/children",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "SharePoint site ID",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of items to return",
+            "default": 200
+          }
+        }
+      }
     },
     {
       "id": "get_file",
       "name": "Get File",
       "description": "Get file metadata and content from SharePoint",
-      "requiresWrite": false
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/sites/{siteId}/drive/items/{itemId}",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "SharePoint site ID",
+            "required": true
+          },
+          "itemId": {
+            "type": "string",
+            "in": "path",
+            "description": "Drive item ID",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "upload_file",
@@ -95,5 +164,9 @@
       "icon": "folder"
     }
   ],
-  "suggestedWith": ["outlook", "teams", "onedrive"]
+  "suggestedWith": [
+    "outlook",
+    "teams",
+    "onedrive"
+  ]
 }
