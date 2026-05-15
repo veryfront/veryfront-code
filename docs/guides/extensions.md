@@ -262,6 +262,19 @@ capabilities: [
 
 Use `contracts.provides` and `contracts.requires` for contract metadata. Capabilities describe runtime resources, not contract ownership or dependency order.
 
+## Contract checklist
+
+Use the same contract metadata in the extension factory and package metadata:
+
+| Case             | Factory metadata                 | Runtime call            | Package metadata               |
+| ---------------- | -------------------------------- | ----------------------- | ------------------------------ |
+| Static provider  | `provides: { CacheStore: impl }` | None                    | `veryfront.contracts.provides` |
+| Dynamic provider | `contracts.provides`             | `ctx.provide()`         | `veryfront.contracts.provides` |
+| Consumer         | `contracts.requires`             | `ctx.require()`         | `veryfront.contracts.requires` |
+| Permission       | `capabilities`                   | Depends on the resource | `veryfront.capabilities`       |
+
+CI runs `deno task lint:extension-contracts` to keep these fields aligned. The check fails if a manifest uses `capabilities: [{ type: "contract" }]`, if factory contracts are missing from `veryfront.contracts`, or if manifest and factory contract lists drift.
+
 ## Available contracts
 
 These are first-party contracts your extension can implement or consume. Some implementations are auto-enabled by core bootstrap. Contracts without a default package are extension points for project or third-party providers.

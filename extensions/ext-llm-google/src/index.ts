@@ -16,6 +16,7 @@ const extGoogle: ExtensionFactory = () => {
     name: "ext-llm-google",
     version: "0.1.0",
     contracts: {
+      provides: ["LLMProvider:google"],
       requires: [LLMProviderRegistryName],
     },
     capabilities: [],

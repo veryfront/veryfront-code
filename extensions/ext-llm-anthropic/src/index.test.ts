@@ -7,6 +7,7 @@ describe("ext-llm-anthropic", () => {
   it("factory descriptor requires the LLMProviderRegistry contract", () => {
     const ext = extAnthropic();
     assertEquals(ext.name, "ext-llm-anthropic");
+    assertEquals(ext.contracts?.provides, ["LLMProvider:anthropic"]);
     assertEquals(ext.contracts?.requires, [LLMProviderRegistryName]);
     assertEquals(ext.capabilities, []);
   });

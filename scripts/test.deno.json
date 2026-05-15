@@ -1,6 +1,8 @@
 {
   "imports": {
     "#std/assert": "jsr:@std/assert",
-    "#std/flags": "jsr:@std/cli/parse-args"
+    "#std/flags": "jsr:@std/cli/parse-args",
+    "#std/path": "jsr:@std/path",
+    "#std/testing/bdd": "jsr:@std/testing/bdd"
   }
 }
