@@ -175,7 +175,9 @@ Each extension owns its third-party dependencies through its own `deno.json`.
 Run `deno task sbom:all --output-dir dist/dependency-sboms` from the repository
 root to generate one SBOM per extension plus aggregate, core, CLI, and React
 boundary views. Use `dependencies-by-manifest.json` in that output to inspect
-the grouped dependency list quickly.
+the grouped dependency list quickly. The React boundary is owned by
+`react/deno.json`; extensions should keep their own dependencies in their
+extension manifest.
 
 ## Creating an Extension
 

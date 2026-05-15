@@ -27,7 +27,7 @@ describe("auditDependencyBoundaries", () => {
           components: [],
         },
         {
-          sourceLocation: "react",
+          sourceLocation: "react/deno.json",
           group: "react",
           componentCount: 5,
           components: [
@@ -93,7 +93,7 @@ describe("auditDependencyBoundaries", () => {
           ],
         },
         {
-          sourceLocation: "react",
+          sourceLocation: "react/deno.json",
           group: "react",
           componentCount: 5,
           components: [
@@ -150,7 +150,7 @@ describe("auditDependencyBoundaries", () => {
           components: [],
         },
         {
-          sourceLocation: "react",
+          sourceLocation: "react/deno.json",
           group: "react",
           componentCount: 1,
           components: [

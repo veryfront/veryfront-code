@@ -57,20 +57,8 @@ export interface DependencyIndex {
 }
 
 export interface DependencyBoundaryInputs {
-  reactImports?: Record<string, string>;
   manifestImportsByPath?: Record<string, Record<string, string>>;
 }
-
-const REACT_BOUNDARY_IMPORTS = new Set([
-  "@types/react",
-  "@types/react-dom",
-  "react",
-  "react-dom",
-  "react-dom/client",
-  "react-dom/server",
-  "react/jsx-dev-runtime",
-  "react/jsx-runtime",
-]);
 
 const EXACT_SEMVER_RE = /^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/;
 
@@ -247,14 +235,6 @@ export function componentsForManifestBoundary(
   ]);
 }
 
-function componentsForReactBoundary(
-  inputs: DependencyBoundaryInputs = {},
-): CycloneDXComponent[] {
-  return componentsFromEsmShImports(inputs.reactImports ?? {}, {
-    onlySpecifiers: REACT_BOUNDARY_IMPORTS,
-  });
-}
-
 function dedupeComponents(
   components: CycloneDXComponent[],
 ): CycloneDXComponent[] {
@@ -291,7 +271,7 @@ export function workspaceMembersFromDenoConfig(
 function outputFileNameForManifest(manifestPath: string): string {
   if (manifestPath === "deno.json") return "core.json";
   if (manifestPath === "cli/deno.json") return "cli.json";
-  if (manifestPath === "react") return "react.json";
+  if (manifestPath === "react/deno.json") return "react.json";
   const extensionMatch = manifestPath.match(
     /^extensions\/([^/]+)\/deno\.json$/,
   );
@@ -326,7 +306,6 @@ export function sbomOutputsForAllManifests(
     return left.localeCompare(right);
   });
 
-  const reactComponents = componentsForReactBoundary(options);
   const boundaryOutputs = manifestPaths.map((manifestPath) => ({
     path: joinOutputPath(
       options.outputDir,
@@ -337,7 +316,6 @@ export function sbomOutputsForAllManifests(
   }));
   const allComponents = dedupeComponents([
     ...componentsFromLock(lockText),
-    ...reactComponents,
     ...boundaryOutputs.flatMap((output) => output.components),
   ]);
 
@@ -349,6 +327,12 @@ export function sbomOutputsForAllManifests(
     output.componentName !== "veryfront:deno.json" &&
     output.componentName !== "veryfront:cli/deno.json"
   );
+  const reactOutputs = remainingOutputs.filter((output) =>
+    output.componentName === "veryfront:react/deno.json"
+  );
+  const nonReactOutputs = remainingOutputs.filter((output) =>
+    output.componentName !== "veryfront:react/deno.json"
+  );
 
   return [
     {
@@ -357,15 +341,8 @@ export function sbomOutputsForAllManifests(
       components: allComponents,
     },
     ...leadingOutputs,
-    {
-      path: joinOutputPath(
-        options.outputDir,
-        outputFileNameForManifest("react"),
-      ),
-      componentName: "veryfront:react",
-      components: reactComponents,
-    },
-    ...remainingOutputs,
+    ...reactOutputs,
+    ...nonReactOutputs,
   ];
 }
 
@@ -374,7 +351,7 @@ function manifestGroup(
 ): DependencyIndexManifest["group"] {
   if (manifestPath === "deno.json") return "core";
   if (manifestPath === "cli/deno.json") return "cli";
-  if (manifestPath === "react") return "react";
+  if (manifestPath === "react/deno.json") return "react";
   if (manifestPath.startsWith("extensions/")) return "extension";
   return "workspace";
 }
@@ -403,7 +380,6 @@ export function dependencyIndexForAllManifests(
   lockText: string,
   options: ManifestGenerationOptions & DependencyBoundaryInputs = {},
 ): DependencyIndex {
-  const reactComponents = componentsForReactBoundary(options);
   const manifestEntries = manifestPathsFromLock(lockText, options).map(
     (manifestPath) => ({
       manifestPath,
@@ -420,10 +396,16 @@ export function dependencyIndexForAllManifests(
   const remainingEntries = manifestEntries.filter(({ manifestPath }) =>
     manifestPath !== "deno.json" && manifestPath !== "cli/deno.json"
   );
+  const reactEntries = remainingEntries.filter(({ manifestPath }) =>
+    manifestPath === "react/deno.json"
+  );
+  const nonReactEntries = remainingEntries.filter(({ manifestPath }) =>
+    manifestPath !== "react/deno.json"
+  );
   const orderedEntries = [
     ...leadingEntries,
-    { manifestPath: "react", components: reactComponents },
-    ...remainingEntries,
+    ...reactEntries,
+    ...nonReactEntries,
   ];
 
   return {
@@ -521,14 +503,12 @@ if (import.meta.main) {
     const outputs = sbomOutputsForAllManifests(lockText, {
       outputDir: args["output-dir"],
       workspaceMembers,
-      reactImports: denoConfig.imports,
       manifestImportsByPath,
     });
     await writeSbom(
       joinOutputPath(args["output-dir"], "dependencies-by-manifest.json"),
       dependencyIndexForAllManifests(lockText, {
         workspaceMembers,
-        reactImports: denoConfig.imports,
         manifestImportsByPath,
       }),
     );
@@ -557,16 +537,16 @@ if (import.meta.main) {
     ? await importsByWorkspaceManifest(workspaceMembers)
     : {};
   const boundaryInputs = {
-    reactImports: denoConfig.imports,
     manifestImportsByPath,
   };
-  const components = args.manifest
-    ? args.manifest === "react"
-      ? componentsForReactBoundary(boundaryInputs)
-      : componentsForManifestBoundary(lockText, args.manifest, boundaryInputs)
+  const manifestPath = args.manifest === "react"
+    ? "react/deno.json"
+    : args.manifest;
+  const components = manifestPath
+    ? componentsForManifestBoundary(lockText, manifestPath, boundaryInputs)
     : componentsFromLock(lockText);
-  const componentName = args.manifest
-    ? `${denoConfig.name ?? "veryfront"}:${args.manifest}`
+  const componentName = manifestPath
+    ? `${denoConfig.name ?? "veryfront"}:${manifestPath}`
     : denoConfig.name ?? "veryfront";
   const outputPath = args.output;
   await writeSbom(outputPath, buildSbom(denoConfig, componentName, components));

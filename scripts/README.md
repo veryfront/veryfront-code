@@ -52,11 +52,11 @@ aggregate workspace. The same output includes `dependencies-by-manifest.json`,
 which is the fastest way to inspect dependencies grouped by boundary.
 
 `core.json` maps to the root framework boundary (`deno.json` and `src/`).
-`react.json` maps to the React import aliases in the root import map, including
-supported esm.sh `deps=` package pins. This keeps React visible as its own
-boundary while `src/` remains the implementation tree. Extension SBOMs include
-npm imports from `deno.lock` and supported esm.sh aliases declared by the
-extension manifest.
+`react.json` maps to `react/deno.json`, which owns the upstream React, React
+DOM, and type package pins. Root `deno.json` maps React specifiers to local
+first-party shims in `react/` so core imports stay third-party free. Extension
+SBOMs include npm imports from `deno.lock` and supported esm.sh aliases declared
+by the extension manifest.
 
 The security audit workflow uploads those files as the `dependency-sboms`
 artifact. It also runs `lint:deps`, `lint:core-deps`, and

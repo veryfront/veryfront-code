@@ -236,17 +236,18 @@ describe("componentsFromLock", () => {
       outputDir: "dist/sbom-0.1.519",
       workspaceMembers: [
         "cli",
+        "react",
         "extensions/ext-css-tailwind",
         "extensions/ext-sandbox-shell-tools",
       ],
-      reactImports: {
-        react: "https://esm.sh/react@19.2.4?target=es2022",
-        "react-dom":
-          "https://esm.sh/react-dom@19.2.4?external=react&target=es2022",
-        "react/jsx-runtime":
-          "https://esm.sh/react@19.2.4/jsx-runtime?deps=csstype@3.2.3&external=react&target=es2022",
-      },
       manifestImportsByPath: {
+        "react/deno.json": {
+          react: "https://esm.sh/react@19.2.4?target=es2022",
+          "react-dom":
+            "https://esm.sh/react-dom@19.2.4?external=react&target=es2022",
+          "react/jsx-runtime":
+            "https://esm.sh/react@19.2.4/jsx-runtime?deps=csstype@3.2.3&external=react&target=es2022",
+        },
         "extensions/ext-css-tailwind/deno.json": {
           tailwindcss: "https://esm.sh/tailwindcss@4.2.2",
           "tailwindcss/plugin": "https://esm.sh/tailwindcss@4.2.2/plugin",
@@ -271,7 +272,7 @@ describe("componentsFromLock", () => {
         "veryfront",
         "veryfront:deno.json",
         "veryfront:cli/deno.json",
-        "veryfront:react",
+        "veryfront:react/deno.json",
         "veryfront:extensions/ext-css-tailwind/deno.json",
         "veryfront:extensions/ext-sandbox-shell-tools/deno.json",
       ],
@@ -320,10 +321,13 @@ describe("componentsFromLock", () => {
     const index = dependencyIndexForAllManifests(lock, {
       workspaceMembers: [
         "cli",
+        "react",
         "extensions/ext-sandbox-shell-tools",
       ],
-      reactImports: {
-        react: "https://esm.sh/react@19.2.4?target=es2022",
+      manifestImportsByPath: {
+        "react/deno.json": {
+          react: "https://esm.sh/react@19.2.4?target=es2022",
+        },
       },
     });
 
@@ -345,7 +349,7 @@ describe("componentsFromLock", () => {
           componentNames: [],
         },
         {
-          sourceLocation: "react",
+          sourceLocation: "react/deno.json",
           group: "react",
           componentNames: ["react"],
         },

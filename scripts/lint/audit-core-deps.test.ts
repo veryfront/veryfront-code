@@ -7,7 +7,7 @@ import {
 } from "./audit-core-deps.ts";
 
 describe("findCoreThirdPartyImports", () => {
-  it("flags npm and remote imports that are not allowlisted", () => {
+  it("flags npm and remote imports without a built-in React allowlist", () => {
     const issues = findCoreThirdPartyImports(
       {
         imports: {
@@ -17,11 +17,11 @@ describe("findCoreThirdPartyImports", () => {
           "react": "https://esm.sh/react@19.2.4",
         },
       },
-      { allowedSpecifiers: new Set(["react"]) },
     );
 
     assertEquals(issues, [
       { specifier: "bash-tool", target: "npm:bash-tool@1.3.16" },
+      { specifier: "react", target: "https://esm.sh/react@19.2.4" },
     ]);
   });
 
@@ -140,27 +140,36 @@ describe("findCoreThirdPartySourceImports", () => {
   });
 
   it("ignores local, internal, first-party, std, test, template, and allowlisted imports", () => {
-    const issues = findCoreThirdPartySourceImports([
+    const issues = findCoreThirdPartySourceImports(
+      [
+        {
+          path: "src/react/component.tsx",
+          content: [
+            'import React from "react";',
+            'import { hydrateRoot } from "react-dom/client";',
+            'import { join } from "#veryfront/platform/path";',
+            'import { defineConfig } from "veryfront/config";',
+            'import extSchema from "@veryfront/ext-schema-zod";',
+            'import { assertEquals } from "jsr:@std/assert";',
+            'import local from "./local.ts";',
+          ].join("\n"),
+        },
+        {
+          path: "src/tool/factory.test.ts",
+          content: 'import { z } from "zod";',
+        },
+        {
+          path: "cli/templates/files/app/tool.ts",
+          content: 'import { z } from "zod";',
+        },
+      ],
       {
-        path: "src/react/component.tsx",
-        content: [
-          'import React from "react";',
-          'import { join } from "#veryfront/platform/path";',
-          'import { defineConfig } from "veryfront/config";',
-          'import extSchema from "@veryfront/ext-schema-zod";',
-          'import { assertEquals } from "jsr:@std/assert";',
-          'import local from "./local.ts";',
-        ].join("\n"),
+        importMap: {
+          react: "./react/react.ts",
+          "react-dom/client": "./react/react-dom-client.ts",
+        },
       },
-      {
-        path: "src/tool/factory.test.ts",
-        content: 'import { z } from "zod";',
-      },
-      {
-        path: "cli/templates/files/app/tool.ts",
-        content: 'import { z } from "zod";',
-      },
-    ]);
+    );
 
     assertEquals(issues, []);
   });

@@ -70,7 +70,7 @@ export function auditDependencyBoundaries(
     }
   }
 
-  const react = manifests.get("react");
+  const react = manifests.get("react/deno.json");
   if (!react) {
     issues.push({
       boundary: "react",
