@@ -1,4 +1,9 @@
 export {
+  DEFAULT_LIVE_EVAL_ENDPOINT,
+  type LiveEvalEnvironment,
+  resolveLiveEvalEnvironment,
+} from "./environment.ts";
+export {
   cancelLiveEvalInputRequest,
   createLiveEvalApiClient,
   createLiveEvalConversation,
@@ -30,6 +35,11 @@ export {
   containsOrderedSubsequence,
   createPlainTextPdf,
 } from "./formatting.ts";
+export {
+  evaluateRuntimeConfidenceEnv,
+  printRuntimeConfidencePreflight,
+  type RuntimeConfidencePreflightResult,
+} from "./preflight.ts";
 export {
   buildRuntimePerformanceSummary,
   type LiveEvalResultForPerformance,
