@@ -1,0 +1,41 @@
+{
+  "name": "@veryfront/react",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "exports": {
+    ".": "./react.ts",
+    "./jsx-runtime": "./jsx-runtime.ts",
+    "./jsx-dev-runtime": "./jsx-dev-runtime.ts",
+    "./react-dom": "./react-dom.ts",
+    "./react-dom/client": "./react-dom-client.ts",
+    "./react-dom/server": "./react-dom-server.ts"
+  },
+  "imports": {
+    "@types/react": "https://esm.sh/@types/react@19.2.14?deps=csstype@3.2.3",
+    "@types/react-dom": "https://esm.sh/@types/react-dom@19.2.3?deps=csstype@3.2.3",
+    "@veryfront/react-dom-client-upstream": "https://esm.sh/react-dom@19.2.4/client?external=react&target=es2022&deps=csstype@3.2.3",
+    "@veryfront/react-dom-server-upstream": "https://esm.sh/react-dom@19.2.4/server?external=react&target=es2022&deps=csstype@3.2.3",
+    "@veryfront/react-dom-upstream": "https://esm.sh/react-dom@19.2.4?external=react&target=es2022&deps=csstype@3.2.3",
+    "@veryfront/react-jsx-dev-runtime-upstream": "https://esm.sh/react@19.2.4/jsx-dev-runtime?external=react&target=es2022&deps=csstype@3.2.3",
+    "@veryfront/react-jsx-runtime-upstream": "https://esm.sh/react@19.2.4/jsx-runtime?external=react&target=es2022&deps=csstype@3.2.3",
+    "@veryfront/react-upstream": "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
+    "react": "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
+    "react-dom": "https://esm.sh/react-dom@19.2.4?external=react&target=es2022&deps=csstype@3.2.3",
+    "react-dom/server": "https://esm.sh/react-dom@19.2.4/server?external=react&target=es2022&deps=csstype@3.2.3",
+    "react-dom/client": "https://esm.sh/react-dom@19.2.4/client?external=react&target=es2022&deps=csstype@3.2.3",
+    "react/jsx-runtime": "https://esm.sh/react@19.2.4/jsx-runtime?external=react&target=es2022&deps=csstype@3.2.3",
+    "react/jsx-dev-runtime": "https://esm.sh/react@19.2.4/jsx-dev-runtime?external=react&target=es2022&deps=csstype@3.2.3"
+  },
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "strict": true,
+    "lib": [
+      "deno.window",
+      "dom",
+      "dom.iterable",
+      "dom.asynciterable",
+      "deno.ns"
+    ]
+  }
+}

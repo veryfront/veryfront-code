@@ -6,6 +6,7 @@ on:
     paths:
       - "deno.json"
       - "cli/deno.json"
+      - "react/deno.json"
       - "extensions/**/deno.json"
       - "scripts/build/generate-sbom.ts"
       - "scripts/lib/deno-lock.ts"

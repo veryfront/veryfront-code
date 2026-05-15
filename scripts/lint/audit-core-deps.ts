@@ -16,21 +16,28 @@ export interface RootNpmSpecifierLiteralIssue {
   value: string;
 }
 
-const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set([
-  "@types/react",
-  "@types/react-dom",
-  "react",
-  "react-dom",
-  "react-dom/client",
-  "react-dom/server",
-  "react/jsx-dev-runtime",
-  "react/jsx-runtime",
-]);
+const CORE_THIRD_PARTY_IMPORT_ALLOWLIST = new Set<string>();
 
 function isThirdPartyImportTarget(target: string): boolean {
   if (target.startsWith("./") || target.startsWith("../")) return false;
   if (target.startsWith("jsr:@std/")) return false;
   return target.startsWith("npm:") || target.startsWith("https://");
+}
+
+function importMapTargetForSpecifier(
+  imports: Record<string, string>,
+  specifier: string,
+): string | undefined {
+  const exact = imports[specifier];
+  if (exact) return exact;
+
+  let bestPrefix: string | undefined;
+  for (const prefix of Object.keys(imports)) {
+    if (!prefix.endsWith("/") || !specifier.startsWith(prefix)) continue;
+    if (!bestPrefix || prefix.length > bestPrefix.length) bestPrefix = prefix;
+  }
+  if (!bestPrefix) return undefined;
+  return `${imports[bestPrefix]}${specifier.slice(bestPrefix.length)}`;
 }
 
 function normalizePath(path: string): string {
@@ -56,6 +63,7 @@ export function shouldCheckCoreSourceImportPath(path: string): boolean {
 function isAllowedCoreSourceSpecifier(
   specifier: string,
   allowedSpecifiers: ReadonlySet<string>,
+  importMap: Record<string, string>,
 ): boolean {
   if (
     specifier.startsWith("./") || specifier.startsWith("../") ||
@@ -70,6 +78,8 @@ function isAllowedCoreSourceSpecifier(
   if (specifier.startsWith("@veryfront/")) return true;
   if (specifier.startsWith("node:")) return true;
   if (specifier.startsWith("jsr:@std/")) return true;
+  const mappedTarget = importMapTargetForSpecifier(importMap, specifier);
+  if (mappedTarget && !isThirdPartyImportTarget(mappedTarget)) return true;
   return allowedSpecifiers.has(specifier);
 }
 
@@ -159,10 +169,14 @@ export function findRootNpmSpecifierLiterals(
 
 export function findCoreThirdPartySourceImports(
   files: Array<{ path: string; content: string }>,
-  options: { allowedSpecifiers?: ReadonlySet<string> } = {},
+  options: {
+    allowedSpecifiers?: ReadonlySet<string>;
+    importMap?: Record<string, string>;
+  } = {},
 ): CoreSourceDependencyIssue[] {
   const allowedSpecifiers = options.allowedSpecifiers ??
     CORE_THIRD_PARTY_IMPORT_ALLOWLIST;
+  const importMap = options.importMap ?? {};
   const issues: CoreSourceDependencyIssue[] = [];
 
   for (const file of files) {
@@ -178,7 +192,7 @@ export function findCoreThirdPartySourceImports(
         );
         if (
           specifier &&
-          !isAllowedCoreSourceSpecifier(specifier, allowedSpecifiers)
+          !isAllowedCoreSourceSpecifier(specifier, allowedSpecifiers, importMap)
         ) {
           issues.push({ path, line: i + 1, specifier });
         }
@@ -187,7 +201,11 @@ export function findCoreThirdPartySourceImports(
       const dynamicSpecifier = DYNAMIC_IMPORT_RE.exec(line)?.[2];
       if (
         dynamicSpecifier &&
-        !isAllowedCoreSourceSpecifier(dynamicSpecifier, allowedSpecifiers)
+        !isAllowedCoreSourceSpecifier(
+          dynamicSpecifier,
+          allowedSpecifiers,
+          importMap,
+        )
       ) {
         issues.push({ path, line: i + 1, specifier: dynamicSpecifier });
       }
@@ -237,6 +255,7 @@ if (import.meta.main) {
   const importMapIssues = findCoreThirdPartyImports(config);
   const sourceIssues = findCoreThirdPartySourceImports(
     await readCoreSourceFiles(),
+    { importMap: config.imports ?? {} },
   );
 
   if (
