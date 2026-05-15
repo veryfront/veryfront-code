@@ -50,7 +50,7 @@ const REQUIRED_EXPORTS = {
     "RunResumeSessionManager",
     "createAgUiHandler",
     "waitForHumanInput",
-    "HumanInputRequestSchema",
+    "getHumanInputRequestSchema",
     "registerAgent",
     "getAgentsAsTools",
     "agentAsTool",

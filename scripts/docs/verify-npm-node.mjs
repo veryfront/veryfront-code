@@ -102,7 +102,7 @@ try {
   assertType(agentMod.createMemory, "function", "createMemory is function");
   assert(agentMod.AgentRuntime !== undefined, "AgentRuntime exists");
   assert(agentMod.RunResumeSessionManager !== undefined, "RunResumeSessionManager exists");
-  assert(agentMod.HumanInputRequestSchema !== undefined, "HumanInputRequestSchema exists");
+  assertType(agentMod.getHumanInputRequestSchema, "function", "getHumanInputRequestSchema is function");
   console.log("  OK    agent — 10 checks");
 } catch (err) {
   failed++;
