@@ -181,8 +181,10 @@ export async function getRemoteIntegrationToolDefinitions(): Promise<
  * Integration tools use "integration__tool_id" format (double underscore separator).
  */
 export function isRemoteIntegrationTool(toolName: string): boolean {
-  const parts = toolName.split("__");
-  return parts.length === 2 && parts[0].length > 0 && parts[1].length > 0;
+  const separatorIndex = toolName.indexOf("__");
+  return separatorIndex > 0 &&
+    separatorIndex === toolName.lastIndexOf("__") &&
+    separatorIndex + 2 < toolName.length;
 }
 
 /**
