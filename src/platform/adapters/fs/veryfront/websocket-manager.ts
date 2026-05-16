@@ -20,6 +20,7 @@ import {
   getPreviewInvalidationPrefixes as getPreviewInvalidationPrefixesHelper,
   getReconnectDelay as getReconnectDelayHelper,
   INVALIDATION_DEBOUNCE_MS,
+  parsePokeWebSocketMessage,
   type PreviewStyleArtifactInfo,
   WS_HEARTBEAT_INTERVAL_MS,
   WS_HEARTBEAT_TIMEOUT_MS,
@@ -265,16 +266,9 @@ export class WebSocketManager {
 
   private handlePokeMessage(event: MessageEvent): void {
     try {
-      const raw: unknown = JSON.parse(event.data as string);
-      if (!raw || typeof raw !== "object") return;
-      const data = raw as Record<string, unknown>;
-      const isPoke = data.type === "poke" || data.type === "entity_updated";
-      if (!isPoke) return;
-
-      const payload = (data.data && typeof data.data === "object" ? data.data : {}) as Record<
-        string,
-        unknown
-      >;
+      const message = parsePokeWebSocketMessage(event.data as string);
+      if (!message) return;
+      const payload = message.payload;
       const changedPaths = payload.changedPaths as string[] | undefined;
       const contentContext = this.deps.getContentContext();
 
@@ -301,7 +295,7 @@ export class WebSocketManager {
       const isProductionPoke = !hasBranchScope;
 
       logger.debug("POKE RECEIVED - checking environment scope", {
-        type: data.type,
+        type: message.type,
         pokeBranchId: normalizedBranchId,
         pokeBranchName: normalizedBranchName,
         isProductionPoke,

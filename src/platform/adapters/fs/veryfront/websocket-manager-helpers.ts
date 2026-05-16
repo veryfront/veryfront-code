@@ -71,3 +71,24 @@ export function buildContentSourceLabel(
     branch: getContentContext()?.branch ?? null,
   };
 }
+
+export type PokeWebSocketMessage = {
+  type: "poke" | "entity_updated";
+  payload: Record<string, unknown>;
+};
+
+export function parsePokeWebSocketMessage(data: string): PokeWebSocketMessage | null {
+  const raw: unknown = JSON.parse(data);
+  if (!raw || typeof raw !== "object") return null;
+
+  const message = raw as Record<string, unknown>;
+  const type = message.type;
+  if (type !== "poke" && type !== "entity_updated") return null;
+
+  return {
+    type,
+    payload: message.data && typeof message.data === "object"
+      ? message.data as Record<string, unknown>
+      : {},
+  };
+}
