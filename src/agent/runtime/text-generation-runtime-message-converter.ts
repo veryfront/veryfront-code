@@ -206,6 +206,20 @@ function convertToolResultPart(
   };
 }
 
+function hasProviderSendableAssistantContent(message: Message): boolean {
+  if (message.role !== "assistant") return true;
+
+  return message.parts.some((part) => {
+    if (part.type === "text" && "text" in part) {
+      return typeof (part as { text?: unknown }).text === "string" &&
+        (part as { text: string }).text.length > 0;
+    }
+
+    return part.type === "tool-call" ||
+      (part.type.startsWith("tool-") && part.type !== "tool-result");
+  });
+}
+
 /**
  * Convert an array of veryfront Messages to the current text-generation runtime message format.
  */
@@ -216,6 +230,10 @@ export function convertToTextGenerationRuntimeMessages(
   const toolResultMessageIndexes = new Map<string, number>();
 
   for (const message of messages) {
+    if (!hasProviderSendableAssistantContent(message)) {
+      continue;
+    }
+
     if (message.role !== "tool") {
       textGenerationRuntimeMessages.push(convertToTextGenerationRuntimeMessage(message));
       continue;
