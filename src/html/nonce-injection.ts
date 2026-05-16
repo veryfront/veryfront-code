@@ -283,18 +283,48 @@ export function addNonceToHtmlStream(
     return result;
   }
 
-  const transformer: Transformer<Uint8Array, Uint8Array> = {
-    transform(chunk, controller) {
-      buffer += decoder.decode(chunk, { stream: true });
-      const transformed = transformBuffer(false);
-      if (transformed) controller.enqueue(encoder.encode(transformed));
-    },
-    flush(controller) {
-      buffer += decoder.decode();
-      const transformed = transformBuffer(true);
-      if (transformed) controller.enqueue(encoder.encode(transformed));
-    },
-  };
+  const reader = stream.getReader();
+  let readerLockReleased = false;
 
-  return stream.pipeThrough(new TransformStream(transformer));
+  function releaseReaderLock(): void {
+    if (readerLockReleased) return;
+    readerLockReleased = true;
+    reader.releaseLock();
+  }
+
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            buffer += decoder.decode();
+            const transformed = transformBuffer(true);
+            if (transformed) controller.enqueue(encoder.encode(transformed));
+            controller.close();
+            releaseReaderLock();
+            return;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const transformed = transformBuffer(false);
+          if (transformed) {
+            controller.enqueue(encoder.encode(transformed));
+            return;
+          }
+        }
+      } catch (error) {
+        releaseReaderLock();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        releaseReaderLock();
+      }
+    },
+  });
 }
