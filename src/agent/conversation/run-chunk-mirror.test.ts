@@ -200,4 +200,62 @@ describe("agent/conversation-run-chunk-mirror", () => {
       },
     ]);
   });
+
+  it("warns when a hosted mirror starts a high-backlog flush", async () => {
+    const originalFetch = globalThis.fetch;
+    const warnings: Array<{ message: string; metadata: Record<string, unknown> }> = [];
+    try {
+      globalThis.fetch = (() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              latestEventId: 3,
+              latestExternalEventSequence: 3,
+              appendedCount: 3,
+              run: {
+                runId: "run-1",
+                conversationId: "11111111-1111-4111-8111-111111111111",
+                latestEventId: 3,
+                latestExternalEventSequence: 3,
+              },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+        )) as typeof fetch;
+      const mirror = createHostedConversationRunChunkMirror({
+        authToken: "token",
+        apiUrl: "https://api.example.test",
+        conversationId: "11111111-1111-4111-8111-111111111111",
+        runId: "run-1",
+        latestEventId: 0,
+        batchSize: 3,
+        highBacklogEventCount: 2,
+        instrumentation: {
+          warn: (message, metadata) => {
+            warnings.push({ message, metadata });
+          },
+        },
+      });
+
+      await mirror.appendEvents([
+        { type: "TEXT_MESSAGE_CONTENT", delta: "a" },
+        { type: "TEXT_MESSAGE_CONTENT", delta: "b" },
+        { type: "TEXT_MESSAGE_CONTENT", delta: "c" },
+      ]);
+      await mirror.flush();
+
+      assertEquals(warnings, [{
+        message: "Durable run mirror backlog is high",
+        metadata: {
+          conversationId: "11111111-1111-4111-8111-111111111111",
+          runId: "run-1",
+          pendingEventCount: 3,
+          consecutiveFailures: 0,
+          threshold: 2,
+        },
+      }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

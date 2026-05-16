@@ -2,6 +2,7 @@ import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/pr
 import { type ConversationRunEvent, ConversationRunEventEncoder } from "./run-events.ts";
 import {
   type ConversationRunMirror,
+  type ConversationRunMirrorHighBacklogState,
   type ConversationRunMirrorRetryScheduledState,
   type ConversationRunMirrorStoppedState,
   createConversationRunMirror,
@@ -18,6 +19,7 @@ import {
 const DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT = 24;
 const DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH = 3;
 const DEFAULT_HOSTED_CHUNK_MIRROR_BATCH_SIZE = 24;
+const DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT = 500;
 
 export interface ConversationRunChunkMirror {
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
@@ -51,6 +53,8 @@ interface ConversationRunChunkMirrorSharedOptions {
   encoder?: ConversationRunEventEncoder;
   flushDelayMs?: number;
   getRetryDelayMs?: (consecutiveFailures: number) => number;
+  highBacklogEventCount?: number;
+  onHighBacklog?: (state: ConversationRunMirrorHighBacklogState) => Promise<void> | void;
   onRetryScheduled?: (state: ConversationRunMirrorRetryScheduledState) => Promise<void> | void;
   onStopped?: (state: ConversationRunMirrorStoppedState) => Promise<void> | void;
   prepareChunkEvents?: (
@@ -107,6 +111,7 @@ export interface HostedConversationRunChunkMirrorOptions {
   latestEventId: number;
   latestExternalEventSequence?: number;
   batchSize?: number;
+  highBacklogEventCount?: number;
   instrumentation?: HostedConversationRunChunkMirrorInstrumentation;
 }
 
@@ -142,6 +147,10 @@ export function createConversationRunChunkMirror(
     immediateFlushEventCount,
     ...(input.flushDelayMs !== undefined ? { flushDelayMs: input.flushDelayMs } : {}),
     ...(input.getRetryDelayMs ? { getRetryDelayMs: input.getRetryDelayMs } : {}),
+    ...(input.highBacklogEventCount !== undefined
+      ? { highBacklogEventCount: input.highBacklogEventCount }
+      : {}),
+    ...(input.onHighBacklog ? { onHighBacklog: input.onHighBacklog } : {}),
     ...(input.onRetryScheduled ? { onRetryScheduled: input.onRetryScheduled } : {}),
     ...(input.onStopped ? { onStopped: input.onStopped } : {}),
   });
@@ -240,6 +249,21 @@ function recordHostedChunkMirrorRetryScheduled(input: {
   );
 }
 
+function recordHostedChunkMirrorHighBacklog(input: {
+  instrumentation: HostedConversationRunChunkMirrorInstrumentation | undefined;
+  conversationId: string;
+  runId: string;
+  backlog: ConversationRunMirrorHighBacklogState;
+}): void {
+  input.instrumentation?.warn?.("Durable run mirror backlog is high", {
+    conversationId: input.conversationId,
+    runId: input.runId,
+    pendingEventCount: input.backlog.pendingEventCount,
+    consecutiveFailures: input.backlog.consecutiveFailures,
+    threshold: input.backlog.threshold,
+  });
+}
+
 function recordHostedChunkMirrorStopped(input: {
   instrumentation: HostedConversationRunChunkMirrorInstrumentation | undefined;
   conversationId: string;
@@ -285,6 +309,8 @@ export function createHostedConversationRunChunkMirror(
   input: HostedConversationRunChunkMirrorOptions,
 ): ConversationRunChunkMirror {
   const batchSize = input.batchSize ?? DEFAULT_HOSTED_CHUNK_MIRROR_BATCH_SIZE;
+  const highBacklogEventCount = input.highBacklogEventCount ??
+    DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT;
 
   return createConversationRunChunkMirror({
     authToken: input.authToken,
@@ -296,6 +322,7 @@ export function createHostedConversationRunChunkMirror(
     maxEventsPerBatch: batchSize,
     maxCursorResyncsPerFlush: DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH,
     immediateFlushEventCount: batchSize,
+    highBacklogEventCount,
     prepareChunkEvents: ({ chunk, defaultPrepare }) =>
       runHostedChunkMirrorTrace(input.instrumentation, "durable.mirrorChunk", async () => {
         const events = defaultPrepare();
@@ -336,6 +363,14 @@ export function createHostedConversationRunChunkMirror(
         conversationId: input.conversationId,
         runId: input.runId,
         flushAttempt,
+      });
+    },
+    onHighBacklog: (backlog) => {
+      recordHostedChunkMirrorHighBacklog({
+        instrumentation: input.instrumentation,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        backlog,
       });
     },
     onStopped: (flushAttempt) => {

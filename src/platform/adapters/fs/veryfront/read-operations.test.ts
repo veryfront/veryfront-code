@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
@@ -721,16 +721,24 @@ describe("ReadOperations", () => {
       // Regression test for Codex review: Promise.allSettled waited for ALL extensions.
       // New approach uses priority-ordered await so a fast .ts resolves immediately
       // without blocking on a slow .mdx or .md.
-      let mdxRequested = false;
+      const deferred = new Map<string, { resolve: (content: string) => void }>();
+      const requestedPaths: string[] = [];
       const client = createMockClient({
         getPublishedFileContent: (path: string) => {
+          requestedPaths.push(path);
           if (path === "pages/fast.tsx") return Promise.reject(new Error("404"));
-          // .ts resolves instantly (high priority)
-          if (path === "pages/fast.ts") return Promise.resolve("fast ts content");
-          // .mdx never resolves (simulates slow extension) — should NOT block result
+          // .ts is high priority. The test resolves it only after proving the
+          // lower-priority .mdx request has started and remains unresolved.
+          if (path === "pages/fast.ts") {
+            return new Promise<string>((resolve) => {
+              deferred.set(path, { resolve });
+            });
+          }
+          // .mdx never resolves (simulates slow extension) and should not block result.
           if (path === "pages/fast.mdx") {
-            mdxRequested = true;
-            return new Promise<string>(() => {}); // Never resolves
+            return new Promise<string>((resolve) => {
+              deferred.set(path, { resolve });
+            });
           }
           return Promise.reject(new Error("404"));
         },
@@ -740,19 +748,37 @@ describe("ReadOperations", () => {
       const readOps = createReadOps(client, false, createReleaseContext("rel-nowait"));
       readOps.setFileListReadyPromise(Promise.resolve());
 
-      const start = performance.now();
-      const content = await readOps.readTextFile("pages/fast.tsx");
-      const elapsed = performance.now() - start;
+      const readPromise = readOps.readTextFile("pages/fast.tsx");
 
-      assertEquals(content, "fast ts content");
-      // .mdx was requested (parallel initiation) but didn't block
-      assertEquals(mdxRequested, true);
-      // Should resolve in well under 100ms, NOT wait for the never-resolving .mdx
-      assert(
-        elapsed < 200,
-        `Should not wait for slow extensions: took ${Math.round(elapsed)}ms, ` +
-          `expected < 200ms (slow .mdx never resolves)`,
-      );
+      for (let i = 0; i < 10 && !deferred.has("pages/fast.mdx"); i++) {
+        await Promise.resolve();
+      }
+
+      assertEquals(requestedPaths, [
+        "pages/fast.tsx",
+        "pages/fast.ts",
+        "pages/fast.jsx",
+        "pages/fast.js",
+        "pages/fast.mdx",
+        "pages/fast.md",
+      ]);
+      assertExists(deferred.get("pages/fast.ts"));
+      assertExists(deferred.get("pages/fast.mdx"));
+
+      deferred.get("pages/fast.ts")?.resolve("fast ts content");
+
+      let settled: { status: "resolved"; value: string } | { status: "pending" } = {
+        status: "pending",
+      };
+      readPromise.then((value) => {
+        settled = { status: "resolved", value };
+      });
+
+      for (let i = 0; i < 10 && settled.status === "pending"; i++) {
+        await Promise.resolve();
+      }
+
+      assertEquals(settled, { status: "resolved", value: "fast ts content" });
     });
   });
 

@@ -30,6 +30,15 @@ export interface ConversationRunMirrorRetryScheduledState {
   retryDelayMs: number;
 }
 
+export interface ConversationRunMirrorHighBacklogState {
+  latestEventId: number;
+  latestExternalEventSequence: number;
+  pendingEventCount: number;
+  consecutiveFailures: number;
+  disabled: false;
+  threshold: number;
+}
+
 export interface ConversationRunMirror {
   enqueue(events: unknown[]): void;
   flush(): Promise<void>;
@@ -65,6 +74,8 @@ export function createConversationRunMirror(input: {
   immediateFlushEventCount: number;
   flushDelayMs?: number;
   getRetryDelayMs?: (consecutiveFailures: number) => number;
+  highBacklogEventCount?: number;
+  onHighBacklog?: (state: ConversationRunMirrorHighBacklogState) => Promise<void> | void;
   onRetryScheduled?: (state: ConversationRunMirrorRetryScheduledState) => Promise<void> | void;
   onStopped?: (state: ConversationRunMirrorStoppedState) => Promise<void> | void;
 }): ConversationRunMirror {
@@ -120,6 +131,30 @@ export function createConversationRunMirror(input: {
       snapshot.pendingEventCount > 0;
   }
 
+  function emitHighBacklogIfNeeded(): void {
+    if (!input.onHighBacklog || input.highBacklogEventCount === undefined) {
+      return;
+    }
+
+    const snapshot = getSnapshot();
+    if (snapshot.disabled || snapshot.pendingEventCount < input.highBacklogEventCount) {
+      return;
+    }
+
+    Promise.resolve(
+      input.onHighBacklog({
+        latestEventId: snapshot.latestEventId,
+        latestExternalEventSequence: snapshot.latestExternalEventSequence,
+        pendingEventCount: snapshot.pendingEventCount,
+        consecutiveFailures: snapshot.consecutiveFailures,
+        disabled: false,
+        threshold: input.highBacklogEventCount,
+      }),
+    ).catch(() => {
+      // Observability hooks must not interrupt durable mirror flushing.
+    });
+  }
+
   function scheduleRetry(): void {
     const snapshot = getSnapshot();
     if (snapshot.disabled || snapshot.pendingEventCount === 0) {
@@ -138,6 +173,7 @@ export function createConversationRunMirror(input: {
   }
 
   async function runFlushLoop(): Promise<void> {
+    emitHighBacklogIfNeeded();
     const flushed = await input.queueController.flush();
 
     if (flushed.outcome === "idle" || flushed.outcome === "flushed") {

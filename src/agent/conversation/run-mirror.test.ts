@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { FakeTime } from "jsr:@std/testing@1.0.17/time";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  type ConversationRunMirrorHighBacklogState,
   type ConversationRunMirrorRetryScheduledState,
   type ConversationRunMirrorStoppedState,
   createConversationRunMirror,
@@ -235,5 +236,44 @@ describe("agent/conversation-run-mirror", () => {
     assertEquals(mirror.getSnapshot().disabled, true);
     assertEquals(mirror.getSnapshot().hasFlushTimer, false);
     assertEquals(mirror.getSnapshot().hasRetryTimer, false);
+  });
+
+  it("surfaces high backlog before a flush starts", async () => {
+    const highBacklogStates: ConversationRunMirrorHighBacklogState[] = [];
+    let flushCalls = 0;
+    const controller = createMockQueueController({
+      flushImpl: async () => {
+        flushCalls += 1;
+        return {
+          outcome: "flushed" as const,
+          latestEventId: 3,
+          latestExternalEventSequence: 4,
+          pendingEventCount: 0,
+          consecutiveFailures: 0,
+          disabled: false,
+        };
+      },
+    });
+    const mirror = createConversationRunMirror({
+      queueController: controller,
+      immediateFlushEventCount: 3,
+      highBacklogEventCount: 2,
+      onHighBacklog: (state) => {
+        highBacklogStates.push(state);
+      },
+    });
+
+    mirror.enqueue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    await mirror.flush();
+
+    assertEquals(flushCalls, 1);
+    assertEquals(highBacklogStates, [{
+      latestEventId: 0,
+      latestExternalEventSequence: 0,
+      pendingEventCount: 3,
+      consecutiveFailures: 0,
+      disabled: false,
+      threshold: 2,
+    }]);
   });
 });

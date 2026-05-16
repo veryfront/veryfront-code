@@ -236,6 +236,38 @@ helpers instead of rebuilding the transport contract:
 This keeps business semantics such as prompt construction, child selection, and
 project policy in the host while keeping the control-plane contract shared.
 
+## Child-run tool lifecycle contract
+
+Child and delegated runs must preserve tool lifecycle state from the provider
+stream through durable events and host UI replay. On the happy path, downstream
+layers should not infer missing tool state.
+
+The canonical lifecycle is:
+
+1. Emit tool input start with a stable tool call id and tool name.
+2. Emit tool input deltas while preserving the same tool call id.
+3. Emit either completed structured input or a structured `tool-input-error`.
+4. Emit either tool output success or tool output error.
+5. Close any pending tool lifecycle before the child run reaches a terminal
+   state.
+
+Schema preservation is part of the same contract. MCP `inputSchemaJson` must
+survive remote discovery, adaptation, host wrappers, and child tool
+materialization. Wrappers can enrich behavior, but they must not silently
+replace a specific schema with permissive `{}` input.
+
+When streamed input is malformed, surface the first failure as
+`tool-input-error`. Later artifact checks can still fail, but they should not
+mask the original malformed input failure.
+
+Before changing this, run or add tests for:
+
+- `src/agent/hosted/child-fork-stream-execution.test.ts`
+- `src/agent/hosted/child-pending-tool-lifecycle.test.ts`
+- `src/agent/hosted/child-tool-input.test.ts`
+- `src/agent/hosted/child-fork-tool-sources.test.ts`
+- `src/agent/conversation/run-event-normalization.test.ts`
+
 ## Current framework boundary
 
 The remaining gap is **not** the conversations API contract itself. The missing
