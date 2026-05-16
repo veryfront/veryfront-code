@@ -26,7 +26,6 @@ import {
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
-  readProviderOptions,
   readRecord,
   requestJson,
   requestStream,
@@ -34,12 +33,11 @@ import {
   TOOL_INPUT_PENDING_THRESHOLD_MS,
   withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
-import type { RuntimePromptMessage } from "veryfront/provider/shared";
 import {
   buildOpenAIChatRequest,
   type OpenAICompatibleLanguageOptions,
-  type RuntimeToolDefinition,
 } from "./openai-chat-request-builder.ts";
+import { buildOpenAIResponsesRequest } from "./openai-responses-request-builder.ts";
 
 // Re-export error classes so extension tests can import from this module.
 export {
@@ -62,18 +60,6 @@ export interface OpenAIRuntimeConfig {
   name?: string;
   fetch?: typeof globalThis.fetch;
 }
-
-// ---------------------------------------------------------------------------
-// Internal types
-// ---------------------------------------------------------------------------
-
-type ProviderReasoningEffort = "low" | "medium" | "high" | "max";
-
-type ProviderReasoningOption = {
-  enabled?: boolean;
-  effort?: ProviderReasoningEffort;
-  budgetTokens?: number;
-};
 
 type OpenAICompatibleChoice = {
   message?: unknown;
@@ -221,71 +207,6 @@ function extractOpenAIToolCalls(message: Record<string, unknown>): Array<{
 
   return normalized;
 }
-
-/**
- * OpenAI reasoning models (o1 / o3 / o4 family) use the completion path but
- * have different constraints than chat models: sampling params are rejected,
- * and they accept a `reasoning_effort` field. We detect them by model id
- * prefix so callers don't have to configure it per runtime.
- */
-function isOpenAIReasoningModel(modelId: string): boolean {
-  return /^o[134](-|$)/.test(modelId);
-}
-
-/**
- * Map the unified reasoning effort to OpenAI's `reasoning_effort` enum.
- * OpenAI doesn't accept "max", so collapse it to "high".
- */
-function resolveOpenAIReasoningEffort(
-  option: ProviderReasoningOption | undefined,
-): "low" | "medium" | "high" | undefined {
-  if (!option || option.enabled !== true) {
-    return undefined;
-  }
-  switch (option.effort) {
-    case "low":
-      return "low";
-    case "high":
-    case "max":
-      return "high";
-    case "medium":
-    default:
-      return "medium";
-  }
-}
-
-function unwrapToolInputSchema(inputSchema: unknown): unknown {
-  if (typeof inputSchema !== "object" || inputSchema === null || Array.isArray(inputSchema)) {
-    return inputSchema;
-  }
-
-  const candidate = Reflect.get(inputSchema, "jsonSchema");
-  return candidate ?? inputSchema;
-}
-
-function toSnakeCaseRecord(record: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(record).map(([key, value]) => [
-      key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`),
-      value,
-    ]),
-  );
-}
-
-type WarningCollector = {
-  push(warning: {
-    type: "unsupported-setting" | "other";
-    setting?: string;
-    details?: string;
-    provider: string;
-  }): void;
-  drain(): Array<{
-    type: "unsupported-setting" | "other";
-    setting?: string;
-    details?: string;
-    provider: string;
-  }>;
-};
 
 // ---------------------------------------------------------------------------
 // Chat streaming
@@ -493,278 +414,8 @@ async function* streamOpenAICompatibleParts(
 }
 
 // ---------------------------------------------------------------------------
-// Responses API types and helpers
+// Responses API result helpers
 // ---------------------------------------------------------------------------
-
-type OpenAIResponsesInputItem = Record<string, unknown>;
-
-type OpenAIResponsesRequest = {
-  model: string;
-  input: OpenAIResponsesInputItem[];
-  instructions?: string;
-  stream?: boolean;
-  max_output_tokens?: number;
-  temperature?: number;
-  top_p?: number;
-  tools?: Array<Record<string, unknown>>;
-  tool_choice?: unknown;
-  reasoning?: { effort?: string; summary?: string };
-  metadata?: Record<string, string>;
-  user?: string;
-  service_tier?: string;
-  parallel_tool_calls?: boolean;
-  text?: { format: Record<string, unknown> };
-  [key: string]: unknown;
-};
-
-/**
- * Convert the unified RuntimePromptMessage[] to the Responses API `input`
- * array shape. Differences from Chat Completions:
- *  - System prompts go on the top-level `instructions` field, not inline.
- *  - Content parts use `input_text` / `output_text` discriminants instead
- *    of the Chat Completions plain-text shorthand.
- *  - Assistant tool calls become standalone `function_call` items in the
- *    input array, not nested `tool_calls` on a message.
- *  - Tool results become standalone `function_call_output` items.
- *  - Reasoning content parts roundtrip as `reasoning` items so callers can
- *    replay multi-turn conversations with chain-of-thought intact.
- */
-function toOpenAIResponsesInput(
-  prompt: RuntimePromptMessage[],
-): { instructions?: string; input: OpenAIResponsesInputItem[] } {
-  const instructionsParts: string[] = [];
-  const input: OpenAIResponsesInputItem[] = [];
-
-  for (const message of prompt) {
-    switch (message.role) {
-      case "system":
-        if (message.content.length > 0) {
-          instructionsParts.push(message.content);
-        }
-        break;
-      case "user":
-        input.push({
-          role: "user",
-          content: toOpenAIResponsesUserContent(message.content),
-        });
-        break;
-      case "assistant": {
-        const messageContent: Array<Record<string, unknown>> = [];
-        for (const part of message.content) {
-          if (part.type === "text") {
-            messageContent.push({ type: "output_text", text: part.text });
-            continue;
-          }
-          if (part.type === "reasoning") {
-            // Reasoning items are top-level entries in the input array,
-            // not nested inside the assistant message. Flush whatever
-            // text we've accumulated first, then push the reasoning item.
-            if (messageContent.length > 0) {
-              input.push({ role: "assistant", content: [...messageContent] });
-              messageContent.length = 0;
-            }
-            const summary: Array<Record<string, unknown>> = [];
-            if (typeof part.text === "string" && part.text.length > 0) {
-              summary.push({ type: "summary_text", text: part.text });
-            }
-            input.push({
-              type: "reasoning",
-              ...(typeof part.signature === "string" ? { encrypted_content: part.signature } : {}),
-              summary,
-            });
-            continue;
-          }
-          // tool-call: flush message content, then push as standalone
-          // function_call item per Responses API shape.
-          if (messageContent.length > 0) {
-            input.push({ role: "assistant", content: [...messageContent] });
-            messageContent.length = 0;
-          }
-          input.push({
-            type: "function_call",
-            call_id: part.toolCallId,
-            name: part.toolName,
-            arguments: stringifyJsonValue(part.input),
-          });
-        }
-        if (messageContent.length > 0) {
-          input.push({ role: "assistant", content: messageContent });
-        }
-        break;
-      }
-      case "tool":
-        for (const part of message.content) {
-          input.push({
-            type: "function_call_output",
-            call_id: part.toolCallId,
-            output: stringifyJsonValue(part.output.value),
-          });
-        }
-        break;
-    }
-  }
-
-  return {
-    ...(instructionsParts.length > 0 ? { instructions: instructionsParts.join("\n\n") } : {}),
-    input,
-  };
-}
-
-function toOpenAIResponsesUserContent(
-  parts: Extract<RuntimePromptMessage, { role: "user" }>["content"],
-): Array<Record<string, unknown>> {
-  const content: Array<Record<string, unknown>> = [];
-
-  for (const part of parts) {
-    if (part.type === "text") {
-      if (part.text.length > 0) {
-        content.push({ type: "input_text", text: part.text });
-      }
-      continue;
-    }
-
-    if (part.type === "image" || part.mediaType.startsWith("image/")) {
-      content.push({ type: "input_image", image_url: part.url, detail: "auto" });
-      continue;
-    }
-
-    content.push({
-      type: "input_file",
-      file_url: part.url,
-      ...(part.filename ? { filename: part.filename } : {}),
-    });
-  }
-
-  return content;
-}
-
-/**
- * Tools on the Responses API differ from Chat Completions: instead of
- * `{ type: "function", function: { name, parameters } }` the function
- * shape lifts the name/parameters/strict to the top of the entry. Native
- * tools (web_search, file_search, computer_use, code_interpreter) live
- * alongside function tools in the same array.
- */
-function toOpenAIResponsesTools(
-  tools: RuntimeToolDefinition[] | undefined,
-): Array<Record<string, unknown>> | undefined {
-  if (!tools) return undefined;
-  const normalized: Array<Record<string, unknown>> = [];
-  for (const tool of tools) {
-    if (tool.type === "function") {
-      normalized.push({
-        type: "function",
-        name: tool.name,
-        ...(typeof tool.description === "string" ? { description: tool.description } : {}),
-        parameters: unwrapToolInputSchema(tool.inputSchema),
-      });
-      continue;
-    }
-    if (!tool.id.startsWith("openai.")) continue;
-    const providerType = tool.id.slice("openai.".length);
-    if (providerType.length === 0) continue;
-    normalized.push({
-      type: providerType,
-      ...toSnakeCaseRecord(tool.args),
-    });
-  }
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function buildOpenAIResponsesRequest(
-  modelId: string,
-  providerName: string,
-  options: OpenAICompatibleLanguageOptions,
-  stream: boolean,
-  warnings: WarningCollector,
-): OpenAIResponsesRequest {
-  const isReasoningModel = isOpenAIReasoningModel(modelId);
-  const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
-  const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
-
-  // Same param-sanitization rules as Chat Completions: reasoning models
-  // reject sampling params. Drop with a warning.
-  if (options.topK !== undefined) {
-    warnings.push({
-      type: "unsupported-setting",
-      provider: "openai",
-      setting: "topK",
-      details: "OpenAI Responses API does not expose top_k; the value was dropped.",
-    });
-  }
-  if (reasoningEnabled) {
-    const dropped: Array<[keyof typeof options, string]> = [
-      ["temperature", "temperature"],
-      ["topP", "top_p"],
-      ["presencePenalty", "presence_penalty"],
-      ["frequencyPenalty", "frequency_penalty"],
-    ];
-    for (const [key, openaiName] of dropped) {
-      if (options[key] !== undefined) {
-        warnings.push({
-          type: "unsupported-setting",
-          provider: "openai",
-          setting: key,
-          details:
-            `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
-        });
-      }
-    }
-  }
-
-  const { instructions, input } = toOpenAIResponsesInput(options.prompt);
-  const responsesTools = toOpenAIResponsesTools(options.tools);
-
-  const body: OpenAIResponsesRequest = {
-    model: modelId,
-    input,
-    ...(instructions !== undefined ? { instructions } : {}),
-    ...(stream ? { stream: true } : {}),
-    ...(options.maxOutputTokens !== undefined
-      ? { max_output_tokens: options.maxOutputTokens }
-      : {}),
-    ...(!reasoningEnabled && options.temperature !== undefined
-      ? { temperature: options.temperature }
-      : {}),
-    ...(!reasoningEnabled && options.topP !== undefined ? { top_p: options.topP } : {}),
-    ...(responsesTools ? { tools: responsesTools } : {}),
-    ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
-    // The Responses API surfaces reasoning effort + summary verbosity
-    // in a structured `reasoning` object instead of a flat field.
-    ...(reasoningEffort !== undefined
-      ? { reasoning: { effort: reasoningEffort, summary: "auto" } }
-      : {}),
-    ...(typeof options.userId === "string" && options.userId.length > 0
-      ? { user: options.userId }
-      : {}),
-    ...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
-    ...(options.parallelToolCalls !== undefined
-      ? { parallel_tool_calls: options.parallelToolCalls }
-      : {}),
-    // Responses API uses `text.format` instead of Chat Completions'
-    // `response_format`. The shape is similar but nested under `text`.
-    ...(options.responseFormat && options.responseFormat.type !== "text"
-      ? {
-        text: {
-          format: options.responseFormat.type === "json" ? { type: "json_object" } : {
-            type: "json_schema",
-            name: options.responseFormat.name,
-            ...(typeof options.responseFormat.description === "string"
-              ? { description: options.responseFormat.description }
-              : {}),
-            schema: unwrapToolInputSchema(options.responseFormat.schema),
-            ...(options.responseFormat.strict !== undefined
-              ? { strict: options.responseFormat.strict }
-              : {}),
-          },
-        },
-      }
-      : {}),
-  };
-
-  Object.assign(body, readProviderOptions(options.providerOptions, "openai", providerName));
-  return body;
-}
 
 /**
  * The Responses API uses `input_tokens` / `output_tokens` field names
