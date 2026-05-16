@@ -340,6 +340,23 @@ describe("tool-helpers", () => {
       }
     });
 
+    it("skips explicit integration tools whose integration has no discovered tools for this run", async () => {
+      toolRegistry.clearAll();
+
+      try {
+        const defs = await withMockRemoteIntegrationTools([], () =>
+          getAvailableTools(
+            {
+              "github__get_pr_diff": true,
+            },
+          ));
+
+        assertEquals(defs.map((def) => def.name), []);
+      } finally {
+        toolRegistry.clearAll();
+      }
+    });
+
     it("only appends explicitly requested remote definitions for explicit tool maps", async () => {
       toolRegistry.clearAll();
 
