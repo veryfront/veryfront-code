@@ -20,6 +20,8 @@ export interface ProviderToolCompatOptions {
 }
 
 const OPENAI_MAX_TOOLS = 128;
+const PROVIDER_TOOL_PROPERTY_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
+
 const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
   "$id",
   "$ref",
@@ -51,7 +53,7 @@ export function getProviderToolProfile(model?: string): ProviderToolProfile {
   }
 
   if (provider === "anthropic") {
-    return { provider: "anthropic", sanitizeSchema: false };
+    return { provider: "anthropic", sanitizeSchema: true };
   }
 
   if (provider === "moonshot") {
@@ -184,6 +186,44 @@ function getGoogleCompatibleSchemaType(type: unknown): unknown {
   return nonNullTypes.length === 1 ? nonNullTypes[0] : undefined;
 }
 
+function sanitizeProviderSchemaPropertyKeys(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeProviderSchemaPropertyKeys(item));
+  }
+
+  if (!isPlainRecord(value)) {
+    return value;
+  }
+
+  const sanitized: Record<string, unknown> = {};
+  const rawProperties = isPlainRecord(value.properties) ? value.properties : undefined;
+  const retainedPropertyNames = rawProperties ? new Set<string>() : undefined;
+
+  for (const [key, child] of Object.entries(value)) {
+    if (key === "properties" && rawProperties) {
+      const properties: Record<string, unknown> = {};
+      for (const [propertyName, propertySchema] of Object.entries(rawProperties)) {
+        if (!PROVIDER_TOOL_PROPERTY_KEY_PATTERN.test(propertyName)) continue;
+        retainedPropertyNames?.add(propertyName);
+        properties[propertyName] = sanitizeProviderSchemaPropertyKeys(propertySchema);
+      }
+      sanitized.properties = properties;
+      continue;
+    }
+
+    if (key === "required" && Array.isArray(child)) {
+      sanitized.required = retainedPropertyNames
+        ? child.filter((item) => typeof item === "string" && retainedPropertyNames.has(item))
+        : child.filter((item) => typeof item === "string");
+      continue;
+    }
+
+    sanitized[key] = sanitizeProviderSchemaPropertyKeys(child);
+  }
+
+  return sanitized;
+}
+
 function sanitizeGoogleSchemaValue(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeGoogleSchemaValue(item));
@@ -254,5 +294,11 @@ export function sanitizeProviderToolSchema(
   const profile = getProviderToolProfile(options.model);
   if (!profile.sanitizeSchema) return schema;
 
-  return sanitizeGoogleSchemaValue(schema) as JsonSchema;
+  const propertyKeySafeSchema = sanitizeProviderSchemaPropertyKeys(schema);
+
+  if (profile.provider === "google") {
+    return sanitizeGoogleSchemaValue(propertyKeySafeSchema) as JsonSchema;
+  }
+
+  return propertyKeySafeSchema as JsonSchema;
 }
