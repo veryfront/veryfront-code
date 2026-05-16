@@ -340,18 +340,19 @@ describe("tool-helpers", () => {
       }
     });
 
-    it("skips explicit integration tools whose integration has no discovered tools for this run", async () => {
+    it("fails loudly when an explicit integration tool has no discovered tools", async () => {
       toolRegistry.clearAll();
 
       try {
-        const defs = await withMockRemoteIntegrationTools([], () =>
-          getAvailableTools(
-            {
-              "github__get_pr_diff": true,
-            },
-          ));
-
-        assertEquals(defs.map((def) => def.name), []);
+        await assertRejects(
+          () =>
+            withMockRemoteIntegrationTools([], () =>
+              getAvailableTools({
+                "github__get_pr_diff": true,
+              })),
+          Error,
+          'Unknown tool reference: github__get_pr_diff. Tool names must exactly match tool({ id: "..." }). Available tools: (none)',
+        );
       } finally {
         toolRegistry.clearAll();
       }
