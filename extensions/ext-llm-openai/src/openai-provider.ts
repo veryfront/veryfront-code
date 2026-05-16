@@ -37,6 +37,7 @@ import {
   buildOpenAIChatRequest,
   type OpenAICompatibleLanguageOptions,
 } from "./openai-chat-request-builder.ts";
+import { streamOpenAICompatibleParts } from "./openai-chat-stream.ts";
 import { buildOpenAIResponsesRequest } from "./openai-responses-request-builder.ts";
 
 // Re-export error classes so extension tests can import from this module.
@@ -65,13 +66,6 @@ type OpenAICompatibleChoice = {
   message?: unknown;
   delta?: unknown;
   finish_reason?: unknown;
-};
-
-type OpenAIStreamToolCallState = {
-  id: string;
-  name: string;
-  arguments: string;
-  started: boolean;
 };
 
 type RuntimeUsage = {
@@ -208,10 +202,6 @@ function extractOpenAIToolCalls(message: Record<string, unknown>): Array<{
   return normalized;
 }
 
-// ---------------------------------------------------------------------------
-// Chat streaming
-// ---------------------------------------------------------------------------
-
 function extractFirstChoice(payload: unknown): OpenAICompatibleChoice | undefined {
   const record = readRecord(payload);
   const choices = record?.choices;
@@ -256,160 +246,6 @@ function buildOpenAIGenerateResult(payload: unknown): {
     ],
     finishReason: normalizeOpenAIFinishReason(choice?.finish_reason),
     usage: extractOpenAIUsage(payload),
-  };
-}
-
-async function* streamOpenAICompatibleParts(
-  stream: ReadableStream<Uint8Array>,
-): AsyncIterable<unknown> {
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const toolCalls = new Map<number, OpenAIStreamToolCallState>();
-  let reasoningId: string | null = null;
-  let reasoningIndex = 0;
-  let finishReason: string | { unified: string; raw: string } | null = null;
-  let usage: RuntimeUsage | undefined;
-
-  for await (const chunk of stream) {
-    buffer += decoder.decode(chunk, { stream: true });
-    const parsed = parseSseChunk(buffer);
-    buffer = parsed.remainder;
-
-    for (const event of parsed.events) {
-      if (event === "[DONE]") {
-        continue;
-      }
-
-      const record = readRecord(event);
-      usage = extractOpenAIUsage(record) ?? usage;
-      const choice = extractFirstChoice(record);
-      if (!choice) {
-        continue;
-      }
-
-      const delta = readRecord(choice.delta);
-      if (typeof delta?.reasoning_content === "string" && delta.reasoning_content.length > 0) {
-        if (!reasoningId) {
-          reasoningId = `reasoning-${reasoningIndex++}`;
-          yield {
-            type: "reasoning-start",
-            id: reasoningId,
-          };
-        }
-
-        yield {
-          type: "reasoning-delta",
-          id: reasoningId,
-          delta: delta.reasoning_content,
-        };
-      }
-
-      const textDelta = extractOpenAIContentText(delta?.content);
-      if (textDelta.length > 0) {
-        if (reasoningId) {
-          yield {
-            type: "reasoning-end",
-            id: reasoningId,
-          };
-          reasoningId = null;
-        }
-        yield { type: "text-delta", delta: textDelta };
-      }
-
-      const rawToolCalls = Array.isArray(delta?.tool_calls) ? delta.tool_calls : [];
-      for (const rawToolCall of rawToolCalls) {
-        if (reasoningId) {
-          yield {
-            type: "reasoning-end",
-            id: reasoningId,
-          };
-          reasoningId = null;
-        }
-
-        const toolCallRecord = readRecord(rawToolCall);
-        const index = typeof toolCallRecord?.index === "number" ? toolCallRecord.index : 0;
-        const current = toolCalls.get(index) ?? {
-          id: typeof toolCallRecord?.id === "string" ? toolCallRecord.id : `tool-${index}`,
-          name: "",
-          arguments: "",
-          started: false,
-        };
-
-        if (typeof toolCallRecord?.id === "string") {
-          current.id = toolCallRecord.id;
-        }
-
-        const fn = readRecord(toolCallRecord?.function);
-        if (typeof fn?.name === "string") {
-          current.name = fn.name;
-        }
-
-        if (!current.started && current.name.length > 0) {
-          current.started = true;
-          yield {
-            type: "tool-input-start",
-            id: current.id,
-            toolName: current.name,
-          };
-        }
-
-        if (typeof fn?.arguments === "string" && fn.arguments.length > 0) {
-          current.arguments += fn.arguments;
-          yield {
-            type: "tool-input-delta",
-            id: current.id,
-            delta: fn.arguments,
-          };
-        }
-
-        toolCalls.set(index, current);
-      }
-
-      const normalizedFinishReason = normalizeOpenAIFinishReason(choice.finish_reason);
-      if (normalizedFinishReason) {
-        finishReason = normalizedFinishReason;
-      }
-    }
-  }
-
-  if (buffer.trim().length > 0) {
-    const parsed = parseSseChunk(`${buffer}\n\n`);
-    for (const event of parsed.events) {
-      if (event === "[DONE]") {
-        continue;
-      }
-
-      const record = readRecord(event);
-      usage = extractOpenAIUsage(record) ?? usage;
-    }
-  }
-
-  if (reasoningId) {
-    yield {
-      type: "reasoning-end",
-      id: reasoningId,
-    };
-  }
-
-  if (
-    finishReason &&
-    typeof finishReason === "object" &&
-    finishReason.unified === "tool-calls"
-  ) {
-    for (const toolCall of toolCalls.values()) {
-      yield {
-        type: "tool-call",
-        toolCallId: toolCall.id,
-        toolName: toolCall.name,
-        input: toolCall.arguments,
-      };
-    }
-  }
-
-  yield {
-    type: "finish",
-    finishReason,
-    ...(usage ? { usage } : {}),
   };
 }
 
