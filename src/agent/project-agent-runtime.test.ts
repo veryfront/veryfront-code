@@ -118,60 +118,68 @@ Deno.test("discoverProjectAgentRuntime clears stale runtime registries before re
   });
 });
 
-Deno.test("discoverProjectAgentRuntime discovers configured project agent paths", async () => {
-  await withTempDir(async (rootDir) => {
-    const agentsDir = resolve(rootDir, "crew");
-    const toolsDir = resolve(rootDir, "toolbox");
-    Deno.mkdirSync(agentsDir, { recursive: true });
-    Deno.mkdirSync(toolsDir, { recursive: true });
-    Deno.writeTextFileSync(
-      resolve(agentsDir, "support.md"),
-      `---
+Deno.test({
+  name: "discoverProjectAgentRuntime discovers configured project agent paths",
+  // Code primitive discovery invokes the esbuild-backed transpiler, which starts
+  // an esbuild child process. This matches the sanitizer policy in the other
+  // discovery tests that import TypeScript project primitives.
+  sanitizeOps: false,
+  sanitizeResources: false,
+  fn: async () => {
+    await withTempDir(async (rootDir) => {
+      const agentsDir = resolve(rootDir, "crew");
+      const toolsDir = resolve(rootDir, "toolbox");
+      Deno.mkdirSync(agentsDir, { recursive: true });
+      Deno.mkdirSync(toolsDir, { recursive: true });
+      Deno.writeTextFileSync(
+        resolve(agentsDir, "support.md"),
+        `---
 name: Support
 model: openai/gpt-5.4
 ---
 
 Help from configured markdown.
 `,
-    );
-    Deno.writeTextFileSync(
-      resolve(toolsDir, "echo.ts"),
-      [
-        'import { tool } from "veryfront/tool";',
-        'import { defineSchema } from "veryfront/schemas";',
-        "",
-        "export default tool({",
-        '  id: "echo",',
-        '  description: "Echo input",',
-        "  inputSchema: defineSchema((v) => v.object({ text: v.string() }))(),",
-        "  execute: ({ text }) => ({ text }),",
-        "});",
-        "",
-      ].join("\n"),
-    );
-    Deno.writeTextFileSync(
-      resolve(rootDir, "veryfront.config.ts"),
-      [
-        "export default {",
-        "  ai: {",
-        '    agents: { discovery: { paths: ["crew"] } },',
-        '    tools: { discovery: { paths: ["toolbox"] } },',
-        "  },",
-        "};",
-        "",
-      ].join("\n"),
-    );
+      );
+      Deno.writeTextFileSync(
+        resolve(toolsDir, "echo.ts"),
+        [
+          'import { tool } from "veryfront/tool";',
+          'import { defineSchema } from "veryfront/schemas";',
+          "",
+          "export default tool({",
+          '  id: "echo",',
+          '  description: "Echo input",',
+          "  inputSchema: defineSchema((v) => v.object({ text: v.string() }))(),",
+          "  execute: ({ text }) => ({ text }),",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      Deno.writeTextFileSync(
+        resolve(rootDir, "veryfront.config.ts"),
+        [
+          "export default {",
+          "  ai: {",
+          '    agents: { discovery: { paths: ["crew"] } },',
+          '    tools: { discovery: { paths: ["toolbox"] } },',
+          "  },",
+          "};",
+          "",
+        ].join("\n"),
+      );
 
-    const result = await discoverProjectAgentRuntime({
-      projectDir: rootDir,
-      adapter: nodeAdapter,
-    });
+      const result = await discoverProjectAgentRuntime({
+        projectDir: rootDir,
+        adapter: nodeAdapter,
+      });
 
-    assertEquals([...result.agents.keys()], ["support"]);
-    assertEquals([...result.tools.keys()], ["echo"]);
-    assertEquals(getProjectAgentRuntimeAgentIdCandidates(result), {
-      codeAgentIds: [],
-      markdownAgentIds: ["support"],
+      assertEquals([...result.agents.keys()], ["support"]);
+      assertEquals([...result.tools.keys()], ["echo"]);
+      assertEquals(getProjectAgentRuntimeAgentIdCandidates(result), {
+        codeAgentIds: [],
+        markdownAgentIds: ["support"],
+      });
     });
-  });
+  },
 });
