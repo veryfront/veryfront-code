@@ -218,7 +218,7 @@ describe("integrations/remote-tools", () => {
 
     const result = await withMockFetch(async () =>
       Response.json({
-        content: [{}, { text: "plain result" }],
+        content: [{ text: undefined }, { text: "plain result" }],
       }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
 
     assertEquals(result, "plain result");

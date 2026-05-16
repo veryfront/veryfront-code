@@ -57,6 +57,7 @@ describe("002.5 Transform Concurrency Under Load", () => {
         const batchTasks = Array.from(
           { length: Math.min(batchSize, totalChildren - batch) },
           async (_, i) => {
+            // Reuse runtime timeout configuration for recursive child slot acquisition.
             const acquired = await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS);
             assert(acquired, `Child transform ${batch + i} should acquire slot`);
             await new Promise((r) => setTimeout(r, 5));
