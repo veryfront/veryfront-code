@@ -304,6 +304,27 @@ describe("text-generation-runtime-message-converter", () => {
       assertEquals(convertToTextGenerationRuntimeMessages([]), []);
     });
 
+    it("omits assistant messages that have no provider-sendable content", () => {
+      const messages: Message[] = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "list my repos" }] },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [{
+            type: "error",
+            code: "agent-provider-error",
+            message: "veryfront-cloud request failed",
+          }],
+        } as unknown as Message,
+        { id: "u2", role: "user", parts: [{ type: "text", text: "try again" }] },
+      ];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [
+        { role: "user", content: "list my repos" },
+        { role: "user", content: "try again" },
+      ]);
+    });
+
     it("splits multiple tool results into one provider message per tool call", () => {
       const messages: Message[] = [{
         id: "tool_batch",
