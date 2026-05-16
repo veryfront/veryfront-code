@@ -81,7 +81,7 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
   const createRemoteToolSource = input.createRemoteToolSource ?? createRemoteMCPToolSource;
   const loadRemoteTools = input.loadRemoteTools ?? loadRemoteToolsFromSource;
   let studioState: StudioMcpState | null = null;
-  let pendingState: Promise<StudioMcpState> | null = null;
+  let pendingState: { promise: Promise<StudioMcpState> } | null = null;
 
   const loadState = async (projectId: string | null): Promise<StudioMcpState> => {
     if (studioState && studioState.projectId === projectId) {
@@ -89,30 +89,32 @@ export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions)
     }
 
     if (pendingState) {
-      const loadedState = await pendingState;
+      const loadedState = await pendingState.promise;
       if (loadedState.projectId === projectId) {
         return loadedState;
       }
     }
 
-    const nextStatePromise = loadStudioMcpState({
-      authToken: input.authToken,
-      projectId,
-      conversationId: input.conversationId,
-      url: studioMcpUrl,
-      sourceId,
-      createRemoteToolSource,
-      loadRemoteTools,
-    });
+    const nextState = {
+      promise: loadStudioMcpState({
+        authToken: input.authToken,
+        projectId,
+        conversationId: input.conversationId,
+        url: studioMcpUrl,
+        sourceId,
+        createRemoteToolSource,
+        loadRemoteTools,
+      }),
+    };
 
-    pendingState = nextStatePromise;
+    pendingState = nextState;
 
     try {
-      const nextState = await nextStatePromise;
-      studioState = nextState;
-      return nextState;
+      const loadedState = await nextState.promise;
+      studioState = loadedState;
+      return loadedState;
     } finally {
-      if (pendingState === nextStatePromise) {
+      if (pendingState === nextState) {
         pendingState = null;
       }
     }

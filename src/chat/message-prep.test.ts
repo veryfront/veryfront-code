@@ -62,7 +62,7 @@ Deno.test("repairToolPairs moves a later tool result immediately after the match
 
   assertEquals(toolResultMatches.length, 2);
   assertEquals(unavailableMatches.length, 0);
-  assertEquals(repaired, [messages[0], messages[1], messages[3], messages[2]]);
+  assertEquals(repaired, [messages[0]!, messages[1]!, messages[3]!, messages[2]!]);
 });
 
 Deno.test("maskOldToolOutputs masks large historical tool outputs and removes stale reasoning before the latest user turn", () => {
@@ -122,7 +122,7 @@ Deno.test("enforceTokenBudget compresses the oldest turn before dropping later t
   const totalTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
   const compacted = enforceTokenBudget(messages, totalTokens - 1);
 
-  assertMatch(String(compacted[0].content), /^\[Compressed:/);
+  assertMatch(String(compacted[0]!.content), /^\[Compressed:/);
   assertEquals(compacted[1], {
     role: "assistant",
     content: "Acknowledged.",
@@ -164,7 +164,10 @@ Deno.test("compressTurn emits a two-message summary shell", () => {
   ];
 
   const compressed = compressTurn(messages, 0, 1);
-  assertStringIncludes(String(compressed[0].content), "[Compressed: please do something important");
+  assertStringIncludes(
+    String(compressed[0]!.content),
+    "[Compressed: please do something important",
+  );
   assertEquals(compressed[1], {
     role: "assistant",
     content: "Acknowledged.",
@@ -217,7 +220,7 @@ Deno.test("rewriteUnsupportedFilePartsAsAnnotations converts non-model-native fi
     },
   ];
 
-  assertEquals(rewriteUnsupportedFilePartsAsAnnotations(messages)[0].parts, [
+  assertEquals(rewriteUnsupportedFilePartsAsAnnotations(messages)[0]!.parts, [
     {
       type: "text",
       text: "Read this data.\n\n<uploaded_files>\n" +

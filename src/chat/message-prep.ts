@@ -704,7 +704,6 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
         continue;
       }
 
-      mutated = true;
       if (keptLaterContent.length === 0) {
         result.splice(laterIndex, 1);
         laterIndex--;

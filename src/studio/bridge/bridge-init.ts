@@ -47,7 +47,6 @@ function notifyAppUnloaded(): void {
 }
 
 export function init(): void {
-  const config = getConfig();
   const params = new URLSearchParams(window.location.search);
   const studioEmbed = params.get("studio_embed") === "true";
   const isStandalone = window.parent === window && !studioEmbed;

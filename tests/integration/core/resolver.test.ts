@@ -786,7 +786,7 @@ describe("ModuleResolver", () => {
         const r = await createTestResolver(context);
 
         const resolved = await r.resolve("../outside");
-        assert(resolved === null || resolved !== null);
+        assertEquals(resolved, null);
       });
     });
 

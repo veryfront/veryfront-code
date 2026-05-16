@@ -231,12 +231,8 @@ await registerExtGoogleForTests();
 
 export { esbuildInitialized };
 
-function safeSetEnv(key: string, value: string | undefined): void {
+function safeSetEnv(key: string, value: string): void {
   try {
-    if (value === undefined) {
-      delete process.env[key];
-      return;
-    }
     process.env[key] = value;
   } catch {
     // ignore if env access is restricted

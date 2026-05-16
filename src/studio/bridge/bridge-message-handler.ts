@@ -26,17 +26,14 @@ export function isSafeNavigationUrl(url: string): boolean {
 
 /**
  * Return a sanitized URL safe for `window.location.href` assignment, or null
- * if the URL must be blocked. Relative paths are returned as-is; absolute URLs
+ * if the URL must be blocked. Relative paths are normalized against the current
+ * origin; absolute URLs
  * must use http/https and target veryfront.com (or a subdomain) to prevent
  * open-redirect. The browser-normalized `parsed.href` is returned instead of
  * the raw input so tainted values never reach the DOM sink.
  */
 export function sanitizeNavigationUrl(url: string): string | null {
   if (typeof url !== "string" || url.length === 0) return null;
-
-  // Relative paths are same-origin by definition.
-  // Exclude protocol-relative URLs (//evil.com) which browsers resolve cross-origin.
-  if (url[0] === "/" && url[1] !== "/") return url;
 
   try {
     const parsed = new URL(url, window.location.origin);

@@ -1,7 +1,19 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { addNonceToHtmlTags } from "./nonce-injection.ts";
+import { addNonceToHtmlStream, addNonceToHtmlTags } from "./nonce-injection.ts";
+
+async function readUtf8Stream(stream: ReadableStream<Uint8Array>): Promise<string> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let result = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) return result + decoder.decode();
+    result += decoder.decode(value, { stream: true });
+  }
+}
 
 describe("html/nonce-injection", () => {
   it("adds a nonce to inline script and style tags", () => {
@@ -92,6 +104,31 @@ describe("html/nonce-injection", () => {
         '<script data-info="prefix nonce=\'\' suffix" nonce="nonce-123">window.__vf=1</script>',
       ),
       true,
+    );
+  });
+
+  it("adds nonces to streamed tags split across chunks", async () => {
+    const encoder = new TextEncoder();
+    const chunks = [
+      "<scr",
+      'ipt>window.tpl="<style>.x{color:red}</style>";</script><sty',
+      "le>.chat{color:red}</style>",
+    ];
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(encoder.encode(chunk));
+        }
+        controller.close();
+      },
+    });
+
+    const html = await readUtf8Stream(addNonceToHtmlStream(stream, "nonce-123"));
+
+    assertEquals(
+      html,
+      '<script nonce="nonce-123">window.tpl="<style>.x{color:red}</style>";</script>' +
+        '<style nonce="nonce-123">.chat{color:red}</style>',
     );
   });
 });

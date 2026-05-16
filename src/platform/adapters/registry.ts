@@ -8,10 +8,14 @@ const logger = baseLogger.component("registry");
 
 type AdapterLoader = () => Promise<RuntimeAdapter>;
 
+interface AdapterInitialization {
+  promise: Promise<RuntimeAdapter>;
+}
+
 class AdapterRegistry {
   private instance: RuntimeAdapter | null = null;
   private initialized = false;
-  private initializationPromise: Promise<RuntimeAdapter> | null = null;
+  private initializationPromise: AdapterInitialization | null = null;
   private loaders = new Map<RuntimeId, AdapterLoader>();
 
   constructor() {
@@ -40,15 +44,17 @@ class AdapterRegistry {
 
   async get(): Promise<RuntimeAdapter> {
     if (this.instance && this.initialized) return this.instance;
-    if (this.initializationPromise) return this.initializationPromise;
+    if (this.initializationPromise) return this.initializationPromise.promise;
 
-    const initializationPromise = withSpan("platform.registry.get", () => this.doInitialize());
-    this.initializationPromise = initializationPromise;
+    const initialization = {
+      promise: withSpan("platform.registry.get", () => this.doInitialize()),
+    };
+    this.initializationPromise = initialization;
 
     try {
-      return await initializationPromise;
+      return await initialization.promise;
     } catch (error) {
-      if (this.initializationPromise === initializationPromise) {
+      if (this.initializationPromise === initialization) {
         this.initializationPromise = null;
       }
       throw error;

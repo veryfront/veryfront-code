@@ -14,7 +14,11 @@ const logger = serverLogger.component("api-wrapper");
  * Using a Map<string, Promise> deduplicates concurrent requests and
  * allows retry on failure (the key is deleted if discovery rejects).
  */
-const discoveredProjects = new Map<string, Promise<void>>();
+interface DiscoveryRecord {
+  promise: Promise<void>;
+}
+
+const discoveredProjects = new Map<string, DiscoveryRecord>();
 
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
@@ -58,56 +62,58 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
   const cacheCompletedDiscovery = shouldCacheCompletedDiscovery(ctx);
 
   const existing = discoveredProjects.get(key);
-  if (existing) return existing;
+  if (existing) return existing.promise;
 
-  const promise = (async () => {
-    const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
-    const { agentRegistry } = await import(
-      "#veryfront/agent/composition/composition.ts"
-    );
-    const { toolRegistry } = await import("#veryfront/tool/registry.ts");
+  const discovery = {
+    promise: (async () => {
+      const { clearTranspileCache, discoverAll } = await import("#veryfront/discovery");
+      const { agentRegistry } = await import(
+        "#veryfront/agent/composition/composition.ts"
+      );
+      const { toolRegistry } = await import("#veryfront/tool/registry.ts");
 
-    // Clear stale entries for this project scope before re-discovery.
-    // This prevents agents/tools removed in a new release from lingering.
-    clearTrackedAgents();
-    clearTranspileCache();
-    agentRegistry.clear();
-    toolRegistry.clear();
+      // Clear stale entries for this project scope before re-discovery.
+      // This prevents agents/tools removed in a new release from lingering.
+      clearTrackedAgents();
+      clearTranspileCache();
+      agentRegistry.clear();
+      toolRegistry.clear();
 
-    const discoveryOptions = createProjectDiscoveryConfig({
-      projectDir: ctx.projectDir,
-      config: ctx.config,
-      fsAdapter: ctx.adapter.fs,
-    });
-    const result = await discoverAll(discoveryOptions);
-    const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
-      discoveryOptions.agentDirs.length > 0;
-
-    const logData = {
-      projectSlug: ctx.projectSlug,
-      releaseId: ctx.releaseId,
-      agents: result.agents.size,
-      tools: result.tools.size,
-      errors: result.errors.length,
-    };
-
-    if (
-      result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
-    ) {
-      logger.info("Primitive discovery found 0 agents and 0 tools", {
-        ...logData,
-        errorMessages: result.errors.map((e) => e.error.message).slice(0, 5),
-        baseDir: ctx.projectDir,
+      const discoveryOptions = createProjectDiscoveryConfig({
+        projectDir: ctx.projectDir,
+        config: ctx.config,
+        fsAdapter: ctx.adapter.fs,
       });
-    } else {
-      logger.info("Primitive discovery completed", logData);
-    }
-  })();
+      const result = await discoverAll(discoveryOptions);
+      const shouldWarnOnEmptyAiDiscovery = discoveryOptions.toolDirs.length > 0 ||
+        discoveryOptions.agentDirs.length > 0;
 
-  discoveredProjects.set(key, promise);
+      const logData = {
+        projectSlug: ctx.projectSlug,
+        releaseId: ctx.releaseId,
+        agents: result.agents.size,
+        tools: result.tools.size,
+        errors: result.errors.length,
+      };
+
+      if (
+        result.agents.size === 0 && result.tools.size === 0 && shouldWarnOnEmptyAiDiscovery
+      ) {
+        logger.info("Primitive discovery found 0 agents and 0 tools", {
+          ...logData,
+          errorMessages: result.errors.map((e) => e.error.message).slice(0, 5),
+          baseDir: ctx.projectDir,
+        });
+      } else {
+        logger.info("Primitive discovery completed", logData);
+      }
+    })(),
+  };
+
+  discoveredProjects.set(key, discovery);
 
   try {
-    await promise;
+    await discovery.promise;
   } catch (error) {
     // Allow retry on next request
     discoveredProjects.delete(key);
@@ -119,7 +125,7 @@ export async function ensureProjectDiscovery(ctx: HandlerContext): Promise<void>
   } finally {
     if (!cacheCompletedDiscovery) {
       const current = discoveredProjects.get(key);
-      if (current === promise) {
+      if (current === discovery) {
         discoveredProjects.delete(key);
       }
     }
