@@ -57,7 +57,10 @@ function resolveRequestToken(): string | undefined {
 // ---------------------------------------------------------------------------
 
 function joinCallToolText(content: CallToolTextContent[]): string {
-  return content.map((item) => item.text).join("\n");
+  return content
+    .map((item) => item.text)
+    .filter((text): text is string => text !== undefined)
+    .join("\n");
 }
 
 function parseJsonText(text: string): unknown | undefined {
@@ -178,7 +181,10 @@ export async function getRemoteIntegrationToolDefinitions(): Promise<
  * Integration tools use "integration__tool_id" format (double underscore separator).
  */
 export function isRemoteIntegrationTool(toolName: string): boolean {
-  return toolName.includes("__");
+  const separatorIndex = toolName.indexOf("__");
+  return separatorIndex > 0 &&
+    separatorIndex === toolName.lastIndexOf("__") &&
+    separatorIndex + 2 < toolName.length;
 }
 
 /**

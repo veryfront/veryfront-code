@@ -49,7 +49,7 @@ export type CreateHostedRuntimeStateResolverOptions<
 };
 
 function activeProjectId(context: HostedRuntimeStateResolverContext): string | null {
-  return context.projectId || null;
+  return context.projectId ?? null;
 }
 
 function activeBranchId(context: HostedRuntimeStateResolverContext): string | null {
@@ -58,6 +58,10 @@ function activeBranchId(context: HostedRuntimeStateResolverContext): string | nu
 
 function steeringRevision(context: HostedRuntimeStateResolverContext): number {
   return context.steeringRevision ?? 0;
+}
+
+function hasValidUserId(userId: string | null | undefined): userId is string {
+  return typeof userId === "string" && userId.length > 0;
 }
 
 export function createHostedRuntimeStateResolver<
@@ -79,7 +83,7 @@ export function createHostedRuntimeStateResolver<
 
     let nextSystem = system;
     const nextContextRecord = { ...(context ?? {}) };
-    if (typeof options.taskContext.userId === "string" && options.taskContext.userId.length > 0) {
+    if (hasValidUserId(options.taskContext.userId)) {
       nextContextRecord.endUserId = options.taskContext.userId;
     }
 

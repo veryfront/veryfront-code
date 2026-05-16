@@ -97,19 +97,25 @@ type InternalAgentCompatibilityMessage = InferSchema<
   ReturnType<typeof getInternalAgentCompatibilityMessageSchema>
 >;
 
+function isRecordObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function isNonEmptyRecordObject(value: unknown): value is Record<string, unknown> {
+  return isRecordObject(value) && Object.keys(value).length > 0;
+}
+
 function extractToolArgs(
   part: Record<string, unknown>,
 ): Record<string, unknown> {
   const args = part.args;
-  if (args && typeof args === "object" && !Array.isArray(args) && Object.keys(args).length > 0) {
-    return args as Record<string, unknown>;
+  if (isNonEmptyRecordObject(args)) {
+    return args;
   }
 
   const input = part.input;
-  if (
-    input && typeof input === "object" && !Array.isArray(input) && Object.keys(input).length > 0
-  ) {
-    return input as Record<string, unknown>;
+  if (isNonEmptyRecordObject(input)) {
+    return input;
   }
 
   const inputText = part.inputText;
@@ -120,20 +126,20 @@ function extractToolArgs(
         return stripped.trimStart().startsWith('"') ? `{${stripped}` : stripped;
       })();
       const parsed = JSON.parse(normalizedInputText);
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        return parsed as Record<string, unknown>;
+      if (isRecordObject(parsed)) {
+        return parsed;
       }
     } catch {
       return {};
     }
   }
 
-  if (args && typeof args === "object" && !Array.isArray(args)) {
-    return args as Record<string, unknown>;
+  if (isRecordObject(args)) {
+    return args;
   }
 
-  if (input && typeof input === "object" && !Array.isArray(input)) {
-    return input as Record<string, unknown>;
+  if (isRecordObject(input)) {
+    return input;
   }
 
   return {};
