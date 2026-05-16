@@ -2,6 +2,7 @@ import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { type ConversationRunEvent, ConversationRunEventEncoder } from "./run-events.ts";
 import {
   type ConversationRunMirror,
+  type ConversationRunMirrorHighBacklogState,
   type ConversationRunMirrorRetryScheduledState,
   type ConversationRunMirrorStoppedState,
   createConversationRunMirror,
@@ -23,6 +24,8 @@ export function createConversationRunStreamMirror(input: {
   encoder?: ConversationRunEventEncoder;
   flushDelayMs?: number;
   getRetryDelayMs?: (consecutiveFailures: number) => number;
+  highBacklogEventCount?: number;
+  onHighBacklog?: (state: ConversationRunMirrorHighBacklogState) => Promise<void> | void;
   onRetryScheduled?: (state: ConversationRunMirrorRetryScheduledState) => Promise<void> | void;
   onStopped?: (state: ConversationRunMirrorStoppedState) => Promise<void> | void;
 }): ConversationRunStreamMirror {
@@ -32,6 +35,10 @@ export function createConversationRunStreamMirror(input: {
     immediateFlushEventCount: input.immediateFlushEventCount,
     ...(input.flushDelayMs !== undefined ? { flushDelayMs: input.flushDelayMs } : {}),
     ...(input.getRetryDelayMs ? { getRetryDelayMs: input.getRetryDelayMs } : {}),
+    ...(input.highBacklogEventCount !== undefined
+      ? { highBacklogEventCount: input.highBacklogEventCount }
+      : {}),
+    ...(input.onHighBacklog ? { onHighBacklog: input.onHighBacklog } : {}),
     ...(input.onRetryScheduled ? { onRetryScheduled: input.onRetryScheduled } : {}),
     ...(input.onStopped ? { onStopped: input.onStopped } : {}),
   });

@@ -6,16 +6,17 @@ This directory contains Mermaid architecture diagrams that describe the internal
 
 ## Diagram Index
 
-| File                                                       | Description                                                                          |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| [01-system-overview.md](./01-system-overview.md)           | High-level system architecture, domains, and bridge modules                          |
-| [02-request-pipeline.md](./02-request-pipeline.md)         | Request handling, server bootstrap, and rendering pipeline                           |
-| [03-ai-agent-system.md](./03-ai-agent-system.md)           | AI capabilities, agent runtime, provider resolution, workflow engine, and memory     |
-| [04-mcp-servers.md](./04-mcp-servers.md)                   | App MCP server and internal AG-UI transport                                          |
-| [05-deployment-platform.md](./05-deployment-platform.md)   | Deployment platform, runtime adapters, filesystem resolution                         |
-| [06-discovery-extensions.md](./06-discovery-extensions.md) | Auto-discovery engine, extension contracts, observability                            |
-| [07-architecture-issues.md](./07-architecture-issues.md)   | Current architectural pressure points and strengthening directions                   |
-| [08-support-matrix.md](./08-support-matrix.md)             | Router modes, runtime targets, and open-core vs service-backed capability boundaries |
+| File                                                                       | Description                                                                                   |
+| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [01-system-overview.md](./01-system-overview.md)                           | High-level system architecture, domains, and bridge modules                                   |
+| [02-request-pipeline.md](./02-request-pipeline.md)                         | Request handling, server bootstrap, and rendering pipeline                                    |
+| [03-ai-agent-system.md](./03-ai-agent-system.md)                           | AI capabilities, agent runtime, provider resolution, workflow engine, and memory              |
+| [04-mcp-servers.md](./04-mcp-servers.md)                                   | App MCP server and internal AG-UI transport                                                   |
+| [05-deployment-platform.md](./05-deployment-platform.md)                   | Deployment platform, runtime adapters, filesystem resolution                                  |
+| [06-discovery-extensions.md](./06-discovery-extensions.md)                 | Auto-discovery engine, extension contracts, observability                                     |
+| [07-architecture-issues.md](./07-architecture-issues.md)                   | Current architectural pressure points and strengthening directions                            |
+| [08-support-matrix.md](./08-support-matrix.md)                             | Router modes, runtime targets, and open-core vs service-backed capability boundaries          |
+| [09-high-risk-runtime-boundaries.md](./09-high-risk-runtime-boundaries.md) | Change checklist for provider, module loading, AG-UI, rendering, and agent runtime boundaries |
 
 ## Key Architectural Concepts
 
