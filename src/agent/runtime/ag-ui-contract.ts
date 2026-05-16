@@ -36,6 +36,12 @@ const agUiRuntimeInjectedToolNameSchema = (v: SchemaValidator) =>
     "Tool names must start with a letter and use a valid client-tool format",
   );
 
+const agUiRuntimeToolJsonSchemaDocumentSchema = (v: SchemaValidator) =>
+  v.record(v.string(), v.unknown()).refine(
+    (value) => isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
+    { message: "Tool schema metadata must be less than 16 KB" },
+  );
+
 export const getAgUiRuntimeInjectedToolSchema = defineSchema((v) =>
   v.object({
     name: agUiRuntimeInjectedToolNameSchema(v),
@@ -44,6 +50,8 @@ export const getAgUiRuntimeInjectedToolSchema = defineSchema((v) =>
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_TOOL_PARAMETERS_BYTES),
       { message: "Tool parameters must be less than 16 KB" },
     ),
+    inputSchema: agUiRuntimeToolJsonSchemaDocumentSchema(v).optional(),
+    outputSchema: agUiRuntimeToolJsonSchemaDocumentSchema(v).optional(),
   })
 );
 

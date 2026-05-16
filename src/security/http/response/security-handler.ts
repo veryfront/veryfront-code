@@ -15,6 +15,27 @@ export function generateNonce(): string {
 }
 
 /**
+ * Studio origins permitted to embed veryfront-hosted apps. Used to derive a
+ * `frame-ancestors` allowlist for pages served from veryfront-managed
+ * domains so the Studio preview iframe still works while non-Studio
+ * embedders are blocked.
+ *
+ * Only explicit Studio hosts are listed — wildcards like `*.veryfront.com`
+ * are intentionally excluded because tenant project domains
+ * (`{slug}.preview.veryfront.com`, etc.) live under the same suffix and
+ * would otherwise be allowed to iframe each other (tenant-vs-tenant
+ * clickjacking). Dev hosts (`veryfront.dev`) are omitted because dev mode
+ * skips the default CSP entirely.
+ */
+const VERYFRONT_FRAME_ANCESTORS = [
+  "'self'",
+  "https://veryfront.com",
+  "https://studio.veryfront.com",
+  "https://veryfront.org",
+  "https://studio.veryfront.org",
+];
+
+/**
  * Build a default CSP that works for typical veryfront apps.
  *
  * - Scripts: nonce-based + cdn.jsdelivr.net + esm.sh (Scalar API docs,
@@ -35,9 +56,17 @@ export function generateNonce(): string {
  * - Frames: 'self' (allows same-origin iframes; apps embedding external
  *   content like YouTube or OAuth popups should add those origins via
  *   security.csp.frameSrc in veryfront.config.ts)
+ * - Frame-ancestors: `'none'` for customer apps, or a Studio allowlist for
+ *   veryfront-managed deployments. Supersedes X-Frame-Options in modern
+ *   browsers and provides clickjacking protection even when X-Frame-Options
+ *   can't be expressive enough (e.g. when Studio embedding is required).
  * - Base-uri/form-action: 'self' (prevent base tag hijack and form redirect)
  */
-function buildDefaultCSP(nonce: string): string {
+function buildDefaultCSP(nonce: string, isVeryfrontDomain: boolean): string {
+  const frameAncestors = isVeryfrontDomain
+    ? `frame-ancestors ${VERYFRONT_FRAME_ANCESTORS.join(" ")}`
+    : `frame-ancestors 'none'`;
+
   return [
     `default-src 'self'`,
     `script-src 'self' 'nonce-${nonce}' https://cdn.jsdelivr.net https://esm.sh`,
@@ -50,6 +79,7 @@ function buildDefaultCSP(nonce: string): string {
     `media-src 'self' https:`,
     `object-src 'none'`,
     `frame-src 'self'`,
+    frameAncestors,
     `base-uri 'self'`,
     `form-action 'self'`,
   ].join("; ");
@@ -81,6 +111,7 @@ export function buildCSP(
   cspUserHeader: string | null,
   config?: SecurityConfig | null,
   adapter?: RuntimeAdapter,
+  isVeryfrontDomain?: boolean,
 ): string {
   const envCsp = adapter?.env?.get?.("VERYFRONT_CSP");
   if (envCsp?.trim()) return envCsp.replace(/{NONCE}/g, nonce);
@@ -94,7 +125,7 @@ export function buildCSP(
   // No explicit CSP configured — apply a secure default in production.
   // Dev mode skips the default to avoid blocking HMR and dev tooling.
   if (!isDev) {
-    return buildDefaultCSP(nonce);
+    return buildDefaultCSP(nonce, isVeryfrontDomain ?? false);
   }
 
   return "";
@@ -136,13 +167,21 @@ export function applySecurityHeaders(
 
   headers.set("X-Content-Type-Options", getHeaderOverride("x-content-type-options") ?? "nosniff");
 
-  if (!isDev && !isVeryfrontDomain) {
+  // X-Frame-Options is the legacy clickjacking control. Modern browsers
+  // honor `frame-ancestors` from CSP (set below) instead, so this is mainly
+  // a fallback for older browsers. Always emit DENY in production — when
+  // Studio embedding is required, the CSP `frame-ancestors` allowlist
+  // (set in buildDefaultCSP for isVeryfrontDomain) takes precedence in
+  // modern browsers and grants the necessary exception. Legacy browsers
+  // would block Studio embedding, which is acceptable since they don't
+  // support modern Studio features.
+  if (!isDev) {
     headers.set("X-Frame-Options", getHeaderOverride("x-frame-options") ?? "DENY");
   }
 
   headers.set("X-XSS-Protection", getHeaderOverride("x-xss-protection") ?? "1; mode=block");
 
-  const csp = buildCSP(isDev, nonce, cspUserHeader, config, adapter);
+  const csp = buildCSP(isDev, nonce, cspUserHeader, config, adapter, isVeryfrontDomain);
   if (csp) headers.set("Content-Security-Policy", csp);
 
   if (!isDev) {
