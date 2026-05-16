@@ -558,3 +558,47 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
   assertEquals(mutations, [{ instructionsChanged: true, skillsChanged: false }]);
   assertEquals(switchedProjects, ["project-2"]);
 });
+
+Deno.test("createHostedProjectRemoteToolSources composes API input preparation with integration end-user input", async () => {
+  const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    defaultProjectId: () => "project-1",
+    getProjectId: () => "project-1",
+    getEndUserId: () => "end-user-123",
+    prepareToolInput: ({ toolInput }) => ({
+      ...toolInput,
+      prepared: true,
+    }),
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [simpleTool("github__list_issues")],
+        execute: (toolName, args, context) => {
+          executed.push({ toolName, args, context });
+          return { ok: true };
+        },
+      }),
+  });
+
+  await sources[0]?.executeTool("github__list_issues", { owner: "veryfront" });
+
+  assertEquals(executed, [
+    {
+      toolName: "get_tool_access_profile",
+      args: { project_reference: "project-1" },
+      context: { projectId: "project-1" },
+    },
+    {
+      toolName: "github__list_issues",
+      args: {
+        owner: "veryfront",
+        prepared: true,
+        end_user_id: "end-user-123",
+      },
+      context: { projectId: "project-1" },
+    },
+  ]);
+});

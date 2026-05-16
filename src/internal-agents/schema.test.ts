@@ -206,6 +206,22 @@ describe("internal-agents/schema", () => {
     });
   });
 
+  it("preserves endUserId on internal stream payloads for on-demand integration auth", () => {
+    const internalRequest = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      endUserId: "10000000-1000-4000-8000-100000000004",
+      messages: [],
+      context: [],
+    });
+
+    assertEquals(
+      (toRuntimeRunAgentInput(internalRequest) as unknown as { endUserId?: string }).endUserId,
+      "10000000-1000-4000-8000-100000000004",
+    );
+  });
+
   it("prefers streamed inputText over empty fallback args when normalizing legacy assistant tool calls", () => {
     const internalRequest = getInternalAgentStreamRequestSchema().parse({
       agentId: "agent_1",
