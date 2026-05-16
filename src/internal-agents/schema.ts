@@ -61,6 +61,7 @@ export const getInternalAgentStreamRequestSchema = defineSchema((v) =>
     threadId: v.string().uuid(),
     runId: getRunIdSchema(),
     parentRunId: getRunIdSchema().optional(),
+    endUserId: v.string().uuid().optional(),
     state: v.unknown().optional(),
     messages: v.array(
       v.union([getRuntimeMessageSchema(), getInternalAgentCompatibilityMessageSchema()]),
@@ -290,6 +291,7 @@ export function toRuntimeRunAgentInput(
     threadId: input.threadId,
     runId: input.runId,
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+    ...(input.endUserId ? { endUserId: input.endUserId } : {}),
     ...(input.state !== undefined ? { state: input.state } : {}),
     messages: input.messages.map(toRuntimeMessage),
     tools: input.tools,
