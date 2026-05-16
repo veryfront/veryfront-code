@@ -1,11 +1,15 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import type { FileCache } from "../cache/file-cache.ts";
 import type { InvalidationCallbacks } from "./types.ts";
 import { WebSocketManager } from "./websocket-manager.ts";
-import { buildReloadProjectContext, getReconnectDelay } from "./websocket-manager-helpers.ts";
+import {
+  buildReloadProjectContext,
+  getReconnectDelay,
+  parsePokeWebSocketMessage,
+} from "./websocket-manager-helpers.ts";
 import { __resetLoggerConfigForTests } from "#veryfront/utils/logger/logger.ts";
 
 interface TimerEntry {
@@ -145,6 +149,48 @@ describe("WebSocketManager", () => {
     assertEquals(getReconnectDelay(2), 10000);
     assertEquals(getReconnectDelay(6), 120000);
     assertEquals(getReconnectDelay(10), 120000);
+  });
+
+  describe("parsePokeWebSocketMessage", () => {
+    it("parses poke messages with object payloads", () => {
+      const parsed = parsePokeWebSocketMessage(JSON.stringify({
+        type: "poke",
+        data: {
+          changedPaths: ["app/page.tsx"],
+          branchName: "main",
+        },
+      }));
+
+      assertEquals(parsed, {
+        type: "poke",
+        payload: {
+          changedPaths: ["app/page.tsx"],
+          branchName: "main",
+        },
+      });
+    });
+
+    it("parses entity_updated messages and normalizes primitive payloads", () => {
+      assertEquals(
+        parsePokeWebSocketMessage(JSON.stringify({
+          type: "entity_updated",
+          data: "ignored",
+        })),
+        {
+          type: "entity_updated",
+          payload: {},
+        },
+      );
+    });
+
+    it("ignores non-poke messages and non-object frames", () => {
+      assertEquals(parsePokeWebSocketMessage(JSON.stringify({ type: "noop", data: {} })), null);
+      assertEquals(parsePokeWebSocketMessage(JSON.stringify(null)), null);
+    });
+
+    it("throws for malformed JSON so callers can keep parse-error logging", () => {
+      assertThrows(() => parsePokeWebSocketMessage("{"), SyntaxError);
+    });
   });
   let originalWebSocket: typeof WebSocket;
   let originalSetTimeout: typeof setTimeout;
