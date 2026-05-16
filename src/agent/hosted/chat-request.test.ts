@@ -233,6 +233,7 @@ describe("agent/hosted-chat-request", () => {
     }
 
     assertEquals(parsed.messages, invocation.messages);
+    assertEquals(parsed.userId, userId);
     assertEquals(parsed.projectId, projectId);
     assertEquals(parsed.conversationId, conversationId);
     assertEquals(parsed.forwardedProps?.runtimeContext, invocation.context);

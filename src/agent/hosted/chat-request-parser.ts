@@ -201,7 +201,7 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
 
   return await buildParsedHostedChatRequest({
     authToken: authenticatedRequest.authToken,
-    userId: authenticatedRequest.userId,
+    userId: invocation.data.run.requestedByUserId,
     chatRequest: chatRequest.data,
     agentId: invocation.data.run.agentId,
     verifyProjectAccess: options.verifyProjectAccess,
