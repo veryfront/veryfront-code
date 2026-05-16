@@ -99,7 +99,7 @@ function buildMergedTools(
         input.runId,
         tool.name,
         tool.description,
-        tool.parameters,
+        tool.inputSchema ?? tool.parameters,
         sessionManager,
       ),
     ]),
