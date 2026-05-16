@@ -164,6 +164,32 @@ describe("integrations/remote-tools", () => {
     });
   });
 
+  it("prefers structuredContent for MCP error results without text content", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: {
+          error: "authentication_required",
+          integration: "linear",
+          connectUrl: "/oauth/connect/linear?projectId=project-1&endUserId=user-1",
+          message: "Authentication required for Linear.",
+        },
+      }), async () => await executeRemoteIntegrationTool("linear__search_issues", { query: "*" }));
+
+    assertEquals(result, {
+      error: "authentication_required",
+      integration: "linear",
+      connectUrl: "/oauth/connect/linear?projectId=project-1&endUserId=user-1",
+      message: "Authentication required for Linear.",
+    });
+  });
+
   it("returns structured content from remote tool calls and detects remote names", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
