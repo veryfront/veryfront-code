@@ -10,6 +10,9 @@ import type {
 } from "../types.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { INVALID_ARGUMENT, TOKEN_STORAGE_ERROR } from "#veryfront/errors";
+import { logger as baseLogger } from "#veryfront/utils";
+
+const logger = baseLogger.component("o-auth");
 
 /** Buffer before token expiry to trigger proactive refresh (5 minutes). */
 const TOKEN_REFRESH_BUFFER_MS = 300_000;
@@ -392,9 +395,12 @@ export class OAuthService extends OAuthProvider {
     });
 
     if (!response.ok) {
-      const error = await response.text();
+      logger.error("OAuth provider API error", {
+        serviceId: this.serviceConfig.serviceId,
+        status: response.status,
+      });
       throw INVALID_ARGUMENT.create({
-        detail: `${this.serviceConfig.displayName} API error: ${response.status} ${error}`,
+        detail: `${this.serviceConfig.displayName} API error: ${response.status}`,
       });
     }
 
