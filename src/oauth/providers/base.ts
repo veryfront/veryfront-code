@@ -395,11 +395,9 @@ export class OAuthService extends OAuthProvider {
     });
 
     if (!response.ok) {
-      const rawBody = await response.text();
       logger.error("OAuth provider API error", {
         serviceId: this.serviceConfig.serviceId,
         status: response.status,
-        body: rawBody,
       });
       throw INVALID_ARGUMENT.create({
         detail: `${this.serviceConfig.displayName} API error: ${response.status}`,

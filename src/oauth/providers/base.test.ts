@@ -170,3 +170,34 @@ Deno.test(
     );
   },
 );
+
+Deno.test(
+  "OAuthService.fetch: provider error body is not leaked into logs (SEC-010)",
+  async () => {
+    const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
+    const secret = "internal-secret-error-detail-do-not-log";
+    const originalError = console.error;
+    const messages: string[] = [];
+
+    console.error = (...args: unknown[]) => {
+      messages.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    try {
+      await assertRejects(
+        () => withErrorFetch(502, secret, () => service.fetch<unknown>("user-1", "/v1/me")),
+        Error,
+      );
+    } finally {
+      console.error = originalError;
+    }
+
+    const logOutput = messages.join("\n");
+    assert(logOutput.includes("OAuth provider API error"));
+    assert(logOutput.includes("502"));
+    assert(
+      !logOutput.includes(secret),
+      `Log output must not contain raw provider body. Got: ${logOutput}`,
+    );
+  },
+);
