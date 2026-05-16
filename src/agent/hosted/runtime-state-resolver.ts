@@ -17,6 +17,7 @@ export type HostedRuntimeStateResolverContext = DefaultResearchArtifactContext &
   branchId?: string | null;
   steeringRevision?: number;
   slashCommandArtifactPathSeen?: boolean;
+  userId?: string | null;
 };
 
 export type HostedRuntimeStateResolverInput = {
@@ -78,6 +79,9 @@ export function createHostedRuntimeStateResolver<
 
     let nextSystem = system;
     const nextContextRecord = { ...(context ?? {}) };
+    if (typeof options.taskContext.userId === "string" && options.taskContext.userId.length > 0) {
+      nextContextRecord.endUserId = options.taskContext.userId;
+    }
 
     if (steeringChanged && options.refreshSystem) {
       nextSystem = await options.refreshSystem({

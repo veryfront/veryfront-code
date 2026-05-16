@@ -36,6 +36,7 @@ export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContex
   model?: string;
   clientProfile?: RuntimeClientProfile | null;
   availableToolNames?: string[];
+  userId?: string | null;
 };
 
 export type HostedChatRuntimeAllowedToolNames = readonly string[] | ReadonlySet<string> | null;
@@ -127,6 +128,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     createRemoteToolSource: input.createRemoteToolSource ?? createRemoteMCPToolSource,
     defaultProjectId: () => activeProjectId(input.taskContext),
     getProjectId: input.getProjectId ?? (() => activeProjectId(input.taskContext)),
+    getEndUserId: () => input.taskContext.userId ?? null,
     getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
     conversationId: input.conversationId,
     allowedToolNames,
