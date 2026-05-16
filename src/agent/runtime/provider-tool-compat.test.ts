@@ -153,4 +153,48 @@ describe("provider-tool-compat", () => {
     assertEquals(sanitized.properties?.labelIds?.type, "array");
     assertEquals(sanitized.properties?.labelIds?.items, {});
   });
+
+  it("removes Anthropic-incompatible property keys and matching required entries", () => {
+    const sanitized = sanitizeProviderToolSchema(
+      {
+        type: "object",
+        properties: {
+          ok_name: { type: "string" },
+          "bad key": { type: "string" },
+          "nested-object": {
+            type: "object",
+            properties: {
+              "also/bad": { type: "string" },
+              fine: { type: "number" },
+            },
+            required: ["also/bad", "fine"],
+          },
+          aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: {
+            type: "boolean",
+          },
+        },
+        required: [
+          "ok_name",
+          "bad key",
+          "nested-object",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
+      } as never,
+      { model: "veryfront-cloud/anthropic/claude-sonnet-4-6" },
+    );
+
+    assertEquals(Object.keys(sanitized.properties ?? {}), ["ok_name", "nested-object"]);
+    assertEquals(sanitized.required, ["ok_name", "nested-object"]);
+    assertEquals(
+      Object.keys(
+        (sanitized.properties?.["nested-object"] as { properties?: Record<string, unknown> })
+          .properties ?? {},
+      ),
+      ["fine"],
+    );
+    assertEquals(
+      (sanitized.properties?.["nested-object"] as { required?: unknown[] }).required,
+      ["fine"],
+    );
+  });
 });
