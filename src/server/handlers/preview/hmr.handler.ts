@@ -1,10 +1,4 @@
-import {
-  HMR_CLOSE_MESSAGE_TOO_LARGE,
-  HMR_CLOSE_RATE_LIMIT,
-  HMR_MAX_MESSAGE_SIZE_BYTES,
-  HMR_MAX_MESSAGES_PER_MINUTE,
-  serverLogger,
-} from "#veryfront/utils";
+import { HMR_MAX_MESSAGES_PER_MINUTE, serverLogger } from "#veryfront/utils";
 import { RateLimiter } from "#veryfront/modules/server/index.ts";
 import { BaseHandler } from "../response/base.ts";
 import {
@@ -25,6 +19,7 @@ import {
   getClientDetails,
   removeClient,
 } from "./hmr-client-manager.ts";
+import { handleHmrClientMessage } from "./hmr-client-message.ts";
 import { getPingIntervalMs, startPingInterval, stopPingInterval } from "./hmr-ping-keepalive.ts";
 import { broadcastUpdate, getMetrics } from "./hmr-message-router.ts";
 import { getEffectiveRequestHost } from "../../utils/request-host.ts";
@@ -101,7 +96,7 @@ export class HMRHandler extends BaseHandler {
     // Honouring it unconditionally lets any remote client present `x-forwarded-host: localhost`
     // and unlock the localhost short-circuit that opens HMR (VULN-SRV-4). Only consult
     // forwarded headers when the request is proxy-trusted; otherwise use Host / url.host.
-    // Proxy trust requires a verifiable dispatch JWS (or operator opt-in) — mere header
+    // Proxy trust requires a verifiable dispatch JWS (or operator opt-in). Mere header
     // presence is not enough, since `x-veryfront-dispatch-jws` is not stripped on ingress.
     const publicKeyPem = ctx.adapter?.env?.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
       getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
@@ -191,40 +186,17 @@ export class HMRHandler extends BaseHandler {
 
       // Handle incoming messages (size/rate guard, ping/pong, activity tracking)
       socket.addEventListener("message", (event) => {
-        const messageSize = HMRHandler.getMessageSize(event.data);
-        if (messageSize > HMR_MAX_MESSAGE_SIZE_BYTES) {
-          try {
-            socket.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
-          } catch (_) {
-            /* expected: socket may already be closed */
-          }
-          return;
-        }
-
-        if (!HMRHandler.rateLimiter.check(socket)) {
-          try {
-            socket.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
-          } catch (_) {
-            /* expected: socket may already be closed */
-          }
-          return;
-        }
-
-        const client = getClient(clientId);
-        if (client) {
-          client.lastActivity = Date.now();
-        }
-
-        if (typeof event.data !== "string") return;
-
-        try {
-          const data = JSON.parse(event.data);
-          if (data?.type === "ping") {
-            socket.send(JSON.stringify({ type: "pong" }));
-          }
-        } catch (_) {
-          /* expected: ignore malformed JSON from client */
-        }
+        handleHmrClientMessage({
+          socket,
+          data: event.data,
+          rateLimiter: HMRHandler.rateLimiter,
+          onActivity: () => {
+            const client = getClient(clientId);
+            if (client) {
+              client.lastActivity = Date.now();
+            }
+          },
+        });
       });
 
       // Clean up on close or error
@@ -329,13 +301,5 @@ export class HMRHandler extends BaseHandler {
     HMRHandler.initialized = false;
 
     logger.debug("Shutdown complete");
-  }
-
-  private static getMessageSize(data: unknown): number {
-    if (typeof data === "string") return data.length;
-    if (data instanceof ArrayBuffer) return data.byteLength;
-    if (ArrayBuffer.isView(data)) return data.byteLength;
-    if (data instanceof Blob) return data.size;
-    return 0;
   }
 }

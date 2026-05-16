@@ -1,5 +1,5 @@
 /**
- * OpenAI provider — implements the {@link LLMProvider} contract for OpenAI,
+ * OpenAI provider, implements the {@link LLMProvider} contract for OpenAI,
  * OpenAI-compatible endpoints (Azure OpenAI, Moonshot AI), and OpenAI's
  * Responses API.
  *
@@ -20,6 +20,7 @@ import {
   isNumberArray,
   mergeUsage,
   parseRetryAfterMs,
+  parseSseChunk,
   ProviderError,
   ProviderOverloadedError,
   ProviderQuotaError,
@@ -31,11 +32,14 @@ import {
   requestStream,
   stringifyJsonValue,
   TOOL_INPUT_PENDING_THRESHOLD_MS,
-  toOpenAICompatibleMessages,
-  toOpenAICompatibleTools,
   withToolInputStatusTransitions,
 } from "veryfront/provider/shared";
-import type { OpenAICompatibleChatRequest, RuntimePromptMessage } from "veryfront/provider/shared";
+import type { RuntimePromptMessage } from "veryfront/provider/shared";
+import {
+  buildOpenAIChatRequest,
+  type OpenAICompatibleLanguageOptions,
+  type RuntimeToolDefinition,
+} from "./openai-chat-request-builder.ts";
 
 // Re-export error classes so extension tests can import from this module.
 export {
@@ -82,52 +86,6 @@ type OpenAIStreamToolCallState = {
   name: string;
   arguments: string;
   started: boolean;
-};
-
-type RuntimeToolDefinition =
-  | {
-    type: "function";
-    name: string;
-    description?: string;
-    inputSchema: unknown;
-  }
-  | {
-    type: "provider";
-    name: string;
-    id: `${string}.${string}`;
-    args: Record<string, unknown>;
-  };
-
-type OpenAICompatibleLanguageOptions = {
-  prompt: RuntimePromptMessage[];
-  maxOutputTokens?: number;
-  temperature?: number;
-  topP?: number;
-  topK?: number;
-  stopSequences?: string[];
-  tools?: RuntimeToolDefinition[];
-  toolChoice?: unknown;
-  seed?: number;
-  presencePenalty?: number;
-  frequencyPenalty?: number;
-  headers?: HeadersInit;
-  providerOptions?: Record<string, unknown>;
-  includeRawChunks?: boolean;
-  abortSignal?: AbortSignal;
-  reasoning?: ProviderReasoningOption;
-  userId?: string;
-  serviceTier?: "auto" | "default" | "flex" | "scale";
-  parallelToolCalls?: boolean;
-  responseFormat?:
-    | { type: "text" }
-    | { type: "json" }
-    | {
-      type: "json_schema";
-      name: string;
-      schema: unknown;
-      description?: string;
-      strict?: boolean;
-    };
 };
 
 type RuntimeUsage = {
@@ -275,27 +233,8 @@ function isOpenAIReasoningModel(modelId: string): boolean {
 }
 
 /**
- * Detect native OpenAI models (gpt-*, o-series, chatgpt-*) vs third-party
- * OpenAI-compatible providers (Kimi, etc.). Native OpenAI models require
- * `max_completion_tokens` (the old `max_tokens` is rejected by newer models
- * like gpt-5.2), while third-party providers still expect `max_tokens`.
- */
-function isNativeOpenAIModel(modelId: string): boolean {
-  return /^(gpt-|o[134](-|$)|chatgpt-)/.test(modelId);
-}
-
-/**
- * Kimi K2.5 fixes sampling parameters (temperature, top_p, presence_penalty,
- * frequency_penalty) to predetermined values and rejects any other values.
- * See https://platform.moonshot.cn/docs/guide/kimi-k2-5-quickstart
- */
-function isFixedSamplingModel(modelId: string): boolean {
-  return /^kimi-k2\.5/.test(modelId);
-}
-
-/**
  * Map the unified reasoning effort to OpenAI's `reasoning_effort` enum.
- * OpenAI doesn't accept "max" — we collapse it to "high".
+ * OpenAI doesn't accept "max", so collapse it to "high".
  */
 function resolveOpenAIReasoningEffort(
   option: ProviderReasoningOption | undefined,
@@ -348,153 +287,9 @@ type WarningCollector = {
   }>;
 };
 
-function buildOpenAIChatRequest(
-  modelId: string,
-  providerName: string,
-  options: OpenAICompatibleLanguageOptions,
-  stream: boolean,
-  warnings: WarningCollector,
-): OpenAICompatibleChatRequest {
-  const isReasoningModel = isOpenAIReasoningModel(modelId);
-  const reasoningEffort = resolveOpenAIReasoningEffort(options.reasoning);
-  const reasoningEnabled = isReasoningModel || reasoningEffort !== undefined;
-  const fixedSampling = isFixedSamplingModel(modelId);
-  const dropSamplingParams = reasoningEnabled || fixedSampling;
-
-  // OpenAI Chat Completions has no top_k surface.
-  if (options.topK !== undefined) {
-    warnings.push({
-      type: "unsupported-setting",
-      provider: "openai",
-      setting: "topK",
-      details: "OpenAI Chat Completions does not expose top_k; the value was dropped.",
-    });
-  }
-
-  // Reasoning models (o1 / o3 / o4) and models with fixed sampling params
-  // reject sampling params outright. Emit warnings.
-  if (dropSamplingParams) {
-    const dropped: Array<[keyof typeof options, string]> = [
-      ["temperature", "temperature"],
-      ["topP", "top_p"],
-      ["presencePenalty", "presence_penalty"],
-      ["frequencyPenalty", "frequency_penalty"],
-    ];
-    for (const [key, openaiName] of dropped) {
-      if (options[key] !== undefined) {
-        warnings.push({
-          type: "unsupported-setting",
-          provider: "openai",
-          setting: key,
-          details: fixedSampling
-            ? `Dropped because this model uses fixed sampling parameters.`
-            : `Dropped because OpenAI reasoning models reject ${openaiName}. Reasoning was active for this request.`,
-        });
-      }
-    }
-  }
-
-  const body: OpenAICompatibleChatRequest = {
-    model: modelId,
-    messages: toOpenAICompatibleMessages(options.prompt),
-    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
-    ...(options.maxOutputTokens !== undefined
-      ? isNativeOpenAIModel(modelId)
-        ? { max_completion_tokens: options.maxOutputTokens }
-        : { max_tokens: options.maxOutputTokens }
-      : {}),
-    ...(!dropSamplingParams && options.temperature !== undefined
-      ? { temperature: options.temperature }
-      : {}),
-    ...(!dropSamplingParams && options.topP !== undefined ? { top_p: options.topP } : {}),
-    ...(options.stopSequences && options.stopSequences.length > 0
-      ? { stop: options.stopSequences }
-      : {}),
-    ...(toOpenAICompatibleTools(options.tools)
-      ? { tools: toOpenAICompatibleTools(options.tools) }
-      : {}),
-    ...(options.toolChoice !== undefined ? { tool_choice: options.toolChoice } : {}),
-    ...(options.seed !== undefined ? { seed: options.seed } : {}),
-    ...(!dropSamplingParams && options.presencePenalty !== undefined
-      ? { presence_penalty: options.presencePenalty }
-      : {}),
-    ...(!dropSamplingParams && options.frequencyPenalty !== undefined
-      ? { frequency_penalty: options.frequencyPenalty }
-      : {}),
-    ...(reasoningEffort !== undefined ? { reasoning_effort: reasoningEffort } : {}),
-    ...(typeof options.userId === "string" && options.userId.length > 0
-      ? { user: options.userId }
-      : {}),
-    ...(options.serviceTier !== undefined ? { service_tier: options.serviceTier } : {}),
-    ...(options.parallelToolCalls !== undefined
-      ? { parallel_tool_calls: options.parallelToolCalls }
-      : {}),
-    ...(options.responseFormat && options.responseFormat.type !== "text"
-      ? {
-        response_format: options.responseFormat.type === "json" ? { type: "json_object" } : {
-          type: "json_schema",
-          json_schema: {
-            name: options.responseFormat.name,
-            ...(typeof options.responseFormat.description === "string"
-              ? { description: options.responseFormat.description }
-              : {}),
-            schema: unwrapToolInputSchema(options.responseFormat.schema),
-            ...(options.responseFormat.strict !== undefined
-              ? { strict: options.responseFormat.strict }
-              : {}),
-          },
-        },
-      }
-      : {}),
-  };
-
-  const providerOpts = readProviderOptions(options.providerOptions, "openai", providerName);
-
-  // Normalize max_tokens → max_completion_tokens for native OpenAI models.
-  if (isNativeOpenAIModel(modelId) && "max_tokens" in providerOpts) {
-    if (!("max_completion_tokens" in providerOpts)) {
-      providerOpts.max_completion_tokens = providerOpts.max_tokens;
-    }
-    delete providerOpts.max_tokens;
-  }
-
-  Object.assign(body, providerOpts);
-  return body;
-}
-
 // ---------------------------------------------------------------------------
 // Chat streaming
 // ---------------------------------------------------------------------------
-
-function parseSseChunk(chunk: string): {
-  events: Array<unknown | "[DONE]">;
-  remainder: string;
-} {
-  const blocks = chunk.split(/\r?\n\r?\n/);
-  const remainder = blocks.pop() ?? "";
-  const events = blocks.flatMap((block) => {
-    const dataLines = block.split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart());
-
-    if (!dataLines.length) {
-      return [];
-    }
-
-    const payload = dataLines.join("\n").trim();
-    if (payload === "[DONE]") {
-      return ["[DONE]" as const];
-    }
-
-    try {
-      return [JSON.parse(payload) as unknown];
-    } catch {
-      return [];
-    }
-  });
-
-  return { events, remainder };
-}
 
 function extractFirstChoice(payload: unknown): OpenAICompatibleChoice | undefined {
   const record = readRecord(payload);
@@ -762,7 +557,7 @@ function toOpenAIResponsesInput(
           }
           if (part.type === "reasoning") {
             // Reasoning items are top-level entries in the input array,
-            // not nested inside the assistant message — flush whatever
+            // not nested inside the assistant message. Flush whatever
             // text we've accumulated first, then push the reasoning item.
             if (messageContent.length > 0) {
               input.push({ role: "assistant", content: [...messageContent] });
