@@ -47,6 +47,21 @@ describe("agent/hosted-runtime-state-resolver", () => {
     assertEquals(refreshCount, 1);
   });
 
+  it("preserves the authenticated user as endUserId in runtime tool context", async () => {
+    const resolver = createHostedRuntimeStateResolver({
+      taskContext: {
+        projectId: "project-1",
+        branchId: null,
+        userId: "user-123",
+      },
+    });
+
+    assertEquals(await resolver({ system: "system", messages: [], step: 1 }), {
+      system: "system",
+      context: { endUserId: "user-123" },
+    });
+  });
+
   it("applies starter-intent blocking context only while required", async () => {
     const taskContext = {
       projectId: null,

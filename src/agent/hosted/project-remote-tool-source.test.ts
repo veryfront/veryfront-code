@@ -268,6 +268,36 @@ Deno.test("createHostedProjectRemoteToolSources defaults to the Veryfront API MC
   assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
 });
 
+Deno.test("createHostedProjectRemoteToolSources injects end_user_id for Veryfront API integration tools", async () => {
+  const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    getProjectId: () => "project-1",
+    getEndUserId: () => "user-123",
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [simpleTool("github__list_issues")],
+        execute: (toolName, args, context) => {
+          executed.push({ toolName, args, context });
+          return { ok: true };
+        },
+      }),
+  });
+
+  await sources[0]?.executeTool("github__list_issues", { repo: "veryfront" });
+
+  assertEquals(executed, [
+    {
+      toolName: "github__list_issues",
+      args: { repo: "veryfront", end_user_id: "user-123" },
+      context: undefined,
+    },
+  ]);
+});
+
 Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools with the tool access profile", async () => {
   const executed: Array<{ toolName: string; args: unknown }> = [];
   const sources = createHostedProjectRemoteToolSources({

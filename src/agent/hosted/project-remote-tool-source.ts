@@ -199,10 +199,49 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     mcpServers?: readonly AgentServiceMcpServerConfig[];
     clientProfile?: RuntimeClientProfile | null;
     getProjectId: () => string | null | undefined;
+    getEndUserId?: () => string | null | undefined;
     conversationId?: string;
     createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
     onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   };
+
+function isVeryfrontApiIntegrationTool(toolName: string): boolean {
+  return /^[a-zA-Z0-9_.-]+__[a-zA-Z0-9_.-]+$/.test(toolName);
+}
+
+function prepareVeryfrontApiToolInput(input: {
+  server: AgentServiceMcpServerConfig;
+  getEndUserId?: () => string | null | undefined;
+  prepareToolInput?: HostedProjectRemoteToolSourcePrepareToolInput;
+}): HostedProjectRemoteToolSourcePrepareToolInput | undefined {
+  if (input.server.kind !== "veryfront-api" && !input.prepareToolInput) {
+    return undefined;
+  }
+
+  return (toolInputContext) => {
+    const prepared = input.prepareToolInput?.(toolInputContext) ?? toolInputContext.toolInput;
+    if (
+      input.server.kind !== "veryfront-api" ||
+      !isVeryfrontApiIntegrationTool(toolInputContext.toolName)
+    ) {
+      return prepared;
+    }
+
+    if (typeof prepared.end_user_id === "string" && prepared.end_user_id.length > 0) {
+      return prepared;
+    }
+
+    const endUserId = input.getEndUserId?.() ?? toolInputContext.context?.endUserId;
+    if (typeof endUserId !== "string" || endUserId.length === 0) {
+      return prepared;
+    }
+
+    return {
+      ...prepared,
+      end_user_id: endUserId,
+    };
+  };
+}
 
 function createHostedProjectRemoteToolSourceFromConfig(
   input: CreateHostedProjectRemoteToolSourcesInput,
@@ -210,6 +249,12 @@ function createHostedProjectRemoteToolSourceFromConfig(
   source: RemoteToolSource,
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
 ): RemoteToolSource {
+  const prepareToolInput = prepareVeryfrontApiToolInput({
+    server,
+    getEndUserId: input.getEndUserId,
+    prepareToolInput: input.prepareToolInput,
+  });
+
   return createHostedProjectRemoteToolSource({
     source,
     ...(input.defaultProjectId !== undefined ? { defaultProjectId: input.defaultProjectId } : {}),
@@ -231,7 +276,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
           }),
       }
       : {}),
-    ...(input.prepareToolInput !== undefined ? { prepareToolInput: input.prepareToolInput } : {}),
+    ...(prepareToolInput !== undefined ? { prepareToolInput } : {}),
     ...(input.retryToolName !== undefined ? { retryToolName: input.retryToolName } : {}),
     ...(input.shouldRetryWithTool !== undefined
       ? { shouldRetryWithTool: input.shouldRetryWithTool }
