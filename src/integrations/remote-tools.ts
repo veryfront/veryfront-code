@@ -122,14 +122,14 @@ async function callRemoteTool(
   if (result?.content && Array.isArray(result.content)) {
     const text = joinCallToolText(result.content as CallToolTextContent[]);
 
+    if (result.structuredContent) return result.structuredContent;
+
     if (result.isError) {
       // Try to preserve structured error data (e.g., authentication_required with connectUrl)
       const parsed = parseJsonText(text);
       if (parsed && typeof parsed === "object") return parsed;
       return { error: "tool_error", message: text };
     }
-
-    if (result.structuredContent) return result.structuredContent;
 
     return parseJsonText(text) ?? text;
   }
