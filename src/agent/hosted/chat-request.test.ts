@@ -198,7 +198,7 @@ describe("agent/hosted-chat-request", () => {
             error: {
               errorCode: "PROJECT_ACCESS_DENIED",
               message: "Project access denied",
-              statusCode: 401,
+              statusCode: 403,
             },
           }),
       },

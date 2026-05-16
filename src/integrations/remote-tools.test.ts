@@ -205,6 +205,23 @@ describe("integrations/remote-tools", () => {
     assertEquals(result, { repos: ["veryfront"] });
     assertStrictEquals(isRemoteIntegrationTool("github__list_repos"), true);
     assertStrictEquals(isRemoteIntegrationTool("list_repos"), false);
+    assertStrictEquals(isRemoteIntegrationTool("__start"), false);
+    assertStrictEquals(isRemoteIntegrationTool("end__"), false);
+    assertStrictEquals(isRemoteIntegrationTool("middle__middle__name"), false);
+  });
+
+  it("omits undefined call tool text entries when joining text content", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        content: [{}, { text: "plain result" }],
+      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+
+    assertEquals(result, "plain result");
   });
 
   it("posts integration config as a full replace payload", async () => {

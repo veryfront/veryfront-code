@@ -29,6 +29,8 @@ import {
 } from "../../../src/modules/react-loader/ssr-module-loader/constants.ts";
 import { Semaphore } from "../../../src/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 
+const BURST_TEST_ACQUIRE_TIMEOUT_MS = 5000;
+
 describe("002.5 Transform Concurrency Under Load", () => {
   afterEach(() => {
     clearSSRModuleCache();
@@ -55,7 +57,7 @@ describe("002.5 Transform Concurrency Under Load", () => {
         const batchTasks = Array.from(
           { length: Math.min(batchSize, totalChildren - batch) },
           async (_, i) => {
-            const acquired = await tryAcquireTransformSlot(projectId, 2000);
+            const acquired = await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS);
             assert(acquired, `Child transform ${batch + i} should acquire slot`);
             await new Promise((r) => setTimeout(r, 5));
             releaseTransformSlot(projectId);
@@ -186,7 +188,7 @@ describe("002.5 Transform Concurrency Under Load", () => {
       let completedCount = 0;
 
       const transforms = Array.from({ length: 100 }, async () => {
-        const acquired = await semaphore.tryAcquire(5000); // 5s timeout for test
+        const acquired = await semaphore.tryAcquire(BURST_TEST_ACQUIRE_TIMEOUT_MS); // 5s timeout for test
         assert(acquired, "All 100 transforms should eventually acquire a permit");
 
         currentConcurrent++;
