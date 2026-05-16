@@ -511,6 +511,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(streamContext, {
       threadId: "10000000-1000-4000-8000-100000000001",
       runId: "run_1",
+      endUserId: "30000000-3000-4000-8000-300000000001",
       context: [{ type: "text", text: "Current file: app.tsx" }],
       forwardedProps: {
         runtimeOverrides: {
