@@ -31,6 +31,10 @@ interface SandboxSessionRecord {
   status: string;
 }
 
+interface PendingOperation {
+  promise: Promise<void>;
+}
+
 const DEFAULT_STARTUP_TIMEOUT_MS = 180_000;
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
@@ -91,9 +95,9 @@ export class LazySandbox {
   private endpoint: string | null = null;
   private sessionId: string | null = null;
   private sessionProjectId: string | null = null;
-  private ensurePromise: Promise<void> | null = null;
-  private closePromise: Promise<void> | null = null;
-  private heartbeatPromise: Promise<void> | null = null;
+  private ensurePromise: PendingOperation | null = null;
+  private closePromise: PendingOperation | null = null;
+  private heartbeatPromise: PendingOperation | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeartbeatAt = 0;
   private readonly activeCommandJobEndpoints = new Map<string, string>();
@@ -118,17 +122,17 @@ export class LazySandbox {
   async ensure(): Promise<void> {
     if (this.endpoint) return;
     if (this.ensurePromise) {
-      await this.ensurePromise;
+      await this.ensurePromise.promise;
       return;
     }
 
-    const promise = this.bootstrapSession();
-    this.ensurePromise = promise;
+    const pending = { promise: this.bootstrapSession() };
+    this.ensurePromise = pending;
 
     try {
-      await promise;
+      await pending.promise;
     } finally {
-      if (this.ensurePromise === promise) {
+      if (this.ensurePromise === pending) {
         this.ensurePromise = null;
       }
     }
@@ -337,7 +341,7 @@ export class LazySandbox {
     if (!currentSessionId) return;
 
     if (this.heartbeatPromise) {
-      await this.heartbeatPromise;
+      await this.heartbeatPromise.promise;
       return;
     }
 
@@ -348,35 +352,37 @@ export class LazySandbox {
       return;
     }
 
-    const promise = (async () => {
-      const res = await this.fetchControl(
-        `${this.apiUrl}/sandbox-sessions/${currentSessionId}/heartbeat`,
-        {
-          method: "POST",
-          headers: this.authHeaders(),
-        },
-      );
+    const pending = {
+      promise: (async () => {
+        const res = await this.fetchControl(
+          `${this.apiUrl}/sandbox-sessions/${currentSessionId}/heartbeat`,
+          {
+            method: "POST",
+            headers: this.authHeaders(),
+          },
+        );
 
-      if (!res.ok) {
-        if (this.sessionId === currentSessionId) {
-          if (this.activeCommandJobEndpoints.size === 0) {
-            await this.deleteSession(currentSessionId);
-            this.resetSessionState(currentSessionId);
+        if (!res.ok) {
+          if (this.sessionId === currentSessionId) {
+            if (this.activeCommandJobEndpoints.size === 0) {
+              await this.deleteSession(currentSessionId);
+              this.resetSessionState(currentSessionId);
+            }
           }
+
+          throw new Error(`Sandbox heartbeat failed: ${res.status} ${await res.text()}`);
         }
 
-        throw new Error(`Sandbox heartbeat failed: ${res.status} ${await res.text()}`);
-      }
+        this.lastHeartbeatAt = Date.now();
+      })(),
+    };
 
-      this.lastHeartbeatAt = Date.now();
-    })();
-
-    this.heartbeatPromise = promise;
+    this.heartbeatPromise = pending;
 
     try {
-      await promise;
+      await pending.promise;
     } finally {
-      if (this.heartbeatPromise === promise) {
+      if (this.heartbeatPromise === pending) {
         this.heartbeatPromise = null;
       }
     }
@@ -384,35 +390,37 @@ export class LazySandbox {
 
   async close(): Promise<void> {
     if (this.closePromise) {
-      await this.closePromise;
+      await this.closePromise.promise;
       return;
     }
 
-    const promise = (async () => {
-      if (this.ensurePromise) {
-        try {
-          await this.ensurePromise;
-        } catch {
-          // startup failure already handled by the caller path
+    const pending = {
+      promise: (async () => {
+        if (this.ensurePromise) {
+          try {
+            await this.ensurePromise.promise;
+          } catch {
+            // startup failure already handled by the caller path
+          }
         }
-      }
 
-      const currentSessionId = this.sessionId;
-      if (!currentSessionId) {
-        this.resetSessionState();
-        return;
-      }
+        const currentSessionId = this.sessionId;
+        if (!currentSessionId) {
+          this.resetSessionState();
+          return;
+        }
 
-      await this.deleteSession(currentSessionId);
-      this.resetSessionState(currentSessionId);
-    })();
+        await this.deleteSession(currentSessionId);
+        this.resetSessionState(currentSessionId);
+      })(),
+    };
 
-    this.closePromise = promise;
+    this.closePromise = pending;
 
     try {
-      await promise;
+      await pending.promise;
     } finally {
-      if (this.closePromise === promise) {
+      if (this.closePromise === pending) {
         this.closePromise = null;
       }
     }

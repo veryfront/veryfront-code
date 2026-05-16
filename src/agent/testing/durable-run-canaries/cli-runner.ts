@@ -60,14 +60,14 @@ export async function runDurableRunCanaryCli(
   const context: LiveEvalApiContext = {
     apiUrl,
     authToken,
-    projectId: projectId || null,
+    projectId,
   };
   const createRunner = input.createRunner ?? createDurableRunCanaryRunner;
   const { runCase } = createRunner({
     apiUrl,
     authToken,
     agentId: input.agentId,
-    projectId: projectId || null,
+    projectId,
     requestTimeoutMs,
     keepSuccessfulEvidence,
   });

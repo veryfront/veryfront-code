@@ -208,7 +208,9 @@ describe("ext-cache-redis extension", () => {
       assertExists(line);
       assertEquals(line!.includes("s3cret"), false);
       assertEquals(line!.includes("alice"), false);
-      assertEquals(line!.includes("redis.example.com"), true);
+      const loggedUrl = line!.match(/\(url=(.*)\)$/)?.[1];
+      assertExists(loggedUrl);
+      assertEquals(new URL(loggedUrl).hostname, "redis.example.com");
 
       await ext.teardown!();
     });

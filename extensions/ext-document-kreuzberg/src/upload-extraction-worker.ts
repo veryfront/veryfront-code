@@ -29,6 +29,15 @@ interface ExtractResponse {
 }
 
 self.onmessage = async (event: MessageEvent<ExtractRequest>) => {
+  if (event.origin && event.origin !== self.location.origin) {
+    self.postMessage(
+      {
+        error: "Rejected document extraction request from invalid origin",
+      } satisfies ExtractResponse,
+    );
+    return;
+  }
+
   try {
     const { buffer, mimeType } = event.data;
     const { extractBytes } = await loadKreuzberg();

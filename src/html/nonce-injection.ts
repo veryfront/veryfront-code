@@ -283,18 +283,18 @@ export function addNonceToHtmlStream(
     return result;
   }
 
-  return stream.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        buffer += decoder.decode(chunk, { stream: true });
-        const transformed = transformBuffer(false);
-        if (transformed) controller.enqueue(encoder.encode(transformed));
-      },
-      flush(controller) {
-        buffer += decoder.decode();
-        const transformed = transformBuffer(true);
-        if (transformed) controller.enqueue(encoder.encode(transformed));
-      },
-    }),
-  );
+  const transformer: Transformer<Uint8Array, Uint8Array> = {
+    transform(chunk, controller) {
+      buffer += decoder.decode(chunk, { stream: true });
+      const transformed = transformBuffer(false);
+      if (transformed) controller.enqueue(encoder.encode(transformed));
+    },
+    flush(controller) {
+      buffer += decoder.decode();
+      const transformed = transformBuffer(true);
+      if (transformed) controller.enqueue(encoder.encode(transformed));
+    },
+  };
+
+  return stream.pipeThrough(new TransformStream(transformer));
 }

@@ -29,13 +29,6 @@ import {
 } from "../../../src/modules/react-loader/ssr-module-loader/constants.ts";
 import { Semaphore } from "../../../src/modules/react-loader/ssr-module-loader/concurrency/semaphore.ts";
 
-function releaseAllSlots(projectId: string): void {
-  const count = getTransformStats().activeProjects.get(projectId) ?? 0;
-  for (let i = 0; i < count; i++) {
-    releaseTransformSlot(projectId);
-  }
-}
-
 describe("002.5 Transform Concurrency Under Load", () => {
   afterEach(() => {
     clearSSRModuleCache();

@@ -22,6 +22,7 @@ if (typeof globalThis.window === "undefined") {
 if (typeof globalThis.location === "undefined") {
   (globalThis as any).location = {
     href: "https://test.veryfront.com/test",
+    origin: "https://test.veryfront.com",
     hostname: "test.veryfront.com",
     reload: () => {},
   };
@@ -118,7 +119,7 @@ Deno.test("routeChange: navigates for safe relative URL", () => {
   });
 
   handleStudioMessage(makeEvent({ action: "routeChange", url: "/new-page" }));
-  assertEquals(navigatedTo, "/new-page");
+  assertEquals(navigatedTo, "https://test.veryfront.com/new-page");
 
   // Restore
   Object.defineProperty(globalThis.location, "href", {
@@ -223,7 +224,7 @@ Deno.test("routeChange: clears existing selection before navigating", () => {
 
   assertEquals(state.selectedNodeId, null);
   assertEquals(state.selectionOverlay?.style.display, "none");
-  assertEquals(navigatedTo, "/new-page");
+  assertEquals(navigatedTo, "https://test.veryfront.com/new-page");
 
   Object.defineProperty(globalThis.location, "href", {
     value: "https://test.veryfront.com/test",
@@ -268,9 +269,9 @@ Deno.test("toggleInspectMode: deselectElements also clears selection", () => {
 // sanitizeNavigationUrl
 // ---------------------------------------------------------------------------
 
-Deno.test("sanitizeNavigationUrl: returns relative paths as-is", () => {
-  assertEquals(sanitizeNavigationUrl("/page"), "/page");
-  assertEquals(sanitizeNavigationUrl("/a/b/c"), "/a/b/c");
+Deno.test("sanitizeNavigationUrl: returns normalized href for relative paths", () => {
+  assertEquals(sanitizeNavigationUrl("/page"), "https://test.veryfront.com/page");
+  assertEquals(sanitizeNavigationUrl("/a/../b"), "https://test.veryfront.com/b");
 });
 
 Deno.test("sanitizeNavigationUrl: returns normalized href for same-origin URLs", () => {

@@ -228,12 +228,10 @@ export async function transformModuleWithDeps(
       mdxCacheDir,
       projectDir,
       undefined,
-      contentSourceId
-        ? {
-          projectId,
-          contentSourceId,
-        }
-        : undefined,
+      {
+        projectId,
+        contentSourceId,
+      },
       config.reactVersion,
     );
     if (mdxCacheResult.status === "hit") {
