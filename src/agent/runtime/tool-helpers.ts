@@ -100,6 +100,38 @@ function formatAvailableToolNames(names: Iterable<string>): string {
   return sorted.length > 0 ? sorted.join(", ") : "(none)";
 }
 
+function getRemoteIntegrationName(toolName: string): string | null {
+  if (!isRemoteIntegrationTool(toolName)) {
+    return null;
+  }
+
+  const separatorIndex = toolName.indexOf("__");
+  if (separatorIndex <= 0) {
+    return null;
+  }
+
+  return toolName.slice(0, separatorIndex);
+}
+
+function hasDiscoveredToolForIntegration(
+  remoteToolNames: Set<string>,
+  toolName: string,
+): boolean {
+  const integrationName = getRemoteIntegrationName(toolName);
+  if (!integrationName) {
+    return false;
+  }
+
+  const prefix = `${integrationName}__`;
+  for (const remoteToolName of remoteToolNames) {
+    if (remoteToolName.startsWith(prefix)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function throwUnknownConfiguredToolsError(
   unknownToolNames: string[],
   availableLocalToolNames: Iterable<string>,
@@ -389,6 +421,18 @@ export async function getAvailableTools(
 
       if (remoteToolNames.has(name)) {
         explicitlyRequestedRemoteToolNames.add(name);
+        continue;
+      }
+
+      // Integration tools are request-scoped: a template agent can declare a
+      // GitHub tool before the current project/user has connected GitHub. If no
+      // tools for that integration were discovered for this run, treat the
+      // configured integration tool as unavailable rather than as a local-tool
+      // typo. If the integration is present but this specific tool is missing,
+      // keep failing loudly below.
+      if (
+        isRemoteIntegrationTool(name) && !hasDiscoveredToolForIntegration(remoteToolNames, name)
+      ) {
         continue;
       }
 
