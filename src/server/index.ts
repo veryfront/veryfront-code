@@ -43,13 +43,9 @@ import { cwd } from "#veryfront/platform/compat/process.ts";
 import { bootstrapProd } from "./bootstrap.ts";
 import { createVeryfrontHandler } from "./runtime-handler/index.ts";
 import { addClient, getClient, removeClient } from "./handlers/preview/hmr-client-manager.ts";
+import { handleHmrClientMessage } from "./handlers/preview/hmr-client-message.ts";
 import { RateLimiter } from "#veryfront/modules/server/index.ts";
-import {
-  HMR_CLOSE_MESSAGE_TOO_LARGE,
-  HMR_CLOSE_RATE_LIMIT,
-  HMR_MAX_MESSAGE_SIZE_BYTES,
-  HMR_MAX_MESSAGES_PER_MINUTE,
-} from "#veryfront/utils";
+import { HMR_MAX_MESSAGES_PER_MINUTE } from "#veryfront/utils";
 
 /** Default server port when no port is specified */
 const DEFAULT_SERVER_PORT = 3_000;
@@ -193,14 +189,6 @@ function toNativeResponse(res: Response): Response {
   });
 }
 
-function getWebSocketMessageSize(data: unknown): number {
-  if (typeof data === "string") return data.length;
-  if (data instanceof ArrayBuffer) return data.byteLength;
-  if (ArrayBuffer.isView(data)) return data.byteLength;
-  if (data instanceof Blob) return data.size;
-  return 0;
-}
-
 export async function createHandler(
   options: { projectDir?: string; mode?: "development" | "production"; port?: number } = {},
 ): Promise<VeryfrontHandler> {
@@ -214,7 +202,7 @@ export async function createHandler(
     return Object.assign(handler, { upgrade: () => {}, connectHMR: () => {} });
   }
 
-  // Development mode (default) — includes file watching, HMR, cache invalidation
+  // Development mode (default), includes file watching, HMR, cache invalidation
   const port = options.port ?? DEFAULT_SERVER_PORT;
   const devServer = new DevServer({
     port,
@@ -226,7 +214,7 @@ export async function createHandler(
   await devServer.start();
 
   // ReloadNotifier subscription for HMR broadcast is now handled eagerly
-  // inside DevServer.start() — no additional subscription needed here.
+  // inside DevServer.start(), no additional subscription needed here.
 
   const internalFetch = devServer.handler;
   const fetch = async (req: Request) => toNativeResponse(await internalFetch(req));
@@ -289,38 +277,15 @@ export async function createHandler(
     ws.addEventListener("error", cleanup);
 
     ws.addEventListener("message", (event) => {
-      const messageSize = getWebSocketMessageSize(event.data);
-      if (messageSize > HMR_MAX_MESSAGE_SIZE_BYTES) {
-        try {
-          ws.close(HMR_CLOSE_MESSAGE_TOO_LARGE, "Message too large");
-        } catch (_) {
-          /* expected: socket may already be closed */
-        }
-        return;
-      }
-
-      if (!hmrRateLimiter.check(ws)) {
-        try {
-          ws.close(HMR_CLOSE_RATE_LIMIT, "Rate limit exceeded");
-        } catch (_) {
-          /* expected: socket may already be closed */
-        }
-        return;
-      }
-
-      const client = getClient(clientId);
-      if (client) client.lastActivity = Date.now();
-
-      if (typeof event.data !== "string") return;
-
-      try {
-        const data = JSON.parse(event.data);
-        if (data?.type === "ping") {
-          ws.send(JSON.stringify({ type: "pong" }));
-        }
-      } catch (_) {
-        /* expected: ignore malformed JSON from client */
-      }
+      handleHmrClientMessage({
+        socket: ws,
+        data: event.data,
+        rateLimiter: hmrRateLimiter,
+        onActivity: () => {
+          const client = getClient(clientId);
+          if (client) client.lastActivity = Date.now();
+        },
+      });
     });
 
     const sendConnected = () => {
