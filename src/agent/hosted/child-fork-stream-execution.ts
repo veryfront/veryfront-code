@@ -50,7 +50,7 @@ import {
   resolveHostedChildStreamWatchdogState,
   withHostedChildStreamIdleTimeout,
 } from "./child-stream-watchdog.ts";
-import type { ForkPart, ForkRuntimeStreamResult } from "../fork-runtime-stream.ts";
+import type { ForkPart, ForkRuntimeStreamResult } from "../streaming/fork-runtime-stream.ts";
 
 const SOFT_IDLE_HEARTBEAT_PHASE = "post_tool_idle";
 const MAX_SOFT_IDLE_HEARTBEATS = 2;

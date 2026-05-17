@@ -7,7 +7,7 @@ import {
   finalizeHostedChildForkRunContextResources,
   handleHostedChildForkRunContextError,
 } from "./child-fork-run-context.ts";
-import type { ForkPart, ForkRuntimeStep } from "../fork-runtime-stream.ts";
+import type { ForkPart, ForkRuntimeStep } from "../streaming/fork-runtime-stream.ts";
 
 async function* forkParts(parts: ForkPart[]): AsyncGenerator<ForkPart, void, void> {
   for (const part of parts) {

@@ -9,7 +9,7 @@ import {
   createDetachedRunTracker,
   type DetachedRunShutdownLifecycle,
   type DetachedRunTracker,
-} from "../detached-run-tracker.ts";
+} from "./detached-run-tracker.ts";
 import {
   type AgentServiceActiveSpanAttributes,
   type AgentServiceDetachedCleanupInput,

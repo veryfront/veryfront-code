@@ -14,7 +14,7 @@ import {
 import {
   type ConversationRunEventQueueController,
   createConversationRunEventQueueController,
-} from "../durable.ts";
+} from "./durable.ts";
 
 const DEFAULT_IMMEDIATE_FLUSH_EVENT_COUNT = 24;
 const DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH = 3;

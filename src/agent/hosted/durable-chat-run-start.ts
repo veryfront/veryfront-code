@@ -5,7 +5,7 @@ import {
   executeAgUiDetachedStart,
 } from "../ag-ui/detached-start.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
-import type { DetachedRunTracker } from "../detached-run-tracker.ts";
+import type { DetachedRunTracker } from "../service/detached-run-tracker.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
 export type HostedDurableRunSetupErrorStatusCode = 400 | 402 | 413 | 429 | 500 | 503;

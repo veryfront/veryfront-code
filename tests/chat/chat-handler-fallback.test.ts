@@ -76,7 +76,7 @@ describe("chat-handler 503 fallback", () => {
         "../../src/agent/composition/composition.ts"
       );
       const { createChatHandler } = await import(
-        "../../src/agent/chat-handler.ts"
+        "../../src/agent/service/chat-handler.ts"
       );
 
       // Register a fake agent whose stream() throws no_ai_available
@@ -150,7 +150,7 @@ describe("chat-handler 503 fallback", () => {
         "../../src/agent/composition/composition.ts"
       );
       const { createChatHandler } = await import(
-        "../../src/agent/chat-handler.ts"
+        "../../src/agent/service/chat-handler.ts"
       );
 
       const fakeAgent = {

@@ -1,10 +1,10 @@
 import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
-import { createChatUiMessageStreamFromDataStream } from "../chat-ui-message-stream.ts";
+import { createChatUiMessageStreamFromDataStream } from "../streaming/chat-ui-message-stream.ts";
 import type {
   HostedChatRuntimeAgent,
   HostedChatRuntimeStreamResult,
 } from "./chat-runtime-contract.ts";
-import { createToolExecutionDataEventBridgeStream } from "../tool-execution-data-event-bridge.ts";
+import { createToolExecutionDataEventBridgeStream } from "../streaming/tool-execution-data-event-bridge.ts";
 import type { Agent } from "../types.ts";
 
 export type HostedChatRuntimeAgentAdapterRunner = <TResult>(

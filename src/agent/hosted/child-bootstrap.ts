@@ -1,5 +1,5 @@
 import { bootstrapConversationAgentRun } from "../conversation/bootstrap.ts";
-import { type ConversationRunProjection } from "../durable.ts";
+import { type ConversationRunProjection } from "../conversation/durable.ts";
 import { type HostedChildRunIdentifiers } from "./child-status.ts";
 
 export interface HostedChildConversationBodyInput {

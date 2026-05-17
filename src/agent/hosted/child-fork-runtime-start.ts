@@ -3,7 +3,7 @@ import {
   type ForkRuntimeStreamResult,
   startAgentRuntimeForkWithHostTools,
   type StartAgentRuntimeForkWithHostToolsInput,
-} from "../fork-runtime-stream.ts";
+} from "../streaming/fork-runtime-stream.ts";
 import {
   type HostedChildRunIdentifiers,
   monitorHostedChildRunStatus,

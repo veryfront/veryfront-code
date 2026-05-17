@@ -3,13 +3,13 @@ import type {
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
 import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
-import { type ConversationRunTargets, resolveConversationRunTargets } from "../durable.ts";
 import {
-  type AgentTraceAttributes,
-  buildInvokeAgentTraceAttributes,
-} from "../agent-trace-attributes.ts";
+  type ConversationRunTargets,
+  resolveConversationRunTargets,
+} from "../conversation/durable.ts";
+import { type AgentTraceAttributes, buildInvokeAgentTraceAttributes } from "./trace-attributes.ts";
 import { createConversationChildLifecycleAdapter } from "../conversation/hosted-lifecycle.ts";
-import type { InvokeAgentChildRunProgressEvent } from "../invoke-agent-child-runs.ts";
+import type { InvokeAgentChildRunProgressEvent } from "../child-run/invoke-agent-child-runs.ts";
 import { bootstrapHostedChildRun } from "./child-bootstrap.ts";
 import {
   runHostedChildExecutionLifecycle,

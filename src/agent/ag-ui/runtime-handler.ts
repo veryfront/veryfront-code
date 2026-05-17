@@ -1,4 +1,4 @@
-import { isResponseLike } from "../response-like.ts";
+import { isResponseLike } from "../service/response-like.ts";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
@@ -18,7 +18,7 @@ import {
   formatAgUiEvent,
   mapRuntimeEventToAgUi,
 } from "#veryfront/internal-agents/ag-ui-sse.ts";
-import { streamDataStreamEvents } from "../data-stream.ts";
+import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 
 const AG_UI_HEADERS: Record<string, string> = {
   "Content-Type": "text/event-stream",

@@ -1,5 +1,5 @@
 import type { RemoteMCPToolSourceConfig } from "#veryfront/tool";
-import { buildStudioMcpHeaders } from "../live-studio-mcp-tools.ts";
+import { buildStudioMcpHeaders } from "../project/live-studio-mcp-tools.ts";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
 
 export type AgentServiceVeryfrontApiMcpServerConfig = {

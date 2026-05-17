@@ -7,7 +7,7 @@
  * @module agent/runtime/model-tool-converter
  */
 import type { ToolDefinition } from "#veryfront/tool";
-import { getProviderNativeToolNames } from "../provider-native-tool-inventory.ts";
+import { getProviderNativeToolNames } from "./provider-native-tool-inventory.ts";
 import type { RuntimeToolSet } from "./runtime-tool-types.ts";
 import {
   addRuntimeTool,

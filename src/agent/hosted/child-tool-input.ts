@@ -1,6 +1,6 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import { withDefaultResearchArtifactPath } from "../default-research-artifact-policy.ts";
+import { withDefaultResearchArtifactPath } from "../artifacts/default-research-artifact-policy.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
 
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";

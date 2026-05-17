@@ -9,11 +9,11 @@ import {
   type HostedChildSteeringMutationHandler,
   wrapHostedChildSteeringMutationTool,
 } from "./child-steering-tools.ts";
-import { getForkRuntimeAllowedToolNames } from "../provider-native-tool-inventory.ts";
+import { getForkRuntimeAllowedToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import {
   PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES,
   type ProjectSteeringPaths,
-} from "../project-steering-mutation.ts";
+} from "../project/steering-mutation.ts";
 
 export interface HostedChildRequestedToolsInput {
   prompt: string;

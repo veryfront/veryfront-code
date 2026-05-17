@@ -8,7 +8,7 @@ import {
   type ConversationRunMirrorStoppedState,
   createConversationRunMirror,
 } from "./run-mirror.ts";
-import { type ConversationRunEventQueueController } from "../durable.ts";
+import { type ConversationRunEventQueueController } from "./durable.ts";
 
 function createMockQueueController(initial?: {
   latestEventId?: number;
