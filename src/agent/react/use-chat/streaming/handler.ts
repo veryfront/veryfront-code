@@ -410,8 +410,23 @@ function handleToolInputAvailable(
   getBuildParts: () => ChatMessagePart[],
 ): void {
   const toolCallId = parsed.toolCallId as string;
-  const toolCall = state.toolCalls.get(toolCallId);
-  if (!toolCall) return;
+  if (!toolCallId) return;
+  if (!state.messageId) {
+    state.messageId = generateClientId("msg");
+  }
+
+  let toolCall = state.toolCalls.get(toolCallId);
+  if (!toolCall) {
+    toolCall = {
+      toolCallId,
+      toolName: (parsed.toolName as string) || "tool",
+      inputText: "",
+      state: "input-available",
+      dynamic: parsed.dynamic === true,
+      order: state.partOrderCounter++,
+    };
+    state.toolCalls.set(toolCallId, toolCall);
+  }
 
   toolCall.input = parsed.input;
   toolCall.toolName = (parsed.toolName as string) || toolCall.toolName;

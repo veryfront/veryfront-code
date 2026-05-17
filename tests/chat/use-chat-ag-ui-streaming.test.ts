@@ -135,4 +135,27 @@ describe("useChat streaming handler (AG-UI protocol)", () => {
     assertEquals(getTextContent(msg), "Found two docs.");
     assertEquals(result.dataEvents, [{ selected: "docs" }]);
   });
+
+  it("preserves AG-UI tool results without preceding tool-call events", async () => {
+    const result = await processAgUiStream([
+      agUiFrame(1, "RunStarted", { runId: "run-result-only" }),
+      agUiFrame(2, "ToolCallResult", {
+        toolCallId: "call-result-only",
+        input: { query: "fallback" },
+        result: '{"count":1}',
+      }),
+      agUiFrame(3, "RunFinished", { metadata: { finishReason: "stop" } }),
+    ]);
+
+    const msg = result.messages[0]!;
+    const toolPart = msg.parts[0] as ChatToolPart;
+
+    assertEquals(result.messages.length, 1);
+    assertEquals(toolPart.type, "dynamic-tool");
+    assertEquals(toolPart.toolCallId, "call-result-only");
+    assertEquals(toolPart.toolName, "tool");
+    assertEquals(toolPart.state, "output-available");
+    assertEquals(toolPart.input, { query: "fallback" });
+    assertEquals(toolPart.output, { count: 1 });
+  });
 });
