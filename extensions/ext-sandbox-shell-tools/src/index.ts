@@ -10,7 +10,6 @@ import {
   type SandboxShellToolsProvider,
   SandboxShellToolsProviderName,
 } from "veryfront/extensions/sandbox";
-import { createBashTool } from "bash-tool";
 
 type BashToolFactory = (
   input: CreateSandboxShellToolsInput,
@@ -22,7 +21,30 @@ export function createSandboxShellToolsProvider(
   return async (input) => await createBashToolImpl(input);
 }
 
-const provider = createSandboxShellToolsProvider(createBashTool);
+const provider = createSandboxShellToolsProvider(async (input) => {
+  const { createBashTool } = await importBashTool();
+  return await createBashTool(input);
+});
+
+async function importBashTool(): Promise<{ createBashTool: BashToolFactory }> {
+  try {
+    return await import("bash-tool") as { createBashTool: BashToolFactory };
+  } catch (error) {
+    if (!isMissingPackageError(error)) throw error;
+    throw new Error(
+      'Sandbox shell tools require the optional package "bash-tool". ' +
+        "Install bash-tool@1.3.16 or pass createBashTool explicitly.",
+    );
+  }
+}
+
+function isMissingPackageError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Cannot find package") ||
+    message.includes("Cannot find module") ||
+    message.includes("ERR_MODULE_NOT_FOUND") ||
+    message.includes("Module not found");
+}
 
 const extSandboxShellTools: ExtensionFactory = () => ({
   name: "ext-sandbox-shell-tools",

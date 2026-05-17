@@ -371,13 +371,32 @@ async function ensureDefaultAuthProvider(): Promise<void> {
 
 async function ensureDefaultNodeTelemetryProvider(): Promise<void> {
   if (tryResolve<NodeTelemetryProvider>(NodeTelemetryProviderName)) return;
-  const { OpenTelemetryNodeTelemetryProvider } = await import(
-    "../../../extensions/ext-observability-opentelemetry/src/index.ts"
-  );
+  const OpenTelemetryNodeTelemetryProvider = await importOpenTelemetryNodeTelemetryProvider();
+  if (!OpenTelemetryNodeTelemetryProvider) return;
   register<NodeTelemetryProvider>(
     NodeTelemetryProviderName,
     new OpenTelemetryNodeTelemetryProvider(),
   );
+}
+
+async function importOpenTelemetryNodeTelemetryProvider() {
+  try {
+    const { OpenTelemetryNodeTelemetryProvider } = await import(
+      "../../../extensions/ext-observability-opentelemetry/src/index.ts"
+    );
+    return OpenTelemetryNodeTelemetryProvider;
+  } catch (error) {
+    if (!isMissingOptionalPackageError(error)) throw error;
+    return null;
+  }
+}
+
+function isMissingOptionalPackageError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Cannot find package") ||
+    message.includes("Cannot find module") ||
+    message.includes("ERR_MODULE_NOT_FOUND") ||
+    message.includes("Module not found");
 }
 
 function resolveEnvironment(
