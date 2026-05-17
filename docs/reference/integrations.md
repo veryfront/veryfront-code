@@ -17,10 +17,17 @@ import { getConnector, getConnectorNames, getIcon, listConnectors } from "veryfr
 ## Examples
 
 ```ts
-import { getIcon, listConnectors } from "veryfront/integrations";
+import {
+  getConnector,
+  getIcon,
+  getRemoteIntegrationToolDefinitions,
+  listConnectors,
+} from "veryfront/integrations";
 
 const connectors = listConnectors();
+const slack = getConnector("slack");
 const slackIcon = getIcon("slack"); // raw SVG string
+const runtimeTools = await getRemoteIntegrationToolDefinitions();
 ```
 
 ## Exports

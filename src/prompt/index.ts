@@ -12,6 +12,11 @@
  *   description: "Summarize text in a chosen style",
  *   content: "Summarize the following text in {style} style:\n\n{text}",
  * });
+ *
+ * const content = await summarize.getContent({
+ *   style: "technical",
+ *   text: "The runtime loads tools before an agent step starts.",
+ * });
  * ```
  */
 

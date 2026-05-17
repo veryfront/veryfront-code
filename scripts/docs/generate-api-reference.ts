@@ -170,7 +170,7 @@ const EMPTY_BARREL_JSDOC: BarrelJSDoc = {
 };
 
 // ---------------------------------------------------------------------------
-// Curated import snippets — show the most representative imports per module
+// Curated import snippets: show the most representative imports per module
 // ---------------------------------------------------------------------------
 
 const IMPORT_PRIORITY: Record<string, string[]> = {
@@ -187,7 +187,7 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
   "veryfront/agent": [
     "agent", "AgentRuntime", "registerAgent", "getAgentsAsTools", "createMemory",
   ],
-  "veryfront/tool": ["tool", "dynamicTool", "toolRegistry"],
+  "veryfront/tool": ["tool", "dynamicTool", "loadRemoteToolsFromSource", "toolRegistry"],
   "veryfront/workflow": [
     "workflow", "step", "parallel", "branch", "waitForApproval", "createWorkflowClient",
   ],
@@ -202,7 +202,7 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
     "registerModelProvider", "resolveModel", "hasModelProvider", "getRegisteredModelProviders",
   ],
   "veryfront/fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
-  // CLI is an executable entry point, not an importable module — skip import snippet
+  // CLI is an executable entry point, not an importable module. Skip import snippet.
   "veryfront/cli": [],
 };
 
@@ -1225,7 +1225,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
   AgentConfig: {
     id: "Unique identifier (auto-generated if omitted)",
     model: "Provider and model (e.g. `\"openai/gpt-4o\"`)",
-    system: "System prompt — string, function, or async function",
+    system: "System prompt: string, function, or async function",
     tools: "Tools available to the agent",
     maxSteps: "Max tool-call iterations per request",
     streaming: "Enable streaming responses",
@@ -1338,12 +1338,12 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     execute: "Step handler function",
     agent: "Agent to run (by ID or instance)",
     tool: "Tool to execute (by ID or instance)",
-    input: "Step input — static value or function of workflow context",
+    input: "Step input: static value or function of workflow context",
     checkpoint: "Persist state after this step",
     retry: "Retry configuration for this step",
     retries: "Retry attempts on failure",
     timeout: "Step timeout (ms)",
-    skip: "Predicate — skip this step if returns true",
+    skip: "Predicate: skip this step if returns true",
   },
   BranchOptions: {
     condition: "Branch predicate function",
@@ -1352,7 +1352,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     checkpoint: "Persist state after this node",
     retry: "Retry configuration",
     timeout: "Node timeout (ms or duration string)",
-    skip: "Predicate — skip if returns true",
+    skip: "Predicate: skip if returns true",
   },
   ParallelOptions: {
     steps: "Steps to run concurrently",
@@ -1361,7 +1361,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     checkpoint: "Persist state after this node",
     retry: "Retry configuration",
     timeout: "Node timeout (ms or duration string)",
-    skip: "Predicate — skip if returns true",
+    skip: "Predicate: skip if returns true",
   },
   CorsOptions: {
     origin: "Allowed origins (string, regex, array, or function)",
@@ -1528,7 +1528,7 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           lines.push(`### \`${typeName.charAt(0).toLowerCase() + typeName.slice(1)}.${method.name}(${paramNames})\``);
           lines.push("");
 
-          // Method description — upstream JSDoc first, then curated fallback
+          // Method description: upstream JSDoc first, then curated fallback
           const methodDesc = method.jsDoc?.doc?.split("\n")[0] ?? methodMeta[method.name]?.desc ?? "";
           if (methodDesc) {
             lines.push(methodDesc);
@@ -1694,7 +1694,7 @@ function generateMD(
     lines.push("");
   }
 
-  // Import snippet — use curated priority list
+  // Import snippet: use curated priority list
   const priorityNames = IMPORT_PRIORITY[entry.importPath];
   const allExportNames = new Set([
     ...exports.functions.map((e) => e.name),
@@ -1794,7 +1794,7 @@ function generateMD(
     lines.push("");
     for (const r of related) {
       const displayName = r.path === "root" ? "veryfront" : `veryfront/${r.path}`;
-      lines.push(`- [\`${displayName}\`](./${r.path}.md) — ${r.reason}`);
+      lines.push(`- [\`${displayName}\`](./${r.path}.md): ${r.reason}`);
     }
     lines.push("");
   }

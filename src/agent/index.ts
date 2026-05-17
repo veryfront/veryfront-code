@@ -16,14 +16,12 @@
  * ```ts
  * import { agent } from "veryfront/agent";
  * import { tool } from "veryfront/tool";
- * import { defineSchema, lazySchema } from "veryfront/schemas";
- *
- * const getSearchInput = defineSchema((v) => v.object({ query: v.string() }));
+ * import { z } from "zod";
  *
  * const searchTool = tool({
  *   id: "search",
  *   description: "Search the knowledge base",
- *   inputSchema: lazySchema(getSearchInput),
+ *   inputSchema: z.object({ query: z.string() }),
  *   execute: async ({ query }) => ({ results: [] }),
  * });
  *
@@ -31,6 +29,29 @@
  *   system: "You are a helpful assistant.",
  *   tools: { search: searchTool },
  *   memory: { type: "conversation", maxMessages: 50 },
+ * });
+ * ```
+ *
+ * @example Agent with materialized runtime tools
+ * ```ts
+ * import { agent } from "veryfront/agent";
+ * import { createRemoteMCPToolSource, loadRemoteToolsFromSource } from "veryfront/tool";
+ *
+ * const docsTools = createRemoteMCPToolSource({
+ *   id: "docs-mcp",
+ *   endpoint: "https://docs.example.com/mcp",
+ *   headers: { Authorization: "Bearer <TOKEN>" },
+ * });
+ *
+ * const runtimeTools = await loadRemoteToolsFromSource(docsTools, {
+ *   context: { projectId: "proj_123" },
+ *   toolNameAliases: { search_docs: "docs_search" },
+ * });
+ *
+ * const assistant = agent({
+ *   system: "Use the docs tools when the answer needs project documentation.",
+ *   tools: runtimeTools,
+ *   maxSteps: 5,
  * });
  * ```
  *

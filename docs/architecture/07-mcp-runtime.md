@@ -10,12 +10,12 @@ SSE, HTTP transport, and task storage through the Model Context Protocol.
 
 Primary source areas:
 
-- `src/mcp/server.ts`
-- `src/mcp/http-transport.ts`
-- `src/mcp/sse.ts`
-- `src/mcp/session.ts`
-- `src/mcp/registry.ts`
-- `src/mcp/task-store.ts`
+- [`src/mcp/server.ts`](../../src/mcp/server.ts)
+- [`src/mcp/http-transport.ts`](../../src/mcp/http-transport.ts)
+- [`src/mcp/sse.ts`](../../src/mcp/sse.ts)
+- [`src/mcp/session.ts`](../../src/mcp/session.ts)
+- [`src/mcp/registry.ts`](../../src/mcp/registry.ts)
+- [`src/mcp/task-store.ts`](../../src/mcp/task-store.ts)
 
 ## Runtime flow
 

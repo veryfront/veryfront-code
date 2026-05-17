@@ -12,11 +12,11 @@ state, and cloud runtime services.
 
 Primary source areas:
 
-- `src/agent/hosted/`
-- `src/agent/conversation/`
-- `src/agent/child-run/`
-- `src/agent/project/`
-- `src/agent/artifacts/`
+- [`src/agent/hosted/`](../../src/agent/hosted/)
+- [`src/agent/conversation/`](../../src/agent/conversation/)
+- [`src/agent/child-run/`](../../src/agent/child-run/)
+- [`src/agent/project/`](../../src/agent/project/)
+- [`src/agent/artifacts/`](../../src/agent/artifacts/)
 
 ## Runtime flow
 

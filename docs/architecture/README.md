@@ -10,6 +10,20 @@ owns one boundary so docs stay easier to update when code changes.
   implementation details.
 - Runtime behavior, transport protocols, build output, and hosted control-plane
   behavior stay on separate pages.
+- Primary source areas use markdown links so GitHub readers can open the
+  owning code directly.
+- Add Mermaid diagrams only when they clarify ownership, branching, or sequence
+  better than prose or tables.
+
+## Page standard
+
+Each focused page gives the reader enough context to make a safe change:
+
+- Responsibility: what the boundary owns.
+- Primary source areas: the code entrypoints to inspect first.
+- Runtime or build flow: the execution sequence or lifecycle.
+- Boundaries: what this page does not own.
+- Change checks: the focused verification expected after a change.
 
 ## Architecture outline
 
@@ -34,6 +48,12 @@ owns one boundary so docs stay easier to update when code changes.
 | [17-observability.md](./17-observability.md)                       | Metrics, traces, logs, profiling, and errors |
 | [18-support-matrix.md](./18-support-matrix.md)                     | Runtime and capability support matrix        |
 | [19-runtime-boundaries.md](./19-runtime-boundaries.md)             | High-risk boundary change checklist          |
+| [20-jobs-and-tasks.md](./20-jobs-and-tasks.md)                     | Jobs client and task execution               |
+| [21-oauth-runtime.md](./21-oauth-runtime.md)                       | OAuth provider, state, and token flow        |
+| [22-integration-runtime.md](./22-integration-runtime.md)           | Integration catalog and remote tools         |
+| [23-sandbox-runtime.md](./23-sandbox-runtime.md)                   | Sandbox session and command execution        |
+| [24-ai-primitives.md](./24-ai-primitives.md)                       | Tool, prompt, and resource definitions       |
+| [25-skill-runtime.md](./25-skill-runtime.md)                       | Skill parsing, restrictions, and execution   |
 
 ## Update policy
 

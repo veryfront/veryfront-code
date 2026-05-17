@@ -42,7 +42,7 @@ of the contract. Runtime context supports text, JSON, and resource entries.
 
 Signed control-plane invocation uses `RuntimeAgentRunInvocationSchema` around
 the runtime request when a trusted control plane owns durable run identity,
-project context, and validated claims. Public AG-UI runtime routes should use
+project context, and validated claims. Public AG-UI runtime routes use
 `AgUiRuntimeRequestSchema`.
 
 ## Package API

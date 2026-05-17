@@ -1,10 +1,10 @@
-# Support Matrix
+# Support matrix
 
 This page keeps fast-moving support details short and explicit.
 
 Use it for supported behavior.
 
-## Router Modes
+## Router modes
 
 Veryfront supports both router modes.
 
@@ -15,7 +15,7 @@ Veryfront supports both router modes.
 | Router preference | `router: "app"` or `router: "pages"` in `veryfront.config.ts`                                       | The preferred router can be configured explicitly.                         |
 | Fallback behavior | If the preferred router directory is missing, Veryfront falls back to the other router when present | This is a runtime convenience, not a reason to mix router styles casually. |
 
-## Runtime Targets
+## Runtime targets
 
 These are the runtime capability profiles modeled by the framework.
 
@@ -27,7 +27,7 @@ These are the runtime capability profiles modeled by the framework.
 | Cloudflare Workers | No         | No         | Limited                       | Streaming is recommended; the runtime uses conservative step, CPU, and memory limits. |
 | Unknown runtime    | No         | No         | Limited                       | Falls back to a constrained compatibility profile.                                    |
 
-## Capability Boundaries
+## Capability boundaries
 
 This matrix separates open-core framework support from capabilities that depend
 on a backing API or cloud bootstrap.
@@ -49,7 +49,7 @@ on a backing API or cloud bootstrap.
 | Remote integration tools                                              | Requires backing API/service layer                | Tool definitions and execution are fetched per request from the configured API layer. |
 | Control-plane agent routing                                           | Requires Veryfront Cloud bootstrap                | EdDSA-signed request validation for hosted agent orchestration.                       |
 
-## Extension Contract Matrix
+## Extension contract matrix
 
 These contracts are backed by first-party extension packages. A contract is
 required only when a feature resolves it. Built-in packages are auto-enabled by
@@ -76,16 +76,16 @@ core bootstrap; optional packages must be configured by the project.
 
 Veryfront tracks third-party dependency ownership by boundary.
 
-| Boundary  | Source                                       | SBOM output                                 | Notes                                                                                      |
-| --------- | -------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| Core      | Root `deno.json` and `src/`                  | `core.json`                                 | The root framework boundary. `src/` is not renamed to `core`; `core` is a reporting label. |
-| CLI       | `cli/deno.json`                              | `cli.json`                                  | Command-line runtime boundary.                                                             |
-| React     | Root React import aliases and esm.sh deps    | `react.json`                                | Tracks React and React DOM separately from core until React has a dedicated package split. |
-| Extension | `extensions/ext-*/deno.json`                 | One file per extension package              | Each extension owns its npm and supported esm.sh dependencies.                             |
-| Aggregate | `deno.lock` plus boundary-specific manifests | `all.json`, `dependencies-by-manifest.json` | Use this view for full supply-chain inventory.                                             |
+| Boundary  | Source                                                          | SBOM output                                 | Notes                                                                                                    |
+| --------- | --------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Core      | Root [`deno.json`](../../deno.json) and [`src/`](../../src/)    | `core.json`                                 | The root framework boundary. [`src/`](../../src/) is not renamed to `core`; `core` is a reporting label. |
+| CLI       | [`cli/deno.json`](../../cli/deno.json)                          | `cli.json`                                  | Command-line runtime boundary.                                                                           |
+| React     | Root React import aliases and esm.sh deps                       | `react.json`                                | Tracks React and React DOM separately from core until React has a dedicated package split.               |
+| Extension | `extensions/ext-*/deno.json`                                    | One file per extension package              | Each extension owns its npm and supported esm.sh dependencies.                                           |
+| Aggregate | [`deno.lock`](../../deno.lock) plus boundary-specific manifests | `all.json`, `dependencies-by-manifest.json` | Use this view for full supply-chain inventory.                                                           |
 
-## Documentation Rule
+## Documentation rule
 
 When a feature depends on a backing API, managed service, or cloud bootstrap,
-docs should say so directly instead of implying the open-core runtime provides
+docs must say so directly instead of implying the open-core runtime provides
 the full managed behavior by itself.

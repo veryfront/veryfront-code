@@ -20,14 +20,21 @@ import { resource, resourceRegistry } from "veryfront/resource";
 import { resource } from "veryfront/resource";
 import { z } from "zod";
 
+const docsBySection: Record<string, string> = {
+  agents: "Agents accept messages, tools, context, and runtime options.",
+  tools: "Tools expose schema-backed callable capabilities.",
+};
+
 const docs = resource({
   pattern: "docs/:section",
   description: "API documentation",
   paramsSchema: z.object({ section: z.string() }),
-  load: async ({ section }) => {
-    return { content: await readDocs(section) };
+  load: ({ section }) => {
+    return { content: docsBySection[section] ?? "Section not found." };
   },
 });
+
+const result = await docs.load({ section: "agents" });
 ```
 
 ## API

@@ -11,11 +11,11 @@ middleware and handler path, and returns a normalized `Response`.
 
 Primary source areas:
 
-- `src/server/handlers/`
-- `src/server/handlers/request/`
-- `src/server/handlers/dev/`
-- `src/routing/`
-- `src/middleware/`
+- [`src/server/handlers/`](../../src/server/handlers/)
+- [`src/server/handlers/request/`](../../src/server/handlers/request/)
+- [`src/server/handlers/dev/`](../../src/server/handlers/dev/)
+- [`src/routing/`](../../src/routing/)
+- [`src/middleware/`](../../src/middleware/)
 
 ## Request classes
 
@@ -32,6 +32,34 @@ Primary source areas:
 | Dev-only endpoints    | Dev server and dashboard handlers           |
 
 ## Flow
+
+```mermaid
+flowchart TD
+  request[Incoming Request] --> context[Parse host, path, proxy, and domain context]
+  context --> classify{Classify path}
+  classify --> assets[Static asset handler]
+  classify --> modules[Runtime module handler]
+  classify --> api[API route handler]
+  classify --> page[Rendering service]
+  classify --> mcp[MCP runtime handler]
+  classify --> agui[AG-UI stream or run-control handler]
+  classify --> channel[Signed control-plane handler]
+  classify --> health[Monitoring or health handler]
+  classify --> dev[Dev-only handler]
+
+  api --> middleware[Configured middleware pipeline]
+  page --> middleware
+  middleware --> appResponse[App Response]
+
+  assets --> normalize[Normalize response headers and errors]
+  modules --> normalize
+  appResponse --> normalize
+  mcp --> normalize
+  agui --> normalize
+  channel --> normalize
+  health --> normalize
+  dev --> normalize
+```
 
 1. The runtime server receives a `Request`.
 2. Request helpers parse host, path, proxy, and domain context.

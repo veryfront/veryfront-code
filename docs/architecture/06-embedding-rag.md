@@ -10,10 +10,10 @@ stores vectors, and exposes retrieval helpers for agent and application code.
 
 Primary source areas:
 
-- `src/embedding/`
-- `src/embedding/react/`
-- `src/embedding/veryfront-cloud/`
-- `src/provider/local/local-embedding-engine.ts`
+- [`src/embedding/`](../../src/embedding/)
+- [`src/embedding/react/`](../../src/embedding/react/)
+- [`src/embedding/veryfront-cloud/`](../../src/embedding/veryfront-cloud/)
+- [`src/provider/local/local-embedding-engine.ts`](../../src/provider/local/local-embedding-engine.ts)
 
 ## Runtime flow
 
