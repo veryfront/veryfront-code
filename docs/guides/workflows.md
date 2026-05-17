@@ -41,10 +41,15 @@ Use `createWorkflowClient()` to register and start a workflow from server code:
 
 ```ts
 // app/api/start-content-workflow/route.ts
-import { agentRegistry } from "veryfront/agent";
+import { getAgent, getAllAgentIds } from "veryfront/agent";
 import { toolRegistry } from "veryfront/tool";
 import { createWorkflowClient } from "veryfront/workflow";
 import contentPipeline from "../../../workflows/content-pipeline.ts";
+
+const agentRegistry = {
+  get: getAgent,
+  list: getAllAgentIds,
+};
 
 const workflows = createWorkflowClient({
   executor: {
@@ -111,10 +116,15 @@ Inside an agent tool, start the workflow from the tool's `execute` function:
 ```ts
 // tools/start-content-workflow.ts
 import { z } from "zod";
-import { agentRegistry } from "veryfront/agent";
+import { getAgent, getAllAgentIds } from "veryfront/agent";
 import { tool, toolRegistry } from "veryfront/tool";
 import { createWorkflowClient } from "veryfront/workflow";
 import contentPipeline from "../workflows/content-pipeline.ts";
+
+const agentRegistry = {
+  get: getAgent,
+  list: getAllAgentIds,
+};
 
 const workflows = createWorkflowClient({
   executor: {
