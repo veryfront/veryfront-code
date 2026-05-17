@@ -12,6 +12,7 @@
     ]
   },
   "imports": {
+    "@kreuzberg/node": "npm:@kreuzberg/node@4.4.2",
     "@kreuzberg/wasm": "npm:@kreuzberg/wasm@4.5.2",
     "#kreuzberg-wasm-glue": "npm:@kreuzberg/wasm@4.5.2/dist/pkg/kreuzberg_wasm.js"
   },

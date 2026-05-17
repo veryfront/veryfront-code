@@ -17,8 +17,13 @@ import {
 	BROWSER_SAFE_DNT_TIMER_MODULES,
 	BROWSER_SAFE_EXPORTS,
 } from "./browser-safe-exports.mjs";
+import {
+	npmDependencyRange,
+	readDenoConfigSet,
+} from "./npm-dependency-sources.ts";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 import { normalizeEsmShReactNpmShims } from "./npm-react-shims.ts";
+import { OPAQUE_DEPENDENCY_VERSIONS } from "../../src/platform/compat/opaque-dependency-versions.ts";
 
 const denoJson = JSON.parse(await Deno.readTextFile("./deno.json"));
 const version = denoJson.version;
@@ -29,6 +34,7 @@ const license = denoJson.license;
 if (!license) {
 	throw new Error("deno.json must have a 'license' field");
 }
+const denoConfigSet = await readDenoConfigSet(".", denoJson);
 
 console.log(`\n📦 Building Veryfront v${version} for npm using dnt...\n`);
 
@@ -133,15 +139,16 @@ await build({
 		},
 		// dnt can't detect dynamic imports, so we add them explicitly
 		dependencies: {
-			"@types/react": "^19.0.0",
-			"@types/react-dom": "^19.0.0",
-			"ai": "^6.0.0",
+			"@types/react": npmDependencyRange(denoConfigSet, "@types/react"),
+			"@types/react-dom": npmDependencyRange(denoConfigSet, "@types/react-dom"),
+			// Root deno.json intentionally rejects core npm imports; ws is a
+			// Node-only dynamic import used by the npm server/HMR path.
 			"ws": "^8.18.0",
-			"@kreuzberg/node": "^4.4.2",
+			"@kreuzberg/node": npmDependencyRange(denoConfigSet, "@kreuzberg/node"),
 		},
 		// Native binary deps that should not block install if they fail
 		optionalDependencies: {
-			"@huggingface/transformers": "^3.4.2",
+			"@huggingface/transformers": `^${OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]}`,
 		},
 		keywords: [
 			"react",
@@ -160,11 +167,6 @@ await build({
 		},
 		peerDependenciesMeta: {
 			"better-sqlite3": { optional: true },
-		},
-		devDependencies: {
-			"@types/ws": "^8.5.0",
-			"@types/better-sqlite3": "^7.6.0",
-			"@types/mime-types": "^2.1.0",
 		},
 		// postinstall added in postBuild after files are copied
 	},

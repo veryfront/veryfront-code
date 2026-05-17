@@ -7,6 +7,7 @@ type PackageJson = {
 	optionalDependencies?: Record<string, string>;
 	peerDependencies?: Record<string, string>;
 	peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+	devDependencies?: Record<string, string>;
 	overrides?: Record<string, string>;
 };
 
@@ -30,6 +31,16 @@ const OPTIONAL_FEATURE_PEERS = [
 	"just-bash",
 ] as const;
 
+const STALE_DIRECT_DEPENDENCIES = [
+	"ai",
+] as const;
+
+const STALE_DEV_DEPENDENCIES = [
+	"@types/better-sqlite3",
+	"@types/mime-types",
+	"@types/ws",
+] as const;
+
 const REQUIRED_NPM_OVERRIDES = {
 	protobufjs: "8.2.0",
 } as const;
@@ -51,6 +62,15 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 
 	for (const name of OPTIONAL_FEATURE_PEERS) {
 		movePackageToOptionalPeer(pkg, name);
+	}
+
+	for (const name of STALE_DIRECT_DEPENDENCIES) {
+		delete pkg.dependencies?.[name];
+		delete pkg.optionalDependencies?.[name];
+	}
+
+	for (const name of STALE_DEV_DEPENDENCIES) {
+		delete pkg.devDependencies?.[name];
 	}
 
 	deleteIfEmpty(pkg, "dependencies");
