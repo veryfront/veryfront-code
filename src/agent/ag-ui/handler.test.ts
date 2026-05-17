@@ -309,6 +309,32 @@ describe("agent/ag-ui-handler", () => {
     });
   });
 
+  it("returns sanitized server errors when AG-UI agent streaming fails", async () => {
+    const testAgent = createTestAgent();
+    testAgent.agent.stream = async () => {
+      throw new Error("provider secret detail");
+    };
+
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 500);
+    assertEquals(await response.json(), { error: "Internal server error" });
+  });
+
   it("flushes the final runtime data event when the upstream stream ends without a trailing blank line", async () => {
     const agent: Agent = {
       id: "assistant-1",

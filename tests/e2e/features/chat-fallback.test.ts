@@ -33,7 +33,7 @@ describe("Feature: Chat Fallback", {
     const projectDir = await createProject("ai-fallback", pages.basic, {
       files: {
         "pages/api/chat.ts": `
-import { agent, createChatHandler } from "veryfront/agent";
+import { agent, createAgUiHandler } from "veryfront/agent";
 
 const assistant = agent({
   id: "test-assistant",
@@ -41,7 +41,7 @@ const assistant = agent({
   system: "You are a helpful test assistant.",
 });
 
-export const POST = createChatHandler("test-assistant");
+export const POST = createAgUiHandler("test-assistant");
 `,
       },
     });
@@ -87,7 +87,7 @@ export const POST = createChatHandler("test-assistant");
     const projectDir = await createProject("ai-fallback-prompt", pages.basic, {
       files: {
         "pages/api/chat.ts": `
-import { agent, createChatHandler } from "veryfront/agent";
+import { agent, createAgUiHandler } from "veryfront/agent";
 
 agent({
   id: "custom-bot",
@@ -95,7 +95,7 @@ agent({
   system: "You are a pirate. Always say arrr.",
 });
 
-export const POST = createChatHandler("custom-bot");
+export const POST = createAgUiHandler("custom-bot");
 `,
       },
     });

@@ -148,7 +148,6 @@ import { useChat } from "veryfront/chat";
 export default function ChatPage() {
   const { messages, input, onChange, onSubmit, isLoading } = useChat({
     api: "/api/chat",
-    transport: "ag-ui",
   });
 
   return (

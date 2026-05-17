@@ -17,7 +17,7 @@ The examples below assume your app has an AG-UI chat endpoint at `/api/chat`. Us
 import { useChat } from "veryfront/chat";
 
 export default function ChatState() {
-  const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
+  const chat = useChat({ api: "/api/chat" });
 
   return (
     <form onSubmit={chat.handleSubmit}>
@@ -28,7 +28,7 @@ export default function ChatState() {
 }
 ```
 
-`useChat` exposes messages, input state, submit handlers, stop/reload handlers, model state, branch helpers, and inference status. Set `transport: "ag-ui"` for Veryfront chat routes created with `createAgUiHandler`.
+`useChat` exposes messages, input state, submit handlers, stop/reload handlers, model state, branch helpers, and inference status. It uses AG-UI for Veryfront chat routes created with `createAgUiHandler`.
 
 ## useAgent
 

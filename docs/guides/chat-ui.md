@@ -36,7 +36,7 @@ Create a client page:
 import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage() {
-  const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
+  const chat = useChat({ api: "/api/chat" });
   return <Chat {...chat} placeholder="Ask me anything..." />;
 }
 ```
@@ -50,7 +50,7 @@ import { createAgUiHandler } from "veryfront/agent";
 export const POST = createAgUiHandler("assistant");
 ```
 
-`createAgUiHandler` validates the request and streams AG-UI SSE. `useChat({ transport: "ag-ui" })` decodes that stream into Veryfront chat messages. The `Chat` component renders the input, message list, loading state, and scroll behavior.
+`createAgUiHandler` validates the request and streams AG-UI SSE. `useChat({ api: "/api/chat" })` decodes that stream into Veryfront chat messages. The `Chat` component renders the input, message list, loading state, and scroll behavior.
 
 Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and send a message. To test the route without the UI:
 
@@ -82,7 +82,7 @@ export const POST = createAgUiHandler("rag", {
 });
 ```
 
-Pair this route with the same `useChat({ api: "/api/chat", transport: "ag-ui" })` client setup. Veryfront wraps untrusted system-role messages returned from `beforeStream` before they reach the agent, so retrieved documents are treated as reference data rather than instructions.
+Pair this route with the same `useChat({ api: "/api/chat" })` client setup. Veryfront wraps untrusted system-role messages returned from `beforeStream` before they reach the agent, so retrieved documents are treated as reference data rather than instructions.
 
 ## Common preset props
 

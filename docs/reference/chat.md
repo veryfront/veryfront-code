@@ -415,11 +415,11 @@ Input area state. Provided by Composer components.
 
 ### `useChat`
 
-Main chat hook. Use `transport: "ag-ui"` with routes created by
+Main chat hook. It uses AG-UI by default and pairs with routes created by
 `createAgUiHandler()`.
 
 ```tsx
-const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
+const chat = useChat({ api: "/api/chat" });
 ```
 
 Returns:

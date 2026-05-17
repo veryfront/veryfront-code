@@ -2,8 +2,7 @@
  * useChat Hook - Layer 1 (Headless)
  *
  * Complete chat state management with zero UI.
- * Consumes the Veryfront chat streaming protocol by default and can consume
- * AG-UI SSE when `transport: "ag-ui"` is set.
+ * Consumes AG-UI SSE by default.
  *
  * Supports three inference modes:
  * - cloud: API key present, normal server-side inference
@@ -14,10 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
-import {
-  handleAgUiStreamingResponse,
-  handleStreamingResponse,
-} from "#veryfront/agent/react/use-chat/streaming/index.ts";
+import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type {
   BranchInfo,
   BrowserInferenceStatus,
@@ -29,6 +25,8 @@ import type {
   UseChatResult,
 } from "#veryfront/agent/react/use-chat/types.ts";
 import { generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
+
+type UseChatStreamHandler = typeof handleAgUiStreamingResponse;
 
 /** A snapshot of messages from a branch point onward */
 interface Branch {
@@ -63,6 +61,13 @@ export function findBranchUserMessageIndex(
   return messages.findIndex((m) =>
     m.role === "user" && branchKeyByMessageId.get(m.id) === branchKey
   );
+}
+
+export function resolveUseChatStreamHandler(
+  transport: UseChatOptions["transport"],
+): UseChatStreamHandler {
+  void transport;
+  return handleAgUiStreamingResponse;
 }
 
 /**
@@ -285,9 +290,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
         let serverModel: string | undefined = model;
         setActiveModel(undefined);
 
-        const handleResponse = options.transport === "ag-ui"
-          ? handleAgUiStreamingResponse
-          : handleStreamingResponse;
+        const handleResponse = resolveUseChatStreamHandler(options.transport);
 
         await handleResponse(response.body, {
           onMessage: (assistantMessage) => {

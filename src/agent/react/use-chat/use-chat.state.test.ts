@@ -1,8 +1,14 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type { ChatMessage } from "./types.ts";
-import { findBranchUserMessageIndex, isLatestRequest, resolveBranchKey } from "./use-chat.ts";
+import {
+  findBranchUserMessageIndex,
+  isLatestRequest,
+  resolveBranchKey,
+  resolveUseChatStreamHandler,
+} from "./use-chat.ts";
 
 describe("use-chat internal state helpers", () => {
   it("isLatestRequest only accepts matching request ids", () => {
@@ -58,5 +64,10 @@ describe("use-chat internal state helpers", () => {
     assertEquals(findBranchUserMessageIndex(messages, "root-2", branchKeyByMessageId), 3);
     assertEquals(findBranchUserMessageIndex(messages, "root-1", branchKeyByMessageId), 1);
     assertEquals(findBranchUserMessageIndex(messages, "missing", branchKeyByMessageId), -1);
+  });
+
+  it("defaults to AG-UI streaming when no transport is specified", () => {
+    assertEquals(resolveUseChatStreamHandler(undefined), handleAgUiStreamingResponse);
+    assertEquals(resolveUseChatStreamHandler("ag-ui"), handleAgUiStreamingResponse);
   });
 });
