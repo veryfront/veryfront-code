@@ -13,6 +13,7 @@ import {
 } from "../../_helpers/playwright.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 import { startProductionServer } from "../../../src/server/production-server.ts";
+import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 
 const ROOT_LAYOUT_SOURCE =
   `export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -30,6 +31,56 @@ const PROXY_MODE_CONFIG_SOURCE = `export default {
               }
             }
           };`;
+
+const DISPATCH_PUBLIC_KEY_ENV = "CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY";
+const encoder = new TextEncoder();
+
+let trustedSigningKeyPair: CryptoKeyPair | undefined;
+let trustedPublicKeyPem: string | undefined;
+
+function encodePem(label: string, der: ArrayBuffer): string {
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(der)));
+  const lines = base64.match(/.{1,64}/g) ?? [base64];
+  return `-----BEGIN ${label}-----\n${lines.join("\n")}\n-----END ${label}-----`;
+}
+
+async function ensureTrustedProxyKeyMaterial(): Promise<void> {
+  if (trustedSigningKeyPair && trustedPublicKeyPem) return;
+
+  trustedSigningKeyPair = (await crypto.subtle.generateKey(
+    "Ed25519",
+    true,
+    ["sign", "verify"],
+  )) as CryptoKeyPair;
+  const der = await crypto.subtle.exportKey("spki", trustedSigningKeyPair.publicKey);
+  trustedPublicKeyPem = encodePem("PUBLIC KEY", der);
+}
+
+async function mintTrustedDispatchJws(projectId: string): Promise<string> {
+  await ensureTrustedProxyKeyMaterial();
+
+  const now = Math.floor(Date.now() / 1000);
+  const header = { alg: "EdDSA", typ: "JWT" };
+  const claims = {
+    iss: "veryfront-api",
+    aud: projectId,
+    sub: "rsc-proxy-hydration-test",
+    project_id: projectId,
+    platform: "browser",
+    body_sha256: "n/a",
+    iat: now,
+    exp: now + 60,
+  };
+  const encodedHeader = base64urlEncode(JSON.stringify(header));
+  const encodedPayload = base64urlEncode(JSON.stringify(claims));
+  const signingInput = encoder.encode(`${encodedHeader}.${encodedPayload}`);
+  const signature = await crypto.subtle.sign(
+    "Ed25519",
+    trustedSigningKeyPair!.privateKey,
+    signingInput,
+  );
+  return `${encodedHeader}.${encodedPayload}.${base64urlEncodeBytes(new Uint8Array(signature))}`;
+}
 
 interface TestProjectContext {
   projectDir: string;
@@ -171,30 +222,49 @@ async function withProxyBrowserPage(
 ): Promise<void> {
   const port = await context.allocatePort();
   const controller = new AbortController();
-  const server = await startProductionServer({
-    projectDir: context.projectDir,
-    port,
-    bindAddress: "127.0.0.1",
-    signal: controller.signal,
-    defaultProjectSlug: context.projectId,
-    defaultProjectId: context.projectId,
-  });
-  await server.ready;
-  await registerTailwindExtension();
-  await waitForReady(port);
+  const previousDispatchPublicKey = Deno.env.get(DISPATCH_PUBLIC_KEY_ENV);
+  await ensureTrustedProxyKeyMaterial();
+  Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, trustedPublicKeyPem!);
 
-  const browserContext = await browser.newContext({ extraHTTPHeaders: headers });
-  const page = await browserContext.newPage();
-  const diagnostics = captureBrowserDiagnostics(page);
+  let server: Awaited<ReturnType<typeof startProductionServer>> | undefined;
 
   try {
-    const response = await page.goto(`http://127.0.0.1:${port}/`);
-    assertEquals(response?.status(), 200);
-    await run(page, diagnostics);
+    server = await startProductionServer({
+      projectDir: context.projectDir,
+      port,
+      bindAddress: "127.0.0.1",
+      signal: controller.signal,
+      defaultProjectSlug: context.projectId,
+      defaultProjectId: context.projectId,
+    });
+    await server.ready;
+    await registerTailwindExtension();
+    await waitForReady(port);
+
+    const browserContext = await browser.newContext({
+      extraHTTPHeaders: {
+        ...headers,
+        "x-veryfront-dispatch-jws": await mintTrustedDispatchJws(context.projectId),
+      },
+    });
+
+    try {
+      const page = await browserContext.newPage();
+      const diagnostics = captureBrowserDiagnostics(page);
+      const response = await page.goto(`http://127.0.0.1:${port}/`);
+      assertEquals(response?.status(), 200);
+      await run(page, diagnostics);
+    } finally {
+      await browserContext.close();
+    }
   } finally {
-    await browserContext.close();
     controller.abort();
-    await server.stop();
+    await server?.stop();
+    if (previousDispatchPublicKey === undefined) {
+      Deno.env.delete(DISPATCH_PUBLIC_KEY_ENV);
+    } else {
+      Deno.env.set(DISPATCH_PUBLIC_KEY_ENV, previousDispatchPublicKey);
+    }
   }
 }
 
