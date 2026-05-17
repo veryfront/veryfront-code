@@ -6,7 +6,7 @@ import {
   handleHostedChildForkFailure,
   type HostedChildForkPendingToolLifecycle,
 } from "./child-fork-stream-execution.ts";
-import type { ForkPart, ForkRuntimeStep } from "../fork-runtime-stream.ts";
+import type { ForkPart, ForkRuntimeStep } from "../streaming/fork-runtime-stream.ts";
 
 function createPendingToolLifecycle(chunks: unknown[]): HostedChildForkPendingToolLifecycle {
   const pendingToolCallIds = new Set<string>();

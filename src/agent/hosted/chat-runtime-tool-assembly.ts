@@ -16,7 +16,7 @@ import {
   type DefaultResearchArtifactContext,
   fetchLatestConversationUserText,
   updateDefaultResearchArtifacts,
-} from "../default-research-artifact-support.ts";
+} from "../artifacts/default-research-artifact-support.ts";
 import { type AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
 import {
   createHostedProjectRemoteToolSources,

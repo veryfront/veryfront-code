@@ -4,7 +4,7 @@ import {
   type AgentRuntimeMessagePart,
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
-} from "../agent-runtime-message-adapter.ts";
+} from "../runtime/message-adapter.ts";
 import type { Message as AgentMessage, MessagePart } from "../schemas/index.ts";
 
 export type HostedChildForkRuntimeStepSystemResolver = (input: {

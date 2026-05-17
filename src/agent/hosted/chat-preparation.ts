@@ -3,7 +3,7 @@ import type {
   ChatSystemMessage,
   ChatUiMessage,
 } from "#veryfront/chat/types.ts";
-import type { AgentRuntimeMessage } from "../agent-runtime-message-adapter.ts";
+import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type {
   HostedChatRuntimeCreationOptions,

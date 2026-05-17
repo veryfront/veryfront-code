@@ -1,7 +1,7 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
-import { streamDataStreamEvents } from "../data-stream.ts";
+import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import { getAgUiRequestSchema, normalizeAgUiMessages } from "./host-support.ts";
 import { extractRequest } from "./request-shared.ts";
 import { type AgUiResumeValue, buildMergedAgUiTools } from "./tool-shared.ts";

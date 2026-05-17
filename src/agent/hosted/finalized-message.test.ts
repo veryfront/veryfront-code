@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "@std/assert";
-import { createMirroredToolChunkState } from "../mirrored-tool-chunk-state.ts";
+import { createMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
 import {
   buildDetachedFallbackChunks,
   buildDetachedFallbackMessageState,

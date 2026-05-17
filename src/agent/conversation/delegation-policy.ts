@@ -1,4 +1,4 @@
-import { extractLatestUserText } from "../default-research-artifact-support.ts";
+import { extractLatestUserText } from "../artifacts/default-research-artifact-support.ts";
 import { buildRootOwnedChildRunResultHint } from "../child-run/result-summary.ts";
 import { isRecord } from "../../chat/conversation.ts";
 import type { ChatSystemMessage } from "../../chat/types.ts";

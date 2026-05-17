@@ -2,7 +2,7 @@ import {
   type AbortRejectionGuardLogger,
   type AbortRejectionProcessTarget,
   installAbortRejectionGuard,
-} from "../abort-rejection-guard.ts";
+} from "./abort-rejection-guard.ts";
 
 export type AgentServiceTraceContext = {
   traceId?: string;

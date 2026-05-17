@@ -1,7 +1,7 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { bootstrapAgentService, runAgentServiceMain } from "./bootstrap.ts";
-import type { AbortRejectionProcessTarget } from "../abort-rejection-guard.ts";
+import type { AbortRejectionProcessTarget } from "./abort-rejection-guard.ts";
 
 function createProcessTarget(): {
   target: AbortRejectionProcessTarget;

@@ -1,5 +1,5 @@
 import { tool, type ToolExecutionContext } from "#veryfront/tool";
-import { containsExactArtifactPathValue } from "../slash-command-artifact-policy.ts";
+import { containsExactArtifactPathValue } from "../artifacts/slash-command-artifact-policy.ts";
 import {
   buildInputRequestLifecycleDataEvent,
   createInputRequest,
@@ -7,8 +7,8 @@ import {
   getFormInputToolInputSchema,
   getInputRequest,
   type InputRequestOutput,
-} from "../input-request-protocol.ts";
-import { executeDurableHumanInputFlow, type HumanInputResult } from "../human-input.ts";
+} from "../input/request-protocol.ts";
+import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/human-input.ts";
 
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;

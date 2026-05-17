@@ -4,7 +4,7 @@ import type {
   AgUiBrowserRunFinishedMetadata,
   AgUiRuntimeStreamEvent,
 } from "../agent/ag-ui/browser-encoder.ts";
-import { parseDataStreamSseEvents } from "#veryfront/agent/data-stream.ts";
+import { parseDataStreamSseEvents } from "#veryfront/agent/streaming/data-stream.ts";
 import {
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,

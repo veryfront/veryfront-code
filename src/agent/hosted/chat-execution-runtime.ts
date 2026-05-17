@@ -37,7 +37,7 @@ import {
   createHostedMirroredUiStream,
   createMirroredToolChunkState,
   type MirroredToolChunkState,
-} from "../mirrored-tool-chunk-state.ts";
+} from "../streaming/mirrored-tool-chunk-state.ts";
 import {
   finalizeHostedDetached,
   finalizeHostedResponse,

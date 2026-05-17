@@ -12,7 +12,7 @@ import {
   type RuntimeLoadSkillToolInput,
   type RuntimeLoadSkillToolOutput,
 } from "../runtime/load-skill-tool.ts";
-import type { MutableAgentProjectContext } from "../project-context.ts";
+import type { MutableAgentProjectContext } from "../project/context.ts";
 import {
   createRuntimeProjectFilesClient,
   type RuntimeProjectFilesClient,

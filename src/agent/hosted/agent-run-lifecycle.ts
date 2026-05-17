@@ -10,7 +10,7 @@ import {
   type AgentTraceAttributes,
   buildAgentRunTraceAttributes,
   buildFinalizedAgentRunTraceAttributes,
-} from "../agent-trace-attributes.ts";
+} from "./trace-attributes.ts";
 
 export interface HostedAgentRunSpan {
   setAttributes: (attributes: AgentTraceAttributes) => void;

@@ -1,4 +1,4 @@
-import { type ConversationRunProjection, createConversationAgentRun } from "../durable.ts";
+import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
 
 export interface ConversationRootRunDescriptor {
   runId: string;

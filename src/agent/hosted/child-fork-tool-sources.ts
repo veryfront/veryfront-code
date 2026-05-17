@@ -18,7 +18,7 @@ import {
 import {
   createLiveStudioMcpTools,
   type LiveStudioMcpToolsOptions,
-} from "../live-studio-mcp-tools.ts";
+} from "../project/live-studio-mcp-tools.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import {
   type HostedChildProjectSwitchHandler,

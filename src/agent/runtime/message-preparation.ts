@@ -3,7 +3,7 @@ import type { ChatUiMessage } from "../../chat/types.ts";
 import {
   type AgentRuntimeMessage,
   convertProviderMessagesToAgentRuntimeMessages,
-} from "../agent-runtime-message-adapter.ts";
+} from "./message-adapter.ts";
 import {
   resolveRuntimeMessageFileUrls,
   type RuntimeFileUrlResolver,

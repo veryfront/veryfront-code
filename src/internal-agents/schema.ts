@@ -12,7 +12,7 @@ import {
   getAgUiRuntimeRunIdSchema,
   getAgUiRuntimeToolCallSchema,
 } from "#veryfront/agent/runtime/ag-ui-contract.ts";
-import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/data-stream.ts";
+import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/data-stream.ts";
 import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   getRuntimeAgentRunInvocationSchema,

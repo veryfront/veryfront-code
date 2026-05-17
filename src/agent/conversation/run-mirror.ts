@@ -1,4 +1,4 @@
-import { type ConversationRunEventQueueController } from "../durable.ts";
+import { type ConversationRunEventQueueController } from "./durable.ts";
 
 export interface ConversationRunMirrorSnapshot {
   latestEventId: number;

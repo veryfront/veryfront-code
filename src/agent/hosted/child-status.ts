@@ -1,4 +1,4 @@
-import { type ConversationRunProjection, getConversationRun } from "../durable.ts";
+import { type ConversationRunProjection, getConversationRun } from "../conversation/durable.ts";
 
 export interface HostedChildRunIdentifiers {
   childConversationId: string;

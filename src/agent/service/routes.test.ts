@@ -1,5 +1,5 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { createDetachedRunTracker } from "../detached-run-tracker.ts";
+import { createDetachedRunTracker } from "./detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "./routes.ts";
 import type { HostedServiceAuthenticatedRequest } from "./auth.ts";
 import type { ParsedHostedChatRequest } from "../hosted/chat-request-parser.ts";

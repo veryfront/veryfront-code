@@ -2,14 +2,14 @@ import {
   type DefaultResearchArtifactContext,
   extractLatestUserText,
   updateDefaultResearchArtifacts,
-} from "../default-research-artifact-support.ts";
+} from "../artifacts/default-research-artifact-support.ts";
 import {
   addFirstTurnStarterIntentRootOwnershipReminder,
   addSlashCommandArtifactReminder,
   evaluateStarterIntentTurnPolicy,
   FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_CONTEXT_KEY,
 } from "../conversation/delegation-policy.ts";
-import { evaluateSlashCommandArtifactPolicy } from "../slash-command-artifact-policy.ts";
+import { evaluateSlashCommandArtifactPolicy } from "../artifacts/slash-command-artifact-policy.ts";
 import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 
 export type HostedRuntimeStateResolverContext = DefaultResearchArtifactContext & {

@@ -2,7 +2,7 @@ import {
   mergeToolInputDelta,
   parseToolInputObject,
   stripLeadingEmptyObjectPlaceholder,
-} from "../data-stream.ts";
+} from "../streaming/data-stream.ts";
 import type { AgUiRuntimeStreamEvent } from "./browser-encoder.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 

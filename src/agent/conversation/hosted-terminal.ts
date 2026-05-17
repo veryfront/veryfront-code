@@ -2,7 +2,7 @@ import {
   type ConversationAgentRunUsage,
   type ConversationRunProjection,
   finalizeConversationAgentRun,
-} from "../durable.ts";
+} from "./durable.ts";
 import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 
 export interface ConversationHostedTerminalStateInput {
