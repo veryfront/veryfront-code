@@ -80,6 +80,11 @@ interface JSONRPCResponse {
   };
 }
 
+interface PendingTaskRun {
+  promise: Promise<void>;
+  abortController: AbortController;
+}
+
 export interface IntegrationLoaderConfig {
   integrations: Record<string, IntegrationRuntimeConfig | undefined>;
   apiBaseUrl: string;
@@ -105,7 +110,7 @@ export class MCPServer {
   private integrationsLoaded = false;
   private sessionManager = new SessionManager();
   private taskStore = new TaskStore();
-  private pendingTasks = new Map<string, Promise<void>>();
+  private pendingTasks = new Map<string, PendingTaskRun>();
   private clientCapabilities: Record<string, unknown> = {};
   private sessionCapabilities = new Map<string, Record<string, unknown>>();
 
@@ -387,19 +392,33 @@ export class MCPServer {
       const rawTtl = typeof taskParam.ttl === "number" ? taskParam.ttl : 60000;
       const ttl = Math.max(MIN_TTL, Math.min(MAX_TTL, rawTtl));
       const task = this.taskStore.create(ttl);
+      const abortController = new AbortController();
+      const outerAbortSignal = toolContext?.abortSignal;
+      const abortFromOuterSignal = () => abortController.abort();
+      if (outerAbortSignal?.aborted) {
+        abortController.abort();
+      } else {
+        outerAbortSignal?.addEventListener("abort", abortFromOuterSignal, { once: true });
+      }
+      const taskToolContext: ToolExecutionContext = {
+        ...toolContext,
+        abortSignal: abortController.signal,
+      };
 
       // Run tool in background, update task on completion
-      // TODO(#842): wire AbortController so that tasks/cancel actually aborts the running tool execution
       const pending = withSpan(
         "mcp.callTool.async",
         async () => {
           try {
-            const result = await executeTool(toolName, args, toolContext);
+            const result = await executeTool(toolName, args, taskToolContext);
             this.taskStore.complete(task.taskId, {
               content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
               isError: false,
             });
           } catch (error) {
+            if (this.taskStore.get(task.taskId)?.status === "cancelled") {
+              return;
+            }
             const message = error instanceof Error ? error.message : String(error);
             logger.warn("Async tool execution failed", {
               tool: toolName,
@@ -410,10 +429,11 @@ export class MCPServer {
           }
         },
         { "mcp.tool.name": toolName, "mcp.task.id": task.taskId },
-      ).then(() => {
+      ).finally(() => {
+        outerAbortSignal?.removeEventListener("abort", abortFromOuterSignal);
         this.pendingTasks.delete(task.taskId);
       });
-      this.pendingTasks.set(task.taskId, pending);
+      this.pendingTasks.set(task.taskId, { promise: pending, abortController });
 
       return Promise.resolve({ task });
     }
@@ -648,6 +668,7 @@ export class MCPServer {
     if (!cancelled) {
       throw new JsonRpcError(-32002, `Cannot cancel task: ${taskId}`);
     }
+    this.pendingTasks.get(String(taskId))?.abortController.abort();
     const task = this.taskStore.get(String(taskId));
     return Promise.resolve({ ...task });
   }
@@ -658,7 +679,7 @@ export class MCPServer {
 
   /** Wait for all background task executions to settle. Useful in tests. */
   waitForPendingTasks(): Promise<void> {
-    return Promise.all(this.pendingTasks.values()).then(() => {});
+    return Promise.all(Array.from(this.pendingTasks.values(), (run) => run.promise)).then(() => {});
   }
 
   createHTTPHandler(): (request: Request) => Promise<Response> {
