@@ -29,6 +29,14 @@ import { Sandbox } from "veryfront/sandbox";
 const sandbox = await Sandbox.create();
 ```
 
+Verify the session with a command before doing longer work:
+
+```ts
+const result = await sandbox.executeCommand("pwd");
+console.log(result.exitCode);
+console.log(result.stdout);
+```
+
 You can also reconnect to an existing session:
 
 ```ts

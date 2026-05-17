@@ -43,6 +43,18 @@ export function GET() {
 
 This creates `GET /api/hello`.
 
+Try it with the dev server running:
+
+```bash
+curl http://localhost:3000/api/hello
+```
+
+The response should be:
+
+```json
+{ "message": "Hello, world!" }
+```
+
 ## HTTP methods
 
 Export any standard HTTP method:

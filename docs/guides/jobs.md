@@ -40,6 +40,15 @@ const jobs = createJobsClient({
 
 If you are already running inside a Veryfront request context, the client can also pick up request-scoped auth and project context automatically.
 
+Verify the connection before creating jobs:
+
+```ts
+const targets = await jobs.targets.list();
+console.log(targets.data.map((target) => target.target));
+```
+
+This call is read-only and confirms that the token, project reference, and API endpoint resolve correctly.
+
 ## Create a one-off job
 
 ```ts

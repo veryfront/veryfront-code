@@ -110,6 +110,14 @@ export async function GET(ctx: APIContext) {
 }
 ```
 
+Try it with the dev server running:
+
+```bash
+curl -i http://localhost:3000/api/users
+```
+
+The response should include any headers added by the middleware that matched the request. If a middleware returns a `Response`, the route handler stops there and returns that response.
+
 ### Cleanup callbacks
 
 Register teardown logic that runs after the response is sent:

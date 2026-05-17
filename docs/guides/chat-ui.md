@@ -12,6 +12,18 @@ Route examples below use the default app router. Veryfront Code also supports mo
 
 ## Quick setup
 
+Create an agent:
+
+```ts
+// agents/assistant.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "assistant",
+  system: "You are a helpful assistant. Answer concisely.",
+});
+```
+
 Create a client page:
 
 ```tsx
@@ -35,6 +47,14 @@ export const POST = createChatHandler("assistant");
 ```
 
 `createChatHandler` validates requests, prepares chat messages, and streams the agent response. The `Chat` component renders the input, message list, loading state, and scroll behavior.
+
+Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and send a message. To test the route without the UI:
+
+```bash
+curl -N http://localhost:3000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Say hello."}]}]}'
+```
 
 ## Add preprocessing
 

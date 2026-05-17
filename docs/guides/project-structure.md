@@ -109,6 +109,14 @@ The filename becomes the ID for TypeScript primitives. For example, `agents/assi
 
 For skills, the directory name is the skill ID. For example, `skills/incident-response/SKILL.md` registers as `"incident-response"`.
 
+Verify discovery by starting the dev server after adding an agent, tool, or workflow file:
+
+```bash
+veryfront dev
+```
+
+Then open the dev dashboard or call a route that uses the primitive. For example, `getAgent("assistant")` should resolve after `agents/assistant.ts` exists and the server has reloaded.
+
 ### Customizing discovery paths
 
 Override the default directories in `veryfront.config.ts`:

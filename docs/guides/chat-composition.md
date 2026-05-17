@@ -8,6 +8,8 @@ order: 15
 
 Use composition when the preset `Chat` component is too constrained but you still want Veryfront to own the chat wiring.
 
+The examples use the same `useChat({ api: "/api/chat" })` setup as the [Chat UI](./chat-ui.md) guide. Create the chat route first, then render these components in a client page and verify them with `veryfront dev`.
+
 ## Layout components
 
 ```tsx

@@ -26,14 +26,36 @@ export default tool({
     units: z.enum(["celsius", "fahrenheit"]).default("celsius"),
   }),
   execute: async ({ city, units }) => {
-    const response = await fetch(`https://api.weather.com/v1?city=${city}&units=${units}`);
-    const data = await response.json();
-    return { temperature: data.temp, conditions: data.conditions };
+    const temperature = units === "fahrenheit" ? 72 : 22;
+    return { city, temperature, units, conditions: "sunny" };
   },
 });
 ```
 
 The filename becomes the tool's ID. This tool registers as `"get-weather"` (hyphens from the filename are preserved).
+
+## Try a tool directly
+
+Agents usually invoke tools, but direct execution is useful for testing and for API routes that expose a specific action:
+
+```ts
+// app/api/weather/route.ts
+import getWeather from "../../../tools/get-weather.ts";
+
+export async function GET(request: Request) {
+  const city = new URL(request.url).searchParams.get("city") ?? "Tokyo";
+  const result = await getWeather.execute({ city, units: "celsius" });
+  return Response.json(result);
+}
+```
+
+Run the dev server and call the route:
+
+```bash
+curl "http://localhost:3000/api/weather?city=Tokyo"
+```
+
+Use this pattern to verify the tool contract before giving the tool to an agent.
 
 ## How agents use tools
 

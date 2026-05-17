@@ -13,6 +13,7 @@ This guide covers the application-facing MCP server exposed by `veryfront/mcp`. 
 ## Setup
 
 ```ts
+// app/api/mcp/route.ts
 import { createMCPServer } from "veryfront/mcp";
 
 const server = createMCPServer({
@@ -30,6 +31,23 @@ export const OPTIONS = handler;
 ```
 
 Mount the handler on your application-owned MCP route. All auto-discovered tools, prompts, and resources are then exposed through the app-facing MCP transport.
+
+Start the dev server with a local token:
+
+```bash
+MCP_TOKEN=dev-token veryfront dev
+```
+
+Smoke test the route by sending an MCP `initialize` request:
+
+```bash
+curl -i http://localhost:3000/api/mcp \
+  -H "Authorization: Bearer dev-token" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}'
+```
+
+The response should include a `MCP-Session-Id` header and a JSON-RPC result with server capabilities.
 
 ### Auth is required
 

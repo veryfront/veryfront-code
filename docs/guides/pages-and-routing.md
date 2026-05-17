@@ -42,6 +42,8 @@ export default function Home() {
 }
 ```
 
+Run `veryfront dev` and open [http://localhost:3000](http://localhost:3000). The page should render `Welcome`.
+
 ## Layouts
 
 Layouts wrap pages and persist across navigation. Create `layout.tsx` at any level:
@@ -93,6 +95,8 @@ export default function BlogPost() {
   return <h1>Post: {params.slug}</h1>;
 }
 ```
+
+Open [http://localhost:3000/blog/hello](http://localhost:3000/blog/hello). The page should render `Post: hello`.
 
 ### Catch-all routes
 
