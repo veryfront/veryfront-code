@@ -1,10 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentServiceSandboxToolsOptions } from "#veryfront/sandbox";
 import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
 import { register, tryResolve } from "#veryfront/extensions/contracts.ts";
 import { MISSING_EXTENSION_ERROR } from "#veryfront/extensions/errors.ts";
+import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { cwd, env } from "#veryfront/platform/compat/process.ts";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import {
@@ -230,10 +231,7 @@ function resolveBaseDir(
   if (options.entrypointUrl !== undefined) {
     return dirname(pathOptionToPath(options.entrypointUrl));
   }
-  if (typeof process !== "undefined") {
-    return process.cwd();
-  }
-  return Deno.cwd();
+  return cwd();
 }
 function hasDiscoveryRoot(baseDir: string): boolean {
   const discoveryDirs = [
@@ -391,13 +389,7 @@ function resolveEnvironment(
   if (options.processTarget?.env) {
     return options.processTarget.env;
   }
-  if (typeof process !== "undefined") {
-    return process.env;
-  }
-  if (typeof Deno !== "undefined") {
-    return Deno.env.toObject();
-  }
-  return {};
+  return env();
 }
 
 function createNodeVeryfrontCloudAgentServiceContext(

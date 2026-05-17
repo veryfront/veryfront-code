@@ -1,6 +1,6 @@
 import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, resolve } from "node:path";
+import { basename, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 import {

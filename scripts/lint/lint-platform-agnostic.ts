@@ -116,6 +116,14 @@ const EXCEPTIONS: Record<string, string[]> = {
   // ai/utils/setup.ts references process.cwd and Deno.cwd in documentation/comments only
   "src/ai/utils/setup.ts": ["process.cwd()", "Deno.cwd()"],
 
+  // Agent definition loaders intentionally stay synchronous because the public runtime
+  // steering path resolves definitions during service construction.
+  "src/agent/hosted/veryfront-cloud-agent-service.ts": ["node: import"],
+  "src/agent/runtime/agent-definition-files.ts": ["node: import"],
+  "src/agent/runtime/project-skill-catalog.ts": ["node: import"],
+  // Live eval PDF fixtures return Buffer for Node-compatible multipart uploads.
+  "src/agent/testing/live-evals/formatting.ts": ["node: import"],
+
   // --- AsyncLocalStorage from node:async_hooks ---
   // No platform abstraction exists for AsyncLocalStorage; these are server-only
   // modules that rely on Node.js/Deno built-in async context propagation.
