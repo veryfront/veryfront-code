@@ -16,6 +16,47 @@ export interface LiveEvalResultRecord {
   textPreview?: string;
 }
 
+type EvalResultStatus = LiveEvalResultRecord["status"];
+
+interface BaseEvalResultInput {
+  id: string;
+  label: string;
+  runtime: LiveEvalRuntime;
+  details: string;
+  startedAt: number;
+}
+
+interface EvalResultInputWithContext extends BaseEvalResultInput {
+  conversationId?: string;
+  runId?: string;
+  artifactPaths?: string[];
+  traceSignature?: string;
+  toolStarts?: string[];
+  toolArgsPreview?: string;
+  textPreview?: string;
+}
+
+function createEvalResult(
+  status: EvalResultStatus,
+  input: EvalResultInputWithContext,
+): LiveEvalResultRecord {
+  return {
+    id: input.id,
+    label: input.label,
+    runtime: input.runtime,
+    status,
+    details: input.details,
+    durationMs: Date.now() - input.startedAt,
+    ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+    ...(input.runId ? { runId: input.runId } : {}),
+    ...(input.artifactPaths?.length ? { artifactPaths: input.artifactPaths } : {}),
+    ...(input.traceSignature ? { traceSignature: input.traceSignature } : {}),
+    ...(input.toolStarts ? { toolStarts: input.toolStarts } : {}),
+    ...(input.toolArgsPreview ? { toolArgsPreview: input.toolArgsPreview } : {}),
+    ...(input.textPreview ? { textPreview: input.textPreview } : {}),
+  };
+}
+
 export function createSkippedEvalResult(input: {
   id: string;
   label: string;
@@ -47,21 +88,7 @@ export function createFailedEvalResult(input: {
   toolArgsPreview?: string;
   textPreview?: string;
 }): LiveEvalResultRecord {
-  return {
-    id: input.id,
-    label: input.label,
-    runtime: input.runtime,
-    status: "fail",
-    details: input.details,
-    durationMs: Date.now() - input.startedAt,
-    ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-    ...(input.runId ? { runId: input.runId } : {}),
-    ...(input.artifactPaths?.length ? { artifactPaths: input.artifactPaths } : {}),
-    ...(input.traceSignature ? { traceSignature: input.traceSignature } : {}),
-    ...(input.toolStarts ? { toolStarts: input.toolStarts } : {}),
-    ...(input.toolArgsPreview ? { toolArgsPreview: input.toolArgsPreview } : {}),
-    ...(input.textPreview ? { textPreview: input.textPreview } : {}),
-  };
+  return createEvalResult("fail", input);
 }
 
 export function createPassedEvalResult(input: {
@@ -78,19 +105,5 @@ export function createPassedEvalResult(input: {
   toolArgsPreview?: string;
   textPreview?: string;
 }): LiveEvalResultRecord {
-  return {
-    id: input.id,
-    label: input.label,
-    runtime: input.runtime,
-    status: "pass",
-    details: input.details,
-    durationMs: Date.now() - input.startedAt,
-    ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-    ...(input.runId ? { runId: input.runId } : {}),
-    ...(input.artifactPaths?.length ? { artifactPaths: input.artifactPaths } : {}),
-    ...(input.traceSignature ? { traceSignature: input.traceSignature } : {}),
-    ...(input.toolStarts ? { toolStarts: input.toolStarts } : {}),
-    ...(input.toolArgsPreview ? { toolArgsPreview: input.toolArgsPreview } : {}),
-    ...(input.textPreview ? { textPreview: input.textPreview } : {}),
-  };
+  return createEvalResult("pass", input);
 }

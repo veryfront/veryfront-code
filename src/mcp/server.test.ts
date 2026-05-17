@@ -1836,6 +1836,63 @@ describe("mcp/server", () => {
     await server.waitForPendingTasks();
   });
 
+  it("tasks/cancel aborts the in-flight async tool", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    let resolveAbort!: () => void;
+    const abortObserved = new Promise<void>((resolve) => {
+      resolveAbort = resolve;
+    });
+    registerTool(
+      "test:abortable",
+      dynamicTool({
+        id: "test:abortable",
+        description: "Abortable tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: (_input, context) =>
+          new Promise((resolve) => {
+            context?.abortSignal?.addEventListener("abort", () => {
+              resolveAbort();
+              resolve({ aborted: true });
+            });
+            setTimeout(() => resolve({ aborted: false }), 200);
+          }),
+      }),
+    );
+    const createResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:abortable", arguments: {}, task: { ttl: 60000 } },
+    });
+    const taskId = (createResult.result as { task: { taskId: string } }).task.taskId;
+
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tasks/cancel",
+      params: { taskId },
+    });
+
+    await Promise.race([
+      abortObserved,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("cancel did not abort tool execution")), 50)
+      ),
+    ]);
+    await server.waitForPendingTasks();
+
+    const getResult = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tasks/get",
+      params: { taskId },
+    });
+    assertEquals((getResult.result as Record<string, unknown>).status, "cancelled");
+  });
+
   it("tasks/result returns completed task result", async () => {
     const server = createMCPServer({
       enabled: true,
