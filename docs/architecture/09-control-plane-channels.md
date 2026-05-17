@@ -10,10 +10,10 @@ services and project runtimes.
 
 Primary source areas:
 
-- `src/channels/control-plane.ts`
-- `src/channels/invoke.ts`
-- `src/server/handlers/request/channel-dispatch-request.ts`
-- `src/server/handlers/request/channel-invoke.handler.ts`
+- [`src/channels/control-plane.ts`](../../src/channels/control-plane.ts)
+- [`src/channels/invoke.ts`](../../src/channels/invoke.ts)
+- [`src/server/handlers/request/channel-dispatch-request.ts`](../../src/server/handlers/request/channel-dispatch-request.ts)
+- [`src/server/handlers/request/channel-invoke.handler.ts`](../../src/server/handlers/request/channel-invoke.handler.ts)
 
 ## Runtime flow
 

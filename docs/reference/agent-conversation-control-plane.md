@@ -184,7 +184,7 @@ Keep these pieces host-local:
 
 When a host keeps local append retry or cursor recovery logic, use
 `isAppendableConversationRunProjection()` after a fresh `getConversationRun()`
-read to decide whether it should keep retrying appends or stop because the run
+read to decide whether it keeps retrying appends or stops because the run
 is already waiting for a tool result or has reached a terminal state.
 
 If the host specifically needs to recover from an append cursor mismatch, use
@@ -194,7 +194,7 @@ stayed unchanged but still appendable, or reached a non-appendable state.
 
 If the host also wants a reusable retry-limit gate around cursor mismatches,
 `recoverConversationRunCursorMismatch()` packages that decision and returns
-whether the host should resume, stop, or bubble the failure while still using
+whether the host resumes, stops, or bubbles the failure while still using
 the canonical conversation-run state model.
 
 For the broader append-failure branch, `recoverConversationRunAppendFailure()`
@@ -286,7 +286,7 @@ project policy in the host while keeping the control-plane contract shared.
 
 Child and delegated runs must preserve tool lifecycle state from the provider
 stream through durable events and host UI replay. On the happy path, downstream
-layers should not infer missing tool state.
+layers must not infer missing tool state.
 
 The canonical lifecycle is:
 
@@ -303,7 +303,7 @@ materialization. Wrappers can enrich behavior, but they must not silently
 replace a specific schema with permissive `{}` input.
 
 When streamed input is malformed, surface the first failure as
-`tool-input-error`. Later artifact checks can still fail, but they should not
+`tool-input-error`. Later artifact checks can still fail, but they must not
 mask the original malformed input failure.
 
 When changing this contract, run or add tests for:

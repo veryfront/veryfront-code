@@ -11,12 +11,12 @@ cache, and agent paths.
 
 Primary source areas:
 
-- `src/observability/`
-- `src/observability/metrics/`
-- `src/observability/tracing/`
-- `src/observability/instruments/`
-- `src/observability/auto-instrument/`
-- `src/errors/`
+- [`src/observability/`](../../src/observability/)
+- [`src/observability/metrics/`](../../src/observability/metrics/)
+- [`src/observability/tracing/`](../../src/observability/tracing/)
+- [`src/observability/instruments/`](../../src/observability/instruments/)
+- [`src/observability/auto-instrument/`](../../src/observability/auto-instrument/)
+- [`src/errors/`](../../src/errors/)
 
 ## Runtime flow
 
@@ -28,9 +28,9 @@ Primary source areas:
 
 ## Boundaries
 
-- Observability records behavior. It should not own business logic.
+- Observability records behavior. It does not own business logic.
 - Public monitoring routes belong in [server runtime](./11-server-runtime.md).
-- Error type definitions and registry patterns belong in `src/errors/`.
+- Error type definitions and registry patterns belong in [`src/errors/`](../../src/errors/).
 
 ## Change checks
 

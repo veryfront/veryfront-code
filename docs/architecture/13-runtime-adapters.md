@@ -10,11 +10,11 @@ capabilities behind shared server, filesystem, and environment access patterns.
 
 Primary source areas:
 
-- `src/platform/`
-- `src/platform/adapters/`
-- `src/platform/cloud/`
-- `src/fs/`
-- `src/server/project-env/`
+- [`src/platform/`](../../src/platform/)
+- [`src/platform/adapters/`](../../src/platform/adapters/)
+- [`src/platform/cloud/`](../../src/platform/cloud/)
+- [`src/fs/`](../../src/fs/)
+- [`src/server/project-env/`](../../src/server/project-env/)
 
 ## Runtime flow
 

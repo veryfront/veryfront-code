@@ -47,7 +47,7 @@ Veryfront service server with graceful shutdown.
 
 ## Veryfront Cloud bootstrap
 
-Use `startAgentService()` from a process entrypoint when the service should use
+Use `startAgentService()` from a process entrypoint when the service uses
 the default Veryfront Cloud configuration, telemetry, model routing, sandbox,
 project steering, durable-run, and prepared-execution wiring.
 
@@ -63,14 +63,14 @@ await startAgentService({
 
 Discovery is rooted at the process cwd by default. The service name comes from
 `VERYFRONT_AGENT_SERVICE_NAME`, the nearest `package.json` or `deno.json`
-`name`, or `veryfront-agent-service`. Pass `serviceName` only when code should
+`name`, or `veryfront-agent-service`. Pass `serviceName` only when code must
 override that convention. Pass `baseDir` when the service may start from a
 different working directory. Pass `entrypointUrl` when deriving `baseDir` from
 a module URL is more convenient.
 
 If the service discovers exactly one code or markdown agent, that agent becomes
 the default automatically. Set `agentId` when the service exposes multiple
-agents or direct `/api/runs` requests should use a specific default.
+agents or direct `/api/runs` requests use a specific default.
 
 ## Remote MCP tools
 

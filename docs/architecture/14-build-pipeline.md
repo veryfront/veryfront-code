@@ -11,12 +11,12 @@ output.
 
 Primary source areas:
 
-- `src/build/`
-- `src/build/production-build/`
-- `src/build/bundler/`
-- `src/build/compiler/`
-- `src/build/asset-pipeline/`
-- `src/transforms/`
+- [`src/build/`](../../src/build/)
+- [`src/build/production-build/`](../../src/build/production-build/)
+- [`src/build/bundler/`](../../src/build/bundler/)
+- [`src/build/compiler/`](../../src/build/compiler/)
+- [`src/build/asset-pipeline/`](../../src/build/asset-pipeline/)
+- [`src/transforms/`](../../src/transforms/)
 
 ## Build flow
 

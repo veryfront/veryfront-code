@@ -8,37 +8,61 @@
  * import { tool } from "veryfront/tool";
  * import { z } from "zod";
  *
- * const weather = tool({
- *   id: "weather",
- *   description: "Get current weather for a city",
- *   inputSchema: z.object({ city: z.string() }),
- *   execute: async ({ city }) => {
- *     const res = await fetch(`https://api.weather.com/${city}`);
- *     return res.json();
+ * const convertLength = tool({
+ *   id: "convert_length",
+ *   description: "Convert meters to feet",
+ *   inputSchema: z.object({ meters: z.number().nonnegative() }),
+ *   execute: ({ meters }) => {
+ *     return { feet: meters * 3.28084 };
  *   },
  * });
  * ```
  *
  * @example Use with an agent
  * ```ts
- * import { tool } from "veryfront/tool";
  * import { agent } from "veryfront/agent";
+ * import { tool } from "veryfront/tool";
  * import { z } from "zod";
  *
- * const weather = tool({
- *   id: "weather",
- *   description: "Get current weather for a city",
- *   inputSchema: z.object({ city: z.string() }),
- *   execute: async ({ city }) => {
- *     const res = await fetch(`https://api.weather.com/${city}`);
- *     return res.json();
+ * const convertLength = tool({
+ *   id: "convert_length",
+ *   description: "Convert meters to feet",
+ *   inputSchema: z.object({ meters: z.number().nonnegative() }),
+ *   execute: ({ meters }) => {
+ *     return { feet: meters * 3.28084 };
  *   },
  * });
  *
  * const assistant = agent({
- *   model: "openai/gpt-4o",
- *   system: "You help with weather questions.",
- *   tools: [weather],
+ *   system: "You answer unit-conversion questions.",
+ *   tools: { convert_length: convertLength },
+ * });
+ * ```
+ *
+ * @example Load remote tools for an agent
+ * ```ts
+ * import { agent } from "veryfront/agent";
+ * import { createRemoteMCPToolSource, loadRemoteToolsFromSource } from "veryfront/tool";
+ *
+ * const docsTools = createRemoteMCPToolSource({
+ *   id: "docs-mcp",
+ *   endpoint: "https://docs.example.com/mcp",
+ *   headers: { Authorization: "Bearer <TOKEN>" },
+ * });
+ *
+ * const runtimeTools = await loadRemoteToolsFromSource(docsTools, {
+ *   context: { projectId: "proj_123" },
+ *   toolNameAliases: { search_docs: "docs_search" },
+ * });
+ *
+ * const assistant = agent({
+ *   system: "Use the docs tools when a question needs project documentation.",
+ *   tools: runtimeTools,
+ *   maxSteps: 5,
+ * });
+ *
+ * const result = await assistant.generate({
+ *   input: "Find the deployment guide for this project.",
  * });
  * ```
  */

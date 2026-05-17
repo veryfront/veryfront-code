@@ -58,3 +58,4 @@ Reference pages cover top-level public import surfaces. Deep public exports, suc
 - [Agent runtime AG-UI](./agent-runtime-ag-ui.md) covers package-hosted AG-UI runtime contracts and endpoint conventions.
 - [Agent service runtime](./agent-service-runtime.md) covers separately deployed agent services.
 - [Agent tooling and runtime state](./agent-tooling.md) covers tool allowlists, provider-native tool discovery, and runtime state hooks.
+- [Skills](../guides/skills.md) covers project-level `SKILL.md` capabilities. Skills are configured through agent discovery and `agent({ skills })`; there is no top-level `veryfront/skill` import path.

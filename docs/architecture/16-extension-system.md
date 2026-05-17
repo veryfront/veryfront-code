@@ -11,13 +11,13 @@ lifecycle hooks.
 
 Primary source areas:
 
-- `src/extensions/`
-- `src/extensions/schema/`
-- `src/extensions/bundler/`
-- `src/extensions/auth/`
-- `src/extensions/cache/`
-- `src/extensions/llm/`
-- `src/extensions/observability/`
+- [`src/extensions/`](../../src/extensions/)
+- [`src/extensions/schema/`](../../src/extensions/schema/)
+- [`src/extensions/bundler/`](../../src/extensions/bundler/)
+- [`src/extensions/auth/`](../../src/extensions/auth/)
+- [`src/extensions/cache/`](../../src/extensions/cache/)
+- [`src/extensions/llm/`](../../src/extensions/llm/)
+- [`src/extensions/observability/`](../../src/extensions/observability/)
 
 ## Runtime flow
 

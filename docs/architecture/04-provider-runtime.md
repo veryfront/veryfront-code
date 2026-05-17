@@ -10,11 +10,11 @@ provider responses, and exposes local or Veryfront Cloud provider adapters.
 
 Primary source areas:
 
-- `src/provider/`
-- `src/provider/runtime-loader/`
-- `src/provider/local/`
-- `src/provider/veryfront-cloud/`
-- `src/agent/runtime/model-resolution.ts`
+- [`src/provider/`](../../src/provider/)
+- [`src/provider/runtime-loader/`](../../src/provider/runtime-loader/)
+- [`src/provider/local/`](../../src/provider/local/)
+- [`src/provider/veryfront-cloud/`](../../src/provider/veryfront-cloud/)
+- [`src/agent/runtime/model-resolution.ts`](../../src/agent/runtime/model-resolution.ts)
 
 ## Runtime flow
 

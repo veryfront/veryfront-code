@@ -11,12 +11,12 @@ API-route, MCP, AG-UI, and monitoring handlers.
 
 Primary source areas:
 
-- `src/server/`
-- `src/server/dev-server/`
-- `src/server/handlers/`
-- `src/server/services/`
-- `src/routing/`
-- `src/middleware/`
+- [`src/server/`](../../src/server/)
+- [`src/server/dev-server/`](../../src/server/dev-server/)
+- [`src/server/handlers/`](../../src/server/handlers/)
+- [`src/server/services/`](../../src/server/services/)
+- [`src/routing/`](../../src/routing/)
+- [`src/middleware/`](../../src/middleware/)
 
 ## Runtime flow
 

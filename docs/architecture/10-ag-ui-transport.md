@@ -10,12 +10,29 @@ AG-UI transport adapts agent runtime events to browser-facing AG-UI streams.
 
 Primary source areas:
 
-- `src/agent/ag-ui/`
-- `src/server/handlers/request/agent-stream.handler.ts`
-- `src/server/handlers/request/agent-run-resume.handler.ts`
-- `src/server/handlers/request/agent-run-cancel.handler.ts`
+- [`src/agent/ag-ui/`](../../src/agent/ag-ui/)
+- [`src/server/handlers/request/agent-stream.handler.ts`](../../src/server/handlers/request/agent-stream.handler.ts)
+- [`src/server/handlers/request/agent-run-resume.handler.ts`](../../src/server/handlers/request/agent-run-resume.handler.ts)
+- [`src/server/handlers/request/agent-run-cancel.handler.ts`](../../src/server/handlers/request/agent-run-cancel.handler.ts)
 
 ## Runtime flow
+
+```mermaid
+sequenceDiagram
+  participant Browser
+  participant Handler as AG-UI request handler
+  participant Runtime as Agent runtime
+  participant Encoder as AG-UI encoder
+  participant Control as Run control
+
+  Browser->>Handler: Chat, resume, cancel, or detached-start request
+  Handler->>Handler: Parse body and forwarded context
+  Handler->>Runtime: Invoke with AG-UI-aware stream context
+  Runtime-->>Encoder: Runtime chunks
+  Encoder-->>Browser: AG-UI events
+  Browser->>Control: Resume or cancellation request
+  Control->>Handler: Run-control operation
+```
 
 1. Request handlers parse AG-UI request bodies and forwarded context.
 2. Tool merging combines request tools, agent tools, and session-managed tools.

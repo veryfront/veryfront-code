@@ -10,11 +10,11 @@ boundaries, renders React output, handles RSC paths, and assembles HTML.
 
 Primary source areas:
 
-- `src/rendering/`
-- `src/server/services/rendering/`
-- `src/server/services/rsc/`
-- `src/react/`
-- `src/html/`
+- [`src/rendering/`](../../src/rendering/)
+- [`src/server/services/rendering/`](../../src/server/services/rendering/)
+- [`src/server/services/rsc/`](../../src/server/services/rsc/)
+- [`src/react/`](../../src/react/)
+- [`src/html/`](../../src/html/)
 
 ## Runtime flow
 
