@@ -30,11 +30,23 @@ const STATIC_ENV: Record<string, string> = {
   NODE_ENV: "production",
   PROXY_MODE: "1",
   PRODUCTION_MODE: "1",
+  VERYFRONT_TRUST_FORWARDED_HEADERS: "1",
   SSR_REDIS_CACHE_ENABLED: "true",
   PROJECT_MAX_CONCURRENT: "1000",
   PROJECT_CIRCUIT_THRESHOLD: "20",
   PROJECT_CIRCUIT_RESET_MS: "15000",
 };
+
+export function buildSplitModeEnvForTests(
+  userEnv: Record<string, string>,
+  productionServerPort: number,
+): Record<string, string> {
+  return {
+    ...STATIC_ENV,
+    ...userEnv,
+    VERYFRONT_SERVER_URL: `http://localhost:${productionServerPort}`,
+  };
+}
 
 function validateEnvVars(): Record<string, string> {
   const missing: string[] = [];
@@ -98,11 +110,7 @@ export async function runSplitMode(options: SplitModeOptions): Promise<void> {
   const userEnv = validateEnvVars();
 
   // Build child-process environment
-  const env: Record<string, string> = {
-    ...STATIC_ENV,
-    ...userEnv,
-    VERYFRONT_SERVER_URL: `http://localhost:${productionServerPort}`,
-  };
+  const env = buildSplitModeEnvForTests(userEnv, productionServerPort);
 
   // Determine command
   const veryfront = useBinary

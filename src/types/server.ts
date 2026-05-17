@@ -1,22 +1,9 @@
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontConfig } from "../config/schemas/index.ts";
 import type { RequestContext } from "../server/context/request-context.ts";
-import type { EnrichedContext } from "../server/context/enriched-context.ts";
-
-export interface ParsedDomain {
-  /** Project slug extracted from host (e.g., "my-project" from "my-project.preview.veryfront.dev") */
-  slug: string | null;
-  /** Branch name extracted from host (e.g., "feature" from "my-project--feature.preview.veryfront.dev") */
-  branch: string | null;
-  /** Environment inferred from domain pattern */
-  environment: "preview" | "development" | "staging" | "production" | null;
-  /** Whether this is a recognized veryfront domain */
-  isVeryfrontDomain: boolean;
-  /** Whether this is a draft (preview) environment */
-  isDraft: boolean;
-  /** Whether this domain allows iframe embedding (veryfront, localhost, xip.io, zip.io) */
-  allowIframeEmbed: boolean;
-}
+import type { EnrichedContext } from "../server/context/enriched-context-types.ts";
+import type { ParsedDomain } from "../server/utils/domain-parser.ts";
+export type { ParsedDomain } from "../server/utils/domain-parser.ts";
 
 export interface SecurityConfig {
   auth?: {

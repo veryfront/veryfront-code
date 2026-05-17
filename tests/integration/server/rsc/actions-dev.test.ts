@@ -41,7 +41,8 @@ describe("RSC Actions Dev Tests", { sanitizeOps: false, sanitizeResources: false
         join(context.projectDir, "veryfront.config.js"),
         `export default {
           title: "RSC Test Site",
-          experimental: { rsc: true }
+          experimental: { rsc: true },
+          security: { cors: true, csrf: false }
         };`,
       );
 

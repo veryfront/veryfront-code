@@ -8,7 +8,7 @@
  */
 
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
-import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache";
+import { detokenizeAllCachePaths, tokenizeAllVeryFrontPaths } from "#veryfront/cache/paths.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";

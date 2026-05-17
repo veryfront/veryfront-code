@@ -2,8 +2,8 @@
  * Agent Discovery Handler
  */
 
-import type { Agent } from "#veryfront/agent";
-import { registerAgent } from "#veryfront/agent";
+import type { Agent } from "#veryfront/agent/types.ts";
+import { registerAgent } from "#veryfront/agent/composition/index.ts";
 import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import type { DiscoveryHandler } from "../types.ts";
 import { filenameToId, trackAgentPath } from "../discovery-utils.ts";

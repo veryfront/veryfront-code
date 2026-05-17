@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 type CalendarEvent = {
   id: string;
@@ -28,7 +29,7 @@ export default tool({
     todayOnly: v.boolean().default(false).describe("Only show events for today"),
   }))(),
   execute: async ({ maxResults, daysAhead, todayOnly }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
 
     try {
       const calendar = createCalendarClient(userId);

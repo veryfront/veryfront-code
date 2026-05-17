@@ -4,12 +4,12 @@
  * Type definitions for the discovery module.
  */
 
-import type { Tool } from "#veryfront/tool";
-import type { Agent } from "#veryfront/agent";
-import type { Resource } from "#veryfront/resource";
-import type { Prompt } from "#veryfront/prompt";
-import type { Workflow } from "#veryfront/workflow";
-import type { Skill } from "#veryfront/skill";
+import type { Agent } from "#veryfront/agent/types.ts";
+import type { Prompt } from "#veryfront/prompt/types.ts";
+import type { Resource } from "#veryfront/resource/types.ts";
+import type { Skill } from "#veryfront/skill/types.ts";
+import type { Tool } from "#veryfront/tool/types.ts";
+import type { Workflow } from "#veryfront/workflow/types.ts";
 import type { TaskDefinition } from "#veryfront/task/types.ts";
 import type { Platform } from "#veryfront/platform/core-platform.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";

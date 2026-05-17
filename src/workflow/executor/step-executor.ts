@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import type { Agent, AgentResponse } from "#veryfront/agent";
-import type { Tool } from "#veryfront/tool";
+import type { Agent, AgentResponse } from "#veryfront/agent/types.ts";
+import type { Tool } from "#veryfront/tool/types.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 import {
   AGENT_NOT_FOUND,
@@ -9,7 +9,7 @@ import {
   ORCHESTRATION_ERROR,
   RESOURCE_NOT_FOUND,
   TIMEOUT_ERROR,
-} from "#veryfront/errors";
+} from "#veryfront/errors/error-registry.ts";
 import type {
   CapturedTenantContext,
   NodeState,

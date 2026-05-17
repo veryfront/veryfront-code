@@ -1,5 +1,4 @@
 import {
-  type AgentResponse,
   type AgUiBrowserEncodedEvent,
   type AgUiBrowserEncoderState,
   type AgUiBrowserRunFinishedMetadata,
@@ -7,7 +6,8 @@ import {
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
-} from "../index.ts";
+} from "./browser-encoder.ts";
+import type { AgentResponse } from "../types.ts";
 
 export interface AgUiRuntimeEventEncoder {
   state: AgUiBrowserEncoderState;

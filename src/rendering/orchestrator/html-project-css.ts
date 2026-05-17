@@ -9,7 +9,7 @@ import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/ver
 import { rendererLogger } from "#veryfront/utils";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { getRouteCandidates } from "./css-candidate-manifest.ts";
-import type { HTMLGenerationContext } from "./html.ts";
+import type { HTMLGenerationContext } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-project-css");
 

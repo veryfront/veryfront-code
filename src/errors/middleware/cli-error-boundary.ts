@@ -162,6 +162,10 @@ export function formatCLIError(error: unknown): string {
  */
 export async function cliErrorBoundary(
   handler: () => Promise<void>,
+  options: {
+    onError?: (error: unknown, vfError: VeryfrontError) => void | Promise<void>;
+    getExitCode?: (error: unknown, vfError: VeryfrontError) => number;
+  } = {},
 ): Promise<void> {
   try {
     await handler();
@@ -182,8 +186,12 @@ export async function cliErrorBoundary(
     // Attach error to active OpenTelemetry span
     attachErrorToActiveSpan(vfError, trace);
 
-    console.log(formatCLIError(error));
-    exit(1);
+    if (options.onError) {
+      await options.onError(error, vfError);
+    } else {
+      console.log(formatCLIError(error));
+    }
+    exit(options.getExitCode?.(error, vfError) ?? 1);
   }
 }
 

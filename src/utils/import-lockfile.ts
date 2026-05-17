@@ -1,7 +1,7 @@
 import { computeHash } from "./hash-utils.ts";
 import { serverLogger } from "./logger/index.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { CACHE_ERROR, NETWORK_ERROR } from "#veryfront/errors";
+import { CACHE_ERROR, NETWORK_ERROR } from "#veryfront/errors/error-registry.ts";
 
 const logger = serverLogger.component("lockfile");
 

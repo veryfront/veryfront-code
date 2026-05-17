@@ -427,6 +427,47 @@ describe("cli/router helpers", () => {
         restoreAll();
       }
     });
+
+    it("unknown command with --json outputs a JSON error envelope", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["nosuch"], json: true } as ParsedArgs,
+        );
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]);
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "nosuch");
+        assertEquals(parsed.error.code, "USAGE_ERROR");
+        assertEquals(parsed.error.slug, "unknown-command");
+        assertEquals(parsed.error.message, "Unknown command: nosuch");
+      } finally {
+        restoreAll();
+      }
+    });
+
+    it("command validation failure with --json outputs a JSON error envelope", async () => {
+      stubExit();
+      stubConsole();
+      setJsonMode(true);
+      try {
+        const code = await runAndCaptureExit(
+          { _: ["serve"], mode: "invalid", json: true } as ParsedArgs,
+        );
+        assertEquals(code, 2);
+        assertEquals(consoleOutput.length, 1);
+        const parsed = JSON.parse(consoleOutput[0]);
+        assertEquals(parsed.success, false);
+        assertEquals(parsed.command, "serve");
+        assertEquals(parsed.error.code, "USAGE_ERROR");
+        assertEquals(parsed.error.slug, "invalid-arguments");
+      } finally {
+        restoreAll();
+      }
+    });
   });
 
   describe("command extraction from args", () => {

@@ -1,12 +1,12 @@
 import {
-  type AgentResponse,
   type AgUiBrowserEncodedEvent,
   type AgUiBrowserEncoderState,
   type AgUiRuntimeStreamEvent,
   createAgUiBrowserEncoderState,
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
-} from "../index.ts";
+} from "./browser-encoder.ts";
+import type { AgentResponse } from "../types.ts";
 
 export interface AgUiChunkEncoderBridge<TChunk> {
   encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];

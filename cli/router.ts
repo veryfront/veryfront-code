@@ -48,6 +48,7 @@ import { showCommandHelp, showMainHelp } from "./help/index.ts";
 import { setColorOverride } from "./ui/colors.ts";
 import { exitProcess, setQuietMode, setVerboseMode } from "./utils/index.ts";
 import {
+  createErrorEnvelope,
   createSuccessEnvelope,
   isJsonMode,
   outputJson,
@@ -146,6 +147,27 @@ function showHelp(command?: string): void {
   showMainHelp();
 }
 
+function commandNameForJson(args: ParsedArgs): string {
+  const command = args._[0];
+  return typeof command === "string" && command.length > 0 ? command : "cli";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function outputCliJsonError(
+  command: string,
+  error: {
+    code: string;
+    slug: string;
+    message: string;
+    context?: Record<string, unknown>;
+  },
+): Promise<void> {
+  await outputJson(createErrorEnvelope(command, error));
+}
+
 /**
  * Route and execute the appropriate CLI command
  *
@@ -210,35 +232,61 @@ export async function routeCommand(args: ParsedArgs): Promise<void> {
     return;
   }
 
+  const handler = command ? commands[command] : undefined;
+
+  if (command && !handler) {
+    const { suggestCommand } = await import("./shared/suggest.ts");
+    const { COMMANDS } = await import("./help/command-definitions.ts");
+    // Use canonical command names from help registry (excludes aliases like "g", "preview")
+    const canonicalNames = Object.keys(COMMANDS);
+    const suggestions = suggestCommand(command, canonicalNames);
+    if (isJsonMode()) {
+      await outputCliJsonError(command, {
+        code: "USAGE_ERROR",
+        slug: "unknown-command",
+        message: `Unknown command: ${command}`,
+        context: suggestions.length > 0 ? { suggestions } : {},
+      });
+      exitProcess(2);
+      return;
+    }
+    cliLogger.error(`Unknown command: ${command}\n`);
+    if (suggestions.length > 0) {
+      cliLogger.info(`  Did you mean?`);
+      for (const s of suggestions) {
+        const desc = COMMANDS[s]?.description ?? "";
+        cliLogger.info(`    ${s}    ${desc}`);
+      }
+    } else {
+      showHelp();
+    }
+    exitProcess(1);
+    return;
+  }
+
   await cliErrorBoundary(async () => {
     if (command === "help") {
       showHelp();
       return;
     }
 
-    const handler = command ? commands[command] : undefined;
-
-    if (command && !handler) {
-      const { suggestCommand } = await import("./shared/suggest.ts");
-      const { COMMANDS } = await import("./help/command-definitions.ts");
-      // Use canonical command names from help registry (excludes aliases like "g", "preview")
-      const canonicalNames = Object.keys(COMMANDS);
-      const suggestions = suggestCommand(command, canonicalNames);
-      cliLogger.error(`Unknown command: ${command}\n`);
-      if (suggestions.length > 0) {
-        cliLogger.info(`  Did you mean?`);
-        for (const s of suggestions) {
-          const desc = COMMANDS[s]?.description ?? "";
-          cliLogger.info(`    ${s}    ${desc}`);
-        }
-      } else {
-        showHelp();
-      }
-      exitProcess(1);
-      return;
-    }
-
     await (handler ?? handleStartCommand)(args);
+  }, {
+    onError: async (error) => {
+      if (!isJsonMode()) {
+        console.log((await import("veryfront/errors")).formatCLIError(error));
+        return;
+      }
+
+      const message = errorMessage(error);
+      const isUsageError = message.startsWith("Invalid ");
+      await outputCliJsonError(commandNameForJson(args), {
+        code: isUsageError ? "USAGE_ERROR" : "RUNTIME_ERROR",
+        slug: isUsageError ? "invalid-arguments" : "command-failed",
+        message,
+      });
+    },
+    getExitCode: (error) => errorMessage(error).startsWith("Invalid ") ? 2 : 1,
   });
 
   // Wait for update check to finish (with timeout to avoid hanging)

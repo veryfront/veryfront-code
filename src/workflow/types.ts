@@ -5,8 +5,8 @@
  */
 
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import type { Agent } from "#veryfront/agent";
-import type { Tool } from "#veryfront/tool";
+import type { Agent } from "#veryfront/agent/types.ts";
+import type { Tool } from "#veryfront/tool/types.ts";
 import type { BlobRef, BlobStorage } from "./blob/types.ts";
 
 // Re-export schema types (Checkpoint excluded - defined locally to use WorkflowContext interface)

@@ -8,7 +8,7 @@
  * @see https://datatracker.ietf.org/doc/html/rfc9457
  */
 
-import type { Handler, HandlerContext, HandlerResult } from "#veryfront/types";
+import type { Handler, HandlerContext, HandlerResult } from "#veryfront/types/server.ts";
 import { trace } from "#veryfront/observability/tracing/api-shim.ts";
 import { PROBLEM_JSON_CONTENT_TYPE } from "../http-error.ts";
 import { recordErrorCount } from "#veryfront/observability/metrics/index.ts";

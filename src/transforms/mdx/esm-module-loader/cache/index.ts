@@ -14,15 +14,13 @@ import {
   getMdxEsmCacheDir,
 } from "#veryfront/utils/cache-dir.ts";
 import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
-import {
-  createFileSystem,
-  type FileSystem,
-  isNotFoundError,
-} from "#veryfront/platform/compat/fs.ts";
+import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
+export { getLocalFs } from "./local-fs.ts";
+import { getLocalFs } from "./local-fs.ts";
 
 export type CacheLookupResult =
   | { status: "hit"; path: string }
@@ -133,15 +131,6 @@ function hasUnresolvedVfModules(code: string): boolean {
     return true;
   }
   return false;
-}
-
-// Local filesystem for cache operations (not project's FSAdapter which may be remote/read-only)
-// This uses the platform's native fs (Deno, Node, Bun) for local cache writes
-let localFs: FileSystem | null = null;
-
-export function getLocalFs(): FileSystem {
-  localFs ??= createFileSystem();
-  return localFs;
 }
 
 const modulePathCaches = new Map<string, Map<string, string>>();

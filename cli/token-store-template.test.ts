@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertNotEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createDefaultTokenStore,
   decryptToken,
   encryptToken,
   generateEncryptionKey,
@@ -22,6 +23,8 @@ const globalStore = globalThis as Record<string, unknown>;
 describe("token store console output", () => {
   const originalLog = console.log;
   const originalError = console.error;
+  const originalNodeEnv = Deno.env.get("NODE_ENV");
+  const originalDatabaseUrl = Deno.env.get("DATABASE_URL");
   let logCalls: unknown[][] = [];
   let errorCalls: unknown[][] = [];
 
@@ -35,6 +38,10 @@ describe("token store console output", () => {
   afterEach(() => {
     console.log = originalLog;
     console.error = originalError;
+    if (originalNodeEnv === undefined) Deno.env.delete("NODE_ENV");
+    else Deno.env.set("NODE_ENV", originalNodeEnv);
+    if (originalDatabaseUrl === undefined) Deno.env.delete("DATABASE_URL");
+    else Deno.env.set("DATABASE_URL", originalDatabaseUrl);
   });
 
   it("does not log auto-generated encryption key to console", async () => {
@@ -78,6 +85,23 @@ describe("token store console output", () => {
         `Decryption failure log should only contain message string, got ${call.length} args`,
       );
     }
+  });
+
+  it("does not use the default memory-backed store in production when durable env vars are present", () => {
+    Deno.env.set("NODE_ENV", "production");
+    Deno.env.set("DATABASE_URL", "postgres://example");
+
+    let message = "";
+    try {
+      createDefaultTokenStore();
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    assertEquals(
+      message.includes("In-memory token storage is not allowed in production"),
+      true,
+    );
   });
 });
 

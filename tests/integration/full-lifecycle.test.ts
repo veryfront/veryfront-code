@@ -341,6 +341,10 @@ export default function HomePage() {
         await remove(join(context.projectDir, "app"), { recursive: true });
         await mkdir(join(context.projectDir, "pages", "api", "posts"), { recursive: true });
         await writeDenoConfig(context.projectDir);
+        await writeTextFile(
+          join(context.projectDir, "veryfront.config.js"),
+          `export default { security: { cors: true, csrf: false } };`,
+        );
 
         await writeTextFile(join(context.projectDir, "pages", "api", "posts", "[id].ts"), apiRoute);
       }

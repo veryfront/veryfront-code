@@ -1,10 +1,10 @@
-import type { DiscoveryResult } from "#veryfront/discovery";
+import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
 import {
   clearTrackedAgents,
   clearTranspileCache,
   createProjectDiscoveryConfig,
   discoverAll,
-} from "#veryfront/discovery";
+} from "#veryfront/discovery/index.ts";
 import { getConfig } from "#veryfront/config";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { clearMCPRegistry } from "#veryfront/mcp";

@@ -79,6 +79,46 @@ describe("server/runtime-handler/index", () => {
     });
   });
 
+  it("allows standard first-party proxy context headers without an extra trust proof", async () => {
+    const handler = createProxyModeHandler();
+
+    const response = await handler(
+      new Request("http://localhost/page", {
+        headers: {
+          "x-project-slug": "my-project",
+          "x-token": "proxy-token",
+          "x-forwarded-host": "my-project.production.veryfront.com",
+          "x-release-id": "rel_123",
+        },
+      }),
+    );
+
+    assertEquals(response.status === 502, false);
+    const body = await response.text();
+    assertEquals(body.includes("proxy context headers require a trusted upstream proxy"), false);
+  });
+
+  it("returns 502 when trust-sensitive proxy context headers are present but untrusted", async () => {
+    const handler = createProxyModeHandler();
+
+    const response = await handler(
+      new Request("http://localhost/page", {
+        headers: {
+          "x-project-slug": "my-project",
+          "x-token": "spoofed-token",
+          "x-project-path": "/attacker/chosen/path",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 502);
+    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(await response.json(), {
+      error: "Untrusted proxy context",
+      detail: "proxy context headers require a trusted upstream proxy",
+    });
+  });
+
   it("skips the proxy header guard for websocket requests", async () => {
     const handler = createProxyModeHandler();
 

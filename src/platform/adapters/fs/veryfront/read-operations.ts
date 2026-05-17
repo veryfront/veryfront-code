@@ -1,11 +1,11 @@
-import { logger as baseLogger } from "#veryfront/utils";
+import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import type { VeryfrontApiClient } from "../../veryfront-api-client/index.ts";
 import { FileCache } from "../cache/file-cache.ts";
 import { logContentMetric, type MissReason } from "./content-metrics.ts";
 import { FileListIndex, type FileListMatchResult } from "./file-list-index.ts";
 import { InFlightRequestDeduper } from "./in-flight-dedupe.ts";
-import { getRequestScopedFile, setRequestScopedFile } from "./multi-project-adapter.ts";
+import { getRequestScopedFile, setRequestScopedFile } from "./request-context.ts";
 import { PathNormalizer } from "./path-normalizer.ts";
 import type { ContentContextProvider } from "./file-list-access.ts";
 import {

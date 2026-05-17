@@ -13,8 +13,8 @@ import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
-import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors";
-import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
+import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 // Static import ensures deno compile includes embedding in the binary.
 // Other modules (agent, tool, etc.) are statically imported elsewhere;
 // embedding is only referenced here.
@@ -31,12 +31,13 @@ let veryfrontGlobalsInitialized = false;
 async function ensureVeryfrontGlobals(): Promise<void> {
   if (veryfrontGlobalsInitialized || !isDenoCompiled) return;
 
+  const loadModule = (specifier: string): Promise<unknown> => import(specifier);
   const [agentMod, toolMod, platformMod, promptMod, resourceMod] = await Promise.all([
-    import("#veryfront/agent"),
-    import("#veryfront/tool"),
-    import("#veryfront/platform"),
-    import("#veryfront/prompt"),
-    import("#veryfront/resource"),
+    loadModule("#veryfront/agent"),
+    loadModule("#veryfront/tool"),
+    loadModule("#veryfront/platform"),
+    loadModule("#veryfront/prompt"),
+    loadModule("#veryfront/resource"),
   ]);
 
   (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = {

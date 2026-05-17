@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createSlackClient } from "../../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 type SlackChannel = {
   id: string;
@@ -27,7 +28,7 @@ export default tool({
       .describe("Exclude archived channels"),
   }))(),
   execute: async ({ limit, excludeArchived }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
 
     try {
       const slack = createSlackClient(userId);

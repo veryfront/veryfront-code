@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createBitbucketClient } from "../../lib/bitbucket-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 type BitbucketIssue = {
   id: number;
@@ -64,7 +65,7 @@ export default tool({
     { workspace, repoSlug, state, kind, priority, limit },
     context,
   ) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
 
     try {
       const bitbucket = createBitbucketClient(userId);

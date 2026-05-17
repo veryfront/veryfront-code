@@ -204,7 +204,7 @@ export interface GmailClient {
 }
 
 // TokenStore adapter keyed by (serviceId, userId). All API calls must pass
-// the authenticated user's id. Never use a shared "current-user" constant
+// the authenticated user's id. Never use a shared development user id
 // in production; that re-introduces VULN-AUTH-2.
 const tokenStoreAdapter = {
   async getTokens(serviceId: string, userId: string): Promise<OAuthToken | null> {

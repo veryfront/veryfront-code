@@ -1,4 +1,5 @@
 import { tokenStore } from "../../../../lib/token-store.ts";
+import { requireUserIdFromRequest } from "../../../../lib/user-id.ts";
 
 const INTEGRATIONS = [
   { id: "gmail", name: "Gmail", icon: "mail" },
@@ -9,8 +10,8 @@ const INTEGRATIONS = [
   { id: "notion", name: "Notion", icon: "notion" },
 ];
 
-export async function GET(_req: Request): Promise<Response> {
-  const userId = "current-user";
+export async function GET(req: Request): Promise<Response> {
+  const userId = requireUserIdFromRequest(req);
 
   const integrations = await Promise.all(
     INTEGRATIONS.map(async (integration) => {

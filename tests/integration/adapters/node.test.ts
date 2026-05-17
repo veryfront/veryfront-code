@@ -179,6 +179,10 @@ describe(
             await mkdir(join(dir, "public"), { recursive: true });
             await writeTextFile(join(dir, "public", "hello.txt"), "hi");
             await mkdir(join(dir, "app"), { recursive: true });
+            await writeTextFile(
+              join(dir, "veryfront.config.js"),
+              `export default { security: { cors: true, csrf: false } };`,
+            );
             await writeTextFile(join(dir, "app", "page.mdx"), "# Home");
             await mkdir(join(dir, "app", "api", "echo"), { recursive: true });
             await writeTextFile(

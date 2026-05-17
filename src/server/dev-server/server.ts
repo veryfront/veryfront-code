@@ -444,7 +444,7 @@ export class DevServer {
       routeDiscovery,
       debounceMs,
       () => this.requestHandler?.invalidateRuntimeHandler(),
-      this,
+      () => this.rediscoverPrimitives(),
       primitiveDirNames,
     );
 

@@ -8,35 +8,19 @@
  * @module transforms/esm/bundle-manifest
  **************************/
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { buildBundleManifestCacheKey } from "#veryfront/cache/keys.ts";
-import {
-  BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC,
-  BUNDLE_MANIFEST_LRU_MAX_ENTRIES,
-} from "#veryfront/utils/constants/cache.ts";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { ensureHttpBundlesExist } from "./http-cache.ts";
+import { rememberBundleManifestHashes } from "./bundle-manifest-ttl.ts";
+import type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
+export type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
+export { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
 
 const LOG_PREFIX = "[BundleManifest]";
-
-/** A single HTTP bundle entry in a manifest. */
-export interface BundleEntry {
-  hash: string;
-  url: string;
-  sizeBytes: number;
-}
-
-/** A manifest tracking all HTTP bundles from a single transform. */
-interface BundleManifest {
-  manifestId: string;
-  bundles: BundleEntry[];
-  createdAt: number;
-  ttlSeconds: number;
-}
 
 export type ManifestValidationReason = "manifest_missing" | "bundle_missing";
 
@@ -47,13 +31,10 @@ export interface ManifestValidationResult {
   reason?: ManifestValidationReason;
 }
 
-/**
- * LRU mapping from bundle hash → manifestId.
- * Used for TTL co-refresh: when any bundle is refreshed, also refresh its manifest.
- */
-const hashToManifestId = new LRUCache<string, string>({
-  maxEntries: BUNDLE_MANIFEST_LRU_MAX_ENTRIES,
-});
+export type BundleRecoveryFn = (
+  bundles: Array<{ path: string; hash: string }>,
+  cacheDir: string,
+) => Promise<string[]>;
 
 /** Lazy accessor for the distributed cache backend. */
 const getCache = createDistributedCacheAccessor(
@@ -76,9 +57,7 @@ export async function createBundleManifest(bundles: BundleEntry[]): Promise<Bund
   const hashes = bundles.map((b) => b.hash);
   const manifestId = await computeManifestId(hashes);
 
-  for (const hash of hashes) {
-    hashToManifestId.set(hash, manifestId);
-  }
+  rememberBundleManifestHashes(hashes, manifestId);
 
   return {
     manifestId,
@@ -145,6 +124,7 @@ async function loadBundleManifest(manifestId: string): Promise<BundleManifest | 
 export async function validateBundleGroup(
   manifestId: string,
   cacheDir: string,
+  recoverMissingBundles?: BundleRecoveryFn,
 ): Promise<ManifestValidationResult> {
   const manifest = await loadBundleManifest(manifestId);
   if (!manifest) {
@@ -154,6 +134,15 @@ export async function validateBundleGroup(
     return { valid: false, failedHashes: [], reason: "manifest_missing" };
   }
 
+  return validateBundleManifest(manifest, cacheDir, recoverMissingBundles);
+}
+
+export async function validateBundleManifest(
+  manifest: BundleManifest,
+  cacheDir: string,
+  recoverMissingBundles: BundleRecoveryFn = (missing) =>
+    Promise.resolve(missing.map(({ hash }) => hash)),
+): Promise<ManifestValidationResult> {
   const missingBundles: Array<{ path: string; hash: string }> = [];
 
   await Promise.all(
@@ -170,52 +159,24 @@ export async function validateBundleGroup(
   if (missingBundles.length === 0) return { valid: true, failedHashes: [] };
 
   logger.info(`${LOG_PREFIX} Attempting to recover missing bundles`, {
-    manifestId: manifestId.slice(0, 12),
+    manifestId: manifest.manifestId.slice(0, 12),
     missing: missingBundles.length,
     total: manifest.bundles.length,
   });
 
-  const unrecoverableHashes = await ensureHttpBundlesExist(missingBundles, cacheDir);
+  const unrecoverableHashes = await recoverMissingBundles(missingBundles, cacheDir);
   if (unrecoverableHashes.length > 0) {
     logger.warn(`${LOG_PREFIX} Some bundles could not be recovered`, {
-      manifestId: manifestId.slice(0, 12),
+      manifestId: manifest.manifestId.slice(0, 12),
       unrecoverable: unrecoverableHashes,
     });
     return { valid: false, failedHashes: unrecoverableHashes, reason: "bundle_missing" };
   }
 
   logger.info(`${LOG_PREFIX} All missing bundles recovered successfully`, {
-    manifestId: manifestId.slice(0, 12),
+    manifestId: manifest.manifestId.slice(0, 12),
     recovered: missingBundles.length,
   });
 
   return { valid: true, failedHashes: [] };
-}
-
-/**
- * Get the manifest ID associated with a bundle hash (for TTL co-refresh).
- */
-export function getManifestIdForHash(hash: string): string | undefined {
-  return hashToManifestId.get(hash);
-}
-
-/**
- * Refresh the TTL of a manifest in the distributed cache.
- */
-export async function refreshManifestTTL(manifestId: string): Promise<void> {
-  const cache = await getCache();
-  if (!cache) return;
-
-  const key = buildBundleManifestCacheKey(manifestId);
-
-  try {
-    const raw = await cache.get(key);
-    if (!raw) return;
-    await cache.set(key, raw, BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC);
-  } catch (error) {
-    logger.debug(`${LOG_PREFIX} Failed to refresh manifest TTL`, {
-      manifestId: manifestId.slice(0, 12),
-      error,
-    });
-  }
 }

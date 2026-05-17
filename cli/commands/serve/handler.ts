@@ -9,7 +9,7 @@ const getServeArgsSchema = defineSchema((v) =>
   v.object({
     mode: ServerModeSchema.default("production"),
     port: v.number().default(DEFAULT_DEV_SERVER_PORT),
-    hostname: v.string().default("0.0.0.0"),
+    hostname: v.string().default("127.0.0.1"),
     split: v.boolean().default(false),
     binary: v.boolean().default(false),
     binaryPath: v.string().default("./bin/veryfront"),

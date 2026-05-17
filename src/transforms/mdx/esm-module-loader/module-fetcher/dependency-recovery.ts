@@ -8,7 +8,7 @@
  */
 
 import { basename, dirname } from "#veryfront/compat/path/index.ts";
-import { detokenizeAllCachePaths } from "#veryfront/cache";
+import { detokenizeAllCachePaths } from "#veryfront/cache/paths.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import type { Logger } from "#veryfront/utils/logger/logger.ts";
 import { getDistributedTransformBackend } from "#veryfront/transforms/esm/transform-cache.ts";
@@ -16,7 +16,7 @@ import { ensureHttpBundlesExist } from "#veryfront/transforms/esm/http-cache.ts"
 import { extractHttpBundlePaths } from "#veryfront/modules/react-loader/ssr-module-loader/http-bundle-helpers.ts";
 import { getHttpBundleCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
-import { getLocalFs } from "../cache/index.ts";
+import { getLocalFs } from "../cache/local-fs.ts";
 import { buildMdxEsmModuleRecoveryCacheKey } from "../cache-format.ts";
 
 const MDX_VFMOD_FILE_URL_PATTERN = /file:\/\/([^"'\s]+veryfront-mdx-esm\/[^"'\s]+\.mjs)/gi;

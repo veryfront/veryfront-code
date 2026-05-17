@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 type FreeSlot = { start: Date; end: Date };
 
@@ -29,8 +30,7 @@ export default tool({
     { durationMinutes, daysToSearch, workingHoursOnly },
     context,
   ): Promise<unknown> => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
 
     try {
       const calendar = createCalendarClient(userId);

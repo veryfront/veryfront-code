@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createSlackClient } from "../../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 export default tool({
   id: "send-message",
@@ -16,7 +17,7 @@ export default tool({
       .describe("Thread timestamp to reply to (for threaded messages)"),
   }))(),
   execute: async ({ channel, text, threadTs }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
 
     try {
       const slack = createSlackClient(userId);

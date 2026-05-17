@@ -13,6 +13,22 @@ const STYLED_STARTER_TEMPLATES: TemplateName[] = [
   "saas-starter",
 ];
 
+async function collectTemplateTsFiles(dir: URL): Promise<URL[]> {
+  const files: URL[] = [];
+
+  for await (const entry of Deno.readDir(dir)) {
+    const child = new URL(`${entry.name}${entry.isDirectory ? "/" : ""}`, dir);
+
+    if (entry.isDirectory) {
+      files.push(...await collectTemplateTsFiles(child));
+    } else if (entry.isFile && entry.name.endsWith(".ts")) {
+      files.push(child);
+    }
+  }
+
+  return files;
+}
+
 describe("cli/templates", () => {
   it("ships a Tailwind entry stylesheet for styled starter templates", async () => {
     for (const templateName of STYLED_STARTER_TEMPLATES) {
@@ -40,5 +56,57 @@ describe("cli/templates", () => {
         `${templateName} layout should import globals.css`,
       );
     }
+  });
+
+  it("integration token store fails closed instead of silently using memory in production", async () => {
+    const tokenStorePath = new URL(
+      "./integrations/_base/files/lib/token-store.ts",
+      import.meta.url,
+    );
+    const tokenStore = await Deno.readTextFile(tokenStorePath);
+
+    assertEquals(
+      tokenStore.includes("createDefaultTokenStore"),
+      true,
+      "token-store.ts should centralize default store selection",
+    );
+    assertEquals(
+      tokenStore.includes("In-memory token storage is not allowed in production"),
+      true,
+      "token-store.ts should fail closed for production memory storage",
+    );
+    assertEquals(
+      tokenStore.includes("getDefaultTokenStore"),
+      true,
+      "token-store.ts should resolve the default store lazily",
+    );
+    assertEquals(
+      tokenStore.includes("export const tokenStore: TokenStore = inMemoryStore;"),
+      false,
+      "token-store.ts must not export the in-memory store unconditionally",
+    );
+    assertEquals(
+      tokenStore.includes("export const tokenStore: TokenStore = createDefaultTokenStore();"),
+      false,
+      "token-store.ts must not throw during module import in production",
+    );
+  });
+
+  it("integration templates do not use a shared current-user token key", async () => {
+    const integrationTemplates = new URL("./integrations/", import.meta.url);
+    const offenders: string[] = [];
+
+    for (const file of await collectTemplateTsFiles(integrationTemplates)) {
+      const source = await Deno.readTextFile(file);
+      if (source.includes('"current-user"') || source.includes("'current-user'")) {
+        offenders.push(file.pathname.replace(integrationTemplates.pathname, ""));
+      }
+    }
+
+    assertEquals(
+      offenders,
+      [],
+      `Integration templates must require a real user id. Offenders: ${offenders.join(", ")}`,
+    );
   });
 });

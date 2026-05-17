@@ -5,7 +5,6 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { OptimizedFileWatcher } from "./file-watcher.ts";
 import type { RouteDiscovery } from "./route-discovery.ts";
 import { ReloadNotifier } from "../reload-notifier.ts";
-import type { DevServer } from "./server.ts";
 import { invalidateModulePaths } from "#veryfront/transforms/mdx/esm-module-loader/index.ts";
 
 const hmrLog = logger.component("hmr");
@@ -61,7 +60,7 @@ export class FileWatchSetup {
     private routeDiscovery: RouteDiscovery,
     private debounceMs: number,
     private invalidateHandler: () => void = () => {},
-    private devServer?: DevServer,
+    private rediscoverPrimitives?: () => Promise<void>,
     primitiveDirNames?: string[],
   ) {
     this.primitiveDirs = new Set(primitiveDirNames ?? DEFAULT_PRIMITIVE_DIRS);
@@ -235,8 +234,8 @@ export class FileWatchSetup {
 
     // Check for primitive file changes and trigger re-discovery
     const hasPrimitiveChanges = actualChanges.some((p) => this.isPrimitivePath(p));
-    if (hasPrimitiveChanges && this.devServer) {
-      await this.devServer.rediscoverPrimitives();
+    if (hasPrimitiveChanges && this.rediscoverPrimitives) {
+      await this.rediscoverPrimitives();
     }
 
     await this.refreshAndReload(actualChanges, "");

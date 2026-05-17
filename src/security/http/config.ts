@@ -4,6 +4,7 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { getConfig } from "#veryfront/config";
 import { serverLogger } from "#veryfront/utils";
 import { buildCSP, generateNonce, serializeCSPDirectives } from "./response/security-handler.ts";
+import { isProduction } from "#veryfront/platform/environment.ts";
 
 const logger = serverLogger.component("security-config-loader");
 
@@ -44,8 +45,11 @@ export class SecurityConfigLoader {
     if (security.headers) security.headers = { ...security.headers };
 
     security.cors ??= false;
+    if (security.csrf === undefined && isProduction()) {
+      security.csrf = true;
+    }
 
-    if (!cfg?.security?.cors && !cfg?.security?.csrf) {
+    if (!security.cors && !security.csrf) {
       logger.warn(
         "Neither CORS nor CSRF protection is configured. " +
           "CORS is disabled by default (same-origin only). " +
