@@ -6,16 +6,12 @@
  * @example
  * ```ts
  * import { resource } from "veryfront/resource";
- * import { defineSchema } from "veryfront/schemas";
- *
- * const getParamsSchema = defineSchema((v) =>
- *   v.object({ section: v.string() })
- * );
+ * import { z } from "zod";
  *
  * const docs = resource({
  *   pattern: "docs/:section",
  *   description: "API documentation",
- *   paramsSchema: getParamsSchema(),
+ *   paramsSchema: z.object({ section: z.string() }),
  *   load: async ({ section }) => {
  *     return { content: await readDocs(section) };
  *   },

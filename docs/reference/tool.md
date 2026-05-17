@@ -26,14 +26,12 @@ import {
 
 ```ts
 import { tool } from "veryfront/tool";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getWeatherInput = defineSchema((v) => v.object({ city: v.string() }));
+import { z } from "zod";
 
 const weather = tool({
   id: "weather",
   description: "Get current weather for a city",
-  inputSchema: lazySchema(getWeatherInput),
+  inputSchema: z.object({ city: z.string() }),
   execute: async ({ city }) => {
     const res = await fetch(`https://api.weather.com/${city}`);
     return res.json();
@@ -46,14 +44,12 @@ const weather = tool({
 ```ts
 import { tool } from "veryfront/tool";
 import { agent } from "veryfront/agent";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getWeatherInput = defineSchema((v) => v.object({ city: v.string() }));
+import { z } from "zod";
 
 const weather = tool({
   id: "weather",
   description: "Get current weather for a city",
-  inputSchema: lazySchema(getWeatherInput),
+  inputSchema: z.object({ city: z.string() }),
   execute: async ({ city }) => {
     const res = await fetch(`https://api.weather.com/${city}`);
     return res.json();

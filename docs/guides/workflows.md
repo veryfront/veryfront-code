@@ -192,18 +192,15 @@ map("process", (ctx) => ctx.input.urls, [
 ## Workflow configuration
 
 ```ts
+import { z } from "zod";
 import { step, workflow } from "veryfront/workflow";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getPipelineInput = defineSchema((v) => v.object({ topic: v.string() }));
-const getPipelineOutput = defineSchema((v) => v.object({ article: v.string() }));
 
 export default workflow({
   id: "pipeline",
   description: "Content generation pipeline",
   version: "1.0.0",
-  inputSchema: lazySchema(getPipelineInput),
-  outputSchema: lazySchema(getPipelineOutput),
+  inputSchema: z.object({ topic: z.string() }),
+  outputSchema: z.object({ article: z.string() }),
   timeout: "30m",
   retry: { maxAttempts: 3, backoff: "exponential" },
   steps: ({ input }) => [
@@ -220,27 +217,9 @@ export default workflow({
 
 ## Blob storage
 
-For large workflow artifacts, configure `blobStorage` on the executor.
-
-Use `VeryfrontCloudBlobStorage` when you want workflow blobs stored in the
-project uploads service on Veryfront Cloud:
-
-```ts
-import { MemoryBackend, WorkflowExecutor } from "veryfront/workflow";
-import { VeryfrontCloudBlobStorage } from "veryfront/workflow/blob";
-
-const executor = new WorkflowExecutor({
-  backend: new MemoryBackend(),
-  blobStorage: new VeryfrontCloudBlobStorage(),
-});
-```
-
-`VeryfrontCloudBlobStorage()` follows the standard cloud bootstrap:
-
-- local development: `VERYFRONT_API_TOKEN` + `VERYFRONT_PROJECT_SLUG`
-- remote/proxy execution: request-scoped Veryfront credentials and project context
-
-Only pass `apiToken`, `projectSlug`, `apiBaseUrl`, or `prefix` when you need to override the defaults.
+For large workflow artifacts, configure `blobStorage` on the executor with a
+host-provided storage adapter. The public workflow export exposes the executor
+integration point. Storage implementations come from the host runtime.
 
 ## React hooks
 

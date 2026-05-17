@@ -175,18 +175,15 @@ try {
   addIssue("guides/index.md", "Could not read index.md");
 }
 
-// 3. Check imports in code examples reference real modules.
-// Use deno.json as the source of truth so the validator does not drift behind
-// the public import surface.
-const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`));
+// 3. Check imports in code examples reference public package modules.
+// Use deno.json exports as the source of truth. The import map also contains
+// repo-local aliases that are not resolvable as package entrypoints.
+const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`)) as {
+  exports?: Record<string, unknown>;
+};
 const validImports = new Set<string>(["veryfront"]);
 for (const exportPath of Object.keys(denoConfig.exports ?? {})) {
   validImports.add(exportPath === "." ? "veryfront" : `veryfront${exportPath.slice(1)}`);
-}
-for (const importPath of Object.keys(denoConfig.imports ?? {})) {
-  if (importPath.startsWith("veryfront/")) {
-    validImports.add(importPath);
-  }
 }
 
 for (const filename of guideFiles) {
