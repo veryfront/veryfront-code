@@ -1,3 +1,11 @@
+import {
+  createAgUiChatEventDecoderState,
+  decodeAgUiSseChunk,
+  flushAgUiSseChunk,
+} from "../../../../chat/ag-ui.ts";
+import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
+import { register, tryResolve } from "../../../../extensions/contracts.ts";
+import type { SchemaValidator } from "../../../../extensions/schema/index.ts";
 import type { ChatMessagePart, ChatToolPart } from "../types.ts";
 import { createAssistantMessage, generateClientId } from "../utils.ts";
 import { buildCurrentParts } from "./parts-builder.ts";
@@ -35,6 +43,15 @@ function createStreamingState(): StreamingState {
   };
 }
 
+async function ensureAgUiSchemaValidator(): Promise<void> {
+  if (tryResolve<SchemaValidator>("SchemaValidator")) return;
+
+  const { createZodAdapter } = await import(
+    "../../../../../extensions/ext-schema-zod/src/adapter.ts"
+  );
+  register<SchemaValidator>("SchemaValidator", createZodAdapter());
+}
+
 export async function handleStreamingResponse(
   body: ReadableStream,
   callbacks: StreamingCallbacks,
@@ -64,7 +81,7 @@ export async function handleStreamingResponse(
         const raw: unknown = JSON.parse(data);
         if (!raw || typeof raw !== "object") continue;
         const parsed = raw as Record<string, unknown>;
-        processEvent(parsed, state, callbacks, getBuildParts);
+        processStreamEvent(parsed, state, callbacks, getBuildParts);
       } catch (_) {
         /* expected: skip malformed JSON in SSE stream */
       }
@@ -77,7 +94,7 @@ export async function handleStreamingResponse(
       const raw: unknown = JSON.parse(buffer.slice(6));
       if (raw && typeof raw === "object") {
         const parsed = raw as Record<string, unknown>;
-        processEvent(parsed, state, callbacks, getBuildParts);
+        processStreamEvent(parsed, state, callbacks, getBuildParts);
       }
     } catch {
       // Skip invalid JSON
@@ -85,7 +102,46 @@ export async function handleStreamingResponse(
   }
 }
 
-function processEvent(
+export async function handleAgUiStreamingResponse(
+  body: ReadableStream,
+  callbacks: StreamingCallbacks,
+): Promise<void> {
+  await ensureAgUiSchemaValidator();
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  const decoderState = createAgUiChatEventDecoderState();
+  const state = createStreamingState();
+
+  const getBuildParts = (): ChatMessagePart[] =>
+    buildCurrentParts(state.textBlocks, state.reasoningBlocks, state.toolCalls, state.steps);
+
+  const processDecodedEvents = (events: ChatStreamEvent[]) => {
+    for (const event of events) {
+      processChatStreamEvent(event, state, callbacks, getBuildParts);
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const decoded = decodeAgUiSseChunk(
+      decoderState,
+      decoder.decode(value, { stream: true }),
+    );
+    for (const event of decoded.events) {
+      processDecodedEvents(event.chatEvents);
+    }
+  }
+
+  const flushed = flushAgUiSseChunk(decoderState);
+  for (const event of flushed.events) {
+    processDecodedEvents(event.chatEvents);
+  }
+}
+
+function processStreamEvent(
   parsed: Record<string, unknown>,
   state: StreamingState,
   callbacks: StreamingCallbacks,
@@ -164,8 +220,96 @@ function processEvent(
   }
 }
 
+function processChatStreamEvent(
+  event: ChatStreamEvent,
+  state: StreamingState,
+  callbacks: StreamingCallbacks,
+  getBuildParts: () => ChatMessagePart[],
+): void {
+  const { onMessage, onData, onUpdate, onToolCall } = callbacks;
+
+  switch (event.type) {
+    case "start":
+      handleStart(event, state);
+      return;
+
+    case "message-metadata":
+      onData(event.messageMetadata);
+      return;
+
+    case "start-step":
+      handleStepStart(event, state, callbacks.onUpdate, getBuildParts);
+      return;
+
+    case "finish-step":
+      handleStepEnd(event, state, callbacks.onUpdate, getBuildParts);
+      return;
+
+    case "text-start":
+      handleTextStart(event, state);
+      return;
+
+    case "text-delta":
+      handleTextDelta(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "text-end":
+      handleTextEnd(event, state);
+      return;
+
+    case "tool-input-start":
+      handleToolInputStart(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "tool-input-delta":
+      handleToolInputDelta(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "tool-input-available":
+      handleToolInputAvailable(event, state, onUpdate, onToolCall, getBuildParts);
+      return;
+
+    case "tool-input-error":
+    case "tool-output-error":
+      handleToolError(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "tool-output-available":
+      handleToolOutputAvailable(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "reasoning-start":
+      handleReasoningStart(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "reasoning-delta":
+      handleReasoningDelta(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "reasoning-end":
+      handleReasoningEnd(event, state, onUpdate, getBuildParts);
+      return;
+
+    case "finish":
+      handleFinish(state, onMessage, getBuildParts);
+      return;
+
+    case "abort":
+      return;
+
+    case "error":
+      throw new Error(event.errorText);
+
+    default:
+      if (event.type.startsWith("data-")) {
+        onData((event as { data: unknown }).data);
+      }
+      return;
+  }
+}
+
 function handleStart(parsed: Record<string, unknown>, state: StreamingState): void {
-  state.messageId = (parsed.messageId as string) || generateClientId("msg");
+  state.messageId = typeof parsed.messageId === "string" ? parsed.messageId : "";
   state.textBlocks.clear();
   state.toolCalls.clear();
   state.reasoningBlocks.clear();
@@ -174,6 +318,9 @@ function handleStart(parsed: Record<string, unknown>, state: StreamingState): vo
 
 function handleTextStart(parsed: Record<string, unknown>, state: StreamingState): void {
   state.currentTextId = (parsed.id as string) || generateClientId("text");
+  if (!state.messageId) {
+    state.messageId = state.currentTextId;
+  }
   state.textBlocks.set(state.currentTextId, { text: "", state: "streaming", order: null });
 }
 
@@ -185,6 +332,10 @@ function handleTextDelta(
 ): void {
   const textId = (parsed.id as string) || state.currentTextId || "default";
   const delta = (parsed.textDelta ?? parsed.delta ?? "") as string;
+
+  if (!state.messageId) {
+    state.messageId = textId === "default" ? generateClientId("msg") : textId;
+  }
 
   let block = state.textBlocks.get(textId);
   if (!block) {
@@ -219,6 +370,10 @@ function handleToolInputStart(
   onUpdate: StreamingCallbacks["onUpdate"],
   getBuildParts: () => ChatMessagePart[],
 ): void {
+  if (!state.messageId) {
+    state.messageId = generateClientId("msg");
+  }
+
   const toolCallId = (parsed.toolCallId as string) || generateClientId("tool");
   const toolCall: OrderedToolCall = {
     toolCallId,
@@ -255,8 +410,23 @@ function handleToolInputAvailable(
   getBuildParts: () => ChatMessagePart[],
 ): void {
   const toolCallId = parsed.toolCallId as string;
-  const toolCall = state.toolCalls.get(toolCallId);
-  if (!toolCall) return;
+  if (!toolCallId) return;
+  if (!state.messageId) {
+    state.messageId = generateClientId("msg");
+  }
+
+  let toolCall = state.toolCalls.get(toolCallId);
+  if (!toolCall) {
+    toolCall = {
+      toolCallId,
+      toolName: (parsed.toolName as string) || "tool",
+      inputText: "",
+      state: "input-available",
+      dynamic: parsed.dynamic === true,
+      order: state.partOrderCounter++,
+    };
+    state.toolCalls.set(toolCallId, toolCall);
+  }
 
   toolCall.input = parsed.input;
   toolCall.toolName = (parsed.toolName as string) || toolCall.toolName;
@@ -339,6 +509,10 @@ function handleReasoningStart(
   onUpdate: StreamingCallbacks["onUpdate"],
   getBuildParts: () => ChatMessagePart[],
 ): void {
+  if (!state.messageId) {
+    state.messageId = generateClientId("msg");
+  }
+
   const reasoningId = (parsed.id as string) || generateClientId("reasoning");
   const reasoning: OrderedReasoning = {
     id: reasoningId,

@@ -145,7 +145,7 @@ export async function POST(request: Request) {
 }
 ```
 
-`toDataStreamResponse()` returns a streaming `Response` with the `text/event-stream` content type, compatible with the `useChat` hook on the client.
+`toDataStreamResponse()` returns a streaming `Response` with the `text/event-stream` content type. It uses the older Veryfront chat stream protocol and is compatible with the default `useChat` transport.
 
 ### Client-side consumption
 

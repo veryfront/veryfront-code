@@ -12,6 +12,10 @@ Route examples below use the default app router. Veryfront Code also supports mo
 
 ## Quick setup
 
+In an app-owned route, create the agent and route below. In a Veryfront-hosted
+Studio context, the host can provide the AG-UI route and request-scoped runtime
+context, so you usually only configure the client that points at that route.
+
 Create an agent:
 
 ```ts
@@ -32,7 +36,7 @@ Create a client page:
 import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
   return <Chat {...chat} placeholder="Ask me anything..." />;
 }
 ```
@@ -41,12 +45,12 @@ Create the API route:
 
 ```ts
 // app/api/chat/route.ts
-import { createChatHandler } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export const POST = createChatHandler("assistant");
+export const POST = createAgUiHandler("assistant");
 ```
 
-`createChatHandler` validates requests, prepares chat messages, and streams the agent response. The `Chat` component renders the input, message list, loading state, and scroll behavior.
+`createAgUiHandler` validates the request and streams AG-UI SSE. `useChat({ transport: "ag-ui" })` decodes that stream into Veryfront chat messages. The `Chat` component renders the input, message list, loading state, and scroll behavior.
 
 Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and send a message. To test the route without the UI:
 
@@ -56,9 +60,9 @@ curl -N http://localhost:3000/api/chat \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Say hello."}]}]}'
 ```
 
-## Add preprocessing
+## Legacy chat transport
 
-Use `beforeStream` for RAG, auth checks, or request-specific context without reimplementing the route internals:
+Use `createChatHandler` only when you need the older Veryfront chat stream protocol or its `beforeStream` hook:
 
 ```ts
 import { createChatHandler } from "veryfront/agent";
@@ -77,6 +81,8 @@ export const POST = createChatHandler("rag", {
   },
 });
 ```
+
+Pair this route with `useChat({ api: "/api/chat" })`. Do not set `transport: "ag-ui"` when the route returns the older chat stream protocol.
 
 ## Common preset props
 

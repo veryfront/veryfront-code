@@ -157,9 +157,12 @@ Pass context from the API route:
 
 ```ts
 // app/api/chat/route.ts
-const result = await agent.stream({
-  messages,
-  context: { endUserId: "user-123" },
+import { createAgUiHandler } from "veryfront/agent";
+
+export const POST = createAgUiHandler("assistant", {
+  context: {
+    endUserId: "user-123",
+  },
 });
 ```
 

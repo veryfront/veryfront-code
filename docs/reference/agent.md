@@ -18,6 +18,7 @@ and host-integration details live in the related reference pages.
 import {
   agent,
   agentAsTool,
+  createAgUiHandler,
   createChatHandler,
   createMemory,
   getAgentsAsTools,
@@ -119,17 +120,13 @@ const assistant = agent({
 
 ```ts
 // app/api/chat/route.ts
-import { agent } from "veryfront/agent";
+import { agent, createAgUiHandler } from "veryfront/agent";
 
 const assistant = agent({
   system: "You are a helpful assistant.",
 });
 
-export async function POST(req: Request) {
-  const { messages } = await req.json();
-  const result = await assistant.stream({ messages });
-  return result.toDataStreamResponse();
-}
+export const POST = createAgUiHandler({ agent: assistant });
 ```
 
 ### Multi-agent composition
@@ -218,10 +215,24 @@ messages from the request body.
 
 **Returns:** <code>Promise&lt;Response&gt;</code>
 
+### `createAgUiHandler(agentIdOrConfig, options?)`
+
+Create a POST route handler that validates an AG-UI request, invokes an agent,
+and streams AG-UI SSE. Use this for new chat UI routes and pair it with
+`useChat({ transport: "ag-ui" })`.
+
+```ts
+// app/api/chat/route.ts
+import { createAgUiHandler } from "veryfront/agent";
+
+export const POST = createAgUiHandler("assistant");
+```
+
 ### `createChatHandler(agentId, options?)`
 
-Create a POST chat route handler with request validation, UI-message
-normalization, server-memory reset, and `NO_AI_AVAILABLE` fallback handling.
+Create a POST chat route handler for the older Veryfront chat stream protocol
+with request validation, UI-message normalization, server-memory reset, and
+`NO_AI_AVAILABLE` fallback handling.
 
 | Property                | Type                                                                                                                                                           | Description                                                                                                                                                    |
 | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |

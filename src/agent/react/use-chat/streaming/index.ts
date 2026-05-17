@@ -4,7 +4,7 @@
  * @module agent/react/use-chat/streaming
  */
 
-export { handleStreamingResponse } from "./handler.ts";
+export { handleAgUiStreamingResponse, handleStreamingResponse } from "./handler.ts";
 export type {
   OrderedReasoning,
   OrderedToolCall,

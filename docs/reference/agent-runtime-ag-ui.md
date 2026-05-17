@@ -68,6 +68,14 @@ export const POST = createAgUiHandler({
 });
 ```
 
+Browser chat UIs can consume this route with:
+
+```tsx
+import { useChat } from "veryfront/chat";
+
+const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
+```
+
 Mount the hosted run-control routes separately with the same session manager.
 
 `createAgUiHandler()` validates the higher-level `AgUiRequestSchema` convenience

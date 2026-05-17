@@ -217,18 +217,12 @@ The most common API route pattern in Veryfront connects a chat UI to an agent:
 
 ```ts
 // app/api/chat/route.ts
-import { getAgent } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export async function POST(request: Request) {
-  const { messages } = await request.json();
-  const agent = getAgent("assistant");
-  if (!agent) return Response.json({ error: "Agent not found" }, { status: 404 });
-  const result = await agent.stream({ messages });
-  return result.toDataStreamResponse();
-}
+export const POST = createAgUiHandler("assistant");
 ```
 
-Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{ type: "text", text }] }`. This pairs with `useChat({ api: "/api/chat" })` on the client, which handles the format automatically. See the [Chat UI](./chat-ui.md) guide.
+Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{ type: "text", text }] }`. The route responds with AG-UI SSE and pairs with `useChat({ api: "/api/chat", transport: "ag-ui" })` on the client. See the [Chat UI](./chat-ui.md) guide.
 
 ## Next
 
