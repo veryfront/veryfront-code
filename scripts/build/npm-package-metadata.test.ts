@@ -50,6 +50,36 @@ describe("normalizeNpmPackageMetadata", () => {
 			"just-bash": { optional: true },
 		});
 	});
+
+	it("removes stale direct AI SDK metadata from automatic npm installs", () => {
+		const pkg = normalizeNpmPackageMetadata({
+			dependencies: {
+				ai: "^6.0.0",
+				zod: "4.3.6",
+			},
+		});
+
+		assertEquals(pkg.dependencies, { zod: "4.3.6" });
+		assertEquals(pkg.peerDependencies, {
+			"better-sqlite3": ">=9.0.0",
+		});
+		assertEquals(pkg.peerDependenciesMeta, {
+			"better-sqlite3": { optional: true },
+		});
+	});
+
+	it("removes stale npm-only type dev dependencies", () => {
+		const pkg = normalizeNpmPackageMetadata({
+			devDependencies: {
+				"@types/better-sqlite3": "^7.6.0",
+				"@types/mime-types": "^2.1.0",
+				"@types/ws": "^8.5.0",
+				"@types/node": "^20.9.0",
+			},
+		});
+
+		assertEquals(pkg.devDependencies, { "@types/node": "^20.9.0" });
+	});
 });
 
 describe("npm supply-chain policy", () => {
