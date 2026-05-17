@@ -30,7 +30,7 @@ transport-neutral lifecycle operations. Do not mount run control under
 `/api/ag-ui`.
 
 `AgUiRuntimeRequestSchema` is defined in
-[`src/agent/runtime/ag-ui-contract.ts`](../../src/agent/runtime/ag-ui-contract.ts).
+[`src/agent/runtime/ag-ui-contract.ts`](https://github.com/veryfront/veryfront-code/blob/main/src/agent/runtime/ag-ui-contract.ts).
 It accepts the AG-UI-aligned request fields used by the runtime:
 
 - `threadId`
