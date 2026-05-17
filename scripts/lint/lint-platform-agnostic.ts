@@ -115,10 +115,6 @@ const EXCEPTIONS: Record<string, string[]> = {
   "src/build/production-build/build/output-generator.ts": ["node: import"],
   // ai/utils/setup.ts references process.cwd and Deno.cwd in documentation/comments only
   "src/ai/utils/setup.ts": ["process.cwd()", "Deno.cwd()"],
-  // ai/workflow/backends/inngest.ts references process.env in documentation
-  "src/ai/workflow/backends/inngest.ts": ["process.env"],
-  // build/config/environment.ts documents process.env.NODE_ENV in JSDoc comment
-  "src/build/config/environment.ts": ["process.env"],
 
   // --- AsyncLocalStorage from node:async_hooks ---
   // No platform abstraction exists for AsyncLocalStorage; these are server-only
