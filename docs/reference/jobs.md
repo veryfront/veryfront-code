@@ -30,7 +30,6 @@ const job = await jobs.create({
   name: "Ingest 1 file",
   target: "task:knowledge-ingest",
   config: {
-    file_count: 1,
     upload_ids: ["11111111-1111-4111-8111-111111111111"],
   },
 });
@@ -48,7 +47,6 @@ const cronJob = await jobs.cron.create({
   schedule: "0 2 * * *",
   timezone: "UTC",
   config: {
-    file_count: 1,
     upload_ids: ["11111111-1111-4111-8111-111111111111"],
   },
 });

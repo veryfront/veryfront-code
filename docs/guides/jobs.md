@@ -54,7 +54,6 @@ const job = await jobs.create({
   name: "Ingest 1 file to knowledge base",
   target: "task:knowledge-ingest",
   config: {
-    file_count: 1,
     upload_ids: ["11111111-1111-4111-8111-111111111111"],
   },
 });
@@ -95,6 +94,8 @@ for (const definition of targets.data) {
 ```
 
 This is the public source of truth for first-party target contracts such as `task:knowledge-ingest`.
+The `config` object is target-specific. Use target discovery to inspect the
+fields the selected target accepts.
 
 ## Work with batches
 
@@ -117,7 +118,6 @@ const cronJob = await jobs.cron.create({
   schedule: "0 2 * * *",
   timezone: "Europe/Stockholm",
   config: {
-    file_count: 1,
     upload_ids: ["11111111-1111-4111-8111-111111111111"],
   },
 });
