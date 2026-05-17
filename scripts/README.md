@@ -10,8 +10,6 @@ scripts/
   lint/           # Code quality & architecture checks
   hooks/          # Git hooks
   split-mode/     # Local split-mode debug config
-  batch-simplify/ # Batch AI simplification tooling
-  rlm-ts/         # RLM tooling
 ```
 
 Cross-runtime (Node/Bun) test infrastructure lives in `tests/node/` and

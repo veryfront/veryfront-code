@@ -154,7 +154,6 @@ const DEFAULT_EXCLUDES = [
   "coverage/",
   "npm/",
   "cli/templates/",
-  "scripts/rlm-ts/output/",
 ];
 
 const SEMANTIC_IDENTIFIER_NODE_TYPES = new Set([
