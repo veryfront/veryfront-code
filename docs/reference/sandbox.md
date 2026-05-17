@@ -153,7 +153,7 @@ Options for creating a sandbox session.
 
 | Property     | Type     | Description                                                                                                         |
 | ------------ | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| `apiUrl?`    | `string` | Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env.                                                   |
+| `apiUrl?`    | `string` | Base URL of the Veryfront API. Defaults to `VERYFRONT_API_URL`, then the Veryfront Cloud API.                       |
 | `authToken?` | `string` | Explicit Veryfront auth token or API key override. Defaults to request-scoped credentials or `VERYFRONT_API_TOKEN`. |
 | `projectId?` | `string` | Optional project context for project-scoped or project-billed sandbox sessions.                                     |
 
@@ -165,7 +165,7 @@ Known sandbox session details for `Sandbox.attach(...)`.
 | ------------ | -------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `id`         | `string` | Existing sandbox session ID.                                                                                           |
 | `endpoint`   | `string` | Existing sandbox runtime endpoint URL.                                                                                 |
-| `apiUrl?`    | `string` | Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env.                                                      |
+| `apiUrl?`    | `string` | Base URL of the Veryfront API. Defaults to `VERYFRONT_API_URL`, then the Veryfront Cloud API.                          |
 | `authToken?` | `string` | Explicit Veryfront auth token or API key override. Defaults to request-scoped credentials or `VERYFRONT_API_TOKEN`.    |
 | `projectId?` | `string` | Optional project context metadata when the caller wants to preserve the same options shape as other sandbox factories. |
 
