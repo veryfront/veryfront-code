@@ -140,6 +140,62 @@ describe("agent/ag-ui-host-support", () => {
     ]);
   });
 
+  it("preserves tool outputs stored on assistant tool parts as tool messages", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-search_docs",
+            toolCallId: "tool-1",
+            toolName: "search_docs",
+            state: "output-available",
+            input: { query: "ag-ui" },
+            output: { matches: 2 },
+          },
+        ],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Summarize that result" }],
+      },
+    ]);
+
+    assertEquals(messages, [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-search_docs",
+            toolCallId: "tool-1",
+            toolName: "search_docs",
+            args: { query: "ag-ui" },
+          },
+        ],
+      },
+      {
+        id: "tool_tool-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "search_docs",
+            result: { matches: 2 },
+          },
+        ],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Summarize that result" }],
+      },
+    ]);
+  });
+
   it("creates AG-UI SSE run-error responses with the existing wire shape", async () => {
     const event = createAgUiRunErrorEvent("Overloaded right now", "OVERLOADED_ERROR");
     const response = createAgUiSseErrorResponse(event, 503);

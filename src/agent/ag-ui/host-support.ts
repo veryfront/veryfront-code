@@ -126,6 +126,33 @@ function normalizeToolArgs(part: Record<string, unknown>): Record<string, unknow
   return {};
 }
 
+function isToolPartWithOutput(
+  part: Record<string, unknown>,
+): part is Record<string, unknown> & {
+  type: string;
+  toolCallId: string;
+  toolName: string;
+  output: unknown;
+} {
+  return typeof part.type === "string" &&
+    part.type.startsWith("tool-") &&
+    part.type !== "tool-result" &&
+    typeof part.toolCallId === "string" &&
+    typeof part.toolName === "string" &&
+    "output" in part &&
+    part.output !== undefined;
+}
+
+function hasToolResultPart(
+  parts: Array<Record<string, unknown>>,
+  toolCallId: string,
+): boolean {
+  return parts.some((part) =>
+    (part.type === "tool-result" && part.toolCallId === toolCallId) ||
+    (part.type === "tool_result" && part.tool_call_id === toolCallId)
+  );
+}
+
 function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][number] | null {
   if (
     part.type === "text" && typeof part.text === "string" &&
@@ -192,6 +219,27 @@ function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][n
   return null;
 }
 
+function extractAssistantToolOutputMessages(message: AgUiRequest["messages"][number]): Message[] {
+  if (message.role !== "assistant") return [];
+
+  return message.parts.flatMap((part) => {
+    if (!isToolPartWithOutput(part) || hasToolResultPart(message.parts, part.toolCallId)) {
+      return [];
+    }
+
+    return [{
+      id: `tool_${part.toolCallId}`,
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: part.toolCallId,
+        toolName: part.toolName,
+        result: part.output,
+      }],
+    }];
+  }) as Message[];
+}
+
 export async function parseAgUiRequest(request: Request): Promise<AgUiRequest> {
   return getAgUiRequestSchema().parse(await request.json());
 }
@@ -206,15 +254,22 @@ export async function parseAgUiRequestOrError(
 }
 
 export function normalizeAgUiMessages(messages: AgUiRequest["messages"]): Message[] {
-  return messages.map((message) => ({
-    id: message.id,
-    role: message.role,
-    parts: message.parts
-      .map((part) => normalizeMessagePart(part))
-      .filter((part): part is Message["parts"][number] => part !== null),
-    ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
-    ...(message.metadata ? { metadata: message.metadata } : {}),
-  })) as any;
+  return messages.flatMap((message) => {
+    const normalizedMessage = {
+      id: message.id,
+      role: message.role,
+      parts: message.parts
+        .map((part) => normalizeMessagePart(part))
+        .filter((part): part is Message["parts"][number] => part !== null),
+      ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
+      ...(message.metadata ? { metadata: message.metadata } : {}),
+    } as Message;
+
+    return [
+      normalizedMessage,
+      ...extractAssistantToolOutputMessages(message),
+    ];
+  });
 }
 
 export function createAgUiRunErrorEvent(message: string, code?: string): AgUiSseEvent {
