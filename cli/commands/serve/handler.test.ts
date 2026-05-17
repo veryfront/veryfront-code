@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { handleServeCommand } from "./handler.ts";
+import { handleServeCommand, parseServeArgs } from "./handler.ts";
 import type { ParsedArgs } from "#cli/shared/types";
 
 describe("commands/serve/handler", () => {
@@ -89,22 +89,25 @@ describe("commands/serve/handler", () => {
     });
 
     describe("hostname/host/bindAddress resolution", () => {
-      it("defaults to 0.0.0.0 when no host flags are provided", () => {
+      it("defaults production mode to localhost when no host flags are provided", () => {
         const args: ParsedArgs = { _: ["serve"] };
-        const bindAddress = String(args.hostname || args.host || "0.0.0.0");
-        assertEquals(bindAddress, "0.0.0.0");
+        const parsed = parseServeArgs(args);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.data.hostname, "127.0.0.1");
       });
 
       it("uses --hostname when provided", () => {
         const args: ParsedArgs = { _: ["serve"], hostname: "127.0.0.1" };
-        const bindAddress = String(args.hostname || args.host || "0.0.0.0");
-        assertEquals(bindAddress, "127.0.0.1");
+        const parsed = parseServeArgs(args);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.data.hostname, "127.0.0.1");
       });
 
       it("uses --host when provided", () => {
         const args: ParsedArgs = { _: ["serve"], host: "localhost" };
-        const bindAddress = String(args.hostname || args.host || "0.0.0.0");
-        assertEquals(bindAddress, "localhost");
+        const parsed = parseServeArgs(args);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.data.hostname, "localhost");
       });
 
       it("prefers --hostname over --host", () => {
@@ -113,8 +116,9 @@ describe("commands/serve/handler", () => {
           hostname: "10.0.0.1",
           host: "192.168.1.1",
         };
-        const bindAddress = String(args.hostname || args.host || "0.0.0.0");
-        assertEquals(bindAddress, "10.0.0.1");
+        const parsed = parseServeArgs(args);
+        assertEquals(parsed.success, true);
+        assertEquals(parsed.data.hostname, "10.0.0.1");
       });
     });
 

@@ -79,6 +79,26 @@ describe("server/runtime-handler/index", () => {
     });
   });
 
+  it("returns 502 when proxy context headers are present but untrusted", async () => {
+    const handler = createProxyModeHandler();
+
+    const response = await handler(
+      new Request("http://localhost/page", {
+        headers: {
+          "x-project-slug": "my-project",
+          "x-token": "spoofed-token",
+        },
+      }),
+    );
+
+    assertEquals(response.status, 502);
+    assertEquals(response.headers.get("Content-Type"), "application/json");
+    assertEquals(await response.json(), {
+      error: "Untrusted proxy context",
+      detail: "proxy context headers require a trusted upstream proxy",
+    });
+  });
+
   it("skips the proxy header guard for websocket requests", async () => {
     const handler = createProxyModeHandler();
 

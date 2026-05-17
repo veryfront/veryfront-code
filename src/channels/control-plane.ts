@@ -1,5 +1,5 @@
-import type { Agent } from "#veryfront/agent";
-import type { HandlerContext } from "#veryfront/types";
+import type { Agent } from "#veryfront/agent/types.ts";
+import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";

@@ -1,6 +1,5 @@
 import { join } from "#veryfront/compat/path";
 import { getExtensionName } from "#veryfront/utils/path-utils.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
 import type { HTMLGenerationOptions } from "#veryfront/html";
 import {
   buildImportMapJson,
@@ -9,18 +8,9 @@ import {
   injectHTMLContent,
   isFullHTMLDocument,
 } from "#veryfront/html";
-import type { CollectedHead } from "#veryfront/react/head-collector.ts";
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type {
-  EntityInfo,
-  LayoutItem,
-  MdxBundle,
-  MDXFrontmatter,
-  PageBundle,
-} from "#veryfront/types";
+import type { MDXFrontmatter } from "#veryfront/types";
 import { DEFAULT_DASHBOARD_PORT, rendererLogger } from "#veryfront/utils";
 import { addNonceToHtmlTags } from "#veryfront/html/nonce-injection.ts";
-import type { RenderOptions } from "./types.ts";
 import { injectElementSelectors } from "#veryfront/studio/element-selector-injector.ts";
 import { computeSourceHash } from "#veryfront/studio/hash-utils.ts";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
@@ -38,6 +28,8 @@ import {
   mergeFrontmatter as mergeCollectedFrontmatter,
 } from "./html-head.ts";
 import { mergeImportedCSS as mergeImportedProjectCss } from "./html-imported-css.ts";
+import type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
+export type { HTMLGenerationContext, HTMLGeneratorConfig } from "./html-types.ts";
 
 const logger = rendererLogger.component("html-generator");
 
@@ -95,28 +87,6 @@ function injectThemePersistenceScript(
 </script>`;
 
   return html.replace(/<\/head>/i, `${script}\n</head>`);
-}
-
-export interface HTMLGeneratorConfig {
-  projectDir: string;
-  adapter: RuntimeAdapter;
-  config: VeryfrontConfig;
-  mode: "development" | "production";
-}
-
-export interface HTMLGenerationContext {
-  html: string;
-  pageInfo: EntityInfo;
-  pageBundle: PageBundle;
-  layoutBundle: MdxBundle | undefined;
-  nestedLayouts: LayoutItem[];
-  collectedMetadata: Record<string, unknown>;
-  slug: string;
-  ssrHash: string;
-  options?: RenderOptions;
-  collectedHead?: CollectedHead;
-  /** Absolute paths to CSS files imported by components (collected during module loading) */
-  cssImports?: string[];
 }
 
 export class HTMLGenerator {

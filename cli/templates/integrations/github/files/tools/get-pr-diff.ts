@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createGitHubClient } from "../../lib/github-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 export default tool({
   id: "get-pr-diff",
@@ -12,8 +13,7 @@ export default tool({
     prNumber: v.number().int().positive().describe("Pull request number"),
   }))(),
   execute: async ({ repo, prNumber }, context) => {
-    // Default to "current-user" for development; in production, always pass userId from session
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
 
     const [owner, repoName] = repo.split("/");
     if (!owner || !repoName) {

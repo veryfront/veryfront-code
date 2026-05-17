@@ -21,6 +21,7 @@ import { errorToRFC9457Response } from "#veryfront/errors/middleware/http-error-
 import { RouteRegistry } from "#veryfront/routing/registry/index.ts";
 import type { Handler } from "#veryfront/types";
 import { SecurityConfigLoader } from "#veryfront/security/http/config.ts";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 
 // Re-export is at the bottom of the file
 import type { HandlerContext as _HandlerContext } from "../handlers/types.ts";
@@ -111,6 +112,7 @@ import {
   runWithProjectEnv,
 } from "../project-env/index.ts";
 import { SCANNER_PATH_PATTERN } from "#veryfront/utils/constants/security.ts";
+import { isProxyTrusted } from "../utils/proxy-trust.ts";
 
 // Re-export from dedicated module for lightweight imports
 export { parseProxyEnvironment, type ProxyEnvironment } from "./proxy-environment.ts";
@@ -446,8 +448,21 @@ export function createVeryfrontHandler(
             }
             : null;
 
-          if (missingHeader) {
-            logger.warn(missingHeader.detail, {
+          const publicKeyPem = adapter.env.get("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY") ??
+            getHostEnv("CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY");
+          const untrustedProxyContext = !missingHeader &&
+            !(await isProxyTrusted(req, { publicKeyPem }));
+          const proxyContextError = untrustedProxyContext
+            ? {
+              error: "Untrusted proxy context",
+              detail: "proxy context headers require a trusted upstream proxy",
+            }
+            : null;
+
+          const proxyGuardError = missingHeader ?? proxyContextError;
+
+          if (proxyGuardError) {
+            logger.warn(proxyGuardError.detail, {
               pathname: url.pathname,
               domain,
               projectSlug: headers.projectSlug,
@@ -463,7 +478,7 @@ export function createVeryfrontHandler(
             completeIsolatedRequest(headers.projectSlug, lifecycle.shouldCheckIsolation, false);
             endRequestTracing(spanInfo.span, 502);
             return new Response(
-              JSON.stringify(missingHeader),
+              JSON.stringify(proxyGuardError),
               { status: 502, headers: { "Content-Type": "application/json" } },
             );
           }

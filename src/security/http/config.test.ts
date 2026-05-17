@@ -1,8 +1,24 @@
 import "#veryfront/schemas/_test-setup.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { SecurityConfigLoader } from "./config.ts";
+
+function captureConsoleLog(): { getOutput: () => string; restore: () => void } {
+  const originalWarn = console.warn;
+  let capturedOutput = "";
+
+  console.warn = (msg: string) => {
+    capturedOutput += `${msg}\n`;
+  };
+
+  return {
+    getOutput: () => capturedOutput,
+    restore: () => {
+      console.warn = originalWarn;
+    },
+  };
+}
 
 function createMockAdapter(
   envMap: Record<string, string> = {},
@@ -17,6 +33,13 @@ function createMockAdapter(
 }
 
 describe("security/http/config", () => {
+  const originalNodeEnv = Deno.env.get("NODE_ENV");
+
+  afterEach(() => {
+    if (originalNodeEnv === undefined) Deno.env.delete("NODE_ENV");
+    else Deno.env.set("NODE_ENV", originalNodeEnv);
+  });
+
   it("serializes object CSP config for downstream handler context", async () => {
     const loader = new SecurityConfigLoader(
       "/project",
@@ -86,5 +109,55 @@ describe("security/http/config", () => {
     assertEquals(loader.getSecurityConfig(), null);
     assertEquals(loader.getCspUserHeader(), null);
     assertEquals(loader.getCorsConfig(), undefined);
+  });
+
+  it("defaults CSRF protection on in production when not explicitly configured", async () => {
+    Deno.env.set("NODE_ENV", "production");
+    const loader = new SecurityConfigLoader(
+      "/project",
+      createMockAdapter(),
+      {
+        security: {},
+      },
+    );
+
+    await loader.ensureLoaded();
+
+    assertEquals(loader.getSecurityConfig()?.csrf, true);
+  });
+
+  it("does not warn that CSRF is unconfigured when production defaults enable it", async () => {
+    Deno.env.set("NODE_ENV", "production");
+    const { getOutput, restore } = captureConsoleLog();
+    const loader = new SecurityConfigLoader(
+      "/project",
+      createMockAdapter(),
+      {
+        security: {},
+      },
+    );
+
+    try {
+      await loader.ensureLoaded();
+    } finally {
+      restore();
+    }
+
+    assertEquals(getOutput().includes("Neither CORS nor CSRF protection is configured"), false);
+  });
+
+  it("honors explicit CSRF disablement in production", async () => {
+    Deno.env.set("NODE_ENV", "production");
+    const loader = new SecurityConfigLoader(
+      "/project",
+      createMockAdapter(),
+      {
+        security: { csrf: false },
+      },
+    );
+
+    await loader.ensureLoaded();
+
+    assertEquals(loader.getSecurityConfig()?.csrf, false);
   });
 });

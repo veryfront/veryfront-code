@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createSlackClient } from "../../lib/slack-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 type SlackMessage = {
   text?: string;
@@ -24,7 +25,7 @@ export default tool({
       .describe("Maximum number of messages to return"),
   }))(),
   execute: async ({ channel, limit }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
 
     try {
       const slack = createSlackClient(userId);

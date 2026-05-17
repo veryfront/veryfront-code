@@ -4,8 +4,7 @@
 
 import type { JsonSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import type { BlobStorage } from "#veryfront/workflow/blob/types.ts";
-// type-only import — no runtime circular dependency (tool ↔ mcp)
-import type { ToolAnnotations } from "#veryfront/mcp/types.ts";
+import type { ToolAnnotations } from "#veryfront/mcp/annotations.ts";
 
 /**
  * Tool configuration options

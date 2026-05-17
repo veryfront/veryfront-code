@@ -1,5 +1,6 @@
-import { REQUEST_ERROR } from "#veryfront/errors";
+import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
+import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import {
   type CommandJob,
   type CommandJobOutput,
@@ -7,10 +8,8 @@ import {
   type ExecOptions,
   type ExecResult,
   type ExecStreamEvent,
-  resolveSandboxApiUrl,
-  resolveSandboxAuthToken,
   type SandboxOptions,
-} from "./sandbox.ts";
+} from "./types.ts";
 
 export interface LazySandboxOptions extends SandboxOptions {
   getProjectId?: () => string | null | undefined;

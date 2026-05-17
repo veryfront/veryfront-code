@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createGitHubClient } from "../../lib/github-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 type PullRequest = {
   number: number;
@@ -38,7 +39,7 @@ export default tool({
       .describe("Maximum number of pull requests to return"),
   }))(),
   execute: async ({ repo, state, limit }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
     const [owner, repoName] = repo.split("/");
 
     if (!owner || !repoName) {

@@ -4,7 +4,7 @@
  * @module extensions/errors
  */
 
-import { defineError } from "#veryfront/errors";
+import { defineError } from "#veryfront/errors/types.ts";
 
 export const MISSING_EXTENSION_ERROR = defineError({
   slug: "missing-extension",

@@ -14,7 +14,7 @@
 
 import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { isTruthyEnvValue } from "#veryfront/utils/constants/env.ts";
-import { serverLogger } from "#veryfront/utils";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import {
   type Context,
   context as shimContext,

@@ -1,70 +1,12 @@
-import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { VeryfrontConfig } from "#veryfront/config";
-import type { HandlerContext, ParsedDomain } from "#veryfront/types";
 import { buildRenderCachePrefix } from "#veryfront/cache/keys.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
-
-export type Environment = "preview" | "production";
-type RenderMode = "development" | "production";
-
-interface ProjectData {
-  id: string;
-  slug: string;
-  name?: string;
-  updated_at?: string;
-  [key: string]: unknown;
-}
-
-export interface EnrichedContext {
-  projectId: string;
-  projectSlug: string;
-  projectDir: string;
-
-  token: string;
-  environment: Environment;
-  branch: string | null;
-  isLocalProject: boolean;
-  mode: RenderMode;
-
-  /** Content source identifier for cache isolation (e.g., "release-abc123", "preview-main", "local-main") */
-  contentSourceId: string;
-  releaseId?: string;
-  environmentName?: string;
-  parsedDomain: ParsedDomain;
-  projectData?: ProjectData;
-
-  adapter: RuntimeAdapter;
-  config: VeryfrontConfig;
-  cachePrefix: string;
-
-  moduleServerUrl?: string;
-  nonce?: string;
-  debug?: boolean;
-
-  createdAt: number;
-}
-
-interface BuildEnrichedContextOptions {
-  projectId: string;
-  projectSlug: string;
-  projectDir: string;
-  token: string;
-  environment: Environment;
-  branch: string | null;
-  isLocalProject: boolean;
-  /** Content source identifier for cache isolation - computed by proxy */
-  contentSourceId: string;
-  parsedDomain: ParsedDomain;
-  adapter: RuntimeAdapter;
-  config: VeryfrontConfig;
-
-  releaseId?: string;
-  environmentName?: string;
-  projectData?: ProjectData;
-  moduleServerUrl?: string;
-  nonce?: string;
-  debug?: boolean;
-}
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
+import type { HandlerContext } from "#veryfront/types/server.ts";
+import type { BuildEnrichedContextOptions, EnrichedContext } from "./enriched-context-types.ts";
+export type {
+  BuildEnrichedContextOptions,
+  EnrichedContext,
+  Environment,
+} from "./enriched-context-types.ts";
 
 export function buildEnrichedContext(options: BuildEnrichedContextOptions): EnrichedContext {
   if (!options.contentSourceId) {

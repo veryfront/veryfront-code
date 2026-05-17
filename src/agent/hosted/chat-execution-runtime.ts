@@ -26,7 +26,6 @@ import type {
 } from "./chat-runtime-contract.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import {
-  type ConversationHostedTerminalRuntimeAdapter,
   type ConversationHostedTerminalStateInput,
   dispatchConversationHostedStreamErrorState,
   dispatchConversationHostedTerminalState,
@@ -50,9 +49,10 @@ import {
   getHostedStreamErrorText,
   shouldFailEmptyHostedFinalizedMessage,
 } from "./stream-terminal-error.ts";
-import type { ConversationRunChunkMirror } from "../conversation/run-chunk-mirror.ts";
 import type { BuildChatStreamChunkMessageMetadataInput } from "../../chat/chat-ui-message-helpers.ts";
 import { createChatStreamWatchdog } from "../../chat/stream-watchdog.ts";
+import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
+export type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 
 const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execution completed";
 
@@ -72,15 +72,6 @@ export interface HostedChatExecutionRuntimeLogger {
 export interface HostedChatExecutionRunContext {
   withContext: <T>(fn: () => T) => T;
   setMessageId?: (messageId: string) => void;
-}
-
-export interface HostedChatExecutionLifecycleAdapter
-  extends ConversationHostedTerminalRuntimeAdapter {
-  durableRootRun: {
-    runId: string;
-    messageId?: string | null;
-  } | null;
-  durableRunMirror: ConversationRunChunkMirror | null;
 }
 
 export type HostedChatExecutionRootStreamWatchdog = ReturnType<typeof createChatStreamWatchdog>;

@@ -165,6 +165,10 @@ export function isEncryptionEnabled(): boolean {
   return getEncryptionKey() !== null;
 }
 
+function isProductionRuntime(): boolean {
+  return getEnvVar("NODE_ENV") === "production";
+}
+
 // ============================================================================
 // In-Memory Store (Development)
 // ============================================================================
@@ -234,10 +238,47 @@ export function createTokenStore(config: TokenStoreConfig): TokenStore {
 // Default Export (Auto-detects environment)
 // ============================================================================
 
-export const tokenStore: TokenStore = inMemoryStore;
+export function createDefaultTokenStore(): TokenStore {
+  if (isProductionRuntime()) {
+    throw new Error(
+      "In-memory token storage is not allowed in production. " +
+        "Configure DATABASE_URL, KV_REST_API_URL, or REDIS_URL and wire a durable store from " +
+        "lib/token-store-examples.ts.",
+    );
+  }
+
+  // The starter keeps the development store explicit. Production adapters in
+  // token-store-examples.ts require provider-specific clients and credentials.
+  return inMemoryStore;
+}
+
+let defaultTokenStore: TokenStore | null = null;
+
+function getDefaultTokenStore(): TokenStore {
+  defaultTokenStore ??= createDefaultTokenStore();
+  return defaultTokenStore;
+}
+
+export const tokenStore: TokenStore = {
+  getToken(userId: string, service: string): Promise<OAuthToken | null> {
+    return getDefaultTokenStore().getToken(userId, service);
+  },
+
+  setToken(userId: string, service: string, token: OAuthToken): Promise<void> {
+    return getDefaultTokenStore().setToken(userId, service, token);
+  },
+
+  revokeToken(userId: string, service: string): Promise<void> {
+    return getDefaultTokenStore().revokeToken(userId, service);
+  },
+
+  isConnected(userId: string, service: string): Promise<boolean> {
+    return getDefaultTokenStore().isConnected(userId, service);
+  },
+};
 
 if (
-  typeof process !== "undefined" && process.env?.NODE_ENV !== "production" &&
+  !isProductionRuntime() &&
   getStorageMode() === "memory"
 ) {
   console.warn(

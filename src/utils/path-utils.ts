@@ -1,4 +1,4 @@
-import { normalize } from "#veryfront/compat/path/index.ts";
+import { isAbsolute, normalize } from "#veryfront/compat/path/resolution.ts";
 import { base64urlEncode } from "./base64url.ts";
 import { logger } from "./logger/logger.ts";
 
@@ -71,7 +71,7 @@ export function getEsbuildLoader(filePath: string): "tsx" | "jsx" | "ts" | "js" 
   return EXTENSION_TO_LOADER[ext] ?? "js";
 }
 
-export { isAbsolute as isAbsolutePath } from "#veryfront/compat/path/index.ts";
+export { isAbsolute as isAbsolutePath };
 
 export function toBase64Url(input: string): string {
   return base64urlEncode(input);

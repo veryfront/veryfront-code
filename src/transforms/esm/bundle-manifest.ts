@@ -8,35 +8,20 @@
  * @module transforms/esm/bundle-manifest
  **************************/
 
-import { rendererLogger as logger } from "#veryfront/utils";
+import { rendererLogger as logger } from "#veryfront/utils/logger/logger.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import { buildBundleManifestCacheKey } from "#veryfront/cache/keys.ts";
-import {
-  BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC,
-  BUNDLE_MANIFEST_LRU_MAX_ENTRIES,
-} from "#veryfront/utils/constants/cache.ts";
-import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { ensureHttpBundlesExist } from "./http-cache.ts";
+import { ensureHttpBundlesExist } from "./bundle-recovery.ts";
+import { rememberBundleManifestHashes } from "./bundle-manifest-ttl.ts";
+import type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
+export type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
+export { getManifestIdForHash, refreshManifestTTL } from "./bundle-manifest-ttl.ts";
 
 const LOG_PREFIX = "[BundleManifest]";
-
-/** A single HTTP bundle entry in a manifest. */
-export interface BundleEntry {
-  hash: string;
-  url: string;
-  sizeBytes: number;
-}
-
-/** A manifest tracking all HTTP bundles from a single transform. */
-interface BundleManifest {
-  manifestId: string;
-  bundles: BundleEntry[];
-  createdAt: number;
-  ttlSeconds: number;
-}
 
 export type ManifestValidationReason = "manifest_missing" | "bundle_missing";
 
@@ -46,14 +31,6 @@ export interface ManifestValidationResult {
   failedHashes: string[];
   reason?: ManifestValidationReason;
 }
-
-/**
- * LRU mapping from bundle hash → manifestId.
- * Used for TTL co-refresh: when any bundle is refreshed, also refresh its manifest.
- */
-const hashToManifestId = new LRUCache<string, string>({
-  maxEntries: BUNDLE_MANIFEST_LRU_MAX_ENTRIES,
-});
 
 /** Lazy accessor for the distributed cache backend. */
 const getCache = createDistributedCacheAccessor(
@@ -76,9 +53,7 @@ export async function createBundleManifest(bundles: BundleEntry[]): Promise<Bund
   const hashes = bundles.map((b) => b.hash);
   const manifestId = await computeManifestId(hashes);
 
-  for (const hash of hashes) {
-    hashToManifestId.set(hash, manifestId);
-  }
+  rememberBundleManifestHashes(hashes, manifestId);
 
   return {
     manifestId,
@@ -175,7 +150,11 @@ export async function validateBundleGroup(
     total: manifest.bundles.length,
   });
 
-  const unrecoverableHashes = await ensureHttpBundlesExist(missingBundles, cacheDir);
+  const unrecoverableHashes = await ensureHttpBundlesExist(
+    missingBundles,
+    cacheDir,
+    async () => null,
+  );
   if (unrecoverableHashes.length > 0) {
     logger.warn(`${LOG_PREFIX} Some bundles could not be recovered`, {
       manifestId: manifestId.slice(0, 12),
@@ -190,32 +169,4 @@ export async function validateBundleGroup(
   });
 
   return { valid: true, failedHashes: [] };
-}
-
-/**
- * Get the manifest ID associated with a bundle hash (for TTL co-refresh).
- */
-export function getManifestIdForHash(hash: string): string | undefined {
-  return hashToManifestId.get(hash);
-}
-
-/**
- * Refresh the TTL of a manifest in the distributed cache.
- */
-export async function refreshManifestTTL(manifestId: string): Promise<void> {
-  const cache = await getCache();
-  if (!cache) return;
-
-  const key = buildBundleManifestCacheKey(manifestId);
-
-  try {
-    const raw = await cache.get(key);
-    if (!raw) return;
-    await cache.set(key, raw, BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC);
-  } catch (error) {
-    logger.debug(`${LOG_PREFIX} Failed to refresh manifest TTL`, {
-      manifestId: manifestId.slice(0, 12),
-      error,
-    });
-  }
 }

@@ -1,5 +1,5 @@
-import type { Agent } from "#veryfront/agent";
-import type { Tool } from "#veryfront/tool";
+import type { Agent } from "#veryfront/agent/types.ts";
+import type { Tool } from "#veryfront/tool/types.ts";
 import type {
   BaseNodeConfig,
   RetryConfig,
@@ -8,7 +8,7 @@ import type {
   WorkflowNode,
 } from "../types.ts";
 import { validateNodeId } from "./validation.ts";
-import { INVALID_ARGUMENT } from "#veryfront/errors";
+import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 
 export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   agent?: string | Agent;

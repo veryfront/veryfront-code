@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createGitHubClient } from "../../lib/github-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 export default tool({
   id: "create-issue",
@@ -21,7 +22,7 @@ export default tool({
       .describe("GitHub usernames to assign to the issue"),
   }))(),
   execute: async ({ repo, title, body, labels, assignees }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
 
     const [owner, repoName] = repo.split("/");
     if (!owner || !repoName) {

@@ -1,18 +1,9 @@
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
-import type { Tool } from "#veryfront/tool";
-import type { Resource } from "#veryfront/resource";
-import type { Prompt } from "#veryfront/prompt";
-
-/**
- * Behavioral hints for MCP clients (MCP 2025-11-25).
- * Guides auto-approval, confirmation prompts, and caching.
- */
-export interface ToolAnnotations {
-  readOnlyHint?: boolean;
-  destructiveHint?: boolean;
-  idempotentHint?: boolean;
-  openWorldHint?: boolean;
-}
+import type { Tool } from "#veryfront/tool/types.ts";
+import type { Resource } from "#veryfront/resource/types.ts";
+import type { Prompt } from "#veryfront/prompt/types.ts";
+export type { ToolAnnotations } from "./annotations.ts";
+import type { ToolAnnotations } from "./annotations.ts";
 
 /**
  * Generic MCP tool definition

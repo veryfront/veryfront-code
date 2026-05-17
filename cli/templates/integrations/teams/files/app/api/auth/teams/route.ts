@@ -1,10 +1,9 @@
 import { createOAuthInitHandler, teamsConfig } from "veryfront/oauth";
 import { oauthMemoryTokenStore } from "../../../../../lib/oauth-memory-store.ts";
+import { requireUserIdFromRequest } from "../../../../../lib/user-id.ts";
 
-// TODO: Replace with real user ID from your auth system (e.g., session cookie, JWT).
-// NEVER return a shared constant in production - it breaks per-user token isolation (VULN-AUTH-2).
-function getUserId(_request: Request): string {
-  return "current-user";
+function getUserId(request: Request): string {
+  return requireUserIdFromRequest(request);
 }
 
 export const GET = createOAuthInitHandler(teamsConfig, {

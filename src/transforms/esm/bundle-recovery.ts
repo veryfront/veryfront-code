@@ -10,7 +10,7 @@
 
 import { createFileSystem, exists } from "#veryfront/platform/compat/fs.ts";
 import { join } from "#veryfront/compat/path/index.ts";
-import { rendererLogger } from "#veryfront/utils";
+import { rendererLogger } from "#veryfront/utils/logger/logger.ts";
 import { simpleHash } from "#veryfront/utils/hash-utils.ts";
 import { httpBundleCache } from "./http-cache-wrapper.ts";
 import { VeryfrontError } from "./http-cache-invariants.ts";

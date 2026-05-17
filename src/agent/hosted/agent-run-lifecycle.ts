@@ -3,7 +3,7 @@ import {
   type ConversationHostedTerminalAdapter,
   createConversationHostedTerminalAdapter,
 } from "../conversation/hosted-terminal.ts";
-import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-runtime.ts";
+import type { HostedChatExecutionLifecycleAdapter } from "./chat-execution-lifecycle-types.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 import type { HostedConversationRootRunState } from "../conversation/root-run-lifecycle.ts";
 import {
