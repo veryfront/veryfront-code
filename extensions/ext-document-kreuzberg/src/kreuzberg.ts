@@ -21,7 +21,15 @@ type KreuzbergModule = {
 
 // deno-lint-ignore no-explicit-any
 async function loadKreuzbergNode(): Promise<any> {
-  return await import("@kreuzberg/node");
+  try {
+    return await import("@kreuzberg/node");
+  } catch (error) {
+    if (!isMissingPackageError(error)) throw error;
+    throw new Error(
+      'Document extraction on Node requires the optional package "@kreuzberg/node". ' +
+        "Install @kreuzberg/node@^4.4.2 or disable document extraction.",
+    );
+  }
 }
 
 export async function loadKreuzberg(): Promise<KreuzbergExtractor> {
@@ -31,7 +39,7 @@ export async function loadKreuzberg(): Promise<KreuzbergExtractor> {
     return loadKreuzbergNode();
   }
 
-  const mod = await import("@kreuzberg/wasm") as unknown as KreuzbergModule;
+  const mod = await importKreuzbergWasm();
 
   const mainModule = typeof (Deno as { mainModule?: string }).mainModule === "string"
     ? (Deno as { mainModule?: string }).mainModule!
@@ -51,4 +59,24 @@ export async function loadKreuzberg(): Promise<KreuzbergExtractor> {
 
   await mod.initWasm?.();
   return mod;
+}
+
+async function importKreuzbergWasm(): Promise<KreuzbergModule> {
+  try {
+    return await import("@kreuzberg/wasm") as unknown as KreuzbergModule;
+  } catch (error) {
+    if (!isMissingPackageError(error)) throw error;
+    throw new Error(
+      'Document extraction on Deno requires the optional package "@kreuzberg/wasm". ' +
+        "Install @kreuzberg/wasm@4.5.2 or disable document extraction.",
+    );
+  }
+}
+
+function isMissingPackageError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Cannot find package") ||
+    message.includes("Cannot find module") ||
+    message.includes("ERR_MODULE_NOT_FOUND") ||
+    message.includes("Module not found");
 }

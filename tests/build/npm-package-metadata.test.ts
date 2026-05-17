@@ -11,13 +11,13 @@ Deno.test("keeps native sqlite support optional for npm consumers", () => {
     peerDependenciesMeta: {},
   });
 
-  assertEquals(pkg.dependencies, {
-    "@kreuzberg/node": "^4.4.2",
-  });
+  assertEquals(pkg.dependencies, undefined);
   assertEquals(pkg.peerDependencies, {
+    "@kreuzberg/node": "^4.4.2",
     "better-sqlite3": ">=9.0.0",
   });
   assertEquals(pkg.peerDependenciesMeta, {
+    "@kreuzberg/node": { optional: true },
     "better-sqlite3": { optional: true },
   });
   assertEquals(pkg.overrides, {

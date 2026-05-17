@@ -272,13 +272,13 @@ await build({
 
 		// Update package.json with bin entry and type
 		const pkg = JSON.parse(await Deno.readTextFile(pkgPath));
-		normalizeNpmPackageMetadata(pkg);
 		pkg.type = "module"; // Required for ESM imports without warnings
 		pkg.types = "./esm/src/index.d.ts";
 		pkg.bin = { veryfront: "bin/veryfront.js" };
-		pkg.files = ["esm", "script", "src", "bin", "tsconfig.json", "LICENSE", "README.md"];
+		pkg.files = ["esm", "script", "bin", "tsconfig.json", "LICENSE", "README.md"];
 		pkg.exports["./tsconfig.json"] = "./tsconfig.json";
 		addTypesExportEntries(pkg.exports);
+		normalizeNpmPackageMetadata(pkg);
 		await Deno.writeTextFile(pkgPath, JSON.stringify(pkg, null, 2));
 	},
 });
