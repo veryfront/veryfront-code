@@ -61,7 +61,7 @@ function useUploads(api: string) {
 }
 
 export default function DocsChat() {
-  const chat = useChat({ api: '/api/chat' })
+  const chat = useChat({ api: '/api/chat', transport: 'ag-ui' })
   const docs = useUploads(UPLOAD_API)
 
   const attachmentItems = useMemo(() => {

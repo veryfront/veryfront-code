@@ -14,8 +14,9 @@ import {
 } from "./ag-ui-helpers.ts";
 import type { ChatStreamEvent } from "./protocol.ts";
 import type { ChatUiMessage, ChatUiMessagePart } from "./types.ts";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
-import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
+import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
 type JsonPatchOperation = {
   op: "add" | "remove" | "replace" | "move" | "copy" | "test";
@@ -91,6 +92,31 @@ export type AgUiChatEventDecoderState = {
   validationMode: AgUiDecoderValidationMode;
   onInvalidJson: ((details: { eventName: string | null; dataLength: number }) => void) | null;
 };
+
+const AG_UI_WIRE_EVENT_NAMES = [
+  "RunStarted",
+  "Custom",
+  "TextMessageStart",
+  "TextMessageContent",
+  "TextMessageEnd",
+  "ToolCallStart",
+  "ToolCallArgs",
+  "ToolCallChunk",
+  "ToolCallEnd",
+  "ToolCallResult",
+  "StateSnapshot",
+  "MessagesSnapshot",
+  "ReasoningMessageStart",
+  "ReasoningMessageContent",
+  "ReasoningMessageEnd",
+  "StateDelta",
+  "RunFinished",
+  "RunError",
+] as const;
+
+const AG_UI_WIRE_EVENT_NAME_SET = new Set<string>(AG_UI_WIRE_EVENT_NAMES);
+
+type AgUiWireEventNameLiteral = typeof AG_UI_WIRE_EVENT_NAMES[number];
 
 export const getAgUiRunFinishedMetadataSchema = defineSchema((v) =>
   v.object({
@@ -179,28 +205,7 @@ export const getAgUiSnapshotMessageSchema = defineSchema((v) =>
 /** @deprecated Use getAgUiSnapshotMessageSchema() */
 export const AgUiSnapshotMessageSchema = lazySchema(getAgUiSnapshotMessageSchema);
 
-export const getAgUiWireEventNameSchema = defineSchema((v) =>
-  v.enum([
-    "RunStarted",
-    "Custom",
-    "TextMessageStart",
-    "TextMessageContent",
-    "TextMessageEnd",
-    "ToolCallStart",
-    "ToolCallArgs",
-    "ToolCallChunk",
-    "ToolCallEnd",
-    "ToolCallResult",
-    "StateSnapshot",
-    "MessagesSnapshot",
-    "ReasoningMessageStart",
-    "ReasoningMessageContent",
-    "ReasoningMessageEnd",
-    "StateDelta",
-    "RunFinished",
-    "RunError",
-  ])
-);
+export const getAgUiWireEventNameSchema = defineSchema((v) => v.enum(AG_UI_WIRE_EVENT_NAMES));
 
 /** @deprecated Use getAgUiWireEventNameSchema() */
 export const AgUiWireEventNameSchema = lazySchema(getAgUiWireEventNameSchema);
@@ -556,6 +561,105 @@ function getReasoningPartId(
   return fallbackId;
 }
 
+function isAgUiWireEventName(value: string | null): value is AgUiWireEventNameLiteral {
+  return typeof value === "string" && AG_UI_WIRE_EVENT_NAME_SET.has(value);
+}
+
+function hasStringField(payload: Record<string, unknown>, key: string): boolean {
+  return typeof payload[key] === "string" && payload[key].length > 0;
+}
+
+function hasOptionalStringField(payload: Record<string, unknown>, key: string): boolean {
+  return payload[key] === undefined || typeof payload[key] === "string";
+}
+
+function isValidAgUiPayload(
+  eventName: AgUiWireEventNameLiteral,
+  payload: Record<string, unknown>,
+): boolean {
+  switch (eventName) {
+    case "RunStarted":
+      return hasOptionalStringField(payload, "runId") &&
+        hasOptionalStringField(payload, "threadId") &&
+        hasOptionalStringField(payload, "agentId");
+
+    case "Custom":
+      return hasStringField(payload, "name") && "value" in payload;
+
+    case "TextMessageStart":
+    case "TextMessageEnd":
+      return hasStringField(payload, "messageId") &&
+        hasOptionalStringField(payload, "id") &&
+        hasOptionalStringField(payload, "contentId") &&
+        hasOptionalStringField(payload, "role");
+
+    case "TextMessageContent":
+      return hasStringField(payload, "messageId") &&
+        typeof payload.delta === "string" &&
+        hasOptionalStringField(payload, "id") &&
+        hasOptionalStringField(payload, "contentId");
+
+    case "ToolCallStart":
+      return hasStringField(payload, "toolCallId") && hasStringField(payload, "toolCallName");
+
+    case "ToolCallArgs":
+    case "ToolCallChunk":
+      return hasStringField(payload, "toolCallId") && typeof payload.delta === "string";
+
+    case "ToolCallEnd":
+      return hasStringField(payload, "toolCallId");
+
+    case "ToolCallResult":
+      return hasStringField(payload, "toolCallId") &&
+        (payload.messageId === undefined || hasStringField(payload, "messageId")) &&
+        (payload.role === undefined || payload.role === "tool") &&
+        (payload.isError === undefined || typeof payload.isError === "boolean");
+
+    case "StateSnapshot":
+      return isRecord(payload.snapshot);
+
+    case "MessagesSnapshot":
+      return Array.isArray(payload.messages);
+
+    case "ReasoningMessageStart":
+    case "ReasoningMessageEnd":
+      return hasOptionalStringField(payload, "messageId") &&
+        hasOptionalStringField(payload, "id") &&
+        hasOptionalStringField(payload, "role");
+
+    case "ReasoningMessageContent":
+      return typeof payload.delta === "string" &&
+        hasOptionalStringField(payload, "messageId") &&
+        hasOptionalStringField(payload, "id");
+
+    case "StateDelta":
+      return "delta" in payload;
+
+    case "RunFinished":
+      return payload.metadata === undefined || isRecord(payload.metadata);
+
+    case "RunError":
+      return hasOptionalStringField(payload, "message") &&
+        hasOptionalStringField(payload, "code");
+  }
+}
+
+function parseAgUiWireEventWithoutSchema(
+  eventName: AgUiWireEventNameLiteral,
+  payload: Record<string, unknown>,
+  validationMode: AgUiDecoderValidationMode,
+): AgUiWireEvent | null {
+  if (isValidAgUiPayload(eventName, payload)) {
+    return { eventName, payload } as AgUiWireEvent;
+  }
+
+  if (validationMode === "strict") {
+    throw new Error(`Malformed AG-UI event payload for ${eventName}`);
+  }
+
+  return null;
+}
+
 function parseAgUiWireEvent(
   frame: ParsedSseEvent,
   input: {
@@ -567,8 +671,7 @@ function parseAgUiWireEvent(
     return null;
   }
 
-  const eventName = getAgUiWireEventNameSchema().safeParse(frame.event);
-  if (!eventName.success) {
+  if (!isAgUiWireEventName(frame.event)) {
     return null;
   }
 
@@ -587,16 +690,20 @@ function parseAgUiWireEvent(
     return null;
   }
 
-  const parsed = getAgUiWireEventSchema().safeParse({
-    eventName: eventName.data,
-    payload,
-  });
+  if (tryResolve<SchemaValidator>("SchemaValidator")) {
+    const parsed = getAgUiWireEventSchema().safeParse({
+      eventName: frame.event,
+      payload,
+    });
 
-  if (!parsed.success && input.validationMode === "strict") {
-    throw new Error(`Malformed AG-UI event payload for ${eventName.data}`);
+    if (!parsed.success && input.validationMode === "strict") {
+      throw new Error(`Malformed AG-UI event payload for ${frame.event}`);
+    }
+
+    return parsed.success ? parsed.data : null;
   }
 
-  return parsed.success ? parsed.data : null;
+  return parseAgUiWireEventWithoutSchema(frame.event, payload, input.validationMode);
 }
 
 function mapWireEventToChatEvents(

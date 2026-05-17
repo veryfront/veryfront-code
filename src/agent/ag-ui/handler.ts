@@ -1,6 +1,8 @@
 import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import type { Agent } from "../types.ts";
+import { fromError } from "#veryfront/errors/veryfront-error.ts";
+import { DEFAULT_LOCAL_MODEL } from "#veryfront/provider/local/model-catalog.ts";
 import {
   AgentRuntime,
   RunAlreadyExistsError,
@@ -13,6 +15,11 @@ import {
   mapRuntimeEventToAgUi,
 } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
+import {
+  applyBeforeStreamResult,
+  type ChatHandlerBeforeStream,
+  extractLastUserText,
+} from "../service/chat-handler.ts";
 import {
   type AgUiRequest,
   normalizeAgUiMessages,
@@ -184,16 +191,31 @@ async function createAgUiStreamResponse(
 async function createAgUiDirectStreamResponse(
   agent: Agent,
   request: AgUiRequest,
+  rawRequest: Request,
   baseContext: Record<string, unknown>,
+  beforeStream?: ChatHandlerBeforeStream,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
+  const context = buildStreamContext(request, baseContext, threadId, runId);
+  let messages = normalizeAgUiMessages(request.messages);
+
+  const beforeStreamResult = await beforeStream?.({
+    request: rawRequest,
+    messages,
+    context,
+    lastUserText: extractLastUserText(messages),
+  });
+  if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
+
+  messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
+  const finalContext = beforeStreamResult?.context ?? context;
 
   await agent.clearMemory();
 
   const result = await agent.stream({
-    messages: normalizeAgUiMessages(request.messages),
-    context: buildStreamContext(request, baseContext, threadId, runId),
+    messages,
+    context: finalContext,
     ...(request.model ? { model: request.model } : {}),
     ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
   });
@@ -213,11 +235,26 @@ async function createAgUiDirectStreamResponse(
 async function createAgUiInjectedToolsStreamResponse(
   agent: Agent,
   request: AgUiRequest,
+  rawRequest: Request,
   baseContext: Record<string, unknown>,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
+  beforeStream?: ChatHandlerBeforeStream,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
+  const context = buildStreamContext(request, baseContext, threadId, runId);
+  let messages = normalizeAgUiMessages(request.messages);
+
+  const beforeStreamResult = await beforeStream?.({
+    request: rawRequest,
+    messages,
+    context,
+    lastUserText: extractLastUserText(messages),
+  });
+  if (isResponseLike(beforeStreamResult)) return beforeStreamResult;
+
+  messages = applyBeforeStreamResult(messages, beforeStreamResult ?? undefined);
+  const finalContext = beforeStreamResult?.context ?? context;
 
   try {
     sessionManager.startRun({ runId, threadId });
@@ -236,8 +273,8 @@ async function createAgUiInjectedToolsStreamResponse(
   let upstreamBody: ReadableStream<Uint8Array>;
   try {
     upstreamBody = await runtime.stream(
-      normalizeAgUiMessages(request.messages),
-      buildStreamContext(request, baseContext, threadId, runId),
+      messages,
+      finalContext,
       undefined,
       request.model,
       request.maxOutputTokens,
@@ -271,6 +308,7 @@ export interface AgUiHandlerOptions {
     | Record<string, unknown>
     | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
   sessionManager?: RunResumeSessionManager<AgUiResumeValue>;
+  beforeStream?: ChatHandlerBeforeStream;
 }
 
 export interface AgUiHandlerConfigWithAgent extends AgUiHandlerOptions {
@@ -347,8 +385,10 @@ export function createAgUiHandler(
         return await createAgUiInjectedToolsStreamResponse(
           agent,
           parsed,
+          request,
           context,
           options.sessionManager,
+          options?.beforeStream,
         );
       }
 
@@ -356,7 +396,13 @@ export function createAgUiHandler(
         ? await options.context(request)
         : options?.context ?? {};
 
-      return await createAgUiDirectStreamResponse(agent, parsed, context);
+      return await createAgUiDirectStreamResponse(
+        agent,
+        parsed,
+        request,
+        context,
+        options?.beforeStream,
+      );
     } catch (error) {
       if (
         error instanceof Error &&
@@ -373,6 +419,18 @@ export function createAgUiHandler(
             })),
           },
           { status: 400 },
+        );
+      }
+
+      const vfError = fromError(error);
+      if (vfError?.type === "no_ai_available") {
+        return Response.json(
+          {
+            code: "NO_AI_AVAILABLE",
+            fallback: "browser",
+            model: DEFAULT_LOCAL_MODEL,
+          },
+          { status: 503 },
         );
       }
 

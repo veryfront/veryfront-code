@@ -19,7 +19,6 @@ import {
   agent,
   agentAsTool,
   createAgUiHandler,
-  createChatHandler,
   createMemory,
   getAgentsAsTools,
   registerAgent,
@@ -194,8 +193,9 @@ as input.
 
 ### `agent.stream(input)`
 
-Run the agent and stream the response. Returns a result with
-`.toDataStreamResponse()` for API routes.
+Run the agent and stream the response. Use `createAgUiHandler()` for chat UI
+routes. Use `agent.stream()` directly only when you are building a custom
+transport or non-chat streaming surface.
 
 | Property      | Type                                         | Description                                                                                    |
 | ------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------- |
@@ -218,7 +218,7 @@ messages from the request body.
 ### `createAgUiHandler(agentIdOrConfig, options?)`
 
 Create a POST route handler that validates an AG-UI request, invokes an agent,
-and streams AG-UI SSE. Use this for new chat UI routes and pair it with
+and streams AG-UI SSE. Use this for chat UI routes and pair it with
 `useChat({ transport: "ag-ui" })`.
 
 ```ts
@@ -228,20 +228,35 @@ import { createAgUiHandler } from "veryfront/agent";
 export const POST = createAgUiHandler("assistant");
 ```
 
-### `createChatHandler(agentId, options?)`
-
-Create a POST chat route handler for the older Veryfront chat stream protocol
-with request validation, UI-message normalization, server-memory reset, and
-`NO_AI_AVAILABLE` fallback handling.
-
-| Property                | Type                                                                                                                                                           | Description                                                                                                                                                    |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agentId`               | `string`                                                                                                                                                       | Registered agent ID.                                                                                                                                           |
-| `options?.context`      | <code>Record&lt;string, unknown&gt; &#124; ((request: Request) =&gt; Record&lt;string, unknown&gt; &#124; Promise&lt;Record&lt;string, unknown&gt;&gt;)</code> | Context passed to `agent.stream()`.                                                                                                                            |
-| `options?.beforeStream` | <code>(input) =&gt; void &#124; Response &#124; ChatHandlerBeforeStreamResult &#124; Promise&lt;...&gt;</code>                                                 | Hook that runs after validation and before `agent.stream()`. Can prepend, append, replace messages, override context, or return a `Response` to short-circuit. |
+| Property                  | Type                                                                                                                                                           | Description                                                                                                                                                     |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentIdOrConfig`         | <code>string &#124; { agent: Agent, ...options }</code>                                                                                                        | Registered agent ID or direct agent instance.                                                                                                                   |
+| `options?.context`        | <code>Record&lt;string, unknown&gt; &#124; ((request: Request) =&gt; Record&lt;string, unknown&gt; &#124; Promise&lt;Record&lt;string, unknown&gt;&gt;)</code> | Context passed to the agent.                                                                                                                                    |
+| `options?.sessionManager` | <code>RunResumeSessionManager&lt;AgUiResumeValue&gt;</code>                                                                                                    | Required when the request injects AG-UI client tools that resume the same run.                                                                                  |
+| `options?.beforeStream`   | <code>(input) =&gt; void &#124; Response &#124; ChatHandlerBeforeStreamResult &#124; Promise&lt;...&gt;</code>                                                 | Hook that runs after validation and before the agent streams. Can prepend, append, replace messages, override context, or return a `Response` to short-circuit. |
 
 `beforeStream` input includes the original `request`, normalized `messages`,
 resolved `context`, and `lastUserText` extracted from the last user message.
+
+```ts
+// app/api/chat/route.ts
+import { createAgUiHandler } from "veryfront/agent";
+
+export const POST = createAgUiHandler("rag", {
+  beforeStream: async ({ lastUserText }) => {
+    const context = `Retrieved context for: ${lastUserText}`;
+    return {
+      prepend: [{
+        role: "system",
+        parts: [{
+          type: "text",
+          text: context,
+        }],
+      }],
+    };
+  },
+});
+```
 
 ### Memory methods
 
@@ -321,7 +336,7 @@ resolved `context`, and `lastUserText` extracted from the last user message.
 | `startNodeVeryfrontCloudAgentService`                                 | Start a Veryfront Cloud agent service with the Node server adapter       |
 | `parseRuntimeAgentRunInvocationOrError`                               | Parse a runtime agent invocation or return a `400` validation `Response` |
 | `resolveRuntimeAgentDefinitionsDir`                                   | Resolve a hosted service `agents/` directory from source/bundled paths   |
-| `createChatHandler`                                                   | Create a POST handler for a chat API route.                              |
+| `createChatHandler`                                                   | Legacy compatibility POST handler for the older chat stream protocol.    |
 | `createMemory`                                                        | Create memory (buffer, conversation, summary)                            |
 | `createRedisMemory`                                                   | Create Redis-backed memory                                               |
 | `createWorkflow`                                                      | Create sequential agent workflow                                         |
@@ -389,13 +404,14 @@ resolved `context`, and `lastUserText` extracted from the last user message.
 | `AgentMiddleware`                          | Agent execution middleware                                                                                                    |
 | `AgentResponse`                            | Agent execution response                                                                                                      |
 | `AgentStatus`                              | Agent status (idle, running, etc.)                                                                                            |
-| `AgentStreamResult`                        | Streaming result (`.toDataStreamResponse()`)                                                                                  |
+| `AgentStreamResult`                        | Low-level streaming result used by custom transports and AG-UI adapters.                                                      |
 | `AgUiContextItem`                          | AG-UI runtime context item                                                                                                    |
 | `AgUiHandlerConfigWithAgent`               | Direct-agent form for `createAgUiHandler`                                                                                     |
 | `AgUiHandlerOptions`                       | Options for `createAgUiHandler`                                                                                               |
 | `AgUiCancelHandlerOptions`                 | Options for `createAgUiCancelHandler`                                                                                         |
 | `AgUiInjectedTool`                         | AG-UI client-injected tool descriptor                                                                                         |
 | `AgUiRequest`                              | Validated AG-UI runtime request body                                                                                          |
+| `AgUiResumeValue`                          | Resume value submitted for an AG-UI client tool continuation.                                                                 |
 | `AgUiSseEvent`                             | AG-UI SSE event object used by host-facing AG-UI helpers                                                                      |
 | `AgUiResumeHandlerOptions`                 | Options for `createAgUiResumeHandler`                                                                                         |
 | `AgUiResumeSignal`                         | Validated hosted-run resume payload                                                                                           |
@@ -410,11 +426,11 @@ resolved `context`, and `lastUserText` extracted from the last user message.
 | `RunSessionStatus`                         | Status of a resumable run session                                                                                             |
 | `SubmitResumeValueOutcome`                 | Result of submitting an accepted or duplicate resume value                                                                    |
 | `WaitForHumanInputOptions`                 | Options for `waitForHumanInput()`                                                                                             |
-| `ChatHandlerBeforeStream`                  | Hook signature for `createChatHandler` customization before streaming.                                                        |
-| `ChatHandlerBeforeStreamContext`           | Input passed to `beforeStream` hook.                                                                                          |
+| `ChatHandlerBeforeStream`                  | Hook signature used by `createAgUiHandler` and legacy chat handler customization before streaming.                            |
+| `ChatHandlerBeforeStreamContext`           | Input passed to the `beforeStream` hook.                                                                                      |
 | `ChatHandlerBeforeStreamResult`            | Message/context mutations returned from `beforeStream`.                                                                       |
 | `ChatHandlerMessageInput`                  | Message shape for `prepend`/`append`/`replaceMessages` in `beforeStream`.                                                     |
-| `ChatHandlerOptions`                       | Options for `createChatHandler`: customize context and pre-stream behavior.                                                   |
+| `ChatHandlerOptions`                       | Legacy compatibility options for `createChatHandler`.                                                                         |
 | `BuildChatStreamChunkMessageMetadataInput` | Input for building canonical hosted chunk metadata from streamed finish parts.                                                |
 | `ChatMessageMetadata`                      | Canonical hosted message metadata shape for streamed assistant messages.                                                      |
 | `ChatMessageMetadataUsage`                 | Usage counters nested under `ChatMessageMetadata.usage`.                                                                      |

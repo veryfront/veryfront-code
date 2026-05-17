@@ -5,7 +5,7 @@
  * Build any interface you want.
  */
 
-export { useChat } from "./use-chat.ts";
+export { useChat } from "#veryfront/agent/react/use-chat/use-chat.ts";
 export type {
   BranchInfo,
   BrowserInferenceStatus,
@@ -23,5 +23,8 @@ export type {
   ToolOutput,
   UseChatOptions,
   UseChatResult,
-} from "./types.ts";
-export type { ChatFinishReason, ChatStreamEvent } from "./stream-protocol.ts";
+} from "#veryfront/agent/react/use-chat/types.ts";
+export type {
+  ChatFinishReason,
+  ChatStreamEvent,
+} from "#veryfront/agent/react/use-chat/stream-protocol.ts";

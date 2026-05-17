@@ -5,8 +5,11 @@
  * Uses inline Blob URL approach — no separate build entry point needed.
  */
 
-import type { WorkerRequest, WorkerResponse } from "./types.ts";
-import { WORKER_SCRIPT } from "./worker-script.ts";
+import type {
+  WorkerRequest,
+  WorkerResponse,
+} from "#veryfront/agent/react/use-chat/browser-inference/types.ts";
+import { WORKER_SCRIPT } from "#veryfront/agent/react/use-chat/browser-inference/worker-script.ts";
 
 interface GenerateCallbacks {
   onStatus?: (status: "loading-runtime" | "downloading-model" | "ready" | "generating") => void;

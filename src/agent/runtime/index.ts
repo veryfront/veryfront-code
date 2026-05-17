@@ -673,8 +673,8 @@ export class AgentRuntime {
     // Eagerly verify the model runtime is available. For local models this
     // checks that @huggingface/transformers can be imported. Must happen
     // BEFORE creating the ReadableStream so no_ai_available errors propagate
-    // to the caller (createChatHandler) who returns a 503 with browser fallback
-    // info, instead of being swallowed as an in-band SSE error in a 200 response.
+    // to the route handler, which returns a 503 with browser fallback info
+    // instead of swallowing it as an in-band SSE error in a 200 response.
     await ensureModelReady(languageModel);
 
     return new ReadableStream<Uint8Array>({

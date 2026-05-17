@@ -16,7 +16,7 @@ const INITIAL_CONVERSATIONS: Conversation[] = [
 export default function Dashboard(): JSX.Element {
   const [conversations] = useState<Conversation[]>(INITIAL_CONVERSATIONS);
   const [activeId, setActiveId] = useState("1");
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
 
   return (
     <div className="flex h-screen bg-white dark:bg-neutral-950">

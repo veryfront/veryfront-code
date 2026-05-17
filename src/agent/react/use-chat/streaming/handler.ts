@@ -4,18 +4,16 @@ import {
   flushAgUiSseChunk,
 } from "../../../../chat/ag-ui.ts";
 import type { ChatStreamEvent } from "../../../../chat/protocol.ts";
-import { register, tryResolve } from "../../../../extensions/contracts.ts";
-import type { SchemaValidator } from "../../../../extensions/schema/index.ts";
-import type { ChatMessagePart, ChatToolPart } from "../types.ts";
-import { createAssistantMessage, generateClientId } from "../utils.ts";
-import { buildCurrentParts } from "./parts-builder.ts";
+import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-chat/types.ts";
+import { createAssistantMessage, generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
+import { buildCurrentParts } from "#veryfront/agent/react/use-chat/streaming/parts-builder.ts";
 import type {
   OrderedReasoning,
   OrderedStep,
   OrderedToolCall,
   StreamingCallbacks,
   TextBlock,
-} from "./types.ts";
+} from "#veryfront/agent/react/use-chat/streaming/types.ts";
 
 interface StreamingState {
   textBlocks: Map<string, TextBlock>;
@@ -41,15 +39,6 @@ function createStreamingState(): StreamingState {
     partOrderCounter: 0,
     currentStep: 0,
   };
-}
-
-async function ensureAgUiSchemaValidator(): Promise<void> {
-  if (tryResolve<SchemaValidator>("SchemaValidator")) return;
-
-  const { createZodAdapter } = await import(
-    "../../../../../extensions/ext-schema-zod/src/adapter.ts"
-  );
-  register<SchemaValidator>("SchemaValidator", createZodAdapter());
 }
 
 export async function handleStreamingResponse(
@@ -106,8 +95,6 @@ export async function handleAgUiStreamingResponse(
   body: ReadableStream,
   callbacks: StreamingCallbacks,
 ): Promise<void> {
-  await ensureAgUiSchemaValidator();
-
   const reader = body.getReader();
   const decoder = new TextDecoder();
   const decoderState = createAgUiChatEventDecoderState();
