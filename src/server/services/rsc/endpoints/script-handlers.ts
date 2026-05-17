@@ -10,7 +10,10 @@ function shouldStopEsbuild(): boolean {
 
 function jsResponse(body: string): Response {
   return new Response(body, {
-    headers: { "content-type": "application/javascript" },
+    headers: {
+      "content-type": "application/javascript",
+      "cache-control": "no-cache",
+    },
   });
 }
 
@@ -46,11 +49,17 @@ async function buildOrServeScript(
     try {
       const src = await adapter.fs.readFile(path);
       return new Response(src, {
-        headers: { "content-type": "application/typescript" },
+        headers: {
+          "content-type": "application/typescript",
+          "cache-control": "no-cache",
+        },
       });
     } catch {
       return new Response("// client-boot: source not available", {
-        headers: { "content-type": "application/javascript" },
+        headers: {
+          "content-type": "application/javascript",
+          "cache-control": "no-cache",
+        },
       });
     }
   } finally {

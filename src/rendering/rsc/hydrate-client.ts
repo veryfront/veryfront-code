@@ -30,16 +30,11 @@ interface ReactRoot {
   unmount(): void;
 }
 
-interface VeryfrontHydrate {
-  run: () => Promise<void>;
-}
-
 interface GlobalHydrationState {
   __VF_CLIENT_MOD_CACHE?: Map<string, ClientModule>;
   __VF_MANIFEST_HASH?: string;
   __VF_TEST_MODE__?: boolean;
   __VF_HYDRATE_CALLED?: boolean;
-  VeryfrontHydrate?: VeryfrontHydrate;
 }
 
 declare const globalThis: typeof window & GlobalHydrationState;
@@ -201,10 +196,4 @@ export async function bootHydration(): Promise<void> {
   } catch (e) {
     rscLogger.warn("hydrate: boot failed", e);
   }
-}
-
-try {
-  globalThis.VeryfrontHydrate = { run: () => bootHydration() };
-} catch (e) {
-  rscLogger.debug("hydrate: expose run failed", e);
 }

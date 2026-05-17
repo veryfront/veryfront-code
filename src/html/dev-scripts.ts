@@ -45,13 +45,11 @@ export function getDevScripts(_hmrPort?: number, nonce?: string): string {
   <script type="module" src="/_veryfront/hmr.js"${nonceAttr}></script>`;
 }
 
-export function getProdScripts(slug: string, nonce?: string): string {
+export function getProdScripts(_slug: string, nonce?: string): string {
   const nonceAttr = buildNonceAttribute(nonce);
-  const encodedSlug = encodeURIComponent(slug);
 
   return `
-  <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>
-  <script type="module" src="/_veryfront/hydrate.js?slug=${encodedSlug}"${nonceAttr}></script>`;
+  <script type="module" src="/_veryfront/rsc/client.js"${nonceAttr}></script>`;
 }
 
 interface StudioScriptOptions {

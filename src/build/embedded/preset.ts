@@ -79,7 +79,6 @@ export async function buildEmbeddedPreset(
 
   const rscFiles = [
     new URL("../../rendering/rsc/client-dom.ts", import.meta.url),
-    new URL("../../rendering/rsc/client-hydrator.ts", import.meta.url),
     new URL("../../rendering/rsc/hydrate-client.ts", import.meta.url),
   ];
 
@@ -106,11 +105,6 @@ export async function buildEmbeddedPreset(
       {
         path: "/_veryfront/rsc/dom.js",
         file: "embedded/rsc/client-dom.js",
-        contentType: "application/javascript",
-      },
-      {
-        path: "/_veryfront/rsc/hydrator.js",
-        file: "embedded/rsc/client-hydrator.js",
         contentType: "application/javascript",
       },
       {

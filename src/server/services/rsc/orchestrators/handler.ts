@@ -1,7 +1,6 @@
 import { buildClientManifest } from "#veryfront/rendering/rsc/component-analyzer.ts";
 import { RSCRenderer } from "#veryfront/rendering/rsc/server-renderer/index.ts";
 import type { ClientComponentMeta } from "#veryfront/rendering/rsc/types.ts";
-import { HydratorHandler } from "./hydrator-handler.ts";
 import { ManifestHandler } from "./manifest-handler.ts";
 import { PageHandler } from "./page-handler.ts";
 import { RenderHandler } from "./render-handler.ts";
@@ -15,14 +14,12 @@ export class RSCDevServerHandler {
   private readonly renderHandler: RenderHandler;
   private readonly streamHandler: StreamHandler;
   private readonly pageHandler: PageHandler;
-  private readonly hydratorHandler: HydratorHandler;
 
   constructor(private readonly projectDir: string) {
     this.manifestHandler = new ManifestHandler(projectDir);
     this.renderHandler = new RenderHandler(projectDir, () => this.renderer);
     this.streamHandler = new StreamHandler(this.renderHandler);
     this.pageHandler = new PageHandler();
-    this.hydratorHandler = new HydratorHandler();
   }
 
   handleManifest(): Promise<Response> {
@@ -45,10 +42,6 @@ export class RSCDevServerHandler {
 
   handlePage(pathname: string, searchParams: URLSearchParams, nonce?: string): Response {
     return this.pageHandler.handle(pathname, searchParams, nonce);
-  }
-
-  handleHydratorScript(): Promise<Response> {
-    return this.hydratorHandler.handle();
   }
 
   private async ensureRenderer(): Promise<void> {

@@ -504,7 +504,8 @@ describe("HTMLGenerator helpers", () => {
 
       assertEquals(/<link rel="stylesheet" href="\/_vf\/css\/[^"]+\.css">/.test(html), true);
       assertEquals(html.includes('id="vf-tailwind-css"'), false);
-      assertEquals(html.includes("hydrate.js?slug=test-page"), true);
+      assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
+      assertEquals(html.includes("/_veryfront/hydrate.js"), false);
     });
   });
 

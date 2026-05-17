@@ -55,15 +55,6 @@ describe(
       });
     });
 
-    describe("handleHydratorScript", { sanitizeOps: false, sanitizeResources: false }, () => {
-      it("should return hydrator script response", async () => {
-        const response = await handler.handleHydratorScript();
-
-        expect(response).toBeInstanceOf(Response);
-        expect(response.headers.get("content-type")).toContain("javascript");
-      });
-    });
-
     describe("handleManifest", { sanitizeOps: false, sanitizeResources: false }, () => {
       it("should return manifest response", async () => {
         const response = await handler.handleManifest();

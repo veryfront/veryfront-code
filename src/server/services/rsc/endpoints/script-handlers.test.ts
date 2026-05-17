@@ -68,6 +68,12 @@ describe("script-handlers", () => {
       assertStringIncludes(contentType ?? "", "javascript");
     });
 
+    it("serves the canonical client without caching", async () => {
+      const adapter = createMockAdapter();
+      const response = await handleClientScript(adapter);
+      assertStringIncludes(response.headers.get("cache-control") ?? "", "no-cache");
+    });
+
     it("should serve source when file exists and esbuild unavailable", async () => {
       // When esbuild is not available but the file exists, it should
       // still return a response (either the raw source or a fallback).
