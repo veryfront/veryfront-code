@@ -548,9 +548,9 @@ export async function startNodeVeryfrontServer(
   const { createServer } = await import("node:http");
   const logger = options.logger ?? serverLogger.component("service-server");
   const bindAddress = options.bindAddress ?? "0.0.0.0";
-  const hardShutdownTimeoutMs = options.hardShutdownTimeoutMs ?? 20_000;
   const server = createServer(toNodeHandler(options.runtime.fetch));
   let shutdownStarted = false;
+  let removeSignalHandlers: () => void = () => undefined;
 
   const stop = async () => {
     if (shutdownStarted) {
@@ -558,9 +558,11 @@ export async function startNodeVeryfrontServer(
     }
 
     shutdownStarted = true;
-    options.runtime.setShuttingDown();
-    await closeNodeServer(server);
-    await options.runtime.stop();
+    try {
+      await stopRuntime(options.runtime, () => closeNodeServer(server));
+    } finally {
+      removeSignalHandlers();
+    }
   };
 
   const ready = new Promise<void>((resolve, reject) => {
@@ -575,33 +577,14 @@ export async function startNodeVeryfrontServer(
     });
   });
 
-  for (const signal of options.signals ?? ["SIGTERM"]) {
-    process.on(signal, () => {
-      if (shutdownStarted) {
-        return;
-      }
-
-      logger.info?.("Veryfront service server received shutdown signal", { signal });
-      const hardTimeout = setTimeout(() => {
-        logger.error?.("Veryfront service server graceful shutdown timed out", { signal });
-        process.exit(1);
-      }, hardShutdownTimeoutMs);
-
-      void stop()
-        .then(() => {
-          clearTimeout(hardTimeout);
-          process.exit(0);
-        })
-        .catch((error: unknown) => {
-          clearTimeout(hardTimeout);
-          logger.error?.("Veryfront service server shutdown failed", {
-            signal,
-            error: error instanceof Error ? error.message : String(error),
-          });
-          process.exit(1);
-        });
-    });
-  }
+  removeSignalHandlers = installSignalHandlers({
+    signalRuntime: getProcessSignalRuntime(),
+    signals: options.signals,
+    logger,
+    stop,
+    hardShutdownTimeoutMs: options.hardShutdownTimeoutMs,
+    runtime: "node",
+  });
 
   return {
     server,

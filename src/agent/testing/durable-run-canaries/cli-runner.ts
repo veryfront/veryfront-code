@@ -1,6 +1,6 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { cwd as getProcessCwd } from "node:process";
+import { mkdir, writeTextFile } from "#veryfront/platform/compat/fs.ts";
+import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
+import { cwd as getProcessCwd } from "#veryfront/platform/compat/process.ts";
 import { type LiveEvalApiContext } from "../live-evals/api-client.ts";
 import { resolveDurableRunCanaryEnvironment } from "./environment.ts";
 import {
@@ -93,7 +93,7 @@ export async function runDurableRunCanaryCli(
   };
 
   await mkdir(dirname(reportPath), { recursive: true });
-  await writeFile(
+  await writeTextFile(
     reportPath,
     JSON.stringify(
       {
