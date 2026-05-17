@@ -137,6 +137,10 @@ async function detectFeatures(projectDir: string, hasAI: boolean): Promise<strin
   return features;
 }
 
+async function hasAgUiRoute(projectDir: string): Promise<boolean> {
+  return await fileExists(join(projectDir, "app/api/ag-ui/route.ts"));
+}
+
 async function getProjectName(projectDir: string, fs: FileSystem): Promise<string> {
   try {
     const content = await fs.readTextFile(join(projectDir, "package.json"));
@@ -174,7 +178,7 @@ export const vfGetProjectContext: MCPTool<GetProjectContextInput, ProjectContext
 
         const directories = await detectDirectories(projectDir);
         const hasAI = await directoryExists(join(projectDir, "ai")) ||
-          await fileExists(join(projectDir, "app/api/chat/route.ts"));
+          await hasAgUiRoute(projectDir);
         const integrations = await detectIntegrations(projectDir, fs);
         const features = await detectFeatures(projectDir, hasAI);
         const name = await getProjectName(projectDir, fs);
@@ -335,9 +339,9 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
 
   const hasAppDir = await directoryExists(join(projectPath, "app"));
   const hasAIDir = await directoryExists(join(projectPath, "ai"));
-  const hasChatRoute = await fileExists(join(projectPath, "app/api/chat/route.ts"));
+  const hasAgentRoute = await hasAgUiRoute(projectPath);
   let template: string | undefined;
-  if (hasAIDir || hasChatRoute) template = "ai-agent";
+  if (hasAIDir || hasAgentRoute) template = "ai-agent";
   else if (hasAppDir) template = "minimal";
 
   const integrations: string[] = [];
@@ -360,7 +364,7 @@ async function detectVeryfrontProject(projectPath: string): Promise<LocalProject
     name,
     path: projectPath,
     template,
-    hasAI: hasAIDir || hasChatRoute,
+    hasAI: hasAIDir || hasAgentRoute,
     integrations,
   };
 }

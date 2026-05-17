@@ -31,7 +31,7 @@ export default function LandingPage(): JSX.Element {
             Your AI-powered platform
           </h1>
           <p className="mt-4 text-lg text-neutral-500 dark:text-neutral-400 max-w-lg mx-auto">
-            Built with Veryfront. Agents, tools, and memory — ready for
+            Built with Veryfront. Agents, tools, and memory are ready for
             production.
           </p>
           <div className="mt-8 flex gap-3 justify-center">
@@ -55,7 +55,7 @@ export default function LandingPage(): JSX.Element {
           {[
             {
               title: "AI Agents",
-              desc: "Define agents with tools, memory, and streaming — auto-discovered from your project.",
+              desc: "Define agents with tools, memory, and streaming. Veryfront auto-discovers them from your project.",
             },
             {
               title: "Per-User Memory",
@@ -63,7 +63,7 @@ export default function LandingPage(): JSX.Element {
             },
             {
               title: "Production Ready",
-              desc: "Auth, rate limiting, and deploy — ship to production with one command.",
+              desc: "Use auth, rate limiting, and deployment to ship to production with one command.",
             },
           ].map(({ title, desc }) => (
             <div key={title}>

@@ -17,8 +17,8 @@ tools/
   list-files.ts        List directory contents
   edit-file.ts         Search and replace in files
 app/
-  api/chat/route.ts    Chat API endpoint
+  api/ag-ui/route.ts    AG-UI endpoint
   page.tsx             Chat interface
 ```
 
-This is a starter template to give you a good starting point — not a production-ready setup.
+This starter is not production-ready.

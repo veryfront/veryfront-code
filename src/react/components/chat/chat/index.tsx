@@ -9,7 +9,7 @@
  * import { Chat, useChat } from "veryfront/chat";
  *
  * export default function Page() {
- *   const chat = useChat({ api: "/api/chat" });
+ *   const chat = useChat({ api: "/api/ag-ui" });
  *   return (
  *     <Chat
  *       messages={chat.messages}

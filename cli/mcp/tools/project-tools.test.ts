@@ -5,12 +5,25 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { dirname, join } from "veryfront/platform/path";
 import {
   vfGetComponentTree,
   vfGetProjectContext,
   vfListLocalProjects,
   vfListRoutes,
 } from "./project-tools.ts";
+
+async function createProject(files: Record<string, string>): Promise<string> {
+  const projectDir = await Deno.makeTempDir({ prefix: "vf-mcp-project-tools-" });
+
+  for (const [relativePath, content] of Object.entries(files)) {
+    const filePath = join(projectDir, relativePath);
+    await Deno.mkdir(dirname(filePath), { recursive: true });
+    await Deno.writeTextFile(filePath, content);
+  }
+
+  return projectDir;
+}
 
 describe("mcp/tools/project-tools", () => {
   describe("vfListRoutes", () => {
@@ -59,6 +72,38 @@ describe("mcp/tools/project-tools", () => {
       assertExists(result);
       assertEquals(typeof result, "object");
     });
+
+    it("detects AI projects from the standardized AG-UI route", async () => {
+      const projectDir = await createProject({
+        "package.json": JSON.stringify({ name: "ag-ui-project" }),
+        "app/api/ag-ui/route.ts": 'export const POST = () => new Response("ok");\n',
+      });
+
+      try {
+        const result = await vfGetProjectContext.execute({ projectPath: projectDir });
+
+        assertEquals(result.hasAI, true);
+        assertEquals(result.features.includes("ai"), true);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not preserve legacy chat route detection", async () => {
+      const projectDir = await createProject({
+        "package.json": JSON.stringify({ name: "legacy-chat-project" }),
+        [join("app", "api", "chat", "route.ts")]: 'export const POST = () => new Response("ok");\n',
+      });
+
+      try {
+        const result = await vfGetProjectContext.execute({ projectPath: projectDir });
+
+        assertEquals(result.hasAI, false);
+        assertEquals(result.features.includes("ai"), false);
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
   });
 
   describe("vfListLocalProjects", () => {
@@ -78,6 +123,42 @@ describe("mcp/tools/project-tools", () => {
     it("returns array of projects when executed", async () => {
       const result = await vfListLocalProjects.execute({});
       assertEquals(Array.isArray(result), true);
+    });
+
+    it("classifies local projects with AG-UI routes as AI projects", async () => {
+      const projectDir = await createProject({
+        "package.json": JSON.stringify({ name: "local-ag-ui-project" }),
+        "veryfront.config.ts": "export default {};\n",
+        "app/api/ag-ui/route.ts": 'export const POST = () => new Response("ok");\n',
+      });
+
+      try {
+        const result = await vfListLocalProjects.execute({ directory: projectDir });
+
+        assertEquals(result.length, 1);
+        assertEquals(result[0]?.hasAI, true);
+        assertEquals(result[0]?.template, "ai-agent");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("does not classify local projects with only legacy chat routes as AI projects", async () => {
+      const projectDir = await createProject({
+        "package.json": JSON.stringify({ name: "local-legacy-chat-project" }),
+        "veryfront.config.ts": "export default {};\n",
+        [join("app", "api", "chat", "route.ts")]: 'export const POST = () => new Response("ok");\n',
+      });
+
+      try {
+        const result = await vfListLocalProjects.execute({ directory: projectDir });
+
+        assertEquals(result.length, 1);
+        assertEquals(result[0]?.hasAI, false);
+        assertEquals(result[0]?.template, "minimal");
+      } finally {
+        await Deno.remove(projectDir, { recursive: true });
+      }
     });
   });
 

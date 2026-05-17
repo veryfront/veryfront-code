@@ -71,7 +71,7 @@
  *
  * @example Streaming API route
  * ```ts
- * // app/api/chat/route.ts
+ * // app/api/ag-ui/route.ts
  * import { agent, createAgUiHandler } from "veryfront/agent";
  *
  * const assistant = agent({

@@ -123,7 +123,7 @@ direct subprocesses.
 Use `createAgUiHandler()` to expose a registered agent through an AG-UI stream:
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("assistant");
@@ -132,12 +132,12 @@ export const POST = createAgUiHandler("assistant");
 Try it with the dev server running:
 
 ```bash
-curl -N http://localhost:3000/api/chat \
+curl -N http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Say hello in one sentence."}]}]}'
 ```
 
-The response streams AG-UI SSE. Pair it with `useChat({ api: "/api/chat" })` in browser UI code. If the route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `createAgUiHandler()`.
+The response streams AG-UI SSE. Pair it with `useChat({ api: "/api/ag-ui" })` in browser UI code. If the route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 

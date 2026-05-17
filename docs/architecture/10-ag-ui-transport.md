@@ -1,12 +1,15 @@
 # AG-UI transport
 
-This page describes AG-UI request parsing, browser response encoding, chunk
-bridging, and run control. It does not cover MCP or provider-specific SSE
-parsing.
+This page describes AG-UI request parsing, browser response encoding, and chunk
+bridging. It does not cover MCP, provider-specific SSE parsing, or
+conversation-scoped run lineage APIs.
 
 ## Responsibility
 
 AG-UI transport adapts agent runtime events to browser-facing AG-UI streams.
+The browser-facing transport convention is `POST /api/ag-ui`. Durable run
+command and control uses sibling `/api/runs*` routes. Signed project-runtime
+invocation uses `/api/control-plane/agents/*`.
 
 Primary source areas:
 
@@ -14,6 +17,7 @@ Primary source areas:
 - [`src/server/handlers/request/agent-stream.handler.ts`](../../src/server/handlers/request/agent-stream.handler.ts)
 - [`src/server/handlers/request/agent-run-resume.handler.ts`](../../src/server/handlers/request/agent-run-resume.handler.ts)
 - [`src/server/handlers/request/agent-run-cancel.handler.ts`](../../src/server/handlers/request/agent-run-cancel.handler.ts)
+- [`src/agent/service/routes.ts`](../../src/agent/service/routes.ts)
 
 ## Runtime flow
 
@@ -25,13 +29,13 @@ sequenceDiagram
   participant Encoder as AG-UI encoder
   participant Control as Run control
 
-  Browser->>Handler: Chat, resume, cancel, or detached-start request
+  Browser->>Handler: POST /api/ag-ui
   Handler->>Handler: Parse body and forwarded context
   Handler->>Runtime: Invoke with AG-UI-aware stream context
   Runtime-->>Encoder: Runtime chunks
   Encoder-->>Browser: AG-UI events
-  Browser->>Control: Resume or cancellation request
-  Control->>Handler: Run-control operation
+  Browser->>Control: POST or DELETE /api/runs*
+  Control->>Handler: Resume, cancel, or detached-start operation
 ```
 
 1. Request handlers parse AG-UI request bodies and forwarded context.
@@ -44,6 +48,9 @@ sequenceDiagram
 
 - AG-UI is the agent UI event stream. It is not MCP JSON-RPC.
 - Provider SSE parsing happens before AG-UI encoding.
+- `/api/runs*` is a sibling lifecycle surface, not a nested AG-UI endpoint.
+- Conversation-scoped runs are Veryfront API lineage and replay records, not
+  package-hosted AG-UI transport endpoints.
 - Hosted durable mirrors consume AG-UI-adjacent state but are documented in
   [hosted agent runs](./08-hosted-agent-runs.md).
 

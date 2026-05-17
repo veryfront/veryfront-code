@@ -2003,7 +2003,7 @@ export const FRAMEWORK_CANDIDATES: readonly string[] = [
   "any",
   "any)",
   "anything",
-  "api/chat",
+  "api/ag-ui",
   "api:",
   "append",
   "application",

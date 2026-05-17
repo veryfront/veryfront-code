@@ -11,7 +11,7 @@ interface Integration {
 }
 
 export default function ChatPage(): React.ReactElement {
-  const chat = useChat({ api: '/api/chat' })
+  const chat = useChat({ api: '/api/ag-ui' })
 
   return (
     <div className="flex flex-col h-screen bg-white dark:bg-neutral-900">

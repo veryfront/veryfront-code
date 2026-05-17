@@ -24,7 +24,7 @@ my-app/
         page.tsx         # /blog/:slug (dynamic route)
     api/
       chat/
-        route.ts         # POST /api/chat
+        route.ts         # POST /api/ag-ui
   agents/               # AI agent definitions (auto-discovered)
     assistant.ts
   tools/                # Tool definitions (auto-discovered)

@@ -21,10 +21,10 @@ cd my-project
 
 ## Project Structure
 
-- `src/` — Application source code
-- `config/` — Configuration files
-- `tests/` — Test suite
-- `docs/` — Documentation
+- `src/`: Application source code
+- `config/`: Configuration files
+- `tests/`: Test suite
+- `docs/`: Documentation
 
 ## Configuration
 

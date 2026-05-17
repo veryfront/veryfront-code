@@ -216,17 +216,17 @@ export function GET() {
 The most common API route pattern in Veryfront connects a chat UI to an agent:
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("assistant");
 ```
 
-Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{ type: "text", text }] }`. The route responds with AG-UI SSE and pairs with `useChat({ api: "/api/chat" })` on the client. See the [Chat UI](./chat-ui.md) guide.
+Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{ type: "text", text }] }`. The route responds with AG-UI SSE and pairs with `useChat({ api: "/api/ag-ui" })` on the client. See the [Chat UI](./chat-ui.md) guide.
 
 ## Next
 
-- [Agents](./agents.md): the agent behind the `/api/chat` endpoint
+- [Agents](./agents.md): the agent behind the `/api/ag-ui` endpoint
 - [Middleware](./middleware.md): add CORS, rate limiting, and auth checks
 
 ## Related

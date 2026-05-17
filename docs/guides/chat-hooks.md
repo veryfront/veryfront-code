@@ -8,7 +8,7 @@ order: 16
 
 Use chat hooks when you need state and runtime integration without the preset UI.
 
-The examples below assume your app has an AG-UI chat endpoint at `/api/chat`. Use the route from [Chat UI](./chat-ui.md) or [Agents](./agents.md), then run `veryfront dev` and open the page that renders the hook.
+The examples below assume your app has an AG-UI chat endpoint at `/api/ag-ui`. Use the route from [Chat UI](./chat-ui.md) or [Agents](./agents.md), then run `veryfront dev` and open the page that renders the hook.
 
 ## useChat
 
@@ -17,7 +17,7 @@ The examples below assume your app has an AG-UI chat endpoint at `/api/chat`. Us
 import { useChat } from "veryfront/chat";
 
 export default function ChatState() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/ag-ui" });
 
   return (
     <form onSubmit={chat.handleSubmit}>
@@ -28,7 +28,7 @@ export default function ChatState() {
 }
 ```
 
-`useChat` exposes messages, input state, submit handlers, stop/reload handlers, model state, branch helpers, and inference status. It uses AG-UI for Veryfront chat routes created with `createAgUiHandler`.
+`useChat` exposes messages, input state, submit handlers, stop/reload handlers, model state, branch helpers, and inference status. It uses AG-UI for Veryfront AG-UI routes created with `createAgUiHandler`.
 
 ## useAgent
 
@@ -90,4 +90,4 @@ export default function Autocomplete() {
 
 - [Chat UI](./chat-ui.md): preset component
 - [Chat composition](./chat-composition.md): custom layouts
-- [`veryfront/chat`](../reference/chat.md): chat API reference
+- [`veryfront/chat`](../reference/chat.md): chat reference

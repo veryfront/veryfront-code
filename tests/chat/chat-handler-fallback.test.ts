@@ -110,7 +110,7 @@ describe("ag-ui handler 503 fallback", () => {
       registerAgent("test-fallback", fakeAgent as any);
 
       const handler = createAgUiHandler("test-fallback");
-      const request = new Request("http://localhost/api/chat", {
+      const request = new Request("http://localhost/api/ag-ui", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -176,7 +176,7 @@ describe("ag-ui handler 503 fallback", () => {
       registerAgent("test-generic-error", fakeAgent as any);
 
       const handler = createAgUiHandler("test-generic-error");
-      const request = new Request("http://localhost/api/chat", {
+      const request = new Request("http://localhost/api/ag-ui", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -118,7 +118,7 @@ const assistant = agent({
 ### Streaming API route
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { agent, createAgUiHandler } from "veryfront/agent";
 
 const assistant = agent({
@@ -219,10 +219,10 @@ messages from the request body.
 
 Create a POST route handler that validates an AG-UI request, invokes an agent,
 and streams AG-UI SSE. Use this for chat UI routes and pair it with
-`useChat({ api: "/api/chat" })`.
+`useChat({ api: "/api/ag-ui" })`.
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("assistant");
@@ -233,13 +233,13 @@ export const POST = createAgUiHandler("assistant");
 | `agentIdOrConfig`         | <code>string &#124; { agent: Agent, ...options }</code>                                                                                                        | Registered agent ID or direct agent instance.                                                                                                                   |
 | `options?.context`        | <code>Record&lt;string, unknown&gt; &#124; ((request: Request) =&gt; Record&lt;string, unknown&gt; &#124; Promise&lt;Record&lt;string, unknown&gt;&gt;)</code> | Context passed to the agent.                                                                                                                                    |
 | `options?.sessionManager` | <code>RunResumeSessionManager&lt;AgUiResumeValue&gt;</code>                                                                                                    | Required when the request injects AG-UI client tools that resume the same run.                                                                                  |
-| `options?.beforeStream`   | <code>(input) =&gt; void &#124; Response &#124; AgUiBeforeStreamResult &#124; Promise&lt;...&gt;</code>                                                      | Hook that runs after validation and before the agent streams. Can prepend, append, replace messages, override context, or return a `Response` to short-circuit. |
+| `options?.beforeStream`   | <code>(input) =&gt; void &#124; Response &#124; AgUiBeforeStreamResult &#124; Promise&lt;...&gt;</code>                                                        | Hook that runs after validation and before the agent streams. Can prepend, append, replace messages, override context, or return a `Response` to short-circuit. |
 
 `beforeStream` input includes the original `request`, normalized `messages`,
 resolved `context`, and `lastUserText` extracted from the last user message.
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("rag", {

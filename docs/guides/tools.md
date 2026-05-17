@@ -156,7 +156,7 @@ export default tool({
 Pass context from the API route:
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("assistant", {

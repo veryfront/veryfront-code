@@ -193,7 +193,7 @@ describe("agent/ag-ui-handler", () => {
     });
 
     const response = await handler(
-      new Request("http://localhost/api/chat", {
+      new Request("http://localhost/api/ag-ui", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -228,7 +228,7 @@ describe("agent/ag-ui-handler", () => {
     });
 
     const response = await handler(
-      new Request("http://localhost/api/chat", {
+      new Request("http://localhost/api/ag-ui", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -251,7 +251,7 @@ describe("agent/ag-ui-handler", () => {
     const handler = createAgUiHandler({ agent: testAgent.agent });
 
     const response = await handler(
-      new Request("http://localhost/api/chat", {
+      new Request("http://localhost/api/ag-ui", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -288,7 +288,7 @@ describe("agent/ag-ui-handler", () => {
     const handler = createAgUiHandler({ agent: testAgent.agent });
 
     const response = await handler(
-      new Request("http://localhost/api/chat", {
+      new Request("http://localhost/api/ag-ui", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -318,7 +318,7 @@ describe("agent/ag-ui-handler", () => {
     const handler = createAgUiHandler({ agent: testAgent.agent });
 
     const response = await handler(
-      new Request("http://localhost/api/chat", {
+      new Request("http://localhost/api/ag-ui", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

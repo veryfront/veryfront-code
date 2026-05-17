@@ -1,6 +1,6 @@
 # Minimal
 
-A barebones starter with just pages and routing — no agents, no tools.
+A barebones starter with just pages and routing, no agents, no tools.
 
 ## What's included
 
@@ -17,4 +17,4 @@ app/
   about/page.mdx    Markdown content page
 ```
 
-This is a starter template to give you a good starting point — not a production-ready setup.
+This starter is not production-ready.

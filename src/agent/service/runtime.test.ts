@@ -71,7 +71,6 @@ describe("agent/agent-service-runtime", () => {
     assertEquals(bundle.runtime.contract.serviceName, "test-agent-service");
     assertEquals(bundle.runtime.contract.defaultAgentId, "assistant");
     assertEquals(bundle.routes.map((route) => route.path), [
-      "/api/ag-ui/messages/stream",
       "/api/ag-ui",
       "/api/runs/:runId",
       "/api/runs",

@@ -21,4 +21,4 @@ app/
   workflows/[id]/page.tsx      Run detail and approval UI
 ```
 
-This is a starter template to give you a good starting point — not a production-ready setup.
+This starter is not production-ready.
