@@ -1,7 +1,7 @@
 ---
 title: "Chat theming"
 description: "Customize chat theme, feature toggles, sources, attachments, and contexts."
-order: 16
+order: 17
 ---
 
 # Chat theming

@@ -1,7 +1,7 @@
 ---
 title: "Extension testing"
 description: "Test Veryfront extension factories and contract implementations."
-order: 30
+order: 31
 ---
 
 # Extension testing

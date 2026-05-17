@@ -29,16 +29,17 @@ runtime capabilities and deployment.
 
 ## AI runtime
 
-| Guide                                             | Description                                                                       |
-| ------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [Providers](./providers.md)                       | Unified model interface for local, Veryfront Cloud, and direct provider runtimes. |
-| [Agents](./agents.md)                             | Create an AI agent with a system prompt, tools, and memory.                       |
-| [Tools](./tools.md)                               | Define tools with Zod schemas that agents can call.                               |
-| [Memory and streaming](./memory-and-streaming.md) | Conversation memory strategies and streaming responses.                           |
-| [Chat UI](./chat-ui.md)                           | Use the preset chat component with one hook and one API route.                    |
-| [Chat composition](./chat-composition.md)         | Build custom chat layouts with composition components.                            |
-| [Chat hooks](./chat-hooks.md)                     | Use headless chat, agent, completion, voice, and thread hooks.                    |
-| [Chat theming](./chat-theming.md)                 | Customize chat features, attachments, sources, models, and visual styling.        |
+| Guide                                               | Description                                                                       |
+| --------------------------------------------------- | --------------------------------------------------------------------------------- |
+| [Providers](./providers.md)                         | Unified model interface for local, Veryfront Cloud, and direct provider runtimes. |
+| [Agents](./agents.md)                               | Create an AI agent with a system prompt, tools, and memory.                       |
+| [Agent service runtime](./agent-service-runtime.md) | Run Veryfront agents as separately deployed services.                             |
+| [Tools](./tools.md)                                 | Define tools with Zod schemas that agents can call.                               |
+| [Memory and streaming](./memory-and-streaming.md)   | Conversation memory strategies and streaming responses.                           |
+| [Chat UI](./chat-ui.md)                             | Use the preset chat component with one hook and one API route.                    |
+| [Chat composition](./chat-composition.md)           | Build custom chat layouts with composition components.                            |
+| [Chat hooks](./chat-hooks.md)                       | Use headless chat, agent, completion, voice, and thread hooks.                    |
+| [Chat theming](./chat-theming.md)                   | Customize chat features, attachments, sources, models, and visual styling.        |
 
 ## Orchestration
 

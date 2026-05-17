@@ -1,7 +1,7 @@
 ---
 title: "Extension lifecycle"
 description: "Understand extension discovery, ordering, presets, setup, and teardown."
-order: 29
+order: 30
 ---
 
 # Extension lifecycle

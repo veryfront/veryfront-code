@@ -1,7 +1,7 @@
 ---
 title: "Memory and streaming"
 description: "Conversation memory strategies and streaming responses."
-order: 12
+order: 13
 ---
 
 # Memory and streaming

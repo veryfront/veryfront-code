@@ -88,7 +88,7 @@ pages/
     chat.ts
 ```
 
-See [Pages & Routing](./pages-and-routing.md) for the full routing system.
+See [Pages and routing](./pages-and-routing.md) for the full routing system.
 
 ## Auto-discovered directories
 
@@ -153,11 +153,13 @@ These directories aren't auto-discovered but follow standard conventions:
 
 ## Why flat?
 
-Veryfront Code is AI-native. Agents, tools, prompts, and workflows are first-class primitives, not add-ons tucked inside a subfolder. Keeping them at the project root makes them visible and accessible, just like `components/` or `lib/`.
+Veryfront Code treats agents, tools, prompts, and workflows as first-class
+project primitives. Keep them at the project root so discovery, review, and
+runtime registration stay predictable.
 
 ## Next
 
-- [Pages & Routing](./pages-and-routing.md): file-based routing, layouts, and dynamic routes
+- [Pages and routing](./pages-and-routing.md): file-based routing, layouts, and dynamic routes
 - [Agents](./agents.md): create your first AI agent
 
 ## Related

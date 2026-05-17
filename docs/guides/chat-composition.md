@@ -1,7 +1,7 @@
 ---
 title: "Chat composition"
 description: "Build custom chat layouts with Chat and Message composition components."
-order: 14
+order: 15
 ---
 
 # Chat composition

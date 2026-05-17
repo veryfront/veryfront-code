@@ -1,7 +1,7 @@
 ---
 title: "Extension publishing"
 description: "Package and publish reusable Veryfront extensions."
-order: 31
+order: 32
 ---
 
 # Extension publishing

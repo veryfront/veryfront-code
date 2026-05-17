@@ -1,7 +1,7 @@
 ---
 title: "Chat hooks"
 description: "Use headless chat, agent, completion, voice, and thread hooks."
-order: 15
+order: 16
 ---
 
 # Chat hooks

@@ -1,7 +1,7 @@
 ---
 title: "Building and deploying"
 description: "Production builds, static export, and deployment targets."
-order: 32
+order: 33
 ---
 
 # Building and deploying

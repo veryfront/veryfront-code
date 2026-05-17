@@ -1,7 +1,7 @@
 ---
 title: "Tools"
 description: "Define tools with schema-backed inputs that agents can call."
-order: 11
+order: 12
 ---
 
 # Tools
@@ -164,7 +164,7 @@ export default agent({
 
 ## Next
 
-- [Memory & Streaming](./memory-and-streaming.md): persist conversations across requests
+- [Memory and streaming](./memory-and-streaming.md): persist conversations across requests
 - [MCP Server](./mcp-server.md): expose tools over Model Context Protocol
 
 ## Related

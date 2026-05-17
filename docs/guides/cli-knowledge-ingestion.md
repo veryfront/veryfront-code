@@ -1,7 +1,7 @@
 ---
 title: "CLI-first knowledge ingestion"
 description: "Turn uploads and local documents into project knowledge files with one command."
-order: 26
+order: 27
 ---
 
 # CLI-first knowledge ingestion

@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Expose tools, prompts, and resources over Model Context Protocol."
-order: 22
+order: 23
 ---
 
 # MCP server

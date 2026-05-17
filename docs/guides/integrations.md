@@ -1,7 +1,7 @@
 ---
 title: "Integrations"
 description: "Config-driven integration tools with OAuth, token management, and API execution across the built-in connector catalog."
-order: 24
+order: 25
 ---
 
 # Integrations

@@ -121,7 +121,7 @@ MDX pages support frontmatter:
 ```mdx
 ---
 title: "About"
-description: "Learn about our team."
+description: "Learn about the team."
 ---
 
 # {frontmatter.title}

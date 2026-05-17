@@ -20,7 +20,7 @@ export default function AboutPage() {
     <>
       <Head>
         <title>About Us</title>
-        <meta name="description" content="Learn about our team and mission." />
+        <meta name="description" content="Learn about the team and mission." />
       </Head>
       <main>
         <h1>About Us</h1>
@@ -121,7 +121,7 @@ export default function About() {
     <>
       <Head>
         <title>About - My App</title>
-        <meta name="description" content="About our team." />
+        <meta name="description" content="About the team." />
       </Head>
       <h1>About</h1>
     </>
@@ -150,7 +150,7 @@ The framework automatically injects `title` and `description` from frontmatter i
 
 ## Next
 
-This is the last guide. Explore the [API Reference](../reference/index.md) for detailed module documentation.
+This is the last guide. Explore the [API reference](../reference/index.md) for detailed module documentation.
 
 ## Related
 

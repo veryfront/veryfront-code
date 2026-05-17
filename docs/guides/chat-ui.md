@@ -1,7 +1,7 @@
 ---
 title: "Chat UI"
 description: "Use the preset Chat component with the useChat hook."
-order: 13
+order: 14
 ---
 
 # Chat UI

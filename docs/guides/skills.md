@@ -1,7 +1,7 @@
 ---
 title: "Skills"
 description: "Define project-level agent capabilities as SKILL.md files with prompt augmentation, tool restrictions, and script execution."
-order: 19
+order: 20
 ---
 
 # Skills

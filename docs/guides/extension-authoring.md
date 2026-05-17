@@ -1,7 +1,7 @@
 ---
 title: "Extension authoring"
 description: "Write focused Veryfront extension factories, contracts, and capabilities."
-order: 28
+order: 29
 ---
 
 # Extension authoring

@@ -1,7 +1,7 @@
 ---
 title: "Extensions"
 description: "Understand how extensions add focused capabilities to Veryfront."
-order: 27
+order: 28
 ---
 
 # Extensions
