@@ -1,21 +1,13 @@
 import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import {
-  type ChannelAssistantsRequest,
   ChannelAssistantsRequestSchema,
   type ChannelInvokeDeps,
   defaultChannelInvokeDeps,
   listChannelAssistants,
-  verifyDispatchJws,
 } from "../../../channels/invoke.ts";
-import { getControlPlaneVerificationPublicKey } from "#veryfront/internal-agents/control-plane-auth.ts";
-import {
-  HTTP_INTERNAL_SERVER_ERROR,
-  PRIORITY_MEDIUM_API,
-} from "#veryfront/utils/constants/index.ts";
-
-const DISPATCH_JWS_HEADER = "x-veryfront-dispatch-jws";
-const MAX_DISPATCH_SIGNATURE_AGE_SECONDS = 60;
+import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
+import { readSignedChannelDispatchRequest } from "./channel-dispatch-request.ts";
 
 export class ChannelAssistantsHandler extends BaseHandler {
   metadata: HandlerMetadata = {
@@ -38,70 +30,31 @@ export class ChannelAssistantsHandler extends BaseHandler {
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
-      const publicKeyPem = getControlPlaneVerificationPublicKey(ctx);
-      if (!publicKeyPem) {
-        this.logWarn("Missing CHANNEL_DISPATCH_SIGNING_PUBLIC_KEY for channel assistants endpoint");
-        return this.respond(
-          builder.json(
-            { error: "Channel dispatch verification is not configured" },
-            HTTP_INTERNAL_SERVER_ERROR,
-          ),
-        );
+      const dispatchRequest = await readSignedChannelDispatchRequest(req, ctx, {
+        builder,
+        endpointName: "channel assistants",
+        invalidRequestError: "Invalid channel assistants request",
+        logLabel: "Channel assistants",
+        logWarn: (message, extra) => this.logWarn(message, extra),
+        schema: ChannelAssistantsRequestSchema,
+      });
+      if (!dispatchRequest.ok) {
+        return this.respond(dispatchRequest.response);
       }
 
-      const projectSlug = ctx.projectSlug;
-      if (!projectSlug) {
-        this.logWarn("Channel assistants request arrived without resolved project slug");
-        return this.respond(builder.json({ error: "Project context is unavailable" }, 400));
-      }
-
-      const dispatchJws = req.headers.get(DISPATCH_JWS_HEADER);
-      if (!dispatchJws) {
-        return this.respond(builder.json({ error: "Missing dispatch signature" }, 401));
-      }
-
-      const rawBody = await req.text();
-      let claims: Awaited<ReturnType<typeof verifyDispatchJws>> | undefined;
-      try {
-        claims = await verifyDispatchJws(dispatchJws, rawBody, {
-          audience: projectSlug,
-          expectedProjectId: ctx.projectId,
-          publicKeyPem,
-          maxAgeSeconds: MAX_DISPATCH_SIGNATURE_AGE_SECONDS,
-        });
-      } catch (error) {
-        this.logWarn("Channel assistants signature verification failed", {
-          error: error instanceof Error ? error.message : String(error),
-          projectSlug,
-          projectId: ctx.projectId,
-        });
-        return this.respond(builder.json({ error: "Invalid dispatch signature" }, 401));
-      }
-
-      let payload: ChannelAssistantsRequest;
-      try {
-        payload = ChannelAssistantsRequestSchema.parse(JSON.parse(rawBody));
-      } catch (error) {
-        this.logWarn("Channel assistants request validation failed", {
-          error: error instanceof Error ? error.message : String(error),
-          projectSlug,
-          projectId: ctx.projectId,
-        });
-        return this.respond(builder.json({ error: "Invalid channel assistants request" }, 400));
-      }
+      const { claims, payload } = dispatchRequest;
 
       if (
-        !claims ||
         payload.projectId !== claims.project_id ||
         (ctx.projectId !== undefined && payload.projectId !== ctx.projectId) ||
         payload.requestId !== claims.sub ||
         payload.platform !== claims.platform
       ) {
         this.logWarn("Channel assistants request body did not match signed claims", {
-          projectSlug,
+          projectSlug: ctx.projectSlug,
           projectId: ctx.projectId,
           requestId: payload.requestId,
-          signedRequestId: claims?.sub,
+          signedRequestId: claims.sub,
         });
         return this.respond(builder.json({ error: "Invalid dispatch signature" }, 401));
       }
