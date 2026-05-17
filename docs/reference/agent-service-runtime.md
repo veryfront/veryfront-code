@@ -1,7 +1,7 @@
 ---
 title: "Agent service runtime"
 description: "Separately deployed Veryfront agent services and their runtime bootstrap helpers."
-order: 10.3
+order: 13
 ---
 
 # Agent service runtime

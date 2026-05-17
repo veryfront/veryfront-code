@@ -1,7 +1,7 @@
 ---
 title: "veryfront/embedding"
 description: "Embedding and RAG primitives for chunking, embedding, and similarity search."
-order: 24
+order: 30
 ---
 
 # veryfront/embedding

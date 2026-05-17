@@ -1,10 +1,10 @@
 ---
-title: "Memory & Streaming"
+title: "Memory and streaming"
 description: "Conversation memory strategies and streaming responses."
-order: 8
+order: 12
 ---
 
-# Memory & Streaming
+# Memory and streaming
 
 Conversation memory strategies and streaming responses.
 

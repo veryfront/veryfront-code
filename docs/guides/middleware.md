@@ -1,7 +1,7 @@
 ---
 title: "Middleware"
 description: "CORS, rate limiting, logging, and custom middleware pipelines."
-order: 17
+order: 7
 ---
 
 # Middleware

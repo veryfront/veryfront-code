@@ -1,10 +1,10 @@
 ---
-title: "Data Fetching"
+title: "Data fetching"
 description: "Server data, static generation, and client-side fetching."
-order: 4
+order: 5
 ---
 
-# Data Fetching
+# Data fetching
 
 Server data, static generation, and client-side fetching.
 

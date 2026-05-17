@@ -1,10 +1,10 @@
 ---
-title: "Chat Theming"
+title: "Chat theming"
 description: "Customize chat theme, feature toggles, sources, attachments, and contexts."
-order: 12
+order: 16
 ---
 
-# Chat Theming
+# Chat theming
 
 Use this guide for visual customization and optional chat UI features.
 

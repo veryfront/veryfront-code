@@ -1,10 +1,10 @@
 ---
-title: "Agent Runtime AG-UI"
+title: "Agent runtime AG-UI"
 description: "Canonical AG-UI request and transport conventions for package-hosted agent runtimes."
 order: 10
 ---
 
-# Agent Runtime AG-UI
+# Agent runtime AG-UI
 
 The `veryfront/agent` package supports a generic AG-UI transport for hosted
 agent runtimes.

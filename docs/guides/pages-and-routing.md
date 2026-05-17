@@ -1,10 +1,10 @@
 ---
-title: "Pages & Routing"
+title: "Pages and routing"
 description: "File-based routing, layouts, dynamic routes, and MDX pages."
-order: 3
+order: 4
 ---
 
-# Pages & Routing
+# Pages and routing
 
 File-based routing, layouts, dynamic routes, and MDX pages.
 

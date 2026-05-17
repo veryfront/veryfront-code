@@ -1,10 +1,10 @@
 ---
-title: "Jobs & Cron Jobs"
+title: "Jobs and cron jobs"
 description: "Run project-scoped background work now or on a schedule through the Veryfront platform."
 order: 20
 ---
 
-# Jobs & Cron Jobs
+# Jobs and cron jobs
 
 Use Veryfront jobs for durable, project-scoped background work.
 

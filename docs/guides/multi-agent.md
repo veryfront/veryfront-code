@@ -1,10 +1,10 @@
 ---
-title: "Multi-Agent"
+title: "Multi-agent"
 description: "Agent composition, delegation, and agent-as-tool patterns."
-order: 14
+order: 18
 ---
 
-# Multi-Agent
+# Multi-agent
 
 Agent composition, delegation, and agent-as-tool patterns.
 

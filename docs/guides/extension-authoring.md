@@ -1,10 +1,10 @@
 ---
-title: "Extension Authoring"
+title: "Extension authoring"
 description: "Write focused Veryfront extension factories, contracts, and capabilities."
-order: 25
+order: 28
 ---
 
-# Extension Authoring
+# Extension authoring
 
 An extension should address one capability boundary. Keep the factory small, declare requirements explicitly, and expose contracts through `provides` or `setup()`.
 

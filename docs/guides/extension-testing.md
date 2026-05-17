@@ -1,10 +1,10 @@
 ---
-title: "Extension Testing"
+title: "Extension testing"
 description: "Test Veryfront extension factories and contract implementations."
-order: 27
+order: 30
 ---
 
-# Extension Testing
+# Extension testing
 
 Extension tests should prove that the factory returns a valid extension and that provided contracts work through the extension loader.
 

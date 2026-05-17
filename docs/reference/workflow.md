@@ -1,7 +1,7 @@
 ---
 title: "veryfront/workflow"
 description: "DAG-based agentic workflows with human-in-the-loop support."
-order: 11
+order: 16
 ---
 
 # veryfront/workflow
@@ -81,7 +81,7 @@ Define workflow with step DAG
 
 **Returns:** <code>Workflow&lt;TInput, TOutput&gt;</code>
 
-## Type Reference
+## Type reference
 
 ### `StepOptions`
 

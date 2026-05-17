@@ -1,7 +1,7 @@
 ---
 title: "veryfront/fs"
 description: "Filesystem operations and path utilities."
-order: 18
+order: 25
 ---
 
 # veryfront/fs

@@ -1,7 +1,7 @@
 ---
 title: "Agents"
 description: "Create an AI agent with a system prompt, tools, and memory."
-order: 6
+order: 10
 ---
 
 # Agents

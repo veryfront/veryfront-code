@@ -1,7 +1,7 @@
 ---
 title: "veryfront/testing"
 description: "Cross-runtime BDD, assertion, isolation, filesystem, environment, and timing test utilities."
-order: 26
+order: 32
 ---
 
 # veryfront/testing

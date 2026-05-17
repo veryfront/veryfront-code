@@ -1,7 +1,7 @@
 ---
 title: "veryfront/provider"
 description: "Provider registry for resolving \"provider/model\" strings to local, Veryfront Cloud, and direct provider runtimes."
-order: 17
+order: 23
 ---
 
 # veryfront/provider

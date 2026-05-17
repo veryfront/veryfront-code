@@ -1,7 +1,7 @@
 ---
 title: "veryfront/oauth"
 description: "OAuth 2.0 helpers with a built-in provider catalog."
-order: 16
+order: 22
 ---
 
 # veryfront/oauth

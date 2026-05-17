@@ -1,10 +1,10 @@
 ---
-title: "Chat Composition"
+title: "Chat composition"
 description: "Build custom chat layouts with Chat and Message composition components."
-order: 10
+order: 14
 ---
 
-# Chat Composition
+# Chat composition
 
 Use composition when the preset `Chat` component is too constrained but you still want Veryfront to own the chat wiring.
 

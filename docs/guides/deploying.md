@@ -1,10 +1,10 @@
 ---
-title: "Building & Deploying"
+title: "Building and deploying"
 description: "Production builds, static export, and deployment targets."
-order: 31
+order: 32
 ---
 
-# Building & Deploying
+# Building and deploying
 
 Production builds, static export, and deployment targets.
 

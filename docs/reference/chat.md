@@ -62,7 +62,7 @@ import {
 } from "veryfront/chat";
 ```
 
-## Preset Component
+## Preset component
 
 ### `Chat`
 
@@ -163,7 +163,7 @@ ChatComponents.Message; // = Message (compound)
 ChatComponents.ErrorBanner; // = ErrorBanner
 ```
 
-## Composition Components
+## Composition components
 
 ### `ChatRoot`
 
@@ -259,7 +259,7 @@ Provider-specific avatar (Claude, OpenAI, or default).
 | ------- | -------- | ----------------- |
 | `model` | `string` | Model identifier. |
 
-## Message Compound
+## Message compound
 
 ### `Message`
 

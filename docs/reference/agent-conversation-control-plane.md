@@ -1,7 +1,7 @@
 ---
 title: "Conversation-backed agent hosts"
 description: "Compose veryfront/agent with a control-plane conversations API while keeping host policy local."
-order: 1
+order: 11
 ---
 
 # Conversation-backed agent hosts

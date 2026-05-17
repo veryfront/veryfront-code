@@ -1,7 +1,7 @@
 ---
 title: "Configuration"
 description: "`veryfront.config.ts` options, environment variables, and runtime settings."
-order: 30
+order: 3
 ---
 
 # Configuration

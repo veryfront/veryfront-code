@@ -1,10 +1,10 @@
 ---
-title: "Chat Hooks"
+title: "Chat hooks"
 description: "Use headless chat, agent, completion, voice, and thread hooks."
-order: 11
+order: 15
 ---
 
-# Chat Hooks
+# Chat hooks
 
 Use chat hooks when you need state and runtime integration without the preset UI.
 

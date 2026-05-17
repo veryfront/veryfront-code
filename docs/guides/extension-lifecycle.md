@@ -1,10 +1,10 @@
 ---
-title: "Extension Lifecycle"
+title: "Extension lifecycle"
 description: "Understand extension discovery, ordering, presets, setup, and teardown."
-order: 26
+order: 29
 ---
 
-# Extension Lifecycle
+# Extension lifecycle
 
 The extension lifecycle controls how Veryfront discovers, orders, starts, and stops extension factories.
 

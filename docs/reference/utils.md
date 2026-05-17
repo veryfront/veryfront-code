@@ -1,7 +1,7 @@
 ---
 title: "veryfront/utils"
 description: "Shared runtime detection, structured logging, constants, hashing, memoization, and feature flag utilities."
-order: 18
+order: 26
 ---
 
 # veryfront/utils

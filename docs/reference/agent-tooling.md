@@ -1,7 +1,7 @@
 ---
 title: "Agent tooling and runtime state"
 description: "Remote tool allowlists, provider-native tool discovery, and request-aware runtime hooks for agents."
-order: 10.4
+order: 14
 ---
 
 # Agent tooling and runtime state

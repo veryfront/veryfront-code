@@ -1,10 +1,10 @@
 ---
-title: "MCP Server"
+title: "MCP server"
 description: "Expose tools, prompts, and resources over Model Context Protocol."
-order: 19
+order: 22
 ---
 
-# MCP Server
+# MCP server
 
 Expose tools, prompts, and resources over Model Context Protocol.
 

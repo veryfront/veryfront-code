@@ -1,7 +1,7 @@
 ---
 title: "veryfront/server"
 description: "Composable service server API."
-order: 28
+order: 33
 ---
 
 # veryfront/server

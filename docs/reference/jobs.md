@@ -1,7 +1,7 @@
 ---
 title: "veryfront/jobs"
 description: "Project-scoped jobs and cron jobs with events, logs, batches, and target discovery."
-order: 13.5
+order: 19
 ---
 
 # veryfront/jobs
@@ -164,7 +164,7 @@ Get one first-party target definition.
 
 **Returns:** `Promise<JobTargetDefinition>`
 
-## Type Reference
+## Type reference
 
 ### `VeryfrontJobsClientConfig`
 

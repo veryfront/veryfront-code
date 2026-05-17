@@ -1,10 +1,10 @@
 ---
-title: "Project Structure"
+title: "Project structure"
 description: "File conventions, directory layout, and how auto-discovery works."
 order: 2
 ---
 
-# Project Structure
+# Project structure
 
 File conventions, directory layout, and how auto-discovery works.
 

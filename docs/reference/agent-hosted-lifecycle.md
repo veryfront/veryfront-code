@@ -1,7 +1,7 @@
 ---
 title: "Agent hosted lifecycle"
 description: "Durable hosted run lifecycle helpers for agent streams and child runs."
-order: 10.2
+order: 12
 ---
 
 # Agent hosted lifecycle

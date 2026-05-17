@@ -1,14 +1,14 @@
 ---
 title: "Integrations"
 description: "Config-driven integration tools with OAuth, token management, and API execution across the built-in connector catalog."
-order: 23
+order: 24
 ---
 
 # Integrations
 
 Veryfront integrations let AI agents use third-party services on behalf of users. Developers enable integrations in `veryfront.config.ts`, and the runtime uses the built-in connector catalog plus remote integration helpers to fetch tool definitions and execute calls through the configured API layer.
 
-## How It Works
+## How it works
 
 ```
 veryfront.config.ts            Runtime helpers                    API / service layer
@@ -63,7 +63,7 @@ export default defineConfig({
 });
 ```
 
-## Authentication Flow
+## Authentication flow
 
 When an agent calls an integration tool and no valid token exists:
 
@@ -89,11 +89,11 @@ GITHUB_CLIENT_SECRET=<GITHUB_CLIENT_SECRET>
 
 When these are set in the backing API environment, the OAuth handlers use them directly.
 
-## API Setup for OAuth Credentials
+## API setup for OAuth credentials
 
 If you are running your own API/service layer for integrations, register an OAuth app for each provider you enable and configure the matching credentials there.
 
-### Provider Registration
+### Provider registration
 
 For each OAuth provider, create an application and configure the callback URL:
 
@@ -187,9 +187,9 @@ These integrations use API keys set by the developer in their project environmen
 | Supabase    | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`                            |
 | Twilio      | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`                       |
 
-## Available Integrations
+## Available integrations
 
-### Project Management
+### Project management
 
 | Integration    | Tools                                                               | Auth            |
 | -------------- | ------------------------------------------------------------------- | --------------- |

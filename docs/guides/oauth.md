@@ -1,7 +1,7 @@
 ---
 title: "OAuth"
 description: "OAuth 2.0 helpers with a built-in provider catalog."
-order: 18
+order: 23
 ---
 
 # OAuth

@@ -1,10 +1,10 @@
 ---
-title: "API Routes"
+title: "API routes"
 description: "HTTP handlers, request parsing, and streaming responses."
-order: 5
+order: 6
 ---
 
-# API Routes
+# API routes
 
 HTTP handlers, request parsing, and streaming responses.
 

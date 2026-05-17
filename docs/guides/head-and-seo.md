@@ -1,10 +1,10 @@
 ---
-title: "Head & SEO"
+title: "Head and SEO"
 description: "Declarative metadata, Open Graph, and structured data."
-order: 32
+order: 8
 ---
 
-# Head & SEO
+# Head and SEO
 
 Declarative metadata, Open Graph, and structured data.
 

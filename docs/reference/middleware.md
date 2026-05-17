@@ -1,7 +1,7 @@
 ---
 title: "veryfront/middleware"
 description: "CORS, rate limiting, logging, and timeout middleware."
-order: 15
+order: 21
 ---
 
 # veryfront/middleware
@@ -93,7 +93,7 @@ List registered middleware with metadata.
 
 **Returns:** <code>Array&lt;&#123; name?: string; order?: number &#125;&gt;</code>
 
-## Type Reference
+## Type reference
 
 ### `CorsOptions`
 
