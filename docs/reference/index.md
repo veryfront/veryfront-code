@@ -53,5 +53,8 @@ Reference pages cover top-level public import surfaces. Deep public exports, suc
 
 ## Host integration references
 
+- [Agent hosted lifecycle](./agent-hosted-lifecycle.md) covers generic durable hosted run lifecycle helpers.
 - [Conversation-backed agent hosts](./agent-conversation-control-plane.md) covers control-plane host composition.
 - [Agent runtime AG-UI](./agent-runtime-ag-ui.md) covers package-hosted AG-UI runtime contracts and endpoint conventions.
+- [Agent service runtime](./agent-service-runtime.md) covers separately deployed agent services.
+- [Agent tooling and runtime state](./agent-tooling.md) covers tool allowlists, provider-native tool discovery, and runtime state hooks.
