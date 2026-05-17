@@ -77,5 +77,3 @@ explicit capability metadata for sensitive extension boundaries.
 | `install.sh` / `install.ps1` | —           | Binary installer (curl/PowerShell)             |
 | `postinstall.js`             | —           | npm postinstall hook (copied into npm package) |
 | `update-homebrew-formula.sh` | —           | Updates Homebrew formula after release         |
-| `debug-production.sh`        | —           | Quick production debugging helper              |
-| `test-production-fix.ts`     | —           | Tests production fixes locally                 |
