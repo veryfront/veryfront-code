@@ -246,6 +246,35 @@ describe("agent/ag-ui-handler", () => {
     assertEquals(testAgent.capturedMessages.length, 0);
   });
 
+  it("rejects oversized text parts before the agent runs", async () => {
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "x".repeat(10_001) }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 400);
+    assertEquals(testAgent.clearMemoryCalls, 0);
+    assertEquals(testAgent.capturedMessages.length, 0);
+    const body = await response.json();
+    assertEquals(body.error, "Invalid AG-UI request");
+    assertStringIncludes(
+      body.details[0]?.message ?? "",
+      "Text message parts must include text less than 10000 characters",
+    );
+  });
+
   it("returns browser fallback metadata when no agent runtime is available", async () => {
     const testAgent = createTestAgent();
     const noAiAvailable = toError(createError({

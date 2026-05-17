@@ -546,23 +546,15 @@ describe("agent/ag-ui-detached-start", () => {
     }
   });
 
-  it("drops oversize detached text parts the same way as the direct AG-UI handler", async () => {
+  it("rejects oversize detached text parts before background execution", async () => {
     const sessionManager = new RunResumeSessionManager<{
       result: unknown;
       isError: boolean;
     }>();
     const originalStream = AgentRuntime.prototype.stream;
 
-    AgentRuntime.prototype.stream = async function (
-      messages: Message[],
-    ): Promise<ReadableStream<Uint8Array>> {
-      assertEquals(messages[0]?.parts.length, 0);
-
-      return new ReadableStream<Uint8Array>({
-        start(controller) {
-          controller.close();
-        },
-      });
+    AgentRuntime.prototype.stream = async function (): Promise<ReadableStream<Uint8Array>> {
+      throw new Error("stream should not be called for invalid requests");
     };
 
     try {
@@ -579,10 +571,13 @@ describe("agent/ag-ui-detached-start", () => {
         }],
       }));
 
-      assertEquals(response.status, 202);
+      assertEquals(response.status, 400);
       const payload = await response.json();
-      assertEquals(payload.accepted, true);
-      assertEquals(payload.duplicate, false);
+      assertEquals(payload.error, "Invalid AG-UI detached start request");
+      assertStringIncludes(
+        payload.details[0]?.message ?? "",
+        "Text message parts must include text less than 10000 characters",
+      );
     } finally {
       AgentRuntime.prototype.stream = originalStream;
     }

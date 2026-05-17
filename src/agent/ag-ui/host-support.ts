@@ -70,7 +70,14 @@ export const getAgUiContextItemSchema = defineSchema((v) =>
 );
 
 const getAgUiMessagePartSchema = defineSchema((v) =>
-  v.object({ type: v.string().min(1) }).passthrough()
+  v.object({ type: v.string().min(1) }).passthrough().refine(
+    (part) =>
+      part.type !== "text" ||
+      (typeof part.text === "string" && part.text.length <= MAX_TEXT_PART_LENGTH),
+    {
+      message: `Text message parts must include text less than ${MAX_TEXT_PART_LENGTH} characters`,
+    },
+  )
 );
 
 const getAgUiMessageSchema = defineSchema((v) =>
