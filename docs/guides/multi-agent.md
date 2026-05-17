@@ -61,9 +61,9 @@ Expose the orchestrator through a chat route:
 
 ```ts
 // app/api/chat/route.ts
-import { createChatHandler } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export const POST = createChatHandler("orchestrator");
+export const POST = createAgUiHandler("orchestrator");
 ```
 
 Run the dev server and ask for an output that requires delegation:

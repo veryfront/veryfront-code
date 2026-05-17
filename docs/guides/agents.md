@@ -120,18 +120,13 @@ direct subprocesses.
 
 ## Connect to a route
 
-Use `getAgent()` to retrieve a registered agent and stream its response:
+Use `createAgUiHandler()` to expose a registered agent through an AG-UI stream:
 
 ```ts
 // app/api/chat/route.ts
-import { getAgent } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export async function POST(request: Request) {
-  const { messages } = await request.json();
-  const agent = getAgent("assistant");
-  const result = await agent.stream({ messages });
-  return result.toDataStreamResponse();
-}
+export const POST = createAgUiHandler("assistant");
 ```
 
 Try it with the dev server running:
@@ -142,7 +137,7 @@ curl -N http://localhost:3000/api/chat \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Say hello in one sentence."}]}]}'
 ```
 
-The response streams the agent output. If the route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `getAgent()`.
+The response streams AG-UI SSE. Pair it with `useChat({ api: "/api/chat", transport: "ag-ui" })` in browser UI code. If the route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 

@@ -2,8 +2,8 @@
  * useChat Hook - Layer 1 (Headless)
  *
  * Complete chat state management with zero UI.
- * Consumes the veryfront streaming protocol
- * (message-start/message-finish + step-start/step-end).
+ * Consumes the Veryfront chat streaming protocol by default and can consume
+ * AG-UI SSE when `transport: "ag-ui"` is set.
  *
  * Supports three inference modes:
  * - cloud: API key present, normal server-side inference
@@ -14,7 +14,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
-import { handleStreamingResponse } from "./streaming/index.ts";
+import { handleAgUiStreamingResponse, handleStreamingResponse } from "./streaming/index.ts";
 import type {
   BranchInfo,
   BrowserInferenceStatus,
@@ -282,7 +282,11 @@ export function useChat(options: UseChatOptions): UseChatResult {
         let serverModel: string | undefined = model;
         setActiveModel(undefined);
 
-        await handleStreamingResponse(response.body, {
+        const handleResponse = options.transport === "ag-ui"
+          ? handleAgUiStreamingResponse
+          : handleStreamingResponse;
+
+        await handleResponse(response.body, {
           onMessage: (assistantMessage) => {
             const withMeta = {
               ...assistantMessage,
