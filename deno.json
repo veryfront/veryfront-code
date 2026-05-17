@@ -96,6 +96,7 @@
     "./chat/final-step-fallback": "./src/chat/final-step-fallback.ts",
     "./chat/provider-errors": "./src/chat/provider-errors.ts",
     "./chat/stream-watchdog": "./src/chat/stream-watchdog.ts",
+    "./agent/request-auth-cache": "./src/agent/service/request-auth-cache.ts",
     "./server": "./src/server/index.ts"
   },
   "imports": {
