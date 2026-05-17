@@ -1,7 +1,7 @@
 ---
 title: "Sandbox"
 description: "Run isolated commands and file operations in ephemeral sandbox sessions."
-order: 19
+order: 26
 ---
 
 # Sandbox
@@ -89,10 +89,10 @@ for await (const event of sandbox.executeStream("npm test")) {
 
 ```ts
 await sandbox.writeFiles([
-  { path: "/workspace/input.txt", content: "hello" },
+  { path: "input.txt", content: "hello" },
 ]);
 
-const content = await sandbox.readFile("/workspace/input.txt");
+const content = await sandbox.readFile("input.txt");
 console.log(content);
 ```
 
@@ -121,9 +121,9 @@ try {
 
 ## Next
 
-- [MCP Server](./mcp-server.md) — expose tools, prompts, and resources over MCP
-- [Agents](./agents.md) — orchestrate sandbox-backed workflows with agents
+- [MCP server](./mcp-server.md): expose tools, prompts, and resources over MCP
+- [Agents](./agents.md): orchestrate sandbox-backed workflows with agents
 
 ## Related
 
-- [`veryfront/sandbox`](../reference/sandbox.md) — sandbox API reference
+- [`veryfront/sandbox`](../reference/sandbox.md): sandbox API reference

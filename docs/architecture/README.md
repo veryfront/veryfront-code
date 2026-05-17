@@ -1,40 +1,50 @@
-# Veryfront Architecture Diagrams
+# Veryfront architecture
 
-This directory contains Mermaid architecture diagrams that describe the internal structure of `veryfront-code`. These diagrams are intended as reference material for AI-assisted development and for onboarding contributors.
+This folder documents the internal architecture of `veryfront-code`. Each page
+owns one boundary so docs stay easier to update when code changes.
 
-> **Note:** These diagrams describe the open-core runtime and framework architecture. Managed Veryfront Cloud behavior is called out explicitly where it matters.
+## Structure rule
 
-## Diagram Index
+- One file describes one architectural concern.
+- Broad maps can link to focused pages, but they must not duplicate their
+  implementation details.
+- Runtime behavior, transport protocols, build output, and hosted control-plane
+  behavior stay on separate pages.
 
-| File                                                                       | Description                                                                                   |
-| -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [01-system-overview.md](./01-system-overview.md)                           | High-level system architecture, domains, and bridge modules                                   |
-| [02-request-pipeline.md](./02-request-pipeline.md)                         | Request handling, server bootstrap, and rendering pipeline                                    |
-| [03-ai-agent-system.md](./03-ai-agent-system.md)                           | AI capabilities, agent runtime, provider resolution, workflow engine, and memory              |
-| [04-mcp-servers.md](./04-mcp-servers.md)                                   | App MCP server and internal AG-UI transport                                                   |
-| [05-deployment-platform.md](./05-deployment-platform.md)                   | Deployment platform, runtime adapters, filesystem resolution                                  |
-| [06-discovery-extensions.md](./06-discovery-extensions.md)                 | Auto-discovery engine, extension contracts, observability                                     |
-| [07-architecture-issues.md](./07-architecture-issues.md)                   | Current architectural pressure points and strengthening directions                            |
-| [08-support-matrix.md](./08-support-matrix.md)                             | Router modes, runtime targets, and open-core vs service-backed capability boundaries          |
-| [09-high-risk-runtime-boundaries.md](./09-high-risk-runtime-boundaries.md) | Change checklist for provider, module loading, AG-UI, rendering, and agent runtime boundaries |
+## Architecture outline
 
-## Key Architectural Concepts
+| File                                                               | Concern                                      |
+| ------------------------------------------------------------------ | -------------------------------------------- |
+| [01-system-overview.md](./01-system-overview.md)                   | System domains and bridge modules            |
+| [02-request-pipeline.md](./02-request-pipeline.md)                 | Request handling pipeline                    |
+| [03-agent-runtime.md](./03-agent-runtime.md)                       | Agent execution boundary                     |
+| [04-provider-runtime.md](./04-provider-runtime.md)                 | Provider and model resolution                |
+| [05-workflow-runtime.md](./05-workflow-runtime.md)                 | Workflow DAG execution                       |
+| [06-embedding-rag.md](./06-embedding-rag.md)                       | Embedding, chunking, and retrieval           |
+| [07-mcp-runtime.md](./07-mcp-runtime.md)                           | MCP server runtime                           |
+| [08-hosted-agent-runs.md](./08-hosted-agent-runs.md)               | Hosted agent run state and child runs        |
+| [09-control-plane-channels.md](./09-control-plane-channels.md)     | Signed control-plane channels                |
+| [10-ag-ui-transport.md](./10-ag-ui-transport.md)                   | AG-UI browser transport                      |
+| [11-server-runtime.md](./11-server-runtime.md)                     | Dev and production server runtime            |
+| [12-rendering-runtime.md](./12-rendering-runtime.md)               | Page rendering, SSR, RSC, and HTML assembly  |
+| [13-runtime-adapters.md](./13-runtime-adapters.md)                 | Runtime adapter capability boundaries        |
+| [14-build-pipeline.md](./14-build-pipeline.md)                     | Production build, bundling, and assets       |
+| [15-discovery-and-registries.md](./15-discovery-and-registries.md) | Project primitive discovery and registries   |
+| [16-extension-system.md](./16-extension-system.md)                 | Extension contracts and lifecycle            |
+| [17-observability.md](./17-observability.md)                       | Metrics, traces, logs, profiling, and errors |
+| [18-support-matrix.md](./18-support-matrix.md)                     | Runtime and capability support matrix        |
+| [19-runtime-boundaries.md](./19-runtime-boundaries.md)             | High-risk boundary change checklist          |
 
-### Extension System
+## Update policy
 
-Veryfront uses a contract-based extension system where capabilities are provided by first-party packages (`@veryfront/ext-*`). Each extension registers one or more contracts (e.g., `AuthProvider`, `Bundler`, `LLMProvider`) through a lifecycle of `setup(ctx)` / `teardown()`. Contracts are resolved lazily at first use with actionable error messages if missing. See [06-discovery-extensions.md](./06-discovery-extensions.md) for details.
+When code changes cross a public boundary, update the guide or reference page
+for the public behavior and the architecture page for the implementation
+boundary. If a change touches more than one boundary, update each focused page
+instead of expanding a broad overview.
 
-### AG-UI Protocol
+## Related documentation
 
-The agent system uses the AG-UI (Agent-User Interface) protocol for real-time streaming between agents and browser clients. This includes SSE transport, chunk encoding, event normalization, and browser response streaming. The control plane (`src/channels/`) routes agent requests with EdDSA-signed authentication.
-
-### Multi-Tenant Isolation
-
-Project-scoped registry managers (`src/registry/`) provide tenant isolation for tools, prompts, workflows, agents, and resources. Each project gets its own namespace, preventing cross-project leakage. This extends to the workflow engine where tenant context is captured, checkpointed, and restored across crash recovery.
-
-## Related Documentation
-
-- [src/README.md](../../src/README.md) — Module overview with dependency layers and import aliases
-- [cli/README.md](../../cli/README.md) — CLI commands, structure, and adding new commands
-- [src/workflow/README.md](../../src/workflow/README.md) — Workflow engine deep dive (checkpointing, job executors, multi-tenant)
-- [extensions/](../../extensions/) — Individual extension READMEs with configuration and usage
+- [src/README.md](../../src/README.md)
+- [cli/README.md](../../cli/README.md)
+- [src/workflow/README.md](../../src/workflow/README.md)
+- [extensions/](../../extensions/)

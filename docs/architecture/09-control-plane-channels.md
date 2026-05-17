@@ -1,0 +1,37 @@
+# Control-plane channels
+
+This page describes signed control-plane and invoke channels. It does not cover
+MCP server protocol handling or browser AG-UI chunk encoding.
+
+## Responsibility
+
+Control-plane channels move signed management requests between Veryfront
+services and project runtimes.
+
+Primary source areas:
+
+- `src/channels/control-plane.ts`
+- `src/channels/invoke.ts`
+- `src/server/handlers/request/channel-dispatch-request.ts`
+- `src/server/handlers/request/channel-invoke.handler.ts`
+
+## Runtime flow
+
+1. A trusted service signs a channel request.
+2. The project runtime validates the signature and request shape.
+3. Dispatch handlers route the request to the intended control-plane operation.
+4. Invoke handlers execute project-scoped runtime work and return structured
+   results.
+
+## Boundaries
+
+- Control-plane channels are signed management surfaces, not public app routes.
+- AG-UI event encoding belongs in [AG-UI transport](./10-ag-ui-transport.md).
+- MCP JSON-RPC dispatch belongs in [MCP runtime](./07-mcp-runtime.md).
+
+## Change checks
+
+- Preserve signature validation before any dispatch.
+- Keep public app route handlers separate from control-plane handlers.
+- Add tests for invalid signatures, malformed payloads, and successful dispatch
+  paths when changing channel behavior.

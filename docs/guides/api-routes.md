@@ -1,10 +1,10 @@
 ---
-title: "API Routes"
+title: "API routes"
 description: "HTTP handlers, request parsing, and streaming responses."
-order: 5
+order: 6
 ---
 
-# API Routes
+# API routes
 
 HTTP handlers, request parsing, and streaming responses.
 
@@ -152,10 +152,10 @@ Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{
 
 ## Next
 
-- [Agents](./agents.md) — the agent behind the `/api/chat` endpoint
-- [Middleware](./middleware.md) — add CORS, rate limiting, and auth checks
+- [Agents](./agents.md): the agent behind the `/api/chat` endpoint
+- [Middleware](./middleware.md): add CORS, rate limiting, and auth checks
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md) — agent API reference
-- [`veryfront/middleware`](../reference/middleware.md) — middleware API reference
+- [`veryfront/agent`](../reference/agent.md): agent API reference
+- [`veryfront/middleware`](../reference/middleware.md): middleware API reference

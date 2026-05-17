@@ -1,10 +1,10 @@
 ---
-title: "Data Fetching"
+title: "Data fetching"
 description: "Server data, static generation, and client-side fetching."
-order: 4
+order: 5
 ---
 
-# Data Fetching
+# Data fetching
 
 Server data, static generation, and client-side fetching.
 
@@ -31,11 +31,11 @@ export default function Dashboard({ user }: { user: User }) {
 
 The `DataContext` provides:
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `request` | `Request` | The incoming HTTP request |
-| `params` | `Record<string, string>` | Route parameters (e.g. `{ slug: "hello" }`) |
-| `query` | `URLSearchParams` | Query string parameters |
+| Property  | Type                     | Description                                 |
+| --------- | ------------------------ | ------------------------------------------- |
+| `request` | `Request`                | The incoming HTTP request                   |
+| `params`  | `Record<string, string>` | Route parameters (e.g. `{ slug: "hello" }`) |
+| `query`   | `URLSearchParams`        | Query string parameters                     |
 
 ## Static data
 
@@ -67,7 +67,7 @@ For dynamic routes, pair `getStaticData` with `getStaticPaths` to tell the frame
 Return `redirect()` or `notFound()` from any data function:
 
 ```tsx
-import { redirect, notFound } from "veryfront";
+import { notFound, redirect } from "veryfront";
 
 export async function getServerData({ params }: DataContext) {
   const post = await getPost(params.slug);
@@ -90,9 +90,9 @@ redirect("/new-url", true); // 301 permanent redirect
 For data that loads after the page renders, fetch in a client component:
 
 ```tsx
-'use client'
+"use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 
 export default function Search() {
   const [results, setResults] = useState([]);
@@ -109,9 +109,9 @@ export default function Search() {
 
 ## Next
 
-- [API Routes](./api-routes.md) — create the endpoints your pages fetch from
-- [Agents](./agents.md) — load AI-generated data server-side
+- [API routes](./api-routes.md): create the endpoints your pages fetch from
+- [Agents](./agents.md): load AI-generated data server-side
 
 ## Related
 
-- [`veryfront` (root)](../reference/root.md) — `getServerData`, `getStaticData`, `redirect`, `notFound`
+- [`veryfront` (root)](../reference/root.md): `getServerData`, `getStaticData`, `redirect`, `notFound`

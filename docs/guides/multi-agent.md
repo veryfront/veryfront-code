@@ -1,10 +1,10 @@
 ---
-title: "Multi-Agent"
+title: "Multi-agent"
 description: "Agent composition, delegation, and agent-as-tool patterns."
-order: 11
+order: 19
 ---
 
-# Multi-Agent
+# Multi-agent
 
 Agent composition, delegation, and agent-as-tool patterns.
 
@@ -43,7 +43,8 @@ import { agent, getAgentsAsTools } from "veryfront/agent";
 
 export default agent({
   id: "orchestrator",
-  system: "You coordinate research and writing. Use the researcher to gather facts, then the writer to produce the article.",
+  system:
+    "You coordinate research and writing. Use the researcher to gather facts, then the writer to produce the article.",
   tools: getAgentsAsTools({
     researcher: "Research a topic using web search",
     writer: "Write an article from research notes",
@@ -71,7 +72,7 @@ For deterministic multi-agent pipelines, use [workflows](./workflows.md):
 
 ```ts
 // workflows/article-pipeline.ts
-import { workflow, step, parallel } from "veryfront/workflow";
+import { parallel, step, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "article-pipeline",
@@ -88,10 +89,10 @@ export default workflow({
 
 ## When to use which
 
-| Pattern | Use when |
-|---------|----------|
+| Pattern           | Use when                                                                    |
+| ----------------- | --------------------------------------------------------------------------- |
 | **Agent-as-tool** | The orchestrator decides dynamically which agents to call and in what order |
-| **Workflow** | The execution order is known in advance — sequential, parallel, or branching |
+| **Workflow**      | The execution order is known in advance: sequential, parallel, or branching |
 
 Agent-as-tool is more flexible but harder to predict. Workflows are deterministic and easier to debug.
 
@@ -102,16 +103,16 @@ All agents in `agents/` are registered automatically. Access them programmatical
 ```ts
 import { getAgent, getAllAgentIds } from "veryfront/agent";
 
-const ids = getAllAgentIds();    // ["assistant", "researcher", "writer"]
+const ids = getAllAgentIds(); // ["assistant", "researcher", "writer"]
 const agent = getAgent("writer"); // Get a specific agent
 ```
 
 ## Next
 
-- [Providers](./providers.md) — configure OpenAI, Anthropic, and Google
-- [Middleware](./middleware.md) — add auth and rate limiting to your agents
+- [Providers](./providers.md): configure OpenAI, Anthropic, and Google
+- [Middleware](./middleware.md): add auth and rate limiting to your agents
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md) — agent API reference
-- [`veryfront/workflow`](../reference/workflow.md) — workflow API reference
+- [`veryfront/agent`](../reference/agent.md): agent API reference
+- [`veryfront/workflow`](../reference/workflow.md): workflow API reference

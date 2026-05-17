@@ -1,10 +1,10 @@
 ---
-title: "Head & SEO"
+title: "Head and SEO"
 description: "Declarative metadata, Open Graph, and structured data."
-order: 18
+order: 8
 ---
 
-# Head & SEO
+# Head and SEO
 
 Declarative metadata, Open Graph, and structured data.
 
@@ -20,7 +20,7 @@ export default function AboutPage() {
     <>
       <Head>
         <title>About Us</title>
-        <meta name="description" content="Learn about our team and mission." />
+        <meta name="description" content="Learn about the team and mission." />
       </Head>
       <main>
         <h1>About Us</h1>
@@ -30,7 +30,7 @@ export default function AboutPage() {
 }
 ```
 
-The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge — page-level tags override layout-level tags for duplicate keys.
+The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge: page-level tags override layout-level tags for duplicate keys.
 
 ## Open Graph
 
@@ -42,7 +42,7 @@ The `Head` component renders its children into the document's `<head>`. When mul
   <meta property="og:image" content="https://example.com/image.jpg" />
   <meta property="og:type" content="article" />
   <meta name="twitter:card" content="summary_large_image" />
-</Head>
+</Head>;
 ```
 
 ## Favicon and icons
@@ -51,7 +51,7 @@ The `Head` component renders its children into the document's `<head>`. When mul
 <Head>
   <link rel="icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-</Head>
+</Head>;
 ```
 
 ## Fonts
@@ -88,7 +88,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       "author": { "@type": "Person", "name": "Jane Doe" },
     })}
   </script>
-</Head>
+</Head>;
 ```
 
 ## Per-page metadata in layouts
@@ -121,7 +121,7 @@ export default function About() {
     <>
       <Head>
         <title>About - My App</title>
-        <meta name="description" content="About our team." />
+        <meta name="description" content="About the team." />
       </Head>
       <h1>About</h1>
     </>
@@ -150,10 +150,10 @@ The framework automatically injects `title` and `description` from frontmatter i
 
 ## Next
 
-This is the last guide. Explore the [API Reference](../reference/index.md) for detailed module documentation.
+This is the last guide. Explore the [API reference](../reference/index.md) for detailed module documentation.
 
 ## Related
 
-- [`veryfront/head`](../reference/head.md) — Head component API reference
-- [`veryfront/fonts`](../reference/fonts.md) — fonts API reference
-- [`veryfront/context`](../reference/context.md) — access frontmatter data
+- [`veryfront/head`](../reference/head.md): Head component API reference
+- [`veryfront/fonts`](../reference/fonts.md): fonts API reference
+- [`veryfront/context`](../reference/context.md): access frontmatter data

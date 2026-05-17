@@ -1,7 +1,7 @@
 ---
 title: "veryfront/provider"
 description: "Provider registry for resolving \"provider/model\" strings to local, Veryfront Cloud, and direct provider runtimes."
-order: 17
+order: 23
 ---
 
 # veryfront/provider
@@ -12,7 +12,7 @@ Most apps do not need this directly. Omit `model` on `agent()` to follow
 runtime defaults, or use `resolveModel()` and `registerModelProvider()` when
 you need an explicit provider path.
 
-Use `agent({ resolveModelTransport })` when the missing piece is
+Use `agent({ resolveModelTransport })` when you need
 request-aware transport behavior such as per-request headers or provider
 options. `registerModelProvider()` is still the right tool for static model
 runtime registration.
@@ -140,4 +140,4 @@ const groupedModels = groupVeryfrontCloudModelsByProvider();
 
 ## Related
 
-- [`veryfront/agent`](./agent.md) — Agents use providers for AI models
+- [`veryfront/agent`](./agent.md): Agents use providers for AI models

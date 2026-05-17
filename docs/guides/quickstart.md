@@ -26,12 +26,12 @@ cd my-app
 
 The CLI walks you through template selection:
 
-- **AI Chatbot** — Agent + chat UI + streaming
-- **Chat with Your Docs** — RAG with source citations
-- **Multi-Agent System** — Agents that delegate to each other
-- **AI Workflow Pipeline** — Steps + approvals + parallelism
-- **Coding Agent** — Claude Code-powered code assistant
-- **AI SaaS** — Auth + chat + per-user memory
+- **AI Chatbot**: Agent + chat UI + streaming
+- **Chat with Your Docs**: RAG with source citations
+- **Multi-Agent System**: Agents that delegate to each other
+- **AI Workflow Pipeline**: Steps + approvals + parallelism
+- **Coding Agent**: Claude Code-powered code assistant
+- **AI SaaS**: Auth + chat + per-user memory
 
 ## Start the dev server
 
@@ -69,7 +69,7 @@ my-app/
         route.ts    # Streaming chat endpoint
 ```
 
-Pages live in `app/`. Agents, tools, prompts, and workflows live at the project root — they're auto-discovered by the framework.
+Pages live in `app/`. Agents, tools, prompts, and workflows live at the project root: they're auto-discovered by the framework.
 
 ## Build for production
 
@@ -90,11 +90,11 @@ If you prefer a different deployment target, run `veryfront build` and deploy th
 
 ## Next
 
-- [Project Structure](./project-structure.md) — understand the full directory layout
-- [API Reference](../reference/index.md) — complete API documentation
+- [Project structure](./project-structure.md): understand the full directory layout
+- [API reference](../reference/index.md): complete API documentation
 
 ## Related
 
-- [Pages & Routing](./pages-and-routing.md) — file-based routing and layouts
-- [Agents](./agents.md) — create your first AI agent
-- [API Routes](./api-routes.md) — backend HTTP handlers
+- [Pages and routing](./pages-and-routing.md): file-based routing and layouts
+- [Agents](./agents.md): create your first AI agent
+- [API routes](./api-routes.md): backend HTTP handlers

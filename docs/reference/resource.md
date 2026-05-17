@@ -1,7 +1,7 @@
 ---
 title: "veryfront/resource"
 description: "Declare and register resources exposable over MCP."
-order: 13
+order: 18
 ---
 
 # veryfront/resource
@@ -18,14 +18,12 @@ import { resource, resourceRegistry } from "veryfront/resource";
 
 ```ts
 import { resource } from "veryfront/resource";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getDocsParams = defineSchema((v) => v.object({ section: v.string() }));
+import { z } from "zod";
 
 const docs = resource({
   pattern: "docs/:section",
   description: "API documentation",
-  paramsSchema: lazySchema(getDocsParams),
+  paramsSchema: z.object({ section: z.string() }),
   load: async ({ section }) => {
     return { content: await readDocs(section) };
   },
@@ -72,4 +70,4 @@ Create MCP-discoverable resource
 
 ## Related
 
-- [`veryfront/mcp`](./mcp.md) — Expose resources via MCP
+- [`veryfront/mcp`](./mcp.md): Expose resources via MCP

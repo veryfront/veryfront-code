@@ -1,10 +1,10 @@
 ---
-title: "Jobs & Cron Jobs"
+title: "Jobs and cron jobs"
 description: "Run project-scoped background work now or on a schedule through the Veryfront platform."
-order: 15.5
+order: 21
 ---
 
-# Jobs & Cron Jobs
+# Jobs and cron jobs
 
 Use Veryfront jobs for durable, project-scoped background work.
 
@@ -17,12 +17,15 @@ Use Veryfront jobs for durable, project-scoped background work.
 
 ## How users create jobs
 
-Today there are two main creation paths:
+Users create jobs through two main paths:
 
 1. **Programmatic**: create jobs through the public REST API or the `veryfront/jobs` SDK.
-2. **Studio-first product flows**: some first-party features, such as knowledge ingestion, create jobs for you and then expose them in the Jobs panel.
+2. **Studio-first product flows**: some first-party features, such as knowledge
+   ingestion, create jobs for you and then expose them in the Jobs panel.
 
-Studio is not yet a general-purpose UI for authoring arbitrary custom job targets. If you want to create your own one-off jobs or cron jobs directly, the public SDK and API are the intended entry points. If you need MCP access, wrap the same jobs client in your own tools rather than assuming a built-in jobs MCP surface.
+Studio exposes jobs created by first-party product flows. Author custom one-off
+jobs and cron jobs through the public SDK or API. For MCP access, wrap the jobs
+client in your own tools.
 
 ## Setup
 
@@ -81,7 +84,7 @@ console.log(logs.logs);
 
 ## Inspect supported first-party targets
 
-Use target discovery if you want to know what first-party contracts exist today:
+Use target discovery to list first-party contracts:
 
 ```ts
 const targets = await jobs.targets.list();
@@ -144,8 +147,12 @@ Use the **SDK / API** when:
 - you need cron scheduling
 - you are building automation or agent-driven project operations
 
+## Next
+
+- [Tasks](./tasks.md): define background task functions
+- [MCP server](./mcp-server.md): expose job operations through MCP tools
+
 ## Related
 
-- [`veryfront/jobs`](../reference/jobs.md) - API reference for the jobs client
-- [CLI Knowledge Ingestion](./cli-knowledge-ingestion.md) - first-party knowledge ingestion flow that creates jobs
-- [MCP Server](./mcp-server.md) - expose the jobs client through your own MCP tools when you need agent-facing access
+- [`veryfront/jobs`](../reference/jobs.md): API reference for the jobs client
+- [CLI-first knowledge ingestion](./cli-knowledge-ingestion.md): first-party knowledge ingestion flow that creates jobs

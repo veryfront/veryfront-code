@@ -1,10 +1,10 @@
 ---
-title: "Agent Runtime AG-UI"
+title: "Agent runtime AG-UI"
 description: "Canonical AG-UI request and transport conventions for package-hosted agent runtimes."
 order: 10
 ---
 
-# Agent Runtime AG-UI
+# Agent runtime AG-UI
 
 The `veryfront/agent` package supports a generic AG-UI transport for hosted
 agent runtimes.
@@ -22,6 +22,28 @@ This is the package-level AG-UI contract. The control-plane wrapper convention i
 - host path: overrideable by the application
 
 The package defines the runtime contract. The host chooses where to mount it.
+
+`AgUiRuntimeRequestSchema` is defined in
+[`src/agent/runtime/ag-ui-contract.ts`](../../src/agent/runtime/ag-ui-contract.ts).
+It accepts the AG-UI-aligned request fields used by the runtime:
+
+- `threadId`
+- `runId`
+- `parentRunId`
+- `state`
+- `messages`
+- `tools`
+- `context`
+- `forwardedProps`
+
+The message subset accepts `system`, `user`, `assistant`, and `tool` roles with
+text content. Assistant tool calls and tool messages with `toolCallId` are part
+of the contract. Runtime context supports text, JSON, and resource entries.
+
+Signed control-plane invocation uses `RuntimeAgentRunInvocationSchema` around
+the runtime request when a trusted control plane owns durable run identity,
+project context, and validated claims. Public AG-UI runtime routes should use
+`AgUiRuntimeRequestSchema`.
 
 ## Package API
 
@@ -58,6 +80,10 @@ For resumable hosted runs, the package also exposes:
 - `createAgUiDetachedStartHandler()`
 - `createAgUiResumeHandler()`
 - `createAgUiCancelHandler()`
+- `createAgUiBrowserResponseStream()`
+- `createAgUiBrowserEncoderState()`
+- `mapRuntimeStreamEventToAgUiBrowserEvents()`
+- `finalizeAgUiBrowserEvents()`
 - `parseAgUiRequest()`
 - `parseAgUiRequestOrError()`
 - `normalizeAgUiMessages()`
@@ -66,7 +92,7 @@ For resumable hosted runs, the package also exposes:
 - `AgUiResumeSignalSchema`
 - `waitForHumanInput()`
 
-## Host Parse / Normalize Helpers
+## Host parse / normalize helpers
 
 Hosts that keep auth, project-access, or runtime preparation local can still
 reuse the package AG-UI request plumbing directly:
@@ -153,21 +179,6 @@ When a host accumulates browser-finished metadata separately,
 `buildAgUiBrowserFinalizeResponse()` converts that metadata into the canonical
 final `AgentResponse` consumed by the browser encoder finalization path.
 
-For durable control-plane integration, `runHostedLifecycle()` provides a
-framework-owned orchestration loop while the host keeps ownership of auth, run
-creation, append/mirror policy, finalize/cancel calls, and transcript policy.
-
-Hosts that keep a browser response-stream execute path can also use
-`runHostedResponseStreamWithHeartbeat()` to reuse the generic
-consume/wait/heartbeat loop while keeping heartbeat chunk shape and logging
-policy local.
-
-For child-run or delegated durable progress flows,
-`runHostedChildLifecycle()` provides the same kind of framework-owned
-orchestration around pending/running/completed/failed/cancelled transitions
-while the host keeps the actual control-plane transport and progress payload
-policy.
-
 For canonical runtime AG-UI hosts using `createAgUiRuntimeHandler()`, the
 package can also invoke optional lifecycle callbacks when the default hosted
 stream path sees tool calls, finishes, or fails:
@@ -176,7 +187,10 @@ stream path sees tool calls, finishes, or fails:
 - `onFinish`
 - `onError`
 
-## Convenience Request Shape
+For durable run lifecycle sequencing outside the AG-UI transport contract, use
+[`Agent hosted lifecycle`](./agent-hosted-lifecycle.md).
+
+## Convenience request shape
 
 `AgUiRequestSchema` accepts:
 
@@ -189,7 +203,7 @@ stream path sees tool calls, finishes, or fails:
 - optional `maxOutputTokens`
 - optional `tools`
 
-## Runtime Context
+## Runtime context
 
 The handler forwards AG-UI metadata into `agent.stream()` context as:
 
@@ -204,7 +218,50 @@ The handler forwards AG-UI metadata into `agent.stream()` context as:
 }
 ```
 
-## Hosted Run Control
+## Browser stream encoder
+
+Use the browser encoder helpers when a host needs to turn the framework runtime
+stream event family into public AG-UI events without importing internal
+transport modules.
+
+```ts
+import {
+  buildAgUiBrowserFinalizeResponse,
+  createAgUiBrowserEncoderState,
+  finalizeAgUiBrowserEvents,
+  mapRuntimeStreamEventToAgUiBrowserEvents,
+} from "veryfront/agent";
+
+const state = createAgUiBrowserEncoderState();
+const events = mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+  type: "tool-input-available",
+  toolCallId: "tool-1",
+  toolName: "web_search",
+  input: { query: "Veryfront" },
+});
+
+const finalEvents = finalizeAgUiBrowserEvents(state, null);
+const finalResponse = buildAgUiBrowserFinalizeResponse(state.metadata);
+```
+
+| Export                                       | Use                                                                                               |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| `createAgUiBrowserEncoderState()`            | Create mutable encoder state for one browser AG-UI stream.                                        |
+| `mapRuntimeStreamEventToAgUiBrowserEvents()` | Map one runtime stream event into zero or more browser AG-UI events.                              |
+| `finalizeAgUiBrowserEvents()`                | Emit terminal browser AG-UI events after the runtime stream finishes.                             |
+| `buildAgUiBrowserFinalizeResponse()`         | Convert browser-finished metadata into the canonical final `AgentResponse`.                       |
+| `createAgUiBrowserChunkEncoder()`            | Combine host chunk metadata tracking with runtime-event mapping for host-owned chunk types.       |
+| `createAgUiRuntimeChatStreamEncoder()`       | Bridge runtime stream events into `ChatStreamEvent` values.                                       |
+| `createAgUiRuntimeEventEncoder()`            | Track browser encoder state and enrich `ToolCallResult` events with captured tool input.          |
+| `createToolExecutionDataEventBridgeStream()` | Merge host-published tool execution data events into a framework data-stream SSE response.        |
+| `createAgUiBrowserFinalizeTracker()`         | Track finish metadata and RunError suppression for one host-owned stream.                         |
+| `createAgUiChunkEncoderBridge()`             | Reuse browser AG-UI event mapping for host-owned chunks that project to runtime stream events.    |
+| `normalizeAgUiBrowserRuntimeRequest()`       | Apply host thread/run defaults and preserve object-like state snapshots for browser framing.      |
+| `createAgUiSseResponse()`                    | Wrap an AG-UI SSE stream in canonical browser response headers.                                   |
+| `createAgUiRuntimeBrowserResponse()`         | Apply browser defaults, construct the browser stream, and wrap it in canonical SSE headers.       |
+| `createAgUiTrackedBrowserResponse()`         | Combine browser request defaulting, chunk encoding, finalize tracking, and SSE response assembly. |
+
+## Hosted run control
 
 Package-hosted resumable runs can expose generic control endpoints using the
 same `RunResumeSessionManager` that the runtime uses internally:
@@ -260,7 +317,7 @@ export const DELETE = createAgUiCancelHandler({ sessionManager });
 These handlers are generic package surfaces. They do not include Veryfront
 control-plane auth/signature requirements.
 
-## Human Input / Approval Waits
+## Human input / approval waits
 
 Hosts that need a structured user-input or approval step can compose the same
 public run-control seam with `waitForHumanInput()`:
@@ -291,10 +348,10 @@ const result = await waitForHumanInput({
 });
 ```
 
-The host still owns persistence and UI delivery, but the request/result schema
-and the wait/resume loop are now public package substrate.
+The host owns persistence and UI delivery. The request/result schema and the
+wait/resume loop are public package substrate.
 
-## Injected Client Tools
+## Injected client tools
 
 Injected client tools in `tools` are supported when the host wires
 `createAgUiHandler()` to a public `RunResumeSessionManager`.

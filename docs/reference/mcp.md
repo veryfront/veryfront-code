@@ -1,7 +1,7 @@
 ---
 title: "veryfront/mcp"
 description: "MCP server exposing tools, prompts, and resources."
-order: 14
+order: 20
 ---
 
 # veryfront/mcp
@@ -28,20 +28,18 @@ import {
 ```ts
 import { createMCPServer } from "veryfront/mcp";
 import { tool } from "veryfront/tool";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getSearchInput = defineSchema((v) => v.object({ query: v.string() }));
+import { z } from "zod";
 
 // Tools auto-register with MCP when defined
 tool({
   id: "search",
   description: "Search docs",
-  inputSchema: lazySchema(getSearchInput),
+  inputSchema: z.object({ query: z.string() }),
   execute: async ({ query }) => ({ results: [] }),
 });
 
 // Create the app-facing MCP server and mount its HTTP handler.
-// `auth` is required — pick a real auth strategy for production, or use the
+// `auth` is required: pick a real auth strategy for production, or use the
 // explicit `{ type: "none", allowUnauthenticated: true }` opt-in for local dev.
 const server = createMCPServer({
   enabled: true,
@@ -71,12 +69,12 @@ after `initialize`, and handles `POST`, `DELETE`, and `OPTIONS` requests.
 
 Current config shape:
 
-| Property  | Type                                                                                      | Description                                                                                                                                               |
-| --------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `enabled` | `boolean`                                                                                 | Enable the MCP server surface                                                                                                                             |
-| `port?`   | `number`                                                                                  | Optional port for hosted/runtime wiring                                                                                                                   |
-| `auth`    | `{ type: "bearer"; validate?: Function } \| { type: "none"; allowUnauthenticated: true }` | **Required.** Request authentication. Use `{ type: "none", allowUnauthenticated: true }` only for local dev — the server fails closed when auth is unset. |
-| `cors?`   | `{ enabled: boolean; origins?: string[] }`                                                | Optional CORS configuration                                                                                                                               |
+| Property  | Type                                                                                      | Description                                                                                                                                              |
+| --------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `enabled` | `boolean`                                                                                 | Enable the MCP server surface                                                                                                                            |
+| `port?`   | `number`                                                                                  | Optional port for hosted/runtime wiring                                                                                                                  |
+| `auth`    | `{ type: "bearer"; validate?: Function } \| { type: "none"; allowUnauthenticated: true }` | **Required.** Request authentication. Use `{ type: "none", allowUnauthenticated: true }` only for local dev: the server fails closed when auth is unset. |
+| `cors?`   | `{ enabled: boolean; origins?: string[] }`                                                | Optional CORS configuration                                                                                                                              |
 
 ## Exports
 
@@ -109,6 +107,6 @@ Current config shape:
 
 ## Related
 
-- [`veryfront/tool`](./tool.md) — Define tools for MCP
-- [`veryfront/prompt`](./prompt.md) — Define prompts for MCP
-- [`veryfront/resource`](./resource.md) — Define resources for MCP
+- [`veryfront/tool`](./tool.md): Define tools for MCP
+- [`veryfront/prompt`](./prompt.md): Define prompts for MCP
+- [`veryfront/resource`](./resource.md): Define resources for MCP

@@ -336,7 +336,7 @@
     "verify:quick": "deno task generate:manifests:check && deno fmt --check src/ cli/ react/ && DENO_NO_PACKAGE_JSON=1 deno lint src/ cli/ react/ && deno task lint:style && deno task lint:cli-boundary && deno task lint:wildcard-exports && deno task lint:barrel-jsdoc && deno task lint:ban-zod && deno task lint:core-deps && deno task lint:dependency-boundaries && deno task lint:extension-contracts && deno task lint:extension-capabilities && deno task docs:validate && deno task typecheck",
     "docs": "rm -rf docs/reference && deno run --allow-read --allow-write --allow-run scripts/docs/generate-api-reference.ts",
     "docs:copy": "rm -rf ../../docs/docs/code/reference && cp -r docs/reference/ ../../docs/docs/code/reference/",
-    "docs:validate": "deno run --allow-read scripts/docs/validate-api-reference.ts",
+    "docs:validate": "deno run --allow-read scripts/docs/validate-api-reference.ts && deno run --allow-read scripts/docs/validate-guides.ts && deno run -A scripts/lint/check-doc-links.ts",
     "docs:verify-npm": "node scripts/docs/verify-npm-exports.mjs && node scripts/docs/verify-npm-node.mjs",
     "docs:check-links": "deno run -A scripts/lint/check-doc-links.ts",
     "lint:ban-zod": "deno run --allow-read scripts/lint/ban-zod-imports.ts",

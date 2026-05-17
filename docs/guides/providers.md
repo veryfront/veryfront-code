@@ -1,7 +1,7 @@
 ---
 title: "Providers"
 description: "Provider registry with runtime conventions and explicit overrides."
-order: 12
+order: 9
 ---
 
 # Providers
@@ -64,10 +64,10 @@ Server-local (SmolLM2-135M via ONNX Runtime)
 Browser Worker (transformers.js from CDN)
 ```
 
-- **Server-local** — runs SmolLM2-135M with `@huggingface/transformers` and ONNX Runtime. The model is downloaded and cached on first use (~100MB).
-- **Browser fallback** — when the server can't load ONNX (e.g. compiled binaries), the chat handler returns a `503` with `NO_AI_AVAILABLE`. The `useChat` hook detects this and loads the same model in a Web Worker via CDN.
+- **Server-local**: runs SmolLM2-135M with `@huggingface/transformers` and ONNX Runtime. The model is downloaded and cached on first use (~100MB).
+- **Browser fallback**: when the server can't load ONNX (e.g. compiled binaries), the chat handler returns a `503` with `NO_AI_AVAILABLE`. The `useChat` hook detects this and loads the same model in a Web Worker via CDN.
 
-The fallback is transparent — `useChat` exposes `inferenceMode` (`"cloud"`, `"server-local"`, or `"browser"`) so your UI can adapt.
+The fallback is transparent: `useChat` exposes `inferenceMode` (`"cloud"`, `"server-local"`, or `"browser"`) so your UI can adapt.
 
 To explicitly use a local model:
 
@@ -102,7 +102,7 @@ agent({ model: "openai/meta-llama/llama-3.1-405b" });
 Override the base URL to route through OpenRouter, Azure OpenAI, Ollama, or any OpenAI-compatible API:
 
 ```bash
-OPENAI_API_KEY=sk-or-v1-...
+OPENAI_API_KEY=<API_KEY>
 OPENAI_BASE_URL=https://openrouter.ai/api/v1
 ```
 
@@ -145,9 +145,9 @@ const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.2");
 
 ## Next
 
-- [Middleware](./middleware.md) — add CORS, rate limiting, and logging
-- [Agents](./agents.md) — agents use providers for AI models
+- [Middleware](./middleware.md): add CORS, rate limiting, and logging
+- [Agents](./agents.md): agents use providers for AI models
 
 ## Related
 
-- [`veryfront/provider`](../reference/provider.md) — provider API reference
+- [`veryfront/provider`](../reference/provider.md): provider API reference

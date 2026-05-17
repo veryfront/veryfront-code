@@ -62,7 +62,7 @@ import {
 } from "veryfront/chat";
 ```
 
-## Preset Component
+## Preset component
 
 ### `Chat`
 
@@ -70,53 +70,53 @@ Full-featured chat UI. Composes `ChatRoot`, `ChatMessageList`, `ChatComposer`, `
 
 | Prop                 | Type                                                       | Default               | Description                         |
 | -------------------- | ---------------------------------------------------------- | --------------------- | ----------------------------------- |
-| `messages`           | `ChatMessage[]`                                            | —                     | **Required.** Message array.        |
-| `input`              | `string`                                                   | —                     | **Required.** Current input value.  |
-| `onChange`           | `(e: ChangeEvent) => void`                                 | —                     | **Required.** Input change handler. |
-| `onSubmit`           | `(e?: FormEvent) => void`                                  | —                     | Form submit handler.                |
-| `stop`               | `() => void`                                               | —                     | Abort current request.              |
-| `reload`             | `() => void`                                               | —                     | Re-send last user message.          |
-| `setInput`           | `(value: string) => void`                                  | —                     | Set input value programmatically.   |
+| `messages`           | `ChatMessage[]`                                            | none                  | **Required.** Message array.        |
+| `input`              | `string`                                                   | none                  | **Required.** Current input value.  |
+| `onChange`           | `(e: ChangeEvent) => void`                                 | none                  | **Required.** Input change handler. |
+| `onSubmit`           | `(e?: FormEvent) => void`                                  | none                  | Form submit handler.                |
+| `stop`               | `() => void`                                               | none                  | Abort current request.              |
+| `reload`             | `() => void`                                               | none                  | Re-send last user message.          |
+| `setInput`           | `(value: string) => void`                                  | none                  | Set input value programmatically.   |
 | `isLoading`          | `boolean`                                                  | `false`               | Loading state.                      |
 | `error`              | `Error \| null`                                            | `null`                | Error to display.                   |
 | `placeholder`        | `string`                                                   | `"Type a message..."` | Input placeholder.                  |
 | `maxHeight`          | `string`                                                   | `"100%"`              | Container max height.               |
-| `className`          | `string`                                                   | —                     | Container class.                    |
-| `theme`              | `Partial<ChatTheme>`                                       | —                     | Theme overrides.                    |
-| `renderMessage`      | `(msg: ChatMessage) => ReactNode`                          | —                     | Custom message renderer.            |
-| `renderTool`         | `(tool: ChatToolPart \| ChatDynamicToolPart) => ReactNode` | —                     | Custom tool call renderer.          |
-| `suggestions`        | `string[]`                                                 | —                     | Suggestion chips in empty state.    |
-| `onSuggestionClick`  | `(suggestion: string) => void`                             | —                     | Suggestion click handler.           |
-| `emptyState`         | `{ icon?, title?, description? }`                          | —                     | Empty state overrides.              |
+| `className`          | `string`                                                   | none                  | Container class.                    |
+| `theme`              | `Partial<ChatTheme>`                                       | none                  | Theme overrides.                    |
+| `renderMessage`      | `(msg: ChatMessage) => ReactNode`                          | none                  | Custom message renderer.            |
+| `renderTool`         | `(tool: ChatToolPart \| ChatDynamicToolPart) => ReactNode` | none                  | Custom tool call renderer.          |
+| `suggestions`        | `string[]`                                                 | none                  | Suggestion chips in empty state.    |
+| `onSuggestionClick`  | `(suggestion: string) => void`                             | none                  | Suggestion click handler.           |
+| `emptyState`         | `{ icon?, title?, description? }`                          | none                  | Empty state overrides.              |
 | `showScrollButton`   | `boolean`                                                  | `false`               | Show scroll-to-bottom button.       |
 | `showMessageActions` | `boolean`                                                  | `true`                | Show copy/edit on messages.         |
-| `models`             | `ModelOption[]`                                            | —                     | Available models for selector.      |
-| `model`              | `string`                                                   | —                     | Current model.                      |
-| `onModelChange`      | `(model: string) => void`                                  | —                     | Model change handler.               |
-| `inferenceMode`      | `InferenceMode`                                            | —                     | Where inference runs.               |
-| `browserStatus`      | `BrowserInferenceStatus`                                   | —                     | Browser model status.               |
+| `models`             | `ModelOption[]`                                            | none                  | Available models for selector.      |
+| `model`              | `string`                                                   | none                  | Current model.                      |
+| `onModelChange`      | `(model: string) => void`                                  | none                  | Model change handler.               |
+| `inferenceMode`      | `InferenceMode`                                            | none                  | Where inference runs.               |
+| `browserStatus`      | `BrowserInferenceStatus`                                   | none                  | Browser model status.               |
 | `showSources`        | `boolean`                                                  | `false`               | Show source citations.              |
-| `onSourceClick`      | `(source, index) => void`                                  | —                     | Source click handler.               |
-| `onAttach`           | `(files: FileList) => void`                                | —                     | File attach handler.                |
-| `onDrop`             | `(files: FileList) => void`                                | —                     | File drop handler.                  |
-| `attachAccept`       | `string`                                                   | —                     | Accepted file types.                |
-| `attachments`        | `AttachmentInfo[]`                                         | —                     | Attached files.                     |
-| `onRemoveAttachment` | `(id: string) => void`                                     | —                     | Remove attachment.                  |
+| `onSourceClick`      | `(source, index) => void`                                  | none                  | Source click handler.               |
+| `onAttach`           | `(files: FileList) => void`                                | none                  | File attach handler.                |
+| `onDrop`             | `(files: FileList) => void`                                | none                  | File drop handler.                  |
+| `attachAccept`       | `string`                                                   | none                  | Accepted file types.                |
+| `attachments`        | `AttachmentInfo[]`                                         | none                  | Attached files.                     |
+| `onRemoveAttachment` | `(id: string) => void`                                     | none                  | Remove attachment.                  |
 | `showExport`         | `boolean`                                                  | `false`               | Show export button.                 |
-| `onFeedback`         | `(messageId, feedback) => void`                            | —                     | Message feedback handler.           |
-| `editMessage`        | `(messageId, text) => Promise`                             | —                     | Edit and resubmit.                  |
-| `getBranches`        | `(messageId) => BranchInfo`                                | —                     | Get branch info.                    |
-| `switchBranch`       | `(messageId, index) => void`                               | —                     | Switch branch.                      |
+| `onFeedback`         | `(messageId, feedback) => void`                            | none                  | Message feedback handler.           |
+| `editMessage`        | `(messageId, text) => Promise`                             | none                  | Edit and resubmit.                  |
+| `getBranches`        | `(messageId) => BranchInfo`                                | none                  | Get branch info.                    |
+| `switchBranch`       | `(messageId, index) => void`                               | none                  | Switch branch.                      |
 | `showSteps`          | `boolean`                                                  | `false`               | Show step indicators.               |
 | `showTabs`           | `boolean`                                                  | `false`               | Show Chat/Uploads tabs.             |
-| `activeTab`          | `ChatTab`                                                  | —                     | Controlled tab.                     |
-| `onTabChange`        | `(tab: ChatTab) => void`                                   | —                     | Tab change handler.                 |
-| `uploads`            | `UploadedFile[]`                                           | —                     | Uploads tab content.                |
-| `onRemoveUpload`     | `(id: string) => void`                                     | —                     | Remove upload.                      |
-| `quickActions`       | `QuickAction[]`                                            | —                     | Quick action cards.                 |
-| `onQuickAction`      | `(action) => void`                                         | —                     | Quick action handler.               |
+| `activeTab`          | `ChatTab`                                                  | none                  | Controlled tab.                     |
+| `onTabChange`        | `(tab: ChatTab) => void`                                   | none                  | Tab change handler.                 |
+| `uploads`            | `UploadedFile[]`                                           | none                  | Uploads tab content.                |
+| `onRemoveUpload`     | `(id: string) => void`                                     | none                  | Remove upload.                      |
+| `quickActions`       | `QuickAction[]`                                            | none                  | Quick action cards.                 |
+| `onQuickAction`      | `(action) => void`                                         | none                  | Quick action handler.               |
 | `enableVoice`        | `boolean`                                                  | `false`               | Enable voice input.                 |
-| `onVoice`            | `() => void`                                               | —                     | Custom voice handler.               |
+| `onVoice`            | `() => void`                                               | none                  | Custom voice handler.               |
 
 ### `ChatWithSidebar`
 
@@ -163,20 +163,20 @@ ChatComponents.Message; // = Message (compound)
 ChatComponents.ErrorBanner; // = ErrorBanner
 ```
 
-## Composition Components
+## Composition components
 
 ### `ChatRoot`
 
 Context provider and container. Wraps all descendant chat components and provides `ChatContextValue`.
 
-Extends `React.HTMLAttributes<HTMLDivElement>` — extra props (e.g. drag handlers) are forwarded to the container element.
+Extends `React.HTMLAttributes<HTMLDivElement>`: extra props (e.g. drag handlers) are forwarded to the container element.
 
 | Prop                 | Type            | Description                           |
 | -------------------- | --------------- | ------------------------------------- |
 | `children`           | `ReactNode`     | **Required.**                         |
 | `messages`           | `ChatMessage[]` | **Required.**                         |
 | `input`              | `string`        | **Required.**                         |
-| All Chat state props | —               | Same as `Chat` minus rendering props. |
+| All Chat state props | none            | Same as `Chat` minus rendering props. |
 
 ### `ChatMessageList`
 
@@ -184,20 +184,20 @@ Message rendering loop with editing, branching, feedback, sources, reasoning, to
 
 | Prop                 | Type                    | Default | Description             |
 | -------------------- | ----------------------- | ------- | ----------------------- |
-| `messages`           | `ChatMessage[]`         | —       | **Required.**           |
+| `messages`           | `ChatMessage[]`         | none    | **Required.**           |
 | `isLoading`          | `boolean`               | `false` | Show loading indicator. |
-| `theme`              | `ChatTheme`             | —       | Theme.                  |
-| `renderMessage`      | `(msg) => ReactNode`    | —       | Custom renderer.        |
-| `renderTool`         | `(tool) => ReactNode`   | —       | Custom tool renderer.   |
-| `model`              | `string`                | —       | For loading avatar.     |
+| `theme`              | `ChatTheme`             | none    | Theme.                  |
+| `renderMessage`      | `(msg) => ReactNode`    | none    | Custom renderer.        |
+| `renderTool`         | `(tool) => ReactNode`   | none    | Custom tool renderer.   |
+| `model`              | `string`                | none    | For loading avatar.     |
 | `showMessageActions` | `boolean`               | `true`  | Show copy/edit.         |
 | `showSources`        | `boolean`               | `false` | Show citations.         |
 | `showSteps`          | `boolean`               | `false` | Show step dots.         |
 | `showScrollButton`   | `boolean`               | `false` | Scroll-to-bottom.       |
-| `editMessage`        | `(id, text) => Promise` | —       | Edit handler.           |
-| `getBranches`        | `(id) => BranchInfo`    | —       | Branch info.            |
-| `switchBranch`       | `(id, index) => void`   | —       | Switch branch.          |
-| `onFeedback`         | `(id, value) => void`   | —       | Feedback handler.       |
+| `editMessage`        | `(id, text) => Promise` | none    | Edit handler.           |
+| `getBranches`        | `(id) => BranchInfo`    | none    | Branch info.            |
+| `switchBranch`       | `(id, index) => void`   | none    | Switch branch.          |
+| `onFeedback`         | `(id, value) => void`   | none    | Feedback handler.       |
 
 ### `ChatComposer`
 
@@ -205,19 +205,19 @@ Input area with attachments, model selector, voice, export, and submit.
 
 | Prop            | Type                       | Default               | Description         |
 | --------------- | -------------------------- | --------------------- | ------------------- |
-| `input`         | `string`                   | —                     | **Required.**       |
-| `onChange`      | `(e: ChangeEvent) => void` | —                     | **Required.**       |
-| `onSubmit`      | `(e: FormEvent) => void`   | —                     | Submit handler.     |
+| `input`         | `string`                   | none                  | **Required.**       |
+| `onChange`      | `(e: ChangeEvent) => void` | none                  | **Required.**       |
+| `onSubmit`      | `(e: FormEvent) => void`   | none                  | Submit handler.     |
 | `isLoading`     | `boolean`                  | `false`               | Loading state.      |
 | `placeholder`   | `string`                   | `"Type a message..."` | Input placeholder.  |
-| `models`        | `ModelOption[]`            | —                     | Model options.      |
-| `model`         | `string`                   | —                     | Current model.      |
-| `onModelChange` | `(model) => void`          | —                     | Model change.       |
-| `onAttach`      | `(files) => void`          | —                     | Attach files.       |
-| `attachments`   | `AttachmentInfo[]`         | —                     | Attached files.     |
+| `models`        | `ModelOption[]`            | none                  | Model options.      |
+| `model`         | `string`                   | none                  | Current model.      |
+| `onModelChange` | `(model) => void`          | none                  | Model change.       |
+| `onAttach`      | `(files) => void`          | none                  | Attach files.       |
+| `attachments`   | `AttachmentInfo[]`         | none                  | Attached files.     |
 | `showExport`    | `boolean`                  | `false`               | Show export button. |
-| `stop`          | `() => void`               | —                     | Stop handler.       |
-| `onVoice`       | `() => void`               | —                     | Voice handler.      |
+| `stop`          | `() => void`               | none                  | Stop handler.       |
+| `onVoice`       | `() => void`               | none                  | Voice handler.      |
 
 ### `ChatEmpty`
 
@@ -227,11 +227,11 @@ Empty state with icon, title, suggestions, and quick actions.
 | ------------------- | ------------------ | ------------------------- | ------------------- |
 | `icon`              | `ReactNode`        | Message icon              | Custom icon.        |
 | `title`             | `string`           | `"What can I help with?"` | Title text.         |
-| `description`       | `string`           | —                         | Description text.   |
-| `suggestions`       | `string[]`         | —                         | Suggestion chips.   |
-| `onSuggestionClick` | `(s) => void`      | —                         | Suggestion handler. |
-| `quickActions`      | `QuickAction[]`    | —                         | Quick action cards. |
-| `onQuickAction`     | `(action) => void` | —                         | Action handler.     |
+| `description`       | `string`           | none                      | Description text.   |
+| `suggestions`       | `string[]`         | none                      | Suggestion chips.   |
+| `onSuggestionClick` | `(s) => void`      | none                      | Suggestion handler. |
+| `quickActions`      | `QuickAction[]`    | none                      | Quick action cards. |
+| `onQuickAction`     | `(action) => void` | none                      | Action handler.     |
 
 ### `ChatIf`
 
@@ -259,7 +259,7 @@ Provider-specific avatar (Claude, OpenAI, or default).
 | ------- | -------- | ----------------- |
 | `model` | `string` | Model identifier. |
 
-## Message Compound
+## Message compound
 
 ### `Message`
 
@@ -295,10 +295,10 @@ Renders a model-specific avatar icon. Hidden for user messages.
 
 | Prop            | Type                      | Default | Description            |
 | --------------- | ------------------------- | ------- | ---------------------- |
-| `renderTool`    | `(tool) => ReactNode`     | —       | Custom tool renderer.  |
+| `renderTool`    | `(tool) => ReactNode`     | none    | Custom tool renderer.  |
 | `showSteps`     | `boolean`                 | `false` | Show step indicators.  |
 | `showSources`   | `boolean`                 | `false` | Show source citations. |
-| `onSourceClick` | `(source, index) => void` | —       | Source click handler.  |
+| `onSourceClick` | `(source, index) => void` | none    | Source click handler.  |
 
 ### `Message.Actions`
 
@@ -417,28 +417,28 @@ Input area state. Provided by Composer components.
 
 Main chat hook. Returns:
 
-| Property            | Type                          | Description                                          |
-| ------------------- | ----------------------------- | ---------------------------------------------------- |
-| `messages`          | `ChatMessage[]`               | Current message list.                                |
-| `input`             | `string`                      | Current input value.                                 |
-| `isLoading`         | `boolean`                     | Whether a response is streaming.                     |
-| `error`             | `Error \| null`               | Last error, if any.                                  |
-| `model`             | `string \| undefined`         | Current model ID.                                    |
-| `setInput`          | `(value: string) => void`     | Update input.                                        |
-| `setModel`          | `(model: string) => void`     | Switch model.                                        |
-| `setMessages`       | `SetState<ChatMessage[]>`     | Replace message list.                                |
-| `sendMessage`       | `(msg) => Promise<void>`      | Send a message.                                      |
-| `editMessage`       | `(id, text) => Promise<void>` | Edit and resubmit.                                   |
-| `getBranches`       | `(id) => BranchInfo`          | Get branch info for a message.                       |
-| `switchBranch`      | `(id, index) => void`         | Switch to a branch.                                  |
-| `reload`            | `() => Promise<void>`         | Regenerate last response.                            |
-| `stop`              | `() => void`                  | Cancel active stream.                                |
-| `handleInputChange` | `ChangeEventHandler`          | Bind to input onChange.                              |
-| `handleSubmit`      | `FormEventHandler`            | Bind to form onSubmit.                               |
-| `onChange`          | `ChangeEventHandler`          | Alias for `handleInputChange` — matches `ChatProps`. |
-| `onSubmit`          | `FormEventHandler`            | Alias for `handleSubmit` — matches `ChatProps`.      |
-| `onModelChange`     | `(model: string) => void`     | Alias for `setModel` — matches `ChatProps`.          |
-| `addToolOutput`     | `(output) => void`            | Provide tool call result.                            |
+| Property            | Type                          | Description                                         |
+| ------------------- | ----------------------------- | --------------------------------------------------- |
+| `messages`          | `ChatMessage[]`               | Current message list.                               |
+| `input`             | `string`                      | Current input value.                                |
+| `isLoading`         | `boolean`                     | Whether a response is streaming.                    |
+| `error`             | `Error \| null`               | Last error, if any.                                 |
+| `model`             | `string \| undefined`         | Current model ID.                                   |
+| `setInput`          | `(value: string) => void`     | Update input.                                       |
+| `setModel`          | `(model: string) => void`     | Switch model.                                       |
+| `setMessages`       | `SetState<ChatMessage[]>`     | Replace message list.                               |
+| `sendMessage`       | `(msg) => Promise<void>`      | Send a message.                                     |
+| `editMessage`       | `(id, text) => Promise<void>` | Edit and resubmit.                                  |
+| `getBranches`       | `(id) => BranchInfo`          | Get branch info for a message.                      |
+| `switchBranch`      | `(id, index) => void`         | Switch to a branch.                                 |
+| `reload`            | `() => Promise<void>`         | Regenerate last response.                           |
+| `stop`              | `() => void`                  | Cancel active stream.                               |
+| `handleInputChange` | `ChangeEventHandler`          | Bind to input onChange.                             |
+| `handleSubmit`      | `FormEventHandler`            | Bind to form onSubmit.                              |
+| `onChange`          | `ChangeEventHandler`          | Alias for `handleInputChange`: matches `ChatProps`. |
+| `onSubmit`          | `FormEventHandler`            | Alias for `handleSubmit`: matches `ChatProps`.      |
+| `onModelChange`     | `(model: string) => void`     | Alias for `setModel`: matches `ChatProps`.          |
+| `addToolOutput`     | `(output) => void`            | Provide tool call result.                           |
 
 See [Chat UI guide](../guides/chat-ui.md) for full documentation.
 
@@ -510,6 +510,6 @@ Multi-conversation thread management with localStorage persistence.
 
 ## Related
 
-- [`veryfront/agent`](./agent.md) — Server-side agent runtime that powers chat
-- [`veryfront/tool`](./tool.md) — Define tools that agents can call
-- [Chat UI Guide](../guides/chat-ui.md) — Getting started guide
+- [`veryfront/agent`](./agent.md): Server-side agent runtime that powers chat
+- [`veryfront/tool`](./tool.md): Define tools that agents can call
+- [Chat UI Guide](../guides/chat-ui.md): Getting started guide

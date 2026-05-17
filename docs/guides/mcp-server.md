@@ -1,10 +1,10 @@
 ---
-title: "MCP Server"
+title: "MCP server"
 description: "Expose tools, prompts, and resources over Model Context Protocol."
-order: 15
+order: 23
 ---
 
-# MCP Server
+# MCP server
 
 Expose tools, prompts, and resources over Model Context Protocol.
 
@@ -55,17 +55,15 @@ Tools defined in `tools/` are automatically available via MCP:
 
 ```ts
 // tools/search-docs.ts
+import { z } from "zod";
 import { tool } from "veryfront/tool";
-import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Search the documentation",
-  inputSchema: defineSchema((v) =>
-    v.object({
-      query: v.string().describe("Search query"),
-      limit: v.number().default(10).describe("Max results"),
-    })
-  )(),
+  inputSchema: z.object({
+    query: z.string().describe("Search query"),
+    limit: z.number().default(10).describe("Max results"),
+  }),
   execute: async ({ query, limit }) => {
     const results = await searchIndex(query, limit);
     return { results };
@@ -118,17 +116,15 @@ export default resource({
 For tools, prompts, or resources not in the auto-discovered directories:
 
 ```ts
+import { z } from "zod";
 import { registerTool } from "veryfront/mcp";
 import { tool } from "veryfront/tool";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getCustomToolInput = defineSchema((v) => v.object({ input: v.string() }));
 
 registerTool(
   "custom-tool",
   tool({
     description: "A custom tool",
-    inputSchema: lazySchema(getCustomToolInput),
+    inputSchema: z.object({ input: z.string() }),
     execute: async ({ input }) => ({ result: input.toUpperCase() }),
   }),
 );

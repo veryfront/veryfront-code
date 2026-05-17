@@ -1,7 +1,7 @@
 ---
 title: "veryfront/sandbox"
 description: "Sandbox module for ephemeral compute environments. Provides the `Sandbox` class for creating and interacting with isolated execution environments."
-order: 20
+order: 28
 ---
 
 # veryfront/sandbox
@@ -145,7 +145,7 @@ Get the sandbox endpoint URL.
 
 **Returns:** `string`
 
-## Type Reference
+## Type reference
 
 ### `SandboxOptions`
 
@@ -273,5 +273,5 @@ Command job with captured stdout/stderr.
 
 ## Related
 
-- [`veryfront/agent`](./agent.md) — Run isolated commands from agent tools/workflows
-- [`veryfront/mcp`](./mcp.md) — Expose sandbox-backed operations over MCP
+- [`veryfront/agent`](./agent.md): Run isolated commands from agent tools/workflows
+- [`veryfront/mcp`](./mcp.md): Expose sandbox-backed operations over MCP

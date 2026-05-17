@@ -1,21 +1,14 @@
 ---
-title: "CLI-First Knowledge Ingestion"
+title: "CLI-first knowledge ingestion"
 description: "Turn uploads and local documents into project knowledge files with one command."
-order: 20
+order: 27
 ---
 
-# CLI-First Knowledge Ingestion
+# CLI-first knowledge ingestion
 
-`veryfront knowledge ingest` is the primary CLI workflow for getting documents into a project's knowledge base.
+`veryfront knowledge ingest` is the primary CLI workflow for getting documents into a project's knowledge base. It finds a source file, parses it, and writes generated markdown back into the project.
 
-Before this flow, agents often had to stitch together several low-level steps by hand:
-
-1. Find an uploaded file
-2. Download it into the workspace
-3. Run parser code manually
-4. Save the generated markdown back into the project
-
-Now the happy path is one command:
+Use one command for the standard path:
 
 ```bash
 veryfront knowledge ingest uploads/contracts/q1.pdf --json
@@ -51,7 +44,7 @@ That keeps knowledge ingestion predictable, scriptable, and much easier to expla
 Authenticate with the CLI and make sure the target project is known:
 
 ```bash
-export VERYFRONT_API_TOKEN=vf_your_api_key
+export VERYFRONT_API_TOKEN=<TOKEN>
 export VERYFRONT_PROJECT_SLUG=my-project
 ```
 
@@ -91,10 +84,11 @@ Use a local path to ingest a file that already exists on disk:
 veryfront knowledge ingest ./contracts/q1.pdf --json
 ```
 
-Inside a sandbox, `/workspace/uploads/...` is also treated as a local file path:
+Inside a sandbox, use a local relative path when the upload is already present
+in the workspace:
 
 ```bash
-veryfront knowledge ingest /workspace/uploads/contracts/q1.pdf --json
+veryfront knowledge ingest ./uploads/contracts/q1.pdf --json
 ```
 
 ## Exact-file batch ingestion
@@ -134,8 +128,8 @@ With `--json`, the command returns a machine-readable summary for each ingested 
 [
   {
     "source": "uploads/demo/notes.txt",
-    "localSourcePath": "/workspace/uploads/demo/notes.txt",
-    "outputPath": "/workspace/knowledge-output/demo-notes.md",
+    "localSourcePath": "<LOCAL_SOURCE_PATH>",
+    "outputPath": "<OUTPUT_PATH>",
     "remotePath": "knowledge/demo-notes.md",
     "slug": "demo-notes",
     "sourceType": "txt",
@@ -158,7 +152,7 @@ The source path determines how the command behaves:
 
 - `uploads/...` means a remote project upload
 - `./uploads/...` means a local file or directory relative to the current working directory
-- `/workspace/uploads/...` means a local file inside the sandbox workspace
+- `./uploads/...` means a local file inside the active workspace
 - multiple explicit sources are passed as positional arguments: `veryfront knowledge ingest <source...> --json`
 
 That distinction matters because `uploads/...` triggers the remote upload download step, while local paths skip it.
@@ -187,7 +181,7 @@ If you need finer control, the lower-level building blocks are still available:
 
 ```bash
 veryfront uploads list
-veryfront uploads pull uploads/contracts/q1.pdf --output /tmp/q1.pdf
+veryfront uploads pull uploads/contracts/q1.pdf --output ./q1.pdf
 veryfront files get knowledge/demo-notes.md
 veryfront files put knowledge/demo-notes.md --from ./demo-notes.md
 ```
@@ -236,10 +230,10 @@ For agent prompts and system instructions, this is the simplest reliable pattern
 
 ## Next
 
-- [Sandbox](./sandbox.md) — run CLI workflows inside isolated workspaces
-- [Agents](./agents.md) — build agent workflows that can call tools and shell commands
-- [Workflows](./workflows.md) — orchestrate repeatable multi-step automation
+- [Sandbox](./sandbox.md): run CLI workflows inside isolated workspaces
+- [Agents](./agents.md): build agent workflows that can call tools and shell commands
+- [Workflows](./workflows.md): orchestrate repeatable multi-step automation
 
 ## Related
 
-- [`veryfront/cli`](../reference/cli.md) — CLI entry point reference
+- [`veryfront/cli`](../reference/cli.md): CLI entry point reference

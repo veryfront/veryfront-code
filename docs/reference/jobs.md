@@ -1,7 +1,7 @@
 ---
 title: "veryfront/jobs"
 description: "Project-scoped jobs and cron jobs with events, logs, batches, and target discovery."
-order: 13.5
+order: 19
 ---
 
 # veryfront/jobs
@@ -164,74 +164,74 @@ Get one first-party target definition.
 
 **Returns:** `Promise<JobTargetDefinition>`
 
-## Type Reference
+## Type reference
 
 ### `VeryfrontJobsClientConfig`
 
-| Property | Type | Description |
-| -------- | ---- | ----------- |
-| `apiUrl?` | `string` | Base URL for the Veryfront API. Defaults to `VERYFRONT_API_URL` or the hosted API. |
-| `authToken?` | `string` | Explicit auth token or API key. Defaults to request-scoped auth or `VERYFRONT_API_TOKEN`. |
-| `projectReference?` | `string` | Project slug or ID used for project-scoped requests. Defaults to request-scoped project or `VERYFRONT_PROJECT_SLUG`. |
-| `retry?` | `Partial<RetryConfig>` | Retry behavior for failed HTTP requests. |
+| Property            | Type                   | Description                                                                                                          |
+| ------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `apiUrl?`           | `string`               | Base URL for the Veryfront API. Defaults to `VERYFRONT_API_URL` or the hosted API.                                   |
+| `authToken?`        | `string`               | Explicit auth token or API key. Defaults to request-scoped auth or `VERYFRONT_API_TOKEN`.                            |
+| `projectReference?` | `string`               | Project slug or ID used for project-scoped requests. Defaults to request-scoped project or `VERYFRONT_PROJECT_SLUG`. |
+| `retry?`            | `Partial<RetryConfig>` | Retry behavior for failed HTTP requests.                                                                             |
 
 ### `CreateJobInput`
 
-| Property | Type | Description |
-| -------- | ---- | ----------- |
-| `name` | `string` | Job name. |
-| `target` | `string` | Job target, for example `task:knowledge-ingest`. |
-| `environmentId?` | `string` | Optional environment scope. |
-| `batchId?` | `string` | Optional batch grouping identifier. |
-| `config?` | `Record<string, unknown>` | Target-specific configuration payload. |
-| `timeoutSeconds?` | `number` | Optional timeout override. |
-| `backoffLimit?` | `number` | Optional retry count override. |
-| `projectReference?` | `string` | Optional per-call project override. |
+| Property            | Type                      | Description                                      |
+| ------------------- | ------------------------- | ------------------------------------------------ |
+| `name`              | `string`                  | Job name.                                        |
+| `target`            | `string`                  | Job target, for example `task:knowledge-ingest`. |
+| `environmentId?`    | `string`                  | Optional environment scope.                      |
+| `batchId?`          | `string`                  | Optional batch grouping identifier.              |
+| `config?`           | `Record<string, unknown>` | Target-specific configuration payload.           |
+| `timeoutSeconds?`   | `number`                  | Optional timeout override.                       |
+| `backoffLimit?`     | `number`                  | Optional retry count override.                   |
+| `projectReference?` | `string`                  | Optional per-call project override.              |
 
 ### `CreateCronJobInput`
 
-| Property | Type | Description |
-| -------- | ---- | ----------- |
-| `name` | `string` | Cron job name. |
-| `target` | `string` | Job target, for example `task:knowledge-ingest`. |
-| `schedule` | `string` | Five-field cron expression. |
-| `timezone?` | `string` | Optional timezone. Defaults to `UTC`. |
-| `environmentId?` | `string` | Optional environment scope. |
-| `config?` | `Record<string, unknown>` | Target-specific configuration payload. |
-| `timeoutSeconds?` | `number` | Optional timeout override. |
-| `backoffLimit?` | `number` | Optional retry count override. |
-| `concurrencyPolicy?` | `"Allow" \| "Forbid" \| "Replace"` | Cron overlap policy. |
-| `projectReference?` | `string` | Optional per-call project override. |
+| Property             | Type                               | Description                                      |
+| -------------------- | ---------------------------------- | ------------------------------------------------ |
+| `name`               | `string`                           | Cron job name.                                   |
+| `target`             | `string`                           | Job target, for example `task:knowledge-ingest`. |
+| `schedule`           | `string`                           | Five-field cron expression.                      |
+| `timezone?`          | `string`                           | Optional timezone. Defaults to `UTC`.            |
+| `environmentId?`     | `string`                           | Optional environment scope.                      |
+| `config?`            | `Record<string, unknown>`          | Target-specific configuration payload.           |
+| `timeoutSeconds?`    | `number`                           | Optional timeout override.                       |
+| `backoffLimit?`      | `number`                           | Optional retry count override.                   |
+| `concurrencyPolicy?` | `"Allow" \| "Forbid" \| "Replace"` | Cron overlap policy.                             |
+| `projectReference?`  | `string`                           | Optional per-call project override.              |
 
 ## Exports
 
 ### Functions
 
-| Name | Description |
-| ---- | ----------- |
+| Name               | Description                          |
+| ------------------ | ------------------------------------ |
 | `createJobsClient` | Create a project-scoped jobs client. |
 
 ### Classes
 
-| Name | Description |
-| ---- | ----------- |
+| Name                  | Description                                                                    |
+| --------------------- | ------------------------------------------------------------------------------ |
 | `VeryfrontJobsClient` | Public client for one-off jobs, cron jobs, batches, targets, events, and logs. |
 
 ### Types
 
-| Name | Description |
-| ---- | ----------- |
-| `CreateCronJobInput` | Input shape for `jobs.cron.create()`. |
-| `CreateJobInput` | Input shape for `jobs.create()`. |
-| `CronJob` | Public cron job resource. |
-| `Job` | Public one-off job resource. |
-| `JobBatch` | Aggregate summary for related jobs. |
-| `JobEventsResponse` | Canonical user-visible event stream. |
-| `JobLogsResponse` | Raw debugging log response. |
-| `JobTargetDefinition` | Public first-party target definition. |
-| `PaginatedCronJobsResponse` | Paginated cron job list response. |
-| `PaginatedJobsResponse` | Paginated job list response. |
-| `VeryfrontJobsClientConfig` | Client configuration. |
+| Name                        | Description                           |
+| --------------------------- | ------------------------------------- |
+| `CreateCronJobInput`        | Input shape for `jobs.cron.create()`. |
+| `CreateJobInput`            | Input shape for `jobs.create()`.      |
+| `CronJob`                   | Public cron job resource.             |
+| `Job`                       | Public one-off job resource.          |
+| `JobBatch`                  | Aggregate summary for related jobs.   |
+| `JobEventsResponse`         | Canonical user-visible event stream.  |
+| `JobLogsResponse`           | Raw debugging log response.           |
+| `JobTargetDefinition`       | Public first-party target definition. |
+| `PaginatedCronJobsResponse` | Paginated cron job list response.     |
+| `PaginatedJobsResponse`     | Paginated job list response.          |
+| `VeryfrontJobsClientConfig` | Client configuration.                 |
 
 ## Related
 

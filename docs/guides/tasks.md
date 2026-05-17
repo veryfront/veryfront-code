@@ -1,7 +1,7 @@
 ---
 title: "Tasks"
 description: "Define background task functions that can run locally or as cloud jobs."
-order: 15.6
+order: 22
 ---
 
 # Tasks
@@ -48,14 +48,14 @@ interface TaskDefinition {
 }
 ```
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | No | Human-readable name |
-| `description` | No | What the task does |
-| `inputSchema` | No | JSON-schema-like input contract for APIs and UIs |
-| `outputSchema` | No | JSON-schema-like output contract |
-| `schedulable` | No | Whether it can be used as a cron job target |
-| `run` | Yes | The function to execute |
+| Field          | Required | Description                                      |
+| -------------- | -------- | ------------------------------------------------ |
+| `name`         | No       | Human-readable name                              |
+| `description`  | No       | What the task does                               |
+| `inputSchema`  | No       | JSON-schema-like input contract for APIs and UIs |
+| `outputSchema` | No       | JSON-schema-like output contract                 |
+| `schedulable`  | No       | Whether it can be used as a cron job target      |
+| `run`          | Yes      | The function to execute                          |
 
 ## Task context
 
@@ -69,9 +69,9 @@ interface TaskContext {
 }
 ```
 
-- **`env`** — filtered environment variables (use `envAllowlist` to restrict)
-- **`config`** — job configuration (passed when run as a cloud job)
-- **`projectId`** — project identifier (available in cloud context)
+- **`env`**: filtered environment variables (use `envAllowlist` to restrict)
+- **`config`**: job configuration (passed when run as a cloud job)
+- **`projectId`**: project identifier (available in cloud context)
 
 ## Discovery
 
@@ -116,13 +116,13 @@ await jobs.create({
 });
 ```
 
-See [Jobs & Cron Jobs](./jobs.md) for scheduling and event monitoring.
+See [Jobs and cron jobs](./jobs.md) for scheduling and event monitoring.
 
 ## Next
 
-- [Jobs & Cron Jobs](./jobs.md) — schedule tasks as cloud jobs
-- [Agents](./agents.md) — agents can invoke tasks as tools
+- [Jobs and cron jobs](./jobs.md): schedule tasks as cloud jobs
+- [Agents](./agents.md): agents can invoke tasks as tools
 
 ## Related
 
-- [Jobs & Cron Jobs](./jobs.md) — the jobs system that executes scheduled tasks
+- [Jobs and cron jobs](./jobs.md): the jobs system that executes scheduled tasks

@@ -11,18 +11,13 @@ Client-side routing, navigation, and links.
 ## Import
 
 ```ts
-import {
-  useRouter,
-  Link,
-  RouterProvider,
-  Router,
-} from "veryfront/router";
+import { Link, Router, RouterProvider, useRouter } from "veryfront/router";
 ```
 
 ## Examples
 
 ```tsx
-import { useRouter, Link } from "veryfront/router";
+import { Link, useRouter } from "veryfront/router";
 
 function Nav() {
   const router = useRouter();
@@ -39,27 +34,27 @@ function Nav() {
 
 ### Components
 
-| Name | Description |
-|------|-------------|
-| `Link` | Navigation link (with prefetching) |
-| `Router` | Internal router managing nav state |
-| `RouterProvider` | Provide router context to tree |
+| Name             | Description                        |
+| ---------------- | ---------------------------------- |
+| `Link`           | Navigation link (with prefetching) |
+| `Router`         | Internal router managing nav state |
+| `RouterProvider` | Provide router context to tree     |
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
+| Name        | Description                           |
+| ----------- | ------------------------------------- |
 | `useRouter` | Get pathname, params, query, navigate |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `LinkProps` | `<Link>` props |
-| `RouterProviderProps` | `<RouterProvider>` props |
-| `RouterValue` | Router context value shape |
+| Name                  | Description                |
+| --------------------- | -------------------------- |
+| `LinkProps`           | `<Link>` props             |
+| `RouterProviderProps` | `<RouterProvider>` props   |
+| `RouterValue`         | Router context value shape |
 
 ## Related
 
-- [`veryfront/head`](./head.md) — Manage document head
-- [`veryfront/context`](./context.md) — Access route params and context
+- [`veryfront/head`](./head.md): Manage document head
+- [`veryfront/context`](./context.md): Access route params and context

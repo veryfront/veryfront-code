@@ -1,7 +1,7 @@
 ---
 title: "Middleware"
 description: "CORS, rate limiting, logging, and custom middleware pipelines."
-order: 13
+order: 7
 ---
 
 # Middleware
@@ -18,7 +18,7 @@ Examples below use the default app router. Veryfront Code also supports API rout
 import { cors } from "veryfront/middleware";
 
 const corsMiddleware = cors({
-  origin: "https://example.com",      // or "*" or ["https://a.com", "https://b.com"]
+  origin: "https://example.com", // or "*" or ["https://a.com", "https://b.com"]
   methods: ["GET", "POST"],
   allowedHeaders: ["Content-Type", "Authorization"],
   maxAge: 86400,
@@ -31,8 +31,8 @@ const corsMiddleware = cors({
 import { rateLimit } from "veryfront/middleware";
 
 const limiter = rateLimit({
-  maxRequests: 100,    // Max requests per window
-  windowMs: 60_000,    // 1 minute window
+  maxRequests: 100, // Max requests per window
+  windowMs: 60_000, // 1 minute window
 });
 ```
 
@@ -57,7 +57,7 @@ const timer = timeout({ timeoutMs: 30_000 }); // 30 seconds
 Combine middleware into a pipeline:
 
 ```ts
-import { MiddlewarePipeline, cors, rateLimit, logger, timeout } from "veryfront/middleware";
+import { cors, logger, MiddlewarePipeline, rateLimit, timeout } from "veryfront/middleware";
 
 const pipeline = new MiddlewarePipeline()
   .use(cors({ origin: "*" }))
@@ -128,9 +128,9 @@ const pipeline = new MiddlewarePipeline()
 
 ## Next
 
-- [OAuth](./oauth.md) — add social login to your app
-- [API Routes](./api-routes.md) — the routes that middleware protects
+- [OAuth](./oauth.md): add social login to your app
+- [API routes](./api-routes.md): the routes that middleware protects
 
 ## Related
 
-- [`veryfront/middleware`](../reference/middleware.md) — middleware API reference
+- [`veryfront/middleware`](../reference/middleware.md): middleware API reference

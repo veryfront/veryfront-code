@@ -1,7 +1,7 @@
 ---
 title: "Configuration"
 description: "`veryfront.config.ts` options, environment variables, and runtime settings."
-order: 16
+order: 3
 ---
 
 # Configuration
@@ -20,7 +20,7 @@ export default defineConfig({
 });
 ```
 
-`defineConfig` provides TypeScript autocompletion but doesn't transform the config — it's a pass-through for type safety.
+`defineConfig` provides TypeScript autocompletion but doesn't transform the config: it's a pass-through for type safety.
 
 ## Options
 
@@ -272,9 +272,9 @@ The framework reads `veryfront.config.ts` automatically. Your config values are 
 
 ## Next
 
-- [Building & Deploying](./deploying.md) — production builds and deployment
-- [Head & SEO](./head-and-seo.md) — metadata and Open Graph tags
+- [Building and deploying](./deploying.md): production builds and deployment
+- [Head and SEO](./head-and-seo.md): metadata and Open Graph tags
 
 ## Related
 
-- [`veryfront` (root)](../reference/root.md) — `defineConfig`, `getConfig`
+- [`veryfront` (root)](../reference/root.md): `defineConfig`, `getConfig`

@@ -21,29 +21,29 @@ import { MDXProvider } from "veryfront/mdx";
 
 <MDXProvider components={{ h1: CustomH1, code: CustomCode, a: CustomLink }}>
   {children}
-</MDXProvider>
+</MDXProvider>;
 ```
 
 ## Exports
 
 ### Components
 
-| Name | Description |
-|------|-------------|
+| Name          | Description             |
+| ------------- | ----------------------- |
 | `MDXProvider` | Override MDX components |
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
+| Name               | Description               |
+| ------------------ | ------------------------- |
 | `useMDXComponents` | Get current MDX overrides |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
+| Name               | Description           |
+| ------------------ | --------------------- |
 | `MDXProviderProps` | `<MDXProvider>` props |
 
 ## Related
 
-- [`veryfront/markdown`](./markdown.md) — For runtime markdown rendering
+- [`veryfront/markdown`](./markdown.md): For runtime markdown rendering

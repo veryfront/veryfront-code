@@ -1,0 +1,174 @@
+---
+title: "Agent service runtime"
+description: "Run Veryfront agents as separately deployed services."
+order: 11
+---
+
+# Agent service runtime
+
+Run a Veryfront agent as a separately deployed service when the agent needs an
+independent process boundary, direct control-plane registration, remote MCP
+tools, or service-level telemetry.
+
+Use an application route for normal in-app chat. Use an agent service when the
+agent must run outside the app server or when Veryfront Cloud needs to invoke a
+push runtime directly.
+
+## Create a service entrypoint
+
+Create a process entrypoint that starts the default Veryfront Cloud agent
+service runtime:
+
+```ts
+// service.ts
+import { startAgentService } from "veryfront/agent";
+
+await startAgentService();
+```
+
+The bootstrap discovers the same project primitives as the app runtime:
+
+- `agents/`
+- `tools/`
+- `skills/`
+- `resources/`
+- `prompts/`
+- `workflows/`
+- `tasks/`
+
+When exactly one code or markdown agent is discovered, that agent becomes the
+default for direct `/api/runs` requests. Pass `agentId` when the service exposes
+multiple agents and direct requests need a predictable default.
+
+## Keep agent behavior in project files
+
+Define the agent in `agents/` and keep service startup separate from agent
+behavior:
+
+```ts
+// agents/support.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "support",
+  system: "You help users resolve support issues.",
+  tools: {
+    searchDocs: true,
+  },
+});
+```
+
+Markdown agents use the file path as the agent id:
+
+```md
+---
+name: Support
+description: Helps users resolve support issues
+max-steps: 6
+---
+
+You help users resolve support issues. Ask for missing details before acting.
+```
+
+For non-standard project layouts, configure discovery paths in
+`veryfront.config.ts` under `ai.<primitive>.discovery.paths`.
+
+## Configure registration
+
+Control-plane registration is convention-first. In `auto` mode, the service
+registers only when `VERYFRONT_API_TOKEN` and
+`VERYFRONT_AGENT_SERVICE_URL` are present.
+
+```bash
+VERYFRONT_API_URL=https://api.example.com
+VERYFRONT_API_TOKEN=<TOKEN>
+VERYFRONT_PROJECT_ID=<PROJECT_ID>
+VERYFRONT_AGENT_SERVICE_URL=https://agent.example.com
+VERYFRONT_AGENT_SERVICE_REGISTRATION=auto
+```
+
+Use `VERYFRONT_AGENT_SERVICE_REGISTRATION=enabled` when startup must fail if the
+service cannot register. Use `disabled` when the service must run without
+control-plane registration.
+
+The service name resolves from `VERYFRONT_AGENT_SERVICE_NAME`, then the nearest
+`package.json` or `deno.json` `name`, then `veryfront-agent-service`. Pass
+`serviceName` only when code should override that convention.
+
+## Add remote MCP tools
+
+Use `mcpServers` when the service needs remote tools. Use
+`veryfrontMcpServer()` for Veryfront-owned control-plane MCP servers and normal
+MCP server config objects for third-party servers.
+
+```ts
+import { startAgentService, veryfrontMcpServer } from "veryfront/agent";
+
+await startAgentService({
+  serviceName: "support-agent",
+  mcpServers: [
+    veryfrontMcpServer(),
+    {
+      id: "linear",
+      endpoint: process.env.LINEAR_MCP_URL,
+      headers: {
+        Authorization: "Bearer <TOKEN>",
+      },
+    },
+  ],
+});
+```
+
+If `mcpServers` is omitted, the Veryfront Cloud preset includes
+`veryfrontMcpServer()` by default. Pass `mcpServers: []` to run without remote
+MCP tools.
+
+## Refresh runtime state
+
+Use `resolveRuntimeState` when a long-lived service run must refresh
+instructions, context, or available tools at a model step boundary.
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "support",
+  system: "You are a support assistant.",
+  resolveRuntimeState: async ({ step }) => {
+    if (step === 0) return;
+
+    return {
+      system: "Use the latest project instructions and tool inventory.",
+    };
+  },
+});
+```
+
+Services that use Veryfront Cloud project steering can reuse
+`fetchDefaultAgentServiceProjectSteering()` for the initial fetch and
+`createDefaultAgentServiceProjectSteeringRefresh()` for step-boundary refresh.
+
+## Use lower-level helpers
+
+Use `startAgentService()` for the standard service shape. Use lower-level
+helpers only when the service needs a custom server adapter, custom execution
+preparation, or custom infrastructure.
+
+| Helper                                             | Use                                                                                  |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `defineAgentService()`                             | Normalize one or more agents into a service registry contract.                       |
+| `startNodeAgentService()`                          | Start a Node service around a request-native runtime.                                |
+| `createNodeAgentServiceRuntimeInfrastructure()`    | Create Node config, logging, tracing, and telemetry infrastructure.                  |
+| `prepareVeryfrontCloudAgentServiceChatExecution()` | Prepare Veryfront Cloud chat execution with model, steering, and durable-run wiring. |
+| `createAgentServiceProjectSteering()`              | Bind markdown agent definitions to project steering and skill refresh.               |
+
+## Next
+
+- [Agents](./agents.md): define the agents the service discovers
+- [Tools](./tools.md): define tools the service can expose to agents
+- [MCP server](./mcp-server.md): expose tools, prompts, and resources over MCP
+
+## Related
+
+- [Agent service runtime reference](../reference/agent-service-runtime.md): complete service runtime API reference
+- [`veryfront/agent`](../reference/agent.md): agent API reference

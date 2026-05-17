@@ -1,7 +1,7 @@
 ---
 title: "Tools"
 description: "Define tools with schema-backed inputs that agents can call."
-order: 7
+order: 12
 ---
 
 # Tools
@@ -16,17 +16,15 @@ Create a file in `tools/`:
 
 ```ts
 // tools/get-weather.ts
+import { z } from "zod";
 import { tool } from "veryfront/tool";
-import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Get the current weather for a city",
-  inputSchema: defineSchema((v) =>
-    v.object({
-      city: v.string().describe("City name"),
-      units: v.enum(["celsius", "fahrenheit"]).default("celsius"),
-    })
-  )(),
+  inputSchema: z.object({
+    city: z.string().describe("City name"),
+    units: z.enum(["celsius", "fahrenheit"]).default("celsius"),
+  }),
   execute: async ({ city, units }) => {
     const response = await fetch(`https://api.weather.com/v1?city=${city}&units=${units}`);
     const data = await response.json();
@@ -76,15 +74,15 @@ When a user asks "What's the weather in Tokyo?", the agent:
 The `description` field is what the model reads to decide when to call your tool. Be specific, and use `.describe()` on schema fields to help the model understand what to pass:
 
 ```ts
+import { z } from "zod";
+
 export default tool({
   description: "Search the product catalog by name, category, or price range",
-  inputSchema: defineSchema((v) =>
-    v.object({
-      query: v.string().min(1).describe("Search term"),
-      category: v.string().optional().describe("Filter by category"),
-      maxPrice: v.number().optional().describe("Maximum price in USD"),
-    })
-  )(),
+  inputSchema: z.object({
+    query: z.string().min(1).describe("Search term"),
+    category: z.string().optional().describe("Filter by category"),
+    maxPrice: z.number().optional().describe("Maximum price in USD"),
+  }),
   execute: async ({ query, category, maxPrice }) => {/* ... */},
 });
 ```
@@ -94,6 +92,8 @@ export default tool({
 Throw from `execute` to signal an error. The agent sees the error message and can retry or respond accordingly:
 
 ```ts
+import { z } from "zod";
+
 export default tool({
   description: "Look up a user by email",
   inputSchema: z.object({ email: z.string().email() }),
@@ -110,6 +110,8 @@ export default tool({
 The `execute` function receives an optional second argument with runtime context:
 
 ```ts
+import { z } from "zod";
+
 export default tool({
   description: "List repos for the current user",
   inputSchema: z.object({
@@ -145,17 +147,15 @@ For one-off tools that don't need auto-discovery, define them inline:
 
 ```ts
 import { agent } from "veryfront/agent";
+import { z } from "zod";
 import { tool } from "veryfront/tool";
-import { defineSchema, lazySchema } from "veryfront/schemas";
-
-const getCalculateInput = defineSchema((v) => v.object({ expression: v.string() }));
 
 export default agent({
   system: "You are a math tutor.",
   tools: {
     calculate: tool({
       description: "Evaluate a math expression",
-      inputSchema: lazySchema(getCalculateInput),
+      inputSchema: z.object({ expression: z.string() }),
       execute: async ({ expression }) => ({ result: eval(expression) }),
     }),
   },
@@ -164,8 +164,8 @@ export default agent({
 
 ## Next
 
-- [Memory & Streaming](./memory-and-streaming.md): persist conversations across requests
-- [MCP Server](./mcp-server.md): expose tools over Model Context Protocol
+- [Memory and streaming](./memory-and-streaming.md): persist conversations across requests
+- [MCP server](./mcp-server.md): expose tools over Model Context Protocol
 
 ## Related
 

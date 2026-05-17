@@ -1,7 +1,7 @@
 ---
 title: "veryfront/prompt"
 description: "Declare and register prompts exposable over MCP."
-order: 12
+order: 17
 ---
 
 # veryfront/prompt
@@ -38,24 +38,24 @@ Create MCP-discoverable prompt
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
+| Name     | Description                    |
+| -------- | ------------------------------ |
 | `prompt` | Create MCP-discoverable prompt |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `Prompt` | `prompt()` return type |
-| `PromptConfig` | `prompt()` config |
+| Name           | Description            |
+| -------------- | ---------------------- |
+| `Prompt`       | `prompt()` return type |
+| `PromptConfig` | `prompt()` config      |
 
 ### Constants
 
-| Name | Description |
-|------|-------------|
+| Name             | Description            |
+| ---------------- | ---------------------- |
 | `promptRegistry` | Global prompt registry |
 
 ## Related
 
-- [`veryfront/mcp`](./mcp.md) — Expose prompts via MCP
-- [`veryfront/agent`](./agent.md) — Use prompts in agents
+- [`veryfront/mcp`](./mcp.md): Expose prompts via MCP
+- [`veryfront/agent`](./agent.md): Use prompts in agents
