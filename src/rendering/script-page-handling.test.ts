@@ -337,12 +337,7 @@ describe("script-page-handling helpers", () => {
           ),
           true,
         );
-        assertEquals(
-          result.html.includes(
-            '<script type="module" src="/_veryfront/hydrate.js?slug=script-page" nonce="nonce-123"></script>',
-          ),
-          true,
-        );
+        assertEquals(result.html.includes("/_veryfront/hydrate.js"), false);
       } finally {
         await Deno.remove(projectDir, { recursive: true });
       }

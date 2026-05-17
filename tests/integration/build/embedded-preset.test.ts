@@ -90,7 +90,6 @@ describe(
 
         const assetPaths = new Set(manifest.assets.map((a) => a.path));
         assert(assetPaths.has("/_veryfront/rsc/dom.js"));
-        assert(assetPaths.has("/_veryfront/rsc/hydrator.js"));
         assert(assetPaths.has("/_veryfront/rsc/hydrate-client.js"));
 
         const filesToCheck = [

@@ -47,8 +47,6 @@ export class PageHandler {
 <body>
   <div id="rsc-root"></div>
   <script type="module"${nonceAttr}>
-    await import('/_veryfront/rsc/hydrate.js').catch(() => void 0);
-
     async function fetchPayload(url) {
       try {
         const res = await fetch(url);
@@ -93,8 +91,7 @@ export class PageHandler {
       document.getElementById('rsc-root').innerHTML = safeHtml;
       window.__RSC_CLIENT_REFS__ = payload.clientRefs;
 
-      if (!window.VeryfrontHydrate?.run) return;
-      return window.VeryfrontHydrate.run();
+      return import('/_veryfront/rsc/client.js?hydrate=1');
     })().catch(error => {
       console.error('[RSC] Failed to load:', error);
       document.getElementById('rsc-root').innerHTML = '<p>Failed to load RSC component</p>';

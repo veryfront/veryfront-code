@@ -42,7 +42,6 @@ export const INTERNAL_ENDPOINTS = {
   // Development endpoints
   HMR_RUNTIME: `${INTERNAL_PREFIX}/hmr-runtime.js`,
   HMR: `${INTERNAL_PREFIX}/hmr.js`,
-  HYDRATE: `${INTERNAL_PREFIX}/hydrate.js`,
   ERROR_OVERLAY: `${INTERNAL_PREFIX}/error-overlay.js`,
   // Legacy endpoint retained for backward compatibility (no active handler).
   DEV_LOADER: `${INTERNAL_PREFIX}/dev-loader.js`,
@@ -64,8 +63,6 @@ export const INTERNAL_ENDPOINTS = {
   RSC_PAGE: `${INTERNAL_PREFIX}/rsc/page`,
   RSC_MODULE: `${INTERNAL_PREFIX}/rsc/module`,
   RSC_DOM: `${INTERNAL_PREFIX}/rsc/dom.js`,
-  RSC_HYDRATOR: `${INTERNAL_PREFIX}/rsc/hydrator.js`,
-  RSC_HYDRATE_CLIENT: `${INTERNAL_PREFIX}/rsc/hydrate-client.js`,
 
   // Library module endpoints
   LIB_CHAT_REACT: `${INTERNAL_PREFIX}/lib/chat/react.js`,

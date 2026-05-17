@@ -13,6 +13,7 @@ import {
 } from "./client-module-strategy.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { consumeNdjsonStream, getContainer } from "./client-dom.ts";
+import { hydrateAllClientBoundaries } from "./hydrate-client.ts";
 import { RSC_PATH_PREFIX, RSC_ROOT_ID } from "./constants.ts";
 
 /**
@@ -71,6 +72,14 @@ export function shouldAttemptRSCTransport(
   return !!doc.getElementById(RSC_ROOT_ID);
 }
 
+export function shouldHydrateOnly(importUrl: string = import.meta.url): boolean {
+  try {
+    return new URL(importUrl, "http://veryfront.local").searchParams.get("hydrate") === "1";
+  } catch (_) {
+    return false;
+  }
+}
+
 async function tryStream(q: string): Promise<boolean> {
   try {
     const res = await fetch(RSC_PATH_PREFIX + "stream" + q);
@@ -89,10 +98,9 @@ async function tryStream(q: string): Promise<boolean> {
 
 async function hydrateMarkers(): Promise<void> {
   try {
-    const mod = await import(RSC_PATH_PREFIX + "hydrate.js");
-    mod.bootHydration?.();
+    await hydrateAllClientBoundaries(document);
   } catch (e) {
-    console.debug?.("[RSC] hydrate import failed", e);
+    console.debug?.("[RSC] hydration failed", e);
   }
 }
 
@@ -158,6 +166,11 @@ export async function boot(): Promise<void> {
   try {
     const q = globalThis.window?.location.search ?? "";
     const hydrationData = readHydrationData(document);
+    if (shouldHydrateOnly()) {
+      await hydrateMarkers();
+      return;
+    }
+
     const pagePath = hydrationData?.pagePath;
     const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
     if (pagePath) {

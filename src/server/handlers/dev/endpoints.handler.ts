@@ -8,7 +8,6 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { HTTP_OK, PRIORITY_HIGH_DEV } from "#veryfront/utils/constants/index.ts";
 import { getHMRScript, getPreviewHMRScript } from "./scripts/hmr-scripts.ts";
 import { getErrorOverlay } from "./scripts/error-overlay.ts";
-import { getHydrateScript } from "./scripts/dev-loader.ts";
 
 const DEFAULT_HMR_PORT = "3000";
 
@@ -19,7 +18,6 @@ export class DevEndpointsHandler extends BaseHandler {
     patterns: [
       { pattern: "/_veryfront/error-overlay.js", exact: true },
       { pattern: "/_veryfront/hmr.js", exact: true },
-      { pattern: "/_veryfront/hydrate.js", exact: true },
       { pattern: "/_veryfront/preview-hmr.js", exact: true },
     ],
     enabled: (ctx) => ctx.isLocalProject || ctx.requestContext?.mode === "preview",
@@ -48,10 +46,6 @@ export class DevEndpointsHandler extends BaseHandler {
       case "/_veryfront/hmr.js": {
         const port = url.searchParams.get("port") ?? DEFAULT_HMR_PORT;
         return getHMRScript(parseInt(port, 10));
-      }
-      case "/_veryfront/hydrate.js": {
-        const slug = url.searchParams.get("slug") ?? "";
-        return getHydrateScript(slug);
       }
       case "/_veryfront/error-overlay.js":
         return getErrorOverlay();

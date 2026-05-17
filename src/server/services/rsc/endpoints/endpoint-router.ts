@@ -106,10 +106,6 @@ export async function handleRSCEndpoint(
       return handlePayloadEndpoint({ handler, searchParams: url.searchParams });
     }
 
-    if (sub === "hydrator.js" || sub === "hydrate.js") {
-      return handler.handleHydratorScript();
-    }
-
     if (sub === "module") {
       return await handleModuleEndpoint({
         searchParams: url.searchParams,

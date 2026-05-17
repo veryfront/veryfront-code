@@ -36,7 +36,7 @@ describe(
       await cleanupBundler();
     });
 
-    it("serves hydrate.js alias and RSC render ETag/304", async () => {
+    it("serves canonical RSC client and RSC render ETag/304", async () => {
       await withTestContext("production-server-rsc-hydrate-etag", async (context: TestContext) => {
         await enableRsc(context);
 
@@ -51,9 +51,13 @@ describe(
         assertExists(server.port);
         const baseUrl = getBaseUrl(server.port);
 
-        const hyd = await fetch(`${baseUrl}/_veryfront/rsc/hydrate.js`);
+        const hyd = await fetch(`${baseUrl}/_veryfront/rsc/client.js`);
         assertEquals(hyd.status, 200);
         await hyd.text();
+
+        const legacy = await fetch(`${baseUrl}/_veryfront/rsc/hydrate.js`);
+        assertEquals(legacy.status, 404);
+        await legacy.body?.cancel();
 
         const r1 = await fetch(`${baseUrl}/_veryfront/rsc/render`);
         assertEquals(r1.status, 200);

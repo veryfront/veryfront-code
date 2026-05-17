@@ -28,11 +28,6 @@ export interface RSCRendererOptions {
   mode?: "development" | "production";
 }
 
-export interface RSCHydratorOptions {
-  manifestUrl?: string;
-  onError?: (error: Error) => void;
-}
-
 export type ComponentType = "server" | "client" | "unknown";
 
 export interface ComponentAnalysis {

@@ -100,7 +100,7 @@ describe(
             if (!/Hello World/i.test(html)) throw new Error("SSR content missing");
 
             await assertOkText(`${url}/_veryfront/rsc/manifest`);
-            await assertOkText(`${url}/_veryfront/rsc/hydrator.js`);
+            await assertOkText(`${url}/_veryfront/rsc/client.js`);
             await assertOkText(`${url}/_veryfront/rsc/dom.js`);
 
             const stream = await fetch(`${url}/_veryfront/rsc/stream`);

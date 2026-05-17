@@ -55,16 +55,16 @@ describe("html/dev-scripts", () => {
   });
 
   describe("getProdScripts", () => {
-    it("should return script tags with slug", () => {
+    it("should return only the canonical RSC client script", () => {
       const scripts = getProdScripts("my-project");
       assertEquals(scripts.includes("rsc/client.js"), true);
-      assertEquals(scripts.includes("hydrate.js"), true);
-      assertEquals(scripts.includes("my-project"), true);
+      assertEquals(scripts.includes("hydrate.js"), false);
+      assertEquals(scripts.includes("my-project"), false);
     });
 
-    it("should encode slug in URL", () => {
+    it("should not encode slug into a legacy hydration URL", () => {
       const scripts = getProdScripts("hello world");
-      assertEquals(scripts.includes("hello%20world"), true);
+      assertEquals(scripts.includes("hello%20world"), false);
     });
 
     it("should include nonce when provided", () => {

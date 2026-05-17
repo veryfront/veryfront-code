@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { selectHydrationRoot, shouldAttemptRSCTransport } from "./client-boot.ts";
+import {
+  selectHydrationRoot,
+  shouldAttemptRSCTransport,
+  shouldHydrateOnly,
+} from "./client-boot.ts";
 
 type MockElement = {
   tagName: string;
@@ -54,6 +58,16 @@ describe("rendering/rsc/client-boot", () => {
       const shouldAttempt = shouldAttemptRSCTransport(makeDocument(["rsc-root"]), null);
 
       assertEquals(shouldAttempt, true);
+    });
+  });
+
+  describe("shouldHydrateOnly", () => {
+    it("detects hydrate-only imports", () => {
+      assertEquals(shouldHydrateOnly("/_veryfront/rsc/client.js?hydrate=1"), true);
+    });
+
+    it("uses normal boot mode by default", () => {
+      assertEquals(shouldHydrateOnly("/_veryfront/rsc/client.js"), false);
     });
   });
 

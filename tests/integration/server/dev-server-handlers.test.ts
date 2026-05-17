@@ -99,7 +99,6 @@ const BROWSER_CSP_SAFE_MODULE_PATHS = [
   "/_vf_modules/_veryfront/rendering/rsc/client-boot.js",
   "/_vf_modules/_veryfront/rendering/rsc/client-dom.js",
   "/_vf_modules/_veryfront/routing/client/page-loader.js",
-  "/_vf_modules/_veryfront/rendering/rsc/client-hydrator.js",
   "/_vf_modules/_veryfront/client/spa/ClientApp.js",
 ];
 

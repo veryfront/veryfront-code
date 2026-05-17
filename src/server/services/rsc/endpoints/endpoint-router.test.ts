@@ -513,25 +513,25 @@ describe("server/services/rsc/endpoints/endpoint-router", () => {
     });
   });
 
-  describe("hydrator script endpoints", () => {
-    it("returns response for hydrator.js", async () => {
+  describe("removed hydrator script endpoints", () => {
+    it("does not serve legacy hydrator.js", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/hydrator.js",
           config: rscEnabledConfig,
         }),
       );
-      assertEquals(result instanceof Response, true);
+      assertEquals(result, null);
     });
 
-    it("returns response for hydrate.js", async () => {
+    it("does not serve legacy hydrate.js", async () => {
       const result = await handleRSCEndpoint(
         makeParams({
           pathname: "/_veryfront/rsc/hydrate.js",
           config: rscEnabledConfig,
         }),
       );
-      assertEquals(result instanceof Response, true);
+      assertEquals(result, null);
     });
   });
 

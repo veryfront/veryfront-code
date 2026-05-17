@@ -73,8 +73,9 @@ describe("html/html-injection", () => {
         { mode: "production", slug: "my-slug" },
       );
 
-      assertEquals(html.includes("hydrate.js"), true);
-      assertEquals(html.includes("my-slug"), true);
+      assertEquals(html.includes("rsc/client.js"), true);
+      assertEquals(html.includes("hydrate.js"), false);
+      assertEquals(html.includes("my-slug"), false);
     });
 
     it("should clear dev placeholders in production mode", () => {
@@ -206,12 +207,7 @@ describe("html/html-injection", () => {
         ),
         true,
       );
-      assertEquals(
-        html.includes(
-          '<script type="module" src="/_veryfront/hydrate.js?slug=my-slug" nonce="nonce-123"></script>',
-        ),
-        true,
-      );
+      assertEquals(html.includes("/_veryfront/hydrate.js"), false);
     });
 
     it("injects preview utility CSS for remote preview full HTML documents", () => {

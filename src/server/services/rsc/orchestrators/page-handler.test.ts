@@ -55,11 +55,18 @@ describe("server/services/rsc/orchestrators/page-handler", () => {
       assertEquals(html.includes("__VERYFRONT_DEV__"), true);
     });
 
-    it("should include hydrate.js import", async () => {
+    it("should not include legacy hydrate.js import", async () => {
       const handler = new PageHandler();
       const response = handler.handle("/", new URLSearchParams());
       const html = await response.text();
-      assertEquals(html.includes("/_veryfront/rsc/hydrate.js"), true);
+      assertEquals(html.includes("/_veryfront/rsc/hydrate.js"), false);
+    });
+
+    it("should import the canonical client in hydrate-only mode after payload injection", async () => {
+      const handler = new PageHandler();
+      const response = handler.handle("/", new URLSearchParams());
+      const html = await response.text();
+      assertEquals(html.includes("import('/_veryfront/rsc/client.js?hydrate=1')"), true);
     });
 
     it("should add nonce attributes to inline scripts when provided", async () => {

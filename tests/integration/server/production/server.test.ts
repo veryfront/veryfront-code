@@ -176,7 +176,7 @@ describe(
         assertEquals(manifestRes.status, 200);
         await manifestRes.text();
 
-        const hydr = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrator.js`);
+        const hydr = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/client.js`);
         assertEquals(hydr.status, 200);
         await hydr.text();
 
@@ -199,7 +199,7 @@ describe(
       });
     });
 
-    it("serves hydrate.js alias and RSC render ETag/304", async () => {
+    it("serves canonical RSC client and RSC render ETag/304", async () => {
       await withTestContext("production-server-rsc-hydrate-etag", async (context: TestContext) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
@@ -217,9 +217,13 @@ describe(
         const controller = new AbortController();
         const server = await startServer(context, port, controller.signal);
 
-        const hyd = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrate.js`);
+        const hyd = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/client.js`);
         assertEquals(hyd.status, 200);
         await hyd.body?.cancel();
+
+        const legacy = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/hydrate.js`);
+        assertEquals(legacy.status, 404);
+        await legacy.body?.cancel();
 
         const r1 = await fetch(`http://127.0.0.1:${port}/_veryfront/rsc/render`);
         assertEquals(r1.status, 200);

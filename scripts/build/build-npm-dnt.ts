@@ -191,7 +191,7 @@ await build({
 
 		// Copy RSC client files that are read at runtime (not imported as modules).
 		// script-handlers.ts resolves these relative to import.meta.url.
-		const rscClientFiles = ["client-boot.ts", "client-dom.ts", "client-hydrator.ts", "hydrate-client.ts"];
+		const rscClientFiles = ["client-boot.ts", "client-dom.ts", "hydrate-client.ts"];
 		const rscSrc = "./src/rendering/rsc";
 		const rscDest = "./npm/esm/src/rendering/rsc";
 		await Deno.mkdir(rscDest, { recursive: true });
