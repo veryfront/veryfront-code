@@ -121,7 +121,7 @@ describe(
       await withTestContext("production-server-api", async (context: TestContext) => {
         await writeTextFile(
           join(context.projectDir, "veryfront.config.js"),
-          `export default { experimental: { rsc: true } };`,
+          `export default { experimental: { rsc: true }, security: { cors: true, csrf: false } };`,
         );
 
         const pagesApiDir = join(context.projectDir, "pages", "api");

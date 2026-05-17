@@ -1,6 +1,7 @@
-import { assertEquals } from "#std/assert";
-import { describe, it } from "#std/testing/bdd";
+import { assertEquals } from "jsr:@std/assert";
+import { describe, it } from "jsr:@std/testing/bdd";
 import {
+  getCircularDependencyCheckResult,
   isWithinCircularDependencyBaseline,
   parseCircularDependencyCount,
 } from "./check-circular-baseline.ts";
@@ -23,5 +24,17 @@ describe("check-circular-baseline", () => {
   it("allows the current baseline but rejects regressions", () => {
     assertEquals(isWithinCircularDependencyBaseline(43, 43), true);
     assertEquals(isWithinCircularDependencyBaseline(44, 43), false);
+  });
+
+  it("fails when the circular dependency command fails without a summary", () => {
+    const result = getCircularDependencyCheckResult({
+      commandSucceeded: false,
+      output: "error: failed to download jsr package",
+      baseline: 0,
+    });
+
+    assertEquals(result.ok, false);
+    assertEquals(result.count, null);
+    assertEquals(result.reason, "command_failed");
   });
 });

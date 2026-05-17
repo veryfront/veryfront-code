@@ -15,7 +15,6 @@ import { BUNDLE_MANIFEST_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists } from "#veryfront/platform/compat/fs.ts";
-import { ensureHttpBundlesExist } from "./bundle-recovery.ts";
 import { rememberBundleManifestHashes } from "./bundle-manifest-ttl.ts";
 import type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
 export type { BundleEntry, BundleManifest } from "./bundle-manifest-types.ts";
@@ -31,6 +30,11 @@ export interface ManifestValidationResult {
   failedHashes: string[];
   reason?: ManifestValidationReason;
 }
+
+export type BundleRecoveryFn = (
+  bundles: Array<{ path: string; hash: string }>,
+  cacheDir: string,
+) => Promise<string[]>;
 
 /** Lazy accessor for the distributed cache backend. */
 const getCache = createDistributedCacheAccessor(
@@ -120,6 +124,7 @@ async function loadBundleManifest(manifestId: string): Promise<BundleManifest | 
 export async function validateBundleGroup(
   manifestId: string,
   cacheDir: string,
+  recoverMissingBundles?: BundleRecoveryFn,
 ): Promise<ManifestValidationResult> {
   const manifest = await loadBundleManifest(manifestId);
   if (!manifest) {
@@ -129,6 +134,15 @@ export async function validateBundleGroup(
     return { valid: false, failedHashes: [], reason: "manifest_missing" };
   }
 
+  return validateBundleManifest(manifest, cacheDir, recoverMissingBundles);
+}
+
+export async function validateBundleManifest(
+  manifest: BundleManifest,
+  cacheDir: string,
+  recoverMissingBundles: BundleRecoveryFn = (missing) =>
+    Promise.resolve(missing.map(({ hash }) => hash)),
+): Promise<ManifestValidationResult> {
   const missingBundles: Array<{ path: string; hash: string }> = [];
 
   await Promise.all(
@@ -145,26 +159,22 @@ export async function validateBundleGroup(
   if (missingBundles.length === 0) return { valid: true, failedHashes: [] };
 
   logger.info(`${LOG_PREFIX} Attempting to recover missing bundles`, {
-    manifestId: manifestId.slice(0, 12),
+    manifestId: manifest.manifestId.slice(0, 12),
     missing: missingBundles.length,
     total: manifest.bundles.length,
   });
 
-  const unrecoverableHashes = await ensureHttpBundlesExist(
-    missingBundles,
-    cacheDir,
-    async () => null,
-  );
+  const unrecoverableHashes = await recoverMissingBundles(missingBundles, cacheDir);
   if (unrecoverableHashes.length > 0) {
     logger.warn(`${LOG_PREFIX} Some bundles could not be recovered`, {
-      manifestId: manifestId.slice(0, 12),
+      manifestId: manifest.manifestId.slice(0, 12),
       unrecoverable: unrecoverableHashes,
     });
     return { valid: false, failedHashes: unrecoverableHashes, reason: "bundle_missing" };
   }
 
   logger.info(`${LOG_PREFIX} All missing bundles recovered successfully`, {
-    manifestId: manifestId.slice(0, 12),
+    manifestId: manifest.manifestId.slice(0, 12),
     recovered: missingBundles.length,
   });
 

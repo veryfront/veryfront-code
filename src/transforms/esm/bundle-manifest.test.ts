@@ -11,6 +11,7 @@ import {
   createBundleManifest,
   getManifestIdForHash,
   validateBundleGroup,
+  validateBundleManifest,
 } from "./bundle-manifest.ts";
 
 describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, () => {
@@ -96,6 +97,31 @@ describe("Bundle Manifest", { sanitizeResources: false, sanitizeOps: false }, ()
       assertEquals(result.valid, false);
       assertEquals(result.failedHashes.length, 0);
       assertEquals(result.reason, "manifest_missing");
+    });
+
+    it("uses the provided recovery function when manifest bundles are missing locally", async () => {
+      const tmpDir = await makeTempDir();
+      try {
+        const bundles: BundleEntry[] = [
+          { hash: "recover111", url: "https://esm.sh/recover@1", sizeBytes: 16 },
+        ];
+        const manifest = await createBundleManifest(bundles);
+        let recovered = false;
+
+        const result = await validateBundleManifest(manifest, tmpDir, async (missing, cacheDir) => {
+          recovered = true;
+          assertEquals(missing.map(({ hash }) => hash), ["recover111"]);
+          assertEquals(cacheDir, tmpDir);
+          await writeTextFile(join(tmpDir, "http-recover111.mjs"), "// recovered bundle");
+          return [];
+        });
+
+        assertEquals(recovered, true);
+        assertEquals(result.valid, true);
+        assertEquals(result.failedHashes, []);
+      } finally {
+        await remove(tmpDir, { recursive: true });
+      }
     });
   });
 });

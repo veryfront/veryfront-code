@@ -26,7 +26,7 @@ function withCacheAllowClose<T>(fn: () => Promise<T>): Promise<T> {
 async function enableRsc(context: { projectDir: string }): Promise<void> {
   await writeTextFile(
     join(context.projectDir, "veryfront.config.js"),
-    `export default { experimental: { rsc: true } };`,
+    `export default { experimental: { rsc: true }, security: { cors: true, csrf: false } };`,
   );
 }
 

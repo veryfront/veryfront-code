@@ -15,7 +15,11 @@ export async function validateCachedBundlesByManifestOrCode(
   cacheDir: string,
 ): Promise<CachedBundleValidationResult> {
   if (bundleManifestId) {
-    const validation = await validateBundleGroup(bundleManifestId, cacheDir);
+    const validation = await validateBundleGroup(
+      bundleManifestId,
+      cacheDir,
+      ensureHttpBundlesExist,
+    );
     if (validation.valid || validation.reason === "bundle_missing") {
       return { ...validation, source: "manifest" };
     }
