@@ -134,6 +134,16 @@ export async function POST(request: Request) {
 }
 ```
 
+Try it with the dev server running:
+
+```bash
+curl -N http://localhost:3000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Say hello in one sentence."}]}]}'
+```
+
+The response streams the agent output. If the route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `getAgent()`.
+
 ## Non-streaming response
 
 For server-side generation (e.g., in `getServerData`), use `generate()`:

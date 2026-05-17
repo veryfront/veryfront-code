@@ -40,6 +40,15 @@ const jobs = createJobsClient({
 
 If you are already running inside a Veryfront request context, the client can also pick up request-scoped auth and project context automatically.
 
+Verify the connection before creating jobs:
+
+```ts
+const targets = await jobs.targets.list();
+console.log(targets.data.map((target) => target.target));
+```
+
+This call is read-only and confirms that the token, project reference, and API endpoint resolve correctly.
+
 ## Create a one-off job
 
 ```ts
@@ -54,7 +63,6 @@ const job = await jobs.create({
   name: "Ingest 1 file to knowledge base",
   target: "task:knowledge-ingest",
   config: {
-    file_count: 1,
     upload_ids: ["11111111-1111-4111-8111-111111111111"],
   },
 });
@@ -95,6 +103,8 @@ for (const definition of targets.data) {
 ```
 
 This is the public source of truth for first-party target contracts such as `task:knowledge-ingest`.
+The `config` object is target-specific. Use target discovery to inspect the
+fields the selected target accepts.
 
 ## Work with batches
 
@@ -117,7 +127,6 @@ const cronJob = await jobs.cron.create({
   schedule: "0 2 * * *",
   timezone: "Europe/Stockholm",
   config: {
-    file_count: 1,
     upload_ids: ["11111111-1111-4111-8111-111111111111"],
   },
 });

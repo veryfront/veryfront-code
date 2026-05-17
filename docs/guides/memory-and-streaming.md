@@ -13,6 +13,8 @@ Route examples below use the default app router. Veryfront Code also supports mo
 Memory configuration is independent of model selection, so these examples omit
 `model` and follow the runtime default.
 
+To test these examples, define the agent, expose it through the `/api/chat` route shown below, run `veryfront dev`, and send messages from the [Chat UI](./chat-ui.md) guide or with `curl`.
+
 ## Memory types
 
 Configure memory on your agent to persist messages across requests:

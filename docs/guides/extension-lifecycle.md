@@ -56,6 +56,14 @@ Extensions can also read project config through `ctx.config` during `setup()`.
 
 During development, changes to `veryfront.config.ts` trigger teardown, rediscovery, and setup. Extensions must release resources in `teardown()` so reloads do not leak connections, timers, or file handles.
 
+Verify reload behavior by adding a temporary log in the extension `setup()` and `teardown()` methods, then run:
+
+```bash
+veryfront dev
+```
+
+Save `veryfront.config.ts`. The dev server should run `teardown()` for the previous extension instance and `setup()` for the new one.
+
 ## Next
 
 - [Extension testing](./extension-testing.md): test factories and contracts

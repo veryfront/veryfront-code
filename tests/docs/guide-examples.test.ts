@@ -282,7 +282,6 @@ describe("Guide: jobs.mdx", () => {
         status: "submitted",
         target: "task:knowledge-ingest",
         config: {
-          file_count: 1,
           upload_ids: ["33333333-3333-4333-8333-333333333333"],
         },
         context_id: null,
@@ -327,7 +326,6 @@ describe("Guide: jobs.mdx", () => {
         name: "Ingest 1 file to knowledge base",
         target: "task:knowledge-ingest",
         config: {
-          file_count: 1,
           upload_ids: ["33333333-3333-4333-8333-333333333333"],
         },
       });
@@ -353,7 +351,6 @@ describe("Guide: jobs.mdx", () => {
         schedule: "0 2 * * *",
         timezone: "Europe/Stockholm",
         config: {
-          file_count: 1,
           upload_ids: ["33333333-3333-4333-8333-333333333333"],
         },
         timeout_seconds: 300,
@@ -392,7 +389,6 @@ describe("Guide: jobs.mdx", () => {
         schedule: "0 2 * * *",
         timezone: "Europe/Stockholm",
         config: {
-          file_count: 1,
           upload_ids: ["33333333-3333-4333-8333-333333333333"],
         },
       });

@@ -8,6 +8,8 @@ order: 16
 
 Use chat hooks when you need state and runtime integration without the preset UI.
 
+The examples below assume your app has a chat endpoint at `/api/chat`. Use the route from [Chat UI](./chat-ui.md) or [Agents](./agents.md), then run `veryfront dev` and open the page that renders the hook.
+
 ## useChat
 
 ```tsx

@@ -12,7 +12,7 @@ export interface ExecOptions {
 
 /** Options for creating a sandbox session. */
 export interface SandboxOptions {
-  /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL env. */
+  /** Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL, then the Veryfront Cloud API. */
   apiUrl?: string;
   /** Explicit Veryfront auth token or API key override. */
   authToken?: string;

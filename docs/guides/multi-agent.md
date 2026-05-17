@@ -55,6 +55,27 @@ export default agent({
 
 `getAgentsAsTools()` wraps each agent as a tool. The orchestrator decides when to call each agent based on its system prompt. Each sub-agent runs its own tool loop independently.
 
+### Invoke the orchestrator
+
+Expose the orchestrator through a chat route:
+
+```ts
+// app/api/chat/route.ts
+import { createChatHandler } from "veryfront/agent";
+
+export const POST = createChatHandler("orchestrator");
+```
+
+Run the dev server and ask for an output that requires delegation:
+
+```bash
+curl -N http://localhost:3000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Research Deno Deploy and write a short technical summary."}]}]}'
+```
+
+The orchestrator receives the user message, then calls `researcher` and `writer` as tools when the model decides they are needed.
+
 ### Single agent-as-tool
 
 For wrapping a single agent:
@@ -86,6 +107,8 @@ export default workflow({
   ],
 });
 ```
+
+Start this workflow from an API route, task, or tool. The [Workflows](./workflows.md) guide shows a copyable `createWorkflowClient()` start route.
 
 ## When to use which
 

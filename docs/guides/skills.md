@@ -87,6 +87,29 @@ When skills are available, agents get three built-in tools:
 | `load-skill-reference` | Read a reference file from a skill               |
 | `execute-skill-script` | Execute a script from a skill (5-minute timeout) |
 
+Enable skills on an agent:
+
+```ts
+// agents/assistant.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "assistant",
+  system: "Use project skills when they match the task.",
+  skills: ["code-review"],
+});
+```
+
+Expose the agent through a chat route, then ask it to use the skill:
+
+```bash
+curl -N http://localhost:3000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Use the code-review skill and summarize what you would check first."}]}]}'
+```
+
+The agent should call `load-skill` before applying the skill instructions.
+
 ## Tool restrictions
 
 The `allowed_tools` field restricts which tools an agent can use while a skill is active. Use exact IDs or prefix wildcards:

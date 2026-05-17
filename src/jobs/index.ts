@@ -20,7 +20,6 @@
  *   name: "Ingest 1 file",
  *   target: "task:knowledge-ingest",
  *   config: {
- *     file_count: 1,
  *     upload_ids: ["00000000-0000-0000-0000-000000000000"],
  *   },
  * });

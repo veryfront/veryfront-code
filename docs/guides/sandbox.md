@@ -15,13 +15,26 @@ The sandbox client talks to authenticated sandbox session APIs. In practice, tha
 ## Create a sandbox session
 
 Use `Sandbox.create()` with sandbox API credentials. In local development,
-`VERYFRONT_API_TOKEN` plus a reachable `VERYFRONT_API_URL` is the default path.
-In remote requests, request-scoped credentials can be used automatically.
+self-hosted apps, CI, and other runtimes outside a Veryfront-hosted request,
+provide credentials explicitly. Set `VERYFRONT_API_TOKEN`, and set
+`VERYFRONT_API_URL` when you need a non-default API endpoint.
+
+Inside a Veryfront-hosted request, the client can use request-scoped
+credentials automatically. In that path, you do not need to set
+`VERYFRONT_API_TOKEN` separately for the request.
 
 ```ts
 import { Sandbox } from "veryfront/sandbox";
 
 const sandbox = await Sandbox.create();
+```
+
+Verify the session with a command before doing longer work:
+
+```ts
+const result = await sandbox.executeCommand("pwd");
+console.log(result.exitCode);
+console.log(result.stdout);
 ```
 
 You can also reconnect to an existing session:

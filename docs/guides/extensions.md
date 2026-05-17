@@ -45,6 +45,14 @@ export default defineConfig({
 });
 ```
 
+Verify the extension loads by running the dev server:
+
+```bash
+veryfront dev
+```
+
+If the extension factory throws during setup, the dev server reports the setup error. For local extensions, edit the extension source and save `veryfront.config.ts` to force reload during development.
+
 ## First-party extension areas
 
 | Area          | Example package                              | Contract family   |

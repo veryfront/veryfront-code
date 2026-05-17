@@ -18,16 +18,17 @@ Examples below use the default app router. Veryfront Code also supports the page
 // app/dashboard/page.tsx
 import type { DataContext } from "veryfront";
 
-export async function getServerData({ request, params }: DataContext) {
-  const token = request.headers.get("authorization");
-  const user = await fetchUser(token);
-  return { props: { user } };
+export async function getServerData({ query }: DataContext) {
+  const name = query.get("name") ?? "Ada";
+  return { props: { user: { name } } };
 }
 
-export default function Dashboard({ user }: { user: User }) {
+export default function Dashboard({ user }: { user: { name: string } }) {
   return <h1>Welcome, {user.name}</h1>;
 }
 ```
+
+Run `veryfront dev` and open [http://localhost:3000/dashboard?name=Grace](http://localhost:3000/dashboard?name=Grace). The page should render `Welcome, Grace`.
 
 The `DataContext` provides:
 
@@ -43,19 +44,23 @@ The `DataContext` provides:
 
 ```tsx
 // app/blog/[slug]/page.tsx
+const posts = [
+  { slug: "hello", title: "Hello" },
+  { slug: "workflow", title: "Workflow notes" },
+];
+
 export async function getStaticData({ params }: { params: { slug: string } }) {
-  const post = await getPost(params.slug);
+  const post = posts.find((item) => item.slug === params.slug);
   return { props: { post } };
 }
 
 export async function getStaticPaths() {
-  const posts = await getAllPosts();
   return {
     paths: posts.map((p) => ({ params: { slug: p.slug } })),
   };
 }
 
-export default function BlogPost({ post }: { post: Post }) {
+export default function BlogPost({ post }: { post: { title: string } }) {
   return <article>{post.title}</article>;
 }
 ```
@@ -67,15 +72,13 @@ For dynamic routes, pair `getStaticData` with `getStaticPaths` to tell the frame
 Return `redirect()` or `notFound()` from any data function:
 
 ```tsx
-import { notFound, redirect } from "veryfront";
+import { type DataContext, notFound, redirect } from "veryfront";
 
 export async function getServerData({ params }: DataContext) {
-  const post = await getPost(params.slug);
+  if (params.slug === "old-post") return redirect("/blog/hello");
+  if (params.slug !== "hello") return notFound();
 
-  if (!post) return notFound();
-  if (post.moved) return redirect(`/blog/${post.newSlug}`);
-
-  return { props: { post } };
+  return { props: { post: { title: "Hello" } } };
 }
 ```
 
