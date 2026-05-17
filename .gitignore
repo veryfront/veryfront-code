@@ -72,6 +72,8 @@ playwright-report/
 # Code optimization scripts output
 scripts/batch-simplify/output/*
 !scripts/batch-simplify/output/.gitkeep
+scripts/rlm-ts/output/*
+!scripts/rlm-ts/output/.gitkeep
 scripts/rlm-optimize/output/*
 !scripts/rlm-optimize/output/.gitkeep
 scripts/rlm-optimize/.venv/

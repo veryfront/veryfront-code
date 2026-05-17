@@ -15,7 +15,7 @@
  *      key and whose `iat`/`exp` claims are within the allowed freshness
  *      window. Presence alone is NOT trusted because the proxy does not strip
  *      this header from untrusted inbound requests (it has to pass through to
- *      the channel-invoke / channel-assistants handlers unchanged), so a
+ *      the channel-invoke handler unchanged), so a
  *      direct-access attacker could otherwise set any value and promote
  *      forwarded-header spoofing.
  *

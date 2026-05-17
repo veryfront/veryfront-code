@@ -15,15 +15,14 @@ Current files:
 - `src/provider/runtime-loader/provider-http.ts`
 - `src/provider/runtime-loader/provider-sse.ts`
 - `src/provider/runtime-loader/provider-usage.ts`
-- `src/provider/runtime-loader/provider-finish-reasons.ts`
 - `src/provider/runtime-loader/provider-embedding-responses.ts`
 - `src/provider/veryfront-cloud/provider.ts`
 - `src/provider/local/local-provider.test.ts`
 
 Current facts:
 
-- Request construction, HTTP transport, SSE parsing, usage extraction, finish
-  reason normalization, and embedding parsing are separate modules under
+- Request construction, HTTP transport, SSE parsing, usage extraction, and
+  embedding parsing are separate modules under
   `src/provider/runtime-loader/`.
 - The provider runtime serves hosted provider adapters, Veryfront Cloud routing,
   local runtime adapters, and agent streaming paths.
