@@ -248,8 +248,9 @@ describe("agent testing durable run canary runner", () => {
           mode: "default_chat",
           agent_id: "agent-b",
           initial_status: "pending",
-          source_target_kind: "project",
-          runtime_target_kind: "production",
+          source_target_kind: "preview_branch",
+          runtime_target_kind: "preview_branch",
+          source_target_branch_id: "branch-a",
           runtime_target_branch_id: "branch-a",
         },
       },
@@ -297,5 +298,45 @@ describe("agent testing durable run canary runner", () => {
       listMessagesRequest.path,
       `/root/conversations/${conversationId}/messages?limit=100`,
     );
+  });
+
+  it("creates main branch control-plane requests when no branch is selected", async () => {
+    const requests: { path: string; method: string; body: unknown }[] = [];
+    const client = createDurableRunCanaryApiClient({
+      apiUrl: "https://api.example.test/root",
+      authToken: "token-a",
+      agentId: "agent-b",
+      projectId: "project-a",
+      requestTimeoutMs: 1_000,
+      fetch: async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : input.toString());
+        requests.push({
+          path: `${url.pathname}${url.search}`,
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(String(init.body)) : null,
+        });
+        return Response.json({ ok: true });
+      },
+    });
+
+    await client.createDurableRootRun({ conversationId, runId: "run_1" });
+
+    assertEquals(requests[0], {
+      path: "/root/runs",
+      method: "POST",
+      body: {
+        kind: "agent",
+        owner: { kind: "conversation", id: conversationId },
+        public_id: "run_1",
+        request: {
+          mode: "default_chat",
+          agent_id: "agent-b",
+          initial_status: "pending",
+          source_target_kind: "project",
+          runtime_target_kind: "main_branch",
+          runtime_target_branch_id: null,
+        },
+      },
+    });
   });
 });

@@ -34,7 +34,7 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
 export const getConversationRunTargetsSchema = defineSchema((v) =>
   v.object({
     sourceTargetKind: v.enum(["project", "preview_branch"]).nullable(),
-    runtimeTargetKind: v.enum(["production", "preview_branch"]).nullable(),
+    runtimeTargetKind: v.enum(["main_branch", "preview_branch"]).nullable(),
     targetBranchId: v.string().uuid().nullable(),
   })
 );
@@ -65,7 +65,7 @@ export function resolveConversationRunTargets(input: {
       }
       : {
         sourceTargetKind: "project",
-        runtimeTargetKind: "production",
+        runtimeTargetKind: "main_branch",
         targetBranchId: null,
       },
   );

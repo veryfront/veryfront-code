@@ -16,9 +16,9 @@ export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
     childAgentId: v.string().min(1),
     description: v.string().min(1).optional(),
     status: v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"]),
-    sourceTargetKind: v.enum(["project", "production", "environment", "preview_branch"]).nullable()
+    sourceTargetKind: v.enum(["project", "main_branch", "environment", "preview_branch"]).nullable()
       .optional(),
-    runtimeTargetKind: v.enum(["production", "environment", "preview_branch"]).nullable()
+    runtimeTargetKind: v.enum(["main_branch", "environment", "preview_branch"]).nullable()
       .optional(),
     targetEnvironmentId: v.string().uuid().nullable().optional(),
     targetBranchId: v.string().uuid().nullable().optional(),
@@ -162,8 +162,8 @@ export async function publishInvokeAgentChildRunProgress(input: {
   childMessageId: string;
   description?: string;
   status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
-  sourceTargetKind?: "project" | "production" | "environment" | "preview_branch" | null;
-  runtimeTargetKind?: "production" | "environment" | "preview_branch" | null;
+  sourceTargetKind?: "project" | "main_branch" | "environment" | "preview_branch" | null;
+  runtimeTargetKind?: "main_branch" | "environment" | "preview_branch" | null;
   targetEnvironmentId?: string | null;
   targetBranchId?: string | null;
   publishParentRunEvents?: (events: InvokeAgentChildRunProgressEvent[]) => Promise<void> | void;
