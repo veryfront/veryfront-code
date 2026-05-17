@@ -414,7 +414,7 @@ export const POST = createAgUiHandler("researcher");
 import { Chat, useChat } from "veryfront/chat";
 
 export default function Home() {
-  const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
+  const chat = useChat({ api: "/api/chat" });
 
   return <Chat {...chat} className="flex-1 min-h-0" placeholder="Message" />;
 }

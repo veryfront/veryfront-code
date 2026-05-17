@@ -16,10 +16,10 @@ import {
 } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import {
+  type AgUiBeforeStream,
   applyBeforeStreamResult,
-  type ChatHandlerBeforeStream,
   extractLastUserText,
-} from "../service/chat-handler.ts";
+} from "../service/before-stream.ts";
 import {
   type AgUiRequest,
   normalizeAgUiMessages,
@@ -193,7 +193,7 @@ async function createAgUiDirectStreamResponse(
   request: AgUiRequest,
   rawRequest: Request,
   baseContext: Record<string, unknown>,
-  beforeStream?: ChatHandlerBeforeStream,
+  beforeStream?: AgUiBeforeStream,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
@@ -238,7 +238,7 @@ async function createAgUiInjectedToolsStreamResponse(
   rawRequest: Request,
   baseContext: Record<string, unknown>,
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
-  beforeStream?: ChatHandlerBeforeStream,
+  beforeStream?: AgUiBeforeStream,
 ): Promise<Response> {
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
@@ -308,7 +308,7 @@ export interface AgUiHandlerOptions {
     | Record<string, unknown>
     | ((request: Request) => Record<string, unknown> | Promise<Record<string, unknown>>);
   sessionManager?: RunResumeSessionManager<AgUiResumeValue>;
-  beforeStream?: ChatHandlerBeforeStream;
+  beforeStream?: AgUiBeforeStream;
 }
 
 export interface AgUiHandlerConfigWithAgent extends AgUiHandlerOptions {
@@ -435,9 +435,7 @@ export function createAgUiHandler(
       }
 
       return Response.json(
-        {
-          error: error instanceof Error ? error.message : "Internal server error",
-        },
+        { error: "Internal server error" },
         { status: 500 },
       );
     }

@@ -73,7 +73,7 @@ Browser chat UIs can consume this route with:
 ```tsx
 import { useChat } from "veryfront/chat";
 
-const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
+const chat = useChat({ api: "/api/chat" });
 ```
 
 Mount the hosted run-control routes separately with the same session manager.

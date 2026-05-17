@@ -1721,14 +1721,11 @@ export {
   type WaitForHumanInputOptions,
 } from "./input/human-input.ts";
 export {
-  type ChatHandlerBeforeStream,
-  type ChatHandlerBeforeStreamContext,
-  type ChatHandlerBeforeStreamResult,
-  type ChatHandlerConfigWithAgent,
-  type ChatHandlerMessageInput,
-  type ChatHandlerOptions,
-  createChatHandler,
-} from "./service/chat-handler.ts";
+  type AgUiBeforeStream,
+  type AgUiBeforeStreamContext,
+  type AgUiBeforeStreamMessageInput,
+  type AgUiBeforeStreamResult,
+} from "./service/before-stream.ts";
 export {
   AgentRuntime,
   getProviderToolProfile,

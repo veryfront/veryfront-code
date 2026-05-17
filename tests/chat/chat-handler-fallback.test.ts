@@ -1,8 +1,9 @@
 /**
- * Tests for the chat handler's 503 fallback response and
+ * Tests for the AG-UI handler's 503 fallback response and
  * the structured no_ai_available error flow.
  */
 import "../_helpers/contract-init.ts";
+import "#veryfront/schemas/_test-setup.ts";
 import { describe, it } from "#veryfront/testing/bdd";
 import { assertEquals } from "#veryfront/testing/assert";
 import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
@@ -63,7 +64,7 @@ describe("no_ai_available error type", () => {
   });
 });
 
-describe("chat-handler 503 fallback", () => {
+describe("ag-ui handler 503 fallback", () => {
   it("returns 503 with NO_AI_AVAILABLE when agent stream throws no_ai_available", async () => {
     const originalLogLevel = getEnv("LOG_LEVEL");
     const originalNodeEnv = getEnv("NODE_ENV");
@@ -75,8 +76,8 @@ describe("chat-handler 503 fallback", () => {
       const { registerAgent } = await import(
         "../../src/agent/composition/composition.ts"
       );
-      const { createChatHandler } = await import(
-        "../../src/agent/service/chat-handler.ts"
+      const { createAgUiHandler } = await import(
+        "../../src/agent/ag-ui/handler.ts"
       );
 
       // Register a fake agent whose stream() throws no_ai_available
@@ -108,7 +109,7 @@ describe("chat-handler 503 fallback", () => {
       // deno-lint-ignore no-explicit-any
       registerAgent("test-fallback", fakeAgent as any);
 
-      const handler = createChatHandler("test-fallback");
+      const handler = createAgUiHandler("test-fallback");
       const request = new Request("http://localhost/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -149,8 +150,8 @@ describe("chat-handler 503 fallback", () => {
       const { registerAgent } = await import(
         "../../src/agent/composition/composition.ts"
       );
-      const { createChatHandler } = await import(
-        "../../src/agent/service/chat-handler.ts"
+      const { createAgUiHandler } = await import(
+        "../../src/agent/ag-ui/handler.ts"
       );
 
       const fakeAgent = {
@@ -174,7 +175,7 @@ describe("chat-handler 503 fallback", () => {
       // deno-lint-ignore no-explicit-any
       registerAgent("test-generic-error", fakeAgent as any);
 
-      const handler = createChatHandler("test-generic-error");
+      const handler = createAgUiHandler("test-generic-error");
       const request = new Request("http://localhost/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },

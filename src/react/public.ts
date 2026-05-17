@@ -11,7 +11,7 @@
  * import { Chat, useChat } from "veryfront/react";
  *
  * export default function Page() {
- *   const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
+ *   const chat = useChat({ api: "/api/chat" });
  *   return <Chat messages={chat.messages} input={chat.input} onChange={chat.handleInputChange} onSubmit={chat.handleSubmit} />;
  * }
  * ```

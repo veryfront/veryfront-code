@@ -219,7 +219,7 @@ messages from the request body.
 
 Create a POST route handler that validates an AG-UI request, invokes an agent,
 and streams AG-UI SSE. Use this for chat UI routes and pair it with
-`useChat({ transport: "ag-ui" })`.
+`useChat({ api: "/api/chat" })`.
 
 ```ts
 // app/api/chat/route.ts
@@ -233,7 +233,7 @@ export const POST = createAgUiHandler("assistant");
 | `agentIdOrConfig`         | <code>string &#124; { agent: Agent, ...options }</code>                                                                                                        | Registered agent ID or direct agent instance.                                                                                                                   |
 | `options?.context`        | <code>Record&lt;string, unknown&gt; &#124; ((request: Request) =&gt; Record&lt;string, unknown&gt; &#124; Promise&lt;Record&lt;string, unknown&gt;&gt;)</code> | Context passed to the agent.                                                                                                                                    |
 | `options?.sessionManager` | <code>RunResumeSessionManager&lt;AgUiResumeValue&gt;</code>                                                                                                    | Required when the request injects AG-UI client tools that resume the same run.                                                                                  |
-| `options?.beforeStream`   | <code>(input) =&gt; void &#124; Response &#124; ChatHandlerBeforeStreamResult &#124; Promise&lt;...&gt;</code>                                                 | Hook that runs after validation and before the agent streams. Can prepend, append, replace messages, override context, or return a `Response` to short-circuit. |
+| `options?.beforeStream`   | <code>(input) =&gt; void &#124; Response &#124; AgUiBeforeStreamResult &#124; Promise&lt;...&gt;</code>                                                      | Hook that runs after validation and before the agent streams. Can prepend, append, replace messages, override context, or return a `Response` to short-circuit. |
 
 `beforeStream` input includes the original `request`, normalized `messages`,
 resolved `context`, and `lastUserText` extracted from the last user message.
@@ -336,7 +336,6 @@ export const POST = createAgUiHandler("rag", {
 | `startNodeVeryfrontCloudAgentService`                                 | Start a Veryfront Cloud agent service with the Node server adapter       |
 | `parseRuntimeAgentRunInvocationOrError`                               | Parse a runtime agent invocation or return a `400` validation `Response` |
 | `resolveRuntimeAgentDefinitionsDir`                                   | Resolve a hosted service `agents/` directory from source/bundled paths   |
-| `createChatHandler`                                                   | Legacy compatibility POST handler for the older chat stream protocol.    |
 | `createMemory`                                                        | Create memory (buffer, conversation, summary)                            |
 | `createRedisMemory`                                                   | Create Redis-backed memory                                               |
 | `createWorkflow`                                                      | Create sequential agent workflow                                         |
@@ -426,11 +425,10 @@ export const POST = createAgUiHandler("rag", {
 | `RunSessionStatus`                         | Status of a resumable run session                                                                                             |
 | `SubmitResumeValueOutcome`                 | Result of submitting an accepted or duplicate resume value                                                                    |
 | `WaitForHumanInputOptions`                 | Options for `waitForHumanInput()`                                                                                             |
-| `ChatHandlerBeforeStream`                  | Hook signature used by `createAgUiHandler` and legacy chat handler customization before streaming.                            |
-| `ChatHandlerBeforeStreamContext`           | Input passed to the `beforeStream` hook.                                                                                      |
-| `ChatHandlerBeforeStreamResult`            | Message/context mutations returned from `beforeStream`.                                                                       |
-| `ChatHandlerMessageInput`                  | Message shape for `prepend`/`append`/`replaceMessages` in `beforeStream`.                                                     |
-| `ChatHandlerOptions`                       | Legacy compatibility options for `createChatHandler`.                                                                         |
+| `AgUiBeforeStream`                         | Hook signature used by `createAgUiHandler` before streaming.                                                                  |
+| `AgUiBeforeStreamContext`                  | Input passed to the `beforeStream` hook.                                                                                      |
+| `AgUiBeforeStreamResult`                   | Message/context mutations returned from `beforeStream`.                                                                       |
+| `AgUiBeforeStreamMessageInput`             | Message shape for `prepend`/`append`/`replaceMessages` in `beforeStream`.                                                     |
 | `BuildChatStreamChunkMessageMetadataInput` | Input for building canonical hosted chunk metadata from streamed finish parts.                                                |
 | `ChatMessageMetadata`                      | Canonical hosted message metadata shape for streamed assistant messages.                                                      |
 | `ChatMessageMetadataUsage`                 | Usage counters nested under `ChatMessageMetadata.usage`.                                                                      |

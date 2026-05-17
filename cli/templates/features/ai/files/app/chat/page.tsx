@@ -3,7 +3,7 @@
 import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage(): React.JSX.Element {
-  const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
+  const chat = useChat({ api: "/api/chat" });
 
   return (
     <div className="min-h-screen bg-neutral-50 dark:bg-neutral-950">

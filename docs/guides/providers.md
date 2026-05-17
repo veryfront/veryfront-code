@@ -29,7 +29,7 @@ curl -N http://localhost:3000/api/chat \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Reply with the active inference mode if available."}]}]}'
 ```
 
-In a client UI, `useChat({ transport: "ag-ui" })` also exposes `inferenceMode` so you can confirm whether the response used cloud, server-local, or browser inference.
+In a client UI, `useChat({ api: "/api/chat" })` also exposes `inferenceMode` so you can confirm whether the response used cloud, server-local, or browser inference.
 
 By convention:
 
