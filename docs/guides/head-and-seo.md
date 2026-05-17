@@ -30,7 +30,7 @@ export default function AboutPage() {
 }
 ```
 
-The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge — page-level tags override layout-level tags for duplicate keys.
+The `Head` component renders its children into the document's `<head>`. When multiple `Head` components are present (e.g., in a layout and a page), they merge: page-level tags override layout-level tags for duplicate keys.
 
 ## Open Graph
 
@@ -154,6 +154,6 @@ This is the last guide. Explore the [API Reference](../reference/index.md) for d
 
 ## Related
 
-- [`veryfront/head`](../reference/head.md) — Head component API reference
-- [`veryfront/fonts`](../reference/fonts.md) — fonts API reference
-- [`veryfront/context`](../reference/context.md) — access frontmatter data
+- [`veryfront/head`](../reference/head.md): Head component API reference
+- [`veryfront/fonts`](../reference/fonts.md): fonts API reference
+- [`veryfront/context`](../reference/context.md): access frontmatter data

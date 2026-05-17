@@ -13,11 +13,11 @@ CORS, rate limiting, logging, and timeout middleware.
 ```ts
 import {
   cors,
-  rateLimit,
-  logger,
-  timeout,
-  MiddlewarePipeline,
   devLogger,
+  logger,
+  MiddlewarePipeline,
+  rateLimit,
+  timeout,
 } from "veryfront/middleware";
 ```
 
@@ -34,7 +34,7 @@ const corsMiddleware = cors({ origin: "https://example.com" });
 ### Pipeline composition
 
 ```ts
-import { MiddlewarePipeline, cors, rateLimit, logger, timeout } from "veryfront/middleware";
+import { cors, logger, MiddlewarePipeline, rateLimit, timeout } from "veryfront/middleware";
 
 const pipeline = new MiddlewarePipeline()
   .use(cors({ origin: "https://example.com" }))
@@ -99,84 +99,84 @@ List registered middleware with metadata.
 
 CORS config
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `origin?` | `string \| string[] \| OriginValidator` | Allowed origins (string, regex, array, or function) |
-| `methods?` | `string[]` | Allowed HTTP methods |
-| `allowedHeaders?` | `string[]` | Allowed request headers |
-| `exposedHeaders?` | `string[]` | Headers exposed to client |
-| `credentials?` | `boolean` | Allow credentials |
-| `maxAge?` | `number` | Preflight cache duration (seconds) |
+| Property          | Type                                    | Description                                         |
+| ----------------- | --------------------------------------- | --------------------------------------------------- |
+| `origin?`         | `string \| string[] \| OriginValidator` | Allowed origins (string, regex, array, or function) |
+| `methods?`        | `string[]`                              | Allowed HTTP methods                                |
+| `allowedHeaders?` | `string[]`                              | Allowed request headers                             |
+| `exposedHeaders?` | `string[]`                              | Headers exposed to client                           |
+| `credentials?`    | `boolean`                               | Allow credentials                                   |
+| `maxAge?`         | `number`                                | Preflight cache duration (seconds)                  |
 
 ### `RateLimitOptions`
 
 Rate limit config
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `maxRequests?` | `number` | Max requests per window |
-| `windowMs?` | `number` | Time window (ms) |
-| `store?` | `RateLimitStore` | Storage backend |
+| Property        | Type                                     | Description                                    |
+| --------------- | ---------------------------------------- | ---------------------------------------------- |
+| `maxRequests?`  | `number`                                 | Max requests per window                        |
+| `windowMs?`     | `number`                                 | Time window (ms)                               |
+| `store?`        | `RateLimitStore`                         | Storage backend                                |
 | `keyGenerator?` | <code>(req: Request) =&gt; string</code> | Function to derive rate limit key from request |
 
 ### `LoggerOptions`
 
 Logger config
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `format?` | `LogFormat` | Log format (combined, common, dev, short) |
-| `skip?` | <code>(req: Request) =&gt; boolean</code> | Skip logging for matching requests |
-| `log?` | <code>(message: string) =&gt; void</code> | Custom log output function |
+| Property  | Type                                      | Description                               |
+| --------- | ----------------------------------------- | ----------------------------------------- |
+| `format?` | `LogFormat`                               | Log format (combined, common, dev, short) |
+| `skip?`   | <code>(req: Request) =&gt; boolean</code> | Skip logging for matching requests        |
+| `log?`    | <code>(message: string) =&gt; void</code> | Custom log output function                |
 
 ### `TimeoutOptions`
 
 Timeout config
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `timeoutMs?` | `number` | Timeout in milliseconds (default: 60000) |
-| `message?` | `string` | Custom message for timeout response |
-| `exclude?` | `string[]` | Paths to exclude from timeout (e.g., health checks) |
+| Property     | Type       | Description                                         |
+| ------------ | ---------- | --------------------------------------------------- |
+| `timeoutMs?` | `number`   | Timeout in milliseconds (default: 60000)            |
+| `message?`   | `string`   | Custom message for timeout response                 |
+| `exclude?`   | `string[]` | Paths to exclude from timeout (e.g., health checks) |
 
 ## Exports
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `cors` | CORS middleware |
-| `devLogger` | Dev logger (colorized) |
-| `getTimeoutFromEnv` | Gets timeout from environment variable REQUEST_TIMEOUT_MS |
-| `logger` | Request/response logger |
-| `prodLogger` | Production logger (structured JSON) |
-| `rateLimit` | Rate limiting (memory or Redis) |
-| `timeout` | Creates a middleware that enforces request timeouts. |
-| `timeoutFromEnv` | Creates a timeout middleware with configuration from environment |
+| Name                | Description                                                      |
+| ------------------- | ---------------------------------------------------------------- |
+| `cors`              | CORS middleware                                                  |
+| `devLogger`         | Dev logger (colorized)                                           |
+| `getTimeoutFromEnv` | Gets timeout from environment variable REQUEST_TIMEOUT_MS        |
+| `logger`            | Request/response logger                                          |
+| `prodLogger`        | Production logger (structured JSON)                              |
+| `rateLimit`         | Rate limiting (memory or Redis)                                  |
+| `timeout`           | Creates a middleware that enforces request timeouts.             |
+| `timeoutFromEnv`    | Creates a timeout middleware with configuration from environment |
 
 ### Classes
 
-| Name | Description |
-|------|-------------|
-| `MemoryRateLimitStore` | In-memory rate limit store |
-| `MiddlewareContext` | Middleware pipeline context |
-| `MiddlewarePipeline` | Composable middleware chain |
-| `RedisRateLimitStore` | Redis rate limit store |
+| Name                   | Description                 |
+| ---------------------- | --------------------------- |
+| `MemoryRateLimitStore` | In-memory rate limit store  |
+| `MiddlewareContext`    | Middleware pipeline context |
+| `MiddlewarePipeline`   | Composable middleware chain |
+| `RedisRateLimitStore`  | Redis rate limit store      |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `Context` | Base request context |
-| `CorsOptions` | CORS config |
-| `ExecutionContext` | Context with execution metadata |
-| `LogFormat` | Log format (combined, common, dev, short) |
-| `LoggerOptions` | Logger config |
-| `MiddlewareFactory` | Middleware factory function |
-| `MiddlewareHandler` | Middleware handler function |
-| `MiddlewarePipelineOptions` | Pipeline config |
-| `Next` | Next middleware callback |
-| `RateLimitOptions` | Rate limit config |
-| `RateLimitStore` | Rate limit storage interface |
-| `RedisRateLimitOptions` | Redis rate limit config |
-| `TimeoutOptions` | Timeout config |
+| Name                        | Description                               |
+| --------------------------- | ----------------------------------------- |
+| `Context`                   | Base request context                      |
+| `CorsOptions`               | CORS config                               |
+| `ExecutionContext`          | Context with execution metadata           |
+| `LogFormat`                 | Log format (combined, common, dev, short) |
+| `LoggerOptions`             | Logger config                             |
+| `MiddlewareFactory`         | Middleware factory function               |
+| `MiddlewareHandler`         | Middleware handler function               |
+| `MiddlewarePipelineOptions` | Pipeline config                           |
+| `Next`                      | Next middleware callback                  |
+| `RateLimitOptions`          | Rate limit config                         |
+| `RateLimitStore`            | Rate limit storage interface              |
+| `RedisRateLimitOptions`     | Redis rate limit config                   |
+| `TimeoutOptions`            | Timeout config                            |

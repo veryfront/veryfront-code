@@ -72,4 +72,4 @@ Create MCP-discoverable resource
 
 ## Related
 
-- [`veryfront/mcp`](./mcp.md) — Expose resources via MCP
+- [`veryfront/mcp`](./mcp.md): Expose resources via MCP

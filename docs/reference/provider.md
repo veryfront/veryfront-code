@@ -140,4 +140,4 @@ const groupedModels = groupVeryfrontCloudModelsByProvider();
 
 ## Related
 
-- [`veryfront/agent`](./agent.md) — Agents use providers for AI models
+- [`veryfront/agent`](./agent.md): Agents use providers for AI models

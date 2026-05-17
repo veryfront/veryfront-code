@@ -55,8 +55,8 @@ Available at `https://<slug>--feature-x.preview.veryfront.com`.
 Set production environment variables on your deployment platform. At minimum, set your LLM provider keys:
 
 ```
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=<API_KEY>
+ANTHROPIC_API_KEY=<API_KEY>
 ```
 
 For Veryfront Cloud, set the same variables in the target environment before deploying.
@@ -95,9 +95,9 @@ You can also deploy the same build output on other infrastructure that supports 
 
 ## Next
 
-- [Head & SEO](./head-and-seo.md) — optimize for search engines
-- [Configuration](./configuration.md) — all configuration options
+- [Head & SEO](./head-and-seo.md): optimize for search engines
+- [Configuration](./configuration.md): all configuration options
 
 ## Related
 
-- [`veryfront` (root)](../reference/root.md) — `defineConfig`, build options
+- [`veryfront` (root)](../reference/root.md): `defineConfig`, build options

@@ -128,9 +128,9 @@ const pipeline = new MiddlewarePipeline()
 
 ## Next
 
-- [OAuth](./oauth.md) — add social login to your app
-- [API Routes](./api-routes.md) — the routes that middleware protects
+- [OAuth](./oauth.md): add social login to your app
+- [API Routes](./api-routes.md): the routes that middleware protects
 
 ## Related
 
-- [`veryfront/middleware`](../reference/middleware.md) — middleware API reference
+- [`veryfront/middleware`](../reference/middleware.md): middleware API reference

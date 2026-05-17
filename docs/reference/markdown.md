@@ -19,25 +19,25 @@ import { Markdown } from "veryfront/markdown";
 ```tsx
 import { Markdown } from "veryfront/markdown";
 
-<Markdown># Hello{"\n\n"}Some **bold** text with `code`.</Markdown>
+<Markdown># Hello{"\n\n"}Some **bold** text with `code`.</Markdown>;
 ```
 
 ## Exports
 
 ### Components
 
-| Name | Description |
-|------|-------------|
+| Name       | Description                                  |
+| ---------- | -------------------------------------------- |
 | `Markdown` | Render markdown with highlighting + diagrams |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
+| Name             | Description                |
+| ---------------- | -------------------------- |
 | `CodeBlockProps` | Code block rendering props |
-| `MarkdownProps` | `<Markdown>` props |
+| `MarkdownProps`  | `<Markdown>` props         |
 
 ## Related
 
-- [`veryfront/chat`](./chat.md) — Used in chat message rendering
-- [`veryfront/mdx`](./mdx.md) — For static MDX pages
+- [`veryfront/chat`](./chat.md): Used in chat message rendering
+- [`veryfront/mdx`](./mdx.md): For static MDX pages

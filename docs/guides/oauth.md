@@ -12,7 +12,7 @@ Route examples below use the default app router. Veryfront Code also supports mo
 
 ## Quick setup
 
-Two routes handle the full OAuth flow — redirect to the provider and handle the callback. Both handlers require a `getUserId` function that returns the authenticated user's id from your session; unauthenticated requests receive a 401.
+Two routes handle the full OAuth flow: redirect to the provider and handle the callback. Both handlers require a `getUserId` function that returns the authenticated user's id from your session; unauthenticated requests receive a 401.
 
 ```ts
 // app/api/auth/github/route.ts
@@ -41,7 +41,7 @@ GITHUB_CLIENT_ID=your-client-id
 GITHUB_CLIENT_SECRET=your-client-secret
 ```
 
-Link users to `/api/auth/github` to start the flow. After authorization, they're redirected back to your callback route. Tokens are stored in that user's per-user slot — never in a single shared slot.
+Link users to `/api/auth/github` to start the flow. After authorization, they're redirected back to your callback route. Tokens are stored in that user's per-user slot: never in a single shared slot.
 
 > **Security.** `getUserId` is required. The init handler rejects any request where it returns `null`, `undefined`, or an empty string. The user's id is bound into the OAuth state row and the callback stores tokens keyed by `(serviceId, userId)`, so one user cannot overwrite another user's tokens by completing an OAuth flow.
 
@@ -75,7 +75,7 @@ const redisTokenStore: TokenStore = {
     await redis.set(`oauth:state:${state}`, JSON.stringify(meta), "EX", 600);
   },
   async consumeState(state) {
-    // Atomic read + delete — the state row must be usable exactly once.
+    // Atomic read + delete: the state row must be usable exactly once.
     const key = `oauth:state:${state}`;
     const data = await redis.get(key);
     if (!data) return null;
@@ -149,15 +149,15 @@ import { tokenStore } from "../../lib/token-store.ts";
 
 const gmail = new OAuthService(gmailConfig, tokenStore);
 
-// Pass the signed-in user's id — never a hardcoded constant.
+// Pass the signed-in user's id: never a hardcoded constant.
 const response = await gmail.fetch(session.userId, "/users/me/messages");
 ```
 
 ## Next
 
-- [MCP Server](./mcp-server.md) — expose your tools over the Model Context Protocol
-- [Configuration](./configuration.md) — environment variables and secrets
+- [MCP Server](./mcp-server.md): expose your tools over the Model Context Protocol
+- [Configuration](./configuration.md): environment variables and secrets
 
 ## Related
 
-- [`veryfront/oauth`](../reference/oauth.md) — OAuth API reference
+- [`veryfront/oauth`](../reference/oauth.md): OAuth API reference

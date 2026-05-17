@@ -150,7 +150,7 @@ export async function POST(request: Request) {
 The `useChat` hook handles the streaming protocol automatically:
 
 ```tsx
-'use client'
+"use client";
 import { useChat } from "veryfront/chat";
 
 export default function ChatPage() {
@@ -180,8 +180,8 @@ const agent = getAgent("assistant");
 const result = await agent.generate({
   input: "Write a haiku about programming.",
 });
-// result.text — full text response
-// result.usage — { promptTokens, completionTokens, totalTokens }
+// result.text: full text response
+// result.usage: { promptTokens, completionTokens, totalTokens }
 ```
 
 ## Client-managed vs server-managed memory
@@ -192,14 +192,14 @@ There are two patterns for conversation history:
 
 **Server-managed** (with agent memory): The server persists messages. The client sends only the latest message. Good for long-running conversations and multi-device access.
 
-You can combine both — use client memory for the UI and server memory for context that persists across sessions.
+You can combine both: use client memory for the UI and server memory for context that persists across sessions.
 
 ## Next
 
-- [Chat UI](./chat-ui.md) — pre-built components for chat interfaces
-- [Workflows](./workflows.md) — orchestrate multiple agents
+- [Chat UI](./chat-ui.md): pre-built components for chat interfaces
+- [Workflows](./workflows.md): orchestrate multiple agents
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md) — agent API reference
-- [`veryfront/chat`](../reference/chat.md) — chat hooks API reference
+- [`veryfront/agent`](../reference/agent.md): agent API reference
+- [`veryfront/chat`](../reference/chat.md): chat hooks API reference

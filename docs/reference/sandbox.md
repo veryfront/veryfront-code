@@ -273,5 +273,5 @@ Command job with captured stdout/stderr.
 
 ## Related
 
-- [`veryfront/agent`](./agent.md) — Run isolated commands from agent tools/workflows
-- [`veryfront/mcp`](./mcp.md) — Expose sandbox-backed operations over MCP
+- [`veryfront/agent`](./agent.md): Run isolated commands from agent tools/workflows
+- [`veryfront/mcp`](./mcp.md): Expose sandbox-backed operations over MCP

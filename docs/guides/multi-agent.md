@@ -89,10 +89,10 @@ export default workflow({
 
 ## When to use which
 
-| Pattern           | Use when                                                                     |
-| ----------------- | ---------------------------------------------------------------------------- |
-| **Agent-as-tool** | The orchestrator decides dynamically which agents to call and in what order  |
-| **Workflow**      | The execution order is known in advance — sequential, parallel, or branching |
+| Pattern           | Use when                                                                    |
+| ----------------- | --------------------------------------------------------------------------- |
+| **Agent-as-tool** | The orchestrator decides dynamically which agents to call and in what order |
+| **Workflow**      | The execution order is known in advance: sequential, parallel, or branching |
 
 Agent-as-tool is more flexible but harder to predict. Workflows are deterministic and easier to debug.
 
@@ -109,10 +109,10 @@ const agent = getAgent("writer"); // Get a specific agent
 
 ## Next
 
-- [Providers](./providers.md) — configure OpenAI, Anthropic, and Google
-- [Middleware](./middleware.md) — add auth and rate limiting to your agents
+- [Providers](./providers.md): configure OpenAI, Anthropic, and Google
+- [Middleware](./middleware.md): add auth and rate limiting to your agents
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md) — agent API reference
-- [`veryfront/workflow`](../reference/workflow.md) — workflow API reference
+- [`veryfront/agent`](../reference/agent.md): agent API reference
+- [`veryfront/workflow`](../reference/workflow.md): workflow API reference

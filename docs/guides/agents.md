@@ -47,7 +47,7 @@ The file path provides the agent id. For example, `agents/support.md` registers 
 
 ## Add tools
 
-Agents call tools to take actions or fetch data. Reference tools by name — the framework resolves them from the `tools/` directory:
+Agents call tools to take actions or fetch data. Reference tools by name: the framework resolves them from the `tools/` directory:
 
 ```ts
 // agents/assistant.ts
@@ -108,7 +108,7 @@ Skill scripts run in one of two modes, selected automatically:
 - **Local (development)**: When no Veryfront Cloud sandbox credentials are available, scripts run as direct subprocesses on your machine via `runCommand()`. No remote sandbox is needed.
 - **Cloud (production)**: When `SANDBOX_AUTH_TOKEN`, `VERYFRONT_API_TOKEN`, or request-scoped Veryfront credentials are available, scripts are uploaded to and executed inside a remote sandbox session.
 
-You don't need any sandbox infrastructure for local development — scripts just run directly.
+You don't need any sandbox infrastructure for local development: scripts just run directly.
 
 ## Skill safety model
 
@@ -260,9 +260,9 @@ integrations on a predictable default.
 
 ## Next
 
-- [Tools](./tools.md) — define the tools your agent calls
-- [Memory & Streaming](./memory-and-streaming.md) — add conversation memory
+- [Tools](./tools.md): define the tools your agent calls
+- [Memory & Streaming](./memory-and-streaming.md): add conversation memory
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md) — agent API reference
+- [`veryfront/agent`](../reference/agent.md): agent API reference

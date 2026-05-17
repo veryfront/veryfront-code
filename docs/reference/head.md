@@ -36,11 +36,11 @@ export default function Page() {
 
 ### Components
 
-| Name | Description |
-|------|-------------|
+| Name   | Description                               |
+| ------ | ----------------------------------------- |
 | `Head` | Render `<title>`, `<meta>`, `<link>` tags |
 
 ## Related
 
-- [`veryfront/router`](./router.md) — Client-side navigation
-- [`veryfront/context`](./context.md) — Access page metadata
+- [`veryfront/router`](./router.md): Client-side navigation
+- [`veryfront/context`](./context.md): Access page metadata

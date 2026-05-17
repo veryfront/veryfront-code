@@ -69,9 +69,9 @@ interface TaskContext {
 }
 ```
 
-- **`env`** — filtered environment variables (use `envAllowlist` to restrict)
-- **`config`** — job configuration (passed when run as a cloud job)
-- **`projectId`** — project identifier (available in cloud context)
+- **`env`**: filtered environment variables (use `envAllowlist` to restrict)
+- **`config`**: job configuration (passed when run as a cloud job)
+- **`projectId`**: project identifier (available in cloud context)
 
 ## Discovery
 
@@ -120,9 +120,9 @@ See [Jobs & Cron Jobs](./jobs.md) for scheduling and event monitoring.
 
 ## Next
 
-- [Jobs & Cron Jobs](./jobs.md) — schedule tasks as cloud jobs
-- [Agents](./agents.md) — agents can invoke tasks as tools
+- [Jobs & Cron Jobs](./jobs.md): schedule tasks as cloud jobs
+- [Agents](./agents.md): agents can invoke tasks as tools
 
 ## Related
 
-- [Jobs & Cron Jobs](./jobs.md) — the jobs system that executes scheduled tasks
+- [Jobs & Cron Jobs](./jobs.md): the jobs system that executes scheduled tasks

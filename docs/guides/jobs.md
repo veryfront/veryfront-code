@@ -20,9 +20,12 @@ Use Veryfront jobs for durable, project-scoped background work.
 Users create jobs through two main paths:
 
 1. **Programmatic**: create jobs through the public REST API or the `veryfront/jobs` SDK.
-2. **Studio-first product flows**: some first-party features, such as knowledge ingestion, create jobs for you and then expose them in the Jobs panel.
+2. **Studio-first product flows**: some first-party features, such as knowledge
+   ingestion, create jobs for you and then expose them in the Jobs panel.
 
-Studio is not yet a general-purpose UI for authoring arbitrary custom job targets. If you want to create your own one-off jobs or cron jobs directly, the public SDK and API are the intended entry points. If you need MCP access, wrap the same jobs client in your own tools rather than assuming a built-in jobs MCP surface.
+Studio exposes jobs created by first-party product flows. Author custom one-off
+jobs and cron jobs through the public SDK or API. For MCP access, wrap the jobs
+client in your own tools.
 
 ## Setup
 

@@ -22,3 +22,23 @@ const loader = await orchestrateExtensions({
 // Later, on shutdown:
 await loader.teardownAll();
 ```
+
+## API groups
+
+| Group           | Exports                                                                                                                                                                           |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Authoring types | `Extension`, `ExtensionFactory`, `ExtensionContext`, `ExtensionLogger`, `Capability`, `ResolvedExtension`, `ExtensionSource`, `ExtensionConfigEntry`, `ExtensionContractMetadata` |
+| Contracts       | `resolve()`, `tryResolve()`                                                                                                                                                       |
+| Discovery       | `discoverLocalExtensions()`, `discoverPackageExtensions()`, `discoverProjectExtensions()`, `parsePackageMetadata()`, `mergeExtensions()`                                          |
+| Loading         | `ExtensionLoader`, `loadExtensionFactory()`                                                                                                                                       |
+| Orchestration   | `orchestrateExtensions()` and `OrchestrateOptions`                                                                                                                                |
+| Validation      | `validateExtension()`, `detectConflicts()`, `ConflictInfo`                                                                                                                        |
+| Capabilities    | `auditCapabilities()`, `formatCapabilities()`, `mapToDenoPermissions()`                                                                                                           |
+| Recommendations | `getRecommendation()`                                                                                                                                                             |
+| Errors          | `MISSING_EXTENSION_ERROR`, `EXTENSION_VALIDATION_ERROR`, `EXTENSION_CONFLICT_ERROR`, `CIRCULAR_DEPENDENCY_ERROR`                                                                  |
+| Sandbox tools   | `SandboxShellToolsProviderName` and sandbox shell tool provider types.                                                                                                            |
+
+Use the extension guides for task-oriented flows:
+[`Extensions`](../guides/extensions.md),
+[`Extension authoring`](../guides/extension-authoring.md), and
+[`Extension lifecycle`](../guides/extension-lifecycle.md).

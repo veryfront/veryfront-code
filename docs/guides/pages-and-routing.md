@@ -192,10 +192,10 @@ export default function LoginForm() {
 
 ## Next
 
-- [Data Fetching](./data-fetching.md) — load data on the server or at build time
-- [API Routes](./api-routes.md) — create backend endpoints
+- [Data Fetching](./data-fetching.md): load data on the server or at build time
+- [API Routes](./api-routes.md): create backend endpoints
 
 ## Related
 
-- [`veryfront/router`](../reference/router.md) — router API reference
-- [`veryfront/context`](../reference/context.md) — params, page data, and frontmatter hooks
+- [`veryfront/router`](../reference/router.md): router API reference
+- [`veryfront/context`](../reference/context.md): params, page data, and frontmatter hooks

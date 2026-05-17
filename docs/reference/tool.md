@@ -158,5 +158,5 @@ List tools from a remote source and materialize them into runtime `Tool` instanc
 
 ## Related
 
-- [`veryfront/agent`](./agent.md) — Agents that use tools
-- [`veryfront/mcp`](./mcp.md) — Expose tools via MCP
+- [`veryfront/agent`](./agent.md): Agents that use tools
+- [`veryfront/mcp`](./mcp.md): Expose tools via MCP

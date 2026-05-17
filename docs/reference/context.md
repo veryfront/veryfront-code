@@ -11,7 +11,7 @@ Access route params, page data, and MDX frontmatter.
 ## Import
 
 ```ts
-import { usePageContext, PageContextProvider } from "veryfront/context";
+import { PageContextProvider, usePageContext } from "veryfront/context";
 ```
 
 ## Examples
@@ -37,25 +37,25 @@ function TableOfContents() {
 
 ### Components
 
-| Name | Description |
-|------|-------------|
+| Name                  | Description                      |
+| --------------------- | -------------------------------- |
 | `PageContextProvider` | Provide page context to children |
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
+| Name             | Description                       |
+| ---------------- | --------------------------------- |
 | `usePageContext` | Get params, frontmatter, headings |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `MdxHeading` | MDX heading (text, id, level) |
+| Name                       | Description                   |
+| -------------------------- | ----------------------------- |
+| `MdxHeading`               | MDX heading (text, id, level) |
 | `PageContextProviderProps` | `<PageContextProvider>` props |
-| `PageContextValue` | Page context value shape |
+| `PageContextValue`         | Page context value shape      |
 
 ## Related
 
-- [`veryfront/router`](./router.md) — Client-side navigation
-- [`veryfront/head`](./head.md) — Manage document head
+- [`veryfront/router`](./router.md): Client-side navigation
+- [`veryfront/head`](./head.md): Manage document head
