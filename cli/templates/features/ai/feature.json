@@ -1,6 +1,6 @@
 {
   "name": "ai",
-  "description": "Add AI capabilities with chat API and agent support",
+  "description": "Add AI capabilities with an AG-UI endpoint and agent support",
   "configMerge": {
     "ai": {
       "enabled": true
@@ -8,7 +8,7 @@
   },
   "tips": [
     "Set VERYFRONT_API_TOKEN and VERYFRONT_PROJECT_SLUG to use Veryfront Cloud defaults locally",
-    "The chat API is available at /api/chat",
+    "The AG-UI endpoint is available at /api/ag-ui",
     "Customize agents in agents/ directory",
     "Add new tools in tools/ directory"
   ]

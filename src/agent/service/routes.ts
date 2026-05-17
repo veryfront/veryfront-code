@@ -342,11 +342,6 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   const routes: AgentServiceRoute[] = [
     {
       method: "POST",
-      path: "/api/ag-ui/messages/stream",
-      handler: (request: Request) => handleAgUiRequest(request),
-    },
-    {
-      method: "POST",
       path: "/api/ag-ui",
       handler: (request: Request) => handleAgUiRequest(request),
     },

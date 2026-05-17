@@ -6,7 +6,7 @@ A team of specialized agents that collaborate on tasks.
 
 - Orchestrator that delegates to researcher and writer agents
 - Agent-as-tool composition via `getAgentsAsTools()`
-- Web search tool (placeholder — configure your own API)
+- Web search tool (placeholder, configure your own API)
 
 ## Structure
 
@@ -17,8 +17,8 @@ agents/
   writer.ts            Produces polished content
 tools/web-search.ts    Placeholder search tool
 app/
-  api/chat/route.ts    Chat API endpoint
+  api/ag-ui/route.ts    AG-UI endpoint
   page.tsx             Chat interface
 ```
 
-This is a starter template to give you a good starting point — not a production-ready setup.
+This starter is not production-ready.

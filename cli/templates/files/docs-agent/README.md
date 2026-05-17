@@ -77,7 +77,7 @@ flowchart LR
 
 **Query**: The user's query is embedded into the same vector space as the documents, then compared against all stored chunks using cosine similarity to find the top-*k* most relevant results.
 
-**RAG**: The `beforeStream` hook in the chat route intercepts each message before it reaches the agent. It searches the document store for relevant chunks, assembles them into context, and prepends them as retrieved reference data. The agent then generates a cited response streamed back to the user.
+**RAG**: The `beforeStream` hook in the AG-UI route intercepts each message before it reaches the agent. It searches the document store for relevant chunks, assembles them into context, and prepends them as retrieved reference data. The agent then generates a cited response streamed back to the user.
 
 ## Structure
 
@@ -88,7 +88,7 @@ content/
   getting-started.md            Sample document
   architecture.md               Sample document
 app/
-  api/chat/route.ts             Chat API endpoint
+  api/ag-ui/route.ts             AG-UI endpoint
   api/uploads/route.ts           Upload (POST) and list (GET) uploads
   api/uploads/[id]/route.ts     Delete upload
   page.tsx                      Chat UI with document upload panel
@@ -103,9 +103,9 @@ app/
 | Upload management | `useUploads` hook | `page.tsx` |
 | Source display | `showSources` prop on `Chat` | `page.tsx` |
 | Upload API routes | `createUploadHandler` | 1-line per route file |
-| Chat API route | `createAgUiHandler` | 1 line in `route.ts` |
+| AG-UI route | `createAgUiHandler` | 1 line in `route.ts` |
 | Agent definition | `agent()` | Config object in `agents/rag.ts` |
-| RAG retrieval | `beforeStream` hook | Context injection in `api/chat/route.ts` |
+| RAG retrieval | `beforeStream` hook | Context injection in `api/ag-ui/route.ts` |
 | Vector store | `ragStore()` | Config in `store.ts` |
 
 ## Adding documents

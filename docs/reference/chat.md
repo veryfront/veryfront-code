@@ -419,7 +419,7 @@ Main chat hook. It uses AG-UI by default and pairs with routes created by
 `createAgUiHandler()`.
 
 ```tsx
-const chat = useChat({ api: "/api/chat" });
+const chat = useChat({ api: "/api/ag-ui" });
 ```
 
 Returns:

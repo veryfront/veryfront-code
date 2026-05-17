@@ -100,10 +100,10 @@ export default agent({
 });
 ```
 
-Expose the agent through a chat route, then ask it to use the skill:
+Expose the agent through an AG-UI route, then ask it to use the skill:
 
 ```bash
-curl -N http://localhost:3000/api/chat \
+curl -N http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Use the code-review skill and summarize what you would check first."}]}]}'
 ```

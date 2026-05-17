@@ -65,7 +65,7 @@ async function trelloFetch<T>(endpoint: string, options: RequestInit = {}): Prom
   // Tokens in query params may be recorded in browser history, server/proxy
   // access logs, and leaked via the Referer header. The Referrer-Policy
   // header (set by Veryfront's security middleware) mitigates the Referer leak.
-  // This is an API design limitation — there is no Authorization header alternative.
+  // This is an API design limitation. There is no Authorization header alternative.
   url.searchParams.set("key", clientId);
   url.searchParams.set("token", token);
 

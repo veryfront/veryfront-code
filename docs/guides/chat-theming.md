@@ -8,7 +8,7 @@ order: 17
 
 Use this guide for visual customization and optional chat UI features.
 
-Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one option at a time, run `veryfront dev`, and verify the chat still sends messages through `/api/chat`.
+Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one option at a time, run `veryfront dev`, and verify the chat still sends messages through `/api/ag-ui`.
 
 ## Theme overrides
 
@@ -74,4 +74,4 @@ Use chat context providers when shared state needs to cross component boundaries
 
 - [Chat UI](./chat-ui.md): preset component
 - [Chat composition](./chat-composition.md): custom layouts
-- [`veryfront/chat`](../reference/chat.md): chat API reference
+- [`veryfront/chat`](../reference/chat.md): chat reference

@@ -9,19 +9,25 @@ order: 10
 The `veryfront/agent` package supports a generic AG-UI transport for hosted
 agent runtimes.
 
-This is the package-level AG-UI contract. The control-plane wrapper convention is `/api/control-plane/agents/*`.
+This is the package-level AG-UI contract. Mount browser-facing AG-UI at
+`POST /api/ag-ui`. Mount durable run command and control as sibling
+`/api/runs*` routes. The signed control-plane wrapper convention is
+`/api/control-plane/agents/*`.
 
 ## Contract
 
 - canonical hosted runtime request contract: `AgUiRuntimeRequestSchema`
 - response body: AG-UI SSE
-- default endpoint convention: `/api/ag-ui`
+- default AG-UI transport endpoint: `POST /api/ag-ui`
 - default detached hosted start endpoint: `POST /api/runs`
 - default hosted resume endpoint: `POST /api/runs/:runId/resume`
 - default hosted cancel endpoint: `DELETE /api/runs/:runId`
 - host path: overrideable by the application
 
 The package defines the runtime contract. The host chooses where to mount it.
+Use `/api/ag-ui` for the streaming AG-UI adapter. Use `/api/runs*` for
+transport-neutral lifecycle operations. Do not mount run control under
+`/api/ag-ui`.
 
 `AgUiRuntimeRequestSchema` is defined in
 [`src/agent/runtime/ag-ui-contract.ts`](../../src/agent/runtime/ag-ui-contract.ts).
@@ -44,6 +50,10 @@ Signed control-plane invocation uses `RuntimeAgentRunInvocationSchema` around
 the runtime request when a trusted control plane owns durable run identity,
 project context, and validated claims. Public AG-UI runtime routes use
 `AgUiRuntimeRequestSchema`.
+
+Conversation-scoped run APIs belong to the Veryfront API service. They are a
+lineage, read, and replay surface for conversation-attached runs, not project
+runtime routes that apps mount next to `app/api/ag-ui/route.ts`.
 
 ## Package API
 
@@ -73,7 +83,7 @@ Browser chat UIs can consume this route with:
 ```tsx
 import { useChat } from "veryfront/chat";
 
-const chat = useChat({ api: "/api/chat" });
+const chat = useChat({ api: "/api/ag-ui" });
 ```
 
 Mount the hosted run-control routes separately with the same session manager.
@@ -322,13 +332,14 @@ const sessionManager = new RunResumeSessionManager<{
 export const DELETE = createAgUiCancelHandler({ sessionManager });
 ```
 
-These handlers are generic package surfaces. They do not include Veryfront
-control-plane auth/signature requirements.
+These handlers are generic package surfaces. They are sibling run-control
+routes for the AG-UI transport. They do not include Veryfront control-plane
+auth/signature requirements.
 
 ## Human input / approval waits
 
 Hosts that need a structured user-input or approval step can compose the same
-public run-control seam with `waitForHumanInput()`:
+public run-control route set with `waitForHumanInput()`:
 
 ```ts
 import {

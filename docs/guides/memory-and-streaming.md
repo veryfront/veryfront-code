@@ -13,7 +13,7 @@ Route examples below use the default app router. Veryfront Code also supports mo
 Memory configuration is independent of model selection, so these examples omit
 `model` and follow the runtime default.
 
-To test these examples, define the agent, expose it through the `/api/chat` route shown below, run `veryfront dev`, and send messages from the [Chat UI](./chat-ui.md) guide or with `curl`.
+To test these examples, define the agent, expose it through the `/api/ag-ui` route shown below, run `veryfront dev`, and send messages from the [Chat UI](./chat-ui.md) guide or with `curl`.
 
 ## Memory types
 
@@ -93,7 +93,7 @@ export default agent({
 Access memory programmatically in API routes:
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { createAgUiHandler, getAgent } from "veryfront/agent";
 
 export const POST = createAgUiHandler("assistant");
@@ -129,7 +129,7 @@ export async function GET() {
 Use `createAgUiHandler()` for chat UI routes. It validates the request, invokes the agent, and returns AG-UI SSE:
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("assistant");
@@ -147,7 +147,7 @@ import { useChat } from "veryfront/chat";
 
 export default function ChatPage() {
   const { messages, input, onChange, onSubmit, isLoading } = useChat({
-    api: "/api/chat",
+    api: "/api/ag-ui",
   });
 
   return (

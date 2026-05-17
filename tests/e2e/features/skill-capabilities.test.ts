@@ -7,7 +7,7 @@
  * - first-class project-root primitives are auto-discovered
  * - discovered tools/prompts/resources/workflows can be exercised end-to-end
  * - skill-directory SKILL.md entries are discoverable at runtime
- * - the 3-minute AI chatbot pattern works with agents/, app/api/chat/route.ts,
+ * - the 3-minute AI chatbot pattern works with agents/, app/api/ag-ui/route.ts,
  *   and a Chat/useChat UI page
  */
 import "../../_helpers/contract-init.ts";
@@ -414,7 +414,7 @@ export const POST = createAgUiHandler("researcher");
 import { Chat, useChat } from "veryfront/chat";
 
 export default function Home() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/ag-ui" });
 
   return <Chat {...chat} className="flex-1 min-h-0" placeholder="Message" />;
 }
@@ -439,7 +439,7 @@ export default agent({
   maxSteps: 5,
 });
 `,
-      "app/api/chat/route.ts": `
+      "app/api/ag-ui/route.ts": `
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("assistant");
@@ -476,7 +476,7 @@ export const POST = createAgUiHandler("assistant");
         code: string;
         fallback: string;
         model: string;
-      }>(server, "/api/chat", {
+      }>(server, "/api/ag-ui", {
         body: {
           messages: [
             {
@@ -525,7 +525,7 @@ export default function Home() {
   return <main id="custom-discovery-page">Custom discovery paths</main>;
 }
 `,
-      "src/app/api/chat/route.ts": `
+      "src/app/api/ag-ui/route.ts": `
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("custom-assistant");
@@ -602,7 +602,7 @@ Use this skill when writing polished copy.
         code: string;
         fallback: string;
         model: string;
-      }>(server, "/api/chat", {
+      }>(server, "/api/ag-ui", {
         body: {
           messages: [
             {

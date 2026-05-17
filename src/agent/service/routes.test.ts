@@ -92,7 +92,6 @@ Deno.test("agent service routes expose the default paths", () => {
   const { routeSet } = createRouteSet();
 
   assertEquals(routeSet.routes.map((route) => `${route.method} ${route.path}`), [
-    "POST /api/ag-ui/messages/stream",
     "POST /api/ag-ui",
     "DELETE /api/runs/:runId",
     "POST /api/runs",

@@ -29,7 +29,7 @@ import { Chat } from "veryfront/react";
 import { useChat } from "veryfront/agent/react";
 
 export default function ChatPage() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/ag-ui" });
 
   return (
     <Chat
@@ -207,7 +207,7 @@ interface AgentTheme {
 
 ## Dark Mode
 
-All components support dark mode automatically via CSS custom properties. Dark mode activates through `prefers-color-scheme: dark`, a `.dark` class, or `[data-theme="dark"]` on a parent element. No `dark:` Tailwind variants are needed — the token system handles it:
+All components support dark mode automatically via CSS custom properties. Dark mode activates through `prefers-color-scheme: dark`, a `.dark` class, or `[data-theme="dark"]` on a parent element. No `dark:` Tailwind variants are needed. The token system handles it:
 
 ```tsx
 <Chat {...chat} />;
@@ -274,7 +274,7 @@ import { Chat } from "veryfront/react";
 import { useChat } from "veryfront/agent/react";
 
 export default function App() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/ag-ui" });
   return <Chat {...chat} />;
 }
 ```
@@ -344,7 +344,7 @@ function CustomMessage({ message }: { message: ChatMessage }) {
 }
 
 export default function AdvancedChat() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/ag-ui" });
 
   return (
     <Chat
@@ -446,7 +446,7 @@ function getTextContent(message: ChatMessage): string {
 
 // Hooks only (v5 API)
 const { messages, input, sendMessage, handleSubmit } = useChat({
-  api: "/api/chat",
+  api: "/api/ag-ui",
 });
 return <YourCompletelyCustomUI />;
 ```

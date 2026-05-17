@@ -29,10 +29,10 @@ describe("Feature: Chat Fallback", {
 
   it("should return 503 with NO_AI_AVAILABLE when no API key is set", async () => {
     // Use pages/ directory (simpler, known to work with e2e infra).
-    // The chat API route registers an agent inline.
+    // The AG-UI API route registers an agent inline.
     const projectDir = await createProject("ai-fallback", pages.basic, {
       files: {
-        "pages/api/chat.ts": `
+        "pages/api/ag-ui.ts": `
 import { agent, createAgUiHandler } from "veryfront/agent";
 
 const assistant = agent({
@@ -49,7 +49,7 @@ export const POST = createAgUiHandler("test-assistant");
     // Longer timeout — agent imports are heavier than simple API routes.
     await withServer(projectDir, async (server) => {
       const response = await fetch(
-        `http://127.0.0.1:${server.port}/api/chat`,
+        `http://127.0.0.1:${server.port}/api/ag-ui`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -86,7 +86,7 @@ export const POST = createAgUiHandler("test-assistant");
   it("should not expose the agent system prompt in the 503 fallback response", async () => {
     const projectDir = await createProject("ai-fallback-prompt", pages.basic, {
       files: {
-        "pages/api/chat.ts": `
+        "pages/api/ag-ui.ts": `
 import { agent, createAgUiHandler } from "veryfront/agent";
 
 agent({
@@ -102,7 +102,7 @@ export const POST = createAgUiHandler("custom-bot");
 
     await withServer(projectDir, async (server) => {
       const response = await fetch(
-        `http://127.0.0.1:${server.port}/api/chat`,
+        `http://127.0.0.1:${server.port}/api/ag-ui`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },

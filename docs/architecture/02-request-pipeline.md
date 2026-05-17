@@ -19,17 +19,18 @@ Primary source areas:
 
 ## Request classes
 
-| Request class         | Handler ownership                           |
-| --------------------- | ------------------------------------------- |
-| Static assets         | Static file handlers                        |
-| Runtime modules       | Module request handlers                     |
-| API routes            | API route handlers and route resolver       |
-| Page routes           | Rendering service entrypoints               |
-| MCP endpoint          | MCP runtime handler                         |
-| AG-UI endpoint        | Agent stream and run-control handlers       |
-| Control-plane channel | Signed channel dispatch and invoke handlers |
-| Monitoring and health | Monitoring handlers                         |
-| Dev-only endpoints    | Dev server and dashboard handlers           |
+| Request class         | Handler ownership                            |
+| --------------------- | -------------------------------------------- |
+| Static assets         | Static file handlers                         |
+| Runtime modules       | Module request handlers                      |
+| API routes            | API route handlers and route resolver        |
+| Page routes           | Rendering service entrypoints                |
+| MCP endpoint          | MCP runtime handler                          |
+| AG-UI endpoint        | Agent stream handlers                        |
+| Run-control endpoint  | Agent run start, resume, and cancel handlers |
+| Control-plane channel | Signed channel dispatch and invoke handlers  |
+| Monitoring and health | Monitoring handlers                          |
+| Dev-only endpoints    | Dev server and dashboard handlers            |
 
 ## Flow
 
@@ -42,7 +43,8 @@ flowchart TD
   classify --> api[API route handler]
   classify --> page[Rendering service]
   classify --> mcp[MCP runtime handler]
-  classify --> agui[AG-UI stream or run-control handler]
+  classify --> agui[AG-UI stream handler]
+  classify --> runctl[Run-control handler]
   classify --> channel[Signed control-plane handler]
   classify --> health[Monitoring or health handler]
   classify --> dev[Dev-only handler]
@@ -56,6 +58,7 @@ flowchart TD
   appResponse --> normalize
   mcp --> normalize
   agui --> normalize
+  runctl --> normalize
   channel --> normalize
   health --> normalize
   dev --> normalize
@@ -73,6 +76,8 @@ flowchart TD
 - Rendering details belong in [rendering runtime](./12-rendering-runtime.md).
 - MCP dispatch belongs in [MCP runtime](./07-mcp-runtime.md).
 - AG-UI stream encoding belongs in [AG-UI transport](./10-ag-ui-transport.md).
+- `/api/runs*` run-control handlers are sibling runtime APIs, not child routes
+  under `/api/ag-ui`.
 - Control-plane signature handling belongs in
   [control-plane channels](./09-control-plane-channels.md).
 

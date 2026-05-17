@@ -57,10 +57,10 @@ export default agent({
 
 ### Invoke the orchestrator
 
-Expose the orchestrator through a chat route:
+Expose the orchestrator through an AG-UI route:
 
 ```ts
-// app/api/chat/route.ts
+// app/api/ag-ui/route.ts
 import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("orchestrator");
@@ -69,7 +69,7 @@ export const POST = createAgUiHandler("orchestrator");
 Run the dev server and ask for an output that requires delegation:
 
 ```bash
-curl -N http://localhost:3000/api/chat \
+curl -N http://localhost:3000/api/ag-ui \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Research Deno Deploy and write a short technical summary."}]}]}'
 ```

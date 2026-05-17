@@ -14,8 +14,8 @@ A simple conversational AI with tool support.
 agents/assistant.ts    Agent definition
 tools/calculator.ts    Example tool
 app/
-  api/chat/route.ts    Chat API endpoint
+  api/ag-ui/route.ts    AG-UI endpoint
   page.tsx             Chat interface
 ```
 
-This is a starter template to give you a good starting point — not a production-ready setup.
+This starter is not production-ready.

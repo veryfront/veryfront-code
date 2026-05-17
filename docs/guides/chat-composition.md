@@ -8,7 +8,7 @@ order: 15
 
 Use composition when the preset `Chat` component is too constrained but you still want Veryfront to own the chat wiring.
 
-The examples use the same `useChat({ api: "/api/chat" })` setup as the [Chat UI](./chat-ui.md) guide. Create the chat route first, then render these components in a client page and verify them with `veryfront dev`.
+The examples use the same `useChat({ api: "/api/ag-ui" })` setup as the [Chat UI](./chat-ui.md) guide. Create the AG-UI route first, then render these components in a client page and verify them with `veryfront dev`.
 
 ## Layout components
 
@@ -17,7 +17,7 @@ The examples use the same `useChat({ api: "/api/chat" })` setup as the [Chat UI]
 import { Chat, useChat } from "veryfront/chat";
 
 export default function CustomLayout() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/ag-ui" });
 
   return (
     <Chat.Root {...chat}>
@@ -65,7 +65,7 @@ import { Message } from "veryfront/chat";
 import { ChatWithSidebar, useChat } from "veryfront/chat";
 
 function App() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/ag-ui" });
   return (
     <ChatWithSidebar
       chat={chat}
@@ -83,4 +83,4 @@ function App() {
 ## Related
 
 - [Chat UI](./chat-ui.md): preset chat component
-- [`veryfront/chat`](../reference/chat.md): chat API reference
+- [`veryfront/chat`](../reference/chat.md): chat reference
