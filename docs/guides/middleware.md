@@ -8,7 +8,10 @@ order: 7
 
 CORS, rate limiting, logging, and custom middleware pipelines.
 
-Examples below use the default app router. Veryfront Code also supports API routes under `pages/api/**`, but the pages router uses a different handler module shape than `app/api/**/route.*`.
+The middleware pipeline works in both router styles. The route module wrapper changes:
+
+- App router API routes live at `app/api/**/route.ts` and export named HTTP method handlers such as `GET` or `POST`. The handler receives the `Request` directly.
+- Pages router API routes live at `pages/api/**` and export named HTTP method handlers or a `default` fallback handler. The handler receives an `APIContext` as `ctx`; use `ctx.request` when a middleware expects a `Request`.
 
 ## Built-in middleware
 
@@ -81,12 +84,29 @@ const pipeline = new MiddlewarePipeline()
 
 ```ts
 // app/api/users/route.ts
+const users = [{ id: "user_123", name: "Ada Lovelace" }];
+
 export async function GET(request: Request) {
   const result = await pipeline.execute(request);
   if (result) return result; // Middleware returned a response (e.g., rate limit exceeded)
 
-  const users = await db.users.findMany();
   return Response.json(users);
+}
+```
+
+The same pipeline can run in a pages router handler by passing `ctx.request`:
+
+```ts
+// pages/api/users.ts
+import type { APIContext } from "veryfront";
+
+const users = [{ id: "user_123", name: "Ada Lovelace" }];
+
+export async function GET(ctx: APIContext) {
+  const result = await pipeline.execute(ctx.request);
+  if (result) return result; // Middleware returned a response (e.g., rate limit exceeded)
+
+  return ctx.json(users);
 }
 ```
 

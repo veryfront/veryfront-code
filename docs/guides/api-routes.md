@@ -8,7 +8,29 @@ order: 6
 
 HTTP handlers, request parsing, and streaming responses.
 
-Examples below use the default app router. Veryfront Code also supports API routes under `pages/api/**`, but the pages router uses a different handler module shape than `app/api/**/route.*`.
+Veryfront supports API routes in the app router and the pages router. The router changes the file location and handler arguments. The request and response APIs stay based on the standard Web `Request` and `Response` objects.
+
+## Router module shapes
+
+Use `app/api/**/route.ts` in the app router. Export named HTTP method handlers. Each handler receives the `Request` directly and receives route params in the second argument.
+
+```ts
+// app/api/hello/route.ts
+export function GET() {
+  return Response.json({ message: "Hello, world!" });
+}
+```
+
+Use `pages/api/**` in the pages router. Export named HTTP method handlers or a `default` fallback handler. Each handler receives an `APIContext` as `ctx`; use `ctx.request` for the raw request, `ctx.params` for route params, `ctx.query` for query parameters, and `ctx.json()` or `Response.json()` to return JSON.
+
+```ts
+// pages/api/hello.ts
+import type { APIContext } from "veryfront";
+
+export function GET(ctx: APIContext) {
+  return ctx.json({ message: "Hello, world!" });
+}
+```
 
 ## Basic route
 
@@ -27,40 +49,86 @@ Export any standard HTTP method:
 
 ```ts
 // app/api/users/route.ts
+const users = [{ id: "user_123", name: "Ada Lovelace" }];
+
 export async function GET() {
-  const users = await db.users.findMany();
   return Response.json(users);
 }
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const user = await db.users.create(body);
+  const user = { id: "user_456", ...body };
   return Response.json(user, { status: 201 });
 }
 
 export async function DELETE(request: Request) {
   const { id } = await request.json();
-  await db.users.delete(id);
+  if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
+  return new Response(null, { status: 204 });
+}
+```
+
+The same pages router route uses `ctx`:
+
+```ts
+// pages/api/users.ts
+import type { APIContext } from "veryfront";
+
+const users = [{ id: "user_123", name: "Ada Lovelace" }];
+
+export async function GET(ctx: APIContext) {
+  return ctx.json(users);
+}
+
+export async function POST(ctx: APIContext) {
+  const body = await ctx.request.json();
+  const user = { id: "user_456", ...body };
+  return ctx.json(user, { status: 201 });
+}
+
+export async function DELETE(ctx: APIContext) {
+  const { id } = await ctx.request.json();
+  if (!id) return ctx.json({ error: "Missing id" }, { status: 400 });
   return new Response(null, { status: 204 });
 }
 ```
 
 ## Dynamic parameters
 
-Use brackets in the path, then read params from the URL:
+Use brackets in the path, then read params from the route context:
 
 ```ts
 // app/api/users/[id]/route.ts
-export async function GET(request: Request) {
-  const url = new URL(request.url);
-  const id = url.pathname.split("/").pop();
-  const user = await db.users.findById(id);
+export async function GET(
+  _request: Request,
+  { params }: { params: Record<string, string> },
+) {
+  const id = params.id;
 
-  if (!user) {
+  if (!id) {
     return Response.json({ error: "Not found" }, { status: 404 });
   }
 
+  const user = { id, name: "Ada Lovelace" };
   return Response.json(user);
+}
+```
+
+In the pages router, params are available on `ctx.params`:
+
+```ts
+// pages/api/users/[id].ts
+import type { APIContext } from "veryfront";
+
+export async function GET(ctx: APIContext) {
+  const id = String(ctx.params.id ?? "");
+
+  if (!id) {
+    return ctx.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const user = { id, name: "Ada Lovelace" };
+  return ctx.json(user);
 }
 ```
 

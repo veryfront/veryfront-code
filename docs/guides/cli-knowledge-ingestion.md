@@ -56,9 +56,9 @@ veryfront login
 
 `veryfront knowledge ingest` requires `python3`.
 
-Inside the Veryfront sandbox image, the embedded parser uses `docling` for PDF, Office, and HTML extraction.
+Inside a Veryfront sandbox, `docling` and the fallback parser packages are already installed. The embedded parser uses `docling` first for PDF, Office, and HTML extraction.
 
-If you are running outside the Veryfront sandbox image, install `docling` to match the sandbox parsing path:
+If you run the CLI outside a Veryfront sandbox, install `docling` and the fallback parser packages to match the sandbox parsing path:
 
 ```bash
 pip install docling pandas openpyxl xlrd pdfplumber python-docx python-pptx beautifulsoup4 lxml
@@ -213,11 +213,11 @@ veryfront knowledge ingest uploads/contracts/q1.pdf --project my-project --json
 
 ### Python package errors
 
-Install the parser packages listed above, or run the command inside the Veryfront sandbox image where the knowledge-ingestion stack is already available.
+Install the parser packages listed above, or run the command inside a Veryfront sandbox where the knowledge-ingestion stack is already available.
 
 ### `docling` is not installed
 
-Inside the sandbox image, `docling` is preinstalled. Outside the sandbox, install `docling` if you want the same extraction path locally. If `docling` is not installed or extraction fails, the command falls back to the Python parser stack for supported formats.
+Inside a Veryfront sandbox, `docling` is already installed. Outside a Veryfront sandbox, install `docling` if you want the same extraction path locally. If `docling` is not installed or extraction fails, the command falls back to the Python parser stack for supported formats.
 
 ## Recommended agent flow
 
