@@ -53,6 +53,31 @@ describe("agent/ag-ui-host-support", () => {
     assertEquals(Array.isArray(body.details), true);
   });
 
+  it("returns a 400 Response for oversized AG-UI text parts", async () => {
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "x".repeat(10_001) }],
+        }],
+      }),
+    });
+
+    const result = await parseAgUiRequestOrError(request);
+
+    assertInstanceOf(result, Response);
+    assertEquals(result.status, 400);
+    const body = await result.json();
+    assertEquals(body.error, "Invalid AG-UI request");
+    assertStringIncludes(
+      body.details[0]?.message ?? "",
+      "Text message parts must include text less than 10000 characters",
+    );
+  });
+
   it("returns a 400 Response from parseAgUiRequestOrError for malformed JSON bodies", async () => {
     const request = new Request("http://localhost/api/ag-ui", {
       method: "POST",
