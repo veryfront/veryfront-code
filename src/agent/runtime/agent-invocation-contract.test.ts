@@ -74,6 +74,52 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(parsed.tools[0]?.name, "studio_focus_component");
   });
 
+  it("accepts main branch runtime targets without branch or environment selectors", () => {
+    const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
+      run: {
+        agentServiceId: "1-runtime-provider",
+        agentId: "builder",
+        conversationId,
+        runId: "run_root_1",
+        messageId,
+        inputAnchorMessageId,
+        requestedByUserId: userId,
+        project: {
+          projectId,
+          projectSlug: "demo-project",
+          runtimeTargetKind: "main_branch",
+        },
+        validatedClaims: {
+          subject: userId,
+          projectId,
+          projectSlug: "demo-project",
+          scopes: ["agent:run"],
+        },
+      },
+    }));
+
+    assertEquals(parsed.run.project.runtimeTargetKind, "main_branch");
+    assertThrows(() =>
+      RuntimeAgentRunInvocationSchema.parse(createInvocation({
+        run: {
+          agentServiceId: "1-runtime-provider",
+          agentId: "builder",
+          conversationId,
+          runId: "run_root_1",
+          messageId,
+          inputAnchorMessageId,
+          requestedByUserId: userId,
+          project: {
+            projectId,
+            projectSlug: "demo-project",
+            runtimeTargetKind: "main_branch",
+            runtimeTargetBranchId: branchId,
+          },
+        },
+      }))
+    );
+  });
+
   it("enforces child-run lineage before invoking a runtime agent service", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       run: {

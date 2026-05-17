@@ -129,7 +129,7 @@ export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
 export const RuntimeAgentSourceContextSchema = lazySchema(getRuntimeAgentSourceContextSchema);
 
 export const getRuntimeAgentTargetKindSchema = defineSchema((v) =>
-  v.enum(["production", "environment", "preview_branch"])
+  v.enum(["main_branch", "environment", "preview_branch"])
 );
 
 /** @deprecated Use getRuntimeAgentTargetKindSchema() */
@@ -146,11 +146,11 @@ export function validateRuntimeAgentTargetSelection(
   ctx: RefinementCtx,
 ) {
   const kind = input.runtimeTargetKind;
-  if (!kind || kind === "production") {
+  if (!kind || kind === "main_branch") {
     if (input.runtimeTargetEnvironmentId || input.runtimeTargetBranchId) {
       ctx.addIssue({
         code: "custom",
-        message: "production target does not accept environment or branch identifiers",
+        message: "main_branch target does not accept environment or branch identifiers",
         path: ["runtimeTargetKind"],
       });
     }

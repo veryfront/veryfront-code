@@ -95,7 +95,7 @@ describe("agent/agent-trace-attributes", () => {
         childRunId: "run-child",
         childMessageId: "message-child",
         sourceTargetKind: "project",
-        runtimeTargetKind: "production",
+        runtimeTargetKind: "main_branch",
         status: "completed",
         usage: {
           inputTokens: 10,
@@ -111,7 +111,7 @@ describe("agent/agent-trace-attributes", () => {
         "child.run.id": "run-child",
         "child.message.id": "message-child",
         "source.target.kind": "project",
-        "runtime.target.kind": "production",
+        "runtime.target.kind": "main_branch",
         "agent.run.final_status": "completed",
         "tool.name": "invoke_agent",
         "tool.call.id": "tool-call-1",

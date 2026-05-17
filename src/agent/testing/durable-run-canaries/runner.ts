@@ -158,6 +158,27 @@ function createApiUrl(config: DurableRunCanaryApiConfig, path: string): URL {
   return new URL(relativePath, baseHref);
 }
 
+function buildCreateRootRunTargetFields(config: DurableRunCanaryApiConfig) {
+  if (!config.projectId) {
+    return {};
+  }
+
+  if (config.branchId) {
+    return {
+      source_target_kind: "preview_branch",
+      runtime_target_kind: "preview_branch",
+      source_target_branch_id: config.branchId,
+      runtime_target_branch_id: config.branchId,
+    } as const;
+  }
+
+  return {
+    source_target_kind: "project",
+    runtime_target_kind: "main_branch",
+    runtime_target_branch_id: null,
+  } as const;
+}
+
 function buildCreateRootRunBody(
   config: DurableRunCanaryApiConfig,
   input: DurableRunCanaryCreateRootRunInput,
@@ -173,13 +194,7 @@ function buildCreateRootRunBody(
       mode: "default_chat",
       agent_id: config.agentId,
       initial_status: "pending",
-      ...(config.projectId
-        ? {
-          source_target_kind: "project",
-          runtime_target_kind: "production",
-          runtime_target_branch_id: config.branchId ?? null,
-        }
-        : {}),
+      ...buildCreateRootRunTargetFields(config),
     },
   };
 }

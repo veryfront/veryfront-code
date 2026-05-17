@@ -123,6 +123,14 @@ describe("agent/durable", () => {
     });
   });
 
+  it("resolves project main branch targets with main_branch runtime metadata", () => {
+    assertEquals(resolveConversationRunTargets({ projectId: PROJECT_ID, branchId: null }), {
+      sourceTargetKind: "project",
+      runtimeTargetKind: "main_branch",
+      targetBranchId: null,
+    });
+  });
+
   it("creates a conversation-owned durable run without target metadata for non-project runs", async () => {
     const fetchCalls = stubFetchSequence(
       acceptedRunResponse({ run_id: "run_root_1" }),
