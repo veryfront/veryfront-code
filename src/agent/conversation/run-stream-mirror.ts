@@ -8,7 +8,7 @@ import {
   createConversationRunMirror,
 } from "./run-mirror.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
-import { type ConversationRunEventQueueController } from "../durable.ts";
+import { type ConversationRunEventQueueController } from "./durable.ts";
 
 export interface ConversationRunStreamMirror {
   handleStreamEvent(event: ChatStreamEvent): void;

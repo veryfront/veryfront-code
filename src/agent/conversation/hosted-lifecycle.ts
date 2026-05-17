@@ -3,13 +3,13 @@ import {
   type ConversationAgentRunUsage,
   type ConversationRunProjection,
   finalizeConversationAgentRun,
-} from "../durable.ts";
+} from "./durable.ts";
 import { prepareConversationRunStreamEvents } from "./run-event-preparation.ts";
 import {
   type InvokeAgentChildRunProgressEvent,
   type InvokeAgentChildRunProgressInput,
   publishInvokeAgentChildRunProgress,
-} from "../invoke-agent-child-runs.ts";
+} from "../child-run/invoke-agent-child-runs.ts";
 import type { ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import type {
   HostedChildLifecycleAdapter,

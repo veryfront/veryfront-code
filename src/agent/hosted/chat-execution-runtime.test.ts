@@ -9,7 +9,7 @@ import type {
   HostedChatRuntimeToUiMessageStreamOptions,
 } from "./chat-runtime-contract.ts";
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
-import { createMirroredToolChunkState } from "../mirrored-tool-chunk-state.ts";
+import { createMirroredToolChunkState } from "../streaming/mirrored-tool-chunk-state.ts";
 import {
   cleanupAfterHostedChatExecutionFinalization,
   createBootstrappedHostedChatExecutionRuntime,

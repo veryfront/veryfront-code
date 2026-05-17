@@ -5,7 +5,7 @@ import type {
   ChatUiMessageChunk,
   MessageMetadata,
 } from "../../chat/types.ts";
-import type { AgentRuntimeMessage } from "../agent-runtime-message-adapter.ts";
+import type { AgentRuntimeMessage } from "../runtime/message-adapter.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";

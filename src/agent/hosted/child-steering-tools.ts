@@ -1,12 +1,12 @@
 import type { HostToolDefinition, HostToolSet, ToolExecutionContext } from "#veryfront/tool";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
-import { getConfirmedProjectContextSwitchId } from "../project-context.ts";
+import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
 import {
   getProjectSteeringMutation,
   isSuccessfulProjectSteeringMutationResult,
   type ProjectSteeringMutationResult,
   type ProjectSteeringPaths,
-} from "../project-steering-mutation.ts";
+} from "../project/steering-mutation.ts";
 
 export type HostedChildSteeringMutationHandler = (
   mutation: ProjectSteeringMutationResult,

@@ -16,13 +16,13 @@ import {
 } from "../service/mcp-server-config.ts";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
-import { getConfirmedProjectContextSwitchId } from "../project-context.ts";
+import { getConfirmedProjectContextSwitchId } from "../project/context.ts";
 import {
   getProjectSteeringMutation,
   isSuccessfulProjectSteeringMutationResult,
   type ProjectSteeringMutationResult,
   type ProjectSteeringPaths,
-} from "../project-steering-mutation.ts";
+} from "../project/steering-mutation.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
 
 export type HostedProjectRemoteToolSourceMutationHandler = (

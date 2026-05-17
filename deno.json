@@ -48,8 +48,8 @@
     "./agent": "./src/agent/index.ts",
     "./agent/testing": "./src/agent/testing/index.ts",
     "./agent/conversation-bootstrap": "./src/agent/conversation/bootstrap.ts",
-    "./agent/durable": "./src/agent/durable.ts",
-    "./agent/invoke-agent-child-runs": "./src/agent/invoke-agent-child-runs.ts",
+    "./agent/durable": "./src/agent/conversation/durable.ts",
+    "./agent/invoke-agent-child-runs": "./src/agent/child-run/invoke-agent-child-runs.ts",
     "./channels/control-plane": "./src/channels/control-plane.ts",
     "./channels/invoke": "./src/channels/invoke.ts",
     "./tool": "./src/tool/index.ts",
@@ -96,7 +96,7 @@
     "./chat/final-step-fallback": "./src/chat/final-step-fallback.ts",
     "./chat/provider-errors": "./src/chat/provider-errors.ts",
     "./chat/stream-watchdog": "./src/chat/stream-watchdog.ts",
-    "./agent/request-auth-cache": "./src/agent/request-auth-cache.ts",
+    "./agent/request-auth-cache": "./src/agent/service/request-auth-cache.ts",
     "./server": "./src/server/index.ts"
   },
   "imports": {

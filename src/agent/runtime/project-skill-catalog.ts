@@ -2,7 +2,7 @@ import { basename } from "node:path";
 import {
   DEFAULT_PROJECT_STEERING_PATHS,
   type ProjectSteeringPaths,
-} from "../project-steering-mutation.ts";
+} from "../project/steering-mutation.ts";
 import type {
   RuntimeGetProjectFileOptions,
   RuntimeProjectFile,

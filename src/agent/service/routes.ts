@@ -5,7 +5,7 @@ import { createAgUiRunErrorEvent, createAgUiSseErrorResponse } from "../ag-ui/ho
 import { createAgUiRuntimeHandler } from "../ag-ui/runtime-handler.ts";
 import { createAgUiCancelHandler } from "../ag-ui/run-control.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
-import type { DetachedRunTracker } from "../detached-run-tracker.ts";
+import type { DetachedRunTracker } from "./detached-run-tracker.ts";
 import {
   buildParsedHostedAgUiRequest,
   createHostedAgUiValidationErrorResponse,
@@ -18,8 +18,8 @@ import {
 } from "../hosted/chat-request-parser.ts";
 import { executeHostedDurableChatRun } from "../hosted/durable-chat-run-start.ts";
 import { type HostedServiceAuthenticatedRequest, HostedServiceAuthError } from "./auth.ts";
-import { createRequestAuthCache } from "../request-auth-cache.ts";
-import { isResponseLike } from "../response-like.ts";
+import { createRequestAuthCache } from "./request-auth-cache.ts";
+import { isResponseLike } from "./response-like.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 
 export type HostedAgentServiceRoutesLogger = {

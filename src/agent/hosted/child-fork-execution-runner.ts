@@ -28,7 +28,7 @@ import {
 import {
   type AgentRuntimeForkStepRunner,
   runAgentRuntimeForkStep,
-} from "../fork-runtime-stream.ts";
+} from "../streaming/fork-runtime-stream.ts";
 import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,

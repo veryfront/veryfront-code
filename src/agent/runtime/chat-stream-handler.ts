@@ -10,7 +10,11 @@
 
 import type { RuntimeStreamPart, RuntimeStreamResult } from "./runtime-tool-types.ts";
 import { sendSSE } from "./sse-utils.ts";
-import { mergeToolCallInput, mergeToolInputDelta, parseToolInputObject } from "../data-stream.ts";
+import {
+  mergeToolCallInput,
+  mergeToolInputDelta,
+  parseToolInputObject,
+} from "../streaming/data-stream.ts";
 import { isDynamicTool } from "./tool-helpers.ts";
 import { serverLogger } from "#veryfront/utils";
 import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";

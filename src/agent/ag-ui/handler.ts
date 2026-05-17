@@ -1,4 +1,4 @@
-import { isResponseLike } from "../response-like.ts";
+import { isResponseLike } from "../service/response-like.ts";
 import { getAgent } from "../composition/index.ts";
 import type { Agent } from "../types.ts";
 import {
@@ -12,7 +12,7 @@ import {
   formatAgUiEvent,
   mapRuntimeEventToAgUi,
 } from "#veryfront/internal-agents/ag-ui-sse.ts";
-import { streamDataStreamEvents } from "../data-stream.ts";
+import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import {
   type AgUiRequest,
   normalizeAgUiMessages,

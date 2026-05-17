@@ -5,7 +5,7 @@ import {
   buildChildRunExecutionSnapshot,
   type ChildRunExecutionResult,
 } from "../child-run/execution-snapshot.ts";
-import type { ConversationRunTargets } from "../durable.ts";
+import type { ConversationRunTargets } from "../conversation/durable.ts";
 import {
   buildHostedDurableChildInvokeFailureResult,
   buildHostedDurableChildInvokeSuccessResult,
@@ -16,7 +16,7 @@ import {
   type HostedDurableChildSetupFailure,
   type HostedDurableChildSuccess,
 } from "./durable-child-fork-execution.ts";
-import type { InvokeAgentChildRunProgressEvent } from "../invoke-agent-child-runs.ts";
+import type { InvokeAgentChildRunProgressEvent } from "../child-run/invoke-agent-child-runs.ts";
 
 const API_URL = "https://api.example.com";
 const AUTH_TOKEN = "token-123";

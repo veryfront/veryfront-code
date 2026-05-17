@@ -1,4 +1,4 @@
-import type { ConversationRunProjection } from "../durable.ts";
+import type { ConversationRunProjection } from "./durable.ts";
 
 export interface ConversationRunContext {
   run: ConversationRunProjection | null;

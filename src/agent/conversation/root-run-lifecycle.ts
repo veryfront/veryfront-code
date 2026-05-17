@@ -11,7 +11,7 @@ import {
   type HostedConversationRunChunkMirrorInstrumentation,
 } from "./run-chunk-mirror.ts";
 import { type ConversationRunEvent } from "./run-events.ts";
-import type { ConversationRunProjection } from "../durable.ts";
+import type { ConversationRunProjection } from "./durable.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 
 export interface ConversationRootRunLifecycle<TMirror> extends ConversationRootRunContext {

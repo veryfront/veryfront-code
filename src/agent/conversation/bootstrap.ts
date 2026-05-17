@@ -2,7 +2,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts";
 import { isUuid, toConversationPartsFromUiMessage } from "#veryfront/chat/conversation.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
-import { type ConversationRunProjection, createConversationAgentRun } from "../durable.ts";
+import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
 
 const CONVERSATION_API_TIMEOUT_MS = 15_000;
 

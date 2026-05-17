@@ -15,7 +15,7 @@ import {
   cloneMirroredToolChunkState,
   type MirroredToolChunkState,
   recordMirroredToolChunkState,
-} from "../mirrored-tool-chunk-state.ts";
+} from "../streaming/mirrored-tool-chunk-state.ts";
 
 export interface BuildFinalizedMessageStateInput {
   responseMessage: ChatUiMessage;

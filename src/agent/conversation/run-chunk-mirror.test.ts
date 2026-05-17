@@ -6,7 +6,7 @@ import type {
   ConversationRunEventQueueController,
   ConversationRunEventQueueFlushResult,
   ConversationRunEventQueueSnapshot,
-} from "../durable.ts";
+} from "./durable.ts";
 import type { ConversationRunEvent } from "./run-events.ts";
 import {
   createConversationRunChunkMirror,

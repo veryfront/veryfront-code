@@ -46,7 +46,7 @@ import {
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
-import { AGENT_DEFAULTS } from "../defaults.ts";
+import { AGENT_DEFAULTS } from "./defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
