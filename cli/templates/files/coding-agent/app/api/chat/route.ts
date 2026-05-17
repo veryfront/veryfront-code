@@ -1,3 +1,3 @@
-import { createChatHandler } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export const POST = createChatHandler("coder");
+export const POST = createAgUiHandler("coder");

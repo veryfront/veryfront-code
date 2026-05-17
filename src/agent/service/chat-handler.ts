@@ -158,7 +158,7 @@ function isTextPart(part: unknown): part is ParsedTextPart {
   return typeof part === "object" && part !== null && "type" in part && part.type === "text";
 }
 
-function extractLastUserText(messages: ParsedMessage[]): string {
+export function extractLastUserText(messages: Array<{ role: string; parts: unknown[] }>): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     const message = messages[i];
     if (!message || message.role !== "user") continue;
@@ -276,7 +276,7 @@ function normalizeHookMessages(
   }) as Message[];
 }
 
-function applyBeforeStreamResult(
+export function applyBeforeStreamResult(
   baseMessages: Message[],
   result: ChatHandlerBeforeStreamResult | undefined,
 ): Message[] {
@@ -294,7 +294,7 @@ function applyBeforeStreamResult(
   ];
 }
 
-/** Options for `createChatHandler` — customize the context passed to the agent. */
+/** Options for legacy `createChatHandler` compatibility. */
 export interface ChatHandlerOptions {
   /** Override context passed to agent.stream(). Default: `{ userId: "current-user" }` */
   context?:
@@ -371,6 +371,8 @@ function extractRequest(requestOrCtx: unknown): Request {
 
 /**
  * Create a POST handler for a chat API route.
+ *
+ * @deprecated Use `createAgUiHandler()` for chat UI routes.
  *
  * Works with both App Router and Pages Router:
  * - App Router: `app/api/chat/route.ts` — handler receives `(request, context)`

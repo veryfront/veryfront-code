@@ -210,7 +210,7 @@ import {
 import { useChat } from "veryfront/agent/react";
 
 export function DesignSystemChat() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
 
   return (
     <ChatContainer className="flex flex-col h-screen max-w-2xl mx-auto">

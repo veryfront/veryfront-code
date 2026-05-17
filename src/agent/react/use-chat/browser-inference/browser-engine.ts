@@ -5,9 +5,13 @@
  * and synthesizes the same streaming updates that handleStreamingResponse produces.
  */
 
-import type { BrowserInferenceStatus, ChatMessage, ChatMessagePart } from "../types.ts";
-import { generateClientId } from "../utils.ts";
-import { BrowserInferenceClient } from "./worker-client.ts";
+import type {
+  BrowserInferenceStatus,
+  ChatMessage,
+  ChatMessagePart,
+} from "#veryfront/agent/react/use-chat/types.ts";
+import { generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
+import { BrowserInferenceClient } from "#veryfront/agent/react/use-chat/browser-inference/worker-client.ts";
 
 /** Default max tokens for browser-side inference */
 const DEFAULT_BROWSER_MAX_TOKENS = 512;

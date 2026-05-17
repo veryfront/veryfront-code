@@ -3,7 +3,7 @@
 import { Chat, useChat } from 'veryfront/chat'
 
 export default function CodeAgent(): JSX.Element {
-  const chat = useChat({ api: '/api/chat' })
+  const chat = useChat({ api: '/api/chat', transport: 'ag-ui' })
 
   return (
     <Chat

@@ -72,17 +72,13 @@
  * @example Streaming API route
  * ```ts
  * // app/api/chat/route.ts
- * import { agent } from "veryfront/agent";
+ * import { agent, createAgUiHandler } from "veryfront/agent";
  *
  * const assistant = agent({
  *   system: "You are a helpful assistant.",
  * });
  *
- * export async function POST(req: Request) {
- *   const { messages } = await req.json();
- *   const result = await assistant.stream({ messages });
- *   return result.toDataStreamResponse();
- * }
+ * export const POST = createAgUiHandler({ agent: assistant });
  * ```
  *
  * @example Multi-agent composition

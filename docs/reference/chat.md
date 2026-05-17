@@ -416,8 +416,7 @@ Input area state. Provided by Composer components.
 ### `useChat`
 
 Main chat hook. Use `transport: "ag-ui"` with routes created by
-`createAgUiHandler()`. Omit `transport` only for routes that return the older
-Veryfront chat stream protocol.
+`createAgUiHandler()`.
 
 ```tsx
 const chat = useChat({ api: "/api/chat", transport: "ag-ui" });

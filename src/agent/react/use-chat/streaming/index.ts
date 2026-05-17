@@ -4,7 +4,10 @@
  * @module agent/react/use-chat/streaming
  */
 
-export { handleAgUiStreamingResponse, handleStreamingResponse } from "./handler.ts";
+export {
+  handleAgUiStreamingResponse,
+  handleStreamingResponse,
+} from "#veryfront/agent/react/use-chat/streaming/handler.ts";
 export type {
   OrderedReasoning,
   OrderedToolCall,
@@ -12,4 +15,4 @@ export type {
   StreamingReasoning,
   StreamingToolCall,
   TextBlock,
-} from "./types.ts";
+} from "#veryfront/agent/react/use-chat/streaming/types.ts";

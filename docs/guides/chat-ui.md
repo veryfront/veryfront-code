@@ -60,14 +60,14 @@ curl -N http://localhost:3000/api/chat \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Say hello."}]}]}'
 ```
 
-## Legacy chat transport
+## Add request preprocessing
 
-Use `createChatHandler` only when you need the older Veryfront chat stream protocol or its `beforeStream` hook:
+Use `beforeStream` on `createAgUiHandler` when the route needs to add context, enforce authorization, or short-circuit a request before the agent runs:
 
 ```ts
-import { createChatHandler } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export const POST = createChatHandler("rag", {
+export const POST = createAgUiHandler("rag", {
   beforeStream: async ({ lastUserText }) => {
     const context = `Search results for: ${lastUserText}`;
     return {
@@ -82,7 +82,7 @@ export const POST = createChatHandler("rag", {
 });
 ```
 
-Pair this route with `useChat({ api: "/api/chat" })`. Do not set `transport: "ag-ui"` when the route returns the older chat stream protocol.
+Pair this route with the same `useChat({ api: "/api/chat", transport: "ag-ui" })` client setup. Veryfront wraps untrusted system-role messages returned from `beforeStream` before they reach the agent, so retrieved documents are treated as reference data rather than instructions.
 
 ## Common preset props
 

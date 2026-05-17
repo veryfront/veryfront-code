@@ -28,7 +28,7 @@ export default function ChatState() {
 }
 ```
 
-`useChat` exposes messages, input state, submit handlers, stop/reload handlers, model state, branch helpers, and inference status. Set `transport: "ag-ui"` when the route uses `createAgUiHandler`. Omit `transport` only for routes that use `createChatHandler`.
+`useChat` exposes messages, input state, submit handlers, stop/reload handlers, model state, branch helpers, and inference status. Set `transport: "ag-ui"` for Veryfront chat routes created with `createAgUiHandler`.
 
 ## useAgent
 

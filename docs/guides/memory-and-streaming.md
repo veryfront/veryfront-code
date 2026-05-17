@@ -94,14 +94,9 @@ Access memory programmatically in API routes:
 
 ```ts
 // app/api/chat/route.ts
-import { getAgent } from "veryfront/agent";
+import { createAgUiHandler, getAgent } from "veryfront/agent";
 
-export async function POST(request: Request) {
-  const { messages } = await request.json();
-  const agent = getAgent("assistant");
-  const result = await agent.stream({ messages });
-  return result.toDataStreamResponse();
-}
+export const POST = createAgUiHandler("assistant");
 
 export async function DELETE() {
   const agent = getAgent("assistant");
@@ -131,21 +126,16 @@ export async function GET() {
 
 ### Server-side streaming
 
-`agent.stream()` returns an `AgentStreamResult` that converts to a standard `Response`:
+Use `createAgUiHandler()` for chat UI routes. It validates the request, invokes the agent, and returns AG-UI SSE:
 
 ```ts
 // app/api/chat/route.ts
-import { getAgent } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export async function POST(request: Request) {
-  const { messages } = await request.json();
-  const agent = getAgent("assistant");
-  const result = await agent.stream({ messages });
-  return result.toDataStreamResponse();
-}
+export const POST = createAgUiHandler("assistant");
 ```
 
-`toDataStreamResponse()` returns a streaming `Response` with the `text/event-stream` content type. It uses the older Veryfront chat stream protocol and is compatible with the default `useChat` transport.
+Use `agent.stream()` directly only when you are building a custom transport or non-chat streaming surface.
 
 ### Client-side consumption
 
@@ -158,6 +148,7 @@ import { useChat } from "veryfront/chat";
 export default function ChatPage() {
   const { messages, input, onChange, onSubmit, isLoading } = useChat({
     api: "/api/chat",
+    transport: "ag-ui",
   });
 
   return (

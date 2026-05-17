@@ -1,7 +1,7 @@
-import { createChatHandler } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 import { store } from "../../../store.ts";
 
-export const POST = createChatHandler("rag", {
+export const POST = createAgUiHandler("rag", {
   beforeStream: async ({ lastUserText }) => {
     const query = lastUserText.trim();
     if (!query) return;
@@ -23,7 +23,7 @@ export const POST = createChatHandler("rag", {
       return {
         prepend: [
           {
-            role: "user",
+            role: "system",
             parts: [
               {
                 type: "text",

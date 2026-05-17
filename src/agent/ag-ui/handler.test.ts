@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertMatch, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { AgUiRequestSchema, createAgUiHandler } from "./handler.ts";
 import { AgentRuntime, RunResumeSessionManager } from "../index.ts";
 import type { Agent, Message } from "../types.ts";
@@ -172,6 +173,111 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, '"provider":"anthropic"');
     assertStringIncludes(body, '"model":"anthropic/claude-sonnet-4-6"');
     assertStringIncludes(body, '"delta":"hello from runtime"');
+  });
+
+  it("runs beforeStream before direct AG-UI streaming", async () => {
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({
+      agent: testAgent.agent,
+      context: { tenant: "acme" },
+      beforeStream: ({ lastUserText, context }) => ({
+        prepend: [{
+          role: "user",
+          parts: [{
+            type: "text",
+            text: `Retrieved context for: ${lastUserText}`,
+          }],
+        }],
+        context: { ...context, retrieval: "complete" },
+      }),
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "What changed?" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 200);
+    assertEquals(testAgent.capturedMessages.length, 2);
+    assertEquals(testAgent.capturedMessages[0]?.role, "user");
+    assertEquals(
+      testAgent.capturedMessages[0]?.parts[0],
+      {
+        type: "text",
+        text: "Retrieved context for: What changed?",
+      },
+    );
+    assertEquals(testAgent.capturedMessages[1]?.id, "msg-1");
+    assertEquals(testAgent.capturedContext?.retrieval, "complete");
+  });
+
+  it("lets beforeStream short-circuit AG-UI requests", async () => {
+    const testAgent = createTestAgent();
+    const handler = createAgUiHandler({
+      agent: testAgent.agent,
+      beforeStream: () => Response.json({ error: "Unauthorized" }, { status: 401 }),
+    });
+
+    const response = await handler(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "blocked" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.json(), { error: "Unauthorized" });
+    assertEquals(testAgent.capturedMessages.length, 0);
+  });
+
+  it("returns browser fallback metadata when no agent runtime is available", async () => {
+    const testAgent = createTestAgent();
+    const noAiAvailable = toError(createError({
+      type: "no_ai_available",
+      message: "Local AI unavailable",
+    }));
+    testAgent.agent.stream = async () => {
+      throw noAiAvailable;
+    };
+
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "fallback" }],
+          }],
+        }),
+      }),
+    );
+
+    assertEquals(response.status, 503);
+    assertEquals(await response.json(), {
+      code: "NO_AI_AVAILABLE",
+      fallback: "browser",
+      model: "smollm2-135m",
+    });
   });
 
   it("flushes the final runtime data event when the upstream stream ends without a trailing blank line", async () => {

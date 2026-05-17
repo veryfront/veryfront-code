@@ -180,9 +180,9 @@ Keep the tone warm and direct.
 echo "style=$STYLE voice=$1"
 `,
       "app/api/research-chat/route.ts": `
-import { createChatHandler } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export const POST = createChatHandler("researcher");
+export const POST = createAgUiHandler("researcher");
 `,
     });
 
@@ -414,7 +414,7 @@ export const POST = createChatHandler("researcher");
 import { Chat, useChat } from "veryfront/chat";
 
 export default function Home() {
-  const chat = useChat({ api: "/api/chat" });
+  const chat = useChat({ api: "/api/chat", transport: "ag-ui" });
 
   return <Chat {...chat} className="flex-1 min-h-0" placeholder="Message" />;
 }
@@ -440,9 +440,9 @@ export default agent({
 });
 `,
       "app/api/chat/route.ts": `
-import { createChatHandler } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export const POST = createChatHandler("assistant");
+export const POST = createAgUiHandler("assistant");
 `,
     });
 
@@ -526,9 +526,9 @@ export default function Home() {
 }
 `,
       "src/app/api/chat/route.ts": `
-import { createChatHandler } from "veryfront/agent";
+import { createAgUiHandler } from "veryfront/agent";
 
-export const POST = createChatHandler("custom-assistant");
+export const POST = createAgUiHandler("custom-assistant");
 `,
       "tooling/get-weather.ts": `
 import { tool } from "veryfront/tool";

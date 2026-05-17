@@ -14,7 +14,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
-import { handleAgUiStreamingResponse, handleStreamingResponse } from "./streaming/index.ts";
+import {
+  handleAgUiStreamingResponse,
+  handleStreamingResponse,
+} from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type {
   BranchInfo,
   BrowserInferenceStatus,
@@ -24,8 +27,8 @@ import type {
   ToolOutput,
   UseChatOptions,
   UseChatResult,
-} from "./types.ts";
-import { generateClientId } from "./utils.ts";
+} from "#veryfront/agent/react/use-chat/types.ts";
+import { generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
 
 /** A snapshot of messages from a branch point onward */
 interface Branch {
@@ -139,7 +142,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
       try {
         const { runBrowserInference } = await import(
-          "./browser-inference/browser-engine.ts"
+          "#veryfront/agent/react/use-chat/browser-inference/browser-engine.ts"
         );
 
         await new Promise<void>((resolve, reject) => {
@@ -398,7 +401,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
 
       try {
         const { stopBrowserInference } = await import(
-          "./browser-inference/browser-engine.ts"
+          "#veryfront/agent/react/use-chat/browser-inference/browser-engine.ts"
         );
         stopBrowserInference();
       } catch (_) {
