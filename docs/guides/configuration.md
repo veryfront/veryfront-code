@@ -272,8 +272,8 @@ The framework reads `veryfront.config.ts` automatically. Your config values are 
 
 ## Next
 
-- [Building & Deploying](./deploying.md): production builds and deployment
-- [Head & SEO](./head-and-seo.md): metadata and Open Graph tags
+- [Building and deploying](./deploying.md): production builds and deployment
+- [Head and SEO](./head-and-seo.md): metadata and Open Graph tags
 
 ## Related
 

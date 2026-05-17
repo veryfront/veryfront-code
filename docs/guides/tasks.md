@@ -116,13 +116,13 @@ await jobs.create({
 });
 ```
 
-See [Jobs & Cron Jobs](./jobs.md) for scheduling and event monitoring.
+See [Jobs and cron jobs](./jobs.md) for scheduling and event monitoring.
 
 ## Next
 
-- [Jobs & Cron Jobs](./jobs.md): schedule tasks as cloud jobs
+- [Jobs and cron jobs](./jobs.md): schedule tasks as cloud jobs
 - [Agents](./agents.md): agents can invoke tasks as tools
 
 ## Related
 
-- [Jobs & Cron Jobs](./jobs.md): the jobs system that executes scheduled tasks
+- [Jobs and cron jobs](./jobs.md): the jobs system that executes scheduled tasks

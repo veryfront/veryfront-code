@@ -95,7 +95,7 @@ You can also deploy the same build output on other infrastructure that supports 
 
 ## Next
 
-- [Head & SEO](./head-and-seo.md): optimize for search engines
+- [Head and SEO](./head-and-seo.md): optimize for search engines
 - [Configuration](./configuration.md): all configuration options
 
 ## Related

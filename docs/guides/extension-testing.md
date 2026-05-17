@@ -69,7 +69,12 @@ describe("my-cache contract", () => {
 deno test --no-check --allow-all extensions/my-cache/src/
 ```
 
+## Next
+
+- [Extension publishing](./extension-publishing.md): package reusable extensions
+- [Building and deploying](./deploying.md): production builds and deployment
+
 ## Related
 
-- [Extension authoring](./extension-authoring.md) - writing extension factories
-- [`veryfront/testing`](../reference/testing.md) - testing API reference
+- [Extension authoring](./extension-authoring.md): writing extension factories
+- [`veryfront/testing`](../reference/testing.md): testing API reference

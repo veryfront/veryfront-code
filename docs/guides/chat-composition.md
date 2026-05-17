@@ -73,8 +73,12 @@ function App() {
 }
 ```
 
+## Next
+
+- [Chat hooks](./chat-hooks.md): manage chat state without preset components
+- [Chat theming](./chat-theming.md): customize chat features and visuals
+
 ## Related
 
-- [Chat UI](./chat-ui.md) - preset chat component
-- [Chat hooks](./chat-hooks.md) - headless chat state
-- [`veryfront/chat`](../reference/chat.md) - chat API reference
+- [Chat UI](./chat-ui.md): preset chat component
+- [`veryfront/chat`](../reference/chat.md): chat API reference

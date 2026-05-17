@@ -245,7 +245,7 @@ export default function PipelineDashboard() {
 
 ## Next
 
-- [Multi-Agent](./multi-agent.md): compose agents in workflows and tools
+- [Multi-agent](./multi-agent.md): compose agents in workflows and tools
 - [Providers](./providers.md): configure the LLM providers that power your agents
 
 ## Related

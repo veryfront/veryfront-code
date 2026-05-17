@@ -79,8 +79,13 @@ export default function Autocomplete() {
 
 `useChat` exposes `inferenceMode` so your UI can show whether inference is running through cloud, server-local, or browser runtime.
 
+## Next
+
+- [Chat theming](./chat-theming.md): customize chat features and visuals
+- [Workflows](./workflows.md): orchestrate multi-step AI execution
+
 ## Related
 
-- [Chat UI](./chat-ui.md) - preset component
-- [Chat composition](./chat-composition.md) - custom layouts
-- [`veryfront/chat`](../reference/chat.md) - chat API reference
+- [Chat UI](./chat-ui.md): preset component
+- [Chat composition](./chat-composition.md): custom layouts
+- [`veryfront/chat`](../reference/chat.md): chat API reference

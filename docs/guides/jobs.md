@@ -147,8 +147,12 @@ Use the **SDK / API** when:
 - you need cron scheduling
 - you are building automation or agent-driven project operations
 
+## Next
+
+- [Tasks](./tasks.md): define background task functions
+- [MCP server](./mcp-server.md): expose job operations through MCP tools
+
 ## Related
 
-- [`veryfront/jobs`](../reference/jobs.md) - API reference for the jobs client
-- [CLI Knowledge Ingestion](./cli-knowledge-ingestion.md) - first-party knowledge ingestion flow that creates jobs
-- [MCP Server](./mcp-server.md) - expose the jobs client through your own MCP tools when you need agent-facing access
+- [`veryfront/jobs`](../reference/jobs.md): API reference for the jobs client
+- [CLI-first knowledge ingestion](./cli-knowledge-ingestion.md): first-party knowledge ingestion flow that creates jobs

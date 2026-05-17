@@ -313,9 +313,14 @@ These integrations use API keys set by the developer in their project environmen
 
 The built-in connector catalog spans OAuth-backed and API-key-backed integrations. Treat the tables above as representative current coverage rather than a hard-coded count contract.
 
+## Next
+
+- [Sandbox](./sandbox.md): run isolated commands and file operations
+- [CLI-first knowledge ingestion](./cli-knowledge-ingestion.md): ingest documents into project knowledge
+
 ## Related
 
-- [Agents](./agents.md)
-- [Tools](./tools.md)
-- [OAuth](./oauth.md)
-- [Configuration](./configuration.md)
+- [Agents](./agents.md): agents use integration tools
+- [Tools](./tools.md): define custom tools
+- [OAuth](./oauth.md): configure OAuth-backed providers
+- [Configuration](./configuration.md): configure project settings

@@ -62,12 +62,12 @@ export default defineConfig({
 
 ## Next
 
-- [Extension authoring](./extension-authoring.md) - write factories, contracts, and capabilities
-- [Extension lifecycle](./extension-lifecycle.md) - understand discovery, ordering, presets, and teardown
-- [Extension testing](./extension-testing.md) - test extension factories and contract implementations
-- [Extension publishing](./extension-publishing.md) - publish reusable extension packages
+- [Extension authoring](./extension-authoring.md): write factories, contracts, and capabilities
+- [Extension lifecycle](./extension-lifecycle.md): understand discovery, ordering, presets, and teardown
+- [Extension testing](./extension-testing.md): test extension factories and contract implementations
+- [Extension publishing](./extension-publishing.md): publish reusable extension packages
 
 ## Related
 
-- [`veryfront/extensions`](../reference/extensions.md) - extension API reference
-- [Project structure](./project-structure.md) - where local extensions live
+- [`veryfront/extensions`](../reference/extensions.md): extension API reference
+- [Project structure](./project-structure.md): where local extensions live

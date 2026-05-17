@@ -165,7 +165,7 @@ export default agent({
 ## Next
 
 - [Memory and streaming](./memory-and-streaming.md): persist conversations across requests
-- [MCP Server](./mcp-server.md): expose tools over Model Context Protocol
+- [MCP server](./mcp-server.md): expose tools over Model Context Protocol
 
 ## Related
 

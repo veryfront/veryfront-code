@@ -29,8 +29,13 @@ deno add @myorg/ext-custom-cache
 
 Use semver for package releases. Treat contract shape changes as breaking changes when downstream projects compile against the old contract.
 
+## Next
+
+- [Building and deploying](./deploying.md): production builds and deployment
+- [Configuration](./configuration.md): project configuration options
+
 ## Related
 
-- [Extensions](./extensions.md) - extension overview
-- [Extension testing](./extension-testing.md) - test before publishing
-- [`veryfront/extensions`](../reference/extensions.md) - extension API reference
+- [Extensions](./extensions.md): extension overview
+- [Extension testing](./extension-testing.md): test before publishing
+- [`veryfront/extensions`](../reference/extensions.md): extension API reference

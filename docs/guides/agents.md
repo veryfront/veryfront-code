@@ -88,7 +88,7 @@ When `skills` is enabled, the runtime automatically registers these skill tools:
 - `load-skill-reference`
 - `execute-skill-script`
 
-See [Project Structure](./project-structure.md) for `skills/` conventions and [Configuration](./configuration.md) for discovery paths.
+See [Project structure](./project-structure.md) for `skills/` conventions and [Configuration](./configuration.md) for discovery paths.
 
 ## Skill execution flow
 

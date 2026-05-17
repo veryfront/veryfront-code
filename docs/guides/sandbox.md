@@ -121,7 +121,7 @@ try {
 
 ## Next
 
-- [MCP Server](./mcp-server.md): expose tools, prompts, and resources over MCP
+- [MCP server](./mcp-server.md): expose tools, prompts, and resources over MCP
 - [Agents](./agents.md): orchestrate sandbox-backed workflows with agents
 
 ## Related

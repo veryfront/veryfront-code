@@ -56,8 +56,13 @@ Extensions can also read project config through `ctx.config` during `setup()`.
 
 During development, changes to `veryfront.config.ts` trigger teardown, rediscovery, and setup. Extensions must release resources in `teardown()` so reloads do not leak connections, timers, or file handles.
 
+## Next
+
+- [Extension testing](./extension-testing.md): test factories and contracts
+- [Extension publishing](./extension-publishing.md): package reusable extensions
+
 ## Related
 
-- [Extensions](./extensions.md) - extension overview
-- [Extension authoring](./extension-authoring.md) - writing extension factories
-- [`veryfront/extensions`](../reference/extensions.md) - extension API reference
+- [Extensions](./extensions.md): extension overview
+- [Extension authoring](./extension-authoring.md): writing extension factories
+- [`veryfront/extensions`](../reference/extensions.md): extension API reference

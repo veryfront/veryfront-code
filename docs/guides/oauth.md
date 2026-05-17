@@ -155,7 +155,7 @@ const response = await gmail.fetch(session.userId, "/users/me/messages");
 
 ## Next
 
-- [MCP Server](./mcp-server.md): expose your tools over the Model Context Protocol
+- [MCP server](./mcp-server.md): expose your tools over the Model Context Protocol
 - [Configuration](./configuration.md): environment variables and secrets
 
 ## Related

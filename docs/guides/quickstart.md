@@ -90,11 +90,11 @@ If you prefer a different deployment target, run `veryfront build` and deploy th
 
 ## Next
 
-- [Project Structure](./project-structure.md): understand the full directory layout
+- [Project structure](./project-structure.md): understand the full directory layout
 - [API reference](../reference/index.md): complete API documentation
 
 ## Related
 
 - [Pages and routing](./pages-and-routing.md): file-based routing and layouts
 - [Agents](./agents.md): create your first AI agent
-- [API Routes](./api-routes.md): backend HTTP handlers
+- [API routes](./api-routes.md): backend HTTP handlers

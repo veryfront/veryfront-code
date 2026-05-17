@@ -88,8 +88,12 @@ const extension: ExtensionFactory = () => ({
 });
 ```
 
+## Next
+
+- [Extension lifecycle](./extension-lifecycle.md): understand discovery and loading
+- [Extension testing](./extension-testing.md): test factories and contracts
+
 ## Related
 
-- [Extensions](./extensions.md) - extension overview
-- [Extension lifecycle](./extension-lifecycle.md) - discovery and loading
-- [`veryfront/extensions`](../reference/extensions.md) - extension API reference
+- [Extensions](./extensions.md): extension overview
+- [`veryfront/extensions`](../reference/extensions.md): extension API reference

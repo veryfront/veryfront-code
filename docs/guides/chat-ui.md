@@ -73,11 +73,11 @@ export const POST = createChatHandler("rag", {
 
 ## Next
 
-- [Chat composition](./chat-composition.md) - build a custom layout with `Chat.Root` and child components
-- [Chat hooks](./chat-hooks.md) - use `useChat`, `useAgent`, and `useCompletion`
-- [Chat theming](./chat-theming.md) - customize themes, contexts, and visual behavior
+- [Chat composition](./chat-composition.md): build a custom layout with `Chat.Root` and child components
+- [Chat hooks](./chat-hooks.md): use `useChat`, `useAgent`, and `useCompletion`
+- [Chat theming](./chat-theming.md): customize themes, contexts, and visual behavior
 
 ## Related
 
-- [`veryfront/chat`](../reference/chat.md) - chat API reference
-- [`veryfront/agent`](../reference/agent.md) - agent API reference
+- [`veryfront/chat`](../reference/chat.md): chat API reference
+- [`veryfront/agent`](../reference/agent.md): agent API reference
