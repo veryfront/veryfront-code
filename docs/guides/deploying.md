@@ -1,7 +1,7 @@
 ---
 title: "Building & Deploying"
 description: "Production builds, static export, and deployment targets."
-order: 17
+order: 31
 ---
 
 # Building & Deploying
@@ -70,8 +70,8 @@ import { defineConfig } from "veryfront";
 
 export default defineConfig({
   build: {
-    outDir: "dist",          // Output directory
-    trailingSlash: false,    // URL trailing slashes
+    outDir: "dist", // Output directory
+    trailingSlash: false, // URL trailing slashes
   },
 });
 ```

@@ -1,7 +1,7 @@
 ---
 title: "Workflows"
 description: "DAG-based multi-step workflows with branching and parallelism."
-order: 10
+order: 13
 ---
 
 # Workflows

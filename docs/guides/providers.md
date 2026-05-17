@@ -1,7 +1,7 @@
 ---
 title: "Providers"
 description: "Provider registry with runtime conventions and explicit overrides."
-order: 12
+order: 16
 ---
 
 # Providers

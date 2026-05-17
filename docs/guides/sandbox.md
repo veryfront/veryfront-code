@@ -1,7 +1,7 @@
 ---
 title: "Sandbox"
 description: "Run isolated commands and file operations in ephemeral sandbox sessions."
-order: 19
+order: 22
 ---
 
 # Sandbox

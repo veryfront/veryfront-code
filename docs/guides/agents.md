@@ -159,7 +159,7 @@ export default agent({
   id: "assistant",
   system: async () => {
     const date = new Date().toLocaleDateString();
-    return `You are a helpful assistant. Today is ${date}.`;
+    return `You are a helpful assistant. Current date: ${date}.`;
   },
 });
 ```

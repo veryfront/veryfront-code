@@ -2,11 +2,11 @@
 
 This page keeps fast-moving support details short and explicit.
 
-Use it for current support shape, not roadmap claims.
+Use it for supported behavior.
 
 ## Router Modes
 
-Veryfront supports both router modes today.
+Veryfront supports both router modes.
 
 | Mode              | Primary file shapes                                                                                 | Notes                                                                      |
 | ----------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -17,7 +17,7 @@ Veryfront supports both router modes today.
 
 ## Runtime Targets
 
-These are the runtime capability profiles currently modeled by the framework.
+These are the runtime capability profiles modeled by the framework.
 
 | Runtime            | Filesystem | MCP server | Long-running agents/workflows | Notes                                                                                 |
 | ------------------ | ---------- | ---------- | ----------------------------- | ------------------------------------------------------------------------------------- |

@@ -24,6 +24,7 @@ interface Issue {
 
 const issues: Issue[] = [];
 const warnings: Issue[] = [];
+const guideOrders = new Map<number, string[]>();
 
 function addIssue(file: string, message: string) {
   issues.push({ file, message });
@@ -89,12 +90,24 @@ for (const filename of guideFiles) {
     }
   }
 
+  const orderLine = fmLines.find((line) => line.startsWith("order:"));
+  if (orderLine) {
+    const order = Number(orderLine.split(":")[1].trim());
+    if (!Number.isInteger(order)) {
+      addIssue(shortName, "Frontmatter field order must be an integer");
+    } else {
+      const files = guideOrders.get(order) ?? [];
+      files.push(filename);
+      guideOrders.set(order, files);
+    }
+  }
+
   const body = content.slice(fmEnd + 5); // after \n---\n
 
   // --- Code blocks balanced ---
   const codeBlockMatches = body.match(/^```/gm);
   if (codeBlockMatches && codeBlockMatches.length % 2 !== 0) {
-    addIssue(shortName, `Unbalanced code blocks (${codeBlockMatches.length} \`\`\` markers — should be even)`);
+    addIssue(shortName, `Unbalanced code blocks (${codeBlockMatches.length} \`\`\` markers, should be even)`);
   }
 
   // --- Internal guide links (relative) ---
@@ -118,7 +131,7 @@ for (const filename of guideFiles) {
 
   // --- Check for stale absolute links ---
   if (/\/code\/(guides|api)\//.test(content)) {
-    addIssue(shortName, "Contains stale absolute links (/code/guides/ or /code/api/) — should use relative paths");
+    addIssue(shortName, "Contains stale absolute links (/code/guides/ or /code/api/), should use relative paths");
   }
 
   // --- Required closing sections (skip index.md) ---
@@ -128,6 +141,12 @@ for (const filename of guideFiles) {
     if (!hasNext && !hasRelated) {
       addWarning(shortName, "Missing both ## Next and ## Related sections");
     }
+  }
+}
+
+for (const [order, files] of guideOrders) {
+  if (files.length > 1) {
+    addIssue("guides", `Duplicate guide order ${order}: ${files.join(", ")}`);
   }
 }
 
@@ -156,40 +175,31 @@ try {
   addIssue("guides/index.md", "Could not read index.md");
 }
 
-// 3. Check imports in code examples reference real modules
-const validImports = new Set([
-  "veryfront",
-  "veryfront/agent",
-  "veryfront/tool",
-  "veryfront/workflow",
-  "veryfront/chat",
-  "veryfront/provider",
-  "veryfront/middleware",
-  "veryfront/oauth",
-  "veryfront/mcp",
-  "veryfront/head",
-  "veryfront/router",
-  "veryfront/context",
-  "veryfront/fonts",
-  "veryfront/markdown",
-  "veryfront/mdx",
-  "veryfront/prompt",
-  "veryfront/resource",
-  "veryfront/fs",
-  "veryfront/sandbox",
-]);
+// 3. Check imports in code examples reference real modules.
+// Use deno.json as the source of truth so the validator does not drift behind
+// the public import surface.
+const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`));
+const validImports = new Set<string>(["veryfront"]);
+for (const exportPath of Object.keys(denoConfig.exports ?? {})) {
+  validImports.add(exportPath === "." ? "veryfront" : `veryfront${exportPath.slice(1)}`);
+}
+for (const importPath of Object.keys(denoConfig.imports ?? {})) {
+  if (importPath.startsWith("veryfront/")) {
+    validImports.add(importPath);
+  }
+}
 
 for (const filename of guideFiles) {
   const filepath = `${GUIDES_DIR}/${filename}`;
   const content = Deno.readTextFileSync(filepath);
   const shortName = `guides/${filename}`;
 
-  const importRe = /from ["'](veryfront(?:\/[a-z-]+)?)["']/g;
+  const importRe = /from ["'](veryfront(?:\/[a-z0-9-]+)*)["']/g;
   let im: RegExpExecArray | null;
   while ((im = importRe.exec(content))) {
     const mod = im[1];
     if (!validImports.has(mod)) {
-      addWarning(shortName, `Code example imports from "${mod}" — not a known export path`);
+      addWarning(shortName, `Code example imports from "${mod}", not a known export path`);
     }
   }
 }

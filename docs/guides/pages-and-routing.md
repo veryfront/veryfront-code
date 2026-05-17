@@ -12,15 +12,15 @@ Examples below use the default app router. Veryfront Code also supports the page
 
 ## Router equivalents
 
-The current implementation supports both router styles. The main difference is file shape:
+Veryfront supports both router styles. The main difference is file shape:
 
-| URL / capability | App router | Pages router |
-| ---------------- | ---------- | ------------ |
-| `/` | `app/page.tsx` | `pages/index.tsx` |
-| `/about` | `app/about/page.tsx` | `pages/about.tsx` |
-| `/blog/:slug` | `app/blog/[slug]/page.tsx` | `pages/blog/[slug].tsx` |
-| `/api/users` | `app/api/users/route.ts` | `pages/api/users.ts` |
-| Root layout | `app/layout.tsx` | `pages/layout.tsx` |
+| URL / capability | App router                 | Pages router            |
+| ---------------- | -------------------------- | ----------------------- |
+| `/`              | `app/page.tsx`             | `pages/index.tsx`       |
+| `/about`         | `app/about/page.tsx`       | `pages/about.tsx`       |
+| `/blog/:slug`    | `app/blog/[slug]/page.tsx` | `pages/blog/[slug].tsx` |
+| `/api/users`     | `app/api/users/route.ts`   | `pages/api/users.ts`    |
+| Root layout      | `app/layout.tsx`           | `pages/layout.tsx`      |
 
 Use the app router when you want the newer directory-per-route shape. Use the pages router when you want the flatter file-per-route layout.
 
@@ -85,7 +85,7 @@ Access params via the `usePageContext` hook:
 
 ```tsx
 // app/blog/[slug]/page.tsx
-'use client'
+"use client";
 import { usePageContext } from "veryfront/context";
 
 export default function BlogPost() {
@@ -130,7 +130,7 @@ description: "Learn about our team."
 Access frontmatter from components using `usePageContext()` from `veryfront/context`:
 
 ```tsx
-'use client'
+"use client";
 import { usePageContext } from "veryfront/context";
 
 function PageTitle() {
@@ -144,7 +144,7 @@ function PageTitle() {
 By default, components render on the server. Add `'use client'` to make a component interactive:
 
 ```tsx
-'use client'
+"use client";
 
 import { useState } from "react";
 
@@ -174,7 +174,7 @@ export default function Nav() {
 Programmatic navigation:
 
 ```tsx
-'use client'
+"use client";
 
 import { useRouter } from "veryfront/router";
 

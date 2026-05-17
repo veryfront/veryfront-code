@@ -1,7 +1,7 @@
 ---
 title: "Tasks"
 description: "Define background task functions that can run locally or as cloud jobs."
-order: 15.6
+order: 21
 ---
 
 # Tasks
@@ -48,14 +48,14 @@ interface TaskDefinition {
 }
 ```
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | No | Human-readable name |
-| `description` | No | What the task does |
-| `inputSchema` | No | JSON-schema-like input contract for APIs and UIs |
-| `outputSchema` | No | JSON-schema-like output contract |
-| `schedulable` | No | Whether it can be used as a cron job target |
-| `run` | Yes | The function to execute |
+| Field          | Required | Description                                      |
+| -------------- | -------- | ------------------------------------------------ |
+| `name`         | No       | Human-readable name                              |
+| `description`  | No       | What the task does                               |
+| `inputSchema`  | No       | JSON-schema-like input contract for APIs and UIs |
+| `outputSchema` | No       | JSON-schema-like output contract                 |
+| `schedulable`  | No       | Whether it can be used as a cron job target      |
+| `run`          | Yes      | The function to execute                          |
 
 ## Task context
 

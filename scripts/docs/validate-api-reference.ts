@@ -19,6 +19,11 @@ interface ValidationError {
   missing: ("@module" | "@example")[];
 }
 
+interface ReferencePageError {
+  exportPath: string;
+  expectedPath: string;
+}
+
 function main(): void {
   const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`));
   const exports: Record<string, string> = denoConfig.exports ?? {};
@@ -30,6 +35,7 @@ function main(): void {
   });
 
   const errors: ValidationError[] = [];
+  const missingReferencePages: ReferencePageError[] = [];
 
   for (const [exportPath, filePath] of topLevel) {
     const absPath = `${ROOT}/${filePath.replace("./", "")}`;
@@ -62,21 +68,40 @@ function main(): void {
     if (missing.length > 0) {
       errors.push({ exportPath, filePath, missing });
     }
+
+    const slug = exportPath === "." ? "root" : exportPath.replace("./", "");
+    const referencePath = `${ROOT}/docs/reference/${slug}.md`;
+    try {
+      Deno.statSync(referencePath);
+    } catch {
+      missingReferencePages.push({ exportPath, expectedPath: referencePath });
+    }
   }
 
-  if (errors.length === 0) {
+  if (errors.length === 0 && missingReferencePages.length === 0) {
     console.log(`All ${topLevel.length} export paths have @module and @example in their JSDoc.`);
+    console.log(`All ${topLevel.length} top-level export paths have reference pages.`);
     Deno.exit(0);
   }
 
-  console.error(`${errors.length} export path(s) missing required JSDoc tags:\n`);
-  for (const err of errors) {
-    console.error(`  ${err.exportPath} (${err.filePath})`);
-    console.error(`    Missing: ${err.missing.join(", ")}`);
+  if (errors.length > 0) {
+    console.error(`${errors.length} export path(s) missing required JSDoc tags:\n`);
+    for (const err of errors) {
+      console.error(`  ${err.exportPath} (${err.filePath})`);
+      console.error(`    Missing: ${err.missing.join(", ")}`);
+    }
+    console.error(
+      "\nAdd @module and @example JSDoc to each barrel file to document the public API.",
+    );
   }
-  console.error(
-    "\nAdd @module and @example JSDoc to each barrel file to document the public API.",
-  );
+
+  if (missingReferencePages.length > 0) {
+    console.error(`\n${missingReferencePages.length} top-level export path(s) missing reference pages:\n`);
+    for (const err of missingReferencePages) {
+      console.error(`  ${err.exportPath} -> ${err.expectedPath}`);
+    }
+    console.error("\nRun deno task docs, then preserve or merge any hand-written reference pages.");
+  }
   Deno.exit(1);
 }
 

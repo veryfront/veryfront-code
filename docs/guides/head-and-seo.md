@@ -1,7 +1,7 @@
 ---
 title: "Head & SEO"
 description: "Declarative metadata, Open Graph, and structured data."
-order: 18
+order: 32
 ---
 
 # Head & SEO
@@ -42,7 +42,7 @@ The `Head` component renders its children into the document's `<head>`. When mul
   <meta property="og:image" content="https://example.com/image.jpg" />
   <meta property="og:type" content="article" />
   <meta name="twitter:card" content="summary_large_image" />
-</Head>
+</Head>;
 ```
 
 ## Favicon and icons
@@ -51,7 +51,7 @@ The `Head` component renders its children into the document's `<head>`. When mul
 <Head>
   <link rel="icon" href="/favicon.ico" />
   <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-</Head>
+</Head>;
 ```
 
 ## Fonts
@@ -88,7 +88,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       "author": { "@type": "Person", "name": "Jane Doe" },
     })}
   </script>
-</Head>
+</Head>;
 ```
 
 ## Per-page metadata in layouts

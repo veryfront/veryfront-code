@@ -12,7 +12,7 @@ control-plane policy but wants the runtime sequencing to come from
 
 ## Package-owned building blocks
 
-Today the reusable pieces are already public:
+The reusable pieces are public:
 
 - `runHostedLifecycle()` / `runHostedChildLifecycle()` for lifecycle sequencing
 - `createConversationAgentRun()`, `appendConversationRunEvents()`,
@@ -27,6 +27,52 @@ Today the reusable pieces are already public:
 
 These helpers let hosts share the same conversations/control-plane contract
 without reaching into app-private internals.
+
+## Lifecycle adapters
+
+Use `createConversationHostedLifecycleAdapter()` when your host starts the
+conversation-owned run, encodes runtime chunks into control-plane events, and
+decides the final model, provider, and usage payload.
+
+The adapter owns:
+
+- appending events through the canonical conversation-run events route
+- mutating the live run cursor after successful appends
+- finalizing or cancelling the canonical conversation run
+
+Use `createConversationChildLifecycleAdapter()` when your host wants the
+framework to own the default child lifecycle progression:
+
+- pending
+- running
+- completed
+- failed
+- cancelled
+
+The child adapter composes `publishInvokeAgentChildRunProgress()` and
+`finalizeConversationAgentRun()`. It can publish lifecycle events through a
+shared parent-run publisher or through the canonical conversation-run events
+route.
+
+## Run context helpers
+
+Use `createConversationRunContext()` when your host wants one canonical object
+for:
+
+- the current conversation-backed run projection
+- the effective parent run id
+- the effective parent message id
+- an optional shared parent-run publisher
+
+Use `prepareConversationRootRunContext()` when your host wants one call that:
+
+- starts or normalizes the root run
+- derives effective parent lineage
+- preserves an optional shared parent-run publisher
+
+These helpers keep durable run lineage and effective parent lineage aligned
+without moving auth policy, transcript persistence, retry policy, or
+host-specific tracing into the package.
 
 ## Recommended root-run composition
 
@@ -260,35 +306,10 @@ When streamed input is malformed, surface the first failure as
 `tool-input-error`. Later artifact checks can still fail, but they should not
 mask the original malformed input failure.
 
-Before changing this, run or add tests for:
+When changing this contract, run or add tests for:
 
 - `src/agent/hosted/child-fork-stream-execution.test.ts`
 - `src/agent/hosted/child-pending-tool-lifecycle.test.ts`
 - `src/agent/hosted/child-tool-input.test.ts`
 - `src/agent/hosted/child-fork-tool-sources.test.ts`
 - `src/agent/conversation/run-event-normalization.test.ts`
-
-## Current framework boundary
-
-The remaining gap is **not** the conversations API contract itself. The missing
-piece is a higher-level reusable adapter that packages the composition above for
-hosts that all want the same conversation-backed lifecycle shell.
-
-The next public seam should own only the generic parts:
-
-- carrying `ConversationRunProjection` through hosted lifecycle execution
-- updating `latestEventId` / `latestExternalEventSequence` after successful
-  appends
-- normalizing terminal metadata into `finalizeConversationAgentRun()` payloads
-- composing child-run lifecycle sequencing with canonical progress publishing
-
-It should still leave these concerns to the host:
-
-- auth and access policy
-- project-linking rules
-- transcript storage semantics
-- retry / backoff / cursor-recovery policy
-- product-specific child-run lineage semantics
-
-That boundary keeps reusable transport and lifecycle substrate in the package
-without promoting product-specific control-plane behavior into the framework.

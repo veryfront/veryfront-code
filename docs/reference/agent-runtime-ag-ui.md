@@ -23,6 +23,28 @@ This is the package-level AG-UI contract. The control-plane wrapper convention i
 
 The package defines the runtime contract. The host chooses where to mount it.
 
+`AgUiRuntimeRequestSchema` is defined in
+[`src/agent/runtime/ag-ui-contract.ts`](../../src/agent/runtime/ag-ui-contract.ts).
+It accepts the AG-UI-aligned request fields used by the runtime:
+
+- `threadId`
+- `runId`
+- `parentRunId`
+- `state`
+- `messages`
+- `tools`
+- `context`
+- `forwardedProps`
+
+The message subset accepts `system`, `user`, `assistant`, and `tool` roles with
+text content. Assistant tool calls and tool messages with `toolCallId` are part
+of the contract. Runtime context supports text, JSON, and resource entries.
+
+Signed control-plane invocation uses `RuntimeAgentRunInvocationSchema` around
+the runtime request when a trusted control plane owns durable run identity,
+project context, and validated claims. Public AG-UI runtime routes should use
+`AgUiRuntimeRequestSchema`.
+
 ## Package API
 
 Use `createAgUiHandler()` as a convenience wrapper when you want a direct
@@ -291,8 +313,8 @@ const result = await waitForHumanInput({
 });
 ```
 
-The host still owns persistence and UI delivery, but the request/result schema
-and the wait/resume loop are now public package substrate.
+The host owns persistence and UI delivery. The request/result schema and the
+wait/resume loop are public package substrate.
 
 ## Injected Client Tools
 

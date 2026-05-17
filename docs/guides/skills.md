@@ -1,7 +1,7 @@
 ---
 title: "Skills"
 description: "Define project-level agent capabilities as SKILL.md files with prompt augmentation, tool restrictions, and script execution."
-order: 11
+order: 15
 ---
 
 # Skills
@@ -58,14 +58,14 @@ skills/<skill-id>/
 
 ## Frontmatter fields
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Skill identifier (lowercase alphanumeric + hyphens, 1-64 chars) |
-| `description` | Yes | Human-readable description (max 1024 chars) |
-| `allowed_tools` | No | Space-delimited tool IDs or prefix patterns (e.g. `api:*`) the agent may use |
-| `license` | No | SPDX license identifier |
-| `compatibility` | No | Compatibility constraints |
-| `metadata` | No | Arbitrary key-value pairs |
+| Field           | Required | Description                                                                  |
+| --------------- | -------- | ---------------------------------------------------------------------------- |
+| `name`          | Yes      | Skill identifier (lowercase alphanumeric + hyphens, 1-64 chars)              |
+| `description`   | Yes      | Human-readable description (max 1024 chars)                                  |
+| `allowed_tools` | No       | Space-delimited tool IDs or prefix patterns (e.g. `api:*`) the agent may use |
+| `license`       | No       | SPDX license identifier                                                      |
+| `compatibility` | No       | Compatibility constraints                                                    |
+| `metadata`      | No       | Arbitrary key-value pairs                                                    |
 
 ## Discovery
 
@@ -81,10 +81,10 @@ skills/
 
 When skills are available, agents get three built-in tools:
 
-| Tool | Description |
-|------|-------------|
-| `load-skill` | Load a skill's full instructions by ID |
-| `load-skill-reference` | Read a reference file from a skill |
+| Tool                   | Description                                      |
+| ---------------------- | ------------------------------------------------ |
+| `load-skill`           | Load a skill's full instructions by ID           |
+| `load-skill-reference` | Read a reference file from a skill               |
 | `execute-skill-script` | Execute a script from a skill (5-minute timeout) |
 
 ## Tool restrictions

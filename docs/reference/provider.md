@@ -12,7 +12,7 @@ Most apps do not need this directly. Omit `model` on `agent()` to follow
 runtime defaults, or use `resolveModel()` and `registerModelProvider()` when
 you need an explicit provider path.
 
-Use `agent({ resolveModelTransport })` when the missing piece is
+Use `agent({ resolveModelTransport })` when you need
 request-aware transport behavior such as per-request headers or provider
 options. `registerModelProvider()` is still the right tool for static model
 runtime registration.

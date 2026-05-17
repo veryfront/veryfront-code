@@ -1,7 +1,7 @@
 ---
 title: "Jobs & Cron Jobs"
 description: "Run project-scoped background work now or on a schedule through the Veryfront platform."
-order: 15.5
+order: 20
 ---
 
 # Jobs & Cron Jobs
@@ -17,7 +17,7 @@ Use Veryfront jobs for durable, project-scoped background work.
 
 ## How users create jobs
 
-Today there are two main creation paths:
+Users create jobs through two main paths:
 
 1. **Programmatic**: create jobs through the public REST API or the `veryfront/jobs` SDK.
 2. **Studio-first product flows**: some first-party features, such as knowledge ingestion, create jobs for you and then expose them in the Jobs panel.
@@ -81,7 +81,7 @@ console.log(logs.logs);
 
 ## Inspect supported first-party targets
 
-Use target discovery if you want to know what first-party contracts exist today:
+Use target discovery to list first-party contracts:
 
 ```ts
 const targets = await jobs.targets.list();

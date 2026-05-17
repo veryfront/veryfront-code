@@ -1,21 +1,14 @@
 ---
 title: "CLI-First Knowledge Ingestion"
 description: "Turn uploads and local documents into project knowledge files with one command."
-order: 20
+order: 29
 ---
 
 # CLI-First Knowledge Ingestion
 
-`veryfront knowledge ingest` is the primary CLI workflow for getting documents into a project's knowledge base.
+`veryfront knowledge ingest` is the primary CLI workflow for getting documents into a project's knowledge base. It finds a source file, parses it, and writes generated markdown back into the project.
 
-Before this flow, agents often had to stitch together several low-level steps by hand:
-
-1. Find an uploaded file
-2. Download it into the workspace
-3. Run parser code manually
-4. Save the generated markdown back into the project
-
-Now the happy path is one command:
+Use one command for the standard path:
 
 ```bash
 veryfront knowledge ingest uploads/contracts/q1.pdf --json

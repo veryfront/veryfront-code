@@ -1,7 +1,7 @@
 ---
 title: "OAuth"
 description: "OAuth 2.0 helpers with a built-in provider catalog."
-order: 14
+order: 18
 ---
 
 # OAuth
@@ -57,7 +57,7 @@ By default, tokens are stored in memory (lost on restart). For production, imple
 
 ```ts
 import { createOAuthCallbackHandler, githubConfig } from "veryfront/oauth";
-import type { TokenStore, OAuthTokens, StoredOAuthState } from "veryfront/oauth";
+import type { OAuthTokens, StoredOAuthState, TokenStore } from "veryfront/oauth";
 
 const redisTokenStore: TokenStore = {
   async getTokens(serviceId, userId) {
@@ -116,7 +116,7 @@ export const POST = createOAuthDisconnectHandler(githubConfig, {
 For providers not included, create your own config:
 
 ```ts
-import { createOAuthInitHandler, createOAuthCallbackHandler } from "veryfront/oauth";
+import { createOAuthCallbackHandler, createOAuthInitHandler } from "veryfront/oauth";
 
 const myProvider = {
   providerId: "my-provider",
@@ -144,7 +144,7 @@ export const GET = createOAuthCallbackHandler(myProvider);
 OAuth service clients (e.g. `OAuthService.fetch`, `OAuthService.getAccessToken`) require the authenticated user's id so tokens are looked up from that user's slot:
 
 ```ts
-import { OAuthService, gmailConfig } from "veryfront/oauth";
+import { gmailConfig, OAuthService } from "veryfront/oauth";
 import { tokenStore } from "../../lib/token-store.ts";
 
 const gmail = new OAuthService(gmailConfig, tokenStore);
