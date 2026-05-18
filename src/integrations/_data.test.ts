@@ -35,7 +35,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 53);
+    assertEquals(totalEndpointTools, 55);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -402,6 +402,15 @@ describe("integration endpoint specs", () => {
   });
 
   it("preserves executor-compatible defaults and GraphQL variable shapes", () => {
+    const calendarUpdateEvent = getTool("calendar", "update_event");
+    assertEquals(calendarUpdateEvent.endpoint?.method, "PATCH");
+    assertEquals(calendarUpdateEvent.endpoint?.params?.eventId?.required, true);
+    assertEquals(calendarUpdateEvent.endpoint?.body?.summary?.required ?? false, false);
+
+    const calendarDeleteEvent = getTool("calendar", "delete_event");
+    assertEquals(calendarDeleteEvent.endpoint?.method, "DELETE");
+    assertEquals(calendarDeleteEvent.endpoint?.params?.eventId?.required, true);
+
     const calendarListEvents = getTool("calendar", "list_events");
     assertEquals(calendarListEvents.endpoint?.params?.calendarId?.default, "primary");
     assertEquals(calendarListEvents.endpoint?.params?.orderBy?.default, "startTime");

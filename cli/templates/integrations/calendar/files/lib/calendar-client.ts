@@ -59,6 +59,16 @@ export interface CreateEventOptions {
   timeZone?: string;
 }
 
+export interface UpdateEventOptions {
+  summary?: string;
+  description?: string;
+  location?: string;
+  start?: Date | string;
+  end?: Date | string;
+  attendees?: string[];
+  timeZone?: string;
+}
+
 export interface FreeBusySlot {
   start: string;
   end: string;
@@ -100,9 +110,19 @@ type FindFreeSlotsOptions = FreeBusyOptions & {
 type CalendarClientShape = {
   listEvents(options?: ListEventsOptions): Promise<CalendarEvent[]>;
   getTodayEvents(): Promise<CalendarEvent[]>;
-  createEvent(options: CreateEventOptions, calendarId?: string): Promise<CalendarEvent>;
+  createEvent(
+    options: CreateEventOptions,
+    calendarId?: string,
+  ): Promise<CalendarEvent>;
+  updateEvent(
+    eventId: string,
+    options: UpdateEventOptions,
+    calendarId?: string,
+  ): Promise<CalendarEvent>;
   getFreeBusy(options: FreeBusyOptions): Promise<FreeBusySlot[]>;
-  findFreeSlots(options: FindFreeSlotsOptions): Promise<Array<{ start: Date; end: Date }>>;
+  findFreeSlots(
+    options: FindFreeSlotsOptions,
+  ): Promise<Array<{ start: Date; end: Date }>>;
   deleteEvent(eventId: string, calendarId?: string): Promise<void>;
 };
 
@@ -111,14 +131,23 @@ type CalendarClientShape = {
  */
 export function createCalendarClient(userId: string): CalendarClientShape {
   async function getAccessToken(): Promise<string> {
-    const token = await getValidToken(calendarOAuthProvider, userId, "calendar");
+    const token = await getValidToken(
+      calendarOAuthProvider,
+      userId,
+      "calendar",
+    );
     if (!token) {
-      throw new Error("Calendar not connected. Please connect your Google Calendar first.");
+      throw new Error(
+        "Calendar not connected. Please connect your Google Calendar first.",
+      );
     }
     return token;
   }
 
-  async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  async function apiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
     const accessToken = await getAccessToken();
 
     const response = await fetch(`${CALENDAR_API_BASE}${endpoint}`, {
@@ -138,7 +167,9 @@ export function createCalendarClient(userId: string): CalendarClientShape {
     return response.json();
   }
 
-  async function listEvents(options: ListEventsOptions = {}): Promise<CalendarEvent[]> {
+  async function listEvents(
+    options: ListEventsOptions = {},
+  ): Promise<CalendarEvent[]> {
     const params = new URLSearchParams();
 
     const timeMin = options.timeMin ? new Date(options.timeMin) : new Date();
@@ -170,9 +201,16 @@ export function createCalendarClient(userId: string): CalendarClientShape {
     return listEvents({ timeMin: today, timeMax: tomorrow, maxResults: 50 });
   }
 
-  function createEvent(options: CreateEventOptions, calendarId = "primary"): Promise<CalendarEvent> {
-    const startDate = typeof options.start === "string" ? options.start : options.start.toISOString();
-    const endDate = typeof options.end === "string" ? options.end : options.end.toISOString();
+  function createEvent(
+    options: CreateEventOptions,
+    calendarId = "primary",
+  ): Promise<CalendarEvent> {
+    const startDate = typeof options.start === "string"
+      ? options.start
+      : options.start.toISOString();
+    const endDate = typeof options.end === "string"
+      ? options.end
+      : options.end.toISOString();
     const timeZone = options.timeZone ?? "UTC";
 
     const event = {
@@ -184,13 +222,58 @@ export function createCalendarClient(userId: string): CalendarClientShape {
       attendees: options.attendees?.map((email) => ({ email })),
     };
 
-    return apiRequest<CalendarEvent>(`/calendars/${encodeURIComponent(calendarId)}/events`, {
-      method: "POST",
-      body: JSON.stringify(event),
-    });
+    return apiRequest<CalendarEvent>(
+      `/calendars/${encodeURIComponent(calendarId)}/events`,
+      {
+        method: "POST",
+        body: JSON.stringify(event),
+      },
+    );
   }
 
-  async function getFreeBusy(options: FreeBusyOptions): Promise<FreeBusySlot[]> {
+  function updateEvent(
+    eventId: string,
+    options: UpdateEventOptions,
+    calendarId = "primary",
+  ): Promise<CalendarEvent> {
+    const timeZone = options.timeZone ?? "UTC";
+    const event: Record<string, unknown> = {};
+
+    if (options.summary !== undefined) event.summary = options.summary;
+    if (options.description !== undefined) {
+      event.description = options.description;
+    }
+    if (options.location !== undefined) event.location = options.location;
+    if (options.start !== undefined) {
+      const startDate = typeof options.start === "string"
+        ? options.start
+        : options.start.toISOString();
+      event.start = { dateTime: startDate, timeZone };
+    }
+    if (options.end !== undefined) {
+      const endDate = typeof options.end === "string"
+        ? options.end
+        : options.end.toISOString();
+      event.end = { dateTime: endDate, timeZone };
+    }
+    if (options.attendees !== undefined) {
+      event.attendees = options.attendees.map((email) => ({ email }));
+    }
+
+    return apiRequest<CalendarEvent>(
+      `/calendars/${encodeURIComponent(calendarId)}/events/${
+        encodeURIComponent(eventId)
+      }?sendUpdates=none`,
+      {
+        method: "PATCH",
+        body: JSON.stringify(event),
+      },
+    );
+  }
+
+  async function getFreeBusy(
+    options: FreeBusyOptions,
+  ): Promise<FreeBusySlot[]> {
     const calendarId = options.calendarId ?? "primary";
 
     const result = await apiRequest<{
@@ -225,7 +308,10 @@ export function createCalendarClient(userId: string): CalendarClientShape {
 
     for (const busy of sortedBusy) {
       if (busy.start.getTime() - currentStart.getTime() >= durationMs) {
-        freeSlots.push({ start: new Date(currentStart), end: new Date(busy.start) });
+        freeSlots.push({
+          start: new Date(currentStart),
+          end: new Date(busy.start),
+        });
       }
 
       if (busy.end > currentStart) {
@@ -240,11 +326,16 @@ export function createCalendarClient(userId: string): CalendarClientShape {
     return freeSlots;
   }
 
-  async function deleteEvent(eventId: string, calendarId = "primary"): Promise<void> {
+  async function deleteEvent(
+    eventId: string,
+    calendarId = "primary",
+  ): Promise<void> {
     const accessToken = await getAccessToken();
 
     const response = await fetch(
-      `${CALENDAR_API_BASE}/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
+      `${CALENDAR_API_BASE}/calendars/${
+        encodeURIComponent(calendarId)
+      }/events/${eventId}`,
       {
         method: "DELETE",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -260,6 +351,7 @@ export function createCalendarClient(userId: string): CalendarClientShape {
     listEvents,
     getTodayEvents,
     createEvent,
+    updateEvent,
     getFreeBusy,
     findFreeSlots,
     deleteEvent,
