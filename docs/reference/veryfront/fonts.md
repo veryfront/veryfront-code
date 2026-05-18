@@ -31,16 +31,16 @@ import { GoogleFonts } from "veryfront/fonts";
 
 ### Components
 
-| Name | Description |
-|------|-------------|
-| `GoogleFonts` | Load Google Fonts via CSS variables |
+| Name | Description | Source |
+|------|-------------|--------|
+| `GoogleFonts` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L84) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `Font` | Font config (name, weights, variable) |
-| `GoogleFontsProps` | `<GoogleFonts>` props |
+| Name | Description | Source |
+|------|-------------|--------|
+| `Font` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L21) |
+| `GoogleFontsProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L28) |
 
 ## Related
 

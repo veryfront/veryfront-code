@@ -26,16 +26,16 @@ import { Markdown } from "veryfront/markdown";
 
 ### Components
 
-| Name | Description |
-|------|-------------|
-| `Markdown` | Render markdown with highlighting + diagrams |
+| Name | Description | Source |
+|------|-------------|--------|
+| `Markdown` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L183) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `CodeBlockProps` | Code block rendering props |
-| `MarkdownProps` | `<Markdown>` props |
+| Name | Description | Source |
+|------|-------------|--------|
+| `CodeBlockProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L17) |
+| `MarkdownProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L6) |
 
 ## Related
 

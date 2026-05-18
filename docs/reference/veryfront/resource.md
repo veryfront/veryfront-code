@@ -59,22 +59,22 @@ Create MCP-discoverable resource
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `resource` | Create MCP-discoverable resource |
+| Name | Description | Source |
+|------|-------------|--------|
+| `resource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/factory.ts#L11) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `Resource` | `resource()` return type |
-| `ResourceConfig` | `resource()` config |
+| Name | Description | Source |
+|------|-------------|--------|
+| `Resource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L26) |
+| `ResourceConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L16) |
 
 ### Constants
 
-| Name | Description |
-|------|-------------|
-| `resourceRegistry` | Global resource registry |
+| Name | Description | Source |
+|------|-------------|--------|
+| `resourceRegistry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L40) |
 
 ## Related
 

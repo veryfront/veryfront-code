@@ -43,22 +43,22 @@ Create MCP-discoverable prompt
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `prompt` | Create MCP-discoverable prompt |
+| Name | Description | Source |
+|------|-------------|--------|
+| `prompt` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L8) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `Prompt` | `prompt()` return type |
-| `PromptConfig` | `prompt()` config |
+| Name | Description | Source |
+|------|-------------|--------|
+| `Prompt` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L2) |
+| `PromptConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L14) |
 
 ### Constants
 
-| Name | Description |
-|------|-------------|
-| `promptRegistry` | Global prompt registry |
+| Name | Description | Source |
+|------|-------------|--------|
+| `promptRegistry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L28) |
 
 ## Related
 

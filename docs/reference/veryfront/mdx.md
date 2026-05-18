@@ -30,21 +30,21 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 ### Components
 
-| Name | Description |
-|------|-------------|
-| `MDXProvider` | Override MDX components |
+| Name | Description | Source |
+|------|-------------|--------|
+| `MDXProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L10) |
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `useMDXComponents` | Get current MDX overrides |
+| Name | Description | Source |
+|------|-------------|--------|
+| `useMDXComponents` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L17) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `MDXProviderProps` | `<MDXProvider>` props |
+| Name | Description | Source |
+|------|-------------|--------|
+| `MDXProviderProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L5) |
 
 ## Related
 

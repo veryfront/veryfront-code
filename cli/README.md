@@ -13,7 +13,7 @@ deno task cli --help       # Show all commands
 
 Mode and process-model overview:
 
-- `../docs/server-modes.md`
+- `../docs/architecture/04-server-runtime.md`
 
 ## Structure
 
@@ -93,7 +93,7 @@ commands/my-command/
 
 ### Steps
 
-1. **`command.ts`** — Define a schema for args with `defineSchema`, use `createArgParser` from `shared/args.ts`, implement the command function:
+1. **`command.ts`** - Define a schema for args with `defineSchema`, use `createArgParser` from `shared/args.ts`, implement the command function:
 
    ```typescript
    import { defineSchema } from "veryfront/schemas";
@@ -118,7 +118,7 @@ commands/my-command/
    }
    ```
 
-2. **`handler.ts`** — Keep it thin (< 20 lines). Parse, validate, delegate:
+2. **`handler.ts`** - Keep it thin (< 20 lines). Parse, validate, delegate:
 
    ```typescript
    import { myCommand, parseMyCommandArgs } from "./command.ts";
@@ -133,11 +133,11 @@ commands/my-command/
    }
    ```
 
-3. **`command-help.ts`** — Define help text using `CommandHelp` type
-4. **`index.ts`** — Barrel re-exports for command, handler, and types
-5. **`router.ts`** — Add handler import and switch case
-6. **`help/command-definitions.ts`** — Register the help definition
-7. **`commands/index.ts`** — Add exports
+3. **`command-help.ts`** - Define help text using `CommandHelp` type
+4. **`index.ts`** - Barrel re-exports for command, handler, and types
+5. **`router.ts`** - Add handler import and switch case
+6. **`help/command-definitions.ts`** - Register the help definition
+7. **`commands/index.ts`** - Add exports
 
 ### Conventions
 
@@ -149,11 +149,11 @@ commands/my-command/
 ## Testing
 
 ```bash
-deno test src/cli/ --allow-all
+deno test --no-check --allow-all --parallel cli/
 ```
 
 ## Related
 
 - **STYLE_GUIDE.md** - CLI output conventions
 - **mcp/skills/** - MCP skill definitions
-- **../observability/** - Error collection used by MCP tools
+- **../src/observability/** - Error collection used by MCP tools

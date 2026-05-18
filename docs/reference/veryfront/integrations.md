@@ -41,44 +41,44 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 
 ### Components
 
-| Name | Description |
-|------|-------------|
-| `EnvVarSchema` | Validates environment variable configuration metadata |
-| `IntegrationConfigSchema` | Validates complete integration connector configuration spec |
-| `IntegrationNameSchema` | Validates integration name against allowed enum values |
-| `IntegrationPromptSchema` | Validates predefined prompt configuration for integrations |
-| `IntegrationToolSchema` | Validates tool definition from connector specification |
-| `OAuthConfigSchema` | Validates OAuth/API key authentication configuration |
-| `OAuthFieldSchema` | Validates OAuth form field configuration and mapping |
+| Name | Description | Source |
+|------|-------------|--------|
+| `EnvVarSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L70) |
+| `IntegrationConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L195) |
+| `IntegrationNameSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L57) |
+| `IntegrationPromptSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L170) |
+| `IntegrationToolSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L159) |
+| `OAuthConfigSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L112) |
+| `OAuthFieldSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L82) |
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `executeRemoteIntegrationTool` | Execute a remote integration tool via the API. |
-| `getConnector` | Look up connector config by name from registry |
-| `getConnectorNames` | Return readonly array of all connector names |
-| `getIcon` | Return SVG icon string for integration by name |
-| `getRemoteIntegrationToolDefinitions` | Fetch integration tool definitions for the current request context. |
-| `isRemoteIntegrationTool` | Check if a tool name looks like a remote integration tool. |
-| `listConnectors` | Return readonly array of all connectors |
-| `syncIntegrationConfig` | Sync integration config from veryfront.config.ts to the API. |
+| Name | Description | Source |
+|------|-------------|--------|
+| `executeRemoteIntegrationTool` | Execute a remote integration tool via the API. Called by the agent runtime when a tool isn't found in the local registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L211) |
+| `getConnector` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L48) |
+| `getConnectorNames` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L56) |
+| `getIcon` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L60) |
+| `getRemoteIntegrationToolDefinitions` | Fetch integration tool definitions for the current request context. Returns ToolDefinition[] that the agent runtime merges into the model's available tools. Returns empty array if no API config or no tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L172) |
+| `isRemoteIntegrationTool` | Check if a tool name looks like a remote integration tool. Integration tools use "integration__tool_id" format (double underscore separator). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L200) |
+| `listConnectors` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/index.ts#L52) |
+| `syncIntegrationConfig` | Sync integration config from veryfront.config.ts to the API. This is a full-replace operation. Called by the MCP server path which has access to the config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/remote-tools.ts#L236) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `EnvVarConfig` | Environment variable requirement with metadata |
-| `IntegrationConfig` | Complete connector spec: name, auth, tools, prompts |
-| `IntegrationConnector` | Runtime connector with tools and endpoint definitions |
-| `IntegrationName` | Union type of valid integration name literals |
-| `IntegrationPrompt` | Predefined prompt template for integration use |
-| `IntegrationRuntimeConfig` | Per-user settings and tool allowlist for integration |
-| `IntegrationScope` |  |
-| `IntegrationTool` | Integration tool with endpoint execution spec |
-| `IntegrationToolMeta` | Tool metadata: name, description, write requirements |
-| `OAuthConfig` | OAuth/API key authentication type and parameters |
-| `OAuthField` | Form field for OAuth configuration with mapping |
+| Name | Description | Source |
+|------|-------------|--------|
+| `EnvVarConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L198) |
+| `IntegrationConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L203) |
+| `IntegrationConnector` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L41) |
+| `IntegrationName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L197) |
+| `IntegrationPrompt` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L202) |
+| `IntegrationRuntimeConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L54) |
+| `IntegrationScope` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L52) |
+| `IntegrationTool` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/types.ts#L33) |
+| `IntegrationToolMeta` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L201) |
+| `OAuthConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L200) |
+| `OAuthField` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L199) |
 
 ## Related
 

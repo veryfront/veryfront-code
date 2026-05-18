@@ -34,6 +34,11 @@ interface ReferencePageError {
   expectedPath: string;
 }
 
+interface ExtraReferencePageError {
+  slug: string;
+  path: string;
+}
+
 function topLevelSlug(exportPath: string): string {
   if (exportPath === ".") return "index";
   return exportPath.replace("./", "").split("/")[0];
@@ -51,6 +56,7 @@ function main(): void {
 
   const errors: ValidationError[] = [];
   const missingReferencePages: ReferencePageError[] = [];
+  const extraReferencePages: ExtraReferencePageError[] = [];
 
   for (const [exportPath, filePath] of topLevel) {
     const absPath = `${ROOT}/${filePath.replace("./", "")}`;
@@ -106,6 +112,22 @@ function main(): void {
     }
   }
 
+  const referenceDir = `${ROOT}/docs/reference/veryfront`;
+  try {
+    for (const entry of Deno.readDirSync(referenceDir)) {
+      if (!entry.isFile || !entry.name.endsWith(".md")) continue;
+      const slug = entry.name.replace(/\.md$/, "");
+      if (!requiredSlugs.has(slug)) {
+        extraReferencePages.push({
+          slug,
+          path: `${referenceDir}/${entry.name}`,
+        });
+      }
+    }
+  } catch {
+    // Missing required pages above already reports the broken reference tree.
+  }
+
   // Structural README that explains the layout.
   const readmePath = `${ROOT}/docs/reference/README.md`;
   let readmeMissing = false;
@@ -115,7 +137,12 @@ function main(): void {
     readmeMissing = true;
   }
 
-  if (errors.length === 0 && missingReferencePages.length === 0 && !readmeMissing) {
+  if (
+    errors.length === 0 &&
+    missingReferencePages.length === 0 &&
+    extraReferencePages.length === 0 &&
+    !readmeMissing
+  ) {
     console.log(
       `All ${topLevel.length} top-level export paths have @module and @example in their JSDoc.`,
     );
@@ -145,6 +172,16 @@ function main(): void {
       console.error(`  ${err.identifier} -> ${err.expectedPath}`);
     }
     console.error("\nRun `deno task docs` to regenerate the reference tree.");
+  }
+
+  if (extraReferencePages.length > 0) {
+    console.error(
+      `\n${extraReferencePages.length} stale reference page(s) found under docs/reference/veryfront/:\n`,
+    );
+    for (const err of extraReferencePages) {
+      console.error(`  ${err.slug} -> ${err.path}`);
+    }
+    console.error("\nRun `deno task docs` to remove stale generated reference pages.");
   }
 
   if (readmeMissing) {

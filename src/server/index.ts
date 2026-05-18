@@ -189,6 +189,7 @@ function toNativeResponse(res: Response): Response {
   });
 }
 
+/** Create a Veryfront request handler for development or production. */
 export async function createHandler(
   options: { projectDir?: string; mode?: "development" | "production"; port?: number } = {},
 ): Promise<VeryfrontHandler> {

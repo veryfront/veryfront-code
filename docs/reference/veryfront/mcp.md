@@ -57,43 +57,43 @@ Create MCP server
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `buildFormElicitation` |  |
-| `buildUrlElicitation` |  |
-| `clearMCPRegistry` | Clear all registries |
-| `createMCPServer` | Create MCP server |
-| `formatSSEEvent` | Stateless SSE formatting utilities per the Server-Sent Events standard. |
-| `formatSSEPrimingEvent` |  |
-| `formatSSERetry` |  |
-| `getMCPRegistry` | Get tool/prompt/resource registry |
-| `getMCPStats` | Get registered capability stats |
-| `registerPrompt` | Register prompt with MCP |
-| `registerResource` | Register resource with MCP |
-| `registerTool` | Register tool with MCP |
+| Name | Description | Source |
+|------|-------------|--------|
+| `buildFormElicitation` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L16) |
+| `buildUrlElicitation` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L29) |
+| `clearMCPRegistry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L36) |
+| `createMCPServer` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L787) |
+| `formatSSEEvent` | Stateless SSE formatting utilities per the Server-Sent Events standard. Used by the Streamable HTTP transport for MCP. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L5) |
+| `formatSSEPrimingEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L16) |
+| `formatSSERetry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L12) |
+| `getMCPRegistry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L8) |
+| `getMCPStats` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L28) |
+| `registerPrompt` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L24) |
+| `registerResource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L20) |
+| `registerTool` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L16) |
 
 ### Classes
 
-| Name | Description |
-|------|-------------|
-| `MCPServer` | MCP server instance |
-| `SessionManager` | Manages MCP sessions for the Streamable HTTP transport. |
-| `TaskStore` |  |
+| Name | Description | Source |
+|------|-------------|--------|
+| `MCPServer` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L95) |
+| `SessionManager` | Manages MCP sessions for the Streamable HTTP transport. Sessions are created during initialization and validated on subsequent requests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/session.ts#L4) |
+| `TaskStore` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/task-store.ts#L15) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `ElicitationRequest` |  |
-| `FormElicitationOptions` |  |
-| `IntegrationLoaderConfig` | Configuration for loading integration tools into MCP |
-| `MCPServerConfig` | `createMCPServer()` config |
-| `MCPStats` | Registry statistics |
-| `MCPTool` | Generic MCP tool definition |
-| `Task` |  |
-| `ToolAnnotations` | Behavioral hints for MCP clients (MCP 2025-11-25). |
-| `ToolListEntry` | Wire format for a single tool in a tools/list response. |
-| `UrlElicitationOptions` |  |
+| Name | Description | Source |
+|------|-------------|--------|
+| `ElicitationRequest` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L11) |
+| `FormElicitationOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts) |
+| `IntegrationLoaderConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L87) |
+| `MCPServerConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/schemas/mcp.schema.ts#L57) |
+| `MCPStats` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/schemas/mcp.schema.ts#L58) |
+| `MCPTool` | Generic MCP tool definition | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/types.ts#L11) |
+| `Task` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/task-store.ts) |
+| `ToolAnnotations` | Behavioral hints for MCP clients (MCP 2025-11-25). Guides auto-approval, confirmation prompts, and caching. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/annotations.ts#L4) |
+| `ToolListEntry` | Wire format for a single tool in a tools/list response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/types.ts#L23) |
+| `UrlElicitationOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L5) |
 
 ## Related
 

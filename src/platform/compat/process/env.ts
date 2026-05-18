@@ -99,6 +99,7 @@ function isProjectEnvActiveSafe(): boolean {
   return _isProjectEnvActive();
 }
 
+/** Read an environment variable from the active project scope. */
 export function getEnv(key: string): string | undefined {
   // Check per-request project env overlay first (AsyncLocalStorage)
   const projectValue = getProjectEnvSafe(key);

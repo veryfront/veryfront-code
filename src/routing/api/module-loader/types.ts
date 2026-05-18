@@ -24,6 +24,7 @@ export type AppRouteHandler = (
 
 export type RouteHandler = PagesRouteHandler | AppRouteHandler;
 
+/** Route module shape with method handlers and an optional default handler. */
 export type APIRoute = Partial<Record<HTTPMethod, RouteHandler>> & {
   default?: RouteHandler;
 };

@@ -54,27 +54,27 @@ const configPath = resolve(cwd(), "veryfront.config.ts");
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `basename` | Get filename of path |
-| `createFileSystem` | Create platform-agnostic FS |
-| `cwd` | Get project root |
-| `dirname` | Get directory of path |
-| `exists` | Check path exists |
-| `extname` | Get file extension |
-| `join` | Join path segments |
-| `mkdir` | Create directory (recursive supported) |
-| `readDir` | List directory entries |
-| `readTextFile` | Read file as UTF-8 |
-| `remove` | Delete file or directory |
-| `resolve` | Resolve to absolute path |
-| `writeTextFile` | Write UTF-8 to file |
+| Name | Description | Source |
+|------|-------------|--------|
+| `basename` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L32) |
+| `createFileSystem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L258) |
+| `cwd` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L17) |
+| `dirname` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L22) |
+| `exists` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L285) |
+| `extname` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L51) |
+| `join` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L11) |
+| `mkdir` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L293) |
+| `readDir` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L301) |
+| `readTextFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L269) |
+| `remove` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L297) |
+| `resolve` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/resolution.ts#L14) |
+| `writeTextFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L277) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `FileSystem` | Filesystem interface |
+| Name | Description | Source |
+|------|-------------|--------|
+| `FileSystem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L4) |
 
 ## Related
 
