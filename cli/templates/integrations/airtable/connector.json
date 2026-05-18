@@ -203,6 +203,229 @@
           }
         }
       }
+    },
+    {
+      "id": "create_records",
+      "name": "Create Records",
+      "description": "Create multiple records in a table",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.airtable.com/v0/{baseId}/{tableIdOrName}",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          },
+          "tableIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table ID or URL-encoded table name",
+            "required": true
+          }
+        },
+        "body": {
+          "records": {
+            "type": "array",
+            "description": "Array of 1-10 record objects with fields",
+            "required": true
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Allow Airtable to typecast field values",
+            "default": false
+          }
+        },
+        "response": {
+          "transform": "records"
+        }
+      }
+    },
+    {
+      "id": "update_record",
+      "name": "Update Record",
+      "description": "Update fields on an existing record",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/{baseId}/{tableIdOrName}/{recordId}",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          },
+          "tableIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table ID or URL-encoded table name",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable record ID",
+            "required": true
+          }
+        },
+        "body": {
+          "fields": {
+            "type": "object",
+            "description": "Field values to update",
+            "required": true
+          },
+          "typecast": {
+            "type": "boolean",
+            "description": "Allow Airtable to typecast field values",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_record",
+      "name": "Delete Record",
+      "description": "Delete a record from a table",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://api.airtable.com/v0/{baseId}/{tableIdOrName}/{recordId}",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          },
+          "tableIdOrName": {
+            "type": "string",
+            "in": "path",
+            "description": "Table ID or URL-encoded table name",
+            "required": true
+          },
+          "recordId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable record ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_table",
+      "name": "Create Table",
+      "description": "Create a new table in an Airtable base",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.airtable.com/v0/meta/bases/{baseId}/tables",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Table name",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Table description"
+          },
+          "fields": {
+            "type": "array",
+            "description": "At least one initial field definition for the table",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_table",
+      "name": "Update Table",
+      "description": "Update table metadata such as name or description using the table ID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.airtable.com/v0/meta/bases/{baseId}/tables/{tableId}",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          },
+          "tableId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable table ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "New table name"
+          },
+          "description": {
+            "type": "string",
+            "description": "New table description"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_field",
+      "name": "Create Field",
+      "description": "Create a new field in an Airtable table",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.airtable.com/v0/meta/bases/{baseId}/tables/{tableId}/fields",
+        "params": {
+          "baseId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable base ID",
+            "required": true
+          },
+          "tableId": {
+            "type": "string",
+            "in": "path",
+            "description": "Airtable table ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Field name",
+            "required": true
+          },
+          "type": {
+            "type": "string",
+            "description": "Airtable field type",
+            "required": true
+          },
+          "description": {
+            "type": "string",
+            "description": "Field description"
+          },
+          "options": {
+            "type": "object",
+            "description": "Field type-specific options"
+          }
+        }
+      }
     }
   ],
   "prompts": [

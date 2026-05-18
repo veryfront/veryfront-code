@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors } from "./_data.ts";
 
 function getConnector(name: string) {
@@ -39,7 +40,7 @@ describe("integration endpoint specs", () => {
 
   it("adds endpoint specs for the newly configured integration providers", () => {
     const expectedEndpointCounts = new Map([
-      ["airtable", 5],
+      ["airtable", 11],
       ["discord", 2],
       ["figma", 4],
       ["notion", 4],
@@ -244,6 +245,89 @@ describe("integration endpoint specs", () => {
         }
       }
     }
+  });
+
+  it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
+    const airtable = getConnector("airtable");
+    const toolIds = airtable.tools.map((tool) => tool.id);
+
+    assertEquals(toolIds, [
+      "list_bases",
+      "get_base",
+      "list_records",
+      "get_record",
+      "create_record",
+      "create_records",
+      "update_record",
+      "delete_record",
+      "create_table",
+      "update_table",
+      "create_field",
+    ]);
+
+    for (const tool of airtable.tools) {
+      assertExists(tool.endpoint, `Expected airtable:${tool.id} to have an endpoint spec`);
+    }
+
+    assertEquals(getTool("airtable", "update_record").endpoint?.method, "PATCH");
+    assertEquals(getTool("airtable", "delete_record").endpoint?.method, "DELETE");
+    assertEquals(getTool("airtable", "create_records").endpoint?.response?.transform, "records");
+    assertEquals(
+      getTool("airtable", "create_table").endpoint?.url,
+      "https://api.airtable.com/v0/meta/bases/{baseId}/tables",
+    );
+    assertEquals(
+      getTool("airtable", "update_table").endpoint?.url,
+      "https://api.airtable.com/v0/meta/bases/{baseId}/tables/{tableId}",
+    );
+    assertEquals(
+      getTool("airtable", "create_field").endpoint?.url,
+      "https://api.airtable.com/v0/meta/bases/{baseId}/tables/{tableId}/fields",
+    );
+  });
+
+  it("keeps Airtable OAuth runtime scopes aligned with schema mutation tools", () => {
+    const airtable = getConnector("airtable");
+
+    assertEquals(airtable.auth?.scopes, airtableConfig.defaultScopes);
+    assertStringIncludes(airtableConfig.defaultScopes.join(" "), "schema.bases:write");
+  });
+
+  it("keeps Airtable connector tools aligned with scaffolded tool files", async () => {
+    const airtable = getConnector("airtable");
+    const toolFiles: string[] = [];
+
+    for await (const entry of Deno.readDir("cli/templates/integrations/airtable/files/tools")) {
+      if (entry.isFile && entry.name.endsWith(".ts")) {
+        toolFiles.push(entry.name.replace(/\.ts$/, ""));
+      }
+    }
+
+    const expectedFiles = airtable.tools.map((tool) => tool.id?.replaceAll("_", "-")).sort();
+    assertEquals(toolFiles.sort(), expectedFiles);
+  });
+
+  it("documents Airtable batch and schema size constraints for agents", async () => {
+    const createRecords = getTool("airtable", "create_records");
+    const createTable = getTool("airtable", "create_table");
+    const createRecordsTool = await Deno.readTextFile(
+      "cli/templates/integrations/airtable/files/tools/create-records.ts",
+    );
+    const createTableTool = await Deno.readTextFile(
+      "cli/templates/integrations/airtable/files/tools/create-table.ts",
+    );
+
+    assertStringIncludes(
+      createRecords.endpoint?.body?.records?.description ?? "",
+      "1-10",
+    );
+    assertStringIncludes(
+      createTable.endpoint?.body?.fields?.description ?? "",
+      "At least one",
+    );
+    assertStringIncludes(createRecordsTool, ".min(1)");
+    assertStringIncludes(createRecordsTool, ".max(10)");
+    assertStringIncludes(createTableTool, ".min(1)");
   });
 
   it("keeps gmail connector tools aligned with scaffolded tool files", async () => {
