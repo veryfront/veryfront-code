@@ -24,6 +24,7 @@ export function createEmptyLockfile(): LockfileData {
   return { version: LOCKFILE_VERSION, imports: {} };
 }
 
+/** Compute integrity. */
 export async function computeIntegrity(content: string): Promise<string> {
   const hash = await computeHash(content);
   return `sha256-${hash}`;
@@ -34,6 +35,7 @@ export async function verifyIntegrity(content: string, integrity: string): Promi
   return computed === integrity;
 }
 
+/** Public API contract for lockfile manager. */
 export interface LockfileManager {
   read(): Promise<LockfileData | null>;
   write(data: LockfileData): Promise<void>;
@@ -70,6 +72,7 @@ function createPlatformFSAdapter(): FSAdapter {
   };
 }
 
+/** Create lockfile manager. */
 export function createLockfileManager(projectDir: string, fsAdapter?: FSAdapter): LockfileManager {
   const fs = fsAdapter ?? createPlatformFSAdapter();
   const lockfilePath = `${projectDir}/${LOCKFILE_NAME}`;

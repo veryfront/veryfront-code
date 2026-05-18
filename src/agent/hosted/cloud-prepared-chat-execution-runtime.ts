@@ -4,6 +4,7 @@ import type { AgentTraceAttributes } from "./trace-attributes.ts";
 import type { HostedChatExecutionRuntimeLogger } from "./chat-execution-runtime.ts";
 import type { PreparedHostedChatExecutionRuntimeOptions } from "./prepared-chat-execution.ts";
 
+/** Input payload for create Veryfront Cloud prepared hosted chat execution runtime options. */
 export type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput = {
   apiUrl: string | URL;
   tracer: PreparedHostedChatExecutionRuntimeOptions["tracer"];
@@ -14,6 +15,7 @@ export type CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput =
   createRootStreamWatchdog?: PreparedHostedChatExecutionRuntimeOptions["createRootStreamWatchdog"];
 };
 
+/** Options accepted by create Veryfront Cloud prepared hosted chat execution runtime. */
 export function createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions(
   input: CreateVeryfrontCloudPreparedHostedChatExecutionRuntimeOptionsInput,
 ): PreparedHostedChatExecutionRuntimeOptions {

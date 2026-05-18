@@ -44,6 +44,7 @@ export type ModelString = string;
 // Import for use in AgentConfig
 import type { EdgeConfig, MemoryConfig } from "./schemas/index.ts";
 
+/** Public API contract for suggestion. */
 export type Suggestion =
   | {
     type: "prompt";
@@ -70,11 +71,13 @@ export type Suggestion =
     task?: never;
   };
 
+/** Public API contract for suggestions. */
 export interface Suggestions {
   welcomeMessage?: string;
   suggestions: Suggestion[];
 }
 
+/** Configuration used by agent. */
 export interface AgentConfig {
   id?: string;
   /** Human-readable display name for registry and control-plane listings. */
@@ -139,8 +142,10 @@ export interface AgentConfig {
   security?: false;
 }
 
+/** Configuration used by resolved agent. */
 export type ResolvedAgentConfig = AgentConfig & { model: ModelString };
 
+/** Request payload for model transport. */
 export interface ModelTransportRequest {
   agentId: string;
   requestedModel: ModelString;
@@ -149,16 +154,19 @@ export interface ModelTransportRequest {
   mode: "generate" | "stream";
 }
 
+/** Public API contract for resolved model transport. */
 export interface ResolvedModelTransport {
   model?: ModelRuntime;
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
 }
 
+/** Public API contract for model transport resolver. */
 export type ModelTransportResolver = (
   request: ModelTransportRequest,
 ) => ResolvedModelTransport | Promise<ResolvedModelTransport>;
 
+/** Request payload for runtime state. */
 export interface RuntimeStateRequest {
   agentId: string;
   mode: "generate" | "stream";
@@ -168,11 +176,13 @@ export interface RuntimeStateRequest {
   context?: Record<string, unknown>;
 }
 
+/** State for resolved runtime. */
 export interface ResolvedRuntimeState {
   system?: string;
   context?: Record<string, unknown>;
 }
 
+/** Public API contract for runtime state resolver. */
 export type RuntimeStateResolver = (
   request: RuntimeStateRequest,
 ) => ResolvedRuntimeState | undefined | Promise<ResolvedRuntimeState | undefined>;
@@ -194,12 +204,14 @@ export type ToolExecutionResultHandler = (
 // Import for use in AgentMiddleware
 import type { AgentContext, AgentResponse } from "./schemas/index.ts";
 
+/** Public API contract for agent middleware. */
 export type AgentMiddleware = (
   context: AgentContext,
   next: () => Promise<AgentResponse>,
 ) => Promise<AgentResponse>;
 
 // Utility functions for working with message parts and tool calls
+/** Return text from parts. */
 export function getTextFromParts(parts: MessagePart[]): string {
   return parts
     .filter((p): p is { type: "text"; text: string } => p.type === "text")
@@ -207,14 +219,17 @@ export function getTextFromParts(parts: MessagePart[]): string {
     .join("");
 }
 
+/** Check whether args is present. */
 export function hasArgs(part: ToolCallPart): part is ToolCallPartWithArgs {
   return "args" in part && part.args !== undefined;
 }
 
+/** Input payload for has. */
 export function hasInput(part: ToolCallPart): part is ToolCallPartWithInput {
   return "input" in part && part.input !== undefined;
 }
 
+/** Return tool arguments. */
 export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
   if (hasArgs(part)) return part.args;
   if (hasInput(part)) return part.input;
@@ -226,6 +241,7 @@ export function getToolArguments(part: ToolCallPart): Record<string, unknown> {
   });
 }
 
+/** Result returned from agent stream. */
 export interface AgentStreamResult {
   toDataStreamResponse(options?: {
     headers?: Record<string, string>;
@@ -234,6 +250,7 @@ export interface AgentStreamResult {
   }): Response;
 }
 
+/** Public API contract for agent. */
 export interface Agent {
   id: string;
   config: ResolvedAgentConfig;

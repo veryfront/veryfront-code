@@ -55,9 +55,34 @@ export function selectHydrationRoot<T extends HydrationRootCandidate>(
     element.tagName.toUpperCase() === "DIV" &&
     !!element.getAttribute("class")?.trim() &&
     !isHiddenHydrationPlaceholder(element)
-  ) ??
-    children.find((element) => !isHiddenHydrationPlaceholder(element)) ??
-    fallback;
+  ) ?? fallback;
+}
+
+export function shouldClientRenderPageRoot<T>(root: T, fallback: T): boolean {
+  return root === fallback;
+}
+
+function createClientRenderRoot(
+  children: readonly Element[],
+  fallback: HTMLElement,
+): HTMLElement {
+  const mount = document.createElement("div");
+  mount.setAttribute("data-veryfront-client-root", "page");
+
+  const firstRenderable = children.find((element) => !isHiddenHydrationPlaceholder(element));
+  if (firstRenderable?.parentNode === fallback) {
+    fallback.insertBefore(mount, firstRenderable);
+  } else {
+    fallback.appendChild(mount);
+  }
+
+  for (const element of children) {
+    if (!isHiddenHydrationPlaceholder(element) && element.parentNode === fallback) {
+      mount.appendChild(element);
+    }
+  }
+
+  return mount;
 }
 
 interface RSCBootDocument {
@@ -125,12 +150,18 @@ async function hydratePageComponent(
       return false;
     }
 
-    const root = selectHydrationRoot(Array.from(document.body.children), document.body);
+    const bodyChildren = Array.from(document.body.children);
+    const root = selectHydrationRoot(bodyChildren, document.body);
+    const component = React.createElement(Component, {});
 
-    ReactDOM.hydrateRoot(root, React.createElement(Component, {}), {
-      identifierPrefix: "vf",
-      onRecoverableError: () => {},
-    });
+    if (shouldClientRenderPageRoot(root, document.body)) {
+      ReactDOM.createRoot(createClientRenderRoot(bodyChildren, document.body)).render(component);
+    } else {
+      ReactDOM.hydrateRoot(root, component, {
+        identifierPrefix: "vf",
+        onRecoverableError: () => {},
+      });
+    }
 
     console.debug?.("[RSC] Page component hydrated successfully");
     return true;

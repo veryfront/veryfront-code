@@ -1,10 +1,13 @@
+/** Public API contract for live eval runtime. */
 export type LiveEvalRuntime = "framework";
 
+/** Public API contract for live eval result for performance. */
 export interface LiveEvalResultForPerformance {
   runtime: LiveEvalRuntime;
   durationMs: number;
 }
 
+/** Public API contract for runtime performance summary. */
 export interface RuntimePerformanceSummary {
   count: number;
   avgDurationMs: number;
@@ -30,6 +33,7 @@ function calculateDurationPercentile(
   return sortedDurations[index] ?? 0;
 }
 
+/** Builds runtime performance summary. */
 export function buildRuntimePerformanceSummary(
   results: LiveEvalResultForPerformance[],
 ): Record<LiveEvalRuntime, RuntimePerformanceSummary> {

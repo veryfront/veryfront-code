@@ -1,3 +1,4 @@
+/** Public API contract for task. */
 export interface Task {
   taskId: string;
   status: "working" | "input_required" | "completed" | "failed" | "cancelled";
@@ -13,6 +14,7 @@ const DEFAULT_POLL_INTERVAL = 2000;
 const SWEEP_INTERVAL_MS = 30_000;
 const MAX_TASKS = 1000;
 
+/** Implement task store. */
 export class TaskStore {
   private tasks = new Map<string, Task>();
   private results = new Map<string, unknown>();

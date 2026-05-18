@@ -1,3 +1,4 @@
+/** Shared tool input pending threshold ms value. */
 export const TOOL_INPUT_PENDING_THRESHOLD_MS = 5_000;
 
 type ToolInputActivityStatus = "pending_input" | "streaming_input";
@@ -57,6 +58,7 @@ export function collectDueToolStatuses(
   return events;
 }
 
+/** Applies tool input status transitions. */
 export async function* withToolInputStatusTransitions(
   stream: AsyncIterable<unknown>,
   thresholdMs = TOOL_INPUT_PENDING_THRESHOLD_MS,

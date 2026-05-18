@@ -44,6 +44,7 @@ export {
   setEnv,
 } from "#veryfront/platform/compat/process.ts";
 
+/** Create temp file. */
 export async function makeTempFile(
   options?: { prefix?: string; suffix?: string },
 ): Promise<string> {
@@ -68,6 +69,7 @@ export async function makeTempFile(
   return tempPath;
 }
 
+/** Options accepted by make temp dir with. */
 export async function makeTempDirWithOptions(options?: {
   prefix?: string;
   dir?: string;
@@ -93,6 +95,7 @@ export async function makeTempDirWithOptions(options?: {
   return tempPath;
 }
 
+/** Wait until a condition succeeds. */
 export async function waitFor(
   condition: () => boolean | Promise<boolean>,
   options?: {
@@ -116,10 +119,12 @@ export async function waitFor(
 }
 
 // no cleanup needed: one-shot
+/** Wait for a duration in milliseconds. */
 export function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }
 
+/** Exit the current process. */
 export function exit(code: number): never {
   if (isDeno) {
     // @ts-ignore - Deno global
@@ -129,6 +134,7 @@ export function exit(code: number): never {
   process.exit(code);
 }
 
+/** Applies temp dir. */
 export async function withTempDir<T>(
   fn: (tempDir: string) => Promise<T>,
   options?: { prefix?: string },
@@ -152,6 +158,7 @@ export async function withTempDir<T>(
   }
 }
 
+/** Applies temp file. */
 export async function withTempFile<T>(
   fn: (tempFile: string) => Promise<T>,
   options?: { prefix?: string; suffix?: string },
@@ -175,6 +182,7 @@ export async function withTempFile<T>(
   }
 }
 
+/** Applies env. */
 export async function withEnv<T>(
   vars: Record<string, string>,
   fn: () => Promise<T>,

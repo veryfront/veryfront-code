@@ -12,6 +12,7 @@ import {
 import { evaluateSlashCommandArtifactPolicy } from "../artifacts/slash-command-artifact-policy.ts";
 import { flattenSystemInstructions } from "../runtime/tool-inventory.ts";
 
+/** Context for hosted runtime state resolver. */
 export type HostedRuntimeStateResolverContext = DefaultResearchArtifactContext & {
   projectId?: string | null;
   branchId?: string | null;
@@ -20,6 +21,7 @@ export type HostedRuntimeStateResolverContext = DefaultResearchArtifactContext &
   userId?: string | null;
 };
 
+/** Input payload for hosted runtime state resolver. */
 export type HostedRuntimeStateResolverInput = {
   context?: Record<string, unknown>;
   system: string;
@@ -27,20 +29,24 @@ export type HostedRuntimeStateResolverInput = {
   step: number;
 };
 
+/** Result returned from hosted runtime state resolver. */
 export type HostedRuntimeStateResolverResult = {
   system: string;
   context: Record<string, unknown>;
 };
 
+/** Input payload for hosted runtime system refresh. */
 export type HostedRuntimeSystemRefreshInput<TContext extends HostedRuntimeStateResolverContext> = {
   taskContext: TContext;
   system: string;
 };
 
+/** Public API contract for hosted runtime system refresh. */
 export type HostedRuntimeSystemRefresh<TContext extends HostedRuntimeStateResolverContext> = (
   input: HostedRuntimeSystemRefreshInput<TContext>,
 ) => Promise<string> | string;
 
+/** Options accepted by create hosted runtime state resolver. */
 export type CreateHostedRuntimeStateResolverOptions<
   TContext extends HostedRuntimeStateResolverContext,
 > = {
@@ -64,6 +70,7 @@ function hasValidUserId(userId: string | null | undefined): userId is string {
   return typeof userId === "string" && userId.length > 0;
 }
 
+/** Create hosted runtime state resolver. */
 export function createHostedRuntimeStateResolver<
   TContext extends HostedRuntimeStateResolverContext,
 >(

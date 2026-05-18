@@ -35,6 +35,7 @@ import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts"
 
 const logger = agentLogger.component("redis-backend");
 
+/** Implement redis backend. */
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
   private connectionPromise: Promise<RedisAdapter> | null = null;

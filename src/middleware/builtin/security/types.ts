@@ -28,6 +28,7 @@ export interface RateLimitEntry {
   resetAt: number;
 }
 
+/** Public API contract for rate limit store. */
 export interface RateLimitStore {
   increment(key: string, windowMs: number): Promise<RateLimitEntry>;
   reset(key: string): Promise<void>;

@@ -14,11 +14,13 @@ interface RedisClient {
   on?(event: string, listener: (...args: unknown[]) => void): void;
 }
 
+/** Options accepted by redis rate limit. */
 export interface RedisRateLimitOptions {
   url?: string;
   keyPrefix?: string;
 }
 
+/** Implement redis rate limit store. */
 export class RedisRateLimitStore implements RateLimitStore {
   private client: RedisClient | null = null;
   private clientPromise: Promise<RedisClient> | null = null;

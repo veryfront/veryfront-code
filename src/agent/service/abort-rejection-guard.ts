@@ -1,17 +1,21 @@
+/** Public API contract for abort rejection guard logger. */
 export type AbortRejectionGuardLogger = {
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Public API contract for abort rejection process target. */
 export type AbortRejectionProcessTarget = {
   on(event: "unhandledRejection", listener: (reason: unknown) => void): void;
   off?(event: "unhandledRejection", listener: (reason: unknown) => void): void;
 };
 
+/** Event emitted for abort rejection. */
 export type AbortRejectionEvent = {
   reason: unknown;
   preventDefault(): void;
 };
 
+/** Public API contract for abort rejection event target. */
 export type AbortRejectionEventTarget = {
   addEventListener(
     event: "unhandledrejection",
@@ -23,6 +27,7 @@ export type AbortRejectionEventTarget = {
   ): void;
 };
 
+/** Options accepted by install abort rejection guard. */
 export type InstallAbortRejectionGuardOptions = {
   loadLogger?: () => AbortRejectionGuardLogger | Promise<AbortRejectionGuardLogger>;
   fallbackWarn?: (message: string, metadata?: Record<string, unknown>) => void;
@@ -31,6 +36,7 @@ export type InstallAbortRejectionGuardOptions = {
   cause?: string;
 };
 
+/** Public API contract for installed abort rejection guard. */
 export type InstalledAbortRejectionGuard = {
   dispose(): void;
 };
@@ -40,6 +46,7 @@ function hasAbortErrorName(reason: unknown): boolean {
     reason.name === "AbortError";
 }
 
+/** Check whether a rejection came from an abort signal. */
 export function isAbortRejectionReason(reason: unknown): boolean {
   return hasAbortErrorName(reason);
 }
@@ -103,6 +110,7 @@ async function logAbortRejection(
   options.fallbackWarn("Agent abort rejection swallowed", metadata);
 }
 
+/** Install abort rejection guard helper. */
 export function installAbortRejectionGuard(
   options: InstallAbortRejectionGuardOptions = {},
 ): InstalledAbortRejectionGuard {

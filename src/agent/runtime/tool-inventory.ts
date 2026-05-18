@@ -23,6 +23,7 @@ function isRuntimeToolInventoryMessage(message: ChatSystemMessage): boolean {
   return message.content.includes(RUNTIME_TOOL_INVENTORY_HEADER);
 }
 
+/** Applies runtime tool inventory. */
 export function withRuntimeToolInventory(
   instructions: string | readonly ChatSystemMessage[],
   toolNames: readonly string[],
@@ -38,6 +39,7 @@ export function withRuntimeToolInventory(
   ];
 }
 
+/** Flatten system instructions helper. */
 export function flattenSystemInstructions(instructions: readonly ChatSystemMessage[]): string {
   return instructions
     .map((message) => message.content.trim())

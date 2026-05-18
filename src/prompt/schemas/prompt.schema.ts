@@ -12,4 +12,5 @@ export const getPromptConfigSchema = defineSchema((v) =>
   })
 );
 
+/** Configuration used by prompt. */
 export type PromptConfig = InferSchema<ReturnType<typeof getPromptConfigSchema>>;

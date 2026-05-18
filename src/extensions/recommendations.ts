@@ -25,6 +25,7 @@ const recommendations = new Map<string, string>([
   ["SandboxShellToolsProvider", "@veryfront/ext-sandbox-shell-tools"],
 ]);
 
+/** Return recommendation. */
 export function getRecommendation(contractName: string): string | undefined {
   return recommendations.get(contractName);
 }

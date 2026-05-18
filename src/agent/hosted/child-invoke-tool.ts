@@ -9,11 +9,13 @@ import {
 import { buildHostedChildToolDescription } from "./child-requested-tools.ts";
 import { shouldBlockHostedChildSameTurnRetry } from "./child-status.ts";
 
+/** Public API contract for hosted child invoke failure. */
 export interface HostedChildInvokeFailure {
   terminalErrorCode: string;
   terminalErrorMessage: string;
 }
 
+/** Options accepted by create hosted child invoke tool. */
 export interface CreateHostedChildInvokeToolOptions<TInput, TResult> {
   id?: string;
   inputSchema: ToolConfig<TInput, TResult>["inputSchema"];
@@ -49,6 +51,7 @@ function buildHostedChildInvokeToolDescription(
   ].join("\n\n");
 }
 
+/** Create hosted child invoke tool. */
 export function createHostedChildInvokeTool<TInput, TResult>(
   options: CreateHostedChildInvokeToolOptions<TInput, TResult>,
 ): Tool<TInput, TResult> {

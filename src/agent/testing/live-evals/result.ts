@@ -1,5 +1,6 @@
 import type { LiveEvalRuntime } from "./performance.ts";
 
+/** Record shape for live eval result. */
 export interface LiveEvalResultRecord {
   id: string;
   label: string;
@@ -57,6 +58,7 @@ function createEvalResult(
   };
 }
 
+/** Result returned from create skipped eval. */
 export function createSkippedEvalResult(input: {
   id: string;
   label: string;
@@ -74,6 +76,7 @@ export function createSkippedEvalResult(input: {
   };
 }
 
+/** Result returned from create failed eval. */
 export function createFailedEvalResult(input: {
   id: string;
   label: string;
@@ -91,6 +94,7 @@ export function createFailedEvalResult(input: {
   return createEvalResult("fail", input);
 }
 
+/** Result returned from create passed eval. */
 export function createPassedEvalResult(input: {
   id: string;
   label: string;

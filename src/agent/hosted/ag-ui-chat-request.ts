@@ -31,15 +31,20 @@ export const getHostedAgUiChatForwardedConfigSchema = defineSchema((v) =>
     .strict()
 );
 
-/** @deprecated Use getHostedAgUiChatForwardedConfigSchema() */
+/** Schema for agent service AG-UI chat forwarded config.
+ * Schema for hosted AG-UI chat forwarded config.
+ * @deprecated Use getHostedAgUiChatForwardedConfigSchema()
+ */
 export const hostedAgUiChatForwardedConfigSchema = lazySchema(
   getHostedAgUiChatForwardedConfigSchema,
 );
 
+/** Configuration used by hosted AG-UI chat forwarded. */
 export type HostedAgUiChatForwardedConfig = InferSchema<
   ReturnType<typeof getHostedAgUiChatForwardedConfigSchema>
 >;
 
+/** Context for derived hosted AG-UI chat. */
 export type DerivedHostedAgUiChatContext = {
   validatedContext: ChatRequestContext;
   projectId: string | null;
@@ -49,10 +54,12 @@ export type DerivedHostedAgUiChatContext = {
   runtimeOverrides: ChatRuntimeOverrides | undefined;
 };
 
+/** Request payload for parsed hosted AG-UI. */
 export type ParsedHostedAgUiRequest = ParsedHostedChatRequest & {
   agUiInput: AgUiRuntimeRequest;
 };
 
+/** Options accepted by build parsed hosted AG-UI request. */
 export type BuildParsedHostedAgUiRequestOptions = {
   agUiInput: AgUiRuntimeRequest;
   authToken: string;
@@ -96,6 +103,7 @@ async function verifyHostedAgUiProjectAccess(input: {
   );
 }
 
+/** Context for derive hosted AG-UI chat. */
 export function deriveHostedAgUiChatContext(
   agUiInput: AgUiRuntimeRequest,
   options: { forwardedConfigNamespace?: string } = {},
@@ -139,6 +147,7 @@ export function deriveHostedAgUiChatContext(
   };
 }
 
+/** Response payload for create hosted AG-UI validation error. */
 export async function createHostedAgUiValidationErrorResponse(
   response: Response,
 ): Promise<Response> {
@@ -160,6 +169,7 @@ export async function createHostedAgUiValidationErrorResponse(
   );
 }
 
+/** Request payload for build parsed hosted AG-UI. */
 export async function buildParsedHostedAgUiRequest(
   input: BuildParsedHostedAgUiRequestOptions,
 ): Promise<ParsedHostedAgUiRequest | Response> {

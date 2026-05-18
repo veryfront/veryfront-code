@@ -40,75 +40,75 @@ export const GET = createOAuthCallbackHandler(gmailConfig);
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createOAuthCallbackHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L41) |
-| `createOAuthDisconnectHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L214) |
-| `createOAuthInitHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L106) |
-| `createOAuthStatusHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L170) |
+| `createOAuthCallbackHandler` | Handler for create oauth callback. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L43) |
+| `createOAuthDisconnectHandler` | Handler for create oauth disconnect. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L218) |
+| `createOAuthInitHandler` | Handler for create oauth init. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L108) |
+| `createOAuthStatusHandler` | Handler for create oauth status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L173) |
 
 ### Classes
 
 | Name | Description | Source |
 |------|-------------|--------|
 | `MemoryTokenStore` | In-memory TokenStore keyed by `(serviceId, userId)`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/token-store/memory.ts#L12) |
-| `OAuthProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L45) |
-| `OAuthService` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L292) |
+| `OAuthProvider` | Implement oauth provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L46) |
+| `OAuthService` | Implement oauth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/base.ts#L294) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AuthorizationUrlOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L93) |
-| `OAuthCallbackHandlerOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L12) |
-| `OAuthInitHandlerOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L74) |
-| `OAuthProviderConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L88) |
-| `OAuthServiceConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L89) |
-| `OAuthState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L91) |
-| `OAuthTokens` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L90) |
-| `TokenExchangeOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L96) |
-| `TokenExchangeResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L92) |
+| `AuthorizationUrlOptions` | Options accepted by authorization URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L99) |
+| `OAuthCallbackHandlerOptions` | Options accepted by oauth callback handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/callback-handler.ts#L13) |
+| `OAuthInitHandlerOptions` | Options accepted by oauth init handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/handlers/init-handler.ts#L75) |
+| `OAuthProviderConfig` | Configuration used by oauth provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L89) |
+| `OAuthServiceConfig` | Configuration used by oauth service. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L91) |
+| `OAuthState` | State for oauth. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L95) |
+| `OAuthTokens` | Public API contract for oauth tokens. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L93) |
+| `TokenExchangeOptions` | Options accepted by token exchange. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L103) |
+| `TokenExchangeResult` | Result returned from token exchange. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/schemas/oauth.schema.ts#L97) |
 | `TokenStore` | TokenStore is keyed by `(serviceId, userId)` - tokens are per-user. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/types.ts#L40) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `airtableConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L101) |
-| `asanaConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L171) |
-| `bitbucketConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L43) |
-| `boxConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L286) |
-| `calendarConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L32) |
-| `clickupConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L325) |
-| `confluenceConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L29) |
-| `discordConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L65) |
-| `driveConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L54) |
-| `dropboxConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L119) |
-| `figmaConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L53) |
-| `freshdeskConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L220) |
-| `githubConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L2) |
-| `gitlabConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L89) |
-| `gmailConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L17) |
-| `hubspotConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L134) |
-| `intercomConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L208) |
-| `jiraConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L16) |
-| `linearConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L77) |
-| `mailchimpConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L232) |
-| `mondayConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L183) |
-| `notionConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L37) |
-| `oneDriveConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/microsoft.ts#L64) |
-| `outlookConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/microsoft.ts#L17) |
-| `pipedriveConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L337) |
-| `quickbooksConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L256) |
-| `salesforceConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L146) |
-| `sharePointConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/microsoft.ts#L49) |
-| `sheetsConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L43) |
-| `shopifyConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L244) |
-| `slackConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L14) |
-| `teamsConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/microsoft.ts#L33) |
-| `trelloConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L310) |
-| `twitterConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L158) |
-| `webexConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L298) |
-| `xeroConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L268) |
-| `zoomConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L195) |
+| `airtableConfig` | Configuration used by airtable. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L109) |
+| `asanaConfig` | Configuration used by asana. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L184) |
+| `bitbucketConfig` | Configuration used by bitbucket. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L46) |
+| `boxConfig` | Configuration used by box. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L308) |
+| `calendarConfig` | Configuration used by calendar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L34) |
+| `clickupConfig` | Configuration used by clickup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L350) |
+| `confluenceConfig` | Configuration used by confluence. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L31) |
+| `discordConfig` | Configuration used by discord. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L70) |
+| `driveConfig` | Configuration used by drive. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L58) |
+| `dropboxConfig` | Configuration used by dropbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L128) |
+| `figmaConfig` | Configuration used by figma. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L57) |
+| `freshdeskConfig` | Configuration used by freshdesk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L237) |
+| `githubConfig` | Configuration used by github. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L3) |
+| `gitlabConfig` | Configuration used by gitlab. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L96) |
+| `gmailConfig` | Configuration used by gmail. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L18) |
+| `hubspotConfig` | Configuration used by hubspot. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L144) |
+| `intercomConfig` | Configuration used by intercom. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L224) |
+| `jiraConfig` | Configuration used by jira. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L17) |
+| `linearConfig` | Configuration used by linear. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L83) |
+| `mailchimpConfig` | Configuration used by mailchimp. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L250) |
+| `mondayConfig` | Configuration used by monday. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L197) |
+| `notionConfig` | Configuration used by notion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L40) |
+| `oneDriveConfig` | Configuration used by one drive. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/microsoft.ts#L68) |
+| `outlookConfig` | Configuration used by outlook. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/microsoft.ts#L18) |
+| `pipedriveConfig` | Configuration used by pipedrive. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L363) |
+| `quickbooksConfig` | Configuration used by quickbooks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L276) |
+| `salesforceConfig` | Configuration used by salesforce. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L157) |
+| `sharePointConfig` | Configuration used by share point. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/microsoft.ts#L52) |
+| `sheetsConfig` | Configuration used by sheets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L46) |
+| `shopifyConfig` | Configuration used by shopify. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L263) |
+| `slackConfig` | Configuration used by slack. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L16) |
+| `teamsConfig` | Configuration used by teams. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/microsoft.ts#L35) |
+| `trelloConfig` | Configuration used by trello. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L334) |
+| `twitterConfig` | Configuration used by twitter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L170) |
+| `webexConfig` | Configuration used by webex. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L321) |
+| `xeroConfig` | Configuration used by xero. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L289) |
+| `zoomConfig` | Configuration used by zoom. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L210) |
 
 ## Related
 

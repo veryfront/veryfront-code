@@ -1,3 +1,4 @@
+/** Error shape for parsed provider. */
 export interface ParsedProviderError {
   code: string;
   message: string;
@@ -13,8 +14,10 @@ function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Result returned from safe JSON parse. */
 export type SafeJsonParseResult = { ok: true; value: unknown } | { ok: false; error: Error };
 
+/** Parse JSON safely without throwing. */
 export function safeJsonParse(value: string): SafeJsonParseResult {
   try {
     return { ok: true, value: JSON.parse(value) };
@@ -28,6 +31,7 @@ function parseErrorJson(value: string): unknown | null {
   return parsed.ok ? parsed.value : null;
 }
 
+/** Parses known problem body. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
     return null;
@@ -56,6 +60,7 @@ export function parseKnownProblemBody(body: unknown): ParsedProviderError | null
   return null;
 }
 
+/** Message shape for is credit limit. */
 export function isCreditLimitMessage(normalizedMessage: string): boolean {
   return (
     normalizedMessage.includes("credit limit") ||
@@ -143,6 +148,7 @@ function extractResponseBody(error: unknown): string | undefined {
   return undefined;
 }
 
+/** Error shape for parse provider. */
 export function parseProviderError(error: unknown): ParsedProviderError {
   return parseProviderErrorInner(error, new WeakSet());
 }

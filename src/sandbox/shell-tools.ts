@@ -158,6 +158,7 @@ function normalizeBashTool(toolDefinition: unknown): SandboxShellToolDefinition 
   return normalized;
 }
 
+/** Normalizes bash tool set. */
 export function normalizeBashToolSet(bashTools: Record<string, unknown>): SandboxShellToolSet {
   return Object.fromEntries(
     Object.entries(bashTools).map((
@@ -166,6 +167,7 @@ export function normalizeBashToolSet(bashTools: Record<string, unknown>): Sandbo
   );
 }
 
+/** Rename sandbox file tools. */
 export function renameSandboxFileTools(bashTools: SandboxShellToolSet): SandboxShellToolSet {
   const tools: SandboxShellToolSet = { ...bashTools };
 
@@ -201,6 +203,7 @@ export function renameSandboxFileTools(bashTools: SandboxShellToolSet): SandboxS
   return tools;
 }
 
+/** Create sandbox shell tools. */
 export async function createSandboxShellTools(
   sandbox: SandboxShellClient,
   createShellTools: SandboxShellToolsProvider,

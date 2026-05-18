@@ -17,6 +17,7 @@ import {
   normalizeChatUiMessageStream,
 } from "../../chat/chat-ui-message-helpers.ts";
 
+/** Public API contract for chat UI message stream finish part. */
 export type ChatUiMessageStreamFinishPart = {
   type: "finish";
   finishReason: ChatFinishReason;
@@ -37,6 +38,7 @@ export type ChatUiMessageStreamFinishPart = {
   };
 };
 
+/** Public API contract for chat UI message stream finish. */
 export type ChatUiMessageStreamFinish<TMessageMetadata = MessageMetadata> = {
   messages: Array<ChatUiMessage<TMessageMetadata>>;
   isContinuation: false;
@@ -45,6 +47,7 @@ export type ChatUiMessageStreamFinish<TMessageMetadata = MessageMetadata> = {
   finishReason: ChatFinishReason;
 };
 
+/** Options accepted by chat UI message stream. */
 export type ChatUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
   generateMessageId?: () => string;
   sendReasoning?: boolean;
@@ -492,6 +495,7 @@ function toUiChunk(event: ChatStreamEvent): ChatUiMessageChunk<MessageMetadata> 
   }
 }
 
+/** Create chat UI message stream from data stream. */
 export function createChatUiMessageStreamFromDataStream<TMessageMetadata = MessageMetadata>(
   input: { stream: ReadableStream<Uint8Array> },
   options: ChatUiMessageStreamOptions<TMessageMetadata> = {},

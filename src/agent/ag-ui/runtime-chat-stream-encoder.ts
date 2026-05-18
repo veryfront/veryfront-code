@@ -6,16 +6,19 @@ import {
 import type { AgUiRuntimeStreamEvent } from "./browser-encoder.ts";
 import type { ChatFinishReason, ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 
+/** State for AG-UI runtime chat stream encoder. */
 export interface AgUiRuntimeChatStreamEncoderState {
   isStepOpen: boolean;
   finishReason: ChatFinishReason;
 }
 
+/** Public API contract for AG-UI runtime chat stream encoder. */
 export interface AgUiRuntimeChatStreamEncoder {
   state: AgUiRuntimeChatStreamEncoderState;
   encode: (event: AgUiRuntimeStreamEvent) => ChatStreamEvent[];
 }
 
+/** Options accepted by create AG-UI runtime chat stream encoder. */
 export interface CreateAgUiRuntimeChatStreamEncoderOptions {
   responseMessageId: string;
   sendReasoning?: boolean;
@@ -72,6 +75,7 @@ function formatErrorText(error: unknown, onError?: (error: unknown) => string): 
   return onError ? onError(error) : error instanceof Error ? error.message : String(error);
 }
 
+/** Create AG-UI runtime chat stream encoder. */
 export function createAgUiRuntimeChatStreamEncoder(
   options: CreateAgUiRuntimeChatStreamEncoderOptions,
 ): AgUiRuntimeChatStreamEncoder {

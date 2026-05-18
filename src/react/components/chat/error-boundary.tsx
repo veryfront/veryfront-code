@@ -1,5 +1,6 @@
 import * as React from "react";
 
+/** Props accepted by chat error boundary. */
 export interface ChatErrorBoundaryProps {
   children: React.ReactNode;
   fallback?: React.ReactNode | ((error: Error, reset: () => void) => React.ReactNode);
@@ -12,6 +13,7 @@ interface ChatErrorBoundaryState {
   error: Error | null;
 }
 
+/** Implement chat error boundary. */
 export class ChatErrorBoundary extends React.Component<
   ChatErrorBoundaryProps,
   ChatErrorBoundaryState
@@ -87,6 +89,7 @@ export class ChatErrorBoundary extends React.Component<
   }
 }
 
+/** Handler for use chat error. */
 export function useChatErrorHandler(): {
   error: Error | null;
   handleError: (error: Error) => void;

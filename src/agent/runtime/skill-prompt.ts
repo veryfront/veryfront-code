@@ -8,8 +8,10 @@ import {
 import { createRuntimePromptBlock } from "./prompt-block.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 
+/** Maximum value for runtime skill prompt entries. */
 export const MAX_RUNTIME_SKILL_PROMPT_ENTRIES = 30;
 
+/** Formats runtime skill metadata. */
 export function formatRuntimeSkillMetadata(skill: RuntimeSkillDefinition): string {
   const details: string[] = [];
   const allowedTools = skill.allowedTools ?? [];
@@ -35,6 +37,7 @@ export function formatRuntimeSkillMetadata(skill: RuntimeSkillDefinition): strin
   return details.length > 0 ? ` (${details.join("; ")})` : "";
 }
 
+/** Builds runtime available skills prompt block. */
 export function buildRuntimeAvailableSkillsPromptBlock(
   skills: readonly RuntimeSkillDefinition[],
 ): string {

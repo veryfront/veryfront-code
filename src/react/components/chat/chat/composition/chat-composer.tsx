@@ -15,6 +15,7 @@ import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import { downloadMarkdown } from "../utils/export.ts";
 import type { ChatMessage } from "#veryfront/agent/react";
 
+/** Props accepted by chat composer. */
 export interface ChatComposerProps {
   input: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
@@ -48,6 +49,7 @@ export interface ChatComposerProps {
   children?: React.ReactNode;
 }
 
+/** Render chat composer. */
 export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
   function ChatComposer(
     {

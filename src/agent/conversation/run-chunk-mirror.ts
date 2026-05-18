@@ -21,6 +21,7 @@ const DEFAULT_MAX_CURSOR_RESYNCS_PER_FLUSH = 3;
 const DEFAULT_HOSTED_CHUNK_MIRROR_BATCH_SIZE = 24;
 const DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT = 500;
 
+/** Public API contract for conversation run chunk mirror. */
 export interface ConversationRunChunkMirror {
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   appendEvents(events: ConversationRunEvent[]): Promise<void>;
@@ -29,20 +30,24 @@ export interface ConversationRunChunkMirror {
   dispose(): void;
 }
 
+/** Public API contract for conversation run chunk mirror prepared chunk. */
 export interface ConversationRunChunkMirrorPreparedChunk {
   chunk: ChatUiMessageChunk<ChatMessageMetadata>;
   events: ConversationRunEvent[];
 }
 
+/** Public API contract for conversation run chunk mirror prepared events. */
 export interface ConversationRunChunkMirrorPreparedEvents {
   events: ConversationRunEvent[];
 }
 
+/** Input payload for conversation run chunk mirror prepare chunk events. */
 export interface ConversationRunChunkMirrorPrepareChunkEventsInput {
   chunk: ChatUiMessageChunk<ChatMessageMetadata>;
   defaultPrepare: () => ConversationRunEvent[];
 }
 
+/** Input payload for conversation run chunk mirror prepare external events. */
 export interface ConversationRunChunkMirrorPrepareExternalEventsInput {
   events: ConversationRunEvent[];
   defaultPrepare: () => ConversationRunEvent[];
@@ -69,11 +74,13 @@ interface ConversationRunChunkMirrorSharedOptions {
   ) => Promise<void> | void;
 }
 
+/** Options accepted by conversation run chunk mirror queue. */
 export interface ConversationRunChunkMirrorQueueOptions
   extends ConversationRunChunkMirrorSharedOptions {
   queueController: ConversationRunEventQueueController;
 }
 
+/** Options accepted by conversation run chunk mirror API. */
 export interface ConversationRunChunkMirrorApiOptions
   extends ConversationRunChunkMirrorSharedOptions {
   authToken: string;
@@ -86,15 +93,18 @@ export interface ConversationRunChunkMirrorApiOptions
   maxCursorResyncsPerFlush?: number;
 }
 
+/** Options accepted by conversation run chunk mirror. */
 export type ConversationRunChunkMirrorOptions =
   | ConversationRunChunkMirrorQueueOptions
   | ConversationRunChunkMirrorApiOptions;
 
+/** Public API contract for hosted conversation run chunk mirror trace attributes. */
 export type HostedConversationRunChunkMirrorTraceAttributes = Record<
   string,
   string | number | boolean | null | undefined
 >;
 
+/** Public API contract for hosted conversation run chunk mirror instrumentation. */
 export interface HostedConversationRunChunkMirrorInstrumentation {
   trace?: <T>(operationName: string, operation: () => Promise<T>) => Promise<T>;
   setTraceAttributes?: (attributes: HostedConversationRunChunkMirrorTraceAttributes) => void;
@@ -103,6 +113,7 @@ export interface HostedConversationRunChunkMirrorInstrumentation {
   error?: (message: string, metadata: Record<string, unknown>) => void;
 }
 
+/** Options accepted by hosted conversation run chunk mirror. */
 export interface HostedConversationRunChunkMirrorOptions {
   authToken: string;
   apiUrl: string;
@@ -136,6 +147,7 @@ function resolveQueueController(
   });
 }
 
+/** Create conversation run chunk mirror. */
 export function createConversationRunChunkMirror(
   input: ConversationRunChunkMirrorOptions,
 ): ConversationRunChunkMirror {
@@ -305,6 +317,7 @@ function recordHostedChunkMirrorStopped(input: {
   }
 }
 
+/** Create hosted conversation run chunk mirror. */
 export function createHostedConversationRunChunkMirror(
   input: HostedConversationRunChunkMirrorOptions,
 ): ConversationRunChunkMirror {

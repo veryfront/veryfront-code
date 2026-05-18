@@ -9,6 +9,7 @@ import {
 import type { AgentMessage, AgentStatus, ToolCall } from "#veryfront/agent";
 import { type AgentTheme, cn, defaultAgentTheme, mergeThemes } from "./theme.ts";
 
+/** Props accepted by agent card. */
 export interface AgentCardProps {
   /** Agent messages */
   messages?: AgentMessage[];
@@ -32,6 +33,7 @@ export interface AgentCardProps {
   renderTool?: (toolCall: ToolCall) => React.ReactNode;
 }
 
+/** Render agent card. */
 export const AgentCard = React.forwardRef<HTMLDivElement, AgentCardProps>(
   (
     {

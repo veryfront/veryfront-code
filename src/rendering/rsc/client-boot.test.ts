@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   selectHydrationRoot,
   shouldAttemptRSCTransport,
+  shouldClientRenderPageRoot,
   shouldHydrateOnly,
 } from "./client-boot.ts";
 
@@ -82,7 +83,7 @@ describe("rendering/rsc/client-boot", () => {
       assertEquals(root, wrapper);
     });
 
-    it("falls back to the first non-placeholder child for non-div roots", () => {
+    it("falls back to the parent container when the page owns the direct child root", () => {
       const headPlaceholder = toCandidate(createElement("DIV", {
         "data-veryfront-head": "1",
         style: "display:none",
@@ -92,17 +93,32 @@ describe("rendering/rsc/client-boot", () => {
 
       const root = selectHydrationRoot([headPlaceholder, main], body);
 
-      assertEquals(root, main);
+      assertEquals(root, body);
     });
 
-    it("skips non-render nodes before selecting a root", () => {
+    it("uses the parent container when only non-render nodes and page roots are present", () => {
       const script = toCandidate(createElement("SCRIPT"));
       const section = toCandidate(createElement("SECTION"));
       const body = toCandidate(createElement("BODY"));
 
       const root = selectHydrationRoot([script, section], body);
 
-      assertEquals(root, section);
+      assertEquals(root, body);
+    });
+  });
+
+  describe("shouldClientRenderPageRoot", () => {
+    it("uses client rendering when the fallback parent is the selected root", () => {
+      const body = toCandidate(createElement("BODY"));
+
+      assertEquals(shouldClientRenderPageRoot(body, body), true);
+    });
+
+    it("keeps hydration when an explicit wrapper is selected", () => {
+      const wrapper = toCandidate(createElement("DIV", { class: "page-shell" }));
+      const body = toCandidate(createElement("BODY"));
+
+      assertEquals(shouldClientRenderPageRoot(wrapper, body), false);
     });
   });
 });

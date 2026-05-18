@@ -12,16 +12,19 @@ import {
   type CreateAgUiTrackedBrowserResponseInput,
 } from "./tracked-browser-response.ts";
 
+/** Public API contract for AG-UI chat UI chunk browser encoder. */
 export type AgUiChatUiChunkBrowserEncoder = Pick<
   AgUiBrowserChunkEncoder<ChatUiMessageChunk<ChatMessageMetadata>>,
   "encode" | "finalize"
 >;
 
+/** Options accepted by create AG-UI chat UI chunk browser encoder. */
 export interface CreateAgUiChatUiChunkBrowserEncoderOptions {
   modelId?: string;
   resolveProvider?: (modelId: string) => string | undefined;
 }
 
+/** Input payload for create AG-UI chat UI tracked browser response. */
 export interface CreateAgUiChatUiTrackedBrowserResponseInput extends
   Omit<
     CreateAgUiTrackedBrowserResponseInput<ChatUiMessageChunk<ChatMessageMetadata>>,
@@ -31,6 +34,7 @@ export interface CreateAgUiChatUiTrackedBrowserResponseInput extends
   resolveProvider?: CreateAgUiChatUiChunkBrowserEncoderOptions["resolveProvider"];
 }
 
+/** Return AG-UI chat UI message metadata from chunk. */
 export function getAgUiChatUiMessageMetadataFromChunk(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
 ): ChatMessageMetadata | undefined {
@@ -45,6 +49,7 @@ export function getAgUiChatUiMessageMetadataFromChunk(
   return undefined;
 }
 
+/** Return AG-UI chat UI message usage metadata. */
 export function getAgUiChatUiMessageUsageMetadata(
   messageMetadata: ChatMessageMetadata | undefined,
 ): Pick<AgUiBrowserRunFinishedMetadata, "inputTokens" | "outputTokens" | "totalTokens"> {
@@ -60,6 +65,7 @@ export function getAgUiChatUiMessageUsageMetadata(
   };
 }
 
+/** Return AG-UI chat UI message chunk metadata. */
 export function getAgUiChatUiMessageChunkMetadata(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
   options: Pick<CreateAgUiChatUiChunkBrowserEncoderOptions, "resolveProvider"> = {},
@@ -97,6 +103,7 @@ export function getAgUiChatUiMessageChunkMetadata(
   };
 }
 
+/** Event emitted for normalize chat UI message chunk to AG-UI runtime. */
 export function normalizeChatUiMessageChunkToAgUiRuntimeEvent(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
 ): AgUiRuntimeStreamEvent {
@@ -132,6 +139,7 @@ export function normalizeChatUiMessageChunkToAgUiRuntimeEvent(
   }
 }
 
+/** Create AG-UI chat UI chunk browser encoder. */
 export function createAgUiChatUiChunkBrowserEncoder(
   options: CreateAgUiChatUiChunkBrowserEncoderOptions = {},
 ): AgUiChatUiChunkBrowserEncoder {
@@ -149,6 +157,7 @@ export function createAgUiChatUiChunkBrowserEncoder(
   });
 }
 
+/** Response payload for create AG-UI chat UI tracked browser. */
 export function createAgUiChatUiTrackedBrowserResponse(
   input: CreateAgUiChatUiTrackedBrowserResponseInput,
 ): Response {

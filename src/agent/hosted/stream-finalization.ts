@@ -1,10 +1,12 @@
 import type { HostedLifecycleTerminalState } from "./lifecycle.ts";
 
+/** Error shape for hosted terminal. */
 export interface HostedTerminalError {
   code: string;
   message: string;
 }
 
+/** State for hosted response finalization. */
 export interface HostedResponseFinalizationState<TMessage, TChunk> {
   persistedMessage: TMessage;
   finalizedMessage: TMessage;
@@ -13,12 +15,14 @@ export interface HostedResponseFinalizationState<TMessage, TChunk> {
   metadata?: HostedLifecycleTerminalState["metadata"];
 }
 
+/** State for hosted detached finalization. */
 export interface HostedDetachedFinalizationState<TChunk> {
   hasContent: boolean;
   fallbackChunks: readonly TChunk[];
   hasIncompleteToolParts: boolean;
 }
 
+/** Options accepted by finalize hosted response. */
 export interface FinalizeHostedResponseOptions<TMessage, TChunk> {
   isAborted: boolean;
   getFinalStep: () => Promise<unknown>;
@@ -41,6 +45,7 @@ export interface FinalizeHostedResponseOptions<TMessage, TChunk> {
   streamError?: unknown | null;
 }
 
+/** Options accepted by finalize hosted detached. */
 export interface FinalizeHostedDetachedOptions<TChunk> {
   isAborted: boolean;
   mirroredDurableOutput: boolean;
@@ -82,6 +87,7 @@ function shouldFailStreamError(
   return !input.isAborted && input.streamError != null;
 }
 
+/** Response payload for finalize hosted. */
 export async function finalizeHostedResponse<TMessage, TChunk>(
   options: FinalizeHostedResponseOptions<TMessage, TChunk>,
 ): Promise<void> {
@@ -139,6 +145,7 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
   await cleanupAfterFinalization(options.cleanup);
 }
 
+/** Finalize hosted detached helper. */
 export async function finalizeHostedDetached<TChunk>(
   options: FinalizeHostedDetachedOptions<TChunk>,
 ): Promise<void> {

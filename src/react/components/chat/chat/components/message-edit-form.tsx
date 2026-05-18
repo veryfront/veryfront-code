@@ -1,12 +1,14 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Props accepted by message edit form. */
 export interface MessageEditFormProps {
   initialContent: string;
   onSave: (content: string) => void;
   onCancel: () => void;
 }
 
+/** Render message edit form. */
 export function MessageEditForm({
   initialContent,
   onSave,

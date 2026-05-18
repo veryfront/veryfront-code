@@ -45,6 +45,7 @@ class LLMProviderRegistryImpl implements LLMProviderRegistry {
   }
 }
 
+/** Create llmprovider registry. */
 export function createLLMProviderRegistry(): LLMProviderRegistry {
   return new LLMProviderRegistryImpl();
 }

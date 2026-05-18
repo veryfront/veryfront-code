@@ -13,6 +13,7 @@ export interface Capability {
   [key: string]: unknown;
 }
 
+/** Public API contract for extension contract metadata. */
 export interface ExtensionContractMetadata {
   /** Contracts this extension registers dynamically during setup(). */
   provides?: string[];
@@ -22,6 +23,7 @@ export interface ExtensionContractMetadata {
 
 export type PackageContractMetadata = ExtensionContractMetadata;
 
+/** Context for extension. */
 export interface ExtensionContext {
   get<T>(contract: string): T | undefined;
   require<T>(contract: string): T;
@@ -30,6 +32,7 @@ export interface ExtensionContext {
   logger: ExtensionLogger;
 }
 
+/** Public API contract for extension logger. */
 export interface ExtensionLogger {
   debug(message: string, ...args: unknown[]): void;
   info(message: string, ...args: unknown[]): void;
@@ -37,6 +40,7 @@ export interface ExtensionLogger {
   error(message: string, ...args: unknown[]): void;
 }
 
+/** Public API contract for extension. */
 export interface Extension {
   name: string;
   version: string;
@@ -48,12 +52,15 @@ export interface Extension {
   extends?: Extension[];
 }
 
+/** Public API contract for extension factory. */
 export type ExtensionFactory = (config?: unknown) => Extension;
 
+/** Entry shape for extension config. */
 export type ExtensionConfigEntry =
   | Extension
   | { name: string; enabled: false };
 
+/** Public API contract for extension source. */
 export type ExtensionSource =
   | "config"
   | "package"
@@ -61,6 +68,7 @@ export type ExtensionSource =
   | "local-file"
   | "builtin";
 
+/** Public API contract for resolved extension. */
 export interface ResolvedExtension {
   extension: Extension;
   source: ExtensionSource;

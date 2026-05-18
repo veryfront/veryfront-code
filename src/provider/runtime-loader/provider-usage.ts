@@ -1,5 +1,6 @@
 import { readRecord } from "./provider-records.ts";
 
+/** Public API contract for runtime usage. */
 export type RuntimeUsage = {
   inputTokens?: number;
   outputTokens?: number;
@@ -107,6 +108,7 @@ export function extractOpenAIResponsesUsage(payload: unknown): RuntimeUsage | un
   };
 }
 
+/** Merge provider usage counters. */
 export function mergeUsage(
   current: RuntimeUsage | undefined,
   next: RuntimeUsage | undefined,

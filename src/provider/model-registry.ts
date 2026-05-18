@@ -39,6 +39,7 @@ import type { ModelRuntime } from "./types.ts";
 
 const localLogger = serverLogger.component("local-llm");
 
+/** Public API contract for model provider factory. */
 export type ModelProviderFactory = (modelId: string) => ModelRuntime;
 
 const manager = new ProjectScopedRegistryManager<ModelProviderFactory>(

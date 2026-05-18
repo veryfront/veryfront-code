@@ -1,5 +1,6 @@
 import { type AgentServiceConfigInput, parseAgentServiceConfig } from "../../service/config.ts";
 
+/** Public API contract for durable run canary environment. */
 export interface DurableRunCanaryEnvironment {
   apiUrl: string;
   authToken: string;
@@ -8,8 +9,10 @@ export interface DurableRunCanaryEnvironment {
   keepSuccessfulEvidence: boolean;
 }
 
+/** Default value for durable run canary timeout ms. */
 export const DEFAULT_DURABLE_RUN_CANARY_TIMEOUT_MS = 240_000;
 
+/** Resolves durable run canary environment. */
 export function resolveDurableRunCanaryEnvironment(
   env: AgentServiceConfigInput = {},
 ): DurableRunCanaryEnvironment {

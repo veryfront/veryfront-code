@@ -1,8 +1,10 @@
+/** Context for open telemetry span. */
 export type OpenTelemetrySpanContext = {
   traceId: string;
   spanId: string;
 };
 
+/** Public API contract for open telemetry span. */
 export type OpenTelemetrySpan = {
   setAttribute(key: string, value: string | number | boolean): unknown;
   setAttributes(attributes: Record<string, string | number | boolean>): unknown;
@@ -12,36 +14,44 @@ export type OpenTelemetrySpan = {
   spanContext(): OpenTelemetrySpanContext;
 };
 
+/** Public API contract for open telemetry tracer. */
 export type OpenTelemetryTracer<TContext, TSpan extends OpenTelemetrySpan, TSpanOptions> = {
   startSpan(name: string, options: TSpanOptions | undefined, context: TContext): TSpan;
   startActiveSpan<T>(name: string, fn: (span: TSpan) => T): T;
 };
 
+/** Public API contract for open telemetry trace API. */
 export type OpenTelemetryTraceApi<TContext, TSpan extends OpenTelemetrySpan, TSpanOptions> = {
   getTracer(serviceName: string): OpenTelemetryTracer<TContext, TSpan, TSpanOptions>;
   getSpan(context: TContext): TSpan | undefined;
   setSpan(context: TContext, span: TSpan): TContext;
 };
 
+/** Public API contract for open telemetry context API. */
 export type OpenTelemetryContextApi<TContext> = {
   active(): TContext;
   with<T>(context: TContext, fn: () => T): T;
 };
 
+/** Input payload for service tracer attribute. */
 export type ServiceTracerAttributeInput = string | number | boolean | null | undefined | object;
 export type ServiceTracerAttributePrimitive = string | number | boolean;
+/** Public API contract for service tracer attribute value. */
 export type ServiceTracerAttributeValue =
   | ServiceTracerAttributePrimitive
   | readonly ServiceTracerAttributePrimitive[]
   | null
   | undefined;
+/** Public API contract for service tracer attributes. */
 export type ServiceTracerAttributes = Record<string, ServiceTracerAttributeValue>;
 
+/** Context for service tracer span. */
 export type ServiceTracerSpanContext = {
   toTraceId(): string;
   toSpanId(): string;
 };
 
+/** Public API contract for service tracer span. */
 export type ServiceTracerSpan<
   TContext,
   TSpan extends OpenTelemetrySpan,
@@ -55,6 +65,7 @@ export type ServiceTracerSpan<
   readonly otelContext: TContext;
 };
 
+/** Options accepted by service tracer start span. */
 export type ServiceTracerStartSpanOptions<
   TContext,
   TSpan extends OpenTelemetrySpan,
@@ -63,6 +74,7 @@ export type ServiceTracerStartSpanOptions<
   childOf?: ServiceTracerSpan<TContext, TSpan>;
 };
 
+/** Public API contract for service tracer. */
 export type ServiceTracer<TContext, TSpan extends OpenTelemetrySpan, TSpanOptions> = {
   init(): void;
   startSpan(
@@ -80,6 +92,7 @@ export type ServiceTracer<TContext, TSpan extends OpenTelemetrySpan, TSpanOption
   trace<T>(name: string, fn: () => T): T;
 };
 
+/** Options accepted by create open telemetry service tracer. */
 export type CreateOpenTelemetryServiceTracerOptions<
   TContext,
   TSpan extends OpenTelemetrySpan,
@@ -91,6 +104,7 @@ export type CreateOpenTelemetryServiceTracerOptions<
   errorStatusCode: number;
 };
 
+/** Public API contract for open telemetry service tracer. */
 export type OpenTelemetryServiceTracer<
   TContext,
   TSpan extends OpenTelemetrySpan,
@@ -159,6 +173,7 @@ function isPromise<T>(value: T | Promise<T>): value is Promise<T> {
   return value instanceof Promise;
 }
 
+/** Create open telemetry service tracer. */
 export function createOpenTelemetryServiceTracer<
   TContext,
   TSpan extends OpenTelemetrySpan,

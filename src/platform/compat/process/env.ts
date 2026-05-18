@@ -28,6 +28,7 @@ function getOverlayEnvValue(
   return { hasValue: true, value: value ?? undefined };
 }
 
+/** Read and write process environment variables. */
 export function env(): Record<string, string> {
   const base = IS_DENO
     ? Deno.env.toObject()
@@ -175,6 +176,7 @@ export function getEnvBoolean(
   return fallback;
 }
 
+/** Sets env. */
 export function setEnv(key: string, value: string): void {
   const overlay = getEnvOverlayStore();
   if (overlay) {
@@ -193,6 +195,7 @@ export function setEnv(key: string, value: string): void {
   throw new Error("setEnv() is not supported in this runtime");
 }
 
+/** Delete a process environment variable. */
 export function deleteEnv(key: string): void {
   const overlay = getEnvOverlayStore();
   if (overlay) {

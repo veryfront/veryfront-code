@@ -1,6 +1,7 @@
 import { FNV1A_PRIME_32 } from "./constants/crypto.ts";
 import { HASH_SEED_FNV1A } from "./constants/hash.ts";
 
+/** Implement memo cache. */
 export class MemoCache<V> {
   private cache = new Map<string, V>();
 
@@ -66,6 +67,7 @@ function memoizeWithCache<Args extends unknown[], Result>(
   };
 }
 
+/** Memoize async. */
 export function memoizeAsync<Args extends unknown[], Result>(
   fn: (...args: Args) => Promise<Result>,
   keyHasher: (...args: Args) => string,
@@ -73,6 +75,7 @@ export function memoizeAsync<Args extends unknown[], Result>(
   return memoizeWithCache(fn, keyHasher) as (...args: Args) => Promise<Result>;
 }
 
+/** Memoize. */
 export function memoize<Args extends unknown[], Result>(
   fn: (...args: Args) => Result,
   keyHasher: (...args: Args) => string,

@@ -13,6 +13,7 @@ import type { BranchInfo, ChatMessage } from "#veryfront/agent/react";
 import type { FeedbackValue } from "../components/message-feedback.tsx";
 import type { PartGroup } from "../utils/message-parts.ts";
 
+/** Public API contract for message context value. */
 export interface MessageContextValue {
   message: ChatMessage;
   role: "user" | "assistant" | "system" | "tool";
@@ -35,6 +36,7 @@ export interface MessageContextValue {
 
 const MessageContext = React.createContext<MessageContextValue | null>(null);
 
+/** Context for use message. */
 export function useMessageContext(): MessageContextValue {
   const context = React.useContext(MessageContext);
   if (!context) {
@@ -45,8 +47,10 @@ export function useMessageContext(): MessageContextValue {
   return context;
 }
 
+/** React hook for message context optional. */
 export function useMessageContextOptional(): MessageContextValue | null {
   return React.useContext(MessageContext);
 }
 
+/** Render message context provider. */
 export const MessageContextProvider = MessageContext.Provider;

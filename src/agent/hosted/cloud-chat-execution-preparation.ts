@@ -16,10 +16,12 @@ const DEFAULT_MISSING_USER_MESSAGE_ERROR_MESSAGE = "DURABLE_CHAT_ROOT_REQUIRES_U
 const DEFAULT_PERSIST_LATEST_USER_MESSAGE_FAILURE_MESSAGE =
   "Failed to persist user message before durable run setup";
 
+/** Public API contract for Veryfront Cloud hosted chat execution preparation logger. */
 export type VeryfrontCloudHostedChatExecutionPreparationLogger = {
   error: (message: string, metadata?: unknown) => void;
 };
 
+/** Input payload for prepare Veryfront Cloud hosted chat execution. */
 export type PrepareVeryfrontCloudHostedChatExecutionInput<
   TRuntimeAgentDefinition extends {
     id: string;
@@ -38,6 +40,7 @@ export type PrepareVeryfrontCloudHostedChatExecutionInput<
     logger?: VeryfrontCloudHostedChatExecutionPreparationLogger;
   };
 
+/** Options accepted by create Veryfront Cloud hosted chat execution root run. */
 export function createVeryfrontCloudHostedChatExecutionRootRunOptions(input: {
   rootRun?: Partial<HostedChatExecutionPreparationRootRunOptions>;
   logger?: VeryfrontCloudHostedChatExecutionPreparationLogger;
@@ -68,6 +71,7 @@ export function createVeryfrontCloudHostedChatExecutionRootRunOptions(input: {
   return rootRun;
 }
 
+/** Prepare Veryfront Cloud hosted chat execution. */
 export async function prepareVeryfrontCloudHostedChatExecution<
   TRuntimeAgentDefinition extends {
     id: string;

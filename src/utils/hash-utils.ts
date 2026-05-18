@@ -4,23 +4,26 @@ import { HASH_SEED_FNV1A } from "./constants/hash.ts";
 /** Number of hex characters kept by shortHash (8 hex chars = 32 bits) */
 const SHORT_HASH_LENGTH = 8;
 
+/** Compute hash. */
 export async function computeHash(content: string): Promise<string> {
   const data = new TextEncoder().encode(content);
   const hashBuffer = await crypto.subtle.digest("SHA-256", data);
 
   return Array.from(new Uint8Array(hashBuffer), (b) => b.toString(16).padStart(2, "0")).join("");
 }
-
+/** Source bundle content used for hash computation. */
 export interface BundleCode {
   code: string;
   css?: string;
   sourceMap?: string;
 }
 
+/** Compute code hash. */
 export function computeCodeHash(code: BundleCode): Promise<string> {
   return computeHash(`${code.code}${code.css ?? ""}${code.sourceMap ?? ""}`);
 }
 
+/** Create simple hash. */
 export function simpleHash(str: string): number {
   let hash = 0;
 
@@ -37,6 +40,7 @@ export function hashCodeHex(str: string): string {
   return simpleHash(str).toString(16);
 }
 
+/** Create short hash. */
 export async function shortHash(content: string): Promise<string> {
   const fullHash = await computeHash(content);
   return fullHash.slice(0, SHORT_HASH_LENGTH);

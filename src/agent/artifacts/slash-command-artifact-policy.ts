@@ -3,11 +3,13 @@ import { isRecord } from "#veryfront/chat/conversation.ts";
 const SLASH_COMMAND_PATTERN = /(?:^|<span\s+data-command="[^"]+">)\s*\/[a-z0-9_-]+/i;
 const EXACT_ARTIFACT_PATH_PATTERN = /(?:^|[\s`"'(])\/?[\w./-]+\.(?:md|mdx|txt|json|ya?ml)\b/i;
 
+/** Input payload for slash command artifact policy. */
 export interface SlashCommandArtifactPolicyInput {
   messages: readonly unknown[];
   slashCommandArtifactPathSeen?: boolean;
 }
 
+/** Public API contract for slash command artifact policy. */
 export interface SlashCommandArtifactPolicy {
   hasSlashCommand: boolean;
   hasExactArtifactPath: boolean;
@@ -189,10 +191,12 @@ function containsExactArtifactPath(messages: readonly unknown[]): boolean {
   });
 }
 
+/** Contains exact artifact path value helper. */
 export function containsExactArtifactPathValue(value: unknown): boolean {
   return extractArtifactPathsFromUnknown(value).length > 0;
 }
 
+/** Evaluate slash command artifact policy helper. */
 export function evaluateSlashCommandArtifactPolicy(
   input: SlashCommandArtifactPolicyInput,
 ): SlashCommandArtifactPolicy {

@@ -14,6 +14,7 @@ function parseToolArguments(serializedArguments: string): Record<string, unknown
   }
 }
 
+/** Normalizes AG-UI runtime messages. */
 export function normalizeAgUiRuntimeMessages(
   messages: AgUiRuntimeRequest["messages"],
 ): Message[] {

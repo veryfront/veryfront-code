@@ -129,6 +129,7 @@ async function startVFSServer(
   const process = new Deno.Command(BINARY_PATH, {
     args: ["serve", "--mode=production", "-p", String(port)],
     cwd: projectDir,
+    clearEnv: true,
     env,
     stdout: "piped",
     stderr: "piped",

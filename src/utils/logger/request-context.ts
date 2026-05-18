@@ -10,6 +10,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { __registerRequestContextGetter, type Logger } from "./logger.ts";
 
+/** Context for request. */
 export interface RequestContext {
   logger: Logger;
   requestId: string;
@@ -34,6 +35,7 @@ export function runWithRequestContext<T>(context: RequestContext, fn: () => T): 
   return requestContextStore.run(context, fn);
 }
 
+/** Run with request context async. */
 export function runWithRequestContextAsync<T>(
   context: RequestContext,
   fn: () => Promise<T>,

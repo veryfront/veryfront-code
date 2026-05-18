@@ -3,10 +3,13 @@ import { resolveSchemaValidator } from "#veryfront/schemas/define.ts";
 import { tool } from "./factory.ts";
 import type { Tool } from "./types.ts";
 
+/** Default value for sleep tool max seconds. */
 export const DEFAULT_SLEEP_TOOL_MAX_SECONDS = 60;
 
+/** Public API contract for sleep tool wait. */
 export type SleepToolWait = (milliseconds: number) => Promise<void> | void;
 
+/** Options accepted by create sleep tool. */
 export type CreateSleepToolOptions = {
   maxSeconds?: number;
   wait?: SleepToolWait;
@@ -37,13 +40,16 @@ function createSleepToolInputSchema(maxSeconds: number): Schema<SleepToolInputSh
   }) as unknown as Schema<SleepToolInputShape>;
 }
 
+/** Input payload for sleep tool. */
 export type SleepToolInput = InferSchema<ReturnType<typeof createSleepToolInputSchema>>;
 
+/** Output from sleep tool. */
 export type SleepToolOutput = {
   sleptFor: number;
   message: string;
 };
 
+/** Create sleep tool. */
 export function createSleepTool(options: CreateSleepToolOptions = {}) {
   const maxSeconds = options.maxSeconds ?? DEFAULT_SLEEP_TOOL_MAX_SECONDS;
   const wait = options.wait ?? defaultSleepToolWait;

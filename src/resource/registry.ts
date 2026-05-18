@@ -38,4 +38,5 @@ class ResourceRegistry extends ScopedRegistryFacade<Resource> {
   }
 }
 
+/** Shared resource registry value. */
 export const resourceRegistry = new ResourceRegistry(resourceRegistryManager);

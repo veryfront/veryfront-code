@@ -5,6 +5,7 @@ import { CheckIcon, CopyIcon } from "../../icons/index.ts";
 const ACTION_BUTTON =
   "inline-flex items-center justify-center size-7 text-[var(--input-placeholder)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2";
 
+/** Props accepted by message actions. */
 export interface MessageActionsProps {
   content: string;
   className?: string;
@@ -12,6 +13,7 @@ export interface MessageActionsProps {
   onEdit?: (content: string) => void;
 }
 
+/** Render message actions. */
 export const MessageActions = React.forwardRef<HTMLDivElement, MessageActionsProps>(
   function MessageActions({ content, className, onEdit }, ref) {
     const [copied, setCopied] = React.useState(false);

@@ -14,10 +14,12 @@ import { type ConversationRunEvent } from "./run-events.ts";
 import type { ConversationRunProjection } from "./durable.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 
+/** Public API contract for conversation root run lifecycle. */
 export interface ConversationRootRunLifecycle<TMirror> extends ConversationRootRunContext {
   mirror: TMirror | null;
 }
 
+/** Options accepted by prepare conversation root run lifecycle. */
 export interface PrepareConversationRootRunLifecycleOptions<TMirror> {
   startRun: (
     input: { abortSignal: AbortSignal },
@@ -32,6 +34,7 @@ export interface PrepareConversationRootRunLifecycleOptions<TMirror> {
   ) => Promise<TMirror> | TMirror;
 }
 
+/** Prepare conversation root run lifecycle. */
 export async function prepareConversationRootRunLifecycle<TMirror>(
   input: PrepareConversationRootRunLifecycleOptions<TMirror>,
   options: { abortSignal: AbortSignal },
@@ -50,6 +53,7 @@ export async function prepareConversationRootRunLifecycle<TMirror>(
   };
 }
 
+/** State for hosted conversation root run. */
 export interface HostedConversationRootRunState {
   runId: string;
   conversationId: string;
@@ -58,6 +62,7 @@ export interface HostedConversationRootRunState {
   latestExternalEventSequence: number;
 }
 
+/** Context for hosted conversation root run. */
 export interface HostedConversationRootRunContext {
   durableRootRun: HostedConversationRootRunState | null;
   durableRunMirror: ConversationRunChunkMirror | null;
@@ -66,6 +71,7 @@ export interface HostedConversationRootRunContext {
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
 }
 
+/** Input payload for prepare hosted conversation root run context. */
 export interface PrepareHostedConversationRootRunContextInput {
   authToken: string;
   apiUrl: string;
@@ -108,6 +114,7 @@ function toHostedConversationRootRunState(
   };
 }
 
+/** Context for prepare hosted conversation root run. */
 export async function prepareHostedConversationRootRunContext(
   input: PrepareHostedConversationRootRunContextInput,
   options: { abortSignal: AbortSignal },

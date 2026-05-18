@@ -4,6 +4,7 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
 ensureBuiltinSchemaValidator();
 
+/** Configuration used by durable run canary API. */
 export interface DurableRunCanaryApiConfig {
   apiUrl: string;
   authToken: string;
@@ -14,22 +15,26 @@ export interface DurableRunCanaryApiConfig {
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
+/** Input payload for durable run canary create root run. */
 export interface DurableRunCanaryCreateRootRunInput {
   conversationId: string;
   runId: string;
 }
 
+/** Input payload for durable run canary send user message. */
 export interface DurableRunCanarySendUserMessageInput {
   conversationId: string;
   prompt: string;
 }
 
+/** Input payload for durable run canary start run. */
 export interface DurableRunCanaryStartRunInput extends DurableRunCanaryCreateRootRunInput {
   messageId: string;
   prompt: string;
   userMessageId: string;
 }
 
+/** Zod schema for get durable run canary message. */
 export const getDurableRunCanaryMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
@@ -39,10 +44,12 @@ export const getDurableRunCanaryMessageSchema = defineSchema((v) =>
   }).passthrough()
 );
 
+/** Message shape for durable run canary. */
 export type DurableRunCanaryMessage = InferSchema<
   ReturnType<typeof getDurableRunCanaryMessageSchema>
 >;
 
+/** Public API contract for durable run canary run summary. */
 export interface DurableRunCanaryRunSummary {
   runId: string;
   conversationId: string;
@@ -101,6 +108,7 @@ const getDurableRunCanaryMessageListSchema = defineSchema((v) =>
   })
 );
 
+/** Parses durable run canary run summary. */
 export function parseDurableRunCanaryRunSummary(value: unknown): DurableRunCanaryRunSummary {
   const snake = getSnakeRunSummarySchema().safeParse(value);
   if (snake.success) {
@@ -235,6 +243,7 @@ function buildStartRunBody(
   };
 }
 
+/** Public API contract for durable run canary API client. */
 export interface DurableRunCanaryApiClient {
   createDurableRootRun: (input: DurableRunCanaryCreateRootRunInput) => Promise<void>;
   getRunSummary: (input: DurableRunCanaryCreateRootRunInput) => Promise<DurableRunCanaryRunSummary>;
@@ -245,6 +254,7 @@ export interface DurableRunCanaryApiClient {
   startDurableRun: (input: DurableRunCanaryStartRunInput) => Promise<void>;
 }
 
+/** Create durable run canary API client. */
 export function createDurableRunCanaryApiClient(
   config: DurableRunCanaryApiConfig,
 ): DurableRunCanaryApiClient {
@@ -329,6 +339,7 @@ export function createDurableRunCanaryApiClient(
   };
 }
 
+/** Result returned from durable run canary. */
 export interface DurableRunCanaryResult {
   id: string;
   label: string;
@@ -340,6 +351,7 @@ export interface DurableRunCanaryResult {
   artifactPaths?: string[];
 }
 
+/** Public API contract for durable run canary prepared case. */
 export interface DurableRunCanaryPreparedCase {
   artifactPaths?: string[] | ((runId: string) => string[]);
   cleanup: (input?: { runId: string }) => Promise<void>;
@@ -353,12 +365,14 @@ export interface DurableRunCanaryPreparedCase {
   }) => Promise<void> | void;
 }
 
+/** Public API contract for durable run canary case. */
 export interface DurableRunCanaryCase {
   id: string;
   label: string;
   prepare: () => Promise<DurableRunCanaryPreparedCase>;
 }
 
+/** Configuration used by durable run canary runner. */
 export interface DurableRunCanaryRunnerConfig extends DurableRunCanaryApiConfig {
   keepSuccessfulEvidence: boolean;
 }
@@ -486,6 +500,7 @@ async function waitForTerminalRun(
   throw new Error(`Timed out waiting for run ${input.runId} to reach a terminal state`);
 }
 
+/** Create durable run canary runner. */
 export function createDurableRunCanaryRunner(
   config: DurableRunCanaryRunnerConfig,
   apiClient: DurableRunCanaryApiClient = createDurableRunCanaryApiClient(config),
@@ -593,6 +608,7 @@ export function createDurableRunCanaryRunner(
   };
 }
 
+/** White-box helpers used by durable run canary tests. */
 export const durableRunCanaryRunnerInternals = {
   collectReferencedChildConversationIds,
   isTerminalRunStatus,

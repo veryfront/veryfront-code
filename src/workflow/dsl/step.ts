@@ -10,6 +10,7 @@ import type {
 import { validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 
+/** Options accepted by step. */
 export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   agent?: string | Agent;
   tool?: string | Tool;
@@ -20,6 +21,7 @@ export interface StepOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   skip?: (context: WorkflowContext) => boolean | Promise<boolean>;
 }
 
+/** Create a workflow step definition. */
 export function step(id: string, options: StepOptions): WorkflowNode {
   validateNodeId(id);
 
@@ -50,6 +52,7 @@ export function step(id: string, options: StepOptions): WorkflowNode {
   return { id, config };
 }
 
+/** Create a workflow step that runs an agent. */
 export function agentStep(
   id: string,
   agent: string | Agent,
@@ -58,6 +61,7 @@ export function agentStep(
   return step(id, { ...options, agent });
 }
 
+/** Create a workflow step that runs a tool. */
 export function toolStep(
   id: string,
   tool: string | Tool,

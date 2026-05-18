@@ -184,6 +184,7 @@ export interface CreateJobEntrypointOptions {
   debug?: boolean;
 }
 
+/** Create job entrypoint. */
 export async function createJobEntrypoint(
   options: CreateJobEntrypointOptions,
 ): Promise<() => Promise<number>> {

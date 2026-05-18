@@ -80,6 +80,7 @@ abstract class BasicMemoryStore<M extends MinimalMessage> implements Memory<M> {
   }
 }
 
+/** Implement conversation memory. */
 export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
   extends BasicMemoryStore<M> {
   protected readonly memoryType = "conversation" as const;
@@ -123,6 +124,7 @@ export class ConversationMemory<M extends MinimalMessage = MinimalMessage>
   }
 }
 
+/** Implement buffer memory. */
 export class BufferMemory<M extends MinimalMessage = MinimalMessage> extends BasicMemoryStore<M> {
   protected readonly memoryType = "buffer" as const;
   protected readonly spanPrefix = "agent.memory.buffer";
@@ -150,6 +152,7 @@ export class BufferMemory<M extends MinimalMessage = MinimalMessage> extends Bas
   }
 }
 
+/** Implement summary memory. */
 export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private messages: M[] = [];
   private summary = "";
@@ -248,6 +251,7 @@ export class SummaryMemory<M extends MinimalMessage = MinimalMessage> implements
   }
 }
 
+/** Create memory. */
 export function createMemory<M extends MinimalMessage = MinimalMessage>(
   config: MemoryConfigBase,
 ): Memory<M> {

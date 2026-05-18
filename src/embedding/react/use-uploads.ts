@@ -9,11 +9,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { RagDocumentMeta } from "../types.ts";
 import { API_ERROR } from "#veryfront/errors";
 
+/** Options accepted by use uploads. */
 export interface UseUploadsOptions {
-  /** API endpoint, e.g. "/api/uploads" */
+  /** API endpoint, e.g. "/API/uploads" */
   api: string;
 }
 
+/** Result returned from use uploads. */
 export interface UseUploadsResult {
   /** All uploads from the server */
   uploads: RagDocumentMeta[];

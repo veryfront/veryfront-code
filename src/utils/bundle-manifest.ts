@@ -2,6 +2,7 @@ import { serverLogger } from "./logger/index.ts";
 
 const logger = serverLogger.component("bundle-manifest");
 
+/** Public API contract for bundle metadata. */
 export interface BundleMetadata {
   hash: string;
   codeHash: string;
@@ -18,6 +19,7 @@ export interface BundleMetadata {
   };
 }
 
+/** Public API contract for bundle code. */
 export interface BundleCode {
   code: string;
   sourceMap?: string;
@@ -154,6 +156,7 @@ export function setBundleManifestStore(store: BundleManifestStore): void {
   });
 }
 
+/** Return bundle manifest store. */
 export function getBundleManifestStore(): BundleManifestStore {
   return manifestStore;
 }

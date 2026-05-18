@@ -1,11 +1,13 @@
 import * as React from "react";
 import type { BrowserInferenceStatus, InferenceMode } from "#veryfront/agent/react";
 
+/** Props accepted by inference badge. */
 export interface InferenceBadgeProps {
   inferenceMode: InferenceMode;
   browserStatus?: BrowserInferenceStatus | null;
 }
 
+/** Render inference badge. */
 export function InferenceBadge({
   inferenceMode,
   browserStatus,

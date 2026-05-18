@@ -1,14 +1,17 @@
 import type { LiveEvalRuntime } from "./performance.ts";
 
+/** Public API contract for live eval case metadata. */
 export interface LiveEvalCaseMetadata {
   tags: readonly string[];
 }
 
+/** Public API contract for live eval result for report. */
 export interface LiveEvalResultForReport {
   runtime: LiveEvalRuntime;
   status: "pass" | "fail" | "skip";
 }
 
+/** Input payload for live eval case selection. */
 export interface LiveEvalCaseSelectionInput<TCase extends { id: string }> {
   allCases: TCase[];
   readOnlyCases: TCase[];
@@ -20,6 +23,7 @@ export interface LiveEvalCaseSelectionInput<TCase extends { id: string }> {
   runExperimentalWriteEvals: boolean;
 }
 
+/** Check whether every live eval tag is present. */
 export function hasEveryLiveEvalTag(
   tags: readonly string[],
   requestedTags: Set<string>,
@@ -33,6 +37,7 @@ export function hasEveryLiveEvalTag(
   return true;
 }
 
+/** Builds live eval case tag summary. */
 export function buildLiveEvalCaseTagSummary(
   cases: readonly {
     metadata?: LiveEvalCaseMetadata;
@@ -52,6 +57,7 @@ export function buildLiveEvalCaseTagSummary(
   );
 }
 
+/** Select live eval cases helper. */
 export function selectLiveEvalCases<
   TCase extends { id: string; metadata?: LiveEvalCaseMetadata },
 >(
@@ -78,6 +84,7 @@ export function selectLiveEvalCases<
     : selectedCases;
 }
 
+/** Resolves live eval requested case IDs. */
 export function resolveLiveEvalRequestedCaseIds(input: {
   caseSets: Record<string, readonly string[]>;
   requestedCaseIds: Set<string>;
@@ -126,6 +133,7 @@ function buildRuntimeCounts(
   };
 }
 
+/** Builds live eval runtime summary. */
 export function buildLiveEvalRuntimeSummary(
   runtimes: readonly LiveEvalRuntime[],
   results: LiveEvalResultForReport[],
@@ -140,6 +148,7 @@ export function buildLiveEvalRuntimeSummary(
   return summary;
 }
 
+/** Builds live eval status summary. */
 export function buildLiveEvalStatusSummary(
   results: LiveEvalResultForReport[],
 ): {

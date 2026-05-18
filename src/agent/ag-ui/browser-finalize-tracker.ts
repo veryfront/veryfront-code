@@ -5,18 +5,21 @@ import {
 } from "./browser-encoder.ts";
 import type { AgentResponse } from "../types.ts";
 
+/** Public API contract for AG-UI browser finalize tracker. */
 export interface AgUiBrowserFinalizeTracker<TChunk> {
   observeChunk: (chunk: TChunk) => void;
   observeEncodedEvents: (events: readonly AgUiBrowserEncodedEvent[]) => void;
   getFinalResponse: () => AgentResponse | null;
 }
 
+/** Options accepted by create AG-UI browser finalize tracker. */
 export interface CreateAgUiBrowserFinalizeTrackerOptions<TChunk> {
   getMetadataFromChunk: (
     chunk: TChunk,
   ) => Partial<AgUiBrowserRunFinishedMetadata> | null | undefined;
 }
 
+/** Create AG-UI browser finalize tracker. */
 export function createAgUiBrowserFinalizeTracker<TChunk>(
   options: CreateAgUiBrowserFinalizeTrackerOptions<TChunk>,
 ): AgUiBrowserFinalizeTracker<TChunk> {

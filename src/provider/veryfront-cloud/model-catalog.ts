@@ -1,10 +1,12 @@
 import type { VeryfrontCloudProviderId } from "./shared.ts";
 
+/** Configuration used by Veryfront Cloud model thinking. */
 export type VeryfrontCloudModelThinkingConfig = {
   enabled: boolean;
   budgetTokens?: number;
 };
 
+/** Public API contract for Veryfront Cloud chat model. */
 export type VeryfrontCloudChatModel = {
   id: string;
   modelId: string;
@@ -14,7 +16,9 @@ export type VeryfrontCloudChatModel = {
   thinkingBudgetTokens?: number;
 };
 
+/** Default value for Veryfront Cloud model ID. */
 export const DEFAULT_VERYFRONT_CLOUD_MODEL_ID = "opus";
+/** Shared Veryfront Cloud model prefix value. */
 export const VERYFRONT_CLOUD_MODEL_PREFIX = "veryfront-cloud/";
 
 const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
@@ -25,6 +29,7 @@ const VERYFRONT_CLOUD_GATEWAY_MODEL_PROVIDER_PREFIXES = [
   "moonshotai/",
 ];
 
+/** Shared Veryfront Cloud chat models value. */
 export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
   {
     id: "opus",
@@ -80,16 +85,19 @@ export const VERYFRONT_CLOUD_CHAT_MODELS: VeryfrontCloudChatModel[] = [
   },
 ];
 
+/** Find Veryfront Cloud model. */
 export function findVeryfrontCloudModel(id: string): VeryfrontCloudChatModel | undefined {
   return VERYFRONT_CLOUD_CHAT_MODELS.find((model) => model.id === id);
 }
 
+/** Normalizes Veryfront Cloud model ID. */
 export function normalizeVeryfrontCloudModelId(modelId: string): string {
   return modelId.startsWith(VERYFRONT_CLOUD_MODEL_PREFIX)
     ? modelId.slice(VERYFRONT_CLOUD_MODEL_PREFIX.length)
     : modelId;
 }
 
+/** Find Veryfront Cloud model by model ID. */
 export function findVeryfrontCloudModelByModelId(
   modelId: string,
 ): VeryfrontCloudChatModel | undefined {
@@ -97,6 +105,7 @@ export function findVeryfrontCloudModelByModelId(
   return VERYFRONT_CLOUD_CHAT_MODELS.find((model) => model.modelId === normalizedModelId);
 }
 
+/** Return Veryfront Cloud provider from model ID. */
 export function getVeryfrontCloudProviderFromModelId(
   modelId: string,
 ): VeryfrontCloudProviderId {
@@ -108,6 +117,7 @@ export function getVeryfrontCloudProviderFromModelId(
   throw new Error(`Unknown model provider prefix "${prefix}" in model ID "${modelId}"`);
 }
 
+/** Try to get Veryfront Cloud provider from model ID. */
 export function tryGetVeryfrontCloudProviderFromModelId(
   modelId: string,
 ): VeryfrontCloudProviderId | undefined {
@@ -118,6 +128,7 @@ export function tryGetVeryfrontCloudProviderFromModelId(
   }
 }
 
+/** Resolves Veryfront Cloud model ID. */
 export function resolveVeryfrontCloudModelId(alias?: string): string {
   const requestedModel = alias || DEFAULT_VERYFRONT_CLOUD_MODEL_ID;
   const catalogModel = VERYFRONT_CLOUD_CHAT_MODELS.find((model) =>
@@ -138,6 +149,7 @@ export function resolveVeryfrontCloudModelId(alias?: string): string {
   return model.modelId;
 }
 
+/** Resolves Veryfront Cloud gateway model ID. */
 export function resolveVeryfrontCloudGatewayModelId(
   modelId: string | undefined,
 ): string | undefined {
@@ -156,6 +168,7 @@ export function resolveVeryfrontCloudGatewayModelId(
     : modelId;
 }
 
+/** Resolves Veryfront Cloud model thinking. */
 export function resolveVeryfrontCloudModelThinking(
   modelId: string | undefined,
 ): VeryfrontCloudModelThinkingConfig | undefined {
@@ -174,6 +187,7 @@ export function resolveVeryfrontCloudModelThinking(
   };
 }
 
+/** Options accepted by resolve Veryfront Cloud thinking provider. */
 export function resolveVeryfrontCloudThinkingProviderOptions(
   modelId: string,
   thinking: VeryfrontCloudModelThinkingConfig | undefined,
@@ -209,6 +223,7 @@ const PROVIDER_LABELS: Record<VeryfrontCloudProviderId, string> = {
 
 const PROVIDER_ORDER: VeryfrontCloudProviderId[] = ["anthropic", "openai", "google", "moonshotai"];
 
+/** Group Veryfront Cloud models by provider. */
 export function groupVeryfrontCloudModelsByProvider(): Array<{
   provider: VeryfrontCloudProviderId;
   label: string;
@@ -221,4 +236,5 @@ export function groupVeryfrontCloudModelsByProvider(): Array<{
   })).filter((group) => group.models.length > 0);
 }
 
+/** Resolves hosted Veryfront Cloud model ID. */
 export const resolveHostedVeryfrontCloudModelId = resolveVeryfrontCloudGatewayModelId;

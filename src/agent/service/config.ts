@@ -12,6 +12,7 @@ function splitAllowedOrigins(value: string): string[] {
 
 export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
 
+/** Configuration used by agent service. */
 export type AgentServiceConfig = {
   VERYFRONT_API_URL: string;
   VERYFRONT_MCP_URL: string;
@@ -33,6 +34,7 @@ export type AgentServiceConfig = {
   OTEL_EXPORTER_OTLP_ENDPOINT?: string;
 };
 
+/** Input payload for agent service config. */
 export type AgentServiceConfigInput = Record<string, string | number | undefined>;
 
 const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
@@ -87,12 +89,17 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
   }));
 });
 
+/** Zod schema for agent service config. */
 export const agentServiceConfigSchema = lazySchema(getAgentServiceConfigSchema);
 
+/** Zod schema for hosted agent service config. */
 export const hostedAgentServiceConfigSchema = agentServiceConfigSchema;
+/** Configuration used by hosted agent service. */
 export type HostedAgentServiceConfig = AgentServiceConfig;
+/** Input payload for hosted agent service config. */
 export type HostedAgentServiceConfigInput = AgentServiceConfigInput;
 
+/** Configuration used by parse agent service. */
 export function parseAgentServiceConfig(
   input: AgentServiceConfigInput,
 ): AgentServiceConfig {
@@ -100,6 +107,7 @@ export function parseAgentServiceConfig(
   return agentServiceConfigSchema.parse(input);
 }
 
+/** Configuration used by parse hosted agent service. */
 export function parseHostedAgentServiceConfig(
   input: HostedAgentServiceConfigInput,
 ): HostedAgentServiceConfig {

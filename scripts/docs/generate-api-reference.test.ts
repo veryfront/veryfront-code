@@ -29,6 +29,10 @@ describe("generate-api-reference", () => {
         new TextDecoder().decode(result.stdout),
         "Source JSDoc coverage:",
       );
+      assertStringIncludes(
+        new TextDecoder().decode(result.stdout),
+        "(0 missing).",
+      );
 
       const routerReference = await Deno.readTextFile(
         `${outputDir}/veryfront/router.md`,
@@ -62,11 +66,59 @@ describe("generate-api-reference", () => {
         "barrel examples must be rendered once",
       );
 
+      const cliReference = await Deno.readTextFile(
+        `${outputDir}/veryfront/cli.md`,
+      );
+      assertEquals(
+        cliReference.includes("`getArgs`"),
+        false,
+        "generated reference pages must not include private declarations",
+      );
+
       for await (const entry of Deno.readDir(`${outputDir}/veryfront`)) {
         if (!entry.isFile || !entry.name.endsWith(".md")) continue;
         const markdown = await Deno.readTextFile(
           `${outputDir}/veryfront/${entry.name}`,
         );
+        for (const line of markdown.split("\n")) {
+          const description = line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/)?.[1] ?? "";
+          if (!description) continue;
+          for (
+            const badPhrase of [
+              "Constant for ",
+              "Function for ",
+              "Handle ",
+              "Interface for ",
+              "Returns whether ",
+              "Type alias for ",
+            ]
+          ) {
+            assertEquals(
+              description.includes(badPhrase),
+              false,
+              `${entry.name} must not contain placeholder JSDoc phrase ${badPhrase}`,
+            );
+          }
+          for (
+            const badPhrase of [
+              " a feature is enabled",
+              " a part carries",
+              "ctaprops",
+              "internals value",
+              "mcpregistry",
+              "mcpstats",
+              "open ai",
+              "otlpwith",
+              "rscenabled",
+            ]
+          ) {
+            assertEquals(
+              description.toLowerCase().includes(badPhrase),
+              false,
+              `${entry.name} must not contain placeholder JSDoc phrase ${badPhrase}`,
+            );
+          }
+        }
         assertEquals(
           markdown.includes("#L0"),
           false,

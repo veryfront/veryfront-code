@@ -16,6 +16,7 @@ function getRecorder(): ReturnType<typeof metricsManager.getRecorder> {
   return metricsManager.getRecorder();
 }
 
+/** Initialize metrics collection. */
 export async function initMetrics(
   config: Parameters<typeof metricsManager.initialize>[0] = {},
   adapter?: RuntimeAdapter,
@@ -23,22 +24,27 @@ export async function initMetrics(
   await metricsManager.initialize(config, adapter);
 }
 
+/** Check whether metrics collection is enabled. */
 export function isMetricsEnabled(): boolean {
   return metricsManager.isEnabled();
 }
 
+/** Shut down metrics collection. */
 export async function shutdownMetrics(): Promise<void> {
   await metricsManager.shutdown();
 }
 
+/** State for get metrics. */
 export function getMetricsState(): ReturnType<typeof metricsManager.getState> {
   return metricsManager.getState();
 }
 
+/** Request payload for record HTTP. */
 export function recordHttpRequest(attributes?: Record<string, string>): void {
   getRecorder()?.recordHttpRequest(attributes);
 }
 
+/** Record HTTP request complete. */
 export function recordHttpRequestComplete(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -46,6 +52,7 @@ export function recordHttpRequestComplete(
   getRecorder()?.recordHttpRequestComplete(durationMs, attributes);
 }
 
+/** Record cache get. */
 export function recordCacheGet(
   hit: boolean,
   attributes?: Record<string, string>,
@@ -53,10 +60,12 @@ export function recordCacheGet(
   getRecorder()?.recordCacheGet(hit, attributes);
 }
 
+/** Record cache set. */
 export function recordCacheSet(attributes?: Record<string, string>): void {
   getRecorder()?.recordCacheSet(attributes);
 }
 
+/** Record cache invalidate. */
 export function recordCacheInvalidate(
   count: number,
   attributes?: Record<string, string>,
@@ -64,10 +73,12 @@ export function recordCacheInvalidate(
   getRecorder()?.recordCacheInvalidate(count, attributes);
 }
 
+/** Sets cache size. */
 export function setCacheSize(size: number): void {
   getRecorder()?.setCacheSize(size);
 }
 
+/** Record render. */
 export function recordRender(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -75,10 +86,12 @@ export function recordRender(
   getRecorder()?.recordRender(durationMs, attributes);
 }
 
+/** Error shape for record render. */
 export function recordRenderError(attributes?: Record<string, string>): void {
   getRecorder()?.recordRenderError(attributes);
 }
 
+/** Record RSC render. */
 export function recordRSCRender(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -86,6 +99,7 @@ export function recordRSCRender(
   getRecorder()?.recordRSCRender(durationMs, attributes);
 }
 
+/** Record RSC stream. */
 export function recordRSCStream(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -93,6 +107,7 @@ export function recordRSCStream(
   getRecorder()?.recordRSCStream(durationMs, attributes);
 }
 
+/** Request payload for record rscrequest. */
 export function recordRSCRequest(
   type: "manifest" | "page" | "stream" | "action",
   attributes?: Record<string, string>,
@@ -100,10 +115,12 @@ export function recordRSCRequest(
   getRecorder()?.recordRSCRequest(type, attributes);
 }
 
+/** Error shape for record rscerror. */
 export function recordRSCError(attributes?: Record<string, string>): void {
   getRecorder()?.recordRSCError(attributes);
 }
 
+/** Record build. */
 export function recordBuild(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -111,6 +128,7 @@ export function recordBuild(
   getRecorder()?.recordBuild(durationMs, attributes);
 }
 
+/** Record bundle. */
 export function recordBundle(
   sizeKb: number,
   attributes?: Record<string, string>,
@@ -118,6 +136,7 @@ export function recordBundle(
   getRecorder()?.recordBundle(sizeKb, attributes);
 }
 
+/** Record data fetch. */
 export function recordDataFetch(
   durationMs: number,
   attributes?: Record<string, string>,
@@ -125,14 +144,17 @@ export function recordDataFetch(
   getRecorder()?.recordDataFetch(durationMs, attributes);
 }
 
+/** Error shape for record data fetch. */
 export function recordDataFetchError(attributes?: Record<string, string>): void {
   getRecorder()?.recordDataFetchError(attributes);
 }
 
+/** Record CORS rejection. */
 export function recordCorsRejection(attributes?: Record<string, string>): void {
   getRecorder()?.recordCorsRejection?.(attributes);
 }
 
+/** Record security headers. */
 export function recordSecurityHeaders(attributes?: Record<string, string>): void {
   getRecorder()?.recordSecurityHeaders?.(attributes);
 }

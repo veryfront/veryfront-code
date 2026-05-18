@@ -25,20 +25,24 @@ import {
 } from "../project/steering-mutation.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
 
+/** Handler for hosted project remote tool source mutation. */
 export type HostedProjectRemoteToolSourceMutationHandler = (
   mutation: ProjectSteeringMutationResult,
 ) => Promise<void> | void;
 
+/** Handler for hosted project remote tool source project switch. */
 export type HostedProjectRemoteToolSourceProjectSwitchHandler = (
   projectId: string,
 ) => Promise<void> | void;
 
+/** Input payload for hosted project remote tool source prepare tool. */
 export type HostedProjectRemoteToolSourcePrepareToolInput = (input: {
   toolName: string;
   toolInput: Record<string, unknown>;
   context?: ToolExecutionContext;
 }) => Record<string, unknown>;
 
+/** Public API contract for hosted project remote tool source retry policy. */
 export type HostedProjectRemoteToolSourceRetryPolicy = (input: {
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -47,6 +51,7 @@ export type HostedProjectRemoteToolSourceRetryPolicy = (input: {
   error: unknown;
 }) => boolean;
 
+/** Input payload for create hosted project remote tool source. */
 export type CreateHostedProjectRemoteToolSourceInput = {
   source: RemoteToolSource;
   defaultProjectId?: ProjectScopedRemoteToolDefaultProjectId;
@@ -68,6 +73,7 @@ function resolveActiveBranchId(
   return getActiveBranchId?.() ?? null;
 }
 
+/** Create hosted project remote tool source. */
 export function createHostedProjectRemoteToolSource(
   input: CreateHostedProjectRemoteToolSourceInput,
 ): RemoteToolSource {
@@ -187,6 +193,7 @@ export function createHostedProjectRemoteToolSource(
   };
 }
 
+/** Input payload for create hosted project remote tool sources. */
 export type CreateHostedProjectRemoteToolSourcesInput =
   & Omit<
     CreateHostedProjectRemoteToolSourceInput,
@@ -289,6 +296,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
   });
 }
 
+/** Create hosted project remote tool sources. */
 export function createHostedProjectRemoteToolSources(
   input: CreateHostedProjectRemoteToolSourcesInput,
 ): RemoteToolSource[] {

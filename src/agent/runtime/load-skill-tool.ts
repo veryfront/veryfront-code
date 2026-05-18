@@ -28,9 +28,11 @@ import {
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
 
+/** Shared runtime load skill continuation note value. */
 export const RUNTIME_LOAD_SKILL_CONTINUATION_NOTE =
   `IMPORTANT: load_skill only loads instructions. It does not perform the task or finish the turn. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_USE_ALLOWED_TOOLS} ${LOAD_SKILL_DELEGATION_THRESHOLD} ${LOAD_SKILL_OVERRIDE_FORWARDING} ${LOAD_SKILL_TOOL_INTERSECTION}`;
 
+/** Shared runtime load skill description value. */
 export const RUNTIME_LOAD_SKILL_DESCRIPTION =
   `Load the full instructions for a skill. Use this when you need detailed guidance for a specific task type. If the skill specifies allowed-tools, you MUST only use those tools while following this skill. load_skill does not perform the task by itself. ${LOAD_SKILL_CONTINUE_SAME_TURN} ${LOAD_SKILL_ROOT_OWNERSHIP} ${LOAD_SKILL_USE_ALLOWED_TOOLS} ${LOAD_SKILL_DELEGATION_THRESHOLD} Use the optional \`file\` parameter to load a specific reference file from the skill.`;
 
@@ -45,19 +47,23 @@ const DEFAULT_RUNTIME_LOAD_SKILL_RESPONSE_MESSAGES: RuntimeLoadedSkillResponseMe
   referenceNote: "Use load_skill with the `file` parameter to load any of these reference files.",
 };
 
+/** Context for runtime load skill tool. */
 export type RuntimeLoadSkillToolContext = RuntimeProjectSkillContext & {
   availableSkillIds?: readonly string[];
   availableToolNames?: readonly string[];
 };
 
+/** Public API contract for runtime load skill builtin store. */
 export type RuntimeLoadSkillBuiltinStore = {
   readSkill: (skillsDir: string, skillId: string) => string | null;
   readReferenceFile: (skillsDir: string, skillId: string, normalizedFile: string) => string | null;
   listReferences: (skillsDir: string, skillId: string) => string[];
 };
 
+/** Public API contract for runtime load skill tool messages. */
 export type RuntimeLoadSkillToolMessages = Partial<RuntimeLoadedSkillResponseMessages>;
 
+/** Options accepted by runtime load skill tool. */
 export type RuntimeLoadSkillToolOptions = {
   context: RuntimeLoadSkillToolContext;
   skillsDir: string;
@@ -84,20 +90,24 @@ export const getRuntimeLoadSkillToolInputSchema = defineSchema((v) =>
 /** @deprecated Use getRuntimeLoadSkillToolInputSchema() */
 const runtimeLoadSkillToolInputSchema = lazySchema(getRuntimeLoadSkillToolInputSchema);
 
+/** Input payload for runtime load skill tool. */
 export type RuntimeLoadSkillToolInput = InferSchema<
   ReturnType<typeof getRuntimeLoadSkillToolInputSchema>
 >;
 
+/** Output from runtime load skill reference file. */
 export type RuntimeLoadSkillReferenceFileOutput = {
   skillId: string;
   file: string;
   content: string;
 };
 
+/** Output from runtime load skill error. */
 export type RuntimeLoadSkillErrorOutput = {
   error: string;
 };
 
+/** Output from runtime load skill tool. */
 export type RuntimeLoadSkillToolOutput =
   | RuntimeLoadedSkillResponse
   | RuntimeLoadSkillReferenceFileOutput
@@ -199,6 +209,7 @@ async function loadRuntimeSkillBody(
   return await options.projectSkillLoader.loadProjectSkill(options.context, skillId);
 }
 
+/** Create runtime load skill tool. */
 export function createRuntimeLoadSkillTool(
   options: RuntimeLoadSkillToolOptions,
 ): Tool<RuntimeLoadSkillToolInput, RuntimeLoadSkillToolOutput> {

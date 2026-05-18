@@ -98,6 +98,7 @@ interface BaseServerOptions {
   requestInterceptor?: (req: Request) => Request | Promise<Request>;
 }
 
+/** Options accepted by start dev mode. */
 export interface StartDevModeOptions extends BaseServerOptions {
   mode?: "development";
   moduleServerPort?: number;
@@ -106,6 +107,7 @@ export interface StartDevModeOptions extends BaseServerOptions {
   fileWatcherDebounceMs?: number;
 }
 
+/** Options accepted by start production mode. */
 export interface StartProductionModeOptions extends BaseServerOptions {
   mode?: "production";
   /** When true, expose additional debug logging. */

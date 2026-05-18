@@ -460,6 +460,7 @@ function getNameAndFn<T extends TestFn | (() => void)>(
   return { name, testFn };
 }
 
+/** Group related BDD tests. */
 export function describe(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | (() => void),
@@ -514,6 +515,7 @@ describe.only = function only(
   requireImpl().describe({ name, only: true }, testFn);
 };
 
+/** Define a BDD test case. */
 export function it(
   nameOrOptions: string | (TestOptions & { name: string }),
   optionsOrFn?: TestOptions | TestFn,
@@ -571,6 +573,7 @@ it.only = function only(
   requireImpl().it({ name, only: true }, testWithEnv);
 };
 
+/** Register a hook before each BDD test. */
 export function beforeEach(fn: HookFn): void {
   if (denoBdd) {
     denoBdd.beforeEach(fn);
@@ -579,6 +582,7 @@ export function beforeEach(fn: HookFn): void {
   requireImpl().beforeEach(fn);
 }
 
+/** Register a hook after each BDD test. */
 export function afterEach(fn: HookFn): void {
   if (denoBdd) {
     denoBdd.afterEach(fn);
@@ -587,6 +591,7 @@ export function afterEach(fn: HookFn): void {
   requireImpl().afterEach(fn);
 }
 
+/** Register a hook before all BDD tests in a group. */
 export function beforeAll(fn: HookFn): void {
   if (denoBdd) {
     denoBdd.beforeAll(fn);
@@ -595,6 +600,7 @@ export function beforeAll(fn: HookFn): void {
   requireImpl().beforeAll(fn);
 }
 
+/** Register a hook after all BDD tests in a group. */
 export function afterAll(fn: HookFn): void {
   if (denoBdd) {
     denoBdd.afterAll(fn);
@@ -603,8 +609,10 @@ export function afterAll(fn: HookFn): void {
   requireImpl().afterAll(fn);
 }
 
+/** Shared test value. */
 export const test = it;
 
+/** Initialize the BDD test adapter. */
 export async function initBdd(): Promise<void> {
   if (denoBdd) return;
   await getImpl();

@@ -33,14 +33,14 @@ import { GoogleFonts } from "veryfront/fonts";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `GoogleFonts` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L84) |
+| `GoogleFonts` | Render Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L87) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `Font` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L21) |
-| `GoogleFontsProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L28) |
+| `Font` | Public API contract for font. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L22) |
+| `GoogleFontsProps` | Props accepted by Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L30) |
 
 ## Related
 

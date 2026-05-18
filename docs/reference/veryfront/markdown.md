@@ -28,14 +28,14 @@ import { Markdown } from "veryfront/markdown";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `Markdown` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L183) |
+| `Markdown` | Render markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L186) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CodeBlockProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L17) |
-| `MarkdownProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L6) |
+| `CodeBlockProps` | Props accepted by code block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L19) |
+| `MarkdownProps` | Props accepted by markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L7) |
 
 ## Related
 

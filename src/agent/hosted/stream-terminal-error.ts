@@ -8,6 +8,7 @@ const EXTERNAL_SERVICE_ERROR_CODE = "EXTERNAL_SERVICE_ERROR";
 const EXTERNAL_SERVICE_ERROR_MESSAGE = "LLM provider service error";
 const STREAM_ERROR_TERMINAL_ERROR_CODE = "STREAM_ERROR";
 
+/** Error shape for hosted stream terminal. */
 export type HostedStreamTerminalError = {
   code: string;
   message: string;
@@ -56,10 +57,12 @@ function getHostedStreamTerminalError(streamError: unknown): HostedStreamTermina
   };
 }
 
+/** Return hosted stream error text. */
 export function getHostedStreamErrorText(streamError: unknown): string {
   return getHostedStreamTerminalError(streamError)?.message ?? getUnknownErrorMessage(streamError);
 }
 
+/** Error shape for get empty hosted finalized message terminal. */
 export function getEmptyHostedFinalizedMessageTerminalError(input: {
   finalStep: unknown;
   streamError?: unknown | null;
@@ -73,6 +76,7 @@ export function getEmptyHostedFinalizedMessageTerminalError(input: {
   );
 }
 
+/** Message shape for should fail empty hosted finalized. */
 export function shouldFailEmptyHostedFinalizedMessage(input: {
   isAborted: boolean;
   message: { parts: ReadonlyArray<unknown> };

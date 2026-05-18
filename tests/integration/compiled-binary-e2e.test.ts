@@ -36,6 +36,7 @@ import {
   assertNoServerLogErrors,
   BINARY_HASH_PATH,
   BINARY_PATH,
+  cleanupBinaryTestCache,
   createTestProject,
   ensureBinaryCompiled,
   fetchOkHtml,
@@ -60,6 +61,7 @@ describe("Compiled Binary E2E", { sanitizeOps: false, sanitizeResources: false, 
   afterAll(async () => {
     // Clean up the test binary after all tests complete
     try {
+      await cleanupBinaryTestCache();
       await Deno.remove(BINARY_PATH);
       await Deno.remove(BINARY_HASH_PATH);
     } catch {
@@ -669,10 +671,8 @@ Regular markdown content follows.
     );
 
     await withServer(projectDir, async (server) => {
-      const response = await fetch(`http://127.0.0.1:${server.port}/docs/guide`);
-      const html = await response.text();
+      const html = await fetchOkHtml(server, "/docs/guide");
 
-      assertEquals(response.status, 200, "Should return 200");
       assertStringIncludes(html, "Documentation Guide", "Should render heading");
       assertStringIncludes(html, "mdx-react-component", "Should render React component");
       assertStringIncludes(

@@ -18,6 +18,7 @@ type LabeledCleanupTask = {
 
 const cleanupTasks = new Set<CleanupTask>();
 
+/** Registers test cleanup. */
 export function registerTestCleanup(task: CleanupTask): void {
   cleanupTasks.add(task);
 }

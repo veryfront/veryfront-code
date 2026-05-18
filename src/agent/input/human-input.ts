@@ -10,6 +10,7 @@ import { RunResumeSessionManager } from "../runtime/index.ts";
 
 const TOOL_CALL_ID_SCHEMA = (v: SchemaValidator) => v.string().min(1).max(128);
 
+/** Zod schema for get human input option. */
 export const getHumanInputOptionSchema = defineSchema((v) =>
   v.object({
     value: v.string(),
@@ -31,6 +32,7 @@ const baseHumanInputFieldFields = (v: SchemaValidator) => ({
   secret: v.boolean().optional().default(false),
 });
 
+/** Zod schema for get human input field. */
 export const getHumanInputFieldSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({
@@ -90,6 +92,7 @@ export const humanInputRequestBaseFields = (v: SchemaValidator) => ({
   submitLabel: v.string().max(64).optional().default("Submit"),
 });
 
+/** Zod schema for get human input request. */
 export const getHumanInputRequestSchema = defineSchema((v) =>
   v.object({
     ...humanInputRequestBaseFields(v),
@@ -104,6 +107,7 @@ export const getHumanInputResponseValuesSchema = defineSchema((v) =>
   )
 );
 
+/** Zod schema for get human input result. */
 export const getHumanInputResultSchema = defineSchema((v) =>
   v.discriminatedUnion("submitted", [
     v.object({
@@ -117,6 +121,7 @@ export const getHumanInputResultSchema = defineSchema((v) =>
   ])
 );
 
+/** Zod schema for get human input pending request. */
 export const getHumanInputPendingRequestSchema = defineSchema((v) =>
   v.object({
     runId: getAgUiRuntimeRunIdSchema(),
@@ -125,26 +130,36 @@ export const getHumanInputPendingRequestSchema = defineSchema((v) =>
   })
 );
 
+/** Public API contract for human input option. */
 export type HumanInputOption = InferSchema<ReturnType<typeof getHumanInputOptionSchema>>;
+/** Public API contract for human input field. */
 export type HumanInputField = InferSchema<ReturnType<typeof getHumanInputFieldSchema>>;
+/** Input payload for human input field. */
 export type HumanInputFieldInput = InferInput<ReturnType<typeof getHumanInputFieldSchema>>;
+/** Request payload for human input. */
 export type HumanInputRequest = InferSchema<ReturnType<typeof getHumanInputRequestSchema>>;
+/** Input payload for human input request. */
 export type HumanInputRequestInput = InferInput<ReturnType<typeof getHumanInputRequestSchema>>;
+/** Result returned from human input. */
 export type HumanInputResult = InferSchema<ReturnType<typeof getHumanInputResultSchema>>;
+/** Request payload for human input pending. */
 export type HumanInputPendingRequest = InferSchema<
   ReturnType<typeof getHumanInputPendingRequestSchema>
 >;
 
+/** Public API contract for human input resume value. */
 export type HumanInputResumeValue = {
   result: unknown;
   isError: boolean;
 };
 
+/** Result returned from durable human input flow. */
 export type DurableHumanInputFlowResult<TCreatedRequest> = {
   result: HumanInputResult;
   createdRequest: TCreatedRequest;
 };
 
+/** Options accepted by execute durable human input flow. */
 export interface ExecuteDurableHumanInputFlowOptions<
   TCreatedRequest,
   TSnapshot,
@@ -164,6 +179,7 @@ export interface ExecuteDurableHumanInputFlowOptions<
   resolveSnapshot: (snapshot: TSnapshot) => HumanInputResult | undefined;
 }
 
+/** Options accepted by wait for durable human input resolution. */
 export interface WaitForDurableHumanInputResolutionOptions<TSnapshot> {
   deadline: number;
   pollIntervalMs: number;
@@ -171,6 +187,7 @@ export interface WaitForDurableHumanInputResolutionOptions<TSnapshot> {
   resolveSnapshot: (snapshot: TSnapshot) => HumanInputResult | undefined;
 }
 
+/** Options accepted by wait for human input. */
 export interface WaitForHumanInputOptions {
   sessionManager: RunResumeSessionManager<HumanInputResumeValue>;
   runId: string;
@@ -179,6 +196,7 @@ export interface WaitForHumanInputOptions {
   onRequest?: ((request: HumanInputPendingRequest) => void | Promise<void>) | undefined;
 }
 
+/** Error shape for human input resume. */
 export class HumanInputResumeError extends Error {
   constructor(readonly detail: unknown) {
     super(
@@ -188,6 +206,7 @@ export class HumanInputResumeError extends Error {
   }
 }
 
+/** Error shape for invalid human input result. */
 export class InvalidHumanInputResultError extends Error {
   constructor(readonly detail: ValidationIssue[]) {
     super("Invalid human input resume payload");
@@ -195,6 +214,7 @@ export class InvalidHumanInputResultError extends Error {
   }
 }
 
+/** Execute durable human input flow. */
 export async function executeDurableHumanInputFlow<
   TCreatedRequest,
   TSnapshot,
@@ -253,6 +273,7 @@ export async function executeDurableHumanInputFlow<
   }
 }
 
+/** Input payload for wait for human. */
 export async function waitForHumanInput(
   options: WaitForHumanInputOptions,
 ): Promise<HumanInputResult> {
@@ -278,6 +299,7 @@ export async function waitForHumanInput(
   return parsed.data;
 }
 
+/** Wait for durable human input resolution helper. */
 export async function waitForDurableHumanInputResolution<TSnapshot>(
   options: WaitForDurableHumanInputResolutionOptions<TSnapshot>,
 ): Promise<HumanInputResult> {

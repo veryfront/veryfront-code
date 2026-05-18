@@ -6,6 +6,7 @@ type PromptGenerateFn = (variables: Record<string, unknown>) => string | Promise
 
 const BLOCKED_PROMPT_PATTERNS = COMMON_BLOCKED_PATTERNS.promptInjection;
 
+/** Create a typed prompt definition. */
 export function prompt(config: PromptConfig): Prompt {
   const { content, description, generate, suggestion } = config;
   const id = config.id ?? generatePromptId();

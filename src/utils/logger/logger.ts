@@ -76,6 +76,7 @@ export interface LogEntry {
   duration_ms?: number;
 }
 
+/** Public API contract for logger. */
 export interface Logger {
   debug(message: string, ...args: unknown[]): void;
   info(message: string, ...args: unknown[]): void;
@@ -549,11 +550,16 @@ function createComponentAwareLogger(base: ConsoleLogger, componentName: string):
 
 // Context-aware loggers that automatically include request context
 export const cliLogger = createContextAwareLogger(baseCliLogger);
+/** Shared server logger value. */
 export const serverLogger = createContextAwareLogger(baseServerLogger);
+/** Shared renderer logger value. */
 export const rendererLogger = createContextAwareLogger(baseRendererLogger);
+/** Shared bundler logger value. */
 export const bundlerLogger = createContextAwareLogger(baseBundlerLogger);
+/** Shared agent logger value. */
 export const agentLogger = createContextAwareLogger(baseAgentLogger);
 export const proxyLogger = createContextAwareLogger(baseProxyLogger);
+/** Shared logger value. */
 export const logger = createContextAwareLogger(baseLogger);
 
 /**
@@ -589,6 +595,7 @@ export function createRequestLogger(
   return baseLogger.child(requestContext);
 }
 
+/** Create job user logger. */
 export function createJobUserLogger(
   baseLogger: Logger,
   jobContext: {

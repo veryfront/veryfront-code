@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from "react";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
+/** Options accepted by use streaming. */
 export interface UseStreamingOptions {
   /** URL to stream from */
   url: string;
@@ -15,6 +16,7 @@ export interface UseStreamingOptions {
   onError?: (error: Error) => void;
 }
 
+/** Result returned from use streaming. */
 export interface UseStreamingResult {
   /** Streaming data */
   data: string;
@@ -35,6 +37,7 @@ export interface UseStreamingResult {
   reset: () => void;
 }
 
+/** React hook for streaming. */
 export function useStreaming(options: UseStreamingOptions): UseStreamingResult {
   const [data, setData] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);

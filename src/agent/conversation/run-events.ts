@@ -3,6 +3,7 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { type ChatStreamEvent } from "#veryfront/chat/protocol.ts";
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 
+/** Shared conversation run event types value. */
 export const conversationRunEventTypes = {
   custom: "CUSTOM",
   textMessageStart: "TEXT_MESSAGE_START",
@@ -23,9 +24,12 @@ export const getConversationRunEventSchema = defineSchema((v) =>
   }).passthrough()
 );
 
-/** @deprecated Use getConversationRunEventSchema() */
+/** Schema for conversation run event.
+ * @deprecated Use getConversationRunEventSchema()
+ */
 export const ConversationRunEventSchema = lazySchema(getConversationRunEventSchema);
 
+/** Event emitted for conversation run. */
 export type ConversationRunEvent =
   & InferSchema<ReturnType<typeof getConversationRunEventSchema>>
   & Record<string, unknown>;
@@ -53,6 +57,7 @@ function encodeCustomDataEvent(
   }];
 }
 
+/** Implement conversation run event encoder. */
 export class ConversationRunEventEncoder {
   private readonly streamedToolInputs = new Set<string>();
   private readonly toolInputs = new Map<string, unknown>();
@@ -227,6 +232,7 @@ export class ConversationRunEventEncoder {
   }
 }
 
+/** Encode conversation run events helper. */
 export function encodeConversationRunEvents(
   events: ChatStreamEvent[],
   encoder = new ConversationRunEventEncoder(),
@@ -234,6 +240,7 @@ export function encodeConversationRunEvents(
   return events.flatMap((event) => encoder.encode(event));
 }
 
+/** Normalizes encoded conversation run events. */
 export function normalizeEncodedConversationRunEvents(
   events: ChatStreamEvent[],
   encoder = new ConversationRunEventEncoder(),

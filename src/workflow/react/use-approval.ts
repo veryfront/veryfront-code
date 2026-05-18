@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors";
 import type { ApprovalDecision, PendingApproval } from "#veryfront/workflow/types.ts";
 
+/** Options accepted by use approval. */
 export interface UseApprovalOptions {
   runId: string;
   approvalId: string;
@@ -11,6 +12,7 @@ export interface UseApprovalOptions {
   onError?: (error: Error) => void;
 }
 
+/** Result returned from use approval. */
 export interface UseApprovalResult {
   approval: PendingApproval | null;
   approve: (comment?: string) => Promise<void>;
@@ -23,9 +25,7 @@ export interface UseApprovalResult {
   isResolved: boolean;
 }
 
-/**
- * Handle workflow approval interactions.
- */
+/** Manage workflow approval interactions. */
 export function useApproval(options: UseApprovalOptions): UseApprovalResult {
   const {
     runId,

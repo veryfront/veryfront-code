@@ -11,6 +11,7 @@ import {
   resolveHostedChildTerminalErrorCode,
 } from "./child-status.ts";
 
+/** State for hosted child lifecycle terminal. */
 export interface HostedChildLifecycleTerminalState {
   status: "completed" | "failed" | "cancelled";
   usage?: {
@@ -27,6 +28,7 @@ export interface HostedChildLifecycleCompletedState
   status: "completed";
 }
 
+/** Public API contract for hosted child lifecycle adapter. */
 export interface HostedChildLifecycleAdapter {
   pending?: () => Promise<void> | void;
   running?: () => Promise<void> | void;
@@ -46,6 +48,7 @@ export interface HostedChildLifecycleErrorState
   status: "failed" | "cancelled";
 }
 
+/** Options accepted by hosted child lifecycle runner. */
 export interface HostedChildLifecycleRunnerOptions<TResult> {
   adapter: HostedChildLifecycleAdapter;
   execute: () => Promise<TResult> | TResult;
@@ -62,6 +65,7 @@ export interface HostedChildLifecycleRunnerOptions<TResult> {
   onLifecycleError?: (error: unknown) => Promise<void> | void;
 }
 
+/** Result returned from hosted child lifecycle run. */
 export type HostedChildLifecycleRunResult<TResult> =
   | {
     status: "completed";
@@ -74,6 +78,7 @@ export type HostedChildLifecycleRunResult<TResult> =
     terminalState: HostedChildLifecycleTerminalState;
   };
 
+/** Result returned from hosted child execution lifecycle. */
 export type HostedChildExecutionLifecycleResult<
   TLocalResult extends ChildRunExecutionResult,
 > =
@@ -89,12 +94,14 @@ export type HostedChildExecutionLifecycleResult<
     terminalState: HostedChildLifecycleTerminalState;
   };
 
+/** Should skip hosted child terminal persistence helper. */
 export function shouldSkipHostedChildTerminalPersistence(
   terminalState: Pick<HostedChildLifecycleTerminalState, "terminalErrorCode">,
 ): boolean {
   return isHostedChildTerminalErrorCode(terminalState.terminalErrorCode);
 }
 
+/** Options accepted by hosted child execution lifecycle. */
 export interface HostedChildExecutionLifecycleOptions<
   TLocalResult extends ChildRunExecutionResult,
 > {
@@ -138,6 +145,7 @@ async function dispatchTerminalState(
   await adapter.completed?.(terminalState);
 }
 
+/** Run hosted child lifecycle. */
 export async function runHostedChildLifecycle<TResult>(
   options: HostedChildLifecycleRunnerOptions<TResult>,
 ): Promise<HostedChildLifecycleRunResult<TResult>> {
@@ -269,6 +277,7 @@ function resolveHostedChildExecutionErrorState(
   };
 }
 
+/** Run hosted child execution lifecycle. */
 export async function runHostedChildExecutionLifecycle<
   TLocalResult extends ChildRunExecutionResult,
 >(

@@ -7,11 +7,13 @@ import { type ConversationRunProjection, createConversationAgentRun } from "./du
 const CONVERSATION_API_TIMEOUT_MS = 15_000;
 
 // Hand-written transform output type.
+/** Record shape for conversation. */
 export interface ConversationRecord {
   id: string;
   projectId: string | null;
 }
 
+/** Zod schema for get conversation record. */
 export const getConversationRecordSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
@@ -29,28 +31,36 @@ export const getConversationRecordSchema = defineSchema((v) =>
     })
 );
 
-/** @deprecated Use getConversationRecordSchema() */
+/** Schema for conversation record.
+ * @deprecated Use getConversationRecordSchema()
+ */
 export const ConversationRecordSchema = lazySchema(getConversationRecordSchema);
 
+/** Zod schema for get conversation message record. */
 export const getConversationMessageRecordSchema = defineSchema((v) =>
   v.object({
     id: v.string().uuid(),
   })
 );
 
-/** @deprecated Use getConversationMessageRecordSchema() */
+/** Schema for conversation message record.
+ * @deprecated Use getConversationMessageRecordSchema()
+ */
 export const ConversationMessageRecordSchema = lazySchema(getConversationMessageRecordSchema);
 
+/** Record shape for conversation message. */
 export type ConversationMessageRecord = InferSchema<
   ReturnType<typeof getConversationMessageRecordSchema>
 >;
 
+/** Error shape for conversation control plane response. */
 export interface ConversationControlPlaneResponseError {
   status: number;
   statusText: string;
   body: string;
 }
 
+/** Public API contract for persist conversation user message failure. */
 export interface PersistConversationUserMessageFailure
   extends ConversationControlPlaneResponseError {
   conversationId: string;
@@ -112,6 +122,7 @@ function buildConversationMessagesPath(apiUrl: string, conversationId: string): 
   return `${buildConversationPath(apiUrl, conversationId)}/messages`;
 }
 
+/** Record shape for fetch conversation. */
 export async function fetchConversationRecord(input: {
   authToken: string;
   apiUrl: string;
@@ -125,6 +136,7 @@ export async function fetchConversationRecord(input: {
   });
 }
 
+/** Ensure conversation project link helper. */
 export async function ensureConversationProjectLink(input: {
   authToken: string;
   apiUrl: string;
@@ -150,6 +162,7 @@ export async function ensureConversationProjectLink(input: {
   });
 }
 
+/** Record shape for create conversation. */
 export async function createConversationRecord(input: {
   authToken: string;
   apiUrl: string;
@@ -165,6 +178,7 @@ export async function createConversationRecord(input: {
   });
 }
 
+/** Message shape for create conversation. */
 export async function createConversationMessage(input: {
   authToken: string;
   apiUrl: string;
@@ -184,6 +198,7 @@ export async function createConversationMessage(input: {
   });
 }
 
+/** Message shape for persist conversation user. */
 export async function persistConversationUserMessage(input: {
   authToken: string;
   apiUrl: string;
@@ -220,6 +235,7 @@ export async function persistConversationUserMessage(input: {
   });
 }
 
+/** Context for find latest user conversation message. */
 export function findLatestUserConversationMessageContext(messages: ChatUiMessage[]): {
   latestUserMessage: ChatUiMessage | undefined;
   visibleParentMessageId?: string;
@@ -246,6 +262,7 @@ export function findLatestUserConversationMessageContext(messages: ChatUiMessage
   };
 }
 
+/** Message shape for persist latest conversation user. */
 export async function persistLatestConversationUserMessage(input: {
   authToken: string;
   apiUrl: string;
@@ -278,12 +295,14 @@ export async function persistLatestConversationUserMessage(input: {
   });
 }
 
+/** Result returned from bootstrap conversation agent run. */
 export interface BootstrapConversationAgentRunResult {
   conversation: ConversationRecord;
   message: ConversationMessageRecord;
   run: ConversationRunProjection;
 }
 
+/** Bootstrap conversation agent run helper. */
 export async function bootstrapConversationAgentRun(input: {
   authToken: string;
   apiUrl: string;

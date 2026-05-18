@@ -1,14 +1,18 @@
 import type { ChatUiMessageChunk, MessageMetadata } from "./types.ts";
 
+/** Default value for chat stream idle timeout ms. */
 export const DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS = 120_000;
+/** Default value for chat stream tool running timeout ms. */
 export const DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS = 300_000;
 
+/** Public API contract for chat stream watchdog phase. */
 export type ChatStreamWatchdogPhase =
   | "response_pending"
   | "tool_input_streaming"
   | "tool_running"
   | "post_tool_idle";
 
+/** State for chat stream watchdog. */
 export type ChatStreamWatchdogState = {
   phase: ChatStreamWatchdogPhase;
   timeoutMs: number;
@@ -16,6 +20,7 @@ export type ChatStreamWatchdogState = {
   toolName?: string;
 };
 
+/** Options accepted by chat stream watchdog. */
 export type ChatStreamWatchdogOptions = {
   idleTimeoutMs?: number;
   toolRunningTimeoutMs?: number;
@@ -24,6 +29,7 @@ export type ChatStreamWatchdogOptions = {
   clearTimeoutFn?: typeof globalThis.clearTimeout;
 };
 
+/** Error shape for chat stream idle timeout. */
 export class ChatStreamIdleTimeoutError extends Error {
   readonly state: ChatStreamWatchdogState;
 
@@ -39,6 +45,7 @@ export class ChatStreamIdleTimeoutError extends Error {
   }
 }
 
+/** State for create chat stream watchdog. */
 export function createChatStreamWatchdogState(
   phase: ChatStreamWatchdogPhase,
   metadata?: {
@@ -58,6 +65,7 @@ export function createChatStreamWatchdogState(
   };
 }
 
+/** Check whether a long-running tool is active. */
 export function isLongRunningToolRunning(
   current: ChatStreamWatchdogState,
   longRunningToolNames: ReadonlySet<string>,
@@ -69,6 +77,7 @@ export function isLongRunningToolRunning(
   );
 }
 
+/** State for get next chat stream watchdog. */
 export function getNextChatStreamWatchdogState(
   currentState: ChatStreamWatchdogState,
   chunk: ChatUiMessageChunk<MessageMetadata>,
@@ -138,10 +147,12 @@ export function getNextChatStreamWatchdogState(
   }
 }
 
+/** Check whether a chunk only carries heartbeat metadata. */
 export function isHeartbeatOnlyMetadataChunk(chunk: ChatUiMessageChunk<MessageMetadata>): boolean {
   return chunk.type === "message-metadata" && Object.keys(chunk.messageMetadata ?? {}).length === 0;
 }
 
+/** Create chat stream watchdog. */
 export function createChatStreamWatchdog(options?: ChatStreamWatchdogOptions) {
   const resolvedOptions = resolveChatStreamWatchdogOptions(options);
   const controller = new AbortController();

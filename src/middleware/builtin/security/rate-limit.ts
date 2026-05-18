@@ -28,6 +28,7 @@ function defaultKeyGenerator(req: Request): string {
   return getRightmostForwardedIp(req) ?? "anonymous";
 }
 
+/** Implement memory rate limit store. */
 export class MemoryRateLimitStore implements RateLimitStore {
   private counts = new Map<string, RateLimitEntry>();
   private cleanupInterval?: ReturnType<typeof setInterval>;
@@ -74,6 +75,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
   }
 }
 
+/** Options accepted by rate limit. */
 export interface RateLimitOptions {
   maxRequests?: number;
   windowMs?: number;
@@ -81,6 +83,7 @@ export interface RateLimitOptions {
   keyGenerator?: (req: Request) => string;
 }
 
+/** Create rate-limit middleware. */
 export function rateLimit(
   optionsOrMaxRequests?: number | RateLimitOptions,
   windowMsArg?: number,

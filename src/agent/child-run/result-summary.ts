@@ -13,6 +13,7 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Summarize child run result text helper. */
 export function summarizeChildRunResultText(
   text: string,
   maxLength = CHILD_RUN_RESULT_TEXT_LIMIT,
@@ -24,10 +25,12 @@ export function summarizeChildRunResultText(
   return `${text.slice(0, maxLength)}… [truncated ${text.length - maxLength} chars]`;
 }
 
+/** Builds child run result summary. */
 export function buildChildRunResultSummary(text: string): { text: string } {
   return { text: summarizeChildRunResultText(text) };
 }
 
+/** Builds root owned child run result text. */
 export function buildRootOwnedChildRunResultText(text: string): string {
   let normalized = text.trim();
 
@@ -42,6 +45,7 @@ export function buildRootOwnedChildRunResultText(text: string): string {
   return normalized;
 }
 
+/** Builds root owned child run result hint. */
 export function buildRootOwnedChildRunResultHint(
   input: { text: string; instruction: string },
 ): { instruction: string; suggestedText: string } {
@@ -51,6 +55,7 @@ export function buildRootOwnedChildRunResultHint(
   };
 }
 
+/** Summarize child run result value helper. */
 export function summarizeChildRunResultValue(output: unknown, depth = 0): unknown {
   if (typeof output === "string") {
     return summarizeChildRunResultText(output, CHILD_RUN_VALUE_STRING_LIMIT);

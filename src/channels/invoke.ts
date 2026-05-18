@@ -61,9 +61,12 @@ const getChannelInvokeRequestWireSchema = defineSchema((v) =>
   })
 );
 
+/** Zod schema for get channel invoke request. */
 export const getChannelInvokeRequestSchema = getChannelInvokeRequestWireSchema;
+/** Zod schema for channel invoke request. */
 export const ChannelInvokeRequestSchema = lazySchema(getChannelInvokeRequestSchema);
 
+/** Zod schema for get channel assistants request. */
 export const getChannelAssistantsRequestSchema = defineSchema((v) =>
   v.object({
     requestId: v.string().min(1),
@@ -71,8 +74,10 @@ export const getChannelAssistantsRequestSchema = defineSchema((v) =>
     platform: v.literal("slack"),
   })
 );
+/** Zod schema for channel assistants request. */
 export const ChannelAssistantsRequestSchema = lazySchema(getChannelAssistantsRequestSchema);
 
+/** Zod schema for get channel assistant. */
 export const getChannelAssistantSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
@@ -81,13 +86,16 @@ export const getChannelAssistantSchema = defineSchema((v) =>
     model: v.string().nullable().optional(),
   })
 );
+/** Zod schema for channel assistant. */
 export const ChannelAssistantSchema = lazySchema(getChannelAssistantSchema);
 
+/** Zod schema for get channel assistants response. */
 export const getChannelAssistantsResponseSchema = defineSchema((v) =>
   v.object({
     assistants: v.array(getChannelAssistantSchema()),
   })
 );
+/** Zod schema for channel assistants response. */
 export const ChannelAssistantsResponseSchema = lazySchema(getChannelAssistantsResponseSchema);
 
 const getChannelTextPartSchema = defineSchema((v) =>
@@ -136,6 +144,7 @@ const getChannelErrorPartSchema = defineSchema((v) =>
 );
 const _channelErrorPartSchema = lazySchema(getChannelErrorPartSchema);
 
+/** Zod schema for get channel response part. */
 export const getChannelResponsePartSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
     getChannelTextPartSchema(),
@@ -145,8 +154,10 @@ export const getChannelResponsePartSchema = defineSchema((v) =>
     getChannelErrorPartSchema(),
   ])
 );
+/** Zod schema for channel response part. */
 export const ChannelResponsePartSchema = lazySchema(getChannelResponsePartSchema);
 
+/** Zod schema for get channel invoke response. */
 export const getChannelInvokeResponseSchema = defineSchema((v) =>
   v.object({
     ignored: v.boolean(),
@@ -162,26 +173,35 @@ export const getChannelInvokeResponseSchema = defineSchema((v) =>
     }).optional(),
   })
 );
+/** Zod schema for channel invoke response. */
 export const ChannelInvokeResponseSchema = lazySchema(getChannelInvokeResponseSchema);
 
+/** Request payload for channel invoke. */
 export type ChannelInvokeRequest = InferSchema<ReturnType<typeof getChannelInvokeRequestSchema>>;
+/** Response payload for channel invoke. */
 export type ChannelInvokeResponse = InferSchema<ReturnType<typeof getChannelInvokeResponseSchema>>;
+/** Request payload for channel assistants. */
 export type ChannelAssistantsRequest = InferSchema<
   ReturnType<typeof getChannelAssistantsRequestSchema>
 >;
+/** Response payload for channel assistants. */
 export type ChannelAssistantsResponse = InferSchema<
   ReturnType<typeof getChannelAssistantsResponseSchema>
 >;
 
+/** Public API contract for channel response part. */
 type ChannelResponsePart = InferSchema<ReturnType<typeof getChannelResponsePartSchema>>;
+/** Public API contract for channel invoke deps. */
 export interface ChannelInvokeDeps extends RuntimeAgentDiscoveryDeps {}
 
+/** Shared default channel invoke deps value. */
 export const defaultChannelInvokeDeps: ChannelInvokeDeps = {
   ensureProjectDiscovery: ensureProjectDiscoveryForProject,
   getAgent: getRegisteredAgent,
   getAllAgentIds: getRegisteredAgentIds,
 };
 
+/** List channel assistants. */
 export async function listChannelAssistants(
   ctx: HandlerContext,
   deps: ChannelInvokeDeps,
@@ -235,6 +255,7 @@ function normalizeConversationPart(
   return null;
 }
 
+/** Normalizes conversation history for runtime. */
 export function normalizeConversationHistoryForRuntime(
   messages: ChannelInvokeRequest["conversationHistory"],
 ): Message[] {
@@ -249,6 +270,7 @@ export function normalizeConversationHistoryForRuntime(
   })) as any;
 }
 
+/** Resolves channel invoke agent. */
 export function resolveChannelInvokeAgent(
   assistantId: string,
   deps: Pick<ChannelInvokeDeps, "getAgent">,
@@ -308,6 +330,7 @@ function findLastAssistantMessage(messages: Message[]): Message | undefined {
   return undefined;
 }
 
+/** Builds channel response parts. */
 export function buildChannelResponseParts(response: AgentResponse): ChannelResponsePart[] {
   const responseParts: ChannelResponsePart[] = [];
   const knownToolCallIds = new Set<string>();
@@ -373,6 +396,7 @@ function classifyChannelInvokeError(error: unknown): ChannelInvokeResponse["erro
   return { code: "internal_error", retryable: true };
 }
 
+/** Execute channel invoke. */
 export async function executeChannelInvoke(
   payload: ChannelInvokeRequest,
   ctx: HandlerContext,

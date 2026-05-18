@@ -14,16 +14,19 @@ import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-comp
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
 
+/** Public API contract for default hosted project steering refresh logger. */
 export type DefaultHostedProjectSteeringRefreshLogger = {
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+/** Public API contract for default hosted project steering refresh lookup. */
 export type DefaultHostedProjectSteeringRefreshLookup = {
   projectId: string;
   authToken: string;
   branchId?: string | null;
 };
 
+/** Public API contract for default hosted project steering fetchers. */
 export type DefaultHostedProjectSteeringFetchers = {
   fetchProjectInstructions: (
     lookup: DefaultHostedProjectSteeringRefreshLookup,
@@ -33,6 +36,7 @@ export type DefaultHostedProjectSteeringFetchers = {
   ) => Promise<RuntimeSkillDefinition[]>;
 };
 
+/** Options accepted by create default hosted project steering refresh. */
 export type CreateDefaultHostedProjectSteeringRefreshOptions =
   & DefaultHostedProjectSteeringFetchers
   & {
@@ -43,6 +47,7 @@ export type CreateDefaultHostedProjectSteeringRefreshOptions =
     logger?: DefaultHostedProjectSteeringRefreshLogger;
   };
 
+/** Input payload for fetch default hosted project steering. */
 export type FetchDefaultHostedProjectSteeringInput =
   & DefaultHostedProjectSteeringFetchers
   & {
@@ -56,6 +61,7 @@ export type FetchDefaultHostedProjectSteeringInput =
     traceOperationName?: string;
   };
 
+/** Fetch default hosted project steering helper. */
 export async function fetchDefaultHostedProjectSteering(
   input: FetchDefaultHostedProjectSteeringInput,
 ): Promise<HostedChatRuntimePreparationSteering> {
@@ -166,6 +172,7 @@ function filterVisibleSkills(input: {
   return input.skills.filter((skill) => input.allowedSkillIds?.includes(skill.id));
 }
 
+/** Create default hosted project steering refresh. */
 export function createDefaultHostedProjectSteeringRefresh(
   options: CreateDefaultHostedProjectSteeringRefreshOptions,
 ): (input: DefaultHostedChatRuntimeSystemRefreshInput) => Promise<string> {

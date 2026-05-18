@@ -2,6 +2,7 @@ import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
+/** Public API contract for file system. */
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
   readFile(path: string): Promise<Uint8Array>;
@@ -256,6 +257,7 @@ class DenoFileSystem implements FileSystem {
   }
 }
 
+/** Create file system. */
 export function createFileSystem(): FileSystem {
   return isDeno ? new DenoFileSystem() : new NodeFileSystem();
 }
@@ -267,48 +269,59 @@ function getFs(): FileSystem {
   return _fs;
 }
 
+/** Read a file as text. */
 export function readTextFile(path: string): Promise<string> {
   return getFs().readTextFile(path);
 }
 
+/** Read a file as bytes. */
 export function readFile(path: string): Promise<Uint8Array> {
   return getFs().readFile(path);
 }
 
+/** Write text to a file. */
 export function writeTextFile(path: string, data: string): Promise<void> {
   return getFs().writeTextFile(path, data);
 }
 
+/** Write bytes to a file. */
 export function writeFile(path: string, data: Uint8Array): Promise<void> {
   return getFs().writeFile(path, data);
 }
 
+/** Check whether a path exists. */
 export function exists(path: string): Promise<boolean> {
   return getFs().exists(path);
 }
 
+/** Read file metadata. */
 export function stat(path: string): Promise<FileInfo> {
   return getFs().stat(path);
 }
 
+/** Create a directory. */
 export function mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
   return getFs().mkdir(path, options);
 }
 
+/** Remove a file or directory. */
 export function remove(path: string, options?: { recursive?: boolean }): Promise<void> {
   return getFs().remove(path, options);
 }
 
+/** Read directory entries. */
 export function readDir(
   path: string,
 ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
   return getFs().readDir(path);
 }
 
+/** Create temp dir. */
 export function makeTempDir(options?: { prefix?: string }): Promise<string> {
   return getFs().makeTempDir(options);
 }
 
+/** Change file permissions. */
 export function chmod(path: string, mode: number): Promise<void> {
   return getFs().chmod(path, mode);
 }
@@ -333,6 +346,7 @@ type DenoGlobal = typeof globalThis & {
   };
 };
 
+/** Error shape for is not found. */
 export function isNotFoundError(error: unknown): boolean {
   const NotFound = (globalThis as DenoGlobal).Deno?.errors?.NotFound;
   if (isDeno && NotFound && error instanceof NotFound) return true;
@@ -346,6 +360,7 @@ export function isNotFoundError(error: unknown): boolean {
   return false;
 }
 
+/** Error shape for is already exists. */
 export function isAlreadyExistsError(error: unknown): boolean {
   const AlreadyExists = (globalThis as DenoGlobal).Deno?.errors?.AlreadyExists;
   if (isDeno && AlreadyExists && error instanceof AlreadyExists) return true;

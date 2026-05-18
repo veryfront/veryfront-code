@@ -2,6 +2,7 @@ import type { BaseNodeConfig, RetryConfig, WorkflowContext, WorkflowNode } from 
 import { validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+/** Options accepted by wait for approval. */
 export interface WaitForApprovalOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   message?: string;
   payload?: unknown | ((context: WorkflowContext) => unknown);
@@ -31,6 +32,7 @@ export function waitForApproval(id: string, options: WaitForApprovalOptions = {}
   };
 }
 
+/** Options accepted by wait for event. */
 export interface WaitForEventOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   eventName: string;
   timeout?: string | number;

@@ -31,6 +31,7 @@ function createTimedAbortSignal(timeoutMs: number, abortSignal?: AbortSignal) {
   };
 }
 
+/** Zod schema for get conversation run targets. */
 export const getConversationRunTargetsSchema = defineSchema((v) =>
   v.object({
     sourceTargetKind: v.enum(["project", "preview_branch"]).nullable(),
@@ -39,13 +40,17 @@ export const getConversationRunTargetsSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getConversationRunTargetsSchema() */
+/** Schema for conversation run targets.
+ * @deprecated Use getConversationRunTargetsSchema()
+ */
 export const ConversationRunTargetsSchema = lazySchema(getConversationRunTargetsSchema);
 
+/** Public API contract for conversation run targets. */
 export type ConversationRunTargets = InferSchema<
   ReturnType<typeof getConversationRunTargetsSchema>
 >;
 
+/** Resolves conversation run targets. */
 export function resolveConversationRunTargets(input: {
   projectId?: string | null;
   branchId?: string | null;
@@ -71,13 +76,17 @@ export function resolveConversationRunTargets(input: {
   );
 }
 
+/** Zod schema for get conversation run status. */
 export const getConversationRunStatusSchema = defineSchema((v) =>
   v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"])
 );
 
-/** @deprecated Use getConversationRunStatusSchema() */
+/** Schema for conversation run status.
+ * @deprecated Use getConversationRunStatusSchema()
+ */
 export const ConversationRunStatusSchema = lazySchema(getConversationRunStatusSchema);
 
+/** Public API contract for conversation run projection. */
 export interface ConversationRunProjection {
   runId: string;
   conversationId: string;
@@ -89,6 +98,7 @@ export interface ConversationRunProjection {
   status: "pending" | "running" | "waiting_for_tool" | "completed" | "failed" | "cancelled";
 }
 
+/** Zod schema for get conversation run projection. */
 export const getConversationRunProjectionSchema = defineSchema((v) =>
   v.object({
     runId: v.string().min(1).optional(),
@@ -139,42 +149,53 @@ export const getConversationRunProjectionSchema = defineSchema((v) =>
     })
 );
 
-/** @deprecated Use getConversationRunProjectionSchema() */
+/** Schema for conversation run projection.
+ * @deprecated Use getConversationRunProjectionSchema()
+ */
 export const ConversationRunProjectionSchema = lazySchema(getConversationRunProjectionSchema);
+/** Public API contract for a conversation run status is active. */
 export type ActiveConversationRunStatus = Extract<
   ConversationRunProjection["status"],
   "pending" | "running" | "waiting_for_tool"
 >;
+/** Public API contract for terminal conversation run status. */
 export type TerminalConversationRunStatus = Extract<
   ConversationRunProjection["status"],
   "completed" | "failed" | "cancelled"
 >;
+/** Result returned from conversation run append cursor resync. */
 export type ConversationRunAppendCursorResyncResult =
   | "advanced"
   | "non_appendable"
   | "unchanged";
+/** Public API contract for conversation run append recovery outcome. */
 export type ConversationRunAppendRecoveryOutcome =
   | "resumed"
   | "stopped"
   | "bubbled";
+/** Public API contract for conversation run append failure outcome. */
 export type ConversationRunAppendFailureOutcome =
   | "resumed"
   | "stopped"
   | "retry_scheduled";
+/** Public API contract for conversation run append execution outcome. */
 export type ConversationRunAppendExecutionOutcome =
   | "resumed"
   | "stopped"
   | "retry_scheduled";
+/** Public API contract for conversation run batch flush outcome. */
 export type ConversationRunBatchFlushOutcome =
   | "flushed"
   | "resumed"
   | "stopped"
   | "retry_scheduled";
+/** Public API contract for conversation run queue flush outcome. */
 export type ConversationRunQueueFlushOutcome =
   | "flushed"
   | "stopped"
   | "retry_scheduled";
 
+/** Public API contract for conversation run event queue controller. */
 export interface ConversationRunEventQueueController {
   enqueue(events: unknown[]): void;
   flush(): Promise<
@@ -214,6 +235,7 @@ export interface ConversationRunEventQueueController {
   };
 }
 
+/** Zod schema for get create conversation run accepted. */
 export const getCreateConversationRunAcceptedSchema = defineSchema((v) =>
   v.object({
     run: v.object({
@@ -232,11 +254,14 @@ export const getCreateConversationRunAcceptedSchema = defineSchema((v) =>
     })
 );
 
-/** @deprecated Use getCreateConversationRunAcceptedSchema() */
+/** Schema for create conversation run accepted.
+ * @deprecated Use getCreateConversationRunAcceptedSchema()
+ */
 export const CreateConversationRunAcceptedSchema = lazySchema(
   getCreateConversationRunAcceptedSchema,
 );
 
+/** Zod schema for get complete conversation run response. */
 export const getCompleteConversationRunResponseSchema = defineSchema((v) =>
   v.object({
     completed: v.boolean(),
@@ -248,11 +273,14 @@ export const getCompleteConversationRunResponseSchema = defineSchema((v) =>
   }).passthrough()
 );
 
-/** @deprecated Use getCompleteConversationRunResponseSchema() */
+/** Schema for complete conversation run response.
+ * @deprecated Use getCompleteConversationRunResponseSchema()
+ */
 export const CompleteConversationRunResponseSchema = lazySchema(
   getCompleteConversationRunResponseSchema,
 );
 
+/** Response payload for append conversation run events. */
 export interface AppendConversationRunEventsResponse {
   latestEventId: number;
   latestExternalEventSequence: number;
@@ -266,6 +294,7 @@ export interface AppendConversationRunEventsResponse {
   };
 }
 
+/** Zod schema for get append conversation run events response. */
 export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
   v.union([
     v.object({
@@ -308,7 +337,9 @@ export const getAppendConversationRunEventsResponseSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getAppendConversationRunEventsResponseSchema() */
+/** Schema for append conversation run events response.
+ * @deprecated Use getAppendConversationRunEventsResponseSchema()
+ */
 export const AppendConversationRunEventsResponseSchema = lazySchema(
   getAppendConversationRunEventsResponseSchema,
 );
@@ -322,12 +353,14 @@ const getConversationRunErrorSchema = defineSchema((v) =>
   })
 );
 
+/** Public API contract for conversation agent run usage. */
 export interface ConversationAgentRunUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
 }
 
+/** Input payload for create conversation agent run. */
 export interface CreateConversationAgentRunInput {
   authToken: string;
   apiUrl: string;
@@ -339,6 +372,7 @@ export interface CreateConversationAgentRunInput {
   branchId?: string | null;
 }
 
+/** Input payload for finalize conversation agent run. */
 export interface FinalizeConversationAgentRunInput {
   authToken: string;
   apiUrl: string;
@@ -352,6 +386,7 @@ export interface FinalizeConversationAgentRunInput {
   terminalErrorMessage?: string | null;
 }
 
+/** Error shape for conversation run terminal state. */
 export class ConversationRunTerminalStateError extends Error {
   readonly status: TerminalConversationRunStatus;
   readonly run: ConversationRunProjection;
@@ -364,6 +399,7 @@ export class ConversationRunTerminalStateError extends Error {
   }
 }
 
+/** Error shape for append conversation run events. */
 export class AppendConversationRunEventsError extends Error {
   readonly status: number;
   readonly detail: string | null;
@@ -381,6 +417,7 @@ export class AppendConversationRunEventsError extends Error {
   }
 }
 
+/** Parses append conversation run events error body. */
 export function parseAppendConversationRunEventsErrorBody(bodyText: string): string | null {
   if (!bodyText) {
     return null;
@@ -398,6 +435,7 @@ export function parseAppendConversationRunEventsErrorBody(bodyText: string): str
   return bodyText;
 }
 
+/** Error shape for is ignorable conversation run append. */
 export function isIgnorableConversationRunAppendError(
   error: unknown,
 ): error is AppendConversationRunEventsError {
@@ -419,6 +457,7 @@ export function isIgnorableConversationRunAppendError(
   );
 }
 
+/** Error shape for is cursor mismatch conversation run append. */
 export function isCursorMismatchConversationRunAppendError(
   error: unknown,
 ): error is AppendConversationRunEventsError {
@@ -429,12 +468,14 @@ export function isCursorMismatchConversationRunAppendError(
   );
 }
 
+/** Check whether a conversation run status is active. */
 export function isActiveConversationRunStatus(
   status: ConversationRunProjection["status"],
 ): status is ActiveConversationRunStatus {
   return status === "pending" || status === "running" || status === "waiting_for_tool";
 }
 
+/** Check whether a conversation run projection can accept more events. */
 export function isAppendableConversationRunProjection(run: ConversationRunProjection): boolean {
   return (
     run.status !== "completed" &&
@@ -446,6 +487,7 @@ export function isAppendableConversationRunProjection(run: ConversationRunProjec
   );
 }
 
+/** Resync conversation run append cursor helper. */
 export async function resyncConversationRunAppendCursor(input: {
   authToken: string;
   apiUrl: string;
@@ -485,6 +527,7 @@ export async function resyncConversationRunAppendCursor(input: {
   };
 }
 
+/** Recover conversation run cursor mismatch helper. */
 export async function recoverConversationRunCursorMismatch(input: {
   error: unknown;
   authToken: string;
@@ -556,6 +599,7 @@ export async function recoverConversationRunCursorMismatch(input: {
   };
 }
 
+/** Recover conversation run append failure helper. */
 export async function recoverConversationRunAppendFailure(input: {
   error: unknown;
   authToken: string;
@@ -626,6 +670,7 @@ export async function recoverConversationRunAppendFailure(input: {
   };
 }
 
+/** Recover conversation run append execution helper. */
 export async function recoverConversationRunAppendExecution(input: {
   error: unknown;
   authToken: string;
@@ -744,6 +789,7 @@ function buildConversationRunEventBatches(input: {
   return batches;
 }
 
+/** Flush conversation run event batches. */
 export async function flushConversationRunEventBatches(input: {
   authToken: string;
   apiUrl: string;
@@ -852,6 +898,7 @@ export async function flushConversationRunEventBatches(input: {
   };
 }
 
+/** Flush conversation run event queue. */
 export async function flushConversationRunEventQueue(input: {
   authToken: string;
   apiUrl: string;
@@ -954,6 +1001,7 @@ export async function flushConversationRunEventQueue(input: {
   };
 }
 
+/** Create conversation run event queue controller. */
 export function createConversationRunEventQueueController(input: {
   authToken: string;
   apiUrl: string;
@@ -1151,6 +1199,7 @@ async function controlPlaneJson<T>(input: {
   return input.responseSchema.parse(await response.json());
 }
 
+/** Return conversation run. */
 export async function getConversationRun(input: {
   authToken: string;
   apiUrl: string;
@@ -1167,6 +1216,7 @@ export async function getConversationRun(input: {
   });
 }
 
+/** Monitor conversation run status helper. */
 export async function monitorConversationRunStatus(input: {
   authToken: string;
   apiUrl: string;
@@ -1225,6 +1275,7 @@ export async function monitorConversationRunStatus(input: {
   }
 }
 
+/** Append conversation run events. */
 export async function appendConversationRunEvents(input: {
   authToken: string;
   apiUrl: string;
@@ -1293,6 +1344,7 @@ export async function appendConversationRunEvents(input: {
   return AppendConversationRunEventsResponseSchema.parse(await response.json());
 }
 
+/** Create conversation agent run. */
 export async function createConversationAgentRun(
   input: CreateConversationAgentRunInput,
 ): Promise<ConversationRunProjection> {
@@ -1356,6 +1408,7 @@ export async function createConversationAgentRun(
   });
 }
 
+/** Finalize conversation agent run helper. */
 export async function finalizeConversationAgentRun(
   input: FinalizeConversationAgentRunInput,
 ): Promise<void> {

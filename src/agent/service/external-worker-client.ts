@@ -2,6 +2,7 @@ import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 
+/** Public API contract for external agent worker. */
 export interface ExternalAgentWorker {
   id: string;
   project_id: string;
@@ -15,6 +16,7 @@ export interface ExternalAgentWorker {
   updated_at?: string;
 }
 
+/** Public API contract for external agent worker request snapshot. */
 export interface ExternalAgentWorkerRequestSnapshot {
   messages: Array<{
     id: string;
@@ -29,6 +31,7 @@ export interface ExternalAgentWorkerRequestSnapshot {
   traceContext?: unknown;
 }
 
+/** Public API contract for external agent worker session. */
 export interface ExternalAgentWorkerSession {
   id: string;
   run_id: string;
@@ -42,6 +45,7 @@ export interface ExternalAgentWorkerSession {
   ended_at?: string | null;
 }
 
+/** Public API contract for external agent worker run. */
 export interface ExternalAgentWorkerRun {
   run_id: string;
   conversation_id: string;
@@ -79,6 +83,7 @@ function externalAgentWorker(v: SchemaValidator): Schema<ExternalAgentWorker> {
   });
 }
 
+/** Zod schema for external agent worker. */
 export const ExternalAgentWorkerSchema = lazySchema(
   defineSchema<ExternalAgentWorker>(externalAgentWorker),
 );
@@ -107,6 +112,7 @@ function externalAgentWorkerRequestSnapshot(
   });
 }
 
+/** Zod schema for external agent worker request snapshot. */
 export const ExternalAgentWorkerRequestSnapshotSchema = lazySchema(
   defineSchema<ExternalAgentWorkerRequestSnapshot>(externalAgentWorkerRequestSnapshot),
 );
@@ -126,6 +132,7 @@ function externalAgentWorkerSession(v: SchemaValidator): Schema<ExternalAgentWor
   });
 }
 
+/** Zod schema for external agent worker session. */
 export const ExternalAgentWorkerSessionSchema = lazySchema(
   defineSchema<ExternalAgentWorkerSession>(externalAgentWorkerSession),
 );
@@ -154,6 +161,7 @@ function externalAgentWorkerRun(v: SchemaValidator): Schema<ExternalAgentWorkerR
   });
 }
 
+/** Zod schema for external agent worker run. */
 export const ExternalAgentWorkerRunSchema = lazySchema(
   defineSchema<ExternalAgentWorkerRun>(externalAgentWorkerRun),
 );
@@ -167,12 +175,14 @@ const RegisterExternalAgentWorkerResponseSchema = lazySchema(
   ),
 );
 
+/** Options accepted by external agent worker client. */
 export interface ExternalAgentWorkerClientOptions {
   apiUrl: string;
   authToken: string;
   fetch?: typeof fetch;
 }
 
+/** Input payload for register external agent worker. */
 export interface RegisterExternalAgentWorkerInput {
   projectReference: string;
   implementationKind: string;
@@ -182,11 +192,13 @@ export interface RegisterExternalAgentWorkerInput {
   metadata?: Record<string, unknown>;
 }
 
+/** Input payload for claim external agent worker run. */
 export interface ClaimExternalAgentWorkerRunInput {
   workerId: string;
   leaseDurationSeconds: number;
 }
 
+/** Input payload for record external agent worker session. */
 export interface RecordExternalAgentWorkerSessionInput {
   workerId: string;
   runId: string;
@@ -195,6 +207,7 @@ export interface RecordExternalAgentWorkerSessionInput {
   metadata?: Record<string, unknown>;
 }
 
+/** Input payload for complete external agent worker run. */
 export interface CompleteExternalAgentWorkerRunInput {
   runId: string;
   status: "completed" | "failed" | "cancelled";
@@ -202,6 +215,7 @@ export interface CompleteExternalAgentWorkerRunInput {
   terminalErrorMessage?: string;
 }
 
+/** Input payload for append external agent worker run events. */
 export interface AppendExternalAgentWorkerRunEventsInput {
   conversationId: string;
   runId: string;
@@ -209,6 +223,7 @@ export interface AppendExternalAgentWorkerRunEventsInput {
   expectedPreviousExternalEventSequence?: number;
 }
 
+/** Public API contract for external agent worker client. */
 export interface ExternalAgentWorkerClient {
   registerWorker(input: RegisterExternalAgentWorkerInput): Promise<ExternalAgentWorker>;
   heartbeatWorker(workerId: string): Promise<ExternalAgentWorker>;
@@ -394,6 +409,7 @@ class DefaultExternalAgentWorkerClient implements ExternalAgentWorkerClient {
   }
 }
 
+/** Create external agent worker client. */
 export function createExternalAgentWorkerClient(
   options: ExternalAgentWorkerClientOptions,
 ): ExternalAgentWorkerClient {

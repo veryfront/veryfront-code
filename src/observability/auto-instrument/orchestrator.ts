@@ -9,6 +9,7 @@ const logger = serverLogger.component("auto-instrument");
 
 let initialized = false;
 
+/** Initialize automatic instrumentation wrappers. */
 export async function initAutoInstrumentation(
   config: AutoInstrumentConfig = {},
   adapter?: RuntimeAdapter,
@@ -37,6 +38,7 @@ export async function initAutoInstrumentation(
   }
 }
 
+/** Check whether auto instrumentation is enabled. */
 export function isAutoInstrumentEnabled(): boolean {
   return initialized;
 }

@@ -69,6 +69,7 @@ interface ForkErrorPart {
   error: Error;
 }
 
+/** Public API contract for fork runtime step. */
 export interface ForkRuntimeStep {
   text: string;
   messages: unknown[];
@@ -94,6 +95,7 @@ interface RecoveredToolObservation {
   sawOutputError: boolean;
 }
 
+/** State for fork recovered parts. */
 export interface ForkRecoveredPartsState {
   toolCalls: Map<string, RecoveredToolObservation>;
   emittedToolCallIds: Set<string>;
@@ -128,6 +130,7 @@ type StreamedStepState = {
   messages: StreamedMessage[];
 };
 
+/** State for fork runtime stream mapping. */
 export type ForkRuntimeStreamMappingState = {
   toolCalls: Map<string, ForkRuntimeToolCallState>;
   emittedToolCallIds: Set<string>;
@@ -135,9 +138,12 @@ export type ForkRuntimeStreamMappingState = {
   logger?: ForkRuntimeStreamLogger;
 };
 
-/** @deprecated Use ForkRuntimeStreamMappingState. */
+/** State for framework stream.
+ * @deprecated Use ForkRuntimeStreamMappingState.
+ */
 export type FrameworkStreamState = ForkRuntimeStreamMappingState;
 
+/** Public API contract for fork part. */
 export type ForkPart =
   | ForkStreamPart
   | ForkToolInputStartPart
@@ -147,10 +153,12 @@ export type ForkPart =
   | ForkToolErrorPart
   | ForkErrorPart;
 
+/** Public API contract for fork runtime stream logger. */
 export type ForkRuntimeStreamLogger = {
   warn: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Result returned from fork runtime stream. */
 export interface ForkRuntimeStreamResult {
   fullStream: AsyncIterable<ForkPart>;
   steps: PromiseLike<readonly ForkRuntimeStep[]>;
@@ -163,6 +171,7 @@ export interface ForkRuntimeStreamResult {
   >;
 }
 
+/** Default value for fork response promise timeout ms. */
 export const DEFAULT_FORK_RESPONSE_PROMISE_TIMEOUT_MS = 1_000;
 
 type ForkRuntimeStepPreparationInput = {
@@ -176,10 +185,12 @@ type ForkRuntimeStepPreparation = {
   system: string;
 };
 
+/** Public API contract for fork runtime step preparer. */
 export type ForkRuntimeStepPreparer = (
   input: ForkRuntimeStepPreparationInput,
 ) => ForkRuntimeStepPreparation | Promise<ForkRuntimeStepPreparation>;
 
+/** Public API contract for agent runtime fork step runner. */
 export type AgentRuntimeForkStepRunner = (
   input: RunAgentRuntimeForkStepInput,
 ) => Promise<{
@@ -187,6 +198,7 @@ export type AgentRuntimeForkStepRunner = (
   responsePromise: Promise<AgentResponse>;
 }>;
 
+/** Input payload for start agent runtime fork. */
 export type StartAgentRuntimeForkInput = {
   apiUrl: string;
   authToken: string;
@@ -208,6 +220,7 @@ export type StartAgentRuntimeForkInput = {
   runStep?: AgentRuntimeForkStepRunner;
 };
 
+/** Input payload for start agent runtime fork with host tools. */
 export type StartAgentRuntimeForkWithHostToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > =
@@ -222,6 +235,7 @@ export type StartAgentRuntimeForkWithHostToolsInput<
     traceTools?: TraceHostToolsOptions<TAttributes>;
   };
 
+/** Starts agent runtime fork with host tools. */
 export function startAgentRuntimeForkWithHostTools<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
@@ -312,6 +326,7 @@ function createAgentRuntimeForkAbortError(abortSignal?: AbortSignal): Error {
   return new DOMException("Agent runtime fork aborted before completion.", "AbortError");
 }
 
+/** Input payload for run agent runtime fork step. */
 export type RunAgentRuntimeForkStepInput = {
   apiUrl: string;
   authToken: string;
@@ -325,10 +340,12 @@ export type RunAgentRuntimeForkStepInput = {
   providerOptions?: Record<string, unknown>;
 };
 
+/** Input payload for run framework fork step. */
 export type RunFrameworkForkStepInput = Omit<RunAgentRuntimeForkStepInput, "runtimeTools"> & {
   frameworkTools: Record<string, Tool | boolean>;
 };
 
+/** Run agent runtime fork step. */
 export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInput): Promise<{
   stream: ReadableStream<Uint8Array>;
   responsePromise: Promise<AgentResponse>;
@@ -391,7 +408,9 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
   };
 }
 
-/** @deprecated Use runAgentRuntimeForkStep with runtimeTools. */
+/** Handles run framework fork step.
+ * @deprecated Use runAgentRuntimeForkStep with runtimeTools.
+ */
 export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<{
   stream: ReadableStream<Uint8Array>;
   responsePromise: Promise<AgentResponse>;
@@ -410,11 +429,13 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
   });
 }
 
+/** Public API contract for fork runtime continuation prompt resolver. */
 export type ForkRuntimeContinuationPromptResolver = (input: {
   step: ForkRuntimeStep;
   stepIndex: number;
 }) => Promise<string | null> | string | null;
 
+/** Response payload for build fork runtime step from. */
 export function buildForkRuntimeStepFromResponse(response: AgentResponse): ForkRuntimeStep {
   const toolCalls = response.toolCalls.map((toolCall) => ({
     toolCallId: toolCall.id,
@@ -444,6 +465,7 @@ export function buildForkRuntimeStepFromResponse(response: AgentResponse): ForkR
   };
 }
 
+/** Should continue fork runtime step helper. */
 export function shouldContinueForkRuntimeStep(
   step: ForkRuntimeStep,
   response: AgentResponse,
@@ -452,6 +474,7 @@ export function shouldContinueForkRuntimeStep(
     response.toolCalls.some((toolCall) => toolCall.status !== "error");
 }
 
+/** Message shape for create fork runtime user. */
 export function createForkRuntimeUserMessage(input: {
   text: string;
   id?: string;
@@ -465,6 +488,7 @@ export function createForkRuntimeUserMessage(input: {
   };
 }
 
+/** Create initial fork runtime messages. */
 export function createInitialForkRuntimeMessages(input: {
   initialMessages?: readonly AgentMessage[];
   prompt?: string;
@@ -481,6 +505,7 @@ export function createInitialForkRuntimeMessages(input: {
   return [...currentMessages, createForkRuntimeUserMessage({ text: input.prompt })];
 }
 
+/** Return max fork runtime step count. */
 export function getMaxForkRuntimeStepCount(input: {
   maxSteps: number;
   maxContinuationSteps?: number;
@@ -488,6 +513,7 @@ export function getMaxForkRuntimeStepCount(input: {
   return input.maxSteps + (input.maxContinuationSteps ?? 0);
 }
 
+/** State for resolve fork runtime continuation. */
 export async function resolveForkRuntimeContinuationState(input: {
   continuationStepsRemaining: number;
   onBeforeStop?: ForkRuntimeContinuationPromptResolver;
@@ -516,6 +542,7 @@ export async function resolveForkRuntimeContinuationState(input: {
   };
 }
 
+/** Starts agent runtime fork. */
 export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRuntimeStreamResult {
   const stepsDeferred = createForkRuntimeDeferred<readonly ForkRuntimeStep[]>();
   const totalUsageDeferred = createForkRuntimeDeferred<
@@ -624,6 +651,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
   };
 }
 
+/** State for create streamed step. */
 export function createStreamedStepState(): StreamedStepState {
   return {
     text: "",
@@ -655,6 +683,7 @@ function isFrameworkTextPart(
   return part.type === "text";
 }
 
+/** State for apply part to streamed step. */
 export function applyPartToStreamedStepState(state: StreamedStepState, part: ForkPart) {
   switch (part.type) {
     case "tool-input-start": {
@@ -858,6 +887,7 @@ function buildFallbackAgentResponse(input: {
   } satisfies AgentResponse;
 }
 
+/** Response payload for resolve fork step. */
 export async function resolveForkStepResponse(input: {
   responsePromise: Promise<AgentResponse>;
   responseTimeoutMs: number;
@@ -902,6 +932,7 @@ function warnForkRuntimeStream(
   logger?.warn(message, metadata);
 }
 
+/** Builds recovered step parts. */
 export function buildRecoveredStepParts(
   step: ForkRuntimeStep,
   state: ForkRecoveredPartsState,
@@ -1005,6 +1036,7 @@ function buildToolCallPartIfNeeded(
   ];
 }
 
+/** State for create fork runtime stream mapping. */
 export function createForkRuntimeStreamMappingState(
   input: { logger?: ForkRuntimeStreamLogger } = {},
 ): ForkRuntimeStreamMappingState {
@@ -1016,6 +1048,7 @@ export function createForkRuntimeStreamMappingState(
   };
 }
 
+/** Map AG-UI runtime event to fork parts. */
 export function mapAgUiRuntimeEventToForkParts(
   event: AgUiRuntimeStreamEvent,
   state: ForkRuntimeStreamMappingState,
@@ -1170,14 +1203,18 @@ export function mapAgUiRuntimeEventToForkParts(
   }
 }
 
-/** @deprecated Use createForkRuntimeStreamMappingState. */
+/** State for create framework stream.
+ * @deprecated Use createForkRuntimeStreamMappingState.
+ */
 export function createFrameworkStreamState(
   input: { logger?: ForkRuntimeStreamLogger } = {},
 ): ForkRuntimeStreamMappingState {
   return createForkRuntimeStreamMappingState(input);
 }
 
-/** @deprecated Use mapAgUiRuntimeEventToForkParts. */
+/** Handles map framework event to fork parts.
+ * @deprecated Use mapAgUiRuntimeEventToForkParts.
+ */
 export function mapFrameworkEventToForkParts(
   event: AgUiRuntimeStreamEvent,
   state: ForkRuntimeStreamMappingState,

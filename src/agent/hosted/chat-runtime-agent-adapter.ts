@@ -7,15 +7,18 @@ import type {
 import { createToolExecutionDataEventBridgeStream } from "../streaming/tool-execution-data-event-bridge.ts";
 import type { Agent } from "../types.ts";
 
+/** Public API contract for hosted chat runtime agent adapter runner. */
 export type HostedChatRuntimeAgentAdapterRunner = <TResult>(
   operation: () => Promise<TResult>,
 ) => Promise<TResult>;
 
+/** Public API contract for hosted chat runtime agent adapter warning. */
 export type HostedChatRuntimeAgentAdapterWarning = {
   toolCallId: string;
   inputPreview: string;
 };
 
+/** Input payload for hosted chat runtime agent adapter. */
 export type HostedChatRuntimeAgentAdapterInput = {
   runtimeAgent: Pick<Agent, "stream">;
   runStream?: HostedChatRuntimeAgentAdapterRunner;
@@ -29,6 +32,7 @@ function previewToolInput(inputText: string): string {
   return inputText.length > 500 ? `${inputText.slice(0, 500)}...` : inputText;
 }
 
+/** Create hosted chat runtime agent adapter. */
 export function createHostedChatRuntimeAgentAdapter(
   input: HostedChatRuntimeAgentAdapterInput,
 ): HostedChatRuntimeAgent {

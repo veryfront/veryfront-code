@@ -10,6 +10,7 @@ type ReasoningCardProps = {
   className?: string;
 };
 
+/** Render reasoning card. */
 export const ReasoningCard = React.forwardRef<HTMLDivElement, ReasoningCardProps>(
   function ReasoningCard({ text, isStreaming = false, className }, ref) {
     const [isOpen, setIsOpen] = React.useState(true);

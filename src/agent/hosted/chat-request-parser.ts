@@ -11,21 +11,25 @@ import {
 } from "./chat-request.ts";
 import { RuntimeAgentRunInvocationSchema } from "../runtime/agent-invocation-contract.ts";
 
+/** Public API contract for hosted chat request principal. */
 export type HostedChatRequestPrincipal = {
   userId: string;
   authToken: string;
 };
 
+/** Error shape for hosted chat project access. */
 export type HostedChatProjectAccessError = {
   errorCode: string;
   message: string;
   statusCode: number;
 };
 
+/** Result returned from hosted chat project access. */
 export type HostedChatProjectAccessResult =
   | { success: true }
   | { success: false; error: HostedChatProjectAccessError };
 
+/** Request payload for parsed hosted chat. */
 export type ParsedHostedChatRequest = {
   agentId: string | undefined;
   userId: string;
@@ -46,6 +50,7 @@ export type ParsedHostedChatRequest = {
   persistLatestUserMessageBeforeDurableRun: boolean;
 };
 
+/** Options accepted by parse hosted chat request. */
 export type ParseHostedChatRequestOptions = {
   authenticate: (request: Request) => Promise<HostedChatRequestPrincipal | Response>;
   verifyProjectAccess?: (input: {
@@ -98,6 +103,7 @@ async function verifyHostedChatProjectAccess(input: {
   );
 }
 
+/** Request payload for build parsed hosted chat. */
 export async function buildParsedHostedChatRequest(input: {
   chatRequest: HostedChatRequest;
   agentId?: string;
@@ -147,6 +153,7 @@ export async function buildParsedHostedChatRequest(input: {
   };
 }
 
+/** Request payload for parse hosted chat request from. */
 export async function parseHostedChatRequestFromRequest(
   request: Request,
   options: ParseHostedChatRequestOptions,
@@ -172,6 +179,7 @@ export async function parseHostedChatRequestFromRequest(
   });
 }
 
+/** Request payload for parse runtime agent run invocation hosted chat request from. */
 export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
   request: Request,
   options: ParseHostedChatRequestOptions,

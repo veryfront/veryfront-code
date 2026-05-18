@@ -10,6 +10,7 @@ import { ORCHESTRATION_ERROR, REQUEST_ERROR } from "#veryfront/errors";
 /** Default polling interval for workflow status updates */
 const DEFAULT_POLL_INTERVAL_MS = 2_000;
 
+/** Options accepted by use workflow. */
 export interface UseWorkflowOptions {
   runId: string;
   apiBase?: string;
@@ -21,6 +22,7 @@ export interface UseWorkflowOptions {
   onApprovalRequired?: (approval: PendingApproval) => void;
 }
 
+/** Result returned from use workflow. */
 export interface UseWorkflowResult {
   run: WorkflowRun | null;
   status: WorkflowStatus;
@@ -35,6 +37,7 @@ export interface UseWorkflowResult {
   error: Error | null;
 }
 
+/** React hook for workflow. */
 export function useWorkflow(options: UseWorkflowOptions): UseWorkflowResult {
   const {
     runId,

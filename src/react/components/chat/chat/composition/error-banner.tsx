@@ -8,12 +8,14 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { RefreshCwIcon } from "../../icons/index.ts";
 
+/** Props accepted by error banner. */
 export interface ErrorBannerProps {
   error: Error;
   onRetry?: () => void;
   className?: string;
 }
 
+/** Render error banner. */
 export const ErrorBanner = React.forwardRef<HTMLDivElement, ErrorBannerProps>(
   function ErrorBanner({ error, onRetry, className }, ref) {
     return (

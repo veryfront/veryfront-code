@@ -9,6 +9,7 @@ import { getRecommendation } from "./recommendations.ts";
 
 const contracts = new Map<string, unknown>();
 
+/** Resolve path segments to an absolute path. */
 export function resolve<T>(name: string): T {
   const impl = contracts.get(name);
   if (impl === undefined) {
@@ -23,18 +24,22 @@ export function resolve<T>(name: string): T {
   return impl as T;
 }
 
+/** Try to resolve. */
 export function tryResolve<T>(name: string): T | undefined {
   return contracts.get(name) as T | undefined;
 }
 
+/** Register. */
 export function register<T>(name: string, impl: T): void {
   contracts.set(name, impl);
 }
 
+/** Unregister. */
 export function unregister(name: string): void {
   contracts.delete(name);
 }
 
+/** Reset. */
 export function reset(): void {
   contracts.clear();
 }

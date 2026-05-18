@@ -23,10 +23,12 @@ import {
 import type { HostedChildForkToolInput } from "./child-tool-input.ts";
 import { isChildRunAbortError, throwIfChildRunAborted } from "../child-run/execution-support.ts";
 
+/** Options accepted by hosted durable child execution. */
 export type HostedDurableChildExecutionOptions = {
   durableChildRun?: HostedChildRunIdentifiers;
 };
 
+/** Result returned from hosted durable child invoke. */
 export type HostedDurableChildInvokeResult = {
   ok: boolean;
   status: "completed" | "failed";
@@ -47,6 +49,7 @@ export type HostedDurableChildInvokeResult = {
   terminalErrorMessage: string | null;
 };
 
+/** Input payload for build hosted durable child invoke failure result. */
 export type BuildHostedDurableChildInvokeFailureResultInput = {
   terminalErrorCode: string;
   terminalErrorMessage: string;
@@ -56,6 +59,7 @@ export type BuildHostedDurableChildInvokeFailureResultInput = {
   childMessageId?: string | null;
 };
 
+/** Public API contract for hosted durable child success. */
 export type HostedDurableChildSuccess<TLocalResult extends ChildRunExecutionResult> = {
   result: TLocalResult;
   snapshot: ChildRunExecutionSnapshot;
@@ -63,6 +67,7 @@ export type HostedDurableChildSuccess<TLocalResult extends ChildRunExecutionResu
   targets: ConversationRunTargets;
 };
 
+/** Public API contract for hosted durable child terminal failure. */
 export type HostedDurableChildTerminalFailure = {
   status: HostedChildTerminalStatus;
   identifiers: HostedChildRunIdentifiers;
@@ -71,6 +76,7 @@ export type HostedDurableChildTerminalFailure = {
   terminalErrorMessage: string;
 };
 
+/** Public API contract for hosted durable child setup failure. */
 export type HostedDurableChildSetupFailure = {
   targets: ConversationRunTargets;
   childConversationId: string | null;
@@ -80,23 +86,28 @@ export type HostedDurableChildSetupFailure = {
   terminalErrorMessage: string;
 };
 
+/** Input payload for hosted durable child invoke trace. */
 export type HostedDurableChildInvokeTraceInput = Parameters<
   typeof buildInvokeAgentTraceAttributes
 >[0];
 
+/** Public API contract for hosted durable child invoke trace base. */
 export type HostedDurableChildInvokeTraceBase = Pick<
   HostedDurableChildInvokeTraceInput,
   "conversationId" | "projectId" | "runId" | "toolCallId" | "childAgentId"
 >;
 
+/** Public API contract for hosted durable child invoke trace overrides. */
 export type HostedDurableChildInvokeTraceOverrides = Partial<
   Omit<HostedDurableChildInvokeTraceInput, keyof HostedDurableChildInvokeTraceBase>
 >;
 
+/** Public API contract for hosted durable child invoke trace recorder. */
 export type HostedDurableChildInvokeTraceRecorder = ReturnType<
   typeof createHostedDurableChildInvokeTraceRecorder
 >;
 
+/** Public API contract for hosted local child invoke trace recorder. */
 export type HostedLocalChildInvokeTraceRecorder = {
   recordLocalResult<TLocalResult extends ChildRunExecutionResult>(
     result: TLocalResult,
@@ -104,6 +115,7 @@ export type HostedLocalChildInvokeTraceRecorder = {
   recordLocalFailure(errorMessage: string): void;
 };
 
+/** Input payload for execute hosted local child invoke. */
 export type ExecuteHostedLocalChildInvokeInput = {
   forkInput: Pick<HostedChildForkToolInput, "description">;
   abortSignal?: AbortSignal;
@@ -112,6 +124,7 @@ export type ExecuteHostedLocalChildInvokeInput = {
   isAbortError?: (error: unknown) => boolean;
 };
 
+/** Result returned from build hosted durable child invoke failure. */
 export function buildHostedDurableChildInvokeFailureResult(
   input: BuildHostedDurableChildInvokeFailureResultInput,
 ): HostedDurableChildInvokeResult {
@@ -132,6 +145,7 @@ export function buildHostedDurableChildInvokeFailureResult(
   };
 }
 
+/** Result returned from build hosted durable child invoke terminal failure. */
 export function buildHostedDurableChildInvokeTerminalFailureResult(
   input: HostedDurableChildTerminalFailure,
 ): HostedDurableChildInvokeResult {
@@ -145,6 +159,7 @@ export function buildHostedDurableChildInvokeTerminalFailureResult(
   });
 }
 
+/** Result returned from build hosted durable child invoke success. */
 export function buildHostedDurableChildInvokeSuccessResult<
   TLocalResult extends ChildRunExecutionResult,
 >(input: HostedDurableChildSuccess<TLocalResult>): HostedDurableChildInvokeResult {
@@ -176,6 +191,7 @@ export function buildHostedDurableChildInvokeSuccessResult<
   };
 }
 
+/** Create hosted durable child invoke trace recorder. */
 export function createHostedDurableChildInvokeTraceRecorder(input: {
   traceBase: HostedDurableChildInvokeTraceBase;
   setTraceAttributes: (attributes: AgentTraceAttributes) => void;
@@ -270,6 +286,7 @@ export function createHostedDurableChildInvokeTraceRecorder(input: {
   };
 }
 
+/** Execute hosted local child invoke. */
 export async function executeHostedLocalChildInvoke(
   input: ExecuteHostedLocalChildInvokeInput,
 ): Promise<ChildRunExecutionResult> {
@@ -298,6 +315,7 @@ export async function executeHostedLocalChildInvoke(
   }
 }
 
+/** Context for hosted durable child bootstrap. */
 export type HostedDurableChildBootstrapContext = {
   parentConversationId: string;
   parentRunId: string;
@@ -307,6 +325,7 @@ export type HostedDurableChildBootstrapContext = {
   provider: string;
 };
 
+/** Public API contract for hosted durable child bootstrap callbacks. */
 export type HostedDurableChildBootstrapCallbacks = {
   runBootstrap?: <T>(operation: () => Promise<T>) => Promise<T>;
   onBootstrapStart?: (input: HostedDurableChildBootstrapContext) => Promise<void> | void;
@@ -320,6 +339,7 @@ export type HostedDurableChildBootstrapCallbacks = {
   }) => Promise<void> | void;
 };
 
+/** Public API contract for hosted durable child runtime dependencies. */
 export type HostedDurableChildRuntimeDependencies = {
   bootstrapChildRun?: typeof bootstrapHostedChildRun;
   createLifecycleAdapter?: typeof createConversationChildLifecycleAdapter;
@@ -327,6 +347,7 @@ export type HostedDurableChildRuntimeDependencies = {
   shouldSkipTerminalPersistence?: typeof shouldSkipHostedChildTerminalPersistence;
 };
 
+/** Input payload for execute hosted durable child fork. */
 export type ExecuteHostedDurableChildForkInput<
   TResult,
   TLocalResult extends ChildRunExecutionResult,
@@ -546,6 +567,7 @@ async function executeHostedDurableChildLifecycle<
   });
 }
 
+/** Execute hosted durable child fork. */
 export async function executeHostedDurableChildFork<
   TResult,
   TLocalResult extends ChildRunExecutionResult,

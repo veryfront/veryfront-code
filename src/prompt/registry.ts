@@ -26,4 +26,5 @@ class PromptRegistryClass extends ScopedRegistryFacade<Prompt> {
   }
 }
 
+/** Shared prompt registry value. */
 export const promptRegistry = new PromptRegistryClass(promptRegistryManager);

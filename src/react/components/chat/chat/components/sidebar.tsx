@@ -3,6 +3,7 @@ import { cn } from "../../theme.ts";
 import { MessageSquareIcon, PlusIcon, TrashIcon } from "../../icons/index.ts";
 import type { Thread } from "../hooks/use-threads.ts";
 
+/** Props accepted by chat sidebar. */
 export interface ChatSidebarProps {
   threads: Thread[];
   activeThreadId: string | null;
@@ -131,6 +132,7 @@ function ThreadItem({
   );
 }
 
+/** Render chat sidebar. */
 export function ChatSidebar({
   threads,
   activeThreadId,

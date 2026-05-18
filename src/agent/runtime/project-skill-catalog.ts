@@ -21,12 +21,14 @@ import {
   type RuntimeSkillMetadataLogger,
 } from "./skill-metadata.ts";
 
+/** Public API contract for runtime project steering lookup. */
 export type RuntimeProjectSteeringLookup = {
   projectId: string;
   authToken: string;
   branchId?: string | null;
 };
 
+/** Options accepted by runtime project skill catalog. */
 export type RuntimeProjectSkillCatalogOptions = {
   getProjectFile: (options: RuntimeGetProjectFileOptions) => Promise<RuntimeProjectFile | null>;
   getProjectFiles: (
@@ -37,6 +39,7 @@ export type RuntimeProjectSkillCatalogOptions = {
   logger?: RuntimeSkillMetadataLogger;
 };
 
+/** Options accepted by runtime project instructions. */
 export type RuntimeProjectInstructionsOptions = {
   getProjectFile: (options: RuntimeGetProjectFileOptions) => Promise<RuntimeProjectFile | null>;
   steeringPaths?: Pick<ProjectSteeringPaths, "instructions">;
@@ -54,6 +57,7 @@ function getInstructionPaths(options: RuntimeProjectInstructionsOptions) {
   return options.steeringPaths?.instructions ?? DEFAULT_PROJECT_STEERING_PATHS.instructions;
 }
 
+/** Loads runtime builtin skill catalog. */
 export function loadRuntimeBuiltinSkillCatalog(input: {
   skillsDir: string;
   logger?: RuntimeSkillMetadataLogger;
@@ -106,6 +110,7 @@ export function loadRuntimeBuiltinSkillCatalog(input: {
   );
 }
 
+/** Return runtime project instructions. */
 export async function getRuntimeProjectInstructions(
   input: RuntimeProjectSteeringLookup & RuntimeProjectInstructionsOptions,
 ): Promise<string> {
@@ -125,6 +130,7 @@ export async function getRuntimeProjectInstructions(
   return "";
 }
 
+/** Return runtime project skill catalog. */
 export async function getRuntimeProjectSkillCatalog(
   input: RuntimeProjectSteeringLookup & RuntimeProjectSkillCatalogOptions,
 ): Promise<RuntimeSkillDefinition[]> {

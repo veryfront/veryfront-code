@@ -1,3 +1,4 @@
+/** Render span names. */
 export const SpanNames = {
   HTTP_REQUEST: "http.request",
   HTTP_HANDLER: "http.handler",

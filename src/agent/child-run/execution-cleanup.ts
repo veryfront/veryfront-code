@@ -1,8 +1,10 @@
+/** Input payload for child run execution buffer cleanup. */
 export interface ChildRunExecutionBufferCleanupInput {
   closeReasoningBuffer: () => Promise<void>;
   closeTextBuffer: () => Promise<void>;
 }
 
+/** Input payload for child run execution resource finalize. */
 export interface ChildRunExecutionResourceFinalizeInput
   extends ChildRunExecutionBufferCleanupInput {
   durableStepStarted: boolean;
@@ -12,6 +14,7 @@ export interface ChildRunExecutionResourceFinalizeInput
   closeRuntime?: () => Promise<void>;
 }
 
+/** Close child run execution buffers helper. */
 export async function closeChildRunExecutionBuffers(
   input: ChildRunExecutionBufferCleanupInput,
 ): Promise<void> {
@@ -19,6 +22,7 @@ export async function closeChildRunExecutionBuffers(
   await input.closeTextBuffer();
 }
 
+/** Finalize child run execution resources helper. */
 export async function finalizeChildRunExecutionResources(
   input: ChildRunExecutionResourceFinalizeInput,
 ): Promise<void> {

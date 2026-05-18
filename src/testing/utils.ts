@@ -30,6 +30,7 @@ export function deepEquals(a: unknown, b: unknown, seen: WeakSet<object> = new W
   return aKeys.every((key) => deepEquals(aRec[key], bRec[key], seen));
 }
 
+/** Serialize unknown values safely for test output. */
 export function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value);

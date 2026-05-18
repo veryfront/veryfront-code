@@ -55,6 +55,7 @@ const integrationNames = [
 ] as const;
 
 export const getIntegrationNameSchema = defineSchema((v) => v.enum(integrationNames));
+/** Zod schema for integration name. */
 export const IntegrationNameSchema = lazySchema(getIntegrationNameSchema);
 
 export const getEnvVarSchema = defineSchema((v) =>
@@ -68,6 +69,7 @@ export const getEnvVarSchema = defineSchema((v) =>
     default: v.string().optional(),
   })
 );
+/** Zod schema for env var. */
 export const EnvVarSchema = lazySchema(getEnvVarSchema);
 
 export const getOAuthFieldSchema = defineSchema((v) =>
@@ -80,6 +82,7 @@ export const getOAuthFieldSchema = defineSchema((v) =>
     default: v.string().optional(),
   })
 );
+/** Zod schema for oauth field. */
 export const OAuthFieldSchema = lazySchema(getOAuthFieldSchema);
 
 export const getOAuthConfigSchema = defineSchema((v) =>
@@ -110,6 +113,7 @@ export const getOAuthConfigSchema = defineSchema((v) =>
     docsUrl: v.string().optional(),
   })
 );
+/** Zod schema for oauth config. */
 export const OAuthConfigSchema = lazySchema(getOAuthConfigSchema);
 
 export const getIntegrationEndpointParamSchema = defineSchema((v) =>
@@ -157,6 +161,7 @@ export const getIntegrationToolSchema = defineSchema((v) =>
     endpoint: getIntegrationEndpointSchema().optional(),
   })
 );
+/** Zod schema for integration tool. */
 export const IntegrationToolSchema = lazySchema(getIntegrationToolSchema);
 
 export const getIntegrationPromptSchema = defineSchema((v) =>
@@ -168,6 +173,7 @@ export const getIntegrationPromptSchema = defineSchema((v) =>
     icon: v.string().optional(),
   })
 );
+/** Zod schema for integration prompt. */
 export const IntegrationPromptSchema = lazySchema(getIntegrationPromptSchema);
 
 export const getIntegrationConfigSchema = defineSchema((v) =>
@@ -193,12 +199,20 @@ export const getIntegrationConfigSchema = defineSchema((v) =>
     category: v.string().optional(),
   })
 );
+/** Zod schema for integration config. */
 export const IntegrationConfigSchema = lazySchema(getIntegrationConfigSchema);
 
+/** Public API contract for integration name. */
 export type IntegrationName = InferSchema<ReturnType<typeof getIntegrationNameSchema>>;
+/** Configuration used by env var. */
 export type EnvVarConfig = InferSchema<ReturnType<typeof getEnvVarSchema>>;
+/** Public API contract for oauth field. */
 export type OAuthField = InferSchema<ReturnType<typeof getOAuthFieldSchema>>;
+/** Configuration used by oauth. */
 export type OAuthConfig = InferSchema<ReturnType<typeof getOAuthConfigSchema>>;
+/** Public API contract for integration tool meta. */
 export type IntegrationToolMeta = InferSchema<ReturnType<typeof getIntegrationToolSchema>>;
+/** Public API contract for integration prompt. */
 export type IntegrationPrompt = InferSchema<ReturnType<typeof getIntegrationPromptSchema>>;
+/** Configuration used by integration. */
 export type IntegrationConfig = InferSchema<ReturnType<typeof getIntegrationConfigSchema>>;

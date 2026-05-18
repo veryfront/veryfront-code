@@ -41,6 +41,7 @@ import type {
 } from "../runtime/agent-definition.ts";
 import type { AgentConfig } from "../types.ts";
 
+/** Configuration used by default hosted chat runtime. */
 export type DefaultHostedChatRuntimeConfig = {
   apiUrl: string;
   apiMcpUrl: string;
@@ -48,10 +49,12 @@ export type DefaultHostedChatRuntimeConfig = {
   mcpServers?: readonly AgentServiceMcpServerConfig[];
 };
 
+/** Public API contract for default hosted chat runtime logger. */
 export type DefaultHostedChatRuntimeLogger = {
   warn(message: string, metadata?: Record<string, unknown>): void;
 };
 
+/** Options accepted by default hosted chat runtime creation. */
 export type DefaultHostedChatRuntimeCreationOptions =
   & HostedChatRuntimeCreationOptions<
     RuntimeAgentMarkdownDefinition,
@@ -61,6 +64,7 @@ export type DefaultHostedChatRuntimeCreationOptions =
     userId?: string;
   };
 
+/** Context for default hosted chat runtime task. */
 export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverContext & {
   authToken: string;
   projectId: string;
@@ -76,27 +80,32 @@ export type DefaultHostedChatRuntimeTaskContext = HostedRuntimeStateResolverCont
   availableToolNames?: string[];
 };
 
+/** Input payload for create default hosted chat runtime context. */
 export type CreateDefaultHostedChatRuntimeContextInput = {
   options: DefaultHostedChatRuntimeCreationOptions;
   modelId: string;
 };
 
+/** Input payload for default hosted chat runtime system refresh. */
 export type DefaultHostedChatRuntimeSystemRefreshInput = {
   taskContext: DefaultHostedChatRuntimeTaskContext;
   liveProjectSteering: NonNullable<DefaultHostedChatRuntimeCreationOptions["liveProjectSteering"]>;
   toolAssembly: HostedChatRuntimeToolAssemblyResult;
 };
 
+/** Input payload for default hosted chat runtime steering mutation. */
 export type DefaultHostedChatRuntimeSteeringMutationInput = {
   mutation: ProjectSteeringMutationResult;
   taskContext: DefaultHostedChatRuntimeTaskContext;
 };
 
+/** Input payload for default hosted chat runtime project switch. */
 export type DefaultHostedChatRuntimeProjectSwitchInput = {
   projectId: string;
   taskContext: DefaultHostedChatRuntimeTaskContext;
 };
 
+/** Options accepted by create default hosted chat runtime. */
 export type CreateDefaultHostedChatRuntimeOptions = {
   options: DefaultHostedChatRuntimeCreationOptions;
   config: DefaultHostedChatRuntimeConfig;
@@ -269,6 +278,7 @@ function runWithDefaultHostedRequestContext<TResult>(
   );
 }
 
+/** Create default hosted chat runtime. */
 export async function createDefaultHostedChatRuntime(
   input: CreateDefaultHostedChatRuntimeOptions,
 ): Promise<HostedChatRuntimeCreationResult> {

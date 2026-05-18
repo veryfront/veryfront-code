@@ -42,11 +42,11 @@ await loader.teardownAll();
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CIRCULAR_DEPENDENCY_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L24) |
-| `EXTENSION_CONFLICT_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L32) |
-| `EXTENSION_VALIDATION_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L16) |
-| `MISSING_EXTENSION_ERROR` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L8) |
-| `SandboxShellToolsProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L3) |
+| `CIRCULAR_DEPENDENCY_ERROR` | Shared circular dependency error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L27) |
+| `EXTENSION_CONFLICT_ERROR` | Shared extension conflict error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L36) |
+| `EXTENSION_VALIDATION_ERROR` | Shared extension validation error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L18) |
+| `MISSING_EXTENSION_ERROR` | Shared missing extension error value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/errors.ts#L9) |
+| `SandboxShellToolsProviderName` | Render sandbox shell tools provider name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L4) |
 
 ### Functions
 
@@ -58,21 +58,21 @@ await loader.teardownAll();
 | `discoverPackageExtensions` | Scan `node_modules` (including `@scoped` packages) for packages that declare veryfront extension metadata in their `package.json`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L159) |
 | `discoverProjectExtensions` | Discover project extensions living under `extensions/` in the project root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L215) |
 | `formatCapabilities` | Format capabilities as human-readable strings for logging. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L11) |
-| `getRecommendation` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L27) |
+| `getRecommendation` | Return recommendation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/recommendations.ts#L28) |
 | `loadExtensionFactory` | Dynamically import an extension factory from `path` and resolve it. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/factory-loader.ts#L31) |
 | `mapToDenoPermissions` | Map capabilities to Deno CLI permission flags. Skips capabilities without a Deno permission mapping. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/capabilities.ts#L53) |
 | `mergeExtensions` | Merge extensions from all four sources in priority order. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L92) |
 | `orchestrateExtensions` | Run the full extension pipeline against a resolved project config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L99) |
 | `parsePackageMetadata` | Parse veryfront extension metadata from a package.json-like object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L58) |
-| `resolve` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L11) |
-| `tryResolve` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L25) |
+| `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L12) |
+| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L27) |
 | `validateExtension` | Validate the shape of an extension object. Returns an array of issue descriptions (empty array = valid). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L83) |
 
 ### Classes
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ExtensionLoader` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/loader.ts#L16) |
+| `ExtensionLoader` | Implement extension loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/loader.ts#L17) |
 
 ### Types
 
@@ -80,22 +80,22 @@ await loader.teardownAll();
 |------|-------------|--------|
 | `Capability` | Declares a system capability an extension requires. Object-based for extensibility -- scoping fields vary by type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L10) |
 | `ConflictInfo` | Information about a contract conflict between extensions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/validation.ts#L11) |
-| `CreateSandboxShellToolsInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L31) |
-| `Extension` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L39) |
-| `ExtensionConfigEntry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L52) |
-| `ExtensionContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L24) |
-| `ExtensionContractMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L15) |
-| `ExtensionFactory` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L50) |
-| `ExtensionLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L32) |
-| `ExtensionSource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L56) |
+| `CreateSandboxShellToolsInput` | Input payload for create sandbox shell tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L37) |
+| `Extension` | Public API contract for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L43) |
+| `ExtensionConfigEntry` | Entry shape for extension config. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L58) |
+| `ExtensionContext` | Context for extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L26) |
+| `ExtensionContractMetadata` | Public API contract for extension contract metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L16) |
+| `ExtensionFactory` | Public API contract for extension factory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L55) |
+| `ExtensionLogger` | Public API contract for extension logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L35) |
+| `ExtensionSource` | Public API contract for extension source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L63) |
 | `OrchestrateOptions` | Options for `orchestrateExtensions`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/orchestrate.ts#L28) |
 | `PackageMetadata` | Metadata extracted from a package.json that declares itself as a veryfront extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/discovery.ts#L16) |
-| `ResolvedExtension` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L63) |
-| `SandboxShellClient` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L24) |
-| `SandboxShellToolDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L9) |
-| `SandboxShellToolExecute` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L5) |
-| `SandboxShellToolSet` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L22) |
-| `SandboxShellToolsProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L39) |
+| `ResolvedExtension` | Public API contract for resolved extension. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/types.ts#L71) |
+| `SandboxShellClient` | Public API contract for sandbox shell client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L29) |
+| `SandboxShellToolDefinition` | Definition for sandbox shell tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L12) |
+| `SandboxShellToolExecute` | Public API contract for sandbox shell tool execute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L7) |
+| `SandboxShellToolSet` | Public API contract for sandbox shell tool set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L26) |
+| `SandboxShellToolsProvider` | Public API contract for sandbox shell tools provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L46) |
 
 ## Deep imports
 
@@ -237,11 +237,11 @@ import { register, reset, resolve } from "veryfront/extensions/contracts";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `register` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L29) |
-| `reset` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L37) |
-| `resolve` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L11) |
-| `tryResolve` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L25) |
-| `unregister` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L33) |
+| `register` | Register. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L32) |
+| `reset` | Reset. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L42) |
+| `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L12) |
+| `tryResolve` | Try to resolve. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L27) |
+| `unregister` | Unregister. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/contracts.ts#L37) |
 
 ### `veryfront/extensions/css`
 
@@ -294,7 +294,7 @@ import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/ex
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createLLMProviderRegistry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider-registry.ts#L47) |
+| `createLLMProviderRegistry` | Create llmprovider registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/llm/llm-provider-registry.ts#L48) |
 
 #### Types
 
@@ -325,11 +325,11 @@ import { NodeTelemetryProviderName } from "veryfront/extensions/observability";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `NodeTelemetryInitializeOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L25) |
-| `NodeTelemetryInstrumentationConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L10) |
-| `NodeTelemetryLogger` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L16) |
-| `NodeTelemetryProcessTarget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L21) |
-| `NodeTelemetryProvider` | Initializes Node-specific OpenTelemetry SDK behavior. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L42) |
+| `NodeTelemetryInitializeOptions` | Options accepted by node telemetry initialize. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L29) |
+| `NodeTelemetryInstrumentationConfig` | Configuration used by node telemetry instrumentation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L11) |
+| `NodeTelemetryLogger` | Public API contract for node telemetry logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L18) |
+| `NodeTelemetryProcessTarget` | Public API contract for node telemetry process target. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L24) |
+| `NodeTelemetryProvider` | Initializes Node-specific OpenTelemetry SDK behavior. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/node-telemetry-provider.ts#L46) |
 | `SpanData` | Data describing a single trace span. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/tracing-exporter.ts#L17) |
 | `TracerProvider` | Minimal TracerProvider interface for the contract. Structurally compatible with both the core shim and the real OTel SDK. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/tracing-exporter.ts#L12) |
 | `TracingExporter` | TracingExporter contract interface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/observability/tracing-exporter.ts#L45) |
@@ -347,7 +347,7 @@ import "veryfront/extensions/parser";
 | Name | Description | Source |
 |------|-------------|--------|
 | `ASTNode` | A single node in an abstract syntax tree. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L9) |
-| `CodeParser` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L82) |
+| `CodeParser` | Public API contract for code parser. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L83) |
 | `GenerateOptions` | Options passed to {@link CodeParser.generate}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L53) |
 | `GenerateResult` | Result returned from {@link CodeParser.generate}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L63) |
 | `InjectJsxNodePositionsOptions` | Options for {@link CodeParser.injectJsxNodePositions}. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/parser/code-parser.ts#L77) |
@@ -367,18 +367,18 @@ import { SandboxShellToolsProviderName } from "veryfront/extensions/sandbox";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `SandboxShellToolsProviderName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L3) |
+| `SandboxShellToolsProviderName` | Render sandbox shell tools provider name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L4) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CreateSandboxShellToolsInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L31) |
-| `SandboxShellClient` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L24) |
-| `SandboxShellToolDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L9) |
-| `SandboxShellToolExecute` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L5) |
-| `SandboxShellToolSet` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L22) |
-| `SandboxShellToolsProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L39) |
+| `CreateSandboxShellToolsInput` | Input payload for create sandbox shell tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L37) |
+| `SandboxShellClient` | Public API contract for sandbox shell client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L29) |
+| `SandboxShellToolDefinition` | Definition for sandbox shell tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L12) |
+| `SandboxShellToolExecute` | Public API contract for sandbox shell tool execute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L7) |
+| `SandboxShellToolSet` | Public API contract for sandbox shell tool set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L26) |
+| `SandboxShellToolsProvider` | Public API contract for sandbox shell tools provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L46) |
 
 ### `veryfront/extensions/schema`
 

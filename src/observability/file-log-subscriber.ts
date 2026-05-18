@@ -1,5 +1,6 @@
 import type { LogEntry, LogLevel, LogSubscriber } from "./log-buffer.ts";
 
+/** Configuration used by file log. */
 export interface FileLogConfig {
   enabled: boolean;
   path: string;
@@ -23,6 +24,7 @@ const SIZE_UNITS: Record<string, number> = {
   gb: 1024 * 1024 * 1024,
 };
 
+/** Parses max size. */
 export function parseMaxSize(value: number | string): number {
   if (typeof value === "number") return value;
 
@@ -47,6 +49,7 @@ function formatEntryJson(entry: LogEntry): string {
   return JSON.stringify(entry);
 }
 
+/** Implement file log subscriber. */
 export class FileLogSubscriber {
   private file: Deno.FsFile | null = null;
   private currentSize = 0;
@@ -181,6 +184,7 @@ export class FileLogSubscriber {
   }
 }
 
+/** Create file log subscriber. */
 export function createFileLogSubscriber(config: FileLogConfig): FileLogSubscriber {
   return new FileLogSubscriber(config);
 }

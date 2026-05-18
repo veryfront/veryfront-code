@@ -17,6 +17,7 @@ function invokeFailWithoutLeaking(
   return fail(error).catch(() => undefined);
 }
 
+/** State for AG-UI browser response request. */
 export interface AgUiBrowserResponseRequestState {
   runId?: string;
   threadId?: string;
@@ -24,17 +25,20 @@ export interface AgUiBrowserResponseRequestState {
   messages: unknown[];
 }
 
+/** Public API contract for AG-UI browser response execution. */
 export interface AgUiBrowserResponseExecution<TChunk> {
   agentUIStream: AsyncIterable<TChunk>;
   fail: (error: unknown) => Promise<void>;
   waitForFinish: () => Promise<void>;
 }
 
+/** Public API contract for AG-UI browser response encoder. */
 export interface AgUiBrowserResponseEncoder<TChunk> {
   encode: (chunk: TChunk) => AgUiSseEvent[];
   finalize: (response: AgentResponse | null) => AgUiSseEvent[];
 }
 
+/** Input payload for create AG-UI browser response stream. */
 export interface CreateAgUiBrowserResponseStreamInput<TChunk, TState> {
   agUiInput: AgUiBrowserResponseRequestState;
   agentId: string;
@@ -53,6 +57,7 @@ function normalizeSnapshot(snapshot: unknown): Record<string, unknown> {
   return isRecord(snapshot) ? snapshot : {};
 }
 
+/** Create AG-UI browser response stream. */
 export function createAgUiBrowserResponseStream<TChunk, TState>(
   input: CreateAgUiBrowserResponseStreamInput<TChunk, TState>,
 ): ReadableStream<Uint8Array> {

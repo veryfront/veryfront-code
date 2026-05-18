@@ -58,24 +58,29 @@ const INCOMPLETE_TOOL_CALLS_PART_ERROR_TEXT = "Assistant ended before tool execu
 
 const FINALIZATION_TERMINAL_STATE_FALLBACK_MODEL_ID = "";
 
+/** Public API contract for hosted chat execution runtime. */
 export interface HostedChatExecutionRuntime {
   agentUIStream: AsyncIterable<ChatUiMessageChunk<MessageMetadata>>;
   fail: (error: unknown) => Promise<void>;
   waitForFinish: () => Promise<void>;
 }
 
+/** Public API contract for hosted chat execution runtime logger. */
 export interface HostedChatExecutionRuntimeLogger {
   error: (message: string, metadata?: Record<string, unknown>) => void;
   warn: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
+/** Context for hosted chat execution run. */
 export interface HostedChatExecutionRunContext {
   withContext: <T>(fn: () => T) => T;
   setMessageId?: (messageId: string) => void;
 }
 
+/** Public API contract for hosted chat execution root stream watchdog. */
 export type HostedChatExecutionRootStreamWatchdog = ReturnType<typeof createChatStreamWatchdog>;
 
+/** Public API contract for hosted chat execution runtime bootstrap. */
 export interface HostedChatExecutionRuntimeBootstrap {
   cleanup: () => Promise<void>;
   lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
@@ -87,6 +92,7 @@ export interface HostedChatExecutionRuntimeBootstrap {
   mirroredToolChunkState: MirroredToolChunkState;
 }
 
+/** Input payload for create hosted chat execution runtime bootstrap. */
 export interface CreateHostedChatExecutionRuntimeBootstrapInput {
   agent: HostedChatRuntimeAgent;
   cleanup: () => Promise<void>;
@@ -98,6 +104,7 @@ export interface CreateHostedChatExecutionRuntimeBootstrapInput {
   createRootStreamWatchdog?: () => HostedChatExecutionRootStreamWatchdog;
 }
 
+/** Input payload for create hosted chat execution runtime. */
 export interface CreateHostedChatExecutionRuntimeInput {
   agentId: string;
   modelId: string;
@@ -110,6 +117,7 @@ export interface CreateHostedChatExecutionRuntimeInput {
   incompleteToolCallsPartErrorText?: string;
 }
 
+/** Input payload for create bootstrapped hosted chat execution runtime. */
 export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
   authToken: string;
   apiUrl: string;
@@ -143,6 +151,7 @@ export interface CreateBootstrappedHostedChatExecutionRuntimeInput {
   ];
 }
 
+/** Public API contract for bootstrapped hosted chat execution runtime. */
 export interface BootstrappedHostedChatExecutionRuntime {
   agentRunSpan: HostedAgentRunSpanController;
   execution: HostedChatExecutionRuntime;
@@ -159,6 +168,7 @@ type SharedFinalizationHooks = Pick<
   | "streamError"
 >;
 
+/** State for to hosted chat execution final. */
 export function toHostedChatExecutionFinalState(
   input: ConversationHostedTerminalStateInput,
 ): HostedLifecycleTerminalState {
@@ -168,6 +178,7 @@ export function toHostedChatExecutionFinalState(
   });
 }
 
+/** Cleanup after hosted chat execution finalization helper. */
 export async function cleanupAfterHostedChatExecutionFinalization(input: {
   cleanup: () => Promise<void>;
   logger?: HostedChatExecutionRuntimeLogger;
@@ -207,6 +218,7 @@ function traceHostedChatRuntimeStream<T>(
   return traceStream(operation);
 }
 
+/** Create hosted chat execution runtime bootstrap. */
 export async function createHostedChatExecutionRuntimeBootstrap(
   input: CreateHostedChatExecutionRuntimeBootstrapInput,
 ): Promise<HostedChatExecutionRuntimeBootstrap> {
@@ -288,6 +300,7 @@ async function createBootstrappedHostedChatRuntime(
   });
 }
 
+/** Create bootstrapped hosted chat execution runtime. */
 export async function createBootstrappedHostedChatExecutionRuntime(
   input: CreateBootstrappedHostedChatExecutionRuntimeInput,
 ): Promise<BootstrappedHostedChatExecutionRuntime> {
@@ -321,6 +334,7 @@ export async function createBootstrappedHostedChatExecutionRuntime(
   }
 }
 
+/** Create hosted chat stream finalization hooks. */
 export function createHostedChatStreamFinalizationHooks(input: {
   lifecycleAdapter: HostedChatExecutionLifecycleAdapter;
   cleanup: () => Promise<void>;
@@ -353,6 +367,7 @@ export function createHostedChatStreamFinalizationHooks(input: {
   };
 }
 
+/** State for create hosted chat finalize response build. */
 export function createHostedChatFinalizeResponseBuildState(input: {
   responseMessage: ChatUiMessage;
   isAborted: boolean;
@@ -392,6 +407,7 @@ export function createHostedChatFinalizeResponseBuildState(input: {
   };
 }
 
+/** State for create hosted chat finalize detached build. */
 export function createHostedChatFinalizeDetachedBuildState(input: {
   capturedMessageId: string | null;
   isAborted: boolean;
@@ -571,6 +587,7 @@ function resolveStreamingMessageId(input: {
   return streamingMessageId;
 }
 
+/** Create hosted chat execution runtime. */
 export function createHostedChatExecutionRuntime(
   input: CreateHostedChatExecutionRuntimeInput,
 ): HostedChatExecutionRuntime {

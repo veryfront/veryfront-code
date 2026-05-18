@@ -12,6 +12,7 @@ class ToolRegistryClass extends ScopedRegistryFacade<Tool> {
   }
 }
 
+/** Shared tool registry value. */
 export const toolRegistry = new ToolRegistryClass(toolManager);
 
 export function toolToProviderDefinition(tool: Tool): ToolDefinition {

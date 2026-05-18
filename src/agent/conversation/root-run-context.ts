@@ -1,5 +1,6 @@
 import { type ConversationRunProjection, createConversationAgentRun } from "./durable.ts";
 
+/** Public API contract for conversation root run descriptor. */
 export interface ConversationRootRunDescriptor {
   runId: string;
   messageId: string;
@@ -7,6 +8,7 @@ export interface ConversationRootRunDescriptor {
   latestExternalEventSequence?: number;
 }
 
+/** Context for conversation root run. */
 export interface ConversationRootRunContext {
   run: ConversationRunProjection | null;
   effectiveParentRunId?: string;
@@ -36,6 +38,7 @@ function createMirrorPublisher(
   return appendEvents ? (events) => appendEvents(events) : undefined;
 }
 
+/** Context for create conversation root run. */
 export function createConversationRootRunContext(input: {
   run: ConversationRunProjection | null;
   parentRunId?: string;
@@ -50,6 +53,7 @@ export function createConversationRootRunContext(input: {
   };
 }
 
+/** Starts conversation root run. */
 export async function startConversationRootRun(input: {
   authToken: string;
   apiUrl: string;
@@ -86,6 +90,7 @@ export async function startConversationRootRun(input: {
   });
 }
 
+/** Create conversation root run start adapter. */
 export function createConversationRootRunStartAdapter(input: {
   authToken: string;
   apiUrl: string;
@@ -110,6 +115,7 @@ export function createConversationRootRunStartAdapter(input: {
   });
 }
 
+/** Context for prepare conversation root run. */
 export async function prepareConversationRootRunContext(input: {
   authToken: string;
   apiUrl: string;

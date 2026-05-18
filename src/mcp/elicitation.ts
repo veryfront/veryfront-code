@@ -1,19 +1,23 @@
+/** Options accepted by form elicitation. */
 export interface FormElicitationOptions {
   message: string;
   schema: Record<string, unknown>;
 }
 
+/** Options accepted by URL elicitation. */
 export interface UrlElicitationOptions {
   message: string;
   url: string;
   elicitationId: string;
 }
 
+/** Request payload for elicitation. */
 export interface ElicitationRequest {
   method: "elicitation/create";
   params: Record<string, unknown>;
 }
 
+/** Builds form elicitation. */
 export function buildFormElicitation(
   options: FormElicitationOptions,
 ): ElicitationRequest {
@@ -27,6 +31,7 @@ export function buildFormElicitation(
   };
 }
 
+/** Builds URL elicitation. */
 export function buildUrlElicitation(
   options: UrlElicitationOptions,
 ): ElicitationRequest {

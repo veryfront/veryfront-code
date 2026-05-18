@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 
+/** Context for Veryfront Cloud. */
 export interface VeryfrontCloudContext {
   apiBaseUrl?: string;
   apiToken?: string;
@@ -9,6 +10,7 @@ export interface VeryfrontCloudContext {
 
 const veryfrontCloudContextStorage = new AsyncLocalStorage<VeryfrontCloudContext>();
 
+/** Context for run with Veryfront Cloud. */
 export function runWithVeryfrontCloudContext<T>(
   context: VeryfrontCloudContext,
   fn: () => T,
@@ -16,6 +18,7 @@ export function runWithVeryfrontCloudContext<T>(
   return veryfrontCloudContextStorage.run(context, fn);
 }
 
+/** Run with Veryfront Cloud context async. */
 export function runWithVeryfrontCloudContextAsync<T>(
   context: VeryfrontCloudContext,
   fn: () => Promise<T>,

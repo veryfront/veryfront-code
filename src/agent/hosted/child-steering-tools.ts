@@ -8,12 +8,15 @@ import {
   type ProjectSteeringPaths,
 } from "../project/steering-mutation.ts";
 
+/** Handler for hosted child steering mutation. */
 export type HostedChildSteeringMutationHandler = (
   mutation: ProjectSteeringMutationResult,
 ) => Promise<void> | void;
 
+/** Handler for hosted child project switch. */
 export type HostedChildProjectSwitchHandler = (projectId: string) => Promise<void> | void;
 
+/** Input payload for wrap hosted child steering mutation tool. */
 export type WrapHostedChildSteeringMutationToolInput = {
   toolName: string;
   toolDefinition: HostToolDefinition;
@@ -23,12 +26,14 @@ export type WrapHostedChildSteeringMutationToolInput = {
   onMutation?: HostedChildSteeringMutationHandler;
 };
 
+/** Input payload for wrap hosted child project switch tool. */
 export type WrapHostedChildProjectSwitchToolInput = {
   tools: HostToolSet;
   toolName?: string;
   onConfirmedProjectSwitch: HostedChildProjectSwitchHandler;
 };
 
+/** Wrap hosted child steering mutation tool helper. */
 export function wrapHostedChildSteeringMutationTool(
   input: WrapHostedChildSteeringMutationToolInput,
 ): HostToolDefinition {
@@ -64,6 +69,7 @@ export function wrapHostedChildSteeringMutationTool(
   };
 }
 
+/** Wrap hosted child project switch tool helper. */
 export function wrapHostedChildProjectSwitchTool(
   input: WrapHostedChildProjectSwitchToolInput,
 ): void {

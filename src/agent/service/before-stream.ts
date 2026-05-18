@@ -1,5 +1,6 @@
 import type { Message } from "../types.ts";
 
+/** Input payload for AG-UI before stream message. */
 export type AgUiBeforeStreamMessageInput = Omit<Message, "id"> & {
   id?: string;
   /**
@@ -12,6 +13,7 @@ export type AgUiBeforeStreamMessageInput = Omit<Message, "id"> & {
   trusted?: boolean;
 };
 
+/** Context for AG-UI before stream. */
 export interface AgUiBeforeStreamContext {
   request: Request;
   messages: Message[];
@@ -19,6 +21,7 @@ export interface AgUiBeforeStreamContext {
   lastUserText: string;
 }
 
+/** Result returned from AG-UI before stream. */
 export interface AgUiBeforeStreamResult {
   prepend?: AgUiBeforeStreamMessageInput[];
   append?: AgUiBeforeStreamMessageInput[];
@@ -26,6 +29,7 @@ export interface AgUiBeforeStreamResult {
   context?: Record<string, unknown>;
 }
 
+/** Public API contract for AG-UI before stream. */
 export type AgUiBeforeStream = (
   input: AgUiBeforeStreamContext,
 ) =>

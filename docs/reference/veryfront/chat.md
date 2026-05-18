@@ -74,7 +74,7 @@ import { Message } from "veryfront/chat";
 
 ### `UseChatOptions`
 
-`useChat` options
+Options accepted by use chat.
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -84,7 +84,7 @@ import { Message } from "veryfront/chat";
 | `body?` | <code>Record&lt;string, unknown&gt;</code> | Extra body fields sent with each request |
 | `headers?` | <code>Record&lt;string, string&gt;</code> | Custom request headers |
 | `credentials?` | `RequestCredentials` | Fetch credentials mode |
-| `model?` | `string` | Override model at runtime (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4-5-20250929") |
+| `model?` | `string` | Override model at runtime (e.g. "openai/gpt-4o", "Anthropic/claude-sonnet-4-5-20250929") |
 | `systemPrompt?` | `string` | System prompt for browser-side inference (server uses agent config) |
 | `browserFallback?` | `boolean` | Enable/disable browser fallback when server can't provide a runtime. Default: true |
 | `onResponse?` | <code>(response: Response) =&gt; void</code> | Raw response callback |
@@ -94,7 +94,7 @@ import { Message } from "veryfront/chat";
 
 ### `UseChatResult`
 
-`useChat` result
+Result returned from use chat.
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -103,7 +103,7 @@ import { Message } from "veryfront/chat";
 | `isLoading` | `boolean` | Whether a request is in flight |
 | `error` | `Error \| null` | Last error (if any) |
 | `model` | `string \| undefined` | Current model override (undefined = use agent default) |
-| `activeModel` | `string \| undefined` | The actual model being used after auto-upgrade (e.g. "anthropic/claude-sonnet-4-20250514") |
+| `activeModel` | `string \| undefined` | The actual model being used after auto-upgrade (e.g. "Anthropic/claude-sonnet-4-20250514") |
 | `inferenceMode` | `InferenceMode` | Where inference is currently happening |
 | `browserStatus` | `BrowserInferenceStatus \| null` | Browser-side model loading/inference status (null when not using browser fallback) |
 | `setInput` | <code>(input: string) =&gt; void</code> | Set input value |
@@ -125,7 +125,7 @@ import { Message } from "veryfront/chat";
 
 ### `UseAgentOptions`
 
-`useAgent` options
+Options accepted by use agent.
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -136,7 +136,7 @@ import { Message } from "veryfront/chat";
 
 ### `UseAgentResult`
 
-`useAgent` result
+Result returned from use agent.
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -155,207 +155,207 @@ import { Message } from "veryfront/chat";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AgentCard` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/agent-card.tsx#L34) |
-| `AttachmentPill` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/attachment-pill.tsx#L37) |
-| `BranchPicker` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/branch-picker.tsx#L10) |
-| `Chat` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/index.tsx#L262) |
-| `ChatComponents` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/index.tsx#L520) |
-| `ChatComposer` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-composer.tsx#L50) |
-| `ChatContextProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/chat-context.tsx#L80) |
-| `ChatEmpty` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-empty.tsx#L23) |
-| `ChatIf` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-if.tsx#L16) |
-| `ChatMessageList` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-message-list.tsx#L74) |
-| `ChatRoot` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-root.tsx#L67) |
-| `ChatSidebar` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sidebar.tsx#L133) |
-| `ChatWithSidebar` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L124) |
-| `ComposerContextProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L61) |
-| `ConversationEmptyState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L64) |
-| `ConversationScrollButton` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L101) |
-| `DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L2) |
-| `DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L3) |
-| `DropZoneOverlay` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/drop-zone.tsx#L8) |
-| `ErrorBanner` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/error-banner.tsx#L16) |
-| `FadeIn` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/animations.tsx#L33) |
-| `InferenceBadge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/inference-badge.tsx#L8) |
-| `InlineCitation` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/inline-citation.tsx#L11) |
-| `Loader` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/animations.tsx#L11) |
-| `Message` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/message.tsx#L335) |
-| `MessageActions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-actions.tsx#L14) |
-| `MessageContextProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L51) |
-| `MessageEditForm` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-edit-form.tsx#L9) |
-| `MessageFeedback` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-feedback.tsx#L15) |
-| `ModelAvatar` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/model-avatar.tsx#L62) |
-| `ModelSelector` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/model-selector.tsx#L55) |
-| `QuickActions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/quick-actions.tsx#L16) |
-| `ReasoningCard` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/reasoning.tsx#L12) |
-| `RichCodeBlock` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/code-block.tsx#L11) |
-| `Shimmer` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/animations.tsx#L3) |
-| `SkillBadge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/skill-badge.tsx#L15) |
-| `Sources` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sources.tsx#L16) |
-| `StandaloneMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/message.tsx#L44) |
-| `StepIndicator` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/step-indicator.tsx#L10) |
-| `StreamingMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/message.tsx#L147) |
-| `Suggestion` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L11) |
-| `Suggestions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L44) |
-| `TabSwitcher` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tab-switcher.tsx#L24) |
-| `ThreadListContextProvider` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L42) |
-| `ToolCallCard` | Tool call card component - renders tool invocations with parameters and results Styled to match AI Elements (https://ai-sdk.dev/elements) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tool-ui.tsx#L134) |
-| `ToolStatusBadge` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tool-ui.tsx#L43) |
-| `UpgradeCTA` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/upgrade-cta.tsx#L9) |
-| `UploadsPanel` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L26) |
+| `AgentCard` | Render agent card. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/agent-card.tsx#L36) |
+| `AttachmentPill` | Render attachment pill. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/attachment-pill.tsx#L40) |
+| `BranchPicker` | Render branch picker. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/branch-picker.tsx#L12) |
+| `Chat` | Render chat. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/index.tsx#L264) |
+| `ChatComponents` | Render chat components. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/index.tsx#L523) |
+| `ChatComposer` | Render chat composer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-composer.tsx#L52) |
+| `ChatContextProvider` | Render chat context provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/chat-context.tsx#L84) |
+| `ChatEmpty` | Render chat empty. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-empty.tsx#L25) |
+| `ChatIf` | Render chat if. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-if.tsx#L18) |
+| `ChatMessageList` | Render chat message list. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-message-list.tsx#L76) |
+| `ChatRoot` | Render chat root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-root.tsx#L69) |
+| `ChatSidebar` | Render chat sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sidebar.tsx#L135) |
+| `ChatWithSidebar` | Render chat with sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L136) |
+| `ComposerContextProvider` | Render composer context provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L65) |
+| `ConversationEmptyState` | State for conversation empty. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L70) |
+| `ConversationScrollButton` | Render conversation scroll button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L109) |
+| `DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS` | Default value for chat stream idle timeout ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L3) |
+| `DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS` | Default value for chat stream tool running timeout ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L5) |
+| `DropZoneOverlay` | Render drop zone overlay. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/drop-zone.tsx#L10) |
+| `ErrorBanner` | Render error banner. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/error-banner.tsx#L18) |
+| `FadeIn` | Render fade in. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/animations.tsx#L36) |
+| `InferenceBadge` | Render inference badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/inference-badge.tsx#L10) |
+| `InlineCitation` | Render inline citation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/inline-citation.tsx#L13) |
+| `Loader` | Render loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/animations.tsx#L13) |
+| `Message` | Message shape for message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/message.tsx#L337) |
+| `MessageActions` | Render message actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-actions.tsx#L16) |
+| `MessageContextProvider` | Render message context provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L55) |
+| `MessageEditForm` | Render message edit form. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-edit-form.tsx#L11) |
+| `MessageFeedback` | Render message feedback. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-feedback.tsx#L18) |
+| `ModelAvatar` | Render model avatar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/model-avatar.tsx#L64) |
+| `ModelSelector` | Render model selector. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/model-selector.tsx#L56) |
+| `QuickActions` | Render quick actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/quick-actions.tsx#L19) |
+| `ReasoningCard` | Render reasoning card. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/reasoning.tsx#L13) |
+| `RichCodeBlock` | Render rich code block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/code-block.tsx#L13) |
+| `Shimmer` | Render shimmer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/animations.tsx#L4) |
+| `SkillBadge` | Render skill badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/skill-badge.tsx#L17) |
+| `Sources` | Render sources. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sources.tsx#L19) |
+| `StandaloneMessage` | Render a standalone chat message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/message.tsx#L45) |
+| `StepIndicator` | Render step indicator. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/step-indicator.tsx#L12) |
+| `StreamingMessage` | Message shape for streaming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/message.tsx#L150) |
+| `Suggestion` | Render suggestion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L13) |
+| `Suggestions` | Render suggestions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L48) |
+| `TabSwitcher` | Render tab switcher. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tab-switcher.tsx#L27) |
+| `ThreadListContextProvider` | Render thread list context provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L46) |
+| `ToolCallCard` | Tool call card component - renders tool invocations with parameters and results Styled to match AI Elements (https://ai-sdk.dev/elements) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tool-ui.tsx#L135) |
+| `ToolStatusBadge` | Render tool status badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tool-ui.tsx#L44) |
+| `UpgradeCTA` | Render upgrade CTA. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/upgrade-cta.tsx#L11) |
+| `UploadsPanel` | Render uploads panel. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L29) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `buildChatStreamChunkMessageMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L116) |
-| `createChatStreamWatchdog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L144) |
-| `createChatStreamWatchdogState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L41) |
-| `dedupeChatUiMessageChunks` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L164) |
+| `buildChatStreamChunkMessageMetadata` | Builds chat stream chunk message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L120) |
+| `createChatStreamWatchdog` | Create chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L155) |
+| `createChatStreamWatchdogState` | State for create chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L48) |
+| `dedupeChatUiMessageChunks` | Dedupe chat UI message chunks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L170) |
 | `downloadMarkdown` | Download messages as a .md file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/export.ts#L63) |
 | `exportAsMarkdown` | Convert chat messages to a markdown string. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/export.ts#L11) |
-| `extractChatMessageMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L111) |
+| `extractChatMessageMetadata` | Extract chat message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L114) |
 | `extractSourcesFromParts` | Extract sources from tool result parts. Looks for `documents` arrays in tool outputs and maps them to Source[]. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/message-parts.ts#L117) |
-| `getNextChatStreamWatchdogState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L71) |
+| `getNextChatStreamWatchdogState` | State for get next chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L80) |
 | `getTextContent` | Get text content from chat message parts | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/message-parts.ts#L14) |
 | `groupPartsInOrder` | Group consecutive parts for ordered rendering Returns an array of groups, each containing either consecutive text parts, a tool part, or a reasoning part | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/message-parts.ts#L61) |
-| `isHeartbeatOnlyMetadataChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L140) |
-| `isLongRunningToolRunning` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L60) |
+| `isHeartbeatOnlyMetadataChunk` | Check whether a chunk only carries heartbeat metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L150) |
+| `isLongRunningToolRunning` | Check whether a long-running tool is active. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L68) |
 | `isReasoningPart` | Check if a part is a reasoning part | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/message-parts.ts#L42) |
 | `isSkillToolPart` | Check if a tool part is a skill-related tool (load-skill, load-skill-reference, execute-skill-script) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/message-parts.ts#L37) |
 | `isToolPart` | Check if a part is a tool part | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/message-parts.ts#L25) |
-| `mapHostedStreamPartToChatUiChunks` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/hosted-ui-chunk-mapping.ts#L213) |
-| `normalizeChatMessageMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L87) |
-| `normalizeChatUiMessageChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L134) |
-| `normalizeChatUiMessageStream` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L225) |
-| `useAgent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-agent.ts#L44) |
+| `mapHostedStreamPartToChatUiChunks` | Map hosted stream part to chat UI chunks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/hosted-ui-chunk-mapping.ts#L216) |
+| `normalizeChatMessageMetadata` | Normalizes chat message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L89) |
+| `normalizeChatUiMessageChunk` | Normalizes chat UI message chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L139) |
+| `normalizeChatUiMessageStream` | Normalizes chat UI message stream. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L232) |
+| `useAgent` | React hook for agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-agent.ts#L47) |
 | `useChat` | useChat hook for managing chat state with veryfront stream events. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/use-chat.ts#L75) |
-| `useChatContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/chat-context.tsx#L66) |
-| `useChatContextOptional` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/chat-context.tsx#L76) |
-| `useChatErrorHandler` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/error-boundary.tsx#L89) |
-| `useCompletion` | useCompletion hook for single text generation | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-completion.ts#L52) |
-| `useComposerContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L47) |
-| `useComposerContextOptional` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L57) |
-| `useMessageContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L37) |
-| `useMessageContextOptional` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L47) |
-| `useStreaming` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L37) |
-| `useThreadListContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L28) |
-| `useThreadListContextOptional` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L38) |
-| `useThreads` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L79) |
-| `useVoiceInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L97) |
+| `useChatContext` | Context for use chat. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/chat-context.tsx#L68) |
+| `useChatContextOptional` | React hook for chat context optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/chat-context.tsx#L79) |
+| `useChatErrorHandler` | Handler for use chat error. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/error-boundary.tsx#L92) |
+| `useCompletion` | useCompletion hook for single text generation | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-completion.ts#L54) |
+| `useComposerContext` | Context for use composer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L49) |
+| `useComposerContextOptional` | React hook for composer context optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L60) |
+| `useMessageContext` | Context for use message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L39) |
+| `useMessageContextOptional` | React hook for message context optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L50) |
+| `useStreaming` | React hook for streaming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L40) |
+| `useThreadListContext` | Context for use thread list. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L30) |
+| `useThreadListContextOptional` | React hook for thread list context optional. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L41) |
+| `useThreads` | React hook for threads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L83) |
+| `useVoiceInput` | Input payload for use voice. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L100) |
 
 ### Classes
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ChatErrorBoundary` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/error-boundary.tsx#L14) |
-| `ChatStreamIdleTimeoutError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L26) |
+| `ChatErrorBoundary` | Implement chat error boundary. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/error-boundary.tsx#L16) |
+| `ChatStreamIdleTimeoutError` | Error shape for chat stream idle timeout. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L32) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AgentCardProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/agent-card.tsx#L11) |
-| `AgentTheme` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/theme.ts#L157) |
-| `AttachmentInfo` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/attachment-pill.tsx#L3) |
-| `AttachmentPillProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/attachment-pill.tsx#L12) |
-| `BranchInfo` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L75) |
-| `BranchPickerProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/branch-picker.tsx#L3) |
+| `AgentCardProps` | Props accepted by agent card. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/agent-card.tsx#L12) |
+| `AgentTheme` | Public API contract for agent theme. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/theme.ts#L159) |
+| `AttachmentInfo` | Public API contract for attachment info. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/attachment-pill.tsx#L4) |
+| `AttachmentPillProps` | Props accepted by attachment pill. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/attachment-pill.tsx#L14) |
+| `BranchInfo` | Public API contract for branch info. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L79) |
+| `BranchPickerProps` | Props accepted by branch picker. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/branch-picker.tsx#L4) |
 | `BrowserInferenceStatus` | Browser-side model loading and inference status | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L16) |
-| `BuildChatStreamChunkMessageMetadataInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L7) |
-| `ChatComposerProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-composer.tsx#L17) |
-| `ChatContextValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/chat-context.tsx#L18) |
-| `ChatDynamicToolPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L46) |
-| `ChatEmptyProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-empty.tsx#L11) |
-| `ChatErrorBoundaryProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/error-boundary.tsx#L2) |
-| `ChatFinishReason` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L123) |
-| `ChatIfProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-if.tsx#L10) |
-| `ChatMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L69) |
-| `ChatMessageListProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-message-list.tsx#L43) |
-| `ChatMessageMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L108) |
-| `ChatMessageMetadataUsage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L77) |
-| `ChatMessagePart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L61) |
-| `ChatProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/index.tsx#L195) |
-| `ChatReasoningPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L15) |
-| `ChatRootProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-root.tsx#L23) |
-| `ChatSidebarProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sidebar.tsx#L5) |
-| `ChatStepPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L56) |
-| `ChatStreamEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L136) |
-| `ChatStreamWatchdogOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L18) |
-| `ChatStreamWatchdogPhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L5) |
-| `ChatStreamWatchdogState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L11) |
-| `ChatTab` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tab-switcher.tsx#L11) |
-| `ChatTextPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L9) |
-| `ChatTheme` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/theme.ts#L119) |
-| `ChatToolPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L28) |
-| `ChatToolResultPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L38) |
-| `ChatToolState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L21) |
-| `ChatUiMessageChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L297) |
-| `ChatWithSidebarAttachmentConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L56) |
-| `ChatWithSidebarChatController` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L16) |
-| `ChatWithSidebarFeatureConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L80) |
-| `ChatWithSidebarGroupedProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L104) |
-| `ChatWithSidebarMessageConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L73) |
-| `ChatWithSidebarModelConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L52) |
-| `ChatWithSidebarProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L122) |
-| `ChatWithSidebarQuickActionsConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L66) |
-| `ChatWithSidebarSidebarConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L42) |
-| `ChatWithSidebarTabsConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L89) |
-| `ChatWithSidebarVoiceConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L99) |
-| `ChildRunAudit` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L97) |
-| `ChildRunAuditToolCall` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L84) |
-| `ChildRunAuditToolResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L90) |
-| `CodeBlockProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/code-block.tsx#L4) |
-| `ComposerContextValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L14) |
-| `ConversationEmptyStateProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L56) |
-| `ConversationScrollButtonProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L95) |
-| `DropZoneOverlayProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/drop-zone.tsx#L3) |
-| `ErrorBannerProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/error-banner.tsx#L10) |
-| `FeedbackValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-feedback.tsx#L3) |
-| `HostedStreamPartForUiChunkMapping` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/hosted-ui-chunk-mapping.ts#L27) |
-| `HostedUiChunkMappingOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/hosted-ui-chunk-mapping.ts#L2) |
-| `InferenceBadgeProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/inference-badge.tsx#L3) |
+| `BuildChatStreamChunkMessageMetadataInput` | Input payload for build chat stream chunk message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/chat-ui-message-helpers.ts#L8) |
+| `ChatComposerProps` | Props accepted by chat composer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-composer.tsx#L18) |
+| `ChatContextValue` | Public API contract for chat context value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/chat-context.tsx#L19) |
+| `ChatDynamicToolPart` | Public API contract for chat dynamic tool part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L52) |
+| `ChatEmptyProps` | Props accepted by chat empty. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-empty.tsx#L12) |
+| `ChatErrorBoundaryProps` | Props accepted by chat error boundary. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/error-boundary.tsx#L3) |
+| `ChatFinishReason` | Public API contract for chat finish reason. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L138) |
+| `ChatIfProps` | Props accepted by chat if. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-if.tsx#L11) |
+| `ChatMessage` | Message shape for chat. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L78) |
+| `ChatMessageListProps` | Props accepted by chat message list. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-message-list.tsx#L44) |
+| `ChatMessageMetadata` | Public API contract for chat message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L122) |
+| `ChatMessageMetadataUsage` | Public API contract for chat message metadata usage. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L87) |
+| `ChatMessagePart` | Public API contract for chat message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L69) |
+| `ChatProps` | Props accepted by chat. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/index.tsx#L196) |
+| `ChatReasoningPart` | Chat message part that carries reasoning text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L17) |
+| `ChatRootProps` | Props accepted by chat root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/chat-root.tsx#L24) |
+| `ChatSidebarProps` | Props accepted by chat sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sidebar.tsx#L6) |
+| `ChatStepPart` | Public API contract for chat step part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L63) |
+| `ChatStreamEvent` | Event emitted for chat stream. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L153) |
+| `ChatStreamWatchdogOptions` | Options accepted by chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L23) |
+| `ChatStreamWatchdogPhase` | Public API contract for chat stream watchdog phase. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L8) |
+| `ChatStreamWatchdogState` | State for chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L15) |
+| `ChatTab` | Public API contract for chat tab. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tab-switcher.tsx#L12) |
+| `ChatTextPart` | Chat message part that carries text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L10) |
+| `ChatTheme` | Public API contract for chat theme. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/theme.ts#L120) |
+| `ChatToolPart` | Public API contract for chat tool part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L32) |
+| `ChatToolResultPart` | Chat message part that carries a tool result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L43) |
+| `ChatToolState` | State for chat tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L24) |
+| `ChatUiMessageChunk` | Public API contract for chat UI message chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L322) |
+| `ChatWithSidebarAttachmentConfig` | Configuration used by chat with sidebar attachment. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L60) |
+| `ChatWithSidebarChatController` | Public API contract for chat with sidebar chat controller. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L17) |
+| `ChatWithSidebarFeatureConfig` | Configuration used by chat with sidebar feature. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L87) |
+| `ChatWithSidebarGroupedProps` | Props accepted by chat with sidebar grouped. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L114) |
+| `ChatWithSidebarMessageConfig` | Configuration used by chat with sidebar message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L79) |
+| `ChatWithSidebarModelConfig` | Configuration used by chat with sidebar model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L55) |
+| `ChatWithSidebarProps` | Props accepted by chat with sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L133) |
+| `ChatWithSidebarQuickActionsConfig` | Configuration used by chat with sidebar quick actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L71) |
+| `ChatWithSidebarSidebarConfig` | Configuration used by chat with sidebar sidebar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L44) |
+| `ChatWithSidebarTabsConfig` | Configuration used by chat with sidebar tabs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L97) |
+| `ChatWithSidebarVoiceConfig` | Configuration used by chat with sidebar voice. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat-with-sidebar.tsx#L108) |
+| `ChildRunAudit` | Public API contract for child run audit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L110) |
+| `ChildRunAuditToolCall` | Public API contract for child run audit tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L95) |
+| `ChildRunAuditToolResult` | Result returned from child run audit tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L102) |
+| `CodeBlockProps` | Props accepted by code block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/code-block.tsx#L5) |
+| `ComposerContextValue` | Public API contract for composer context value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/composer-context.tsx#L15) |
+| `ConversationEmptyStateProps` | Props accepted by conversation empty state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L61) |
+| `ConversationScrollButtonProps` | Props accepted by conversation scroll button. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L102) |
+| `DropZoneOverlayProps` | Props accepted by drop zone overlay. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/drop-zone.tsx#L4) |
+| `ErrorBannerProps` | Props accepted by error banner. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/error-banner.tsx#L11) |
+| `FeedbackValue` | Public API contract for feedback value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-feedback.tsx#L4) |
+| `HostedStreamPartForUiChunkMapping` | Public API contract for hosted stream part for UI chunk mapping. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/hosted-ui-chunk-mapping.ts#L29) |
+| `HostedUiChunkMappingOptions` | Options accepted by hosted UI chunk mapping. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/hosted-ui-chunk-mapping.ts#L3) |
+| `InferenceBadgeProps` | Props accepted by inference badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/inference-badge.tsx#L4) |
 | `InferenceMode` | Where inference is happening | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L13) |
-| `InlineCitationProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/inline-citation.tsx#L4) |
-| `MessageActionsProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-actions.tsx#L7) |
-| `MessageContextValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L15) |
-| `MessageEditFormProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-edit-form.tsx#L3) |
-| `MessageFeedbackProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-feedback.tsx#L5) |
-| `MessageProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/message.tsx#L5) |
-| `MessageRootProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/message.tsx#L55) |
-| `ModelAvatarProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/model-avatar.tsx#L12) |
+| `InlineCitationProps` | Props accepted by inline citation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/inline-citation.tsx#L5) |
+| `MessageActionsProps` | Props accepted by message actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-actions.tsx#L8) |
+| `MessageContextValue` | Public API contract for message context value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/message-context.tsx#L16) |
+| `MessageEditFormProps` | Props accepted by message edit form. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-edit-form.tsx#L4) |
+| `MessageFeedbackProps` | Props accepted by message feedback. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/message-feedback.tsx#L7) |
+| `MessageProps` | Props accepted by message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/message.tsx#L6) |
+| `MessageRootProps` | Props accepted by message root. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/message.tsx#L56) |
+| `ModelAvatarProps` | Props accepted by model avatar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/composition/model-avatar.tsx#L13) |
 | `ModelOption` | A "provider/model" value and its display label. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/model-selector.tsx#L14) |
-| `ModelSelectorProps` | Props for `<ModelSelector>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/model-selector.tsx#L28) |
-| `OnToolCallArg` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L46) |
+| `ModelSelectorProps` | Props accepted by `<ModelSelector>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/model-selector.tsx#L28) |
+| `OnToolCallArg` | Public API contract for on tool call arg. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L48) |
 | `PartGroup` | Part group types for ordered rendering | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/utils/message-parts.ts#L51) |
-| `QuickAction` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/quick-actions.tsx#L3) |
-| `QuickActionsProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/quick-actions.tsx#L10) |
-| `SkillBadgeProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/skill-badge.tsx#L10) |
-| `Source` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sources.tsx#L3) |
-| `SourcesProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sources.tsx#L10) |
-| `StepIndicatorProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/step-indicator.tsx#L4) |
-| `StreamingMessageProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/message.tsx#L133) |
-| `SuggestionProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L4) |
-| `SuggestionsProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L38) |
-| `TabSwitcherProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tab-switcher.tsx#L13) |
-| `Thread` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L4) |
-| `ThreadListContextValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L13) |
-| `ToolOutput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L38) |
-| `UpgradeCTAProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/upgrade-cta.tsx#L5) |
-| `UploadedFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L4) |
-| `UploadsPanelProps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L12) |
-| `UseAgentOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-agent.ts#L4) |
-| `UseAgentResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-agent.ts#L18) |
-| `UseChatOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L55) |
-| `UseChatResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L80) |
-| `UseCompletionOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-completion.ts#L9) |
-| `UseCompletionResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-completion.ts#L29) |
-| `UseStreamingOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L3) |
-| `UseStreamingResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L17) |
-| `UseThreadsOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L16) |
-| `UseThreadsResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L21) |
-| `UseVoiceInputOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L2) |
-| `UseVoiceInputResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L25) |
+| `QuickAction` | Public API contract for quick action. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/quick-actions.tsx#L4) |
+| `QuickActionsProps` | Props accepted by quick actions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/quick-actions.tsx#L12) |
+| `SkillBadgeProps` | Props accepted by skill badge. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/skill-badge.tsx#L11) |
+| `Source` | Public API contract for source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sources.tsx#L4) |
+| `SourcesProps` | Props accepted by sources. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/sources.tsx#L12) |
+| `StepIndicatorProps` | Props accepted by step indicator. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/step-indicator.tsx#L5) |
+| `StreamingMessageProps` | Props accepted by streaming message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/message.tsx#L135) |
+| `SuggestionProps` | Props accepted by suggestion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L5) |
+| `SuggestionsProps` | Props accepted by suggestions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/empty-state.tsx#L41) |
+| `TabSwitcherProps` | Props accepted by tab switcher. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/tab-switcher.tsx#L15) |
+| `Thread` | Public API contract for thread. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L5) |
+| `ThreadListContextValue` | Public API contract for thread list context value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/contexts/thread-list-context.tsx#L14) |
+| `ToolOutput` | Output from tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L39) |
+| `UpgradeCTAProps` | Props accepted by the upgrade CTA. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/upgrade-cta.tsx#L6) |
+| `UploadedFile` | Public API contract for uploaded file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L5) |
+| `UploadsPanelProps` | Props accepted by uploads panel. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/components/uploads-panel.tsx#L14) |
+| `UseAgentOptions` | Options accepted by use agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-agent.ts#L5) |
+| `UseAgentResult` | Result returned from use agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-agent.ts#L20) |
+| `UseChatOptions` | Options accepted by use chat. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L58) |
+| `UseChatResult` | Result returned from use chat. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-chat/types.ts#L85) |
+| `UseCompletionOptions` | Options accepted by use completion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-completion.ts#L10) |
+| `UseCompletionResult` | Result returned from use completion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-completion.ts#L31) |
+| `UseStreamingOptions` | Options accepted by use streaming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L4) |
+| `UseStreamingResult` | Result returned from use streaming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-streaming.ts#L19) |
+| `UseThreadsOptions` | Options accepted by use threads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L18) |
+| `UseThreadsResult` | Result returned from use threads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/chat/hooks/use-threads.ts#L24) |
+| `UseVoiceInputOptions` | Options accepted by use voice input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L3) |
+| `UseVoiceInputResult` | Result returned from use voice input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/react/use-voice-input.ts#L27) |
 
 ## Deep imports
 
@@ -371,48 +371,47 @@ import { createAgUiChatEventDecoderState, decodeAgUiSseChunk, flushAgUiSseChunk 
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AgUiRunFinishedMetadataSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L135) |
-| `AgUiSnapshotMessageSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L205) |
-| `AgUiSnapshotToolCallSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L150) |
-| `AgUiWireEventNameSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L210) |
-| `AgUiWireEventSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L525) |
+| `AgUiRunFinishedMetadataSchema` | Schema for AG-UI run finished metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L146) |
+| `AgUiSnapshotMessageSchema` | Schema for AG-UI snapshot message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L222) |
+| `AgUiSnapshotToolCallSchema` | Schema for AG-UI snapshot tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L164) |
+| `AgUiWireEventNameSchema` | Schema for AG-UI wire event name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L230) |
+| `AgUiWireEventSchema` | Schema for AG-UI wire event. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L549) |
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createAgUiChatEventDecoderState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L914) |
-| `decodeAgUiSseChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L932) |
-| `flushAgUiSseChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L976) |
-| `mapAgUiRuntimeMessagesToChatUiMessages` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L369) |
-| `parseSseEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L881) |
+| `createAgUiChatEventDecoderState` | State for create AG-UI chat event decoder. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L944) |
+| `decodeAgUiSseChunk` | Decode AG-UI SSE chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L963) |
+| `flushAgUiSseChunk` | Flush AG-UI SSE chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L1008) |
+| `mapAgUiRuntimeMessagesToChatUiMessages` | Map AG-UI runtime messages to chat UI messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L390) |
+| `parseSseEvent` | Event emitted for parse sse. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L910) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `AgUiChatEventDecoderState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L85) |
-| `AgUiDecodedChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L78) |
-| `AgUiDecodedEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L72) |
-| `AgUiDecoderValidationMode` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L83) |
-| `AgUiRunFinishedMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L527) |
-| `AgUiRuntimeMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L41) |
-| `AgUiRuntimeToolCall` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L32) |
-| `AgUiSnapshotMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L530) |
-| `AgUiWireEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L532) |
-| `AgUiWireEventName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L531) |
-| `ParsedSseEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L66) |
-| `ToolCallState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L27) |
+| `AgUiChatEventDecoderState` | State for AG-UI chat event decoder. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L93) |
+| `AgUiDecodedChunk` | Public API contract for AG-UI decoded chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L84) |
+| `AgUiDecodedEvent` | Event emitted for AG-UI decoded. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L77) |
+| `AgUiDecoderValidationMode` | Public API contract for AG-UI decoder validation mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L90) |
+| `AgUiRunFinishedMetadata` | Public API contract for AG-UI run finished metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L552) |
+| `AgUiRuntimeMessage` | Message shape for AG-UI runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L44) |
+| `AgUiRuntimeToolCall` | Public API contract for AG-UI runtime tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L34) |
+| `AgUiSnapshotMessage` | Message shape for AG-UI snapshot. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L556) |
+| `AgUiWireEvent` | Event emitted for AG-UI wire. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L560) |
+| `AgUiWireEventName` | Public API contract for AG-UI wire event name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L558) |
+| `ParsedSseEvent` | Event emitted for parsed sse. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L70) |
 
 #### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `getAgUiRunFinishedMetadataSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L120) |
-| `getAgUiSnapshotMessageSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L169) |
-| `getAgUiSnapshotToolCallSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L137) |
-| `getAgUiWireEventNameSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L207) |
-| `getAgUiWireEventSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L401) |
+| `getAgUiRunFinishedMetadataSchema` | Zod schema for get AG-UI run finished metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L129) |
+| `getAgUiSnapshotMessageSchema` | Zod schema for get AG-UI snapshot message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L184) |
+| `getAgUiSnapshotToolCallSchema` | Zod schema for get AG-UI snapshot tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L149) |
+| `getAgUiWireEventNameSchema` | Zod schema for get AG-UI wire event name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L225) |
+| `getAgUiWireEventSchema` | Zod schema for get AG-UI wire event. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/ag-ui.ts#L423) |
 
 ### `veryfront/chat/conversation`
 
@@ -424,63 +423,62 @@ import { convertUiMessagesToProviderModelMessages, extractTextFromMessage, extra
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `UUID_PATTERN` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L152) |
+| `UUID_PATTERN` | Shared UUID pattern value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L178) |
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `convertUiMessagesToProviderModelMessages` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L919) |
-| `extractTextFromMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L468) |
-| `extractUploadId` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L159) |
-| `getStringField` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L187) |
-| `getUiToolName` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L237) |
-| `hasIncompleteToolParts` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L388) |
-| `isDataUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L223) |
-| `isReasoningPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L464) |
-| `isRecord` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L183) |
-| `isTextPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L460) |
-| `isToolCallPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L442) |
-| `isToolResultPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L451) |
-| `isToolUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L229) |
-| `isUuid` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L155) |
-| `mapToolState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L164) |
-| `markIncompleteToolPartsAsErrored` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L396) |
-| `markIncompleteToolPartsAsStopped` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L392) |
-| `pushToolParts` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L246) |
-| `stringifyUnknown` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L213) |
-| `toConversationPartsFromUiMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L316) |
+| `convertUiMessagesToProviderModelMessages` | Convert UI messages to provider model messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L965) |
+| `extractTextFromMessage` | Message shape for extract text from. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L513) |
+| `extractUploadId` | Extract upload ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L187) |
+| `getStringField` | Return string field. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L218) |
+| `getUiToolName` | Return UI tool name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L272) |
+| `hasIncompleteToolParts` | Check whether incomplete tool parts is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L426) |
+| `isDataUiPart` | Check whether a chat part is a custom data part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L256) |
+| `isReasoningPart` | Check whether a value is a reasoning part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L508) |
+| `isRecord` | Record shape for is. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L213) |
+| `isTextPart` | Check whether a value is a text part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L503) |
+| `isToolCallPart` | Check whether a value is a tool-call part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L483) |
+| `isToolResultPart` | Check whether a value is a tool-result part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L493) |
+| `isToolUiPart` | Check whether a chat part is a tool UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L263) |
+| `isUuid` | Check whether a value is a UUID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L182) |
+| `mapToolState` | State for map tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L193) |
+| `markIncompleteToolPartsAsErrored` | Mark incomplete tool parts as errored. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L436) |
+| `markIncompleteToolPartsAsStopped` | Mark incomplete tool parts as stopped. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L431) |
+| `pushToolParts` | Push tool parts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L282) |
+| `stringifyUnknown` | Stringify unknown helper. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L245) |
+| `toConversationPartsFromUiMessage` | Message shape for to conversation parts from UI. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L353) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ApiConversation` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L95) |
-| `ApiMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L121) |
-| `ConversationType` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L65) |
-| `MessagePart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L58) |
-| `MessageStatus` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L72) |
-| `ReasoningPartLike` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L144) |
-| `TextPartLike` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L139) |
-| `ToolCallLike` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L123) |
-| `ToolResultLike` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L131) |
-| `ToolUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L149) |
+| `ApiConversation` | Public API contract for API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L111) |
+| `ApiMessage` | Message shape for API. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L141) |
+| `ConversationType` | Public API contract for conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L73) |
+| `MessagePart` | Public API contract for message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L62) |
+| `MessageStatus` | Public API contract for message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L84) |
+| `ReasoningPartLike` | Reasoning-like provider message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L168) |
+| `TextPartLike` | Text-like provider message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L162) |
+| `ToolCallLike` | Public API contract for tool call like. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L144) |
+| `ToolResultLike` | Public API contract for tool result like. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L153) |
 
 #### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `apiConversationSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L93) |
-| `apiMessageSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L119) |
-| `conversationTypeSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L64) |
-| `convertUiMessagesToModelMessages` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L939) |
-| `getApiConversationSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L74) |
-| `getApiMessageSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L97) |
-| `getConversationTypeSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L60) |
-| `getMessagePartSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L4) |
-| `getMessageStatusSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L67) |
-| `messagePartSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L56) |
-| `messageStatusSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L71) |
+| `apiConversationSchema` | Schema for API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L108) |
+| `apiMessageSchema` | Schema for API message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L138) |
+| `conversationTypeSchema` | Schema for conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L71) |
+| `convertUiMessagesToModelMessages` | Shared convert UI messages to model messages value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L986) |
+| `getApiConversationSchema` | Zod schema for get API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L87) |
+| `getApiMessageSchema` | Zod schema for get API message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L114) |
+| `getConversationTypeSchema` | Zod schema for get conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L65) |
+| `getMessagePartSchema` | Zod schema for get message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L5) |
+| `getMessageStatusSchema` | Zod schema for get message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L76) |
+| `messagePartSchema` | Schema for message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L59) |
+| `messageStatusSchema` | Schema for message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L82) |
 
 ### `veryfront/chat/final-step-fallback`
 
@@ -492,36 +490,34 @@ import { appendMissingFallbackTextPart, buildFallbackUiMessageChunks, buildFallb
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `DEFAULT_STREAM_PROMISE_TIMEOUT_MS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L15) |
+| `DEFAULT_STREAM_PROMISE_TIMEOUT_MS` | Default value for stream promise timeout ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L16) |
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `appendMissingFallbackTextPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L883) |
-| `buildFallbackUiMessageChunks` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L894) |
-| `buildFallbackUiMessageParts` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L874) |
-| `buildMissingFallbackTextChunks` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L943) |
-| `buildMissingFallbackToolChunks` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L920) |
-| `buildMissingFallbackToolChunksFromParts` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L932) |
-| `extractFinalStepFinishReason` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L770) |
-| `extractFinalStepTerminalError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L856) |
-| `extractFinalStepText` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L778) |
-| `extractFinalStepToolCalls` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L786) |
-| `extractFinalStepToolResults` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L809) |
-| `getLastStreamStep` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L754) |
-| `getStreamSteps` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L762) |
+| `appendMissingFallbackTextPart` | Append missing fallback text part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L899) |
+| `buildFallbackUiMessageChunks` | Builds fallback UI message chunks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L911) |
+| `buildFallbackUiMessageParts` | Builds fallback UI message parts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L889) |
+| `buildMissingFallbackTextChunks` | Builds missing fallback text chunks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L963) |
+| `buildMissingFallbackToolChunks` | Builds missing fallback tool chunks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L938) |
+| `buildMissingFallbackToolChunksFromParts` | Builds missing fallback tool chunks from parts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L951) |
+| `extractFinalStepFinishReason` | Extract final step finish reason. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L780) |
+| `extractFinalStepTerminalError` | Error shape for extract final step terminal. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L870) |
+| `extractFinalStepText` | Extract final step text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L789) |
+| `extractFinalStepToolCalls` | Extract final step tool calls. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L798) |
+| `extractFinalStepToolResults` | Extract final step tool results. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L822) |
+| `getLastStreamStep` | Return last stream step. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L762) |
+| `getStreamSteps` | Return stream steps. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L771) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ChatFallbackPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L19) |
-| `ChatPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L20) |
-| `FallbackToolChunkState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L36) |
-| `FinalStepTerminalError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L720) |
-| `FinalStepToolCall` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L23) |
-| `FinalStepToolResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L29) |
+| `ChatFallbackPart` | Public API contract for chat fallback part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L21) |
+| `FallbackToolChunkState` | State for fallback tool chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L42) |
+| `FinalStepToolCall` | Public API contract for final step tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L27) |
+| `FinalStepToolResult` | Result returned from final step tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/final-step-fallback.ts#L34) |
 
 ### `veryfront/chat/message-prep`
 
@@ -533,29 +529,29 @@ import { compactForStep, compressTurn, dedupeToolHistory } from "veryfront/chat/
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `compactForStep` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L776) |
-| `compressTurn` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L30) |
-| `dedupeToolHistory` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L796) |
-| `enforceTokenBudget` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L856) |
-| `enforceTokenBudgetWithTurnCompression` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L104) |
-| `ensureToolCallInputs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L746) |
-| `estimateOverhead` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L741) |
-| `estimateTokens` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L21) |
-| `isModelSupportedFileMediaType` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L204) |
-| `maskOldToolOutputs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L518) |
-| `normalizeMessageFilePartMediaTypes` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L209) |
-| `prepareProviderModelMessagesFromUiMessages` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L410) |
-| `repairToolPairs` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L599) |
-| `rewriteUnsupportedFilePartsAsAnnotations` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L235) |
-| `sanitizeProviderModelMessages` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L367) |
-| `stripPendingToolParts` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L305) |
+| `compactForStep` | Compact for step. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L791) |
+| `compressTurn` | Compress turn. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L32) |
+| `dedupeToolHistory` | Dedupe tool history. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L812) |
+| `enforceTokenBudget` | Enforce token budget. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L873) |
+| `enforceTokenBudgetWithTurnCompression` | Enforce token budget with turn compression. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L107) |
+| `ensureToolCallInputs` | Ensure tool call inputs helper. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L760) |
+| `estimateOverhead` | Estimate overhead. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L754) |
+| `estimateTokens` | Estimate tokens. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L22) |
+| `isModelSupportedFileMediaType` | Check whether the model supports the file media type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L208) |
+| `maskOldToolOutputs` | Mask old tool outputs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L529) |
+| `normalizeMessageFilePartMediaTypes` | Normalizes message file part media types. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L214) |
+| `prepareProviderModelMessagesFromUiMessages` | Prepare provider model messages from UI messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L420) |
+| `repairToolPairs` | Repair tool pairs. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L611) |
+| `rewriteUnsupportedFilePartsAsAnnotations` | Rewrite unsupported file parts as annotations. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L241) |
+| `sanitizeProviderModelMessages` | Sanitize provider model messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L375) |
+| `stripPendingToolParts` | Strip pending tool parts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L312) |
 
 #### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `prepareModelMessagesFromUiMessages` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L871) |
-| `sanitizeModelMessages` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L398) |
+| `prepareModelMessagesFromUiMessages` | Shared prepare model messages from UI messages value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L889) |
+| `sanitizeModelMessages` | Shared sanitize model messages value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/message-prep.ts#L407) |
 
 ### `veryfront/chat/protocol`
 
@@ -569,34 +565,28 @@ import "veryfront/chat/protocol";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ChatDynamicToolPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L46) |
-| `ChatFinishReason` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L123) |
-| `ChatMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L69) |
-| `ChatMessageMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L108) |
-| `ChatMessageMetadataUsage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L77) |
-| `ChatMessagePart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L61) |
+| `ChatDynamicToolPart` | Public API contract for chat dynamic tool part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L52) |
+| `ChatFinishReason` | Public API contract for chat finish reason. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L138) |
+| `ChatMessage` | Message shape for chat. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L78) |
+| `ChatMessageMetadata` | Public API contract for chat message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L122) |
+| `ChatMessageMetadataUsage` | Public API contract for chat message metadata usage. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L87) |
+| `ChatMessagePart` | Public API contract for chat message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L69) |
 | `ChatPartState` | Canonical chat message and stream protocol for Veryfront chat surfaces. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L7) |
-| `ChatReasoningPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L15) |
-| `ChatStepPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L56) |
-| `ChatStreamEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L136) |
-| `ChatStreamEventBase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L131) |
-| `ChatTextPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L9) |
-| `ChatToolPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L28) |
-| `ChatToolResultPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L38) |
-| `ChatToolState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L21) |
-| `ChatUiMessageChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L297) |
-| `ChildRunAudit` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L97) |
-| `ChildRunAuditToolCall` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L84) |
-| `ChildRunAuditToolResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L90) |
-| `IdChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L271) |
-| `IdDeltaChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L276) |
-| `MessageLifecycleChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L255) |
-| `NamedToolCallChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L285) |
-| `ToolCallChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L280) |
-| `ToolErrorChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L293) |
-| `ToolInputChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L289) |
+| `ChatReasoningPart` | Chat message part that carries reasoning text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L17) |
+| `ChatStepPart` | Public API contract for chat step part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L63) |
+| `ChatStreamEvent` | Event emitted for chat stream. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L153) |
+| `ChatTextPart` | Chat message part that carries text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L10) |
+| `ChatToolPart` | Public API contract for chat tool part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L32) |
+| `ChatToolResultPart` | Chat message part that carries a tool result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L43) |
+| `ChatToolState` | State for chat tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L24) |
+| `ChatUiMessageChunk` | Public API contract for chat UI message chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L322) |
+| `ChildRunAudit` | Public API contract for child run audit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L110) |
+| `ChildRunAuditToolCall` | Public API contract for child run audit tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L95) |
+| `ChildRunAuditToolResult` | Result returned from child run audit tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L102) |
 
 ### `veryfront/chat/provider-errors`
+
+Error shape for parsed provider.
 
 ```ts
 import { isCreditLimitMessage, parseKnownProblemBody, parseProviderError } from "veryfront/chat/provider-errors";
@@ -606,17 +596,17 @@ import { isCreditLimitMessage, parseKnownProblemBody, parseProviderError } from 
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `isCreditLimitMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L58) |
-| `parseKnownProblemBody` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L30) |
-| `parseProviderError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L145) |
-| `safeJsonParse` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L17) |
+| `isCreditLimitMessage` | Message shape for is credit limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L63) |
+| `parseKnownProblemBody` | Parses known problem body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L34) |
+| `parseProviderError` | Error shape for parse provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L151) |
+| `safeJsonParse` | Parse JSON safely without throwing. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L20) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ParsedProviderError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts) |
-| `SafeJsonParseResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L15) |
+| `ParsedProviderError` | Error shape for parsed provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L1) |
+| `SafeJsonParseResult` | Result returned from safe JSON parse. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/provider-errors.ts#L17) |
 
 ### `veryfront/chat/stream-watchdog`
 
@@ -628,32 +618,32 @@ import { createChatStreamWatchdog, createChatStreamWatchdogState, getNextChatStr
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L2) |
-| `DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L3) |
+| `DEFAULT_CHAT_STREAM_IDLE_TIMEOUT_MS` | Default value for chat stream idle timeout ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L3) |
+| `DEFAULT_CHAT_STREAM_TOOL_RUNNING_TIMEOUT_MS` | Default value for chat stream tool running timeout ms. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L5) |
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createChatStreamWatchdog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L144) |
-| `createChatStreamWatchdogState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L41) |
-| `getNextChatStreamWatchdogState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L71) |
-| `isHeartbeatOnlyMetadataChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L140) |
-| `isLongRunningToolRunning` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L60) |
+| `createChatStreamWatchdog` | Create chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L155) |
+| `createChatStreamWatchdogState` | State for create chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L48) |
+| `getNextChatStreamWatchdogState` | State for get next chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L80) |
+| `isHeartbeatOnlyMetadataChunk` | Check whether a chunk only carries heartbeat metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L150) |
+| `isLongRunningToolRunning` | Check whether a long-running tool is active. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L68) |
 
 #### Classes
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ChatStreamIdleTimeoutError` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L26) |
+| `ChatStreamIdleTimeoutError` | Error shape for chat stream idle timeout. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L32) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ChatStreamWatchdogOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L18) |
-| `ChatStreamWatchdogPhase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L5) |
-| `ChatStreamWatchdogState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L11) |
+| `ChatStreamWatchdogOptions` | Options accepted by chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L23) |
+| `ChatStreamWatchdogPhase` | Public API contract for chat stream watchdog phase. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L8) |
+| `ChatStreamWatchdogState` | State for chat stream watchdog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/stream-watchdog.ts#L15) |
 
 ### `veryfront/chat/types`
 
@@ -665,80 +655,78 @@ import { buildDataFileAnnotation, isImageFile, isTextPreviewFile } from "veryfro
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `buildDataFileAnnotation` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L601) |
-| `isImageFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L563) |
-| `isTextPreviewFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L575) |
-| `isValidImageFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L567) |
-| `normalizeInlineAttachmentMediaType` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L579) |
+| `buildDataFileAnnotation` | Builds data file annotation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L665) |
+| `isImageFile` | Check whether a file is an image. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L623) |
+| `isTextPreviewFile` | Check whether a file supports text preview. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L637) |
+| `isValidImageFile` | Check whether a file is a supported image upload. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L628) |
+| `normalizeInlineAttachmentMediaType` | Normalizes inline attachment media type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L642) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ChatAssistantContentPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L219) |
-| `ChatAssistantMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L237) |
-| `ChatDataUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L143) |
-| `ChatDynamicToolUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L133) |
-| `ChatFileUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L95) |
-| `ChatMessageMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L108) |
-| `ChatMessageMetadataUsage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L77) |
-| `ChatModelFilePart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L178) |
-| `ChatModelMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L256) |
-| `ChatModelReasoningPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L173) |
-| `ChatModelTextPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L168) |
-| `ChatNamedToolUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L138) |
-| `ChatReasoningUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L71) |
-| `ChatRequestContext` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L308) |
-| `ChatRuntimeOverrides` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L268) |
-| `ChatSourceDocumentUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L87) |
-| `ChatSourceUrlUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L80) |
-| `ChatStepStartUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L76) |
-| `ChatSystemMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L226) |
-| `ChatTextUiPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L66) |
-| `ChatToolCallPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L188) |
-| `ChatToolMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L242) |
-| `ChatToolPartBase` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L119) |
-| `ChatToolPartState` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L107) |
-| `ChatToolResultOutput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L196) |
-| `ChatToolResultPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L210) |
-| `ChatUiMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L159) |
-| `ChatUiMessageChunk` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L297) |
-| `ChatUiMessagePart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L148) |
-| `ChatUiMessageRole` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L64) |
-| `ChatUserContentPart` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L218) |
-| `ChatUserMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L232) |
-| `ChildRunAudit` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L97) |
-| `ChildRunAuditToolCall` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L84) |
-| `ChildRunAuditToolResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L90) |
-| `DurableRootRunDescriptor` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L258) |
-| `FileUIPartWithUpload` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L102) |
-| `JsonValue` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L166) |
-| `MessageMetadata` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L108) |
-| `ProjectFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L274) |
-| `ProjectFileListItem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L279) |
-| `ProviderModelMessage` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L247) |
-| `UploadedFileReference` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L287) |
+| `ChatAssistantContentPart` | Public API contract for chat assistant content part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L245) |
+| `ChatAssistantMessage` | Message shape for chat assistant. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L266) |
+| `ChatDataUiPart` | Chat UI part that carries custom data chunks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L158) |
+| `ChatDynamicToolUiPart` | Tool UI part for a runtime-selected tool name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L146) |
+| `ChatFileUiPart` | Public API contract for chat file UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L104) |
+| `ChatMessageMetadata` | Public API contract for chat message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L122) |
+| `ChatMessageMetadataUsage` | Public API contract for chat message metadata usage. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L87) |
+| `ChatModelFilePart` | Public API contract for chat model file part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L199) |
+| `ChatModelMessage` | Message shape for chat model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L288) |
+| `ChatModelReasoningPart` | Provider model message part that carries reasoning text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L193) |
+| `ChatModelTextPart` | Provider model message part that carries text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L187) |
+| `ChatNamedToolUiPart` | Tool UI part keyed by a static tool type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L152) |
+| `ChatReasoningUiPart` | Public API contract for chat reasoning UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L76) |
+| `ChatRequestContext` | Context for chat request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L349) |
+| `ChatRuntimeOverrides` | Public API contract for chat runtime overrides. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L302) |
+| `ChatSourceDocumentUiPart` | Public API contract for chat source document UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L95) |
+| `ChatSourceUrlUiPart` | Public API contract for chat source URL UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L87) |
+| `ChatStepStartUiPart` | Public API contract for chat step start UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L82) |
+| `ChatSystemMessage` | Message shape for chat system. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L253) |
+| `ChatTextUiPart` | Public API contract for chat text UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L70) |
+| `ChatToolCallPart` | Provider model message part that carries a tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L210) |
+| `ChatToolMessage` | Message shape for chat tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L272) |
+| `ChatToolPartState` | State for chat tool part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L118) |
+| `ChatToolResultOutput` | Output from chat tool result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L219) |
+| `ChatToolResultPart` | Provider model message part that carries a tool result. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L234) |
+| `ChatUiMessage` | Message shape for chat UI. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L176) |
+| `ChatUiMessageChunk` | Public API contract for chat UI message chunk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L322) |
+| `ChatUiMessagePart` | Public API contract for chat UI message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L164) |
+| `ChatUiMessageRole` | Public API contract for chat UI message role. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L67) |
+| `ChatUserContentPart` | Public API contract for chat user content part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L243) |
+| `ChatUserMessage` | Message shape for chat user. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L260) |
+| `ChildRunAudit` | Public API contract for child run audit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L110) |
+| `ChildRunAuditToolCall` | Public API contract for child run audit tool call. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L95) |
+| `ChildRunAuditToolResult` | Result returned from child run audit tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L102) |
+| `DurableRootRunDescriptor` | Public API contract for durable root run descriptor. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L291) |
+| `FileUIPartWithUpload` | File UI part enriched with upload metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L112) |
+| `MessageMetadata` | Public API contract for chat message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/protocol.ts#L122) |
+| `ProjectFile` | Public API contract for project file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L309) |
+| `ProjectFileListItem` | Public API contract for project file list item. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L315) |
+| `ProviderModelMessage` | Message shape for provider model. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L278) |
+| `UploadedFileReference` | Public API contract for uploaded file reference. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L324) |
 
 #### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `chatRequestContextSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L306) |
-| `chatToolPartStateSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L399) |
-| `chatUiMessagePartSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L519) |
-| `chatUiMessageRoleSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L381) |
-| `chatUiMessageSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L531) |
-| `chatUiMessagesSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L536) |
-| `getChatRequestContextSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L296) |
-| `getChatToolPartStateSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L383) |
-| `getChatUiMessagePartSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L504) |
-| `getChatUiMessageRoleSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L376) |
-| `getChatUiMessageSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L521) |
-| `getChatUiMessagesSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L533) |
-| `getMessageMetadataSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L356) |
-| `imageFileTypes` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L50) |
-| `messageMetadataSchema` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L374) |
-| `textFileExtensions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L48) |
+| `chatRequestContextSchema` | Schema for chat request context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L346) |
+| `chatToolPartStateSchema` | Schema for chat tool part state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L449) |
+| `chatUiMessagePartSchema` | Schema for chat ui message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L572) |
+| `chatUiMessageRoleSchema` | Schema for chat ui message role. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L428) |
+| `chatUiMessageSchema` | Schema for chat ui message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L587) |
+| `chatUiMessagesSchema` | Schema for chat ui messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L595) |
+| `getChatRequestContextSchema` | Zod schema for get chat request context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L334) |
+| `getChatToolPartStateSchema` | Zod schema for get chat tool part state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L431) |
+| `getChatUiMessagePartSchema` | Zod schema for get chat UI message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L555) |
+| `getChatUiMessageRoleSchema` | Zod schema for get chat UI message role. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L421) |
+| `getChatUiMessageSchema` | Zod schema for get chat UI message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L575) |
+| `getChatUiMessagesSchema` | Zod schema for get chat UI messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L590) |
+| `getMessageMetadataSchema` | Zod schema for get message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L398) |
+| `imageFileTypes` | Image media types that chat uploads can display natively. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L52) |
+| `messageMetadataSchema` | Schema for message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L418) |
+| `textFileExtensions` | File extensions that chat uploads can inline as text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L49) |
 
 ## Related
 

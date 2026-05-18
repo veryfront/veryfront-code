@@ -12,6 +12,7 @@
  *    `index.md`. Synthetic parents that only own deep imports (e.g.
  *    `channels`) also require a page.
  * 3. The structural `docs/reference/README.md` exists.
+ * 4. Generated reference tables do not contain known placeholder wording.
  *
  * Runs as part of `deno task verify`.
  *
@@ -39,9 +40,42 @@ interface ExtraReferencePageError {
   path: string;
 }
 
+interface ReferenceQualityError {
+  path: string;
+  line: number;
+  phrase: string;
+  text: string;
+}
+
+const CASE_SENSITIVE_BAD_REFERENCE_PHRASES = [
+  "Constant for ",
+  "Function for ",
+  "Interface for ",
+  "Returns whether ",
+  "Type alias for ",
+  "Handle ",
+] as const;
+
+const CASE_INSENSITIVE_BAD_REFERENCE_PHRASES = [
+  " a feature is enabled",
+  " a part carries",
+  "ctaprops",
+  "internals value",
+  "mcpregistry",
+  "mcpstats",
+  "open ai",
+  "otlpwith",
+  "rscenabled",
+] as const;
+
 function topLevelSlug(exportPath: string): string {
   if (exportPath === ".") return "index";
   return exportPath.replace("./", "").split("/")[0];
+}
+
+function extractReferenceDescription(line: string): string | undefined {
+  const match = line.match(/^\|\s*`[^`]+`\s*\|\s*([^|]*?)\s*\|/);
+  return match?.[1].trim();
 }
 
 function main(): void {
@@ -57,6 +91,7 @@ function main(): void {
   const errors: ValidationError[] = [];
   const missingReferencePages: ReferencePageError[] = [];
   const extraReferencePages: ExtraReferencePageError[] = [];
+  const referenceQualityErrors: ReferenceQualityError[] = [];
 
   for (const [exportPath, filePath] of topLevel) {
     const absPath = `${ROOT}/${filePath.replace("./", "")}`;
@@ -117,11 +152,38 @@ function main(): void {
     for (const entry of Deno.readDirSync(referenceDir)) {
       if (!entry.isFile || !entry.name.endsWith(".md")) continue;
       const slug = entry.name.replace(/\.md$/, "");
+      const path = `${referenceDir}/${entry.name}`;
       if (!requiredSlugs.has(slug)) {
         extraReferencePages.push({
           slug,
-          path: `${referenceDir}/${entry.name}`,
+          path,
         });
+      }
+
+      const content = Deno.readTextFileSync(path);
+      const lines = content.split("\n");
+      for (const [index, text] of lines.entries()) {
+        const description = extractReferenceDescription(text);
+        if (!description) continue;
+        for (const phrase of CASE_SENSITIVE_BAD_REFERENCE_PHRASES) {
+          if (!description.includes(phrase)) continue;
+          referenceQualityErrors.push({
+            path,
+            line: index + 1,
+            phrase,
+            text,
+          });
+        }
+        const lowerDescription = description.toLowerCase();
+        for (const phrase of CASE_INSENSITIVE_BAD_REFERENCE_PHRASES) {
+          if (!lowerDescription.includes(phrase)) continue;
+          referenceQualityErrors.push({
+            path,
+            line: index + 1,
+            phrase,
+            text,
+          });
+        }
       }
     }
   } catch {
@@ -141,6 +203,7 @@ function main(): void {
     errors.length === 0 &&
     missingReferencePages.length === 0 &&
     extraReferencePages.length === 0 &&
+    referenceQualityErrors.length === 0 &&
     !readmeMissing
   ) {
     console.log(
@@ -150,6 +213,7 @@ function main(): void {
       `All ${requiredSlugs.size} reference pages exist under docs/reference/veryfront/.`,
     );
     console.log("docs/reference/README.md exists.");
+    console.log("Generated reference pages passed placeholder wording checks.");
     Deno.exit(0);
   }
 
@@ -182,6 +246,21 @@ function main(): void {
       console.error(`  ${err.slug} -> ${err.path}`);
     }
     console.error("\nRun `deno task docs` to remove stale generated reference pages.");
+  }
+
+  if (referenceQualityErrors.length > 0) {
+    console.error(
+      `\n${referenceQualityErrors.length} generated reference quality issue(s) found:\n`,
+    );
+    for (const err of referenceQualityErrors.slice(0, 30)) {
+      console.error(`  ${err.path}:${err.line}`);
+      console.error(`    Matched: ${err.phrase}`);
+      console.error(`    ${err.text}`);
+    }
+    if (referenceQualityErrors.length > 30) {
+      console.error(`  ... ${referenceQualityErrors.length - 30} more issue(s) omitted.`);
+    }
+    console.error("\nFix the source JSDoc, then run `deno task docs`.");
   }
 
   if (readmeMissing) {

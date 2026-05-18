@@ -56,25 +56,25 @@ const configPath = resolve(cwd(), "veryfront.config.ts");
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `basename` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L32) |
-| `createFileSystem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L258) |
-| `cwd` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L17) |
-| `dirname` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L22) |
-| `exists` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L285) |
-| `extname` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L51) |
-| `join` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L11) |
-| `mkdir` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L293) |
-| `readDir` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L301) |
-| `readTextFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L269) |
-| `remove` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L297) |
-| `resolve` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/resolution.ts#L14) |
-| `writeTextFile` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L277) |
+| `basename` | Return the last path segment. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L35) |
+| `createFileSystem` | Create file system. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L260) |
+| `cwd` | Return the current working directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/lifecycle.ts#L18) |
+| `dirname` | Return the parent directory path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L24) |
+| `exists` | Check whether a path exists. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L292) |
+| `extname` | Return the file extension for a path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L55) |
+| `join` | Join path segments. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/basic-operations.ts#L12) |
+| `mkdir` | Create a directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L302) |
+| `readDir` | Read directory entries. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L312) |
+| `readTextFile` | Read a file as text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L272) |
+| `remove` | Remove a file or directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L307) |
+| `resolve` | Resolve path segments to an absolute path. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/path/resolution.ts#L15) |
+| `writeTextFile` | Write text to a file. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L282) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `FileSystem` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L4) |
+| `FileSystem` | Public API contract for file system. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L5) |
 
 ## Related
 

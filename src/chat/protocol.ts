@@ -7,18 +7,21 @@
 
 export type ChatPartState = "streaming" | "done";
 
+/** Chat message part that carries text. */
 export interface ChatTextPart {
   type: "text";
   text: string;
   state?: ChatPartState;
 }
 
+/** Chat message part that carries reasoning text. */
 export interface ChatReasoningPart {
   type: "reasoning";
   text: string;
   state?: ChatPartState;
 }
 
+/** State for chat tool. */
 export type ChatToolState =
   | "input-streaming"
   | "input-available"
@@ -26,6 +29,7 @@ export type ChatToolState =
   | "output-available"
   | "output-error";
 
+/** Public API contract for chat tool part. */
 export interface ChatToolPart<NAME extends string = string, INPUT = unknown, OUTPUT = unknown> {
   type: `tool-${NAME}`;
   toolCallId: string;
@@ -36,6 +40,7 @@ export interface ChatToolPart<NAME extends string = string, INPUT = unknown, OUT
   errorText?: string;
 }
 
+/** Chat message part that carries a tool result. */
 export interface ChatToolResultPart<RESULT = unknown> {
   type: "tool-result";
   toolCallId: string;
@@ -44,6 +49,7 @@ export interface ChatToolResultPart<RESULT = unknown> {
   isError?: boolean;
 }
 
+/** Public API contract for chat dynamic tool part. */
 export interface ChatDynamicToolPart {
   type: "dynamic-tool";
   toolCallId: string;
@@ -54,11 +60,13 @@ export interface ChatDynamicToolPart {
   errorText?: string;
 }
 
+/** Public API contract for chat step part. */
 export interface ChatStepPart {
   type: "step-start" | "step-end";
   stepIndex: number;
 }
 
+/** Public API contract for chat message part. */
 export type ChatMessagePart =
   | ChatTextPart
   | ChatReasoningPart
@@ -67,6 +75,7 @@ export type ChatMessagePart =
   | ChatDynamicToolPart
   | ChatStepPart;
 
+/** Message shape for chat. */
 export interface ChatMessage {
   id: string;
   role: "system" | "user" | "assistant";
@@ -75,6 +84,7 @@ export interface ChatMessage {
   createdAt?: Date | string;
 }
 
+/** Public API contract for chat message metadata usage. */
 export interface ChatMessageMetadataUsage {
   inputTokens?: number;
   outputTokens?: number;
@@ -82,12 +92,14 @@ export interface ChatMessageMetadataUsage {
   cachedInputTokens?: number;
 }
 
+/** Public API contract for child run audit tool call. */
 export interface ChildRunAuditToolCall {
   toolName: string;
   toolCallId: string;
   input?: unknown;
 }
 
+/** Result returned from child run audit tool. */
 export interface ChildRunAuditToolResult {
   toolName: string;
   toolCallId: string;
@@ -95,6 +107,7 @@ export interface ChildRunAuditToolResult {
   output: unknown;
 }
 
+/** Public API contract for child run audit. */
 export interface ChildRunAudit {
   status: "completed" | "failed" | "cancelled" | "stopped";
   description?: string;
@@ -106,6 +119,7 @@ export interface ChildRunAudit {
   terminalErrorMessage?: string | null;
 }
 
+/** Public API contract for chat message metadata. */
 export interface ChatMessageMetadata {
   createdAt?: string;
   isStopped?: boolean;
@@ -121,6 +135,7 @@ export interface ChatMessageMetadata {
   usage?: ChatMessageMetadataUsage;
 }
 
+/** Public API contract for chat finish reason. */
 export type ChatFinishReason =
   | "stop"
   | "length"
@@ -129,11 +144,13 @@ export type ChatFinishReason =
   | "error"
   | "other";
 
+/** Public API contract for chat stream event base. */
 type ChatStreamEventBase = {
   providerExecuted?: boolean;
   dynamic?: boolean;
 };
 
+/** Event emitted for chat stream. */
 export type ChatStreamEvent =
   | {
     type: "start";
@@ -253,6 +270,7 @@ export type ChatStreamEvent =
     errorText: string;
   };
 
+/** Public API contract for message lifecycle chunk. */
 type MessageLifecycleChunk<TMessageMetadata> =
   | {
     type: "start";
@@ -269,32 +287,39 @@ type MessageLifecycleChunk<TMessageMetadata> =
     messageMetadata: TMessageMetadata;
   };
 
+/** Public API contract for ID chunk. */
 type IdChunk<TType extends string> = {
   type: TType;
   id: string;
 };
 
+/** Public API contract for ID delta chunk. */
 type IdDeltaChunk<TType extends string> = IdChunk<TType> & {
   delta: string;
 };
 
+/** Public API contract for tool call chunk. */
 type ToolCallChunk<TType extends string> = {
   type: TType;
   toolCallId: string;
 };
 
+/** Public API contract for named tool call chunk. */
 type NamedToolCallChunk<TType extends string> = ToolCallChunk<TType> & {
   toolName: string;
 };
 
+/** Public API contract for tool input chunk. */
 type ToolInputChunk<TType extends string> = NamedToolCallChunk<TType> & {
   input: unknown;
 };
 
+/** Public API contract for tool error chunk. */
 type ToolErrorChunk<TType extends string> = ToolCallChunk<TType> & {
   errorText: string;
 };
 
+/** Public API contract for chat UI message chunk. */
 export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
   | MessageLifecycleChunk<TMessageMetadata>
   | {

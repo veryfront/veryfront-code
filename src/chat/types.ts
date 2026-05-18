@@ -46,8 +46,10 @@ const NATIVE_TEXT_ATTACHMENT_EXTENSIONS = [
   ".sql",
 ] as const;
 
+/** File extensions that chat uploads can inline as text. */
 export const textFileExtensions = [...NATIVE_TEXT_ATTACHMENT_EXTENSIONS, ".csv"] as const;
 
+/** Image media types that chat uploads can display natively. */
 export const imageFileTypes = [
   "image/png",
   "image/jpeg",
@@ -62,22 +64,27 @@ const INLINE_TEXT_MEDIA_TYPE = "text/plain";
 const INLINE_BINARY_MEDIA_TYPE = "application/octet-stream";
 const INLINE_PDF_MEDIA_TYPE = "application/pdf";
 
+/** Public API contract for chat UI message role. */
 export type ChatUiMessageRole = "system" | "user" | "assistant";
 
+/** Public API contract for chat text UI part. */
 export type ChatTextUiPart = {
   type: "text";
   text: string;
 };
 
+/** Public API contract for chat reasoning UI part. */
 export type ChatReasoningUiPart = {
   type: "reasoning";
   text: string;
 };
 
+/** Public API contract for chat step start UI part. */
 export type ChatStepStartUiPart = {
   type: "step-start";
 };
 
+/** Public API contract for chat source URL UI part. */
 export type ChatSourceUrlUiPart = {
   type: "source-url";
   sourceId: string;
@@ -85,6 +92,7 @@ export type ChatSourceUrlUiPart = {
   title?: string;
 };
 
+/** Public API contract for chat source document UI part. */
 export type ChatSourceDocumentUiPart = {
   type: "source-document";
   sourceId: string;
@@ -93,6 +101,7 @@ export type ChatSourceDocumentUiPart = {
   filename?: string;
 };
 
+/** Public API contract for chat file UI part. */
 export type ChatFileUiPart = {
   type: "file";
   mediaType: string;
@@ -100,11 +109,13 @@ export type ChatFileUiPart = {
   filename?: string;
 };
 
+/** File UI part enriched with upload metadata. */
 export type FileUIPartWithUpload = ChatFileUiPart & {
   uploadId?: string;
   uploadPath?: string;
 };
 
+/** State for chat tool part. */
 export type ChatToolPartState =
   | "pending"
   | "input-streaming"
@@ -117,6 +128,7 @@ export type ChatToolPartState =
   | "error"
   | "completed";
 
+/** Public API contract for chat tool part base. */
 type ChatToolPartBase = {
   toolCallId: string;
   input: unknown;
@@ -131,21 +143,25 @@ type ChatToolPartBase = {
   };
 };
 
+/** Tool UI part for a runtime-selected tool name. */
 export type ChatDynamicToolUiPart = ChatToolPartBase & {
   type: "dynamic-tool";
   toolName: string;
 };
 
+/** Tool UI part keyed by a static tool type. */
 export type ChatNamedToolUiPart = ChatToolPartBase & {
   type: `tool-${string}` | "tool_call";
   toolName?: string;
 };
 
+/** Chat UI part that carries custom data chunks. */
 export type ChatDataUiPart = {
   type: `data-${string}`;
   data: unknown;
 };
 
+/** Public API contract for chat UI message part. */
 export type ChatUiMessagePart =
   | ChatTextUiPart
   | ChatReasoningUiPart
@@ -157,6 +173,7 @@ export type ChatUiMessagePart =
   | ChatNamedToolUiPart
   | ChatDataUiPart;
 
+/** Message shape for chat UI. */
 export interface ChatUiMessage<TMessageMetadata = ChatMessageMetadata> {
   id: string;
   role: ChatUiMessageRole;
@@ -164,18 +181,22 @@ export interface ChatUiMessage<TMessageMetadata = ChatMessageMetadata> {
   metadata?: TMessageMetadata;
 }
 
+/** JSON-compatible value used in chat tool output. */
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+/** Provider model message part that carries text. */
 export type ChatModelTextPart = {
   type: "text";
   text: string;
 };
 
+/** Provider model message part that carries reasoning text. */
 export type ChatModelReasoningPart = {
   type: "reasoning";
   text: string;
 };
 
+/** Public API contract for chat model file part. */
 export type ChatModelFilePart = {
   type: "file" | "image";
   mediaType: string;
@@ -186,6 +207,7 @@ export type ChatModelFilePart = {
   uploadPath?: string;
 };
 
+/** Provider model message part that carries a tool call. */
 export type ChatToolCallPart = {
   type: "tool-call";
   toolCallId: string;
@@ -194,6 +216,7 @@ export type ChatToolCallPart = {
   providerExecuted?: boolean;
 };
 
+/** Output from chat tool result. */
 export type ChatToolResultOutput =
   | {
     type: "json";
@@ -208,6 +231,7 @@ export type ChatToolResultOutput =
     value: string;
   };
 
+/** Provider model message part that carries a tool result. */
 export type ChatToolResultPart = {
   type: "tool-result";
   toolCallId: string;
@@ -216,7 +240,9 @@ export type ChatToolResultPart = {
   providerOptions?: unknown;
 };
 
+/** Public API contract for chat user content part. */
 export type ChatUserContentPart = ChatModelTextPart | ChatModelFilePart;
+/** Public API contract for chat assistant content part. */
 export type ChatAssistantContentPart =
   | ChatModelTextPart
   | ChatModelReasoningPart
@@ -224,27 +250,32 @@ export type ChatAssistantContentPart =
   | ChatToolCallPart
   | ChatToolResultPart;
 
+/** Message shape for chat system. */
 export type ChatSystemMessage = {
   role: "system";
   content: string;
   providerOptions?: Record<string, unknown>;
 };
 
+/** Message shape for chat user. */
 export type ChatUserMessage = {
   role: "user";
   content: string | ChatUserContentPart[];
 };
 
+/** Message shape for chat assistant. */
 export type ChatAssistantMessage = {
   role: "assistant";
   content: string | ChatAssistantContentPart[];
 };
 
+/** Message shape for chat tool. */
 export type ChatToolMessage = {
   role: "tool";
   content: ChatToolResultPart[];
 };
 
+/** Message shape for provider model. */
 export type ProviderModelMessage =
   | ChatSystemMessage
   | ChatUserMessage
@@ -254,8 +285,10 @@ export type ProviderModelMessage =
 /**
  * @deprecated Use ProviderModelMessage for provider-facing model payloads.
  */
+/** Message shape for chat model. */
 export type ChatModelMessage = ProviderModelMessage;
 
+/** Public API contract for durable root run descriptor. */
 export interface DurableRootRunDescriptor {
   runId: string;
   messageId: string;
@@ -266,17 +299,20 @@ export interface DurableRootRunDescriptor {
   spawnedFromToolCallId?: string;
 }
 
+/** Public API contract for chat runtime overrides. */
 export interface ChatRuntimeOverrides {
   allowedTools?: string[];
   thinking?: false | number;
   maxSteps?: number;
 }
 
+/** Public API contract for project file. */
 export interface ProjectFile {
   path: string;
   content: string;
 }
 
+/** Public API contract for project file list item. */
 export interface ProjectFileListItem {
   id: string;
   path: string;
@@ -285,6 +321,7 @@ export interface ProjectFileListItem {
   updated_at: string;
 }
 
+/** Public API contract for uploaded file reference. */
 export interface UploadedFileReference {
   name: string;
   mediaType: string;
@@ -294,6 +331,7 @@ export interface UploadedFileReference {
   size?: number;
 }
 
+/** Zod schema for get chat request context. */
 export const getChatRequestContextSchema = defineSchema((v) =>
   v.object({
     conversationId: v.string().optional(),
@@ -303,9 +341,12 @@ export const getChatRequestContextSchema = defineSchema((v) =>
   }).strict()
 );
 
-/** @deprecated Use getChatRequestContextSchema() */
+/** Schema for chat request context.
+ * @deprecated Use getChatRequestContextSchema()
+ */
 export const chatRequestContextSchema = lazySchema(getChatRequestContextSchema);
 
+/** Context for chat request. */
 export type ChatRequestContext = InferSchema<ReturnType<typeof getChatRequestContextSchema>>;
 
 // Helper that returns a nonEmptyString schema for reuse within defineSchema callbacks.
@@ -354,6 +395,7 @@ const getMessageMetadataUsageSchema = defineSchema((v) =>
   }).strict()
 );
 
+/** Zod schema for get message metadata. */
 export const getMessageMetadataSchema = defineSchema((v) =>
   v.object({
     createdAt: v.string().optional(),
@@ -371,16 +413,22 @@ export const getMessageMetadataSchema = defineSchema((v) =>
   }).strict()
 );
 
-/** @deprecated Use getMessageMetadataSchema() */
+/** Schema for message metadata.
+ * @deprecated Use getMessageMetadataSchema()
+ */
 export const messageMetadataSchema = lazySchema(getMessageMetadataSchema);
 
+/** Zod schema for get chat UI message role. */
 export const getChatUiMessageRoleSchema = defineSchema((v) =>
   v.enum(["system", "user", "assistant"])
 );
 
-/** @deprecated Use getChatUiMessageRoleSchema() */
+/** Schema for chat ui message role.
+ * @deprecated Use getChatUiMessageRoleSchema()
+ */
 export const chatUiMessageRoleSchema = lazySchema(getChatUiMessageRoleSchema);
 
+/** Zod schema for get chat tool part state. */
 export const getChatToolPartStateSchema = defineSchema((v) =>
   v.enum([
     "pending",
@@ -396,7 +444,9 @@ export const getChatToolPartStateSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getChatToolPartStateSchema() */
+/** Schema for chat tool part state.
+ * @deprecated Use getChatToolPartStateSchema()
+ */
 export const chatToolPartStateSchema = lazySchema(getChatToolPartStateSchema);
 
 const getToolApprovalSchema = defineSchema((v) =>
@@ -502,6 +552,7 @@ const getChatDataUiPartSchema = defineSchema((v) =>
   }).strip()
 );
 
+/** Zod schema for get chat UI message part. */
 export const getChatUiMessagePartSchema = defineSchema((v) =>
   v.union([
     getChatTextUiPartSchema(),
@@ -516,9 +567,12 @@ export const getChatUiMessagePartSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getChatUiMessagePartSchema() */
+/** Schema for chat ui message part.
+ * @deprecated Use getChatUiMessagePartSchema()
+ */
 export const chatUiMessagePartSchema = lazySchema(getChatUiMessagePartSchema);
 
+/** Zod schema for get chat UI message. */
 export const getChatUiMessageSchema = defineSchema((v) =>
   v.object({
     id: nonEmptyString(v),
@@ -528,12 +582,17 @@ export const getChatUiMessageSchema = defineSchema((v) =>
   }).strip()
 );
 
-/** @deprecated Use getChatUiMessageSchema() */
+/** Schema for chat ui message.
+ * @deprecated Use getChatUiMessageSchema()
+ */
 export const chatUiMessageSchema = lazySchema(getChatUiMessageSchema);
 
+/** Zod schema for get chat UI messages. */
 export const getChatUiMessagesSchema = defineSchema((v) => v.array(getChatUiMessageSchema()));
 
-/** @deprecated Use getChatUiMessagesSchema() */
+/** Schema for chat ui messages.
+ * @deprecated Use getChatUiMessagesSchema()
+ */
 export const chatUiMessagesSchema = lazySchema(getChatUiMessagesSchema);
 
 function hasExtension(filename: string | undefined, extensions: readonly string[]) {
@@ -561,10 +620,12 @@ function isInlinePreviewMediaType(mediaType: string) {
     mediaType === INLINE_PDF_MEDIA_TYPE;
 }
 
+/** Check whether a file is an image. */
 export function isImageFile(type: string | undefined) {
   return type?.startsWith("image/") ?? false;
 }
 
+/** Check whether a file is a supported image upload. */
 export function isValidImageFile(type: string) {
   if (type.length === 0) {
     return false;
@@ -573,10 +634,12 @@ export function isValidImageFile(type: string) {
   return imageFileTypes.some((imageFileType) => imageFileType === type);
 }
 
+/** Check whether a file supports text preview. */
 export function isTextPreviewFile(name: string | undefined, type: string | undefined) {
   return isTextMediaType(type) || hasExtension(name, textFileExtensions);
 }
 
+/** Normalizes inline attachment media type. */
 export function normalizeInlineAttachmentMediaType(
   filename: string | undefined,
   mediaType: string | undefined,
@@ -599,6 +662,7 @@ function escapeXmlAttr(value: string): string {
   );
 }
 
+/** Builds data file annotation. */
 export function buildDataFileAnnotation(refs: UploadedFileReference[]): string {
   if (refs.length === 0) return "";
 

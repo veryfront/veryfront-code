@@ -14,6 +14,7 @@ export { SpanOperations } from "./span-operations.ts";
 export { ContextPropagation } from "./context-propagation.ts";
 export { SpanNames } from "./span-names.ts";
 
+/** Initialize tracing for the current runtime. */
 export async function initTracing(
   config: Partial<TracingConfig> = {},
   adapter?: RuntimeAdapter,
@@ -21,6 +22,7 @@ export async function initTracing(
   await tracingManager.initialize(config, adapter);
 }
 
+/** Check whether tracing is enabled. */
 export function isTracingEnabled(): boolean {
   return tracingManager.isEnabled();
 }
@@ -29,6 +31,7 @@ export function isTracingDegraded(): boolean {
   return tracingManager.isDegraded();
 }
 
+/** Shut down the tracing runtime. */
 export function shutdownTracing(): void {
   tracingManager.shutdown();
 }
@@ -45,14 +48,17 @@ function getContextProp(): ReturnType<typeof tracingManager.getContextPropagatio
   return tracingManager.getContextPropagation();
 }
 
+/** Starts span. */
 export function startSpan(name: string, options: SpanOptions = {}): Span | null {
   return getSpanOps()?.startSpan(name, options) ?? null;
 }
 
+/** End an active tracing span. */
 export function endSpan(span: Span | null, error?: Error): void {
   getSpanOps()?.endSpan(span, error);
 }
 
+/** Sets span attributes. */
 export function setSpanAttributes(
   span: Span | null,
   attributes: Record<string, string | number | boolean>,
@@ -60,6 +66,7 @@ export function setSpanAttributes(
   getSpanOps()?.setAttributes(span, attributes);
 }
 
+/** Event emitted for add span. */
 export function addSpanEvent(
   span: Span | null,
   name: string,
@@ -68,6 +75,7 @@ export function addSpanEvent(
   getSpanOps()?.addEvent(span, name, attributes);
 }
 
+/** Create child span. */
 export function createChildSpan(
   parentSpan: Span | null,
   name: string,
@@ -76,24 +84,29 @@ export function createChildSpan(
   return getSpanOps()?.createChildSpan(parentSpan, name, options) ?? null;
 }
 
+/** Context for extract. */
 export function extractContext(headers: Headers): Context | undefined {
   return getContextProp()?.extractContext(headers);
 }
 
+/** Context for inject. */
 export function injectContext(context: Context, headers: Headers): void {
   getContextProp()?.injectContext(context, headers);
 }
 
+/** Context for get active. */
 export function getActiveContext(): Context | undefined {
   return getContextProp()?.getActiveContext();
 }
 
+/** Applies active span. */
 export async function withActiveSpan<T>(span: Span | null, fn: () => Promise<T>): Promise<T> {
   const contextProp = getContextProp();
   if (!contextProp) return fn();
   return contextProp.withActiveSpan(span, fn);
 }
 
+/** Applies span. */
 export async function withSpan<T>(
   name: string,
   fn: (span: Span | null) => Promise<T>,
@@ -112,6 +125,7 @@ export async function withSpan<T>(
   );
 }
 
+/** Applies span sync. */
 export function withSpanSync<T>(
   name: string,
   fn: (span: Span | null) => T,

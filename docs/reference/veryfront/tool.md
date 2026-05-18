@@ -93,7 +93,7 @@ const result = await assistant.generate({
 
 ### `tool(config)`
 
-Create typed tool (Zod-validated)
+Create a typed tool definition.
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -112,76 +112,76 @@ Create typed tool (Zod-validated)
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `DEFAULT_SLEEP_TOOL_MAX_SECONDS` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L5) |
+| `DEFAULT_SLEEP_TOOL_MAX_SECONDS` | Default value for sleep tool max seconds. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L6) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createContext7ToolSource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/context7.ts#L23) |
-| `createProjectScopedRemoteToolCatalog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L185) |
-| `createRemoteMCPToolSource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-mcp.ts#L298) |
-| `createSleepTool` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L46) |
-| `createToolsFromHostDefinitions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L82) |
-| `createToolsFromHostDefinitions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L86) |
-| `createToolsFromHostDefinitions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L90) |
-| `createToolsFromRemoteDefinitions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-source-tools.ts#L25) |
-| `dynamicTool` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L205) |
-| `executeTool` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/executor.ts#L4) |
-| `filterProjectScopedRemoteToolDefinitions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L111) |
-| `hasToolExecutionErrorMarker` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/result.ts#L4) |
-| `hydrateProjectScopedRemoteToolInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L125) |
-| `isErroredToolExecutionResult` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/result.ts#L12) |
-| `isProjectNavigationRemoteTool` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L93) |
-| `isRemoteToolNameAllowed` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L104) |
-| `listProjectScopedRemoteToolNames` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L272) |
-| `loadRemoteToolsFromSource` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-source-tools.ts#L53) |
-| `resolveProjectScopedRemoteToolProjectId` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L147) |
-| `tool` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L154) |
-| `traceHostTools` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L35) |
+| `createContext7ToolSource` | Create context7 tool source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/context7.ts#L25) |
+| `createProjectScopedRemoteToolCatalog` | Create project scoped remote tool catalog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L199) |
+| `createRemoteMCPToolSource` | Create remote MCP tool source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-mcp.ts#L300) |
+| `createSleepTool` | Create sleep tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L52) |
+| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L86) |
+| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L91) |
+| `createToolsFromHostDefinitions` | Create tools from host definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L96) |
+| `createToolsFromRemoteDefinitions` | Create tools from remote definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-source-tools.ts#L27) |
+| `dynamicTool` | Create a dynamic tool definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L208) |
+| `executeTool` | Execute a tool definition with validated input. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/executor.ts#L5) |
+| `filterProjectScopedRemoteToolDefinitions` | Filter project scoped remote tool definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L122) |
+| `hasToolExecutionErrorMarker` | Check whether tool execution error marker is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/result.ts#L5) |
+| `hydrateProjectScopedRemoteToolInput` | Input payload for hydrate project scoped remote tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L137) |
+| `isErroredToolExecutionResult` | Result returned from is errored tool execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/result.ts#L14) |
+| `isProjectNavigationRemoteTool` | Check whether a remote tool is project-navigation scoped. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L102) |
+| `isRemoteToolNameAllowed` | Check whether a remote tool name is allowed. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L114) |
+| `listProjectScopedRemoteToolNames` | List project scoped remote tool names. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L287) |
+| `loadRemoteToolsFromSource` | Loads remote tools from source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-source-tools.ts#L56) |
+| `resolveProjectScopedRemoteToolProjectId` | Resolves project scoped remote tool project ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L160) |
+| `tool` | Create a typed tool definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L155) |
+| `traceHostTools` | Wrap host tools with tracing metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L40) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `Context7ToolSourceConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/context7.ts#L4) |
-| `CreateSleepToolOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L9) |
-| `DynamicToolConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L195) |
-| `HostToolDefinition` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L8) |
-| `HostToolMaterializationOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L29) |
-| `HostToolSet` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L21) |
-| `HostToolTraceAttributeInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L10) |
-| `HostToolTraceAttributes` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L8) |
-| `HostToolTraceRunner` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L3) |
+| `Context7ToolSourceConfig` | Configuration used by context7 tool source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/context7.ts#L5) |
+| `CreateSleepToolOptions` | Options accepted by create sleep tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L12) |
+| `DynamicToolConfig` | Configuration used by dynamic tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/factory.ts#L197) |
+| `HostToolDefinition` | Definition for host tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L9) |
+| `HostToolMaterializationOptions` | Options accepted by host tool materialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L32) |
+| `HostToolSet` | Public API contract for host tool set. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/host-tools.ts#L23) |
+| `HostToolTraceAttributeInput` | Input payload for host tool trace attribute. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L13) |
+| `HostToolTraceAttributes` | Public API contract for host tool trace attributes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L10) |
+| `HostToolTraceRunner` | Public API contract for host tool trace runner. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L4) |
 | `JsonSchema` | Minimal JSON Schema type used by the `SchemaValidator` contract for `toJsonSchema()`. Kept in the extensions/schema category so the contract can reference it without depending on any non-leaf module. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/json-schema.ts#L8) |
-| `ListProjectScopedRemoteToolNameOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L53) |
-| `ProjectScopedRemoteToolCatalog` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L42) |
-| `ProjectScopedRemoteToolCatalogOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L12) |
-| `ProjectScopedRemoteToolDefaultProjectId` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L6) |
-| `ProjectScopedRemoteToolDefinitions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L25) |
-| `ProjectScopedRemoteToolExecution` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L36) |
-| `ProjectScopedRemoteToolExecutionInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L30) |
-| `ProjectScopedRemoteToolOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L2) |
-| `RemoteMCPToolSourceConfig` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-mcp.ts#L7) |
-| `RemoteToolMaterializationOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-source-tools.ts#L4) |
-| `RemoteToolSource` | Remote tool source loaded dynamically at runtime. Hosts can provide these to expose tools from remote MCP-compatible systems without registering those tools globally inside the framework. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L166) |
-| `SleepToolInput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L39) |
-| `SleepToolOutput` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L41) |
-| `SleepToolWait` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L7) |
-| `Tool` | Tool instance (returned by tool() function) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L108) |
+| `ListProjectScopedRemoteToolNameOptions` | Options accepted by list project scoped remote tool name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L61) |
+| `ProjectScopedRemoteToolCatalog` | Public API contract for project scoped remote tool catalog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L49) |
+| `ProjectScopedRemoteToolCatalogOptions` | Options accepted by project scoped remote tool catalog. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L15) |
+| `ProjectScopedRemoteToolDefaultProjectId` | Public API contract for project scoped remote tool default project ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L8) |
+| `ProjectScopedRemoteToolDefinitions` | Public API contract for project scoped remote tool definitions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L29) |
+| `ProjectScopedRemoteToolExecution` | Public API contract for project scoped remote tool execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L42) |
+| `ProjectScopedRemoteToolExecutionInput` | Input payload for project scoped remote tool execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L35) |
+| `ProjectScopedRemoteToolOptions` | Options accepted by project scoped remote tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/project-scoped-remote-tools.ts#L3) |
+| `RemoteMCPToolSourceConfig` | Configuration used by remote MCP tool source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-mcp.ts#L8) |
+| `RemoteToolMaterializationOptions` | Options accepted by remote tool materialization. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/remote-source-tools.ts#L5) |
+| `RemoteToolSource` | Remote tool source loaded dynamically at runtime. Hosts can provide these to expose tools from remote MCP-compatible systems without registering those tools globally inside the framework. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L167) |
+| `SleepToolInput` | Input payload for sleep tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L43) |
+| `SleepToolOutput` | Output from sleep tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L46) |
+| `SleepToolWait` | Public API contract for sleep tool wait. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L9) |
+| `Tool` | Tool instance (returned by tool() function) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L109) |
 | `ToolConfig` | Tool configuration options | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L12) |
-| `ToolDefinition` | Provider-facing tool definition used for model/tool registration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L153) |
+| `ToolDefinition` | Provider-facing tool definition used for model/tool registration. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L154) |
 | `ToolExecutionContext` | Context passed to tool execution | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L59) |
-| `ToolExecutionDataEvent` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L88) |
-| `ToolSet` | Runtime tool map keyed by the tool name exposed to an agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L148) |
-| `TraceHostToolsOptions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L16) |
+| `ToolExecutionDataEvent` | Event emitted for tool execution data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L89) |
+| `ToolSet` | Runtime tool map keyed by the tool name exposed to an agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L149) |
+| `TraceHostToolsOptions` | Options accepted by trace host tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/tracing.ts#L20) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `sleepTool` | Default sleep tool (max 60 s) exposed as a property accessor so the underlying `tool({...})` materialization is deferred until first use. Preserves the existing `sleepTool.execute(...)` call shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L84) |
-| `toolRegistry` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/registry.ts#L14) |
+| `sleepTool` | Default sleep tool (max 60 s) exposed as a property accessor so the underlying `tool({...})` materialization is deferred until first use. Preserves the existing `sleepTool.execute(...)` call shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L90) |
+| `toolRegistry` | Shared tool registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/registry.ts#L15) |
 
 ## Related
 

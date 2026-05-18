@@ -131,6 +131,7 @@ export function normalizeChunkPath(
 }
 
 // Re-export for backward compatibility
+/** Shared dev server endpoints value. */
 export const DEV_SERVER_ENDPOINTS = {
   HMR_RUNTIME: INTERNAL_ENDPOINTS.HMR_RUNTIME,
   ERROR_OVERLAY: INTERNAL_ENDPOINTS.ERROR_OVERLAY,

@@ -1,3 +1,4 @@
+/** Options accepted by dev server. */
 export interface DevServerOptions {
   port: number;
   projectDir: string;
@@ -22,11 +23,13 @@ export interface DevServerOptions {
   defaultProjectId?: string;
 }
 
+/** Public API contract for route directory. */
 export interface RouteDirectory {
   type: "app" | "pages";
   path: string;
 }
 
+/** Public API contract for file watcher metrics. */
 export interface FileWatcherMetrics {
   totalFileChangeEvents: number;
   routeDiscoveryCalls: number;

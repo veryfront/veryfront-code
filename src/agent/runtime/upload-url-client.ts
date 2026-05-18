@@ -16,20 +16,24 @@ const getApiErrorBodySchema = defineSchema((v) =>
   }).passthrough()
 );
 
+/** Public API contract for runtime upload URL fetch. */
 export type RuntimeUploadUrlFetch = (url: string, init: RequestInit) => Promise<Response>;
 
+/** Options accepted by runtime upload URL client. */
 export type RuntimeUploadUrlClientOptions = {
   apiUrl: string | URL;
   fetch?: RuntimeUploadUrlFetch;
   timeoutMs?: number;
 };
 
+/** Options accepted by runtime upload URL. */
 export type RuntimeUploadUrlOptions = RuntimeUploadUrlClientOptions & {
   authToken: string;
   uploadId: string;
   projectId?: string | null;
 };
 
+/** Return runtime upload URL. */
 export async function getRuntimeUploadUrl(options: RuntimeUploadUrlOptions): Promise<string> {
   const url = createRuntimeUploadUrl(options);
   const response = await (options.fetch ?? fetch)(url.toString(), {

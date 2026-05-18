@@ -5,6 +5,7 @@ import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./t
 
 type ResolvableValue<T> = T | ((context?: ToolExecutionContext) => T | Promise<T>);
 
+/** Configuration used by remote MCP tool source. */
 export interface RemoteMCPToolSourceConfig {
   id?: string;
   endpoint: ResolvableValue<string>;
@@ -296,6 +297,7 @@ function normalizeCallToolResult(result: unknown): unknown {
   return result;
 }
 
+/** Create remote MCP tool source. */
 export function createRemoteMCPToolSource(
   config: RemoteMCPToolSourceConfig,
 ): RemoteToolSource {

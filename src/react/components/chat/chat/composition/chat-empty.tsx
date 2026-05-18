@@ -9,6 +9,7 @@ import { cn } from "../../theme.ts";
 import { ConversationEmptyState, Suggestion, Suggestions } from "../components/empty-state.tsx";
 import { type QuickAction, QuickActions } from "../components/quick-actions.tsx";
 
+/** Props accepted by chat empty. */
 export interface ChatEmptyProps {
   icon?: React.ReactNode;
   title?: string;
@@ -21,6 +22,7 @@ export interface ChatEmptyProps {
   children?: React.ReactNode;
 }
 
+/** Render chat empty. */
 export const ChatEmpty = React.forwardRef<HTMLDivElement, ChatEmptyProps>(
   function ChatEmpty(
     {

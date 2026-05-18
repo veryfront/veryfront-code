@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { REQUEST_ERROR } from "#veryfront/errors";
 
+/** Options accepted by use workflow start. */
 export interface UseWorkflowStartOptions {
   workflowId: string;
   apiBase?: string;
@@ -8,6 +9,7 @@ export interface UseWorkflowStartOptions {
   onError?: (error: Error) => void;
 }
 
+/** Result returned from use workflow start. */
 export interface UseWorkflowStartResult<TInput = unknown> {
   start: (input: TInput) => Promise<string>;
   isStarting: boolean;
@@ -16,6 +18,7 @@ export interface UseWorkflowStartResult<TInput = unknown> {
   resetError: () => void;
 }
 
+/** React hook for workflow start. */
 export function useWorkflowStart<TInput = unknown>(
   options: UseWorkflowStartOptions,
 ): UseWorkflowStartResult<TInput> {

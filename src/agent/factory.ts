@@ -53,6 +53,7 @@ function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStrea
   };
 }
 
+/** Agent helper. */
 export function agent(config: AgentConfig): Agent {
   if (typeof config.id === "string" && config.id.trim().length === 0) {
     throw toError(

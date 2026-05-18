@@ -1,5 +1,6 @@
 import { type AgentServiceConfigInput, parseAgentServiceConfig } from "../../service/config.ts";
 
+/** Public API contract for live eval environment. */
 export interface LiveEvalEnvironment {
   endpoint: string;
   authToken: string;
@@ -9,8 +10,10 @@ export interface LiveEvalEnvironment {
   model: string | undefined;
 }
 
+/** Default value for live eval endpoint. */
 export const DEFAULT_LIVE_EVAL_ENDPOINT = "http://127.0.0.1:3001/api/ag-ui";
 
+/** Resolves live eval environment. */
 export function resolveLiveEvalEnvironment(
   env: AgentServiceConfigInput = {},
 ): LiveEvalEnvironment {

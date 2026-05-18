@@ -1183,6 +1183,8 @@ function normalizeDenoDocDeclaration(
   name: string,
   declaration: Record<string, unknown>,
 ): DocNode | undefined {
+  if (declaration.declarationKind === "private") return undefined;
+
   const kind = typeof declaration.kind === "string" ? declaration.kind : "";
   if (!kind) return undefined;
 
