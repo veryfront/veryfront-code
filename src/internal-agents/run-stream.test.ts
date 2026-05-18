@@ -18,6 +18,7 @@ describe("internal-agents/run-stream", () => {
         system: "test",
         tools: {
           cancel_job: true,
+          create_file: true,
           web_search: true,
           gmail__list_emails: true,
         },
@@ -39,7 +40,7 @@ describe("internal-agents/run-stream", () => {
       context: [],
       forwardedProps: {
         runtimeOverrides: {
-          allowedTools: ["gmail__list_emails"],
+          allowedTools: ["create_file", "gmail__list_emails"],
           integrationToolDefinitions: [
             {
               name: "gmail__list_emails",

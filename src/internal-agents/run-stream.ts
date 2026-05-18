@@ -91,7 +91,7 @@ function buildMergedTools(
   agent: Agent,
   input: RuntimeRunAgentInput,
   sessionManager: AgentRunSessionManager,
-  allowedRemoteToolNames?: string[],
+  availableForwardedToolNames?: string[],
 ) {
   const injectedTools = Object.fromEntries(
     input.tools.map((tool) => [
@@ -124,7 +124,7 @@ function buildMergedTools(
   const merged: Record<string, Tool | boolean> = {};
   for (const [toolName, entry] of Object.entries(agent.config.tools)) {
     if (entry === true) {
-      if (toolRegistry.get(toolName) || allowedRemoteToolNames?.includes(toolName)) {
+      if (toolRegistry.get(toolName) || availableForwardedToolNames?.includes(toolName)) {
         merged[toolName] = true;
       }
       continue;
@@ -208,11 +208,12 @@ export async function createRuntimeAgentStreamResponse(
 
   const allowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
   const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(input.forwardedProps);
+  const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
   const mergedTools = buildMergedTools(
     agent,
     input,
     deps.sessionManager,
-    allowedRemoteToolNames,
+    availableForwardedToolNames,
   );
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
