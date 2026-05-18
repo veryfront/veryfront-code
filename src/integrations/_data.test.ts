@@ -18,7 +18,7 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
-  it("adds endpoint specs for all 58 tools across the 5 targeted integrations", () => {
+  it("adds endpoint specs for all 62 tools across the 5 targeted integrations", () => {
     const targetedConnectors = [
       "calendar",
       "github",
@@ -41,7 +41,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 58);
+    assertEquals(totalEndpointTools, 62);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -49,7 +49,7 @@ describe("integration endpoint specs", () => {
       ["airtable", 11],
       ["discord", 2],
       ["figma", 4],
-      ["notion", 4],
+      ["notion", 8],
     ]);
 
     for (
@@ -198,6 +198,29 @@ describe("integration endpoint specs", () => {
       jiraGetTransitions.endpoint?.url,
       "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions",
     );
+
+    const notionGetPage = getTool("notion", "get_page");
+    assertEquals(notionGetPage.endpoint?.method, "GET");
+    assertEquals(
+      notionGetPage.endpoint?.url,
+      "https://api.notion.com/v1/pages/{pageId}",
+    );
+    assertEquals(notionGetPage.endpoint?.params?.pageId?.required, true);
+
+    const notionGetDatabase = getTool("notion", "get_database");
+    assertEquals(notionGetDatabase.endpoint?.method, "GET");
+    assertEquals(
+      notionGetDatabase.endpoint?.url,
+      "https://api.notion.com/v1/databases/{databaseId}",
+    );
+
+    const notionAppendBlocks = getTool("notion", "append_blocks");
+    assertEquals(notionAppendBlocks.endpoint?.method, "PATCH");
+    assertEquals(notionAppendBlocks.endpoint?.body?.children?.required, true);
+
+    const notionUpdatePage = getTool("notion", "update_page");
+    assertEquals(notionUpdatePage.endpoint?.method, "PATCH");
+    assertEquals(notionUpdatePage.endpoint?.body?.archived?.type, "boolean");
 
     const confluenceGetPage = getTool("confluence", "get_page");
     assertEquals(
@@ -640,5 +663,34 @@ describe("integration endpoint specs", () => {
       linearUpdateIssue.endpoint?.query ?? "",
       "stateId: $stateId",
     );
+
+    const linearListTeams = getTool("linear", "list_teams");
+    assertStringIncludes(
+      linearListTeams.endpoint?.query ?? "",
+      "teams(first: $first)",
+    );
+
+    const linearListWorkflowStates = getTool("linear", "list_workflow_states");
+    assertStringIncludes(
+      linearListWorkflowStates.endpoint?.query ?? "",
+      "team(id: $teamId)",
+    );
+    assertStringIncludes(
+      linearListWorkflowStates.endpoint?.query ?? "",
+      "states { nodes",
+    );
+
+    const linearListUsers = getTool("linear", "list_users");
+    assertStringIncludes(
+      linearListUsers.endpoint?.query ?? "",
+      "users(first: $first)",
+    );
+
+    const linearAddComment = getTool("linear", "add_comment");
+    assertStringIncludes(
+      linearAddComment.endpoint?.query ?? "",
+      "commentCreate(input: { issueId: $issueId, body: $body })",
+    );
+    assertEquals(linearAddComment.endpoint?.params?.body?.required, true);
   });
 });

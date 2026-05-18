@@ -194,3 +194,44 @@ export function getPageTitle(page: NotionPage): string {
 
   return "Untitled";
 }
+
+export function getDatabase(databaseId: string): Promise<NotionDatabase> {
+  return notionFetch<NotionDatabase>(`/databases/${databaseId}`);
+}
+
+export async function appendBlocks(options: {
+  blockId: string;
+  children: Array<Record<string, unknown>>;
+  after?: string;
+}): Promise<NotionBlock[]> {
+  const response = await notionFetch<NotionResponse<NotionBlock>>(
+    `/blocks/${options.blockId}/children`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        children: options.children,
+        after: options.after,
+      }),
+    },
+  );
+
+  return response.results ?? [];
+}
+
+export function updatePage(options: {
+  pageId: string;
+  properties?: Record<string, unknown>;
+  archived?: boolean;
+  icon?: Record<string, unknown>;
+  cover?: Record<string, unknown>;
+}): Promise<NotionPage> {
+  return notionFetch<NotionPage>(`/pages/${options.pageId}`, {
+    method: "PATCH",
+    body: JSON.stringify({
+      properties: options.properties,
+      archived: options.archived,
+      icon: options.icon,
+      cover: options.cover,
+    }),
+  });
+}
