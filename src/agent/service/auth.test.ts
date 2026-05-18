@@ -227,6 +227,27 @@ describe("agent/agent-service-auth", () => {
     assertEquals(result.token, fixture.token);
   });
 
+  it("uses the built-in AuthProvider for configured public key JWTs", async () => {
+    const fixture = await createRs256JwtFixture({
+      userId: "user-1",
+      email: "user@example.test",
+    });
+    const auth = createHostedServiceAuth({
+      getConfig: () => ({
+        OAUTH_PUBLIC_KEY: fixture.publicKeyPem,
+        NODE_ENV: "production",
+        VERYFRONT_API_URL: "https://api.example.test",
+      }),
+    });
+
+    const result = await auth.verifyJwt(fixture.token);
+
+    assertEquals(result.success, true);
+    if (!result.success) throw new Error("Expected JWT verification to succeed");
+    assertEquals(result.userId, "user-1");
+    assertEquals(result.email, "user@example.test");
+  });
+
   it("uses an AuthProvider to verify configured public key JWTs", async () => {
     const calls: Array<{
       token: string;

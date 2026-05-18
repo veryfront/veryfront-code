@@ -125,10 +125,20 @@ function getProjectAccessTimeoutMs(options: HostedServiceAuthOptions): number {
   return options.projectAccessTimeoutMs ?? 15_000;
 }
 
-function getAuthProvider(
+let defaultAuthProviderPromise: Promise<HostedServiceJwtVerifier> | undefined;
+
+async function getDefaultAuthProvider(): Promise<HostedServiceJwtVerifier> {
+  defaultAuthProviderPromise ??= import("../../../extensions/ext-auth-jwt/src/index.ts")
+    .then(({ createAuthProvider }) => createAuthProvider({}));
+  return await defaultAuthProviderPromise;
+}
+
+async function getAuthProvider(
   options: HostedServiceAuthOptions,
-): HostedServiceJwtVerifier | undefined {
-  return options.authProvider ?? tryResolve<HostedServiceJwtVerifier>("AuthProvider");
+): Promise<HostedServiceJwtVerifier | undefined> {
+  return options.authProvider ??
+    tryResolve<HostedServiceJwtVerifier>("AuthProvider") ??
+    await getDefaultAuthProvider();
 }
 
 export function getHostedServiceTokenFromRequest(request: Request): string | null {
@@ -267,7 +277,7 @@ export function createHostedServiceAuth(
       }
 
       try {
-        const authProvider = getAuthProvider(options);
+        const authProvider = await getAuthProvider(options);
         if (!authProvider) {
           return {
             success: false,
