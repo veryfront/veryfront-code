@@ -96,6 +96,7 @@ export function createGitHubClient(userId: string): {
     perPage?: number;
     type?: "all" | "owner" | "public" | "private" | "member";
   }): Promise<GitHubRepo[]>;
+  getRepo(owner: string, repo: string): Promise<GitHubRepo>;
   listPullRequests(
     owner: string,
     repo: string,
@@ -230,6 +231,10 @@ export function createGitHubClient(userId: string): {
       if (options.type) params.set("type", options.type);
 
       return apiRequest<GitHubRepo[]>(`/user/repos${toQueryString(params)}`);
+    },
+
+    getRepo(owner, repo): Promise<GitHubRepo> {
+      return apiRequest<GitHubRepo>(`/repos/${owner}/${repo}`);
     },
 
     listPullRequests(owner, repo, options = {}): Promise<GitHubPullRequest[]> {

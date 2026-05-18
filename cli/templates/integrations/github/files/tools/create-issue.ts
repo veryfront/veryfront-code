@@ -6,21 +6,25 @@ import { requireUserIdFromContext } from "../../lib/user-id.ts";
 export default tool({
   id: "create-issue",
   description: "Create a new issue in a GitHub repository",
-  inputSchema: defineSchema((v) => v.object({
-    repo: v
-      .string()
-      .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
-    title: v.string().min(1).describe("Issue title"),
-    body: v
-      .string()
-      .optional()
-      .describe("Issue body/description (supports Markdown)"),
-    labels: v.array(v.string()).optional().describe("Labels to add to the issue"),
-    assignees: v
-      .array(v.string())
-      .optional()
-      .describe("GitHub usernames to assign to the issue"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      repo: v
+        .string()
+        .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
+      title: v.string().min(1).describe("Issue title"),
+      body: v
+        .string()
+        .optional()
+        .describe("Issue body/description (supports Markdown)"),
+      labels: v.array(v.string()).optional().describe(
+        "Labels to add to the issue",
+      ),
+      assignees: v
+        .array(v.string())
+        .optional()
+        .describe("GitHub usernames to assign to the issue"),
+    })
+  )(),
   execute: async ({ repo, title, body, labels, assignees }, context) => {
     const userId = requireUserIdFromContext(context);
 

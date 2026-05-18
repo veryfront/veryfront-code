@@ -4,37 +4,40 @@ import { createGitHubClient } from "../../lib/github-client.ts";
 import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 export default tool({
-  id: "get-issue",
-  description: "Get details of a GitHub issue",
+  id: "get-repo",
+  description: "Get details of a GitHub repository",
   inputSchema: defineSchema((v) =>
     v.object({
-      repo: v.string().describe("Repository in format 'owner/repo'"),
-      issueNumber: v.number().int().positive().describe("Issue number"),
+      repo: v
+        .string()
+        .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
     })
   )(),
-  execute: async ({ repo, issueNumber }, context) => {
+  execute: async ({ repo }, context) => {
     const userId = requireUserIdFromContext(context);
     const [owner, repoName] = repo.split("/");
+
     if (!owner || !repoName) {
       return { error: "Invalid repository format. Use 'owner/repo' format." };
     }
 
     try {
       const github = createGitHubClient(userId);
-      const issue = await github.getIssue(owner, repoName, issueNumber);
+      const result = await github.getRepo(owner, repoName);
+
       return {
-        issue: {
-          number: issue.number,
-          title: issue.title,
-          body: issue.body,
-          state: issue.state,
-          url: issue.html_url,
-          author: issue.user.login,
-          labels: issue.labels.map((label: { name: string }) => label.name),
-          assignees: issue.assignees.map((assignee: { login: string }) =>
-            assignee.login
-          ),
-          updatedAt: issue.updated_at,
+        repository: {
+          name: result.name,
+          fullName: result.full_name,
+          description: result.description ?? null,
+          isPrivate: result.private,
+          url: result.html_url,
+          defaultBranch: result.default_branch,
+          language: result.language,
+          stars: result.stargazers_count,
+          forks: result.forks_count,
+          openIssues: result.open_issues_count,
+          updatedAt: result.updated_at,
         },
       };
     } catch (error) {

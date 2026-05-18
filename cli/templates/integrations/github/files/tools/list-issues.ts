@@ -3,26 +3,22 @@ import { defineSchema } from "veryfront/schemas";
 import { createGitHubClient } from "../../lib/github-client.ts";
 import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
-type PullRequest = {
+type GitHubIssueListItem = {
   number: number;
   title: string;
+  body: string | null;
   state: string;
-  draft: boolean;
   html_url: string;
   user: { login: string };
   created_at: string;
   updated_at: string;
-  head: { ref: string };
-  base: { ref: string };
-  additions: number;
-  deletions: number;
-  changed_files: number;
   labels: Array<{ name: string }>;
+  assignees: Array<{ login: string }>;
 };
 
 export default tool({
-  id: "list-prs",
-  description: "List pull requests for a GitHub repository",
+  id: "list-issues",
+  description: "List issues for a GitHub repository",
   inputSchema: defineSchema((v) =>
     v.object({
       repo: v
@@ -31,13 +27,13 @@ export default tool({
       state: v
         .enum(["open", "closed", "all"])
         .default("open")
-        .describe("State of pull requests to list"),
+        .describe("State of issues to list"),
       limit: v
         .number()
         .min(1)
         .max(100)
-        .default(10)
-        .describe("Maximum number of pull requests to return"),
+        .default(20)
+        .describe("Maximum number of issues to return"),
     })
   )(),
   execute: async ({ repo, state, limit }, context) => {
@@ -50,31 +46,27 @@ export default tool({
 
     try {
       const github = createGitHubClient(userId);
-      const prs = await github.listPullRequests(owner, repoName, {
+      const issues = await github.listIssues(owner, repoName, {
         state,
         perPage: limit,
       });
 
       return {
-        pullRequests: prs.map((pr: PullRequest) => ({
-          number: pr.number,
-          title: pr.title,
-          state: pr.state,
-          isDraft: pr.draft,
-          url: pr.html_url,
-          author: pr.user.login,
-          createdAt: pr.created_at,
-          updatedAt: pr.updated_at,
-          sourceBranch: pr.head.ref,
-          targetBranch: pr.base.ref,
-          additions: pr.additions,
-          deletions: pr.deletions,
-          changedFiles: pr.changed_files,
-          labels: pr.labels.map(({ name }) => name),
+        issues: issues.map((issue: GitHubIssueListItem) => ({
+          number: issue.number,
+          title: issue.title,
+          body: issue.body,
+          state: issue.state,
+          url: issue.html_url,
+          author: issue.user.login,
+          labels: issue.labels.map((label) => label.name),
+          assignees: issue.assignees.map((assignee) => assignee.login),
+          createdAt: issue.created_at,
+          updatedAt: issue.updated_at,
         })),
-        count: prs.length,
+        count: issues.length,
         repository: repo,
-        message: `Found ${prs.length} ${state} pull request(s) in ${repo}.`,
+        message: `Found ${issues.length} ${state} issue(s) in ${repo}.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {
