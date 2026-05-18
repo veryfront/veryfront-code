@@ -8,6 +8,15 @@ order: 18
 
 DAG-based multi-step workflows with branching and parallelism.
 
+## Prerequisites
+
+- A Veryfront project with the `workflows/` directory available (see
+  [Quickstart](./quickstart.md)).
+- Any agents or tools referenced by a step are defined in `agents/` or
+  `tools/` (see [Agents](./agents.md) and [Tools](./tools.md)).
+- A provider configured for any agents the workflow uses
+  (see [Providers](./providers.md)).
+
 ## Define a workflow
 
 Create a file in `workflows/`:
@@ -374,6 +383,33 @@ function WorkflowStatus({ runId }: { runId: string }) {
   );
 }
 ```
+
+## Verify it worked
+
+Start the workflow from the start route, then poll the run state until it
+reaches a terminal status:
+
+```bash
+RUN=$(curl -s http://localhost:3000/api/start-content-workflow \
+  -H "Content-Type: application/json" \
+  -d '{"topic":"AI agents"}' | jq -r .runId)
+
+while true; do
+  STATE=$(curl -s "http://localhost:3000/api/workflows/runs/$RUN")
+  STATUS=$(echo "$STATE" | jq -r '.status')
+  echo "status=$STATUS"
+  case "$STATUS" in
+    completed|failed|cancelled) break ;;
+  esac
+  sleep 2
+done
+```
+
+A working run reaches `status: "completed"` and exposes a `nodeStates` map
+with one `completed` entry per step. From the React side, `useWorkflow`
+keeps `status` and `nodeStates` in sync with the same endpoint. If `status`
+ends in `failed`, inspect the matching node entry in `nodeStates` for the
+underlying error.
 
 ## Next
 

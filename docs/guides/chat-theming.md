@@ -10,6 +10,13 @@ Use this guide for visual customization and optional chat UI features.
 
 Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one option at a time, run `veryfront dev`, and verify the chat still sends messages through `/api/ag-ui`.
 
+## Prerequisites
+
+- A working preset Chat UI (see [Chat UI](./chat-ui.md)).
+- For attachments: an upload endpoint you can call from `onAttach`.
+- For model switching: more than one provider configured (see
+  [Providers](./providers.md)).
+
 ## Theme overrides
 
 ```tsx
@@ -64,6 +71,19 @@ Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one opti
 ## Context providers
 
 Use chat context providers when shared state needs to cross component boundaries in a custom UI. Prefer the preset props or composition components unless a nested component needs direct context access.
+
+## Verify it worked
+
+After applying each option:
+
+- **Theme**: open the page and confirm primary and background colors match
+  what you set.
+- **Attachments**: drop a file matching `attachAccept` and confirm `onAttach`
+  fires with the file list.
+- **Models**: switch the model selector and confirm a request body sent on
+  the next message includes the new `model` field.
+- **Sources and actions**: confirm action buttons render under each message
+  and `onFeedback` fires when you click them.
 
 ## Next
 

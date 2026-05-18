@@ -8,6 +8,12 @@ order: 29
 
 An extension should address one capability boundary. Keep the factory small, declare requirements explicitly, and expose contracts through `provides` or `setup()`.
 
+## Prerequisites
+
+- A Veryfront project that imports `veryfront/extensions`.
+- A concrete capability gap to fill: write the extension that fills exactly
+  that gap rather than a general-purpose toolkit.
+
 ## Scaffold an extension
 
 ```bash
@@ -87,6 +93,15 @@ const extension: ExtensionFactory = () => ({
   ],
 });
 ```
+
+## Verify it worked
+
+1. Run `veryfront extension validate extensions/my-cache`. A passing
+   extension prints no errors.
+2. Add the factory to `veryfront.config.ts` and restart `veryfront dev`.
+   The dev log should list the extension under its declared name.
+3. Use the contract from another part of the app and confirm the
+   extension's `provides` value is what gets resolved.
 
 ## Next
 

@@ -14,6 +14,16 @@ Use an application route for normal in-app chat. Use an agent service when the
 agent must run outside the app server or when Veryfront Cloud needs to invoke a
 push runtime directly.
 
+## Prerequisites
+
+- At least one agent in `agents/` that the service should expose (see
+  [Agents](./agents.md)).
+- A deployment target you can run a long-running Node process on.
+- For Veryfront Cloud registration: `VERYFRONT_API_TOKEN`,
+  `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG`, and a publicly
+  reachable `VERYFRONT_AGENT_SERVICE_URL`. See
+  [Configuration](./configuration.md) for the full list.
+
 ## Create a service entrypoint
 
 Create a process entrypoint that starts the default Veryfront Cloud agent
@@ -161,6 +171,23 @@ preparation, or custom infrastructure.
 | `createNodeAgentServiceRuntimeInfrastructure()`    | Create Node config, logging, tracing, and telemetry infrastructure.                  |
 | `prepareVeryfrontCloudAgentServiceChatExecution()` | Prepare Veryfront Cloud chat execution with model, steering, and durable-run wiring. |
 | `createAgentServiceProjectSteering()`              | Bind markdown agent definitions to project steering and skill refresh.               |
+
+## Verify it worked
+
+Start the service entrypoint and call the run route directly. The default
+port is `3001`; override with `PORT` if needed.
+
+```bash
+node service.ts &
+curl -N http://localhost:3001/api/runs \
+  -H "Content-Type: application/json" \
+  -d '{"agentId":"support","messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"ping"}]}]}'
+```
+
+A working service streams AG-UI events back. If Veryfront Cloud registration
+is enabled, the service should also appear in the cloud dashboard's agent
+service list after the first heartbeat
+(`VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS`).
 
 ## Next
 

@@ -10,6 +10,16 @@ OAuth 2.0 helpers with a built-in provider catalog.
 
 Route examples below use the default app router. Veryfront Code also supports mounting equivalent handlers under `pages/api/**` when `router: "pages"` is enabled.
 
+## Prerequisites
+
+- An app session that lets you identify the signed-in user
+  (`getSessionUserId` in the examples below).
+- A token store backing `OAuthService` (Redis, KV, or your own
+  implementation).
+- Provider credentials (client id, client secret, callback URL) set as
+  environment variables. See the matching provider config object in
+  [`veryfront/oauth`](../reference/oauth.md).
+
 ## Quick setup
 
 Two routes handle the full OAuth flow: redirect to the provider and handle the callback. Both handlers require a `getUserId` function that returns the authenticated user's id from your session; unauthenticated requests receive a 401.
@@ -152,6 +162,28 @@ const gmail = new OAuthService(gmailConfig, tokenStore);
 // Pass the signed-in user's id: never a hardcoded constant.
 const response = await gmail.fetch(session.userId, "/users/me/messages");
 ```
+
+## Verify it worked
+
+Sign in as a test user, then open the init route in a browser:
+
+```
+http://localhost:3000/api/auth/github
+```
+
+A working setup:
+
+- Redirects to the provider's consent screen.
+- Returns to your callback route with `?code=...` and `state=...`.
+- Stores tokens for the signed-in user. Confirm via:
+
+  ```ts
+  const tokens = await tokenStore.get(userId, githubConfig.id);
+  console.log(tokens.accessToken ? "ok" : "missing");
+  ```
+
+- Calling `gmail.fetch(userId, ...)` (or any provider service) returns the
+  expected provider response without a `401`.
 
 ## Next
 

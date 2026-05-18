@@ -8,6 +8,13 @@ order: 20
 
 Skills are project-level agent capabilities defined as `SKILL.md` files following the [agentskills.io](https://agentskills.io) specification. They give agents structured instructions, restrict which tools are available, and provide reference files and executable scripts.
 
+## Prerequisites
+
+- A Veryfront project with at least one agent (see [Agents](./agents.md)).
+- The `skills/` directory exists at the project root, or
+  `ai.skills.discovery.paths` is set in
+  [Configuration](./configuration.md).
+
 ## Quick start
 
 Create a skill directory with a `SKILL.md` file:
@@ -134,6 +141,17 @@ veryfront skills create my-skill
 # Validate a skill
 veryfront skills validate skills/my-skill
 ```
+
+## Verify it worked
+
+1. Run `veryfront skills validate skills/my-skill`. A passing skill prints
+   no errors and exits with status `0`.
+2. Restart `veryfront dev`. The dev log should list each registered skill
+   under its directory name.
+3. Send a message that should trigger the skill (for example, a code-review
+   skill should engage when the message asks to "review this diff"). The
+   AG-UI response should reference the skill's instructions or call only
+   the tools listed in `allowed_tools`.
 
 ## Next
 

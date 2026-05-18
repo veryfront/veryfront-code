@@ -10,6 +10,13 @@ Expose tools, prompts, and resources over Model Context Protocol.
 
 This guide covers the application-facing MCP server exposed by `veryfront/mcp`. It is separate from the internal AG-UI transport and signed control-plane run flows used by Veryfront Studio.
 
+## Prerequisites
+
+- A Veryfront project with tools, prompts, or resources you want to expose
+  (see [Tools](./tools.md)).
+- A way to mint bearer tokens for MCP clients (a static `MCP_TOKEN` env var
+  is fine in development).
+
 ## Setup
 
 ```ts
@@ -153,6 +160,21 @@ registerTool(
 This guide is about the application-facing MCP server from `veryfront/mcp`.
 
 It is not the same surface as the CLI development server started with `veryfront mcp`, which exposes Veryfront development/runtime tools rather than your app's MCP route.
+
+## Verify it worked
+
+Use any MCP-aware client (Claude Desktop, an MCP CLI, or `curl`) to call the
+`tools/list` method:
+
+```bash
+curl -X POST http://localhost:3000/api/mcp \
+  -H "Authorization: Bearer $MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+```
+
+A working server returns a JSON-RPC response that lists every registered
+tool. Calling without the bearer token should return `401 Unauthorized`.
 
 ## Next
 

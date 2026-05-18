@@ -10,6 +10,13 @@ Server data, static generation, and client-side fetching.
 
 Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
 
+## Prerequisites
+
+- A project with at least one page (see
+  [Pages and routing](./pages-and-routing.md)).
+- A data source you can call from server code, build-time scripts, or the
+  browser (REST API, database, or in-memory data).
+
 ## Server data
 
 `getServerData` runs on every request. Use it when data depends on the request (auth, query params, cookies):
@@ -109,6 +116,17 @@ export default function Search() {
   return <ul>{results.map((r) => <li key={r.id}>{r.title}</li>)}</ul>;
 }
 ```
+
+## Verify it worked
+
+- For `getServerData`, hit the page with `curl http://localhost:3000/<path>`
+  and confirm the response contains the value you returned in `props`.
+- For `getStaticData`, run `veryfront build` and inspect the generated HTML
+  for the page. The HTML should contain the static value rather than a
+  client-side fetch loop.
+- For client-side fetching, open the browser dev tools network tab. The
+  request should fire after the page paints and the rendered output should
+  match the response.
 
 ## Next
 

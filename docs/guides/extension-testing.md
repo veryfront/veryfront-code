@@ -8,6 +8,12 @@ order: 31
 
 Extension tests should prove that the factory returns a valid extension and that provided contracts work through the extension loader.
 
+## Prerequisites
+
+- An extension factory under test (see
+  [Extension authoring](./extension-authoring.md)).
+- `deno` available on your PATH.
+
 ## Factory test
 
 ```ts
@@ -68,6 +74,13 @@ describe("my-cache contract", () => {
 ```bash
 deno test --no-check --allow-all extensions/my-cache/src/
 ```
+
+## Verify it worked
+
+A working test suite ends with `0 failures` and prints a successful count
+for both the factory test and the contract test. If `tryResolve` returns
+`undefined`, check that the extension's `provides` block uses the same
+contract name (`"CacheStore"`) the consumer requests.
 
 ## Next
 

@@ -10,6 +10,12 @@ Use `Chat` when you want a complete chat interface with one component. Use this 
 
 Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
 
+## Prerequisites
+
+- A Veryfront project with the `agents/` directory available (see
+  [Quickstart](./quickstart.md)).
+- A configured provider (see [Providers](./providers.md)).
+
 ## Quick setup
 
 In an app-owned route, create the agent and route below. In a Veryfront-hosted
@@ -96,6 +102,20 @@ Pair this route with the same `useChat({ api: "/api/ag-ui" })` client setup. Ver
   showMessageActions
 />;
 ```
+
+## Verify it worked
+
+Run `veryfront dev` and open the page that renders `Chat`. Type a message
+and submit:
+
+- The composer should clear and a placeholder assistant message should
+  appear with a typing indicator.
+- Tokens should stream in. The final message should be a non-empty assistant
+  reply.
+- If you set `suggestions`, clicking a suggestion should populate the input.
+
+If the assistant response is empty, check the dev-server log for provider or
+agent errors and confirm the AG-UI route is mounted at `/api/ag-ui`.
 
 ## Next
 

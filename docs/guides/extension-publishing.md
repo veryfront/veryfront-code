@@ -8,6 +8,14 @@ order: 32
 
 Publish an extension when it should be reused across projects or installed as a first-party or third-party package.
 
+## Prerequisites
+
+- A passing extension test suite (see
+  [Extension testing](./extension-testing.md)).
+- A publish target: an npm scope, a JSR scope, or both.
+- Authentication for the publish target (`npm login` or `deno publish` JSR
+  credentials).
+
 ## Package checklist
 
 1. Export the extension factory as the default export.
@@ -28,6 +36,16 @@ deno add @myorg/ext-custom-cache
 ## Versioning
 
 Use semver for package releases. Treat contract shape changes as breaking changes when downstream projects compile against the old contract.
+
+## Verify it worked
+
+After publishing:
+
+1. Install the released package in a fresh test project.
+2. Add the factory to `veryfront.config.ts` and run `veryfront dev`.
+3. The dev log should list the extension under the published name. Calling
+   the contract from app code should resolve through the published package
+   rather than any local copy.
 
 ## Next
 

@@ -10,6 +10,12 @@ File-based routing, layouts, dynamic routes, and MDX pages.
 
 Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
 
+## Prerequisites
+
+- A project created with `veryfront init` (see [Quickstart](./quickstart.md)).
+- The dev server is the easiest way to test routes:
+  `veryfront dev`.
+
 ## Router equivalents
 
 Veryfront supports both router styles. The main difference is file shape:
@@ -193,6 +199,20 @@ export default function LoginForm() {
   return <form onSubmit={handleSubmit}>...</form>;
 }
 ```
+
+## Verify it worked
+
+Start the dev server and request each page you added:
+
+```bash
+veryfront dev
+curl -I http://localhost:3000/
+curl -I http://localhost:3000/about
+curl -I http://localhost:3000/blog/hello
+```
+
+Each request should return `HTTP/1.1 200 OK`. Visit the same URLs in a browser
+to confirm the React component renders without console errors.
 
 ## Next
 

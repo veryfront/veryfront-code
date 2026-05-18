@@ -8,6 +8,14 @@ order: 25
 
 Veryfront integrations let AI agents use third-party services on behalf of users. Developers enable integrations in `veryfront.config.ts`, and the runtime uses the built-in connector catalog plus remote integration helpers to fetch tool definitions and execute calls through the configured API layer.
 
+## Prerequisites
+
+- A Veryfront project with a configured agent (see [Agents](./agents.md)).
+- Provider credentials for each integration you enable: either a Veryfront
+  Cloud token plus a project reference, or per-user OAuth credentials
+  (see [OAuth](./oauth.md)).
+- `veryfront.config.ts` is editable in your repo.
+
 ## How it works
 
 ```
@@ -312,6 +320,19 @@ These integrations use API keys set by the developer in their project environmen
 ---
 
 The built-in connector catalog spans OAuth-backed and API-key-backed integrations. Treat the tables above as representative current coverage rather than a hard-coded count contract.
+
+## Verify it worked
+
+After enabling an integration:
+
+1. Restart `veryfront dev`. The dev log lists the integration tools that
+   were registered.
+2. From an agent that includes the integration tools, send a message that
+   exercises one tool. The AG-UI stream should include a tool call event
+   with the integration's tool id and a non-error result.
+3. For per-user OAuth integrations, confirm the user has authorised the
+   provider first (see [OAuth](./oauth.md)). Calls fail with `401` if the
+   user has no token.
 
 ## Next
 

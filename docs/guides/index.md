@@ -1,78 +1,87 @@
 ---
 title: "Guides"
-description: "Build Veryfront applications with pages, routing, AI agents, workflows, integrations, and deployment."
+description: "Goal-oriented tutorials for building Veryfront apps, agents, workflows, and integrations with the Veryfront library and CLI."
 order: 0
 ---
 
 # Guides
 
-Use these guides to build Veryfront applications, from project setup through
-runtime capabilities and deployment.
+Each guide helps you complete one goal with the Veryfront library or CLI.
+Pick the guide that matches what you want to do next.
 
-## Getting started
+If you are new, start at [Get started](#get-started) and walk through the
+guides in order. If you already have a project, jump to the section that
+matches your goal.
 
-| Guide                                       | Description                                                                 |
+## Get started
+
+| Guide                                       | What you will do                                                              |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Quickstart](./quickstart.md)               | Install Veryfront, create a project, and run the dev server.                  |
+| [Project structure](./project-structure.md) | Learn the file conventions and how auto-discovery wires your project up.      |
+| [Configuration](./configuration.md)         | Configure `veryfront.config.ts`, environment variables, and runtime settings. |
+
+## Build pages and APIs
+
+| Guide                                       | What you will do                                                            |
 | ------------------------------------------- | --------------------------------------------------------------------------- |
-| [Quickstart](./quickstart.md)               | Install, create a project, and run the dev server in under 2 minutes.       |
-| [Project structure](./project-structure.md) | File conventions, directory layout, and how auto-discovery works.           |
-| [Configuration](./configuration.md)         | `veryfront.config.ts` options, environment variables, and runtime settings. |
+| [Pages and routing](./pages-and-routing.md) | Add file-based pages, layouts, dynamic routes, and MDX content.             |
+| [Data fetching](./data-fetching.md)         | Load data on the server, prerender static pages, and fetch from the client. |
+| [API routes](./api-routes.md)               | Build HTTP handlers with request parsing and streaming responses.           |
+| [Middleware](./middleware.md)               | Add CORS, rate limiting, logging, and custom middleware pipelines.          |
+| [Head and SEO](./head-and-seo.md)           | Set page metadata, Open Graph tags, and structured data.                    |
 
-## Core app
+## Add an AI agent
 
-| Guide                                       | Description                                                    |
-| ------------------------------------------- | -------------------------------------------------------------- |
-| [Pages and routing](./pages-and-routing.md) | File-based routing, layouts, dynamic routes, and MDX pages.    |
-| [Data fetching](./data-fetching.md)         | Server data, static generation, and client-side fetching.      |
-| [API routes](./api-routes.md)               | HTTP handlers, request parsing, and streaming responses.       |
-| [Middleware](./middleware.md)               | CORS, rate limiting, logging, and custom middleware pipelines. |
-| [Head and SEO](./head-and-seo.md)           | Declarative metadata, Open Graph, and structured data.         |
+| Guide                                               | What you will do                                                                |
+| --------------------------------------------------- | ------------------------------------------------------------------------------- |
+| [Providers](./providers.md)                         | Pick a model provider for local inference, Veryfront Cloud, or a direct vendor. |
+| [Agents](./agents.md)                               | Define an agent with a system prompt, tools, and memory.                        |
+| [Agent service runtime](./agent-service-runtime.md) | Run agents as separately deployed services.                                     |
+| [Tools](./tools.md)                                 | Define typed tools that agents can call.                                        |
+| [Memory and streaming](./memory-and-streaming.md)   | Add conversation memory and stream model output to the client.                  |
 
-## AI runtime
+## Build a chat UI
 
-| Guide                                               | Description                                                                       |
-| --------------------------------------------------- | --------------------------------------------------------------------------------- |
-| [Providers](./providers.md)                         | Unified model interface for local, Veryfront Cloud, and direct provider runtimes. |
-| [Agents](./agents.md)                               | Create an AI agent with a system prompt, tools, and memory.                       |
-| [Agent service runtime](./agent-service-runtime.md) | Run Veryfront agents as separately deployed services.                             |
-| [Tools](./tools.md)                                 | Define tools with Zod schemas that agents can call.                               |
-| [Memory and streaming](./memory-and-streaming.md)   | Conversation memory strategies and streaming responses.                           |
-| [Chat UI](./chat-ui.md)                             | Use the preset chat component with one hook and one API route.                    |
-| [Chat composition](./chat-composition.md)           | Build custom chat layouts with composition components.                            |
-| [Chat hooks](./chat-hooks.md)                       | Use headless chat, agent, completion, voice, and thread hooks.                    |
-| [Chat theming](./chat-theming.md)                   | Customize chat features, attachments, sources, models, and visual styling.        |
+| Guide                                     | What you will do                                                            |
+| ----------------------------------------- | --------------------------------------------------------------------------- |
+| [Chat UI](./chat-ui.md)                   | Drop in the preset chat component with one hook and one API route.          |
+| [Chat composition](./chat-composition.md) | Build a custom chat layout with the composition components.                 |
+| [Chat hooks](./chat-hooks.md)             | Drive chat from headless hooks: chat, agent, completion, voice, and thread. |
+| [Chat theming](./chat-theming.md)         | Theme chat features, attachments, sources, models, and visuals.             |
 
-## Orchestration
+## Orchestrate work across agents and time
 
-| Guide                           | Description                                                                             |
-| ------------------------------- | --------------------------------------------------------------------------------------- |
-| [Workflows](./workflows.md)     | DAG-based multi-step workflows with branching and parallelism.                          |
-| [Multi-agent](./multi-agent.md) | Agent composition, delegation, and agent-as-tool patterns.                              |
-| [Skills](./skills.md)           | Project-level agent capabilities as SKILL.md files with tool restrictions.              |
-| [Jobs and cron jobs](./jobs.md) | Create one-off jobs, schedule cron jobs, inspect events, and work with batch summaries. |
-| [Tasks](./tasks.md)             | Define background task functions that run locally or as cloud jobs.                     |
+| Guide                           | What you will do                                                        |
+| ------------------------------- | ----------------------------------------------------------------------- |
+| [Workflows](./workflows.md)     | Define a DAG-based workflow with branches, retries, and parallel steps. |
+| [Multi-agent](./multi-agent.md) | Compose agents with delegation and agent-as-tool patterns.              |
+| [Skills](./skills.md)           | Add project-level skills from `SKILL.md` files with tool restrictions.  |
+| [Jobs](./jobs.md)               | Run one-off jobs, schedule cron jobs, and inspect batch summaries.      |
+| [Tasks](./tasks.md)             | Write background task functions that run locally or as cloud jobs.      |
 
-## Protocols and integrations
+## Connect external systems
 
-| Guide                                                         | Description                                                                         |
-| ------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| [MCP server](./mcp-server.md)                                 | Expose tools, prompts, and resources over Model Context Protocol.                   |
-| [OAuth](./oauth.md)                                           | OAuth 2.0 helpers with a built-in provider catalog.                                 |
-| [Integrations](./integrations.md)                             | Config-driven integration tools with OAuth, token management, and API execution.    |
-| [Sandbox](./sandbox.md)                                       | Run isolated commands and file operations in ephemeral sandbox sessions.            |
-| [CLI-first knowledge ingestion](./cli-knowledge-ingestion.md) | Turn uploads and local documents into project knowledge files with one CLI command. |
+| Guide                                                   | What you will do                                                                      |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [MCP server](./mcp-server.md)                           | Expose tools, prompts, and resources over Model Context Protocol.                     |
+| [OAuth](./oauth.md)                                     | Sign users in with OAuth 2.0 and the built-in provider catalog.                       |
+| [Integrations](./integrations.md)                       | Wire config-driven integration tools with OAuth, token management, and API execution. |
+| [Sandbox](./sandbox.md)                                 | Run isolated commands and file operations in an ephemeral sandbox session.            |
+| [CLI knowledge ingestion](./cli-knowledge-ingestion.md) | Turn uploads and local documents into project knowledge files from the CLI.           |
 
-## Extensibility
+## Extend Veryfront
 
-| Guide                                             | Description                                                      |
-| ------------------------------------------------- | ---------------------------------------------------------------- |
-| [Extensions](./extensions.md)                     | Understand how extensions add focused capabilities to Veryfront. |
-| [Extension authoring](./extension-authoring.md)   | Write focused extension factories, contracts, and capabilities.  |
-| [Extension lifecycle](./extension-lifecycle.md)   | Understand extension discovery, ordering, setup, and teardown.   |
-| [Extension testing](./extension-testing.md)       | Test extension factories and contract implementations.           |
-| [Extension publishing](./extension-publishing.md) | Package and publish reusable extensions.                         |
+| Guide                                             | What you will do                                                           |
+| ------------------------------------------------- | -------------------------------------------------------------------------- |
+| [Extensions](./extensions.md)                     | Understand how extensions add focused capabilities to a Veryfront project. |
+| [Extension authoring](./extension-authoring.md)   | Write a focused extension factory, contract, and capability.               |
+| [Extension lifecycle](./extension-lifecycle.md)   | Trace extension discovery, ordering, setup, and teardown.                  |
+| [Extension testing](./extension-testing.md)       | Test an extension factory and the contracts it implements.                 |
+| [Extension publishing](./extension-publishing.md) | Package and publish a reusable extension.                                  |
 
-## Production
+## Ship to production
 
-| Guide                                    | Description                                               |
-| ---------------------------------------- | --------------------------------------------------------- |
-| [Building and deploying](./deploying.md) | Production builds, static export, and deployment targets. |
+| Guide                                    | What you will do                                                |
+| ---------------------------------------- | --------------------------------------------------------------- |
+| [Building and deploying](./deploying.md) | Build for production, configure static export, and pick a host. |

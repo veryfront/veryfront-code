@@ -10,6 +10,11 @@ Declarative metadata, Open Graph, and structured data.
 
 Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
 
+## Prerequisites
+
+- At least one page in your project (see
+  [Pages and routing](./pages-and-routing.md)).
+
 ## Basic metadata
 
 ```tsx
@@ -148,9 +153,22 @@ Content here.
 
 The framework automatically injects `title` and `description` from frontmatter into the `<head>`.
 
+## Verify it worked
+
+Open the page in the browser and inspect the document `<head>`. Confirm:
+
+- `<title>` matches what you set.
+- The `description`, `og:*`, and `twitter:*` meta tags are present and have
+  the expected values.
+- For social previews, use the
+  [Facebook sharing debugger](https://developers.facebook.com/tools/debug/)
+  and [Twitter card validator](https://cards-dev.twitter.com/validator) once
+  the site is deployed.
+
 ## Next
 
-This is the last guide. Explore the [API reference](../reference/index.md) for detailed module documentation.
+Continue with [Providers](./providers.md) to wire up an LLM provider, or jump
+to the [API reference](../reference/index.md) for module details.
 
 ## Related
 

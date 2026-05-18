@@ -11,6 +11,11 @@ Agent composition, delegation, and agent-as-tool patterns.
 Each agent can omit `model` and inherit the runtime default, or set an
 explicit provider/model override when you need one.
 
+## Prerequisites
+
+- At least two agents in `agents/` (see [Agents](./agents.md)).
+- A configured provider (see [Providers](./providers.md)).
+
 ## Agent-as-tool
 
 Convert an agent into a tool that another agent can call:
@@ -129,6 +134,26 @@ import { getAgent, getAllAgentIds } from "veryfront/agent";
 const ids = getAllAgentIds(); // ["assistant", "researcher", "writer"]
 const agent = getAgent("writer"); // Get a specific agent
 ```
+
+## Verify it worked
+
+After wiring delegation, run a request against the orchestrator and watch
+the dev-server logs:
+
+```bash
+curl -N http://localhost:3000/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Research and summarise the latest npm release."}]}]}'
+```
+
+A working delegation:
+
+- Logs show the orchestrator calling each sub-agent in order.
+- The final AG-UI response contains output that could only come from the
+  sub-agents (research output then writer output, for example).
+
+For workflows, hit the workflow start route from
+[Workflows](./workflows.md) and follow `runId` events instead.
 
 ## Next
 

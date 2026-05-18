@@ -10,6 +10,13 @@ Define tools with schema-backed inputs that agents can call.
 
 Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
 
+## Prerequisites
+
+- A Veryfront project running locally (see [Quickstart](./quickstart.md)).
+- An agent that will call the tool, or an API route that invokes the tool
+  directly (see [Agents](./agents.md) and [API routes](./api-routes.md)).
+- `zod` is available in the project (it is bundled with `veryfront`).
+
 ## Define a tool
 
 Create a file in `tools/`:
@@ -181,11 +188,41 @@ export default agent({
     calculate: tool({
       description: "Evaluate a math expression",
       inputSchema: z.object({ expression: z.string() }),
-      execute: async ({ expression }) => ({ result: eval(expression) }),
+      execute: async ({ expression }) => ({
+        result: evaluateMathExpression(expression),
+      }),
     }),
   },
 });
 ```
+
+`evaluateMathExpression` is your own validated math evaluator. Avoid passing
+free-form input into `eval()` or `Function()`.
+
+## Verify it worked
+
+Restart `veryfront dev` after creating the tool file. To run the tool by
+itself, expose a small debug API route:
+
+```ts
+// app/api/debug/tools/route.ts
+import { toolRegistry } from "veryfront/tool";
+
+export async function POST(request: Request) {
+  const { name, input } = await request.json();
+  const result = await toolRegistry.get(name)?.execute(input);
+  return Response.json(result);
+}
+```
+
+```bash
+curl -X POST http://localhost:3000/api/debug/tools \
+  -H "Content-Type: application/json" \
+  -d '{"name":"get-weather","input":{"city":"Berlin"}}'
+```
+
+A working tool returns the JSON your `execute` function produced. Remove the
+debug route before deploying.
 
 ## Next
 
