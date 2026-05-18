@@ -41,7 +41,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 55);
+    assertEquals(totalEndpointTools, 58);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -531,6 +531,21 @@ describe("integration endpoint specs", () => {
   });
 
   it("keeps github list-issues on GraphQL so pull requests stay separate", () => {
+    const githubGetIssue = getTool("github", "get_issue");
+    assertEquals(githubGetIssue.endpoint?.method, "GET");
+    assertEquals(githubGetIssue.endpoint?.params?.issue_number?.required, true);
+
+    const githubUpdateIssue = getTool("github", "update_issue");
+    assertEquals(githubUpdateIssue.endpoint?.method, "PATCH");
+    assertEquals(
+      githubUpdateIssue.endpoint?.body?.state?.description,
+      "Issue state: open or closed",
+    );
+
+    const githubAddIssueComment = getTool("github", "add_issue_comment");
+    assertEquals(githubAddIssueComment.endpoint?.method, "POST");
+    assertEquals(githubAddIssueComment.endpoint?.body?.body?.required, true);
+
     const tool = getTool("github", "list_issues");
 
     assertEquals(tool.endpoint?.type, "graphql");
