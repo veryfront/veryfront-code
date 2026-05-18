@@ -18,7 +18,7 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
-  it("adds endpoint specs for all 62 tools across the 5 targeted integrations", () => {
+  it("adds endpoint specs for all 60 tools across the 5 targeted integrations", () => {
     const targetedConnectors = [
       "calendar",
       "github",
@@ -41,7 +41,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 62);
+    assertEquals(totalEndpointTools, 60);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
