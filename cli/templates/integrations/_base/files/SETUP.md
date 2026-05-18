@@ -156,7 +156,7 @@ ATLASSIAN_CLOUD_ID=your-cloud-id
 2. Click **Create New App** > **From scratch**
 3. Go to **OAuth & Permissions**:
    - Add redirect URL: `http://localhost:3000/api/auth/slack/callback`
-   - Add scopes: `channels:read`, `chat:write`, `users:read`, `im:write`
+   - Add scopes: `channels:history`, `channels:read`, `chat:write`, `groups:history`, `groups:read`, `im:history`, `im:read`, `mpim:history`, `mpim:read`, `users:read`
 4. **Install to Workspace**
 
 ```env
