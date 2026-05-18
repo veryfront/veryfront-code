@@ -253,5 +253,5 @@ HTTP method handler is not exported.
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md): agent API reference
-- [`veryfront/middleware`](../reference/middleware.md): middleware API reference
+- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
+- [`veryfront/middleware`](../reference/veryfront/middleware.md): middleware API reference

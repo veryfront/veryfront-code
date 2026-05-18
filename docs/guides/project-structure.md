@@ -193,4 +193,4 @@ you defined.
 ## Related
 
 - [Configuration](./configuration.md): `veryfront.config.ts` options
-- [`veryfront` (root)](../reference/root.md): core framework API reference
+- [`veryfront` (root)](../reference/veryfront/index.md): core framework API reference

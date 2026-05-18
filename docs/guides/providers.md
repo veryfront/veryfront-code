@@ -184,4 +184,4 @@ whether the call used cloud, server-local, or browser inference.
 
 ## Related
 
-- [`veryfront/provider`](../reference/provider.md): provider API reference
+- [`veryfront/provider`](../reference/veryfront/provider.md): provider API reference

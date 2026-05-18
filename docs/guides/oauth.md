@@ -18,7 +18,7 @@ Route examples below use the default app router. Veryfront Code also supports mo
   implementation).
 - Provider credentials (client id, client secret, callback URL) set as
   environment variables. See the matching provider config object in
-  [`veryfront/oauth`](../reference/oauth.md).
+  [`veryfront/oauth`](../reference/veryfront/oauth.md).
 
 ## Quick setup
 
@@ -192,4 +192,4 @@ A working setup:
 
 ## Related
 
-- [`veryfront/oauth`](../reference/oauth.md): OAuth API reference
+- [`veryfront/oauth`](../reference/veryfront/oauth.md): OAuth API reference

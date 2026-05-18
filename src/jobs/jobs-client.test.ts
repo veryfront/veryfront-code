@@ -73,7 +73,6 @@ function makeJob(overrides: Record<string, unknown> = {}) {
     status: "submitted",
     target: "task:knowledge-ingest",
     config: {
-      file_count: 1,
       upload_ids: ["33333333-3333-4333-8333-333333333333"],
     },
     context_id: null,
@@ -115,7 +114,6 @@ function makeCronJob(overrides: Record<string, unknown> = {}) {
     schedule: "0 2 * * *",
     timezone: "Europe/Stockholm",
     config: {
-      file_count: 1,
       upload_ids: ["33333333-3333-4333-8333-333333333333"],
     },
     timeout_seconds: 300,
@@ -178,7 +176,6 @@ describe("VeryfrontJobsClient", () => {
       timeoutSeconds: 900,
       backoffLimit: 0,
       config: {
-        file_count: 1,
         upload_ids: ["33333333-3333-4333-8333-333333333333"],
       },
     });
@@ -194,8 +191,76 @@ describe("VeryfrontJobsClient", () => {
       timeout_seconds: 900,
       backoff_limit: 0,
       config: {
-        file_count: 1,
         upload_ids: ["33333333-3333-4333-8333-333333333333"],
+      },
+    });
+  });
+
+  it("creates knowledge ingest jobs by upload ids", async () => {
+    mockFetch([jsonResponse(makeJob())]);
+
+    const client = new VeryfrontJobsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.knowledge.ingestByUploadIds({
+      uploadIds: ["33333333-3333-4333-8333-333333333333"],
+      batchId: "66666666-6666-4666-8666-666666666666",
+    });
+
+    assertEquals(jsonBody(0), {
+      name: "Ingest knowledge",
+      target: "task:knowledge-ingest",
+      batch_id: "66666666-6666-4666-8666-666666666666",
+      config: {
+        upload_ids: ["33333333-3333-4333-8333-333333333333"],
+      },
+    });
+  });
+
+  it("creates knowledge ingest jobs by upload paths", async () => {
+    mockFetch([jsonResponse(makeJob())]);
+
+    const client = new VeryfrontJobsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.knowledge.ingestByUploadPaths({
+      uploadPaths: ["uploads/contracts/q1.pdf"],
+    });
+
+    assertEquals(jsonBody(0), {
+      name: "Ingest knowledge",
+      target: "task:knowledge-ingest",
+      config: {
+        paths: ["uploads/contracts/q1.pdf"],
+      },
+    });
+  });
+
+  it("creates knowledge ingest jobs by upload prefix", async () => {
+    mockFetch([jsonResponse(makeJob())]);
+
+    const client = new VeryfrontJobsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.knowledge.ingestByUploadPrefix({
+      uploadPrefix: "uploads/contracts",
+      name: "Ingest contracts",
+    });
+
+    assertEquals(jsonBody(0), {
+      name: "Ingest contracts",
+      target: "task:knowledge-ingest",
+      config: {
+        path_prefix: "uploads/contracts",
       },
     });
   });
@@ -639,7 +704,7 @@ describe("VeryfrontJobsClient", () => {
       timezone: "Europe/Stockholm",
       concurrencyPolicy: "Forbid",
       config: {
-        file_count: 1,
+        paths: ["uploads/contracts/q1.pdf"],
       },
     });
     const listed = await client.cron.list({ status: "active" });

@@ -115,7 +115,7 @@ any source file should hot-reload within a second.
 ## Next
 
 - [Project structure](./project-structure.md): understand the full directory layout
-- [API reference](../reference/index.md): complete API documentation
+- [API reference](../reference/README.md): complete API documentation
 
 ## Related
 

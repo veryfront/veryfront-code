@@ -259,4 +259,4 @@ troubleshooting section above.
 
 ## Related
 
-- [`veryfront/cli`](../reference/cli.md): CLI entry point reference
+- [`veryfront/cli`](../reference/veryfront/cli.md): CLI entry point reference

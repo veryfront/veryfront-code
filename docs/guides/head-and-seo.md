@@ -168,10 +168,10 @@ Open the page in the browser and inspect the document `<head>`. Confirm:
 ## Next
 
 Continue with [Providers](./providers.md) to wire up an LLM provider, or jump
-to the [API reference](../reference/index.md) for module details.
+to the [API reference](../reference/README.md) for module details.
 
 ## Related
 
-- [`veryfront/head`](../reference/head.md): Head component API reference
-- [`veryfront/fonts`](../reference/fonts.md): fonts API reference
-- [`veryfront/context`](../reference/context.md): access frontmatter data
+- [`veryfront/head`](../reference/veryfront/head.md): Head component API reference
+- [`veryfront/fonts`](../reference/veryfront/fonts.md): fonts API reference
+- [`veryfront/context`](../reference/veryfront/context.md): access frontmatter data

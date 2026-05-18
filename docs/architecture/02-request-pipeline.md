@@ -73,16 +73,28 @@ flowchart TD
 
 ## Boundaries
 
-- Rendering details belong in [rendering runtime](./12-rendering-runtime.md).
-- MCP dispatch belongs in [MCP runtime](./07-mcp-runtime.md).
-- AG-UI stream encoding belongs in [AG-UI transport](./10-ag-ui-transport.md).
+- Rendering details belong in [rendering runtime](./03-rendering-runtime.md).
+- MCP dispatch belongs in [MCP runtime](./10-mcp-runtime.md).
+- AG-UI stream encoding belongs in [AG-UI transport](./06-ag-ui-transport.md).
 - `/api/runs*` run-control handlers are sibling runtime APIs, not child routes
   under `/api/ag-ui`.
 - Control-plane signature handling belongs in
-  [control-plane channels](./09-control-plane-channels.md).
+  [control-plane channels](./11-control-plane-channels.md).
 
 ## Change checks
 
 - Add handler tests for any route classification or response shape change.
 - Keep dev-only endpoints out of production request paths.
 - Keep public app routes, protocol routes, and control-plane routes separate.
+
+## Related guides
+
+- [API routes](../guides/api-routes.md)
+- [Middleware](../guides/middleware.md)
+- [Pages and routing](../guides/pages-and-routing.md)
+
+## Related reference
+
+- [`veryfront/middleware`](../reference/veryfront/middleware.md)
+- [`veryfront/router`](../reference/veryfront/router.md)
+- [`veryfront/server`](../reference/veryfront/server.md)

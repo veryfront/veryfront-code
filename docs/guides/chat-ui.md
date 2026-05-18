@@ -125,5 +125,5 @@ agent errors and confirm the AG-UI route is mounted at `/api/ag-ui`.
 
 ## Related
 
-- [`veryfront/chat`](../reference/chat.md): chat reference
-- [`veryfront/agent`](../reference/agent.md): agent API reference
+- [`veryfront/chat`](../reference/veryfront/chat.md): chat reference
+- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference

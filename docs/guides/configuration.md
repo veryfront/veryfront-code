@@ -292,4 +292,4 @@ it once you have confirmed the value resolves.
 
 ## Related
 
-- [`veryfront` (root)](../reference/root.md): `defineConfig`, `getConfig`
+- [`veryfront` (root)](../reference/veryfront/index.md): `defineConfig`, `getConfig`

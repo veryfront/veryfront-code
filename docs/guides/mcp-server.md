@@ -183,7 +183,7 @@ tool. Calling without the bearer token should return `401 Unauthorized`.
 
 ## Related
 
-- [`veryfront/mcp`](../reference/mcp.md): MCP server API reference
-- [`veryfront/tool`](../reference/tool.md): tool API reference
-- [`veryfront/prompt`](../reference/prompt.md): prompt API reference
-- [`veryfront/resource`](../reference/resource.md): resource API reference
+- [`veryfront/mcp`](../reference/veryfront/mcp.md): MCP server API reference
+- [`veryfront/tool`](../reference/veryfront/tool.md): tool API reference
+- [`veryfront/prompt`](../reference/veryfront/prompt.md): prompt API reference
+- [`veryfront/resource`](../reference/veryfront/resource.md): resource API reference

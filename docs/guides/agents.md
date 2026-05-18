@@ -236,5 +236,5 @@ check the dev-server log for the agent registration or provider error.
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md): agent API reference
-- [Agent service runtime reference](../reference/agent-service-runtime.md): service runtime API reference
+- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
+- [Agent service runtime reference](../reference/veryfront/agent.md): service runtime API reference
