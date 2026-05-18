@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { join } from "#veryfront/compat/path/index.ts";
-import { cwd, getEnv } from "#veryfront/platform/compat/process.ts";
+import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { isNode } from "#veryfront/platform/compat/runtime.ts";
 
 const cacheStorage = new AsyncLocalStorage<string>();
@@ -15,9 +15,9 @@ export function getCacheDirFromContext(): string | undefined {
 }
 
 function getDefaultCacheBaseDir(): string {
-  const home = getEnv("HOME");
-  const isProduction = getEnv("NODE_ENV") === "production" ||
-    getEnv("VERYFRONT_MODE") === "production";
+  const home = getHostEnv("HOME");
+  const isProduction = getHostEnv("NODE_ENV") === "production" ||
+    getHostEnv("VERYFRONT_MODE") === "production";
 
   if (home && isProduction) {
     return join(home, ".cache", "veryfront");
@@ -29,7 +29,7 @@ function getDefaultCacheBaseDir(): string {
 export function getCacheBaseDir(): string {
   return (
     getCacheDirFromContext() ??
-      getEnv("VERYFRONT_CACHE_DIR") ?? getEnv("VF_CACHE_DIR") ??
+      getHostEnv("VERYFRONT_CACHE_DIR") ?? getHostEnv("VF_CACHE_DIR") ??
       getDefaultCacheBaseDir()
   );
 }
@@ -46,7 +46,7 @@ export function getHttpBundleCacheDir(): string {
  * Ensure cached ESM modules can resolve bare specifiers (e.g. `import 'react'`)
  * when running on Node.js.
  *
- * Cached .mjs files live under getCacheBaseDir() (e.g. /app/.cache/). Node.js
+ * Cached .mjs files live under getCacheBaseDir(). Node.js
  * resolves bare specifiers by walking up from the importing file looking for
  * node_modules/. Because the cache directory has no node_modules ancestor,
  * packages like `react` cannot be found.

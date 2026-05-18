@@ -9,6 +9,7 @@ import {
   getMdxEsmCacheDir,
   runWithCacheDir,
 } from "./cache-dir.ts";
+import { runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 
 const MANAGED_ENV_KEYS = [
   "HOME",
@@ -112,6 +113,21 @@ describe("cache-dir", () => {
       setEnv("HOME", "/tmp");
 
       assertEquals(getCacheBaseDir(), "/tmp/.cache/veryfront");
+    });
+
+    it("should use host runtime env while a project env overlay is active", () => {
+      deleteEnv("VERYFRONT_CACHE_DIR");
+      deleteEnv("VF_CACHE_DIR");
+      setEnv("NODE_ENV", "production");
+      setEnv("VERYFRONT_MODE", "production");
+      setEnv("HOME", "/tmp");
+
+      const result = runWithProjectEnv(
+        { HOME: "/tenant", VF_CACHE_DIR: "/tenant/cache" },
+        () => getCacheBaseDir(),
+      );
+
+      assertEquals(result, "/tmp/.cache/veryfront");
     });
 
     it("should return the local .cache dir when not in production and no env", () => {
