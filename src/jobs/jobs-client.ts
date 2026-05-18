@@ -38,6 +38,7 @@ import {
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
+const DEFAULT_KNOWLEDGE_INGEST_JOB_NAME = "Ingest knowledge";
 
 export interface VeryfrontJobsClientConfig {
   apiUrl?: string;
@@ -66,7 +67,7 @@ export interface ListJobEventsOptions extends ProjectScopedOptions {
 }
 
 export interface CreateJobInput extends ProjectScopedOptions {
-  name?: string;
+  name: string;
   target: string;
   environmentId?: string;
   batchId?: string;
@@ -345,8 +346,11 @@ export class VeryfrontJobsClient {
     options: KnowledgeIngestJobOptions,
     config: Record<string, unknown>,
   ): Promise<Job> {
+    const { name = DEFAULT_KNOWLEDGE_INGEST_JOB_NAME, ...rest } = options;
+
     return this.create({
-      ...options,
+      ...rest,
+      name,
       target: "task:knowledge-ingest",
       config,
     });
