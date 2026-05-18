@@ -25,6 +25,12 @@ export interface ToolConfig<TInput = any, TOutput = any> {
   inputSchema: Schema<TInput>;
 
   /**
+   * Optional output schema. Hosts can use this to document or validate
+   * structured tool results.
+   */
+  outputSchema?: Schema<TOutput>;
+
+  /**
    * Allow unknown/non-contract schemas to fall back to a permissive JSON
    * schema. Use only for truly dynamic tools; prefer `v.unknown()` or
    * `v.any()` from the SchemaValidator DSL instead.
@@ -131,6 +137,12 @@ export interface Tool<TInput = any, TOutput = any> {
    * This is generated at tool creation time to avoid bundling issues
    */
   inputSchemaJson?: JsonSchema;
+
+  /** Optional pre-converted JSON Schema for tool outputs. */
+  outputSchemaJson?: JsonSchema;
+
+  /** Optional output schema produced by `defineSchema`. */
+  outputSchema?: Schema<TOutput>;
 
   /**
    * Execute the tool

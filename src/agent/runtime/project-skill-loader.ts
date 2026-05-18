@@ -67,13 +67,88 @@ function isAccessDeniedError(
   return options.isAccessDeniedError?.(error) ?? false;
 }
 
+type ProjectSkillSource =
+  | { kind: "directory"; skillsPath: string }
+  | { kind: "flat"; skillsPath: string };
+
+async function findProjectSkillSource(input: {
+  options: RuntimeProjectSkillLoaderOptions;
+  context: RuntimeProjectSkillContext;
+  skillId: string;
+}): Promise<ProjectSkillSource | null> {
+  const projectId = input.context.projectId;
+  if (!projectId) {
+    return null;
+  }
+
+  for (const skillsPath of getSkillPaths(input.options)) {
+    const directorySkill = await input.options.getProjectFile({
+      projectId,
+      authToken: input.context.authToken,
+      branchId: input.context.branchId,
+      path: `${skillsPath}/${input.skillId}/SKILL.md`,
+    });
+    if (directorySkill?.content) {
+      return { kind: "directory", skillsPath };
+    }
+
+    const flatSkill = await input.options.getProjectFile({
+      projectId,
+      authToken: input.context.authToken,
+      branchId: input.context.branchId,
+      path: `${skillsPath}/${input.skillId}.md`,
+    });
+    if (flatSkill?.content) {
+      return { kind: "flat", skillsPath };
+    }
+  }
+
+  return null;
+}
+
+function collectProjectSkillReferences(input: {
+  allFiles: readonly RuntimeProjectFileListItem[];
+  skillsPath: string;
+  skillId: string;
+}): string[] {
+  const skillPrefix = `${input.skillsPath}/${input.skillId}/`;
+  const refsPrefix = `${skillPrefix}references/`;
+  const references = new Set<string>();
+
+  for (const file of input.allFiles) {
+    if (!file.path.startsWith(refsPrefix)) {
+      continue;
+    }
+
+    const relativePath = file.path.slice(skillPrefix.length);
+    if (!relativePath.includes("/")) {
+      continue;
+    }
+
+    const normalizedReference = normalizeRuntimeSkillReferencePath(relativePath);
+    if (normalizedReference) {
+      references.add(normalizedReference);
+    }
+  }
+
+  return [...references].sort();
+}
+
 async function listProjectSkillReferences(input: {
   options: RuntimeProjectSkillLoaderOptions;
   context: RuntimeProjectSkillContext;
   skillId: string;
+  skillsPath?: string;
 }): Promise<string[]> {
   const projectId = input.context.projectId;
   if (!projectId) {
+    return [];
+  }
+
+  const source: ProjectSkillSource | null = input.skillsPath
+    ? { kind: "directory", skillsPath: input.skillsPath }
+    : await findProjectSkillSource(input);
+  if (source?.kind !== "directory") {
     return [];
   }
 
@@ -82,30 +157,12 @@ async function listProjectSkillReferences(input: {
     authToken: input.context.authToken,
     branchId: input.context.branchId,
   });
-  const references = new Set<string>();
 
-  for (const skillsPath of getSkillPaths(input.options)) {
-    const skillPrefix = `${skillsPath}/${input.skillId}/`;
-    const refsPrefix = `${skillPrefix}references/`;
-
-    for (const file of allFiles) {
-      if (!file.path.startsWith(refsPrefix)) {
-        continue;
-      }
-
-      const relativePath = file.path.slice(skillPrefix.length);
-      if (!relativePath.includes("/")) {
-        continue;
-      }
-
-      const normalizedReference = normalizeRuntimeSkillReferencePath(relativePath);
-      if (normalizedReference) {
-        references.add(normalizedReference);
-      }
-    }
-  }
-
-  return [...references].sort();
+  return collectProjectSkillReferences({
+    allFiles,
+    skillsPath: source.skillsPath,
+    skillId: input.skillId,
+  });
 }
 
 async function loadProjectSkill(input: {
@@ -130,7 +187,7 @@ async function loadProjectSkill(input: {
       if (directorySkill?.content) {
         return {
           instructions: directorySkill.content,
-          references: await listProjectSkillReferences(input),
+          references: await listProjectSkillReferences({ ...input, skillsPath }),
         };
       }
 
@@ -179,16 +236,19 @@ async function loadProjectSkillReference(input: {
   }
 
   try {
-    for (const skillsPath of getSkillPaths(input.options)) {
-      const projectFile = await input.options.getProjectFile({
-        projectId,
-        authToken: input.context.authToken,
-        branchId: input.context.branchId,
-        path: `${skillsPath}/${input.skillId}/${input.normalizedFile}`,
-      });
-      if (projectFile?.content) {
-        return projectFile.content;
-      }
+    const source = await findProjectSkillSource(input);
+    if (source?.kind !== "directory") {
+      return null;
+    }
+
+    const projectFile = await input.options.getProjectFile({
+      projectId,
+      authToken: input.context.authToken,
+      branchId: input.context.branchId,
+      path: `${source.skillsPath}/${input.skillId}/${input.normalizedFile}`,
+    });
+    if (projectFile?.content) {
+      return projectFile.content;
     }
   } catch (error) {
     if (!isAccessDeniedError(error, input.options)) {

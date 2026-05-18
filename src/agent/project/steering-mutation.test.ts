@@ -38,6 +38,23 @@ Deno.test("getProjectSteeringMutation detects skill directory moves", () => {
         project_reference: "project-1",
         branch_id: "branch-1",
         source_path: "src/old.ts",
+        destination_path: "skills/react/SKILL.md",
+      },
+      activeProjectId: "project-1",
+      activeBranchId: "branch-1",
+    }),
+    { instructionsChanged: false, skillsChanged: true },
+  );
+});
+
+Deno.test("getProjectSteeringMutation detects legacy hidden skill directory moves", () => {
+  assertEquals(
+    getProjectSteeringMutation({
+      toolName: "move_file",
+      toolInput: {
+        project_reference: "project-1",
+        branch_id: "branch-1",
+        source_path: "src/old.ts",
         destination_path: ".veryfront/skills/react/SKILL.md",
       },
       activeProjectId: "project-1",
