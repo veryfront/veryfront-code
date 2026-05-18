@@ -14,11 +14,23 @@ export function getCacheDirFromContext(): string | undefined {
   return cacheStorage.getStore();
 }
 
+function getDefaultCacheBaseDir(): string {
+  const home = getEnv("HOME");
+  const isProduction = getEnv("NODE_ENV") === "production" ||
+    getEnv("VERYFRONT_MODE") === "production";
+
+  if (home && isProduction) {
+    return join(home, ".cache", "veryfront");
+  }
+
+  return join(cwd(), ".cache");
+}
+
 export function getCacheBaseDir(): string {
   return (
     getCacheDirFromContext() ??
       getEnv("VERYFRONT_CACHE_DIR") ?? getEnv("VF_CACHE_DIR") ??
-      join(cwd(), ".cache")
+      getDefaultCacheBaseDir()
   );
 }
 
