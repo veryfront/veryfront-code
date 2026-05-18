@@ -269,11 +269,7 @@ export async function executeConfiguredTool(
     if (allowedRemoteToolNames && !allowedRemoteToolNames.includes(toolName)) {
       throw new Error(`Tool "${toolName}" is not allowed for this run`);
     }
-    return await executeRemoteIntegrationTool(
-      toolName,
-      input,
-      context?.endUserId as string | undefined,
-    );
+    return await executeRemoteIntegrationTool(toolName, input, context);
   }
 
   return await executeTool(toolName, input, context);
