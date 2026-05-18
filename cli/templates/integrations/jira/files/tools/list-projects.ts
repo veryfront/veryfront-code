@@ -15,9 +15,9 @@ export default tool({
       projects: projects.map((project) => {
         const lead = project.lead
           ? {
-              displayName: project.lead.displayName,
-              accountId: project.lead.accountId,
-            }
+            displayName: project.lead.displayName,
+            accountId: project.lead.accountId,
+          }
           : null;
 
         return {

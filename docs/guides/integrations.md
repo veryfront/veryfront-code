@@ -222,14 +222,14 @@ environment variables. No OAuth app is needed:
 
 ### Project management
 
-| Integration    | Tools                                                               | Auth            |
-| -------------- | ------------------------------------------------------------------- | --------------- |
-| **Jira**       | search-issues, get-issue, create-issue, update-issue, list-projects | OAuth           |
-| **Linear**     | search-issues, get-issue, create-issue, update-issue, list-projects | OAuth           |
-| **Asana**      | list-tasks, get-task, create-task, update-task, list-projects       | OAuth           |
-| **ClickUp**    | list-tasks, get-task, create-task, update-task, list-lists          | OAuth           |
-| **Monday.com** | list-boards, list-items, get-item, create-item, update-item         | OAuth (GraphQL) |
-| **Trello**     | list-boards, list-cards, get-card, create-card, update-card         | OAuth           |
+| Integration    | Tools                                                                                                                         | Auth            |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------- |
+| **Jira**       | list-projects, get-project, search-issues, get-issue, create-issue, update-issue, list-comments, add-comment, get-transitions | OAuth           |
+| **Linear**     | search-issues, get-issue, create-issue, update-issue, list-projects                                                           | OAuth           |
+| **Asana**      | list-tasks, get-task, create-task, update-task, list-projects                                                                 | OAuth           |
+| **ClickUp**    | list-tasks, get-task, create-task, update-task, list-lists                                                                    | OAuth           |
+| **Monday.com** | list-boards, list-items, get-item, create-item, update-item                                                                   | OAuth (GraphQL) |
+| **Trello**     | list-boards, list-cards, get-card, create-card, update-card                                                                   | OAuth           |
 
 ### Code & DevOps
 
