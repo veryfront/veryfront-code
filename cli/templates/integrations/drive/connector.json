@@ -166,7 +166,46 @@
       "id": "upload_file",
       "name": "Upload File",
       "description": "Upload or create a file in Google Drive",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/upload/drive/v3/files",
+        "params": {
+          "uploadType": {
+            "type": "string",
+            "in": "query",
+            "description": "Google Drive upload mode",
+            "default": "media"
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Partial response field selector",
+            "default": "id, name, mimeType, webViewLink, modifiedTime, size, parents"
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "Text content to upload",
+            "required": true
+          },
+          "mimeType": {
+            "type": "string",
+            "description": "Content MIME type",
+            "default": "text/plain"
+          },
+          "name": {
+            "type": "string",
+            "description": "Desired file name; use create_folder for folders",
+            "required": false
+          },
+          "parents": {
+            "type": "array",
+            "description": "Optional parent folder IDs"
+          }
+        }
+      }
     }
   ],
   "prompts": [

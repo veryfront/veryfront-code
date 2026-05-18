@@ -47,8 +47,8 @@ describe("integration endpoint specs", () => {
   it("adds endpoint specs for the newly configured integration providers", () => {
     const expectedEndpointCounts = new Map([
       ["airtable", 11],
-      ["discord", 2],
-      ["figma", 4],
+      ["discord", 5],
+      ["figma", 5],
       ["notion", 8],
     ]);
 
@@ -69,12 +69,12 @@ describe("integration endpoint specs", () => {
   it("adds static endpoint specs for the next configured integration providers", () => {
     const expectedEndpointCounts = new Map([
       ["hubspot", 5],
-      ["dropbox", 4],
-      ["drive", 4],
-      ["docs-google", 4],
+      ["dropbox", 5],
+      ["drive", 5],
+      ["docs-google", 5],
       ["sheets", 16],
-      ["onedrive", 3],
-      ["sharepoint", 4],
+      ["onedrive", 4],
+      ["sharepoint", 5],
     ]);
 
     for (
@@ -100,7 +100,7 @@ describe("integration endpoint specs", () => {
       ["salesforce", 5],
       ["outlook", 5],
       ["teams", 5],
-      ["discord", 2],
+      ["discord", 5],
     ]);
 
     for (
