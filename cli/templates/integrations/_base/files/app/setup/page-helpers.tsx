@@ -208,7 +208,7 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
       "Go to Slack API Apps page",
       "Click Create New App > From scratch",
       "Go to OAuth & Permissions",
-      "Add scopes: channels:read, chat:write, users:read, channels:history",
+      "Add scopes: channels:history, channels:read, chat:write, groups:history, groups:read, im:history, im:read, mpim:history, mpim:read, users:read",
       "Add redirect URL: http://localhost:3000/api/auth/slack/callback",
       "Install to Workspace",
       "Copy Client ID and Secret to .env",

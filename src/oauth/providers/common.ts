@@ -25,9 +25,13 @@ export const slackConfig: OAuthServiceConfig = {
     "channels:history",
     "channels:read",
     "chat:write",
-    "users:read",
+    "groups:history",
+    "groups:read",
     "im:history",
     "im:read",
+    "mpim:history",
+    "mpim:read",
+    "users:read",
   ],
 };
 
