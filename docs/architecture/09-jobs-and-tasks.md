@@ -75,4 +75,4 @@ flowchart TD
 
 ## Related reference
 
-- [`veryfront/jobs`](../reference/jobs.md)
+- [`veryfront/jobs`](../reference/veryfront/jobs.md)

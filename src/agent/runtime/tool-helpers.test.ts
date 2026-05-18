@@ -222,6 +222,52 @@ describe("tool-helpers", () => {
       );
     });
 
+    it("passes runtime run and agent context to remote integration tool execution", async () => {
+      const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_URL");
+      const originalApiToken = Deno.env.get("VERYFRONT_API_TOKEN");
+      let requestBody: Record<string, unknown> | undefined;
+
+      try {
+        Deno.env.set("VERYFRONT_API_URL", "https://api.test");
+        Deno.env.set("VERYFRONT_API_TOKEN", "token");
+
+        const result = await withMockFetch(
+          async (input: string | URL | Request, init?: RequestInit) => {
+            const request = input instanceof Request ? input : new Request(input, init);
+            requestBody = await request.json();
+            return Response.json({ structuredContent: { ok: true } });
+          },
+          async () =>
+            await executeConfiguredTool(
+              "gmail__list_emails",
+              { maxResults: 10 },
+              undefined,
+              {
+                toolCallId: "tool-4",
+                runId: "run-123",
+                agentId: "agent-123",
+                endUserId: "user-123",
+              },
+              ["gmail__list_emails"],
+            ),
+        );
+
+        assertEquals(result, { structuredContent: { ok: true } });
+        assertEquals(requestBody, {
+          name: "gmail__list_emails",
+          arguments: { maxResults: 10 },
+          end_user_id: "user-123",
+          run_id: "run-123",
+          agent_id: "agent-123",
+        });
+      } finally {
+        if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+        else Deno.env.set("VERYFRONT_API_URL", originalApiBaseUrl);
+        if (originalApiToken === undefined) Deno.env.delete("VERYFRONT_API_TOKEN");
+        else Deno.env.set("VERYFRONT_API_TOKEN", originalApiToken);
+      }
+    });
+
     it("executes remote MCP tools from configured remote tool sources", async () => {
       const remoteSource = createRemoteMCPToolSource({
         id: "docs",

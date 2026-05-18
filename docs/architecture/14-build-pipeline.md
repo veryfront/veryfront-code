@@ -45,4 +45,4 @@ Primary source areas:
 
 ## Related reference
 
-- [CLI reference](../reference/cli.md)
+- [CLI reference](../reference/veryfront/cli.md)

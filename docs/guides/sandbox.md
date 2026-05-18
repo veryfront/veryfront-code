@@ -139,4 +139,4 @@ try {
 
 ## Related
 
-- [`veryfront/sandbox`](../reference/sandbox.md): sandbox API reference
+- [`veryfront/sandbox`](../reference/veryfront/sandbox.md): sandbox API reference

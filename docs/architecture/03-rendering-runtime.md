@@ -46,6 +46,6 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/head`](../reference/head.md)
-- [`veryfront/root`](../reference/root.md)
-- [`veryfront/chat`](../reference/chat.md)
+- [`veryfront/head`](../reference/veryfront/head.md)
+- [`veryfront/root`](../reference/veryfront/index.md)
+- [`veryfront/chat`](../reference/veryfront/chat.md)

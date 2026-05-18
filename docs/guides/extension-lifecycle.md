@@ -73,4 +73,4 @@ Save `veryfront.config.ts`. The dev server should run `teardown()` for the previ
 
 - [Extensions](./extensions.md): extension overview
 - [Extension authoring](./extension-authoring.md): writing extension factories
-- [`veryfront/extensions`](../reference/extensions.md): extension API reference
+- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference

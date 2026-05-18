@@ -97,4 +97,4 @@ the full managed behavior by itself.
 
 ## Related reference
 
-- [Reference index](../reference/index.md)
+- [Reference index](../reference/README.md)

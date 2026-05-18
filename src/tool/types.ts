@@ -60,6 +60,8 @@ export interface ToolConfig<TInput = any, TOutput = any> {
 export interface ToolExecutionContext {
   /** ID of the agent calling the tool (if any) */
   agentId?: string;
+  /** ID of the current agent run when the runtime is tracking run lifecycles */
+  runId?: string;
   /** Stable ID for the current tool call when the runtime is tracking tool lifecycles */
   toolCallId?: string;
   /** Project identity used by integration token resolution */

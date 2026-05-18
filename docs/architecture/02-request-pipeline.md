@@ -95,6 +95,6 @@ flowchart TD
 
 ## Related reference
 
-- [`veryfront/middleware`](../reference/middleware.md)
-- [`veryfront/router`](../reference/router.md)
-- [`veryfront/server`](../reference/server.md)
+- [`veryfront/middleware`](../reference/veryfront/middleware.md)
+- [`veryfront/router`](../reference/veryfront/router.md)
+- [`veryfront/server`](../reference/veryfront/server.md)

@@ -170,5 +170,5 @@ preparation, or custom infrastructure.
 
 ## Related
 
-- [Agent service runtime reference](../reference/agent-service-runtime.md): complete service runtime API reference
-- [`veryfront/agent`](../reference/agent.md): agent API reference
+- [Agent service runtime reference](../reference/veryfront/agent.md): complete service runtime API reference
+- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference

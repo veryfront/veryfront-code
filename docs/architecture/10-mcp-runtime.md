@@ -52,4 +52,4 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/mcp`](../reference/mcp.md)
+- [`veryfront/mcp`](../reference/veryfront/mcp.md)

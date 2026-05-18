@@ -71,4 +71,4 @@ flowchart TD
 
 ## Related reference
 
-- [`veryfront/workflow`](../reference/workflow.md)
+- [`veryfront/workflow`](../reference/veryfront/workflow.md)

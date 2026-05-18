@@ -38,6 +38,7 @@ import {
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
+const DEFAULT_KNOWLEDGE_INGEST_JOB_NAME = "Ingest knowledge";
 
 export interface VeryfrontJobsClientConfig {
   apiUrl?: string;
@@ -73,6 +74,26 @@ export interface CreateJobInput extends ProjectScopedOptions {
   config?: Record<string, unknown>;
   timeoutSeconds?: number;
   backoffLimit?: number;
+}
+
+export interface KnowledgeIngestJobOptions extends ProjectScopedOptions {
+  name?: string;
+  environmentId?: string;
+  batchId?: string;
+  timeoutSeconds?: number;
+  backoffLimit?: number;
+}
+
+export interface KnowledgeIngestByUploadIdsInput extends KnowledgeIngestJobOptions {
+  uploadIds: string[];
+}
+
+export interface KnowledgeIngestByUploadPathsInput extends KnowledgeIngestJobOptions {
+  uploadPaths: string[];
+}
+
+export interface KnowledgeIngestByUploadPrefixInput extends KnowledgeIngestJobOptions {
+  uploadPrefix: string;
 }
 
 export interface ListBatchJobsOptions extends ProjectScopedOptions {
@@ -138,6 +159,12 @@ export class VeryfrontJobsClient {
   private requestToken?: string;
   private requestProjectReference?: string;
 
+  readonly knowledge: {
+    ingestByUploadIds: NamespaceMethod<[KnowledgeIngestByUploadIdsInput], Job>;
+    ingestByUploadPaths: NamespaceMethod<[KnowledgeIngestByUploadPathsInput], Job>;
+    ingestByUploadPrefix: NamespaceMethod<[KnowledgeIngestByUploadPrefixInput], Job>;
+  };
+
   readonly cron: {
     create: NamespaceMethod<[CreateCronJobInput], CronJob>;
     list: NamespaceMethod<[ListCronJobsOptions?], PaginatedCronJobsResponse>;
@@ -165,6 +192,12 @@ export class VeryfrontJobsClient {
       maxRetries: config.retry?.maxRetries ?? DEFAULT_MAX_RETRIES,
       initialDelay: config.retry?.initialDelay ?? DEFAULT_INITIAL_RETRY_DELAY_MS,
       maxDelay: config.retry?.maxDelay ?? DEFAULT_MAX_RETRY_DELAY_MS,
+    };
+
+    this.knowledge = {
+      ingestByUploadIds: (input) => this.ingestKnowledgeByUploadIds(input),
+      ingestByUploadPaths: (input) => this.ingestKnowledgeByUploadPaths(input),
+      ingestByUploadPrefix: (input) => this.ingestKnowledgeByUploadPrefix(input),
     };
 
     this.cron = {
@@ -292,6 +325,35 @@ export class VeryfrontJobsClient {
       JobSchema,
       { method: "POST" },
     );
+  }
+
+  private ingestKnowledgeByUploadIds(input: KnowledgeIngestByUploadIdsInput): Promise<Job> {
+    const { uploadIds, ...options } = input;
+    return this.createKnowledgeIngestJob(options, { upload_ids: uploadIds });
+  }
+
+  private ingestKnowledgeByUploadPaths(input: KnowledgeIngestByUploadPathsInput): Promise<Job> {
+    const { uploadPaths, ...options } = input;
+    return this.createKnowledgeIngestJob(options, { paths: uploadPaths });
+  }
+
+  private ingestKnowledgeByUploadPrefix(input: KnowledgeIngestByUploadPrefixInput): Promise<Job> {
+    const { uploadPrefix, ...options } = input;
+    return this.createKnowledgeIngestJob(options, { path_prefix: uploadPrefix });
+  }
+
+  private createKnowledgeIngestJob(
+    options: KnowledgeIngestJobOptions,
+    config: Record<string, unknown>,
+  ): Promise<Job> {
+    const { name = DEFAULT_KNOWLEDGE_INGEST_JOB_NAME, ...rest } = options;
+
+    return this.create({
+      ...rest,
+      name,
+      target: "task:knowledge-ingest",
+      config,
+    });
   }
 
   private createCronJob(input: CreateCronJobInput): Promise<CronJob> {

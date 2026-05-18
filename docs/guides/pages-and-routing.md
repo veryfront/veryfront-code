@@ -201,5 +201,5 @@ export default function LoginForm() {
 
 ## Related
 
-- [`veryfront/router`](../reference/router.md): router API reference
-- [`veryfront/context`](../reference/context.md): params, page data, and frontmatter hooks
+- [`veryfront/router`](../reference/veryfront/router.md): router API reference
+- [`veryfront/context`](../reference/veryfront/context.md): params, page data, and frontmatter hooks

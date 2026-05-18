@@ -47,6 +47,6 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/agent`](../reference/agent.md)
-- [`veryfront/tool`](../reference/tool.md)
-- [`veryfront/workflow`](../reference/workflow.md)
+- [`veryfront/agent`](../reference/veryfront/agent.md)
+- [`veryfront/tool`](../reference/veryfront/tool.md)
+- [`veryfront/workflow`](../reference/veryfront/workflow.md)

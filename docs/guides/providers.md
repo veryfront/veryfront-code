@@ -160,4 +160,4 @@ const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.2");
 
 ## Related
 
-- [`veryfront/provider`](../reference/provider.md): provider API reference
+- [`veryfront/provider`](../reference/veryfront/provider.md): provider API reference

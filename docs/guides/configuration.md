@@ -277,4 +277,4 @@ The framework reads `veryfront.config.ts` automatically. Your config values are 
 
 ## Related
 
-- [`veryfront` (root)](../reference/root.md): `defineConfig`, `getConfig`
+- [`veryfront` (root)](../reference/veryfront/index.md): `defineConfig`, `getConfig`

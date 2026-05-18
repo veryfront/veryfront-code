@@ -48,6 +48,6 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/server`](../reference/server.md)
-- [`veryfront/middleware`](../reference/middleware.md)
-- [`veryfront/router`](../reference/router.md)
+- [`veryfront/server`](../reference/veryfront/server.md)
+- [`veryfront/middleware`](../reference/veryfront/middleware.md)
+- [`veryfront/router`](../reference/veryfront/router.md)

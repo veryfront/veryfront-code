@@ -137,5 +137,5 @@ const agent = getAgent("writer"); // Get a specific agent
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md): agent API reference
-- [`veryfront/workflow`](../reference/workflow.md): workflow API reference
+- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
+- [`veryfront/workflow`](../reference/veryfront/workflow.md): workflow API reference

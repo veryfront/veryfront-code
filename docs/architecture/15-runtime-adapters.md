@@ -44,4 +44,4 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/fs`](../reference/fs.md)
+- [`veryfront/fs`](../reference/veryfront/fs.md)

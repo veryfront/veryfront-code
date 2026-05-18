@@ -236,4 +236,4 @@ For agent prompts and system instructions, this is the simplest reliable pattern
 
 ## Related
 
-- [`veryfront/cli`](../reference/cli.md): CLI entry point reference
+- [`veryfront/cli`](../reference/veryfront/cli.md): CLI entry point reference

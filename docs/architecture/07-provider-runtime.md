@@ -73,5 +73,5 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/provider`](../reference/provider.md)
-- [`veryfront/embedding`](../reference/embedding.md)
+- [`veryfront/provider`](../reference/veryfront/provider.md)
+- [`veryfront/embedding`](../reference/veryfront/embedding.md)

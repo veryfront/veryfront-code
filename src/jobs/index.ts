@@ -16,12 +16,8 @@
  *   projectReference: "my-project",
  * });
  *
- * const job = await jobs.create({
- *   name: "Ingest 1 file",
- *   target: "task:knowledge-ingest",
- *   config: {
- *     upload_ids: ["00000000-0000-0000-0000-000000000000"],
- *   },
+ * const job = await jobs.knowledge.ingestByUploadIds({
+ *   uploadIds: ["00000000-0000-0000-0000-000000000000"],
  * });
  *
  * const events = await jobs.events(job.id);
@@ -32,6 +28,10 @@ export {
   type CreateCronJobInput,
   type CreateJobInput,
   createJobsClient,
+  type KnowledgeIngestByUploadIdsInput,
+  type KnowledgeIngestByUploadPathsInput,
+  type KnowledgeIngestByUploadPrefixInput,
+  type KnowledgeIngestJobOptions,
   type ListBatchJobsOptions,
   type ListCronJobsOptions,
   type ListJobEventsOptions,

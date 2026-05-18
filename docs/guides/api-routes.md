@@ -231,5 +231,5 @@ Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md): agent API reference
-- [`veryfront/middleware`](../reference/middleware.md): middleware API reference
+- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
+- [`veryfront/middleware`](../reference/veryfront/middleware.md): middleware API reference

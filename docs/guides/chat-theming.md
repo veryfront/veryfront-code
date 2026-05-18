@@ -74,4 +74,4 @@ Use chat context providers when shared state needs to cross component boundaries
 
 - [Chat UI](./chat-ui.md): preset component
 - [Chat composition](./chat-composition.md): custom layouts
-- [`veryfront/chat`](../reference/chat.md): chat reference
+- [`veryfront/chat`](../reference/veryfront/chat.md): chat reference

@@ -164,6 +164,38 @@ describe("integrations/remote-tools", () => {
     });
   });
 
+  it("forwards run and agent context when executing remote integration tools", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    let requestBody: Record<string, unknown> | undefined;
+
+    await withMockFetch(
+      async (input: string | URL | Request, init?: RequestInit) => {
+        const request = input instanceof Request ? input : new Request(input, init);
+        requestBody = await request.json();
+
+        return Response.json({ structuredContent: { ok: true } });
+      },
+      async () =>
+        await executeRemoteIntegrationTool(
+          "gmail__list_emails",
+          { maxResults: 10 },
+          { endUserId: "end-user-123", runId: "run-123", agentId: "agent-123" },
+        ),
+    );
+
+    assertEquals(requestBody, {
+      name: "gmail__list_emails",
+      arguments: { maxResults: 10 },
+      end_user_id: "end-user-123",
+      run_id: "run-123",
+      agent_id: "agent-123",
+    });
+  });
+
   it("prefers structuredContent for MCP error results without text content", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
