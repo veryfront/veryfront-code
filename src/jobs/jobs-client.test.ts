@@ -211,6 +211,7 @@ describe("VeryfrontJobsClient", () => {
     });
 
     assertEquals(jsonBody(0), {
+      name: "Ingest knowledge",
       target: "task:knowledge-ingest",
       batch_id: "66666666-6666-4666-8666-666666666666",
       config: {
@@ -233,6 +234,7 @@ describe("VeryfrontJobsClient", () => {
     });
 
     assertEquals(jsonBody(0), {
+      name: "Ingest knowledge",
       target: "task:knowledge-ingest",
       config: {
         paths: ["uploads/contracts/q1.pdf"],
