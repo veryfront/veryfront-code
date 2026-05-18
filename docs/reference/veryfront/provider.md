@@ -195,4 +195,4 @@ User guides:
 
 Architecture:
 
-- [04-provider-runtime](../../architecture/04-provider-runtime.md): Provider runtime architecture
+- [07-provider-runtime](../../architecture/07-provider-runtime.md): Provider and embedding runtime

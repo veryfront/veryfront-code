@@ -429,5 +429,5 @@ User guides:
 
 Architecture:
 
-- [05-workflow-runtime](../../architecture/05-workflow-runtime.md): Workflow runtime architecture
-- [20-jobs-and-tasks](../../architecture/20-jobs-and-tasks.md): Workflows, jobs, and tasks
+- [08-workflow-runtime](../../architecture/08-workflow-runtime.md): Workflow runtime architecture
+- [09-jobs-and-tasks](../../architecture/09-jobs-and-tasks.md): Workflows, jobs, and tasks

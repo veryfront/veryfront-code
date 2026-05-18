@@ -183,4 +183,4 @@ import { endServerSpan, extractContext, getTraceContext } from "veryfront/observ
 
 Architecture:
 
-- [17-observability](../../architecture/17-observability.md): Observability architecture
+- [13-observability](../../architecture/13-observability.md): Observability architecture

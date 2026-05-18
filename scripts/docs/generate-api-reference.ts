@@ -413,60 +413,60 @@ const RELATED_ARCHITECTURE: Record<
     { path: "02-request-pipeline", reason: "Request handling pipeline" },
   ],
   "veryfront/chat": [
-    { path: "10-ag-ui-transport", reason: "AG-UI streaming transport" },
-    { path: "24-ai-primitives", reason: "AI primitives and chat surfaces" },
+    { path: "05-agent-runtime", reason: "AI primitives and chat surfaces" },
+    { path: "06-ag-ui-transport", reason: "AG-UI streaming transport" },
   ],
   "veryfront/agent": [
-    { path: "03-agent-runtime", reason: "Agent runtime architecture" },
-    { path: "08-hosted-agent-runs", reason: "Hosted agent runs" },
-    { path: "09-control-plane-channels", reason: "Control-plane channels" },
-    { path: "10-ag-ui-transport", reason: "AG-UI transport contract" },
-    { path: "19-runtime-boundaries", reason: "Runtime boundaries" },
-    { path: "24-ai-primitives", reason: "AI primitives" },
+    { path: "05-agent-runtime", reason: "Agent runtime, hosted runs, AI primitives, and skills" },
+    { path: "06-ag-ui-transport", reason: "AG-UI transport contract" },
+    { path: "11-control-plane-channels", reason: "Control-plane channels" },
   ],
   "veryfront/tool": [
-    { path: "24-ai-primitives", reason: "Tools as AI primitives" },
+    { path: "05-agent-runtime", reason: "Tools as AI primitives" },
   ],
   "veryfront/workflow": [
-    { path: "05-workflow-runtime", reason: "Workflow runtime architecture" },
-    { path: "20-jobs-and-tasks", reason: "Workflows, jobs, and tasks" },
+    { path: "08-workflow-runtime", reason: "Workflow runtime architecture" },
+    { path: "09-jobs-and-tasks", reason: "Workflows, jobs, and tasks" },
   ],
   "veryfront/prompt": [
-    { path: "24-ai-primitives", reason: "Prompts as AI primitives" },
+    { path: "05-agent-runtime", reason: "Prompts as AI primitives" },
   ],
   "veryfront/resource": [
-    { path: "24-ai-primitives", reason: "Resources as AI primitives" },
+    { path: "05-agent-runtime", reason: "Resources as AI primitives" },
   ],
   "veryfront/jobs": [
-    { path: "20-jobs-and-tasks", reason: "Jobs and tasks runtime" },
+    { path: "09-jobs-and-tasks", reason: "Jobs and tasks runtime" },
   ],
   "veryfront/mcp": [
-    { path: "07-mcp-runtime", reason: "MCP runtime architecture" },
+    { path: "10-mcp-runtime", reason: "MCP runtime architecture" },
   ],
   "veryfront/observability": [
-    { path: "17-observability", reason: "Observability architecture" },
+    { path: "13-observability", reason: "Observability architecture" },
   ],
   "veryfront/oauth": [
-    { path: "21-oauth-runtime", reason: "OAuth runtime architecture" },
+    { path: "18-oauth-runtime", reason: "OAuth runtime architecture" },
   ],
   "veryfront/integrations": [
-    { path: "22-integration-runtime", reason: "Integration runtime" },
+    { path: "19-integration-runtime", reason: "Integration runtime" },
   ],
   "veryfront/sandbox": [
-    { path: "23-sandbox-runtime", reason: "Sandbox runtime architecture" },
+    { path: "17-sandbox-runtime", reason: "Sandbox runtime architecture" },
   ],
   "veryfront/extensions": [
-    { path: "16-extension-system", reason: "Extension system architecture" },
+    { path: "12-extension-system", reason: "Extension system architecture" },
   ],
   "veryfront/provider": [
-    { path: "04-provider-runtime", reason: "Provider runtime architecture" },
+    { path: "07-provider-runtime", reason: "Provider and embedding runtime" },
+  ],
+  "veryfront/embedding": [
+    { path: "07-provider-runtime", reason: "Embedding shares provider model resolution" },
   ],
   "veryfront/server": [
-    { path: "11-server-runtime", reason: "Server runtime architecture" },
+    { path: "04-server-runtime", reason: "Server runtime architecture" },
   ],
   "veryfront/channels": [
-    { path: "09-control-plane-channels", reason: "Control-plane channels" },
-    { path: "10-ag-ui-transport", reason: "AG-UI transport" },
+    { path: "06-ag-ui-transport", reason: "AG-UI transport" },
+    { path: "11-control-plane-channels", reason: "Control-plane channels" },
   ],
 };
 

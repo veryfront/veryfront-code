@@ -52,10 +52,20 @@ sequenceDiagram
 - Conversation-scoped runs are Veryfront API lineage and replay records, not
   package-hosted AG-UI transport endpoints.
 - Hosted durable mirrors consume AG-UI-adjacent state but are documented in
-  [hosted agent runs](./08-hosted-agent-runs.md).
+  [agent runtime](./05-agent-runtime.md).
 
 ## Change checks
 
 - Add tests for chunk encoding, finalization, resume, cancellation, and forwarded
   context changes.
 - Keep AG-UI event names and payload shapes compatible with browser clients.
+
+## Related guides
+
+- [Agent service runtime](../guides/agent-service-runtime.md)
+- [Memory and streaming](../guides/memory-and-streaming.md)
+
+## Related reference
+
+- [`veryfront/agent/runtime/ag-ui`](../reference/veryfront/agent.md)
+- [`veryfront/agent/service-runtime`](../reference/veryfront/agent.md)

@@ -48,7 +48,7 @@ flowchart TD
 
 - Integration runtime owns connector metadata and remote tool bridge behavior.
 - OAuth runtime owns provider redirects, callbacks, and token storage.
-- Local project tools belong in [agent runtime](./03-agent-runtime.md) and the
+- Local project tools belong in [agent runtime](./05-agent-runtime.md) and the
   public [Tools](../guides/tools.md) guide.
 - The backing API owns actual third-party API calls and provider token access.
 
@@ -62,3 +62,11 @@ flowchart TD
   token.
 - Update [Integrations](../guides/integrations.md) when catalog behavior or
   public config changes.
+
+## Related guides
+
+- [Integrations](../guides/integrations.md)
+
+## Related reference
+
+- [`veryfront/integrations`](../reference/veryfront/integrations.md)

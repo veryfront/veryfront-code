@@ -94,4 +94,4 @@ User guides:
 
 Architecture:
 
-- [22-integration-runtime](../../architecture/22-integration-runtime.md): Integration runtime
+- [19-integration-runtime](../../architecture/19-integration-runtime.md): Integration runtime

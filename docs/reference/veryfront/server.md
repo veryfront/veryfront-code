@@ -133,4 +133,4 @@ User guides:
 
 Architecture:
 
-- [11-server-runtime](../../architecture/11-server-runtime.md): Server runtime architecture
+- [04-server-runtime](../../architecture/04-server-runtime.md): Server runtime architecture

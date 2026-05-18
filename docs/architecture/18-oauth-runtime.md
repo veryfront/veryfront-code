@@ -54,7 +54,7 @@ sequenceDiagram
 - OAuth owns authorization, callback, token exchange, and token storage
   contracts.
 - Integration metadata can reference OAuth provider configs, but integration
-  tool execution belongs in [integration runtime](./22-integration-runtime.md).
+  tool execution belongs in [integration runtime](./19-integration-runtime.md).
 - Public route ownership belongs to the application route that mounts the OAuth
   handlers.
 - Persistent token storage is supplied by the application or backing service.
@@ -68,3 +68,11 @@ sequenceDiagram
 - Add token-store tests when changing state consumption or token keying.
 - Keep tokens, secrets, and provider responses out of public logs and errors.
 - Update [OAuth](../guides/oauth.md) when public handler behavior changes.
+
+## Related guides
+
+- [OAuth](../guides/oauth.md)
+
+## Related reference
+
+- [`veryfront/oauth`](../reference/veryfront/oauth.md)

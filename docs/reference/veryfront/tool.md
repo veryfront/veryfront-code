@@ -196,4 +196,4 @@ User guides:
 
 Architecture:
 
-- [24-ai-primitives](../../architecture/24-ai-primitives.md): Tools as AI primitives
+- [05-agent-runtime](../../architecture/05-agent-runtime.md): Tools as AI primitives

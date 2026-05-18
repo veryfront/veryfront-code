@@ -30,12 +30,24 @@ Primary source areas:
 
 ## Boundaries
 
-- Rendering internals belong in [rendering runtime](./12-rendering-runtime.md).
+- Rendering internals belong in [rendering runtime](./03-rendering-runtime.md).
 - Production build output belongs in [build pipeline](./14-build-pipeline.md).
-- Runtime adapter capability belongs in [runtime adapters](./13-runtime-adapters.md).
+- Runtime adapter capability belongs in [runtime adapters](./15-runtime-adapters.md).
 
 ## Change checks
 
 - Add handler tests for any public route behavior change.
 - Keep dev-only endpoints out of production server paths.
 - Keep monitoring and control-plane handlers separate from public app routes.
+
+## Related guides
+
+- [Deploying](../guides/deploying.md)
+- [Configuration](../guides/configuration.md)
+- [Middleware](../guides/middleware.md)
+
+## Related reference
+
+- [`veryfront/server`](../reference/veryfront/server.md)
+- [`veryfront/middleware`](../reference/veryfront/middleware.md)
+- [`veryfront/router`](../reference/veryfront/router.md)

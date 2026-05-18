@@ -755,5 +755,5 @@ User guides:
 
 Architecture:
 
-- [10-ag-ui-transport](../../architecture/10-ag-ui-transport.md): AG-UI streaming transport
-- [24-ai-primitives](../../architecture/24-ai-primitives.md): AI primitives and chat surfaces
+- [05-agent-runtime](../../architecture/05-agent-runtime.md): AI primitives and chat surfaces
+- [06-ag-ui-transport](../../architecture/06-ag-ui-transport.md): AG-UI streaming transport

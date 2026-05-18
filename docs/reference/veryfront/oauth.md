@@ -122,4 +122,4 @@ User guides:
 
 Architecture:
 
-- [21-oauth-runtime](../../architecture/21-oauth-runtime.md): OAuth runtime architecture
+- [18-oauth-runtime](../../architecture/18-oauth-runtime.md): OAuth runtime architecture

@@ -73,4 +73,4 @@ User guides:
 
 Architecture:
 
-- [24-ai-primitives](../../architecture/24-ai-primitives.md): Prompts as AI primitives
+- [05-agent-runtime](../../architecture/05-agent-runtime.md): Prompts as AI primitives

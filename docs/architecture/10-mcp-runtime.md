@@ -1,12 +1,16 @@
 # MCP runtime
 
-This page describes the MCP server runtime. It does not cover AG-UI transport or
-agent browser streaming.
+This page describes the MCP server runtime. It does not cover AG-UI transport,
+agent browser streaming, or the shape of tool, prompt, and resource
+definitions.
 
 ## Responsibility
 
-The MCP runtime exposes tools, resources, prompts, session handling, elicitation,
-SSE, HTTP transport, and task storage through the Model Context Protocol.
+The MCP runtime is a transport surface. It exposes the tool, prompt, and
+resource primitives defined by the agent runtime as Model Context Protocol
+artifacts and handles session handling, elicitation, SSE, HTTP transport, and
+task storage. Primitive shape, factories, schemas, and registries belong to
+[agent runtime](./05-agent-runtime.md).
 
 Primary source areas:
 
@@ -31,11 +35,21 @@ Primary source areas:
 
 - MCP is a tool and resource protocol surface. It is not the AG-UI browser
   stream.
+- The agent runtime owns primitive definitions, registries, and tool
+  execution; see [agent runtime](./05-agent-runtime.md).
 - Agent runtime may use MCP tools, but MCP does not own agent message execution.
-- Control-plane signed channel handling belongs in [control-plane channels](./09-control-plane-channels.md).
+- Control-plane signed channel handling belongs in [control-plane channels](./11-control-plane-channels.md).
 
 ## Change checks
 
 - Keep JSON-RPC responses schema-valid.
 - Preserve session behavior when changing elicitation or SSE support.
 - Add tests in `src/mcp/*.test.ts` for protocol-visible behavior.
+
+## Related guides
+
+- [MCP server](../guides/mcp-server.md)
+
+## Related reference
+
+- [`veryfront/mcp`](../reference/veryfront/mcp.md)

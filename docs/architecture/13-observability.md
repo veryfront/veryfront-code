@@ -29,7 +29,7 @@ Primary source areas:
 ## Boundaries
 
 - Observability records behavior. It does not own business logic.
-- Public monitoring routes belong in [server runtime](./11-server-runtime.md).
+- Public monitoring routes belong in [server runtime](./04-server-runtime.md).
 - Error type definitions and registry patterns belong in [`src/errors/`](../../src/errors/).
 
 ## Change checks
@@ -37,3 +37,11 @@ Primary source areas:
 - Add tests for metric names, trace attributes, log filtering, and error
   collection when changing instrumentation.
 - Keep sensitive values out of logs and trace attributes.
+
+## Related guides
+
+- [Configuration](../guides/configuration.md)
+
+## Related reference
+
+- [`veryfront/observability`](../reference/veryfront/observability.md)

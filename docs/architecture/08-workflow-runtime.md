@@ -64,3 +64,11 @@ flowchart TD
 - Add executor tests when changing DAG ordering, approvals, retry behavior, or
   checkpointing.
 - Keep workflow terminology aligned with `docs/guides/workflows.md`.
+
+## Related guides
+
+- [Workflows](../guides/workflows.md)
+
+## Related reference
+
+- [`veryfront/workflow`](../reference/veryfront/workflow.md)

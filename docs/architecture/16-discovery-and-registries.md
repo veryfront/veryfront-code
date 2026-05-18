@@ -32,7 +32,7 @@ Primary source areas:
 ## Boundaries
 
 - Discovery imports project primitives. Extension lifecycle is documented in
-  [extension system](./16-extension-system.md).
+  [extension system](./12-extension-system.md).
 - Registries provide storage and lookup. They do not execute primitives.
 
 ## Change checks
@@ -40,3 +40,13 @@ Primary source areas:
 - Add fixture-based discovery tests when changing convention paths or export
   detection.
 - Preserve project scoping to avoid cross-project registry leakage.
+
+## Related guides
+
+- [Project structure](../guides/project-structure.md)
+
+## Related reference
+
+- [`veryfront/agent`](../reference/veryfront/agent.md)
+- [`veryfront/tool`](../reference/veryfront/tool.md)
+- [`veryfront/workflow`](../reference/veryfront/workflow.md)

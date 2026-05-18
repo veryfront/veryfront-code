@@ -59,9 +59,9 @@ flowchart TD
 - The backing sandbox service owns container lifecycle, isolation, scheduling,
   and command execution internals.
 - Workflow runtime may call sandbox-backed tools, but workflow state belongs in
-  [workflow runtime](./05-workflow-runtime.md).
+  [workflow runtime](./08-workflow-runtime.md).
 - MCP may expose sandbox-backed tools, but MCP transport belongs in
-  [MCP runtime](./07-mcp-runtime.md).
+  [MCP runtime](./10-mcp-runtime.md).
 
 ## Change checks
 
@@ -74,3 +74,11 @@ flowchart TD
 - Keep auth tokens server-side and redact backing service details from public
   errors.
 - Update [Sandbox](../guides/sandbox.md) when public client behavior changes.
+
+## Related guides
+
+- [Sandbox](../guides/sandbox.md)
+
+## Related reference
+
+- [`veryfront/sandbox`](../reference/veryfront/sandbox.md)

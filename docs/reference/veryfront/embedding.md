@@ -69,3 +69,9 @@ export const { POST, GET, DELETE } = createUploadHandler(store);
 | `UseUploadsResult` |  |
 | `VectorStore` |  |
 | `VectorStoreConfig` |  |
+
+## Related
+
+Architecture:
+
+- [07-provider-runtime](../../architecture/07-provider-runtime.md): Embedding shares provider model resolution

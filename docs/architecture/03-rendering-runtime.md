@@ -36,3 +36,16 @@ Primary source areas:
 - Add tests for page resolution, layout ordering, RSC route behavior, and SSR
   response shape when changing rendering code.
 - Keep app-router and pages-router behavior explicit.
+
+## Related guides
+
+- [Pages and routing](../guides/pages-and-routing.md)
+- [Head and SEO](../guides/head-and-seo.md)
+- [Chat composition](../guides/chat-composition.md)
+- [Chat UI](../guides/chat-ui.md)
+
+## Related reference
+
+- [`veryfront/head`](../reference/veryfront/head.md)
+- [`veryfront/root`](../reference/veryfront/index.md)
+- [`veryfront/chat`](../reference/veryfront/chat.md)

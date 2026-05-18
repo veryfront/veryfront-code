@@ -1834,9 +1834,6 @@ User guides:
 
 Architecture:
 
-- [03-agent-runtime](../../architecture/03-agent-runtime.md): Agent runtime architecture
-- [08-hosted-agent-runs](../../architecture/08-hosted-agent-runs.md): Hosted agent runs
-- [09-control-plane-channels](../../architecture/09-control-plane-channels.md): Control-plane channels
-- [10-ag-ui-transport](../../architecture/10-ag-ui-transport.md): AG-UI transport contract
-- [19-runtime-boundaries](../../architecture/19-runtime-boundaries.md): Runtime boundaries
-- [24-ai-primitives](../../architecture/24-ai-primitives.md): AI primitives
+- [05-agent-runtime](../../architecture/05-agent-runtime.md): Agent runtime, hosted runs, AI primitives, and skills
+- [06-ag-ui-transport](../../architecture/06-ag-ui-transport.md): AG-UI transport contract
+- [11-control-plane-channels](../../architecture/11-control-plane-channels.md): Control-plane channels

@@ -129,5 +129,5 @@ import { buildChannelResponseParts, executeChannelInvoke, listChannelAssistants 
 
 Architecture:
 
-- [09-control-plane-channels](../../architecture/09-control-plane-channels.md): Control-plane channels
-- [10-ag-ui-transport](../../architecture/10-ag-ui-transport.md): AG-UI transport
+- [06-ag-ui-transport](../../architecture/06-ag-ui-transport.md): AG-UI transport
+- [11-control-plane-channels](../../architecture/11-control-plane-channels.md): Control-plane channels

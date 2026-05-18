@@ -248,4 +248,4 @@ User guides:
 
 Architecture:
 
-- [23-sandbox-runtime](../../architecture/23-sandbox-runtime.md): Sandbox runtime architecture
+- [17-sandbox-runtime](../../architecture/17-sandbox-runtime.md): Sandbox runtime architecture

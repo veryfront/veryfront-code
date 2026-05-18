@@ -412,4 +412,4 @@ User guides:
 
 Architecture:
 
-- [16-extension-system](../../architecture/16-extension-system.md): Extension system architecture
+- [12-extension-system](../../architecture/12-extension-system.md): Extension system architecture

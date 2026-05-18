@@ -109,4 +109,4 @@ User guides:
 
 Architecture:
 
-- [07-mcp-runtime](../../architecture/07-mcp-runtime.md): MCP runtime architecture
+- [10-mcp-runtime](../../architecture/10-mcp-runtime.md): MCP runtime architecture

@@ -31,12 +31,8 @@ const jobs = new VeryfrontJobsClient({
   projectReference: "my-project",
 });
 
-const job = await jobs.create({
-  name: "Ingest 1 file",
-  target: "task:knowledge-ingest",
-  config: {
-    upload_ids: ["00000000-0000-0000-0000-000000000000"],
-  },
+const job = await jobs.knowledge.ingestByUploadIds({
+  uploadIds: ["00000000-0000-0000-0000-000000000000"],
 });
 
 const events = await jobs.events(job.id);
@@ -113,8 +109,12 @@ const events = await jobs.events(job.id);
 | `JobTargetDefinitionsResponse` |  |
 | `KnowledgeIngestBatchSource` |  |
 | `KnowledgeIngestBatchSourceWithMessage` |  |
+| `KnowledgeIngestByUploadIdsInput` |  |
+| `KnowledgeIngestByUploadPathsInput` |  |
+| `KnowledgeIngestByUploadPrefixInput` |  |
 | `KnowledgeIngestFailedFileResult` |  |
 | `KnowledgeIngestFileResult` |  |
+| `KnowledgeIngestJobOptions` |  |
 | `KnowledgeIngestJobResult` |  |
 | `KnowledgeIngestSkippedFileResult` |  |
 | `ListBatchJobsOptions` |  |
@@ -136,4 +136,4 @@ User guides:
 
 Architecture:
 
-- [20-jobs-and-tasks](../../architecture/20-jobs-and-tasks.md): Jobs and tasks runtime
+- [09-jobs-and-tasks](../../architecture/09-jobs-and-tasks.md): Jobs and tasks runtime
