@@ -74,6 +74,30 @@ export interface LinearWorkflowState {
   type: string;
 }
 
+export interface LinearUser {
+  id: string;
+  name: string;
+  displayName?: string;
+  email: string;
+  active: boolean;
+  avatarUrl?: string;
+}
+
+export interface LinearComment {
+  id: string;
+  body: string;
+  createdAt: string;
+  user?: {
+    id: string;
+    name: string;
+  };
+  issue?: {
+    id: string;
+    identifier: string;
+    title: string;
+  };
+}
+
 interface GraphQLResponse<T> {
   data?: T;
   errors?: Array<{
@@ -456,4 +480,67 @@ export async function getWorkflowStates(teamId: string): Promise<LinearWorkflowS
   });
 
   return data.team.states.nodes;
+}
+
+export async function listUsers(options?: {
+  limit?: number;
+}): Promise<LinearUser[]> {
+  const query = `
+    query ListUsers($first: Int) {
+      users(first: $first) {
+        nodes {
+          id
+          name
+          displayName
+          email
+          active
+          avatarUrl
+        }
+      }
+    }
+  `;
+
+  const data = await linearFetch<{ users: { nodes: LinearUser[] } }>(query, {
+    first: options?.limit ?? 50,
+  });
+
+  return data.users.nodes;
+}
+
+export async function addComment(options: {
+  issueId: string;
+  body: string;
+}): Promise<LinearComment> {
+  const mutation = `
+    mutation AddComment($issueId: String!, $body: String!) {
+      commentCreate(input: { issueId: $issueId, body: $body }) {
+        success
+        comment {
+          id
+          body
+          createdAt
+          user {
+            id
+            name
+          }
+          issue {
+            id
+            identifier
+            title
+          }
+        }
+      }
+    }
+  `;
+
+  const data = await linearFetch<{ commentCreate: { success: boolean; comment: LinearComment } }>(
+    mutation,
+    options,
+  );
+
+  if (!data.commentCreate.success) {
+    throw new Error("Failed to add comment");
+  }
+
+  return data.commentCreate.comment;
 }
