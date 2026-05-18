@@ -38,10 +38,11 @@ function addWarning(file: string, message: string) {
 const GUIDE_SLUG_TO_FILE: Record<string, string> = {};
 const REF_SLUG_TO_FILE: Record<string, string> = {};
 
-// Collect all guide .md files
+// Collect all guide .md files. README.md is repo-maintainer documentation,
+// not a published guide, so it is skipped from guide validation.
 const guideFiles: string[] = [];
 for (const entry of Deno.readDirSync(GUIDES_DIR)) {
-  if (entry.isFile && entry.name.endsWith(".md")) {
+  if (entry.isFile && entry.name.endsWith(".md") && entry.name !== "README.md") {
     guideFiles.push(entry.name);
     const slug = entry.name.replace(".md", "");
     GUIDE_SLUG_TO_FILE[slug] = entry.name;

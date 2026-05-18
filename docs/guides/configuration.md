@@ -8,6 +8,11 @@ order: 3
 
 `veryfront.config.ts` options, environment variables, and runtime settings.
 
+## Prerequisites
+
+- A project created with `veryfront init` (see [Quickstart](./quickstart.md)).
+- Write access to `veryfront.config.ts` and the project's `.env` file.
+
 ## Config file
 
 ```ts
@@ -269,6 +274,16 @@ export default defineConfig({
 ## Reading config at runtime
 
 The framework reads `veryfront.config.ts` automatically. Your config values are available to the build system and dev server. Pages and API routes access config indirectly through the features it enables (port, build output, router mode, etc.).
+
+## Verify it worked
+
+After editing `veryfront.config.ts`, restart `veryfront dev`. The dev banner
+should print the resolved `title`, output directory, and router mode. Set a
+distinctive `title` and check that the document title in the browser matches.
+
+For environment variables, read them back from a temporary API route. For
+example, return `getEnv("VERYFRONT_API_TOKEN")` from a debug route and remove
+it once you have confirmed the value resolves.
 
 ## Next
 

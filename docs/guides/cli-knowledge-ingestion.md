@@ -228,6 +228,29 @@ For agent prompts and system instructions, this is the simplest reliable pattern
 3. Use local paths only when the file is already present in the workspace
 4. Fall back to `uploads` and `files` CRUD commands only when you need manual control
 
+## Verify it worked
+
+After ingesting a source, the command writes one or more markdown files
+under the project's `knowledge/` directory:
+
+```bash
+ls knowledge/
+```
+
+A working ingestion lists the new `knowledge/<name>.md` entry. Open the
+generated markdown and confirm the parsed content matches the original.
+
+For automation, capture the JSON output of the command directly:
+
+```bash
+veryfront knowledge ingest uploads/sample.pdf --json | jq '.knowledgeFiles'
+```
+
+The JSON output names every file the command wrote. If the array is empty
+or the command exited non-zero, the parser most likely fell back to an
+error path; check the command output for the reason and the
+troubleshooting section above.
+
 ## Next
 
 - [Sandbox](./sandbox.md): run CLI workflows inside isolated workspaces

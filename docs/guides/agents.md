@@ -14,6 +14,13 @@ For the normal path, omit `model`. Veryfront Code uses runtime conventions:
 local inference by default, and Veryfront Cloud defaults when
 `VERYFRONT_API_TOKEN` plus project context are available.
 
+## Prerequisites
+
+- A Veryfront project running locally (see [Quickstart](./quickstart.md)).
+- A provider configured for inference (see [Providers](./providers.md)).
+- The `agents/` directory exists. If you customised `ai.agents.discovery.paths`
+  in [Configuration](./configuration.md), use that directory instead.
+
 ## Define an agent
 
 Create a file in `agents/`:
@@ -206,6 +213,20 @@ export default agent({
 | `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                         |
 | `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings           |
 | `skills`              | `true \| string[]`                                                                                     | Enable all skills (`true`) or only specific skill IDs                        |
+
+## Verify it worked
+
+Save the agent file, restart `veryfront dev`, and hit the AG-UI route:
+
+```bash
+curl -N http://localhost:3000/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Hello"}]}]}'
+```
+
+The server should stream AG-UI events that end with a `RunFinished` event.
+If the response is `404`, the AG-UI route file is missing; if it is `500`,
+check the dev-server log for the agent registration or provider error.
 
 ## Next
 

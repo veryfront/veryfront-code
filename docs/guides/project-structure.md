@@ -10,6 +10,11 @@ File conventions, directory layout, and how auto-discovery works.
 
 Examples below show the default app-router layout. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
 
+## Prerequisites
+
+- A project created with `veryfront init` (see [Quickstart](./quickstart.md)).
+- Familiarity with how a file path maps to a route in modern React frameworks.
+
 ## Directory layout
 
 ```
@@ -164,6 +169,21 @@ These directories aren't auto-discovered but follow standard conventions:
 Veryfront Code treats agents, tools, prompts, and workflows as first-class
 project primitives. Keep them at the project root so discovery, review, and
 runtime registration stay predictable.
+
+## Verify it worked
+
+Add a file in any auto-discovered directory and restart `veryfront dev`. For
+example, drop `agents/hello.ts`:
+
+```ts
+import { agent } from "veryfront/agent";
+
+export default agent({ id: "hello", system: "Say hi." });
+```
+
+The dev server log should print a line confirming the agent was registered.
+Call `getAgent("hello")` from a route or test. It should resolve to the agent
+you defined.
 
 ## Next
 

@@ -8,6 +8,16 @@ order: 9
 
 Provider registry. Maps "provider/model" strings to framework-compatible model runtimes.
 
+## Prerequisites
+
+- At least one agent defined under `agents/` (see [Agents](./agents.md)).
+- One of the following:
+  - A Veryfront Cloud token (`VERYFRONT_API_TOKEN` plus
+    `VERYFRONT_PROJECT_SLUG`),
+  - An API key for a direct provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+    or `GOOGLE_API_KEY`), or
+  - A local inference target if you want to run without external providers.
+
 ## Runtime conventions (recommended)
 
 For most projects, omit `model` entirely and let runtime defaults choose the
@@ -152,6 +162,20 @@ import { resolveModel } from "veryfront/provider";
 const model = resolveModel("openai/gpt-5.2");
 const cloudModel = resolveModel("veryfront-cloud/openai/gpt-5.2");
 ```
+
+## Verify it worked
+
+Call your agent's AG-UI route once provider env vars are set:
+
+```bash
+curl -N http://localhost:3000/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Reply with the active inference mode if available."}]}]}'
+```
+
+A token stream that ends without an authentication error means the provider
+resolved. In a chat UI, the `inferenceMode` field on `useChat` reports
+whether the call used cloud, server-local, or browser inference.
 
 ## Next
 

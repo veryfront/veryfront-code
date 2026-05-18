@@ -12,6 +12,12 @@ Use the sandbox when your app needs short-lived, isolated execution for tasks li
 
 The sandbox client talks to authenticated sandbox session APIs. In practice, that means you need either Veryfront Cloud credentials or your own compatible backing API/service layer for `/sandbox-sessions`.
 
+## Prerequisites
+
+- A Veryfront Cloud token (`VERYFRONT_API_TOKEN`) or a self-hosted
+  `/sandbox-sessions` API and matching `VERYFRONT_API_URL`.
+- A reachable network from the process that calls `Sandbox.create()`.
+
 ## Create a sandbox session
 
 Use `Sandbox.create()` with sandbox API credentials. In local development,
@@ -131,6 +137,19 @@ try {
   await sandbox.close();
 }
 ```
+
+## Verify it worked
+
+Run the example above in a Node script with the env vars set. A working
+sandbox:
+
+- Prints `ready` to stdout from `executeCommand`.
+- Returns `exitCode: 0` from the command result.
+- Releases its session on `sandbox.close()` without an error.
+
+If `Sandbox.create()` throws a `401`, double-check the API token. If the
+session never closes, look in the cloud dashboard for the lingering session
+id and close it manually.
 
 ## Next
 

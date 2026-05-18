@@ -13,6 +13,11 @@ The middleware pipeline works in both router styles. The route module wrapper ch
 - App router API routes live at `app/api/**/route.ts` and export named HTTP method handlers such as `GET` or `POST`. The handler receives the `Request` directly.
 - Pages router API routes live at `pages/api/**` and export named HTTP method handlers or a `default` fallback handler. The handler receives an `APIContext` as `ctx`; use `ctx.request` when a middleware expects a `Request`.
 
+## Prerequisites
+
+- At least one API route in your project (see [API routes](./api-routes.md)).
+- The dev server running so you can hit the routes with `curl`.
+
 ## Built-in middleware
 
 ### CORS
@@ -153,6 +158,22 @@ const pipeline = new MiddlewarePipeline()
   .use(auth)
   .use(cors({ origin: "*" }));
 ```
+
+## Verify it worked
+
+Hit a route with and without the headers the middleware expects:
+
+```bash
+# Expect 401 without an Authorization header
+curl -i http://localhost:3000/api/protected
+
+# Expect 200 with a valid token
+curl -i http://localhost:3000/api/protected \
+  -H "Authorization: Bearer dev-token"
+```
+
+For CORS, include an `Origin` header and confirm
+`Access-Control-Allow-Origin` is set on the response.
 
 ## Next
 

@@ -10,6 +10,13 @@ Use chat hooks when you need state and runtime integration without the preset UI
 
 The examples below assume your app has an AG-UI chat endpoint at `/api/ag-ui`. Use the route from [Chat UI](./chat-ui.md) or [Agents](./agents.md), then run `veryfront dev` and open the page that renders the hook.
 
+## Prerequisites
+
+- A page that can render React client components.
+- An AG-UI route mounted at `/api/ag-ui` (or another path you pass via `api`).
+- For `useCompletion`, an API route that returns plain text or SSE for the
+  `complete` call.
+
 ## useChat
 
 ```tsx
@@ -80,6 +87,20 @@ export default function Autocomplete() {
 ## Inference mode
 
 `useChat` exposes `inferenceMode` so your UI can show whether inference is running through cloud, server-local, or browser runtime.
+
+## Verify it worked
+
+Render the hook in a page and exercise the surface you care about:
+
+- `useChat`: submit a message. `chat.messages` should grow and `isLoading`
+  should flip while the response streams.
+- `useAgent`: call `invoke`. `status` should move through `running` to
+  `idle` and `messages` should contain the agent's reply.
+- `useCompletion`: call `complete`. `completion` should populate and
+  `isLoading` should flip back to `false` when the response ends.
+
+If `isLoading` never flips back, check the network tab for the request to
+your API and the dev-server log for handler errors.
 
 ## Next
 

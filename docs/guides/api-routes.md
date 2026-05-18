@@ -10,6 +10,12 @@ HTTP handlers, request parsing, and streaming responses.
 
 Veryfront supports API routes in the app router and the pages router. The router changes the file location and handler arguments. The request and response APIs stay based on the standard Web `Request` and `Response` objects.
 
+## Prerequisites
+
+- A project created with `veryfront init` (see [Quickstart](./quickstart.md)).
+- The dev server running (`veryfront dev`) or a build target you can hit with
+  HTTP.
+
 ## Router module shapes
 
 Use `app/api/**/route.ts` in the app router. Export named HTTP method handlers. Each handler receives the `Request` directly and receives route params in the second argument.
@@ -223,6 +229,22 @@ export const POST = createAgUiHandler("assistant");
 ```
 
 Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{ type: "text", text }] }`. The route responds with AG-UI SSE and pairs with `useChat({ api: "/api/ag-ui" })` on the client. See the [Chat UI](./chat-ui.md) guide.
+
+## Verify it worked
+
+Call each handler with `curl` from another terminal while `veryfront dev` is
+running:
+
+```bash
+curl -i http://localhost:3000/api/hello
+curl -i -X POST http://localhost:3000/api/echo \
+  -H "Content-Type: application/json" \
+  -d '{"hello":"world"}'
+```
+
+A working handler returns the expected status code and a JSON or streamed
+body. A `404` means the file path does not match the URL; a `405` means the
+HTTP method handler is not exported.
 
 ## Next
 

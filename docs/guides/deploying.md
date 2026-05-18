@@ -11,6 +11,15 @@ Production builds, static export, and deployment targets.
 Veryfront Cloud is the primary managed deployment path. The same runtime can also be self-hosted or deployed on other infrastructure.
 The npm package, CLI, and import name remain `veryfront`.
 
+## Prerequisites
+
+- A Veryfront project that runs with `veryfront dev`.
+- Production credentials for any LLM providers and other integrations the
+  app uses.
+- For Veryfront Cloud: a `VERYFRONT_API_TOKEN` and a project reference.
+- For self-hosted: a deploy target (container host, Node host, or static
+  host) that can serve the build output.
+
 ## Build
 
 Create a production build:
@@ -92,6 +101,21 @@ CMD ["deno", "task", "start"]
 ```
 
 You can also deploy the same build output on other infrastructure that supports your chosen runtime or container model.
+
+## Verify it worked
+
+After `veryfront build`:
+
+- `dist/` (or your configured `outDir`) contains compiled assets.
+- `veryfront start` serves the build locally on port `3000`. Hit `/` and
+  any API route with `curl` and confirm responses match the dev server.
+
+After `veryfront deploy`:
+
+- The CLI prints a production URL such as
+  `https://<slug>.production.veryfront.com`.
+- Open the URL and confirm the home page and any API routes respond.
+- The Cloud dashboard lists the new deployment under the project.
 
 ## Next
 

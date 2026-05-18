@@ -8,6 +8,12 @@ order: 30
 
 The extension lifecycle controls how Veryfront discovers, orders, starts, and stops extension factories.
 
+## Prerequisites
+
+- At least one extension installed or local (see
+  [Extensions](./extensions.md)).
+- The dev server running so you can observe setup and teardown logs.
+
 ## Load sequence
 
 ```text
@@ -63,6 +69,17 @@ veryfront dev
 ```
 
 Save `veryfront.config.ts`. The dev server should run `teardown()` for the previous extension instance and `setup()` for the new one.
+
+## Verify it worked
+
+With the temporary `setup()`/`teardown()` logs in place:
+
+- On `veryfront dev` startup, every extension prints a `setup` log line.
+- Save `veryfront.config.ts`. Each affected extension should print a
+  `teardown` log line and then a fresh `setup` log line.
+- On Ctrl+C, every extension prints its final `teardown` log line.
+
+Remove the temporary logs before publishing the extension.
 
 ## Next
 

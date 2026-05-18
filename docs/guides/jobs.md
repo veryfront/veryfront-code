@@ -15,6 +15,14 @@ Use Veryfront jobs for durable, project-scoped background work.
 - **logs** are raw debugging output.
 - A **batch** groups related jobs together.
 
+## Prerequisites
+
+- A Veryfront Cloud project and a `VERYFRONT_API_TOKEN`. Set
+  `VERYFRONT_PROJECT_ID` or `VERYFRONT_PROJECT_SLUG` to identify the project
+  (see [Configuration](./configuration.md)).
+- A task or other targetable capability the job should run (see
+  [Tasks](./tasks.md)).
+
 ## How users create jobs
 
 Users create jobs through two main paths:
@@ -155,6 +163,32 @@ Use the **SDK / API** when:
 - you need to create jobs directly
 - you need cron scheduling
 - you are building automation or agent-driven project operations
+
+## Verify it worked
+
+After creating a job, watch its status and event stream:
+
+```ts
+const job = await jobs.create({ name: "Test job", target: "task:sync-data" });
+console.log("created", job.id);
+
+// Poll status until terminal
+while (true) {
+  const { status } = await jobs.get(job.id);
+  if (status === "succeeded" || status === "failed") break;
+  await new Promise((r) => setTimeout(r, 2000));
+}
+
+// Read the canonical event stream
+const events = await jobs.events(job.id);
+for (const entry of events.entries) {
+  console.log(entry);
+}
+```
+
+A working setup ends with `status: "succeeded"` and an event log whose
+entries describe the run. The same job should also appear in Studio under
+the jobs panel.
 
 ## Next
 

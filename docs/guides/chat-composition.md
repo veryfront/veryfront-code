@@ -10,6 +10,11 @@ Use composition when the preset `Chat` component is too constrained but you stil
 
 The examples use the same `useChat({ api: "/api/ag-ui" })` setup as the [Chat UI](./chat-ui.md) guide. Create the AG-UI route first, then render these components in a client page and verify them with `veryfront dev`.
 
+## Prerequisites
+
+- A working preset Chat UI (see [Chat UI](./chat-ui.md)).
+- The `/api/ag-ui` route mounted with `createAgUiHandler`.
+
 ## Layout components
 
 ```tsx
@@ -74,6 +79,17 @@ function App() {
   );
 }
 ```
+
+## Verify it worked
+
+Render your composed layout in a client page, run `veryfront dev`, and:
+
+- Confirm the header, message list, and composer all render where you placed
+  them.
+- Submit a message and confirm tokens stream into the message list (the same
+  AG-UI flow as the preset `Chat` component).
+- For `Message` compound components, confirm avatar, content, and actions
+  render in the order you arranged them.
 
 ## Next
 

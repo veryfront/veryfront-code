@@ -15,6 +15,14 @@ Memory configuration is independent of model selection, so these examples omit
 
 To test these examples, define the agent, expose it through the `/api/ag-ui` route shown below, run `veryfront dev`, and send messages from the [Chat UI](./chat-ui.md) guide or with `curl`.
 
+## Prerequisites
+
+- An agent in `agents/` (see [Agents](./agents.md)).
+- An AG-UI route (see [API routes](./api-routes.md) for the
+  `createAgUiHandler("assistant")` pattern).
+- A storage backend if you choose `conversation` memory; the default in-memory
+  driver is fine while developing.
+
 ## Memory types
 
 Configure memory on your agent to persist messages across requests:
@@ -185,6 +193,24 @@ There are two patterns for conversation history:
 **Server-managed** (with agent memory): The server persists messages. The client sends only the latest message. Good for long-running conversations and multi-device access.
 
 You can combine both: use client memory for the UI and server memory for context that persists across sessions.
+
+## Verify it worked
+
+Send two messages on the same `threadId` (with `conversation` memory) and
+confirm the second response references the first message. With `curl`:
+
+```bash
+THREAD=$(uuidgen)
+curl -s http://localhost:3000/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d "{\"threadId\":\"$THREAD\",\"messages\":[{\"id\":\"1\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"text\":\"My name is Sam.\"}]}]}"
+curl -s http://localhost:3000/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d "{\"threadId\":\"$THREAD\",\"messages\":[{\"id\":\"2\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"text\":\"What is my name?\"}]}]}"
+```
+
+The second response should mention "Sam". For streaming, watch the SSE
+output: tokens arrive incrementally rather than in one chunk.
 
 ## Next
 

@@ -8,6 +8,13 @@ order: 22
 
 Tasks are user-defined functions in `tasks/` that can run locally via `veryfront task <name>` or in the cloud as Jobs and Cron Jobs.
 
+## Prerequisites
+
+- A Veryfront project with the `tasks/` directory available (see
+  [Quickstart](./quickstart.md)).
+- For cloud execution: a `VERYFRONT_API_TOKEN` and a project reference
+  (see [Configuration](./configuration.md)).
+
 ## Quick start
 
 Create a task file:
@@ -117,6 +124,21 @@ await jobs.create({
 ```
 
 See [Jobs and cron jobs](./jobs.md) for scheduling and event monitoring.
+
+## Verify it worked
+
+Run the task locally first:
+
+```bash
+veryfront task sync-data
+```
+
+A passing task prints any `console.log` output, exits with status `0`, and
+returns the value you returned from `run` as the final JSON line.
+
+For cloud execution, create a job that targets the task and check Studio for
+a `succeeded` status. See the verification block in
+[Jobs and cron jobs](./jobs.md) for the SDK-driven check.
 
 ## Next
 
