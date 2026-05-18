@@ -108,7 +108,27 @@
       "id": "upload_file",
       "name": "Upload File",
       "description": "Upload or update a file in Dropbox",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://content.dropboxapi.com/2/files/upload",
+        "contentType": "application/octet-stream",
+        "params": {
+          "Dropbox-API-Arg": {
+            "type": "object",
+            "in": "header",
+            "description": "Dropbox upload args: path, mode, autorename, mute",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "File content to upload",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "search_files",

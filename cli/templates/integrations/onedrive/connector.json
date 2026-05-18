@@ -92,7 +92,33 @@
       "id": "upload_file",
       "name": "Upload File",
       "description": "Upload or update a file in OneDrive",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://graph.microsoft.com/v1.0/me/drive/items/{parentFolderId}:/{fileName}:/content",
+        "contentType": "application/octet-stream",
+        "params": {
+          "parentFolderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Parent folder item ID, or root",
+            "default": "root"
+          },
+          "fileName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the file to upload",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "File content to upload",
+            "required": true
+          }
+        }
+      }
     },
     {
       "id": "download_file",

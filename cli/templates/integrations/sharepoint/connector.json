@@ -138,7 +138,39 @@
       "id": "upload_file",
       "name": "Upload File",
       "description": "Upload a file to a SharePoint document library",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://graph.microsoft.com/v1.0/sites/{siteId}/drive/items/{parentFolderId}:/{fileName}:/content",
+        "contentType": "application/octet-stream",
+        "params": {
+          "siteId": {
+            "type": "string",
+            "in": "path",
+            "description": "SharePoint site ID",
+            "required": true
+          },
+          "parentFolderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Parent folder item ID, or root",
+            "default": "root"
+          },
+          "fileName": {
+            "type": "string",
+            "in": "path",
+            "description": "Name of the file to upload",
+            "required": true
+          }
+        },
+        "body": {
+          "content": {
+            "type": "string",
+            "description": "File content to upload",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [
