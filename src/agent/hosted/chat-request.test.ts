@@ -218,7 +218,7 @@ describe("agent/hosted-chat-request", () => {
   it("parses runtime agent invocations into hosted chat requests", async () => {
     const invocation = createRuntimeInvocation();
     const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
-      new Request("https://agent.example.com/api/control-plane/agents/stream", {
+      new Request("https://agent.example.com/api/control-plane/runs/run_1/stream", {
         method: "POST",
         body: JSON.stringify(invocation),
       }),

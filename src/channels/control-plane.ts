@@ -8,8 +8,8 @@ import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts"
 const SIGNATURE_SKEW_SECONDS = 5;
 
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
-export const CONTROL_PLANE_AGENT_STREAM_PATH = "/api/control-plane/agents/stream";
-export const CONTROL_PLANE_AGENT_RUNS_PATH_PREFIX = "/api/control-plane/agents/runs/";
+export const CONTROL_PLANE_RUNS_PATH_PREFIX = "/api/control-plane/runs/";
+export const CONTROL_PLANE_RUN_STREAM_PATH = "/api/control-plane/runs/:runId/stream";
 
 const getCompactJwsHeaderSchema = defineSchema((v) =>
   v.object({

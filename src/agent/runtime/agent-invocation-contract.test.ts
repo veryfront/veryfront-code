@@ -240,7 +240,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
 
   it("parses runtime agent invocation request bodies through the public helper", async () => {
     const parsed = await parseRuntimeAgentRunInvocation(
-      new Request("http://localhost/api/control-plane/agents/stream", {
+      new Request("http://localhost/api/control-plane/runs/run_1/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(createInvocation()),
@@ -253,7 +253,7 @@ describe("agent/runtime-agent-invocation-contract", () => {
 
   it("returns a 400 response for malformed runtime agent invocation payloads", async () => {
     const result = await parseRuntimeAgentRunInvocationOrError(
-      new Request("http://localhost/api/control-plane/agents/stream", {
+      new Request("http://localhost/api/control-plane/runs/run_1/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ run: { runId: "run_1" } }),

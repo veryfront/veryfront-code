@@ -17,7 +17,7 @@ function createDynamicImportStub(
 describe("internal-agents/runtime-owner", () => {
   it("prefers explicit pod env overrides for the runtime owner url", async () => {
     const request = new Request(
-      "https://demo-project.preview.veryfront.org/api/control-plane/agents/stream",
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
     );
 
     const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
@@ -37,7 +37,7 @@ describe("internal-agents/runtime-owner", () => {
 
   it("falls back to detected runtime interfaces when no explicit pod host is configured", async () => {
     const request = new Request(
-      "https://demo-project.preview.veryfront.org/api/control-plane/agents/stream",
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
     );
 
     const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
@@ -59,7 +59,7 @@ describe("internal-agents/runtime-owner", () => {
 
   it("does not let a generic PORT env override the runtime listener port", async () => {
     const request = new Request(
-      "https://demo-project.preview.veryfront.org:21000/api/control-plane/agents/stream",
+      "https://demo-project.preview.veryfront.org:21000/api/control-plane/runs/run_1/stream",
     );
 
     const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
@@ -80,7 +80,7 @@ describe("internal-agents/runtime-owner", () => {
 
   it("returns a null owner url when Deno interface probing throws", async () => {
     const request = new Request(
-      "https://demo-project.preview.veryfront.org/api/control-plane/agents/stream",
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
     );
 
     const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {
@@ -100,7 +100,7 @@ describe("internal-agents/runtime-owner", () => {
 
   it("returns null when no routable runtime owner host can be determined", async () => {
     const request = new Request(
-      "https://demo-project.preview.veryfront.org/api/control-plane/agents/stream",
+      "https://demo-project.preview.veryfront.org/api/control-plane/runs/run_1/stream",
     );
 
     const ownerUrl = await resolveRuntimeOwnerInvokeUrl(request, {

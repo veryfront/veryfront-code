@@ -8,14 +8,14 @@ MCP server protocol handling or browser AG-UI chunk encoding.
 Control-plane channels move signed management requests between Veryfront
 services and project runtimes.
 
-Project runtimes expose these signed agent control-plane paths:
+Project runtimes expose these signed control-plane paths:
 
-| Path                                                | Purpose                                               |
-| --------------------------------------------------- | ----------------------------------------------------- |
-| `POST /api/control-plane/agents/list`               | List project agents available to the control plane.   |
-| `POST /api/control-plane/agents/stream`             | Invoke a project agent with a signed runtime request. |
-| `POST /api/control-plane/agents/runs/:runId/resume` | Resume a waiting project agent run.                   |
-| `DELETE /api/control-plane/agents/runs/:runId`      | Cancel a project agent run.                           |
+| Path                                         | Purpose                                                   |
+| -------------------------------------------- | --------------------------------------------------------- |
+| `POST /api/control-plane/agents/list`        | List project agents available to the control plane.       |
+| `POST /api/control-plane/runs/:runId/stream` | Invoke a project agent run with a signed runtime request. |
+| `POST /api/control-plane/runs/:runId/resume` | Resume a waiting project agent run.                       |
+| `DELETE /api/control-plane/runs/:runId`      | Cancel a project agent run.                               |
 
 Primary source areas:
 

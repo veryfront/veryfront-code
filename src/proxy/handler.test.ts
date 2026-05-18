@@ -1181,7 +1181,7 @@ describe("Proxy Handler", () => {
       }
     });
 
-    it("allows signed internal agent stream requests through protected preview using inbound token", async () => {
+    it("allows signed control-plane run stream requests through protected preview using inbound token", async () => {
       let tokenEndpointHits = 0;
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
@@ -1212,7 +1212,7 @@ describe("Proxy Handler", () => {
         const handler = createHandler(port);
 
         const req = new Request(
-          "http://protected-project.preview.veryfront.com/api/control-plane/agents/stream",
+          "http://protected-project.preview.veryfront.com/api/control-plane/runs/run_1/stream",
           {
             headers: {
               host: "protected-project.preview.veryfront.com",

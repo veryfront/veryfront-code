@@ -74,7 +74,7 @@ describe("agent/agent-service-runtime", () => {
       "/api/ag-ui",
       "/api/runs/:runId",
       "/api/runs",
-      "/api/control-plane/agents/stream",
+      "/api/control-plane/runs/:runId/stream",
     ]);
 
     const ready = await bundle.runtime.request("/readiness");

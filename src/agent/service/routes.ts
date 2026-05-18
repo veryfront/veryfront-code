@@ -1,5 +1,5 @@
 import { parseProviderError } from "../../chat/provider-errors.ts";
-import { CONTROL_PLANE_AGENT_STREAM_PATH } from "../../channels/control-plane.ts";
+import { CONTROL_PLANE_RUN_STREAM_PATH } from "../../channels/control-plane.ts";
 import type { AgentServiceRoute } from "./definition.ts";
 import { createAgUiRunErrorEvent, createAgUiSseErrorResponse } from "../ag-ui/host-support.ts";
 import { createAgUiRuntimeHandler } from "../ag-ui/runtime-handler.ts";
@@ -118,6 +118,7 @@ export type HostedAgentServiceRouteSet<TExecution extends object> = {
   handleRuntimeAgentRunInvocationExecuteRequest: (input: {
     request: Request;
     requestOrCtx?: unknown;
+    runId?: string;
   }) => Promise<Response>;
   handleDurableChatRunCancelRequest: (input: {
     request: Request;
@@ -298,6 +299,7 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
   async function handleRuntimeAgentRunInvocationExecuteRequest(input: {
     request: Request;
     requestOrCtx?: unknown;
+    runId?: string;
   }): Promise<Response> {
     return trace("handler.runtimeAgentRunInvocationExecute", async () => {
       const req = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(input.request, {
@@ -307,6 +309,10 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
       });
       if (req instanceof Response) {
         return req;
+      }
+
+      if (input.runId && req.durableRootRun?.runId !== input.runId) {
+        return Response.json({ errorCode: "CONTROL_PLANE_RUN_ID_MISMATCH" }, { status: 400 });
       }
 
       return executeParsedDurableChatRun({
@@ -361,8 +367,9 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
     },
     {
       method: "POST",
-      path: CONTROL_PLANE_AGENT_STREAM_PATH,
-      handler: (request: Request) => handleRuntimeAgentRunInvocationExecuteRequest({ request }),
+      path: CONTROL_PLANE_RUN_STREAM_PATH,
+      handler: (request: Request, params: Record<string, string>) =>
+        handleRuntimeAgentRunInvocationExecuteRequest({ request, runId: params.runId }),
     },
   ];
 

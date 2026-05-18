@@ -1,4 +1,4 @@
-import { CONTROL_PLANE_AGENT_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
+import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
 import {
   ControlPlaneRequestError,
   verifyControlPlaneRequest,
@@ -16,7 +16,7 @@ import { BaseHandler } from "../response/base.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 
-const CANCEL_PATH_REGEX = /^\/api\/control-plane\/agents\/runs\/([^/]+)$/;
+const CANCEL_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)$/;
 
 function getRunId(pathname: string): string | null {
   return CANCEL_PATH_REGEX.exec(pathname)?.[1] ?? null;
@@ -27,7 +27,7 @@ export class AgentRunCancelHandler extends BaseHandler {
     name: "AgentRunCancelHandler",
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
     patterns: [
-      { pattern: CONTROL_PLANE_AGENT_RUNS_PATH_PREFIX, prefix: true, method: "DELETE" },
+      { pattern: CONTROL_PLANE_RUNS_PATH_PREFIX, prefix: true, method: "DELETE" },
     ],
   };
 

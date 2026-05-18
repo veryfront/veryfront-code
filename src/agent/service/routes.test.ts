@@ -95,7 +95,7 @@ Deno.test("agent service routes expose the default paths", () => {
     "POST /api/ag-ui",
     "DELETE /api/runs/:runId",
     "POST /api/runs",
-    "POST /api/control-plane/agents/stream",
+    "POST /api/control-plane/runs/:runId/stream",
   ]);
 });
 
@@ -129,9 +129,10 @@ Deno.test("agent service routes preserve control-plane target agent ids", async 
   const { routeSet, preparedRequests } = createRouteSet();
   const response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
     request: createAuthenticatedRequest(
-      "/api/control-plane/agents/stream",
+      "/api/control-plane/runs/run-1/stream",
       createRuntimeAgentInvocationBody(),
     ),
+    runId: "run-1",
   });
 
   assertEquals(response.status, 202);
