@@ -83,4 +83,4 @@ function App() {
 ## Related
 
 - [Chat UI](./chat-ui.md): preset chat component
-- [`veryfront/chat`](../reference/chat.md): chat reference
+- [`veryfront/chat`](../reference/veryfront/chat.md): chat reference

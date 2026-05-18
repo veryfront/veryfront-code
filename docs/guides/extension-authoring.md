@@ -96,4 +96,4 @@ const extension: ExtensionFactory = () => ({
 ## Related
 
 - [Extensions](./extensions.md): extension overview
-- [`veryfront/extensions`](../reference/extensions.md): extension API reference
+- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference

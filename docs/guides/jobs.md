@@ -163,5 +163,5 @@ Use the **SDK / API** when:
 
 ## Related
 
-- [`veryfront/jobs`](../reference/jobs.md): API reference for the jobs client
+- [`veryfront/jobs`](../reference/veryfront/jobs.md): API reference for the jobs client
 - [CLI-first knowledge ingestion](./cli-knowledge-ingestion.md): first-party knowledge ingestion flow that creates jobs

@@ -161,4 +161,4 @@ const pipeline = new MiddlewarePipeline()
 
 ## Related
 
-- [`veryfront/middleware`](../reference/middleware.md): middleware API reference
+- [`veryfront/middleware`](../reference/veryfront/middleware.md): middleware API reference

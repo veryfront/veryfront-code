@@ -160,4 +160,4 @@ const response = await gmail.fetch(session.userId, "/users/me/messages");
 
 ## Related
 
-- [`veryfront/oauth`](../reference/oauth.md): OAuth API reference
+- [`veryfront/oauth`](../reference/veryfront/oauth.md): OAuth API reference

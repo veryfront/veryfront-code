@@ -100,4 +100,4 @@ You can also deploy the same build output on other infrastructure that supports 
 
 ## Related
 
-- [`veryfront` (root)](../reference/root.md): `defineConfig`, build options
+- [`veryfront` (root)](../reference/veryfront/index.md): `defineConfig`, build options

@@ -194,4 +194,4 @@ export default agent({
 
 ## Related
 
-- [`veryfront/tool`](../reference/tool.md): tool API reference
+- [`veryfront/tool`](../reference/veryfront/tool.md): tool API reference

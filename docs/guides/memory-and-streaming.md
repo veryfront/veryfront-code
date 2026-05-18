@@ -193,5 +193,5 @@ You can combine both: use client memory for the UI and server memory for context
 
 ## Related
 
-- [`veryfront/agent`](../reference/agent.md): agent API reference
-- [`veryfront/chat`](../reference/chat.md): chat hooks API reference
+- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
+- [`veryfront/chat`](../reference/veryfront/chat.md): chat hooks API reference

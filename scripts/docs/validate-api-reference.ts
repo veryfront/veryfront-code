@@ -2,16 +2,26 @@
 /**
  * API Docs Validator
  *
- * Checks that every top-level `deno.json` export path has barrel JSDoc with
- * both a `@module` tag and at least one `@example` block. This complements
- * `lint:barrel-jsdoc` (which checks `@module` only) by also requiring examples.
+ * Checks that:
+ * 1. Every top-level `deno.json` export path has barrel JSDoc with both a
+ *    `@module` tag and at least one `@example` block. This complements
+ *    `lint:barrel-jsdoc` (which checks `@module` only) by also requiring
+ *    examples.
+ * 2. Every public import surface has a reference page at
+ *    `docs/reference/veryfront/<slug>.md`. The root export maps to
+ *    `index.md`. Synthetic parents that only own deep imports (e.g.
+ *    `channels`) also require a page.
+ * 3. The structural `docs/reference/README.md` exists.
  *
  * Runs as part of `deno task verify`.
  *
- * Usage: deno run --allow-read scripts/docs/validate-api-docs.ts
+ * Usage: deno run --allow-read scripts/docs/validate-api-reference.ts
  */
 
 const ROOT = Deno.cwd();
+
+/** Slugs that own only deep imports and have no top-level barrel JSDoc. */
+const SYNTHETIC_PARENTS = new Set<string>(["channels"]);
 
 interface ValidationError {
   exportPath: string;
@@ -20,15 +30,20 @@ interface ValidationError {
 }
 
 interface ReferencePageError {
-  exportPath: string;
+  identifier: string;
   expectedPath: string;
+}
+
+function topLevelSlug(exportPath: string): string {
+  if (exportPath === ".") return "index";
+  return exportPath.replace("./", "").split("/")[0];
 }
 
 function main(): void {
   const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`));
   const exports: Record<string, string> = denoConfig.exports ?? {};
 
-  // Only check top-level export paths (skip deep subpaths)
+  // Only check top-level export paths for JSDoc tags (skip deep subpaths).
   const topLevel = Object.entries(exports).filter(([path]) => {
     const parts = path.split("/");
     return parts.length <= 2;
@@ -51,7 +66,7 @@ function main(): void {
     const trimmed = content.trimStart();
     const missing: ("@module" | "@example")[] = [];
 
-    // Check for JSDoc block
+    // Check for JSDoc block.
     if (!trimmed.startsWith("/**")) {
       missing.push("@module", "@example");
     } else {
@@ -68,19 +83,46 @@ function main(): void {
     if (missing.length > 0) {
       errors.push({ exportPath, filePath, missing });
     }
+  }
 
-    const slug = exportPath === "." ? "root" : exportPath.replace("./", "");
-    const referencePath = `${ROOT}/docs/reference/${slug}.md`;
+  // Required reference pages: one per top-level slug plus synthetic parents.
+  const requiredSlugs = new Set<string>();
+  for (const [exportPath] of Object.entries(exports)) {
+    requiredSlugs.add(topLevelSlug(exportPath));
+  }
+  for (const slug of SYNTHETIC_PARENTS) {
+    requiredSlugs.add(slug);
+  }
+
+  for (const slug of requiredSlugs) {
+    const referencePath = `${ROOT}/docs/reference/veryfront/${slug}.md`;
     try {
       Deno.statSync(referencePath);
     } catch {
-      missingReferencePages.push({ exportPath, expectedPath: referencePath });
+      missingReferencePages.push({
+        identifier: slug === "index" ? "veryfront" : `veryfront/${slug}`,
+        expectedPath: referencePath,
+      });
     }
   }
 
-  if (errors.length === 0 && missingReferencePages.length === 0) {
-    console.log(`All ${topLevel.length} export paths have @module and @example in their JSDoc.`);
-    console.log(`All ${topLevel.length} top-level export paths have reference pages.`);
+  // Structural README that explains the layout.
+  const readmePath = `${ROOT}/docs/reference/README.md`;
+  let readmeMissing = false;
+  try {
+    Deno.statSync(readmePath);
+  } catch {
+    readmeMissing = true;
+  }
+
+  if (errors.length === 0 && missingReferencePages.length === 0 && !readmeMissing) {
+    console.log(
+      `All ${topLevel.length} top-level export paths have @module and @example in their JSDoc.`,
+    );
+    console.log(
+      `All ${requiredSlugs.size} reference pages exist under docs/reference/veryfront/.`,
+    );
+    console.log("docs/reference/README.md exists.");
     Deno.exit(0);
   }
 
@@ -96,12 +138,19 @@ function main(): void {
   }
 
   if (missingReferencePages.length > 0) {
-    console.error(`\n${missingReferencePages.length} top-level export path(s) missing reference pages:\n`);
+    console.error(
+      `\n${missingReferencePages.length} reference page(s) missing under docs/reference/veryfront/:\n`,
+    );
     for (const err of missingReferencePages) {
-      console.error(`  ${err.exportPath} -> ${err.expectedPath}`);
+      console.error(`  ${err.identifier} -> ${err.expectedPath}`);
     }
-    console.error("\nRun deno task docs, then preserve or merge any hand-written reference pages.");
+    console.error("\nRun `deno task docs` to regenerate the reference tree.");
   }
+
+  if (readmeMissing) {
+    console.error(`\nMissing docs/reference/README.md (run \`deno task docs\`).`);
+  }
+
   Deno.exit(1);
 }
 
