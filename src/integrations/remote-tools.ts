@@ -28,6 +28,22 @@ interface CallToolTextContent {
   text?: string;
 }
 
+type RemoteIntegrationToolExecutionContext = {
+  endUserId?: string;
+  runId?: string;
+  agentId?: string;
+};
+
+function normalizeRemoteExecutionContext(
+  contextOrEndUserId?: string | RemoteIntegrationToolExecutionContext,
+): RemoteIntegrationToolExecutionContext | undefined {
+  if (typeof contextOrEndUserId === "string") {
+    return { endUserId: contextOrEndUserId };
+  }
+
+  return contextOrEndUserId;
+}
+
 // ---------------------------------------------------------------------------
 // Per-request token resolution
 // ---------------------------------------------------------------------------
@@ -99,7 +115,7 @@ async function callRemoteTool(
   token: string,
   toolName: string,
   args: Record<string, unknown>,
-  endUserId?: string,
+  context?: RemoteIntegrationToolExecutionContext,
 ): Promise<unknown> {
   const response = await fetch(`${baseUrl}/integrations/tools/call`, {
     method: "POST",
@@ -110,7 +126,9 @@ async function callRemoteTool(
     body: JSON.stringify({
       name: toolName,
       arguments: args,
-      end_user_id: endUserId,
+      end_user_id: context?.endUserId,
+      run_id: context?.runId,
+      agent_id: context?.agentId,
     }),
   });
 
@@ -194,7 +212,7 @@ export function isRemoteIntegrationTool(toolName: string): boolean {
 export async function executeRemoteIntegrationTool(
   toolName: string,
   args: Record<string, unknown>,
-  endUserId?: string,
+  contextOrEndUserId?: string | RemoteIntegrationToolExecutionContext,
 ): Promise<unknown> {
   const baseUrl = getApiBaseUrlEnv();
   const token = resolveRequestToken();
@@ -202,7 +220,13 @@ export async function executeRemoteIntegrationTool(
     return { error: "no_api_token", message: "No API token available" };
   }
 
-  return callRemoteTool(baseUrl, token, toolName, args, endUserId);
+  return callRemoteTool(
+    baseUrl,
+    token,
+    toolName,
+    args,
+    normalizeRemoteExecutionContext(contextOrEndUserId),
+  );
 }
 
 /**
