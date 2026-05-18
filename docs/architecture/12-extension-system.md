@@ -33,7 +33,7 @@ Primary source areas:
 - Extensions provide framework capabilities. Integrations expose third-party
   service tools.
 - Project primitive discovery belongs in
-  [discovery and registries](./15-discovery-and-registries.md).
+  [discovery and registries](./16-discovery-and-registries.md).
 - Provider runtime can consume extension-provided provider contracts, but model
   request translation remains provider runtime work.
 
@@ -41,3 +41,15 @@ Primary source areas:
 
 - Add contract tests when changing extension schema or lifecycle semantics.
 - Keep missing-extension errors actionable and sanitized.
+
+## Related guides
+
+- [Extensions](../guides/extensions.md)
+- [Extension authoring](../guides/extension-authoring.md)
+- [Extension lifecycle](../guides/extension-lifecycle.md)
+- [Extension publishing](../guides/extension-publishing.md)
+- [Extension testing](../guides/extension-testing.md)
+
+## Related reference
+
+- [`veryfront/extensions`](../reference/extensions.md)

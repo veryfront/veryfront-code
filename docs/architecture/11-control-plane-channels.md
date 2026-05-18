@@ -40,8 +40,8 @@ Primary source areas:
   operations.
 - Conversation-scoped run APIs in Veryfront API provide run lineage, read, and
   replay for conversation-attached runs.
-- AG-UI event encoding belongs in [AG-UI transport](./10-ag-ui-transport.md).
-- MCP JSON-RPC dispatch belongs in [MCP runtime](./07-mcp-runtime.md).
+- AG-UI event encoding belongs in [AG-UI transport](./06-ag-ui-transport.md).
+- MCP JSON-RPC dispatch belongs in [MCP runtime](./10-mcp-runtime.md).
 
 ## Change checks
 
@@ -49,3 +49,12 @@ Primary source areas:
 - Keep public app route handlers separate from control-plane handlers.
 - Add tests for invalid signatures, malformed payloads, and successful dispatch
   paths when changing channel behavior.
+
+## Related guides
+
+- [Agent service runtime](../guides/agent-service-runtime.md)
+
+## Related reference
+
+- [`veryfront/agent/conversation-control-plane`](../reference/agent-conversation-control-plane.md)
+- [`veryfront/agent/service-runtime`](../reference/agent-service-runtime.md)

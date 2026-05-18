@@ -31,10 +31,18 @@ Primary source areas:
 
 - Server runtime consumes build output but does not own production build steps.
 - Runtime adapters describe host capabilities, not build graph semantics.
-- Extension-provided bundler contracts belong in [extension system](./16-extension-system.md).
+- Extension-provided bundler contracts belong in [extension system](./12-extension-system.md).
 
 ## Change checks
 
 - Add tests for route collection, manifest output, generated assets, and
   transform behavior when changing build output.
 - Run build verification when public build output or generated references change.
+
+## Related guides
+
+- [Deploying](../guides/deploying.md)
+
+## Related reference
+
+- [CLI reference](../reference/cli.md)

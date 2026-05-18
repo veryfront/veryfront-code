@@ -34,5 +34,14 @@ Primary source areas:
 
 ## Change checks
 
-- Update [support matrix](./18-support-matrix.md) when runtime support changes.
+- Update [support matrix](./20-support-matrix.md) when runtime support changes.
 - Add runtime-specific tests or compatibility tests for adapter behavior changes.
+
+## Related guides
+
+- [Deploying](../guides/deploying.md)
+- [Configuration](../guides/configuration.md)
+
+## Related reference
+
+- [`veryfront/fs`](../reference/fs.md)

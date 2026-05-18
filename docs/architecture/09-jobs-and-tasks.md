@@ -54,7 +54,7 @@ flowchart TD
 - A task is a developer-defined function. It is not a job run.
 - A job is durable background execution of a target. It is not a workflow DAG.
 - Cron jobs create job runs over time. They are not job runs themselves.
-- Workflow worker execution belongs in [workflow runtime](./05-workflow-runtime.md).
+- Workflow worker execution belongs in [workflow runtime](./08-workflow-runtime.md).
 - The managed job service is outside this package; this package owns the client,
   schemas, discovery, and local task runner.
 
@@ -67,3 +67,12 @@ flowchart TD
   behavior, context construction, or env allowlisting.
 - Update [Jobs and cron jobs](../guides/jobs.md) and [Tasks](../guides/tasks.md)
   when public behavior changes.
+
+## Related guides
+
+- [Jobs and cron jobs](../guides/jobs.md)
+- [Tasks](../guides/tasks.md)
+
+## Related reference
+
+- [`veryfront/jobs`](../reference/jobs.md)
