@@ -26,18 +26,27 @@ npm install -g veryfront
 ## Create a project
 
 ```bash
-veryfront init my-app
-cd my-app
+veryfront init test-app
+cd test-app
 ```
 
-The CLI walks you through template selection:
+The CLI walks you through template selection. The current templates are:
 
-- **AI Chatbot**: Agent + chat UI + streaming
-- **Chat with Your Docs**: RAG with source citations
-- **Multi-Agent System**: Agents that delegate to each other
-- **AI Workflow Pipeline**: Steps + approvals + parallelism
-- **Coding Agent**: Claude Code-powered code assistant
-- **AI SaaS**: Auth + chat + per-user memory
+| Template ID          | Label              | What you get                       |
+| -------------------- | ------------------ | ---------------------------------- |
+| `minimal`            | Minimal            | Blank canvas, no extras            |
+| `ai-agent`           | AI Agent           | Agent + chat UI + streaming        |
+| `docs-agent`         | Docs Agent         | Document Q&A with source citations |
+| `agentic-workflow`   | Agentic Workflow   | Steps + approvals + parallelism    |
+| `multi-agent-system` | Multi-Agent System | Agents that delegate to each other |
+| `coding-agent`       | Coding Agent       | AI code assistant with file tools  |
+| `saas-starter`       | SaaS Starter       | Auth + chat + per-user memory      |
+
+To skip the prompt and pick a template up front, pass `--template`:
+
+```bash
+veryfront init test-app --template ai-agent
+```
 
 ## Start the dev server
 
@@ -49,20 +58,23 @@ Open [http://localhost:3000](http://localhost:3000). Changes to any file reload 
 
 ## Project overview
 
-After `init`, your project looks like this:
+After `init` with the `minimal` template, your project looks like this:
 
 ```
-my-app/
+test-app/
   app/
     layout.tsx      # Root layout wrapping all pages
     page.tsx        # Home page (/)
+    about/
+      page.mdx      # /about (MDX page)
   package.json
+  README.md
 ```
 
-If you picked the **AI Chatbot** template, you also get:
+If you picked the `ai-agent` template, you also get:
 
 ```
-my-app/
+test-app/
   agents/
     assistant.ts    # AI agent definition
   tools/
@@ -71,8 +83,8 @@ my-app/
     layout.tsx
     page.tsx        # Chat UI
     api/
-      chat/
-        route.ts    # Streaming chat endpoint
+      ag-ui/
+        route.ts    # AG-UI streaming chat endpoint
 ```
 
 Pages live in `app/`. Agents, tools, prompts, and workflows live at the project root: they're auto-discovered by the framework.
