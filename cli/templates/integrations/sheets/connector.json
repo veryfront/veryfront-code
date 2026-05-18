@@ -146,7 +146,49 @@
       "id": "write_range",
       "name": "Write Range",
       "description": "Write data to a spreadsheet range",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          },
+          "range": {
+            "type": "string",
+            "in": "path",
+            "description": "A1 notation range to write",
+            "required": true
+          },
+          "valueInputOption": {
+            "type": "string",
+            "in": "query",
+            "description": "How input values should be interpreted",
+            "default": "USER_ENTERED"
+          },
+          "includeValuesInResponse": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether the response should include written values",
+            "default": false
+          }
+        },
+        "body": {
+          "values": {
+            "type": "array",
+            "description": "2D array of row values to write",
+            "required": true
+          },
+          "majorDimension": {
+            "type": "string",
+            "description": "Major dimension of provided values",
+            "default": "ROWS"
+          }
+        }
+      }
     },
     {
       "id": "create_spreadsheet",

@@ -64,7 +64,7 @@ describe("integration endpoint specs", () => {
       ["dropbox", 4],
       ["drive", 4],
       ["docs-google", 4],
-      ["sheets", 4],
+      ["sheets", 5],
       ["onedrive", 3],
       ["sharepoint", 4],
     ]);
@@ -185,6 +185,17 @@ describe("integration endpoint specs", () => {
     const sheetsReadRange = getTool("sheets", "read_range");
     assertEquals(sheetsReadRange.endpoint?.params?.spreadsheetId?.in, "path");
     assertEquals(sheetsReadRange.endpoint?.params?.range?.in, "path");
+
+    const sheetsWriteRange = getTool("sheets", "write_range");
+    assertEquals(
+      sheetsWriteRange.endpoint?.url,
+      "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}",
+    );
+    assertEquals(sheetsWriteRange.endpoint?.method, "PUT");
+    assertEquals(sheetsWriteRange.endpoint?.params?.spreadsheetId?.required, true);
+    assertEquals(sheetsWriteRange.endpoint?.params?.range?.required, true);
+    assertEquals(sheetsWriteRange.endpoint?.body?.values?.required, true);
+    assertEquals(sheetsWriteRange.endpoint?.params?.valueInputOption?.default, "USER_ENTERED");
 
     const oneDriveListFiles = getTool("onedrive", "list_files");
     assertEquals(
