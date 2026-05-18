@@ -4,30 +4,28 @@ import { createGitHubClient } from "../../lib/github-client.ts";
 import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 export default tool({
-  id: "create-issue",
-  description: "Create a new issue in a GitHub repository",
+  id: "update-issue",
+  description: "Update, close, or reopen a GitHub issue",
   inputSchema: defineSchema((v) =>
     v.object({
-      repo: v
-        .string()
-        .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
-      title: v.string().min(1).describe("Issue title"),
-      body: v
-        .string()
-        .optional()
-        .describe("Issue body/description (supports Markdown)"),
+      repo: v.string().describe("Repository in format 'owner/repo'"),
+      issueNumber: v.number().int().positive().describe("Issue number"),
+      title: v.string().optional().describe("Updated issue title"),
+      body: v.string().optional().describe("Updated issue body"),
+      state: v.enum(["open", "closed"]).optional().describe("Issue state"),
       labels: v.array(v.string()).optional().describe(
-        "Labels to add to the issue",
+        "Replacement label names",
       ),
-      assignees: v
-        .array(v.string())
-        .optional()
-        .describe("GitHub usernames to assign to the issue"),
+      assignees: v.array(v.string()).optional().describe(
+        "Replacement assignee usernames",
+      ),
     })
   )(),
-  execute: async ({ repo, title, body, labels, assignees }, context) => {
+  execute: async (
+    { repo, issueNumber, title, body, state, labels, assignees },
+    context,
+  ) => {
     const userId = requireUserIdFromContext(context);
-
     const [owner, repoName] = repo.split("/");
     if (!owner || !repoName) {
       return { error: "Invalid repository format. Use 'owner/repo' format." };
@@ -35,24 +33,26 @@ export default tool({
 
     try {
       const github = createGitHubClient(userId);
-      const issue = await github.createIssue(owner, repoName, {
+      const issue = await github.updateIssue(owner, repoName, issueNumber, {
         title,
         body,
+        state,
         labels,
         assignees,
       });
-
       return {
         success: true,
         issue: {
           number: issue.number,
           title: issue.title,
-          url: issue.html_url,
           state: issue.state,
-          labels: issue.labels.map((l: { name: string }) => l.name),
-          assignees: issue.assignees.map((a: { login: string }) => a.login),
+          url: issue.html_url,
+          labels: issue.labels.map((label: { name: string }) => label.name),
+          assignees: issue.assignees.map((assignee: { login: string }) =>
+            assignee.login
+          ),
         },
-        message: `Issue #${issue.number} created successfully in ${repo}.`,
+        message: `Issue #${issue.number} updated successfully in ${repo}.`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

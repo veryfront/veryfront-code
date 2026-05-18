@@ -18,7 +18,7 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
-  it("adds endpoint specs for all 53 tools across the 5 targeted integrations", () => {
+  it("adds endpoint specs for all 58 tools across the 5 targeted integrations", () => {
     const targetedConnectors = [
       "calendar",
       "github",
@@ -41,7 +41,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 55);
+    assertEquals(totalEndpointTools, 58);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -469,6 +469,27 @@ describe("integration endpoint specs", () => {
     assertStringIncludes(createTableTool, ".min(1)");
   });
 
+  it("keeps github connector tools aligned with scaffolded tool files", async () => {
+    const github = getConnector("github");
+    const toolFiles: string[] = [];
+
+    for await (
+      const entry of Deno.readDir(
+        "cli/templates/integrations/github/files/tools",
+      )
+    ) {
+      if (entry.isFile && entry.name.endsWith(".ts")) {
+        toolFiles.push(entry.name.replace(/\.ts$/, ""));
+      }
+    }
+
+    const expectedFiles = github.tools.map((tool) => {
+      assertExists(tool.id);
+      return tool.id.replaceAll("_", "-");
+    }).sort();
+    assertEquals(toolFiles.sort(), expectedFiles);
+  });
+
   it("keeps gmail connector tools aligned with scaffolded tool files", async () => {
     const gmail = getConnector("gmail");
     const toolFiles: string[] = [];
@@ -531,6 +552,25 @@ describe("integration endpoint specs", () => {
   });
 
   it("keeps github list-issues on GraphQL so pull requests stay separate", () => {
+    const githubGetRepo = getTool("github", "get_repo");
+    assertEquals(githubGetRepo.endpoint?.method, "GET");
+    assertEquals(githubGetRepo.endpoint?.params?.owner?.required, true);
+
+    const githubGetIssue = getTool("github", "get_issue");
+    assertEquals(githubGetIssue.endpoint?.method, "GET");
+    assertEquals(githubGetIssue.endpoint?.params?.issue_number?.required, true);
+
+    const githubUpdateIssue = getTool("github", "update_issue");
+    assertEquals(githubUpdateIssue.endpoint?.method, "PATCH");
+    assertEquals(
+      githubUpdateIssue.endpoint?.body?.state?.description,
+      "Issue state: open or closed",
+    );
+
+    const githubAddIssueComment = getTool("github", "add_issue_comment");
+    assertEquals(githubAddIssueComment.endpoint?.method, "POST");
+    assertEquals(githubAddIssueComment.endpoint?.body?.body?.required, true);
+
     const tool = getTool("github", "list_issues");
 
     assertEquals(tool.endpoint?.type, "graphql");

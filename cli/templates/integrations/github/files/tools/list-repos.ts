@@ -20,22 +20,24 @@ type GitHubRepo = {
 export default tool({
   id: "list-repos",
   description: "List GitHub repositories for the authenticated user",
-  inputSchema: defineSchema((v) => v.object({
-    type: v
-      .enum(["all", "owner", "public", "private", "member"])
-      .default("all")
-      .describe("Type of repositories to list"),
-    sort: v
-      .enum(["created", "updated", "pushed", "full_name"])
-      .default("updated")
-      .describe("How to sort the repositories"),
-    limit: v
-      .number()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe("Maximum number of repositories to return"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      type: v
+        .enum(["all", "owner", "public", "private", "member"])
+        .default("all")
+        .describe("Type of repositories to list"),
+      sort: v
+        .enum(["created", "updated", "pushed", "full_name"])
+        .default("updated")
+        .describe("How to sort the repositories"),
+      limit: v
+        .number()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Maximum number of repositories to return"),
+    })
+  )(),
   execute: async ({ type, sort, limit }, context) => {
     const userId = requireUserIdFromContext(context);
 

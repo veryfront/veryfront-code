@@ -235,7 +235,7 @@ environment variables. No OAuth app is needed:
 
 | Integration   | Tools                                                                                                                                                                  | Auth    |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| **GitHub**    | list-repos, list-prs, create-issue, get-pr-diff                                                                                                                        | OAuth   |
+| **GitHub**    | list-repos, get-repo, list-issues, get-issue, update-issue, add-issue-comment, list-prs, create-issue, get-pr-diff                                                     | OAuth   |
 | **GitLab**    | list-projects, get-project, search-issues, get-issue, create-issue, update-issue, add-issue-comment, list-merge-requests, get-merge-request, add-merge-request-comment | OAuth   |
 | **Bitbucket** | list-repositories, list-pull-requests, create-pull-request, list-issues                                                                                                | OAuth   |
 | **Sentry**    | list-projects, list-issues, get-issue, resolve-issue                                                                                                                   | API Key |
