@@ -40,6 +40,65 @@
   ],
   "tools": [
     {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List accessible GitLab projects",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects",
+        "params": {
+          "membership": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Only return projects the user is a member of",
+            "default": true
+          },
+          "search": {
+            "type": "string",
+            "in": "query",
+            "description": "Search text for projects"
+          },
+          "simple": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Return simplified project objects",
+            "default": true
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Result page",
+            "default": 1
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 20
+          }
+        }
+      }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get detailed information about a GitLab project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://gitlab.com/api/v4/projects/{projectId}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "GitLab numeric project ID or raw namespace/project path",
+            "required": true
+          }
+        }
+      }
+    },
+    {
       "id": "search_issues",
       "name": "Search Issues",
       "description": "Search for issues across projects",
@@ -147,6 +206,87 @@
       }
     },
     {
+      "id": "update_issue",
+      "name": "Update Issue",
+      "description": "Update, close, or reopen a GitLab issue",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://gitlab.com/api/v4/projects/{projectId}/issues/{issueIid}",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "GitLab numeric project ID or raw namespace/project path",
+            "required": true
+          },
+          "issueIid": {
+            "type": "number",
+            "in": "path",
+            "description": "Project-local issue IID",
+            "required": true
+          }
+        },
+        "body": {
+          "title": {
+            "type": "string",
+            "description": "Updated issue title"
+          },
+          "description": {
+            "type": "string",
+            "description": "Updated issue description"
+          },
+          "state_event": {
+            "type": "string",
+            "description": "close or reopen"
+          },
+          "labels": {
+            "type": "string",
+            "description": "Comma-separated replacement labels"
+          },
+          "assignee_ids": {
+            "type": "array",
+            "description": "GitLab user IDs to assign"
+          }
+        }
+      }
+    },
+    {
+      "id": "add_issue_comment",
+      "name": "Add Issue Comment",
+      "description": "Add a comment/note to a GitLab issue",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gitlab.com/api/v4/projects/{projectId}/issues/{issueIid}/notes",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "GitLab numeric project ID or raw namespace/project path",
+            "required": true
+          },
+          "issueIid": {
+            "type": "number",
+            "in": "path",
+            "description": "Project-local issue IID",
+            "required": true
+          }
+        },
+        "body": {
+          "body": {
+            "type": "string",
+            "description": "Comment body in Markdown",
+            "required": true
+          },
+          "confidential": {
+            "type": "boolean",
+            "description": "Make the note visible only to project members"
+          }
+        }
+      }
+    },
+    {
       "id": "list_merge_requests",
       "name": "List Merge Requests",
       "description": "List merge requests for a project or across projects",
@@ -188,42 +328,60 @@
       }
     },
     {
-      "id": "list_projects",
-      "name": "List Projects",
-      "description": "List accessible GitLab projects",
+      "id": "get_merge_request",
+      "name": "Get Merge Request",
+      "description": "Get detailed information about a specific GitLab merge request",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://gitlab.com/api/v4/projects",
+        "url": "https://gitlab.com/api/v4/projects/{projectId}/merge_requests/{mergeRequestIid}",
         "params": {
-          "membership": {
-            "type": "boolean",
-            "in": "query",
-            "description": "Only return projects the user is a member of",
-            "default": true
-          },
-          "search": {
+          "projectId": {
             "type": "string",
-            "in": "query",
-            "description": "Search text for projects"
+            "in": "path",
+            "description": "GitLab numeric project ID or raw namespace/project path",
+            "required": true
           },
-          "simple": {
+          "mergeRequestIid": {
+            "type": "number",
+            "in": "path",
+            "description": "Project-local merge request IID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "add_merge_request_comment",
+      "name": "Add Merge Request Comment",
+      "description": "Add a comment/note to a GitLab merge request",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://gitlab.com/api/v4/projects/{projectId}/merge_requests/{mergeRequestIid}/notes",
+        "params": {
+          "projectId": {
+            "type": "string",
+            "in": "path",
+            "description": "GitLab numeric project ID or raw namespace/project path",
+            "required": true
+          },
+          "mergeRequestIid": {
+            "type": "number",
+            "in": "path",
+            "description": "Project-local merge request IID",
+            "required": true
+          }
+        },
+        "body": {
+          "body": {
+            "type": "string",
+            "description": "Comment body in Markdown",
+            "required": true
+          },
+          "internal": {
             "type": "boolean",
-            "in": "query",
-            "description": "Return simplified project objects",
-            "default": true
-          },
-          "page": {
-            "type": "number",
-            "in": "query",
-            "description": "Result page",
-            "default": 1
-          },
-          "per_page": {
-            "type": "number",
-            "in": "query",
-            "description": "Results per page",
-            "default": 20
+            "description": "Make the note internal when supported"
           }
         }
       }

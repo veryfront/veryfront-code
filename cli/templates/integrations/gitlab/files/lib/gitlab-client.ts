@@ -100,8 +100,21 @@ export interface GitLabUser {
   web_url: string;
 }
 
+export interface GitLabNote {
+  id: number;
+  body: string;
+  author: { id: number; username: string; name: string; avatar_url: string };
+  created_at: string;
+  updated_at: string;
+  system: boolean;
+  confidential?: boolean;
+  internal?: boolean;
+}
+
 function encodeProjectId(projectId: number | string): number | string {
-  return typeof projectId === "string" ? encodeURIComponent(projectId) : projectId;
+  return typeof projectId === "string"
+    ? encodeURIComponent(projectId)
+    : projectId;
 }
 
 function buildQuery(params: URLSearchParams): string {
@@ -109,9 +122,16 @@ function buildQuery(params: URLSearchParams): string {
   return query ? `?${query}` : "";
 }
 
-async function gitlabFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function gitlabFetch<T>(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
   const token = await getAccessToken();
-  if (!token) throw new Error("Not authenticated with GitLab. Please connect your account.");
+  if (!token) {
+    throw new Error(
+      "Not authenticated with GitLab. Please connect your account.",
+    );
+  }
 
   const response = await fetch(`${GITLAB_BASE_URL}${endpoint}`, {
     ...options,
@@ -184,8 +204,13 @@ export function searchIssues(options: {
   return gitlabFetch<GitLabIssue[]>(`${base}${buildQuery(params)}`);
 }
 
-export function getIssue(projectId: number | string, issueIid: number): Promise<GitLabIssue> {
-  return gitlabFetch<GitLabIssue>(`/projects/${encodeProjectId(projectId)}/issues/${issueIid}`);
+export function getIssue(
+  projectId: number | string,
+  issueIid: number,
+): Promise<GitLabIssue> {
+  return gitlabFetch<GitLabIssue>(
+    `/projects/${encodeProjectId(projectId)}/issues/${issueIid}`,
+  );
 }
 
 export function createIssue(
@@ -207,10 +232,13 @@ export function createIssue(
   if (options.milestoneId) body.milestone_id = options.milestoneId;
   if (options.dueDate) body.due_date = options.dueDate;
 
-  return gitlabFetch<GitLabIssue>(`/projects/${encodeProjectId(projectId)}/issues`, {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return gitlabFetch<GitLabIssue>(
+    `/projects/${encodeProjectId(projectId)}/issues`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 export function updateIssue(
@@ -228,14 +256,38 @@ export function updateIssue(
 
   if (options.title) body.title = options.title;
   if (options.description !== undefined) body.description = options.description;
-  if (options.state) body.state_event = options.state === "closed" ? "close" : "reopen";
+  if (options.state) {
+    body.state_event = options.state === "closed" ? "close" : "reopen";
+  }
   if (options.labels) body.labels = options.labels.join(",");
   if (options.assigneeIds) body.assignee_ids = options.assigneeIds;
 
-  return gitlabFetch<GitLabIssue>(`/projects/${encodeProjectId(projectId)}/issues/${issueIid}`, {
-    method: "PUT",
-    body: JSON.stringify(body),
-  });
+  return gitlabFetch<GitLabIssue>(
+    `/projects/${encodeProjectId(projectId)}/issues/${issueIid}`,
+    {
+      method: "PUT",
+      body: JSON.stringify(body),
+    },
+  );
+}
+
+export function addIssueComment(
+  projectId: number | string,
+  issueIid: number,
+  options: { body: string; confidential?: boolean },
+): Promise<GitLabNote> {
+  const body: Record<string, unknown> = { body: options.body };
+  if (options.confidential !== undefined) {
+    body.confidential = options.confidential;
+  }
+
+  return gitlabFetch<GitLabNote>(
+    `/projects/${encodeProjectId(projectId)}/issues/${issueIid}/notes`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
+  );
 }
 
 export function listMergeRequests(options?: {
@@ -265,6 +317,23 @@ export function getMergeRequest(
 ): Promise<GitLabMergeRequest> {
   return gitlabFetch<GitLabMergeRequest>(
     `/projects/${encodeProjectId(projectId)}/merge_requests/${mrIid}`,
+  );
+}
+
+export function addMergeRequestComment(
+  projectId: number | string,
+  mrIid: number,
+  options: { body: string; internal?: boolean },
+): Promise<GitLabNote> {
+  const body: Record<string, unknown> = { body: options.body };
+  if (options.internal !== undefined) body.internal = options.internal;
+
+  return gitlabFetch<GitLabNote>(
+    `/projects/${encodeProjectId(projectId)}/merge_requests/${mrIid}/notes`,
+    {
+      method: "POST",
+      body: JSON.stringify(body),
+    },
   );
 }
 
