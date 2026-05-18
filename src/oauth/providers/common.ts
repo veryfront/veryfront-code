@@ -21,7 +21,14 @@ export const slackConfig: OAuthServiceConfig = {
   clientIdEnvVar: "SLACK_CLIENT_ID",
   clientSecretEnvVar: "SLACK_CLIENT_SECRET",
   apiBaseUrl: "https://slack.com/api",
-  defaultScopes: ["channels:read", "chat:write", "users:read"],
+  defaultScopes: [
+    "channels:history",
+    "channels:read",
+    "chat:write",
+    "users:read",
+    "im:history",
+    "im:read",
+  ],
 };
 
 export const notionConfig: OAuthServiceConfig = {
