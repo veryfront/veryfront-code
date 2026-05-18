@@ -229,7 +229,7 @@
         "body": {
           "records": {
             "type": "array",
-            "description": "Array of record objects with fields",
+            "description": "Array of 1-10 record objects with fields",
             "required": true
           },
           "typecast": {
@@ -343,7 +343,7 @@
           },
           "fields": {
             "type": "array",
-            "description": "Initial field definitions for the table",
+            "description": "At least one initial field definition for the table",
             "required": true
           }
         }
@@ -352,7 +352,7 @@
     {
       "id": "update_table",
       "name": "Update Table",
-      "description": "Update table metadata such as name or description",
+      "description": "Update table metadata such as name or description using the table ID",
       "requiresWrite": true,
       "endpoint": {
         "method": "PATCH",

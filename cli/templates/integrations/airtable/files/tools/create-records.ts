@@ -14,8 +14,10 @@ export default tool({
       tableIdOrName: v.string().describe("The ID or name of the table"),
       records: v
         .array(v.object({ fields: v.record(v.string(), v.unknown()) }))
+        .min(1)
+        .max(10)
         .describe(
-          'Array of records to create. Example: [{ fields: { "Name": "Jane" } }]',
+          'Array of 1-10 records to create. Example: [{ fields: { "Name": "Jane" } }]',
         ),
       typecast: v.boolean().optional().describe(
         "Allow Airtable to typecast field values",

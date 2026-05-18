@@ -26,8 +26,9 @@ export default tool({
             "Field type-specific options",
           ),
         }))
+        .min(1)
         .describe(
-          'Initial field definitions. Example: [{ "name": "Name", "type": "singleLineText" }]',
+          'At least one initial field definition. Example: [{ "name": "Name", "type": "singleLineText" }]',
         ),
     })
   )(),

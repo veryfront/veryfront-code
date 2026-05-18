@@ -97,7 +97,12 @@ export const airtableConfig: OAuthServiceConfig = {
   clientIdEnvVar: "AIRTABLE_CLIENT_ID",
   clientSecretEnvVar: "AIRTABLE_CLIENT_SECRET",
   apiBaseUrl: "https://api.airtable.com/v0",
-  defaultScopes: ["data.records:read", "data.records:write", "schema.bases:read"],
+  defaultScopes: [
+    "data.records:read",
+    "data.records:write",
+    "schema.bases:read",
+    "schema.bases:write",
+  ],
   useBasicAuth: true,
 };
 

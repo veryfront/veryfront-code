@@ -4,7 +4,8 @@ import { updateTable } from "../../lib/airtable-client.ts";
 
 export default tool({
   id: "update-table",
-  description: "Update Airtable table metadata, such as name or description.",
+  description:
+    "Update Airtable table metadata, such as name or description. Uses the table ID for stable updates.",
   inputSchema: defineSchema((v) =>
     v.object({
       baseId: v.string().describe(

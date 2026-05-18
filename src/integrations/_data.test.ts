@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors } from "./_data.ts";
 
 function getConnector(name: string) {
@@ -285,6 +286,13 @@ describe("integration endpoint specs", () => {
     );
   });
 
+  it("keeps Airtable OAuth runtime scopes aligned with schema mutation tools", () => {
+    const airtable = getConnector("airtable");
+
+    assertEquals(airtable.auth?.scopes, airtableConfig.defaultScopes);
+    assertStringIncludes(airtableConfig.defaultScopes.join(" "), "schema.bases:write");
+  });
+
   it("keeps Airtable connector tools aligned with scaffolded tool files", async () => {
     const airtable = getConnector("airtable");
     const toolFiles: string[] = [];
@@ -297,6 +305,29 @@ describe("integration endpoint specs", () => {
 
     const expectedFiles = airtable.tools.map((tool) => tool.id?.replaceAll("_", "-")).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
+  });
+
+  it("documents Airtable batch and schema size constraints for agents", async () => {
+    const createRecords = getTool("airtable", "create_records");
+    const createTable = getTool("airtable", "create_table");
+    const createRecordsTool = await Deno.readTextFile(
+      "cli/templates/integrations/airtable/files/tools/create-records.ts",
+    );
+    const createTableTool = await Deno.readTextFile(
+      "cli/templates/integrations/airtable/files/tools/create-table.ts",
+    );
+
+    assertStringIncludes(
+      createRecords.endpoint?.body?.records?.description ?? "",
+      "1-10",
+    );
+    assertStringIncludes(
+      createTable.endpoint?.body?.fields?.description ?? "",
+      "At least one",
+    );
+    assertStringIncludes(createRecordsTool, ".min(1)");
+    assertStringIncludes(createRecordsTool, ".max(10)");
+    assertStringIncludes(createTableTool, ".min(1)");
   });
 
   it("keeps gmail connector tools aligned with scaffolded tool files", async () => {

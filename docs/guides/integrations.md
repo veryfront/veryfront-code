@@ -255,11 +255,12 @@ These integrations use API keys set by the developer in their project environmen
 
 ### Databases
 
-| Integration   | Tools                                                                     | Auth    |
-| ------------- | ------------------------------------------------------------------------- | ------- |
-| **Supabase**  | list-tables, query-table, insert-row, update-row, delete-row              | API Key |
-| **Neon**      | list-projects, list-branches, query-database, list-tables, describe-table | API Key |
-| **Snowflake** | run-query, list-databases, list-schemas, list-tables, describe-table      | API Key |
+| Integration   | Tools                                                                                                                                                 | Auth    |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| **Airtable**  | list-bases, get-base, list-records, get-record, create-record, create-records, update-record, delete-record, create-table, update-table, create-field | OAuth   |
+| **Supabase**  | list-tables, query-table, insert-row, update-row, delete-row                                                                                          | API Key |
+| **Neon**      | list-projects, list-branches, query-database, list-tables, describe-table                                                                             | API Key |
+| **Snowflake** | run-query, list-databases, list-schemas, list-tables, describe-table                                                                                  | API Key |
 
 ### Design
 
@@ -312,10 +313,9 @@ These integrations use API keys set by the developer in their project environmen
 
 ### Social
 
-| Integration   | Tools                                                                                                                                                 | Auth  |
-| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
-| **Twitter/X** | search-tweets, post-tweet, get-timeline                                                                                                               | OAuth |
-| **Airtable**  | list-bases, get-base, list-records, get-record, create-record, create-records, update-record, delete-record, create-table, update-table, create-field | OAuth |
+| Integration   | Tools                                   | Auth  |
+| ------------- | --------------------------------------- | ----- |
+| **Twitter/X** | search-tweets, post-tweet, get-timeline | OAuth |
 
 ---
 
