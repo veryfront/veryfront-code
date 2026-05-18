@@ -19,9 +19,9 @@ export interface JiraIssue {
     summary: string;
     description?:
       | {
-          type: string;
-          content: unknown[];
-        }
+        type: string;
+        content: unknown[];
+      }
       | string;
     status: {
       name: string;
@@ -91,6 +91,17 @@ export interface JiraTransition {
   };
 }
 
+export interface JiraComment {
+  id: string;
+  body: unknown;
+  author?: {
+    displayName: string;
+    accountId: string;
+  };
+  created: string;
+  updated: string;
+}
+
 function buildAdfDescription(text: string): Record<string, unknown> {
   return {
     type: "doc",
@@ -115,7 +126,9 @@ async function jiraFetch<T>(
 ): Promise<T> {
   const token = await getAccessToken();
   if (!token) {
-    throw new Error("Not authenticated with Jira. Please connect your account.");
+    throw new Error(
+      "Not authenticated with Jira. Please connect your account.",
+    );
   }
 
   const cloudId = await getCloudId();
@@ -123,7 +136,8 @@ async function jiraFetch<T>(
     throw new Error("Jira cloud ID not found. Please reconnect your account.");
   }
 
-  const baseUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/${JIRA_API_VERSION}`;
+  const baseUrl =
+    `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/${JIRA_API_VERSION}`;
   const url = endpoint.startsWith("http") ? endpoint : `${baseUrl}${endpoint}`;
 
   const response = await fetch(url, {
@@ -138,8 +152,7 @@ async function jiraFetch<T>(
 
   if (!response.ok) {
     const error = await response.json().catch(() => ({} as unknown));
-    const message =
-      (error as any)?.errorMessages?.join(", ") ||
+    const message = (error as any)?.errorMessages?.join(", ") ||
       (error as any)?.message ||
       response.statusText;
 
@@ -225,6 +238,47 @@ export async function createIssue(options: {
   );
 
   return getIssue(response.key);
+}
+
+export async function listComments(
+  issueIdOrKey: string,
+  options?: { startAt?: number; maxResults?: number },
+): Promise<
+  {
+    comments: JiraComment[];
+    total: number;
+    startAt: number;
+    maxResults: number;
+  }
+> {
+  const params = new URLSearchParams({
+    startAt: String(options?.startAt ?? 0),
+    maxResults: String(options?.maxResults ?? 50),
+  });
+
+  const response = await jiraFetch<{
+    comments?: JiraComment[];
+    total?: number;
+    startAt?: number;
+    maxResults?: number;
+  }>(`/issue/${issueIdOrKey}/comment?${params.toString()}`);
+
+  return {
+    comments: response.comments ?? [],
+    total: response.total ?? 0,
+    startAt: response.startAt ?? 0,
+    maxResults: response.maxResults ?? 0,
+  };
+}
+
+export function addComment(
+  issueIdOrKey: string,
+  body: string,
+): Promise<JiraComment> {
+  return jiraFetch<JiraComment>(`/issue/${issueIdOrKey}/comment`, {
+    method: "POST",
+    body: JSON.stringify({ body: buildAdfDescription(body) }),
+  });
 }
 
 export function updateIssue(

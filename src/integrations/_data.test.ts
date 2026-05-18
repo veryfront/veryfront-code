@@ -95,7 +95,7 @@ describe("integration endpoint specs", () => {
     const expectedEndpointCounts = new Map([
       ["asana", 5],
       ["gitlab", 10],
-      ["jira", 5],
+      ["jira", 9],
       ["confluence", 5],
       ["salesforce", 5],
       ["outlook", 5],
@@ -172,6 +172,32 @@ describe("integration endpoint specs", () => {
       "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search",
     );
     assertEquals(jiraSearchIssues.endpoint?.body?.jql?.required, true);
+
+    const jiraGetProject = getTool("jira", "get_project");
+    assertEquals(
+      jiraGetProject.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/{projectIdOrKey}",
+    );
+    assertEquals(
+      jiraGetProject.endpoint?.params?.projectIdOrKey?.required,
+      true,
+    );
+
+    const jiraListComments = getTool("jira", "list_comments");
+    assertEquals(
+      jiraListComments.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/comment",
+    );
+
+    const jiraAddComment = getTool("jira", "add_comment");
+    assertEquals(jiraAddComment.endpoint?.method, "POST");
+    assertEquals(jiraAddComment.endpoint?.body?.body?.required, true);
+
+    const jiraGetTransitions = getTool("jira", "get_transitions");
+    assertEquals(
+      jiraGetTransitions.endpoint?.url,
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions",
+    );
 
     const confluenceGetPage = getTool("confluence", "get_page");
     assertEquals(
@@ -524,7 +550,10 @@ describe("integration endpoint specs", () => {
     const calendarUpdateEvent = getTool("calendar", "update_event");
     assertEquals(calendarUpdateEvent.endpoint?.method, "PATCH");
     assertEquals(calendarUpdateEvent.endpoint?.params?.eventId?.required, true);
-    assertEquals(calendarUpdateEvent.endpoint?.body?.summary?.required ?? false, false);
+    assertEquals(
+      calendarUpdateEvent.endpoint?.body?.summary?.required ?? false,
+      false,
+    );
 
     const calendarDeleteEvent = getTool("calendar", "delete_event");
     assertEquals(calendarDeleteEvent.endpoint?.method, "DELETE");
