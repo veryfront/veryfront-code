@@ -39,7 +39,7 @@ describe("integration endpoint specs", () => {
 
   it("adds endpoint specs for the newly configured integration providers", () => {
     const expectedEndpointCounts = new Map([
-      ["airtable", 5],
+      ["airtable", 11],
       ["discord", 2],
       ["figma", 4],
       ["notion", 4],
@@ -244,6 +244,59 @@ describe("integration endpoint specs", () => {
         }
       }
     }
+  });
+
+  it("exposes Airtable CRUD and schema mutation endpoint tools", () => {
+    const airtable = getConnector("airtable");
+    const toolIds = airtable.tools.map((tool) => tool.id);
+
+    assertEquals(toolIds, [
+      "list_bases",
+      "get_base",
+      "list_records",
+      "get_record",
+      "create_record",
+      "create_records",
+      "update_record",
+      "delete_record",
+      "create_table",
+      "update_table",
+      "create_field",
+    ]);
+
+    for (const tool of airtable.tools) {
+      assertExists(tool.endpoint, `Expected airtable:${tool.id} to have an endpoint spec`);
+    }
+
+    assertEquals(getTool("airtable", "update_record").endpoint?.method, "PATCH");
+    assertEquals(getTool("airtable", "delete_record").endpoint?.method, "DELETE");
+    assertEquals(getTool("airtable", "create_records").endpoint?.response?.transform, "records");
+    assertEquals(
+      getTool("airtable", "create_table").endpoint?.url,
+      "https://api.airtable.com/v0/meta/bases/{baseId}/tables",
+    );
+    assertEquals(
+      getTool("airtable", "update_table").endpoint?.url,
+      "https://api.airtable.com/v0/meta/bases/{baseId}/tables/{tableId}",
+    );
+    assertEquals(
+      getTool("airtable", "create_field").endpoint?.url,
+      "https://api.airtable.com/v0/meta/bases/{baseId}/tables/{tableId}/fields",
+    );
+  });
+
+  it("keeps Airtable connector tools aligned with scaffolded tool files", async () => {
+    const airtable = getConnector("airtable");
+    const toolFiles: string[] = [];
+
+    for await (const entry of Deno.readDir("cli/templates/integrations/airtable/files/tools")) {
+      if (entry.isFile && entry.name.endsWith(".ts")) {
+        toolFiles.push(entry.name.replace(/\.ts$/, ""));
+      }
+    }
+
+    const expectedFiles = airtable.tools.map((tool) => tool.id?.replaceAll("_", "-")).sort();
+    assertEquals(toolFiles.sort(), expectedFiles);
   });
 
   it("keeps gmail connector tools aligned with scaffolded tool files", async () => {

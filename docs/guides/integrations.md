@@ -312,10 +312,10 @@ These integrations use API keys set by the developer in their project environmen
 
 ### Social
 
-| Integration   | Tools                                                         | Auth  |
-| ------------- | ------------------------------------------------------------- | ----- |
-| **Twitter/X** | search-tweets, post-tweet, get-timeline                       | OAuth |
-| **Airtable**  | list-bases, get-base, list-records, get-record, create-record | OAuth |
+| Integration   | Tools                                                                                                                                                 | Auth  |
+| ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ----- |
+| **Twitter/X** | search-tweets, post-tweet, get-timeline                                                                                                               | OAuth |
+| **Airtable**  | list-bases, get-base, list-records, get-record, create-record, create-records, update-record, delete-record, create-table, update-table, create-field | OAuth |
 
 ---
 
