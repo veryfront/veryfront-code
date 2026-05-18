@@ -25,6 +25,7 @@ const args = parseArgs(Deno.args, {
 });
 
 const OUTPUT_DIR = args.output.startsWith("/") ? args.output : `${ROOT}/${args.output}`;
+const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -35,10 +36,30 @@ interface ExportEntry {
   exportPath: string;
   /** e.g. "veryfront" or "veryfront/agent" */
   importPath: string;
-  /** Short name for the file, e.g. "root" or "agent" */
+  /** Short name for the file, e.g. "index" (root) or "agent" */
   slug: string;
-  /** Relative TS file path, e.g. "./src/agent/index.ts" */
+  /** Relative TS file path, e.g. "./src/agent/index.ts". Empty for synthetic parents. */
   filePath: string;
+  /** True when no concrete top-level export exists (e.g. `channels`). */
+  isSynthetic?: boolean;
+  /** Curated description used when no barrel JSDoc is available. */
+  syntheticDescription?: string;
+}
+
+interface DeepImport {
+  /** e.g. "./agent/testing" or "./channels/control-plane" */
+  exportPath: string;
+  /** e.g. "veryfront/agent/testing" */
+  importPath: string;
+  /** Sub-path under the parent, e.g. "testing" or "claude-code/react" */
+  subSlug: string;
+  /** Relative TS file path */
+  filePath: string;
+}
+
+interface ModuleGroup {
+  parent: ExportEntry;
+  deepImports: DeepImport[];
 }
 
 interface BarrelJSDoc {
@@ -287,6 +308,165 @@ const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
   "veryfront/sandbox": [
     { path: "agent", reason: "Run isolated commands from agent tools/workflows" },
     { path: "mcp", reason: "Expose sandbox-backed operations over MCP" },
+  ],
+};
+
+// ---------------------------------------------------------------------------
+// Cross-references to user guides and architecture pages
+// ---------------------------------------------------------------------------
+
+const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = {
+  "veryfront": [
+    { path: "configuration", reason: "Configure your Veryfront project" },
+    { path: "project-structure", reason: "Project layout and conventions" },
+    { path: "data-fetching", reason: "Server data, static data, params" },
+  ],
+  "veryfront/head": [
+    { path: "head-and-seo", reason: "Document head, metadata, and SEO" },
+  ],
+  "veryfront/router": [
+    { path: "pages-and-routing", reason: "Pages and client-side routing" },
+  ],
+  "veryfront/context": [
+    { path: "pages-and-routing", reason: "Page context for routes and MDX" },
+  ],
+  "veryfront/fonts": [
+    { path: "head-and-seo", reason: "Font loading and SEO" },
+  ],
+  "veryfront/chat": [
+    { path: "chat-ui", reason: "Compose chat UI in the browser" },
+    { path: "chat-hooks", reason: "Manage chat state and streaming" },
+    { path: "chat-composition", reason: "Mix prebuilt and custom chat pieces" },
+    { path: "chat-theming", reason: "Theme chat components" },
+  ],
+  "veryfront/markdown": [
+    { path: "chat-ui", reason: "Render markdown in chat" },
+  ],
+  "veryfront/mdx": [
+    { path: "pages-and-routing", reason: "Author MDX pages" },
+  ],
+  "veryfront/agent": [
+    { path: "agents", reason: "Define and run agents" },
+    { path: "multi-agent", reason: "Compose multi-agent systems" },
+    { path: "memory-and-streaming", reason: "Memory, streaming, and lifecycle" },
+    { path: "agent-service-runtime", reason: "Deploy agents as standalone services" },
+  ],
+  "veryfront/tool": [
+    { path: "tools", reason: "Define and call tools" },
+  ],
+  "veryfront/workflow": [
+    { path: "workflows", reason: "Author durable workflows" },
+    { path: "multi-agent", reason: "Orchestrate multi-agent workflows" },
+  ],
+  "veryfront/prompt": [
+    { path: "mcp-server", reason: "Expose prompts over MCP" },
+  ],
+  "veryfront/resource": [
+    { path: "mcp-server", reason: "Expose resources over MCP" },
+  ],
+  "veryfront/jobs": [
+    { path: "jobs", reason: "Schedule and run background jobs" },
+  ],
+  "veryfront/mcp": [
+    { path: "mcp-server", reason: "Build and host MCP servers" },
+  ],
+  "veryfront/middleware": [
+    { path: "middleware", reason: "Compose HTTP middleware" },
+    { path: "api-routes", reason: "Apply middleware to API routes" },
+  ],
+  "veryfront/oauth": [
+    { path: "oauth", reason: "OAuth flows and provider setup" },
+  ],
+  "veryfront/provider": [
+    { path: "providers", reason: "Register model providers" },
+  ],
+  "veryfront/integrations": [
+    { path: "integrations", reason: "Connect SaaS integrations" },
+  ],
+  "veryfront/sandbox": [
+    { path: "sandbox", reason: "Run code in isolated sandbox environments" },
+  ],
+  "veryfront/extensions": [
+    { path: "extensions", reason: "Use built-in extensions" },
+    { path: "extension-authoring", reason: "Author your own extensions" },
+    { path: "extension-lifecycle", reason: "Extension lifecycle and hooks" },
+    { path: "extension-publishing", reason: "Publish extensions" },
+    { path: "extension-testing", reason: "Test extensions" },
+  ],
+  "veryfront/testing": [
+    { path: "extension-testing", reason: "Test extensions with BDD utilities" },
+  ],
+  "veryfront/cli": [
+    { path: "cli-knowledge-ingestion", reason: "CLI knowledge ingestion" },
+  ],
+  "veryfront/server": [
+    { path: "deploying", reason: "Deploy the server" },
+  ],
+};
+
+const RELATED_ARCHITECTURE: Record<
+  string,
+  Array<{ path: string; reason: string }>
+> = {
+  "veryfront": [
+    { path: "01-system-overview", reason: "System overview and boundaries" },
+    { path: "02-request-pipeline", reason: "Request handling pipeline" },
+  ],
+  "veryfront/chat": [
+    { path: "10-ag-ui-transport", reason: "AG-UI streaming transport" },
+    { path: "24-ai-primitives", reason: "AI primitives and chat surfaces" },
+  ],
+  "veryfront/agent": [
+    { path: "03-agent-runtime", reason: "Agent runtime architecture" },
+    { path: "08-hosted-agent-runs", reason: "Hosted agent runs" },
+    { path: "09-control-plane-channels", reason: "Control-plane channels" },
+    { path: "10-ag-ui-transport", reason: "AG-UI transport contract" },
+    { path: "19-runtime-boundaries", reason: "Runtime boundaries" },
+    { path: "24-ai-primitives", reason: "AI primitives" },
+  ],
+  "veryfront/tool": [
+    { path: "24-ai-primitives", reason: "Tools as AI primitives" },
+  ],
+  "veryfront/workflow": [
+    { path: "05-workflow-runtime", reason: "Workflow runtime architecture" },
+    { path: "20-jobs-and-tasks", reason: "Workflows, jobs, and tasks" },
+  ],
+  "veryfront/prompt": [
+    { path: "24-ai-primitives", reason: "Prompts as AI primitives" },
+  ],
+  "veryfront/resource": [
+    { path: "24-ai-primitives", reason: "Resources as AI primitives" },
+  ],
+  "veryfront/jobs": [
+    { path: "20-jobs-and-tasks", reason: "Jobs and tasks runtime" },
+  ],
+  "veryfront/mcp": [
+    { path: "07-mcp-runtime", reason: "MCP runtime architecture" },
+  ],
+  "veryfront/observability": [
+    { path: "17-observability", reason: "Observability architecture" },
+  ],
+  "veryfront/oauth": [
+    { path: "21-oauth-runtime", reason: "OAuth runtime architecture" },
+  ],
+  "veryfront/integrations": [
+    { path: "22-integration-runtime", reason: "Integration runtime" },
+  ],
+  "veryfront/sandbox": [
+    { path: "23-sandbox-runtime", reason: "Sandbox runtime architecture" },
+  ],
+  "veryfront/extensions": [
+    { path: "16-extension-system", reason: "Extension system architecture" },
+  ],
+  "veryfront/provider": [
+    { path: "04-provider-runtime", reason: "Provider runtime architecture" },
+  ],
+  "veryfront/server": [
+    { path: "11-server-runtime", reason: "Server runtime architecture" },
+  ],
+  "veryfront/channels": [
+    { path: "09-control-plane-channels", reason: "Control-plane channels" },
+    { path: "10-ag-ui-transport", reason: "AG-UI transport" },
   ],
 };
 
@@ -733,23 +913,99 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
 // 1. Read deno.json exports
 // ---------------------------------------------------------------------------
 
-function getExports(): ExportEntry[] {
-  const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`));
-  const exports: Record<string, string> = denoConfig.exports ?? {};
-
-  return Object.entries(exports)
-    .filter(([path]) => isTopLevelExportPath(path))
-    .map(([exportPath, filePath]) => createExportEntry(exportPath, filePath));
-}
+/**
+ * Synthetic parent pages that group deep imports without a top-level export.
+ * Each entry produces a `<slug>.md` page that hosts the deep imports listed
+ * under that slug in `deno.json`.
+ */
+const SYNTHETIC_PARENTS: Record<string, { description: string }> = {
+  channels: {
+    description:
+      "Channel transports for the Veryfront control plane and AG-UI invoke route. These are deep-import-only modules.",
+  },
+};
 
 function isTopLevelExportPath(path: string): boolean {
   return path.split("/").length <= 2;
 }
 
+function topLevelSlug(exportPath: string): string {
+  if (exportPath === ".") return "index";
+  return exportPath.replace("./", "").split("/")[0];
+}
+
 function createExportEntry(exportPath: string, filePath: string): ExportEntry {
-  const slug = exportPath === "." ? "root" : exportPath.replace("./", "");
+  const slug = exportPath === "." ? "index" : exportPath.replace("./", "");
   const importPath = exportPath === "." ? "veryfront" : `veryfront/${slug}`;
   return { exportPath, importPath, slug, filePath };
+}
+
+function createSyntheticEntry(slug: string): ExportEntry {
+  const meta = SYNTHETIC_PARENTS[slug];
+  return {
+    exportPath: `./${slug}`,
+    importPath: `veryfront/${slug}`,
+    slug,
+    filePath: "",
+    isSynthetic: true,
+    syntheticDescription: meta?.description ?? "",
+  };
+}
+
+function createDeepImport(exportPath: string, filePath: string, parentSlug: string): DeepImport {
+  const slugPath = exportPath.replace("./", "");
+  const subSlug = slugPath.slice(parentSlug.length + 1);
+  return {
+    exportPath,
+    importPath: `veryfront/${slugPath}`,
+    subSlug,
+    filePath,
+  };
+}
+
+function getModuleGroups(): ModuleGroup[] {
+  const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`));
+  const exports: Record<string, string> = denoConfig.exports ?? {};
+
+  const groups = new Map<string, ModuleGroup>();
+  const order: string[] = [];
+
+  // First pass: top-level exports become parents.
+  for (const [exportPath, filePath] of Object.entries(exports)) {
+    if (!isTopLevelExportPath(exportPath)) continue;
+    const parent = createExportEntry(exportPath, filePath);
+    if (!groups.has(parent.slug)) {
+      order.push(parent.slug);
+    }
+    groups.set(parent.slug, { parent, deepImports: [] });
+  }
+
+  // Second pass: deep imports attach to (or create synthetic) parents.
+  for (const [exportPath, filePath] of Object.entries(exports)) {
+    if (isTopLevelExportPath(exportPath)) continue;
+    const parentSlug = topLevelSlug(exportPath);
+    let group = groups.get(parentSlug);
+    if (!group) {
+      if (!SYNTHETIC_PARENTS[parentSlug]) {
+        console.warn(
+          `Skipping deep import ${exportPath}: no top-level parent and no SYNTHETIC_PARENTS entry for "${parentSlug}".`,
+        );
+        continue;
+      }
+      const parent = createSyntheticEntry(parentSlug);
+      group = { parent, deepImports: [] };
+      groups.set(parentSlug, group);
+      order.push(parentSlug);
+    }
+    group.deepImports.push(createDeepImport(exportPath, filePath, parentSlug));
+  }
+
+  // Stable sort for deep imports within each group.
+  for (const group of groups.values()) {
+    group.deepImports.sort((a, b) => a.importPath.localeCompare(b.importPath));
+  }
+
+  return order.map((slug) => groups.get(slug)!).filter(Boolean);
 }
 
 // ---------------------------------------------------------------------------
@@ -1667,20 +1923,31 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
 // 6. Generate MDX content
 // ---------------------------------------------------------------------------
 
+interface DeepImportRender {
+  deep: DeepImport;
+  jsdoc: BarrelJSDoc;
+  exports: CategorizedExports;
+}
+
 function generateMD(
   entry: ExportEntry,
   jsdoc: BarrelJSDoc,
   exports: CategorizedExports,
   nodes: DocNode[],
   order: number,
+  deepImports: DeepImportRender[] = [],
 ): string {
   const lines: string[] = [];
+
+  const description = entry.isSynthetic
+    ? (entry.syntheticDescription ?? "")
+    : jsdoc.description;
 
   // Frontmatter
   lines.push("---");
   lines.push(`title: "${entry.importPath}"`);
-  if (jsdoc.description) {
-    lines.push(`description: "${jsdoc.description.replace(/"/g, '\\"')}"`);
+  if (description) {
+    lines.push(`description: "${description.replace(/"/g, '\\"')}"`);
   }
   lines.push(`order: ${order}`);
   lines.push("---");
@@ -1689,8 +1956,14 @@ function generateMD(
   // H1 title + description paragraph (visible on GitHub)
   lines.push(`# ${entry.importPath}`);
   lines.push("");
-  if (jsdoc.description) {
-    lines.push(jsdoc.description);
+  if (description) {
+    lines.push(description);
+    lines.push("");
+  }
+  if (entry.isSynthetic) {
+    lines.push(
+      `\`${entry.importPath}\` has no direct exports. Use the deep imports below.`,
+    );
     lines.push("");
   }
 
@@ -1787,54 +2060,157 @@ function generateMD(
     }
   }
 
-  // Related modules
+  // Deep imports: each deep barrel rendered as a subsection.
+  if (deepImports.length > 0) {
+    lines.push("## Deep imports");
+    lines.push("");
+    lines.push(
+      "These import paths group focused functionality under this module. Each is a separate barrel; import only what you need.",
+    );
+    lines.push("");
+    for (const di of deepImports) {
+      lines.push(`### \`${di.deep.importPath}\``);
+      lines.push("");
+      if (di.jsdoc.description) {
+        lines.push(di.jsdoc.description);
+        lines.push("");
+      }
+      lines.push("```ts");
+      const sample = pickDeepImportSample(di.exports);
+      if (sample.length > 0) {
+        lines.push(`import { ${sample.join(", ")} } from "${di.deep.importPath}";`);
+      } else {
+        lines.push(`import "${di.deep.importPath}";`);
+      }
+      lines.push("```");
+      lines.push("");
+
+      const sections: Array<[string, typeof di.exports.functions]> = [
+        ["Components", di.exports.components],
+        ["Functions", di.exports.functions],
+        ["Classes", di.exports.classes],
+        ["Types", di.exports.types],
+        ["Constants", di.exports.constants],
+      ];
+      for (const [label, items] of sections) {
+        if (items.length === 0) continue;
+        lines.push(`#### ${label}`);
+        lines.push("");
+        lines.push("| Name | Description |");
+        lines.push("|------|-------------|");
+        for (const item of items) {
+          lines.push(`| \`${item.name}\` | ${item.description || ""} |`);
+        }
+        lines.push("");
+      }
+    }
+  }
+
+  // Related: reference modules, user guides, architecture pages.
   const related = RELATED_MODULES[entry.importPath];
-  if (related && related.length > 0) {
+  const relatedGuides = RELATED_GUIDES[entry.importPath];
+  const relatedArch = RELATED_ARCHITECTURE[entry.importPath];
+  const hasAnyRelated =
+    (related && related.length > 0) ||
+    (relatedGuides && relatedGuides.length > 0) ||
+    (relatedArch && relatedArch.length > 0);
+
+  if (hasAnyRelated) {
     lines.push("## Related");
     lines.push("");
-    for (const r of related) {
-      const displayName = r.path === "root" ? "veryfront" : `veryfront/${r.path}`;
-      lines.push(`- [\`${displayName}\`](./${r.path}.md): ${r.reason}`);
+
+    if (related && related.length > 0) {
+      lines.push("Reference modules:");
+      lines.push("");
+      for (const r of related) {
+        const displayName = r.path === "root" ? "veryfront" : `veryfront/${r.path}`;
+        const target = r.path === "root" ? "index" : r.path;
+        lines.push(`- [\`${displayName}\`](./${target}.md): ${r.reason}`);
+      }
+      lines.push("");
     }
-    lines.push("");
+
+    if (relatedGuides && relatedGuides.length > 0) {
+      lines.push("User guides:");
+      lines.push("");
+      for (const g of relatedGuides) {
+        lines.push(`- [${g.path}](../../guides/${g.path}.md): ${g.reason}`);
+      }
+      lines.push("");
+    }
+
+    if (relatedArch && relatedArch.length > 0) {
+      lines.push("Architecture:");
+      lines.push("");
+      for (const a of relatedArch) {
+        lines.push(`- [${a.path}](../../architecture/${a.path}.md): ${a.reason}`);
+      }
+      lines.push("");
+    }
   }
 
   return lines.join("\n");
 }
 
+function pickDeepImportSample(exports: CategorizedExports): string[] {
+  const all = [
+    ...exports.functions,
+    ...exports.components,
+    ...exports.classes,
+    ...exports.constants,
+  ].map((e) => e.name);
+  return all.slice(0, 3);
+}
+
 // ---------------------------------------------------------------------------
-// 7. Generate overview/index page
+// 7. Generate README for docs/reference/
 // ---------------------------------------------------------------------------
 
-function generateOverviewMD(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }>): string {
+function generateReadmeMD(
+  entries: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }>,
+): string {
   const lines: string[] = [];
 
-  lines.push("---");
-  lines.push('title: "Framework API Reference"');
-  lines.push('description: "Complete API reference for the Veryfront framework."');
-  lines.push("order: 0");
-  lines.push("---");
+  lines.push("# Framework API reference");
   lines.push("");
-  lines.push("# Framework API Reference");
+  lines.push(
+    "These pages document every public import surface published by `veryfront`. They are the source for the public reference site.",
+  );
   lines.push("");
-  lines.push("Complete API reference for the Veryfront framework.");
+  lines.push("## Source of truth");
   lines.push("");
-  lines.push("## Install");
+  lines.push(
+    "Reference pages are generated from the `exports` map in `deno.json`. Every top-level export becomes one page under `veryfront/`, and deep exports (e.g. `veryfront/agent/testing`) are documented as `Deep imports` sections on their parent page.",
+  );
   lines.push("");
   lines.push("```bash");
-  lines.push("npm install veryfront");
+  lines.push("deno task docs           # regenerate this directory");
+  lines.push("deno task docs:validate  # check structure and links");
   lines.push("```");
   lines.push("");
-  lines.push("## Modules");
+  lines.push("## Layout");
+  lines.push("");
+  lines.push("```text");
+  lines.push("docs/reference/");
+  lines.push("  README.md          # this file");
+  lines.push("  veryfront/");
+  lines.push("    index.md         # the root `veryfront` import");
+  for (const { entry } of entries) {
+    if (entry.slug === "index") continue;
+    lines.push(`    ${entry.slug}.md`);
+  }
+  lines.push("```");
+  lines.push("");
+  lines.push("## Module index");
   lines.push("");
   lines.push("| Import | Description |");
   lines.push("|--------|-------------|");
-
   for (const { entry, jsdoc } of entries) {
-    const desc = jsdoc.description || "";
-    lines.push(`| [\`${entry.importPath}\`](./${entry.slug}.md) | ${desc} |`);
+    const desc = entry.isSynthetic
+      ? (entry.syntheticDescription ?? "")
+      : (jsdoc.description || "");
+    lines.push(`| [\`${entry.importPath}\`](./veryfront/${entry.slug}.md) | ${desc} |`);
   }
-
   lines.push("");
   return lines.join("\n");
 }
@@ -1845,47 +2221,79 @@ function generateOverviewMD(entries: Array<{ entry: ExportEntry; jsdoc: BarrelJS
 
 async function main() {
   console.log("Reading deno.json exports...");
-  const entries = getExports();
-  console.log(`Found ${entries.length} export paths.`);
+  const groups = getModuleGroups();
+  console.log(`Found ${groups.length} module groups.`);
 
   await ensureDir(OUTPUT_DIR);
+  await ensureDir(VERYFRONT_DIR);
 
-  const overviewData: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }> = [];
+  const indexData: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }> = [];
 
-  for (const [idx, entry] of entries.entries()) {
-    const absFilePath = `${ROOT}/${entry.filePath.replace("./", "")}`;
-    console.log(`Processing ${entry.importPath} (${entry.filePath})...`);
+  for (const [idx, group] of groups.entries()) {
+    const entry = group.parent;
+    console.log(
+      `Processing ${entry.importPath}${entry.isSynthetic ? " (synthetic)" : ` (${entry.filePath})`}...`,
+    );
 
-    // Read barrel JSDoc
     let jsdoc: BarrelJSDoc;
-    try {
-      const content = await Deno.readTextFile(absFilePath);
-      jsdoc = parseBarrelJSDoc(content);
-    } catch (err) {
-      console.warn(`  Could not read ${entry.filePath}: ${err}`);
-      jsdoc = { description: "", moduleName: "", examples: [] };
+    let nodes: DocNode[] = [];
+    let exports: CategorizedExports = {
+      functions: [],
+      types: [],
+      classes: [],
+      constants: [],
+      components: [],
+    };
+
+    if (entry.isSynthetic) {
+      jsdoc = {
+        description: entry.syntheticDescription ?? "",
+        moduleName: entry.importPath,
+        examples: [],
+      };
+    } else {
+      const absFilePath = `${ROOT}/${entry.filePath.replace("./", "")}`;
+      try {
+        const content = await Deno.readTextFile(absFilePath);
+        jsdoc = parseBarrelJSDoc(content);
+      } catch (err) {
+        console.warn(`  Could not read ${entry.filePath}: ${err}`);
+        jsdoc = { description: "", moduleName: "", examples: [] };
+      }
+      nodes = await getDenoDoc(entry.filePath);
+      exports = categorizeNodes(nodes, entry.importPath);
     }
 
-    overviewData.push({ entry, jsdoc });
+    indexData.push({ entry, jsdoc });
 
-    // Get deno doc --json
-    const nodes = await getDenoDoc(entry.filePath);
-    const exports = categorizeNodes(nodes, entry.importPath);
+    const deepRenders: DeepImportRender[] = [];
+    for (const deep of group.deepImports) {
+      const absFilePath = `${ROOT}/${deep.filePath.replace("./", "")}`;
+      let deepJsdoc: BarrelJSDoc;
+      try {
+        const content = await Deno.readTextFile(absFilePath);
+        deepJsdoc = parseBarrelJSDoc(content);
+      } catch {
+        deepJsdoc = { description: "", moduleName: "", examples: [] };
+      }
+      const deepNodes = await getDenoDoc(deep.filePath);
+      const deepExports = categorizeNodes(deepNodes, deep.importPath);
+      deepRenders.push({ deep, jsdoc: deepJsdoc, exports: deepExports });
+    }
 
-    // Generate MD
     const order = idx + 1;
-    const md = generateMD(entry, jsdoc, exports, nodes, order);
-    const outPath = `${OUTPUT_DIR}/${entry.slug}.md`;
+    const md = generateMD(entry, jsdoc, exports, nodes, order, deepRenders);
+    const outPath = `${VERYFRONT_DIR}/${entry.slug}.md`;
     await Deno.writeTextFile(outPath, md);
     console.log(`  Wrote ${outPath}`);
   }
 
-  // Generate overview page
-  const overviewMD = generateOverviewMD(overviewData);
-  const overviewPath = `${OUTPUT_DIR}/index.md`;
-  await Deno.writeTextFile(overviewPath, overviewMD);
-  console.log(`\nWrote overview: ${overviewPath}`);
-  console.log(`Generated ${entries.length + 1} MD files in ${OUTPUT_DIR}`);
+  // Write the structure README at the docs/reference root.
+  const readmeMD = generateReadmeMD(indexData);
+  const readmePath = `${OUTPUT_DIR}/README.md`;
+  await Deno.writeTextFile(readmePath, readmeMD);
+  console.log(`\nWrote ${readmePath}`);
+  console.log(`Generated ${groups.length} MD files in ${VERYFRONT_DIR}`);
 }
 
 main();

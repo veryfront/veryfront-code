@@ -150,10 +150,10 @@ The framework automatically injects `title` and `description` from frontmatter i
 
 ## Next
 
-This is the last guide. Explore the [API reference](../reference/index.md) for detailed module documentation.
+This is the last guide. Explore the [API reference](../reference/README.md) for detailed module documentation.
 
 ## Related
 
-- [`veryfront/head`](../reference/head.md): Head component API reference
-- [`veryfront/fonts`](../reference/fonts.md): fonts API reference
-- [`veryfront/context`](../reference/context.md): access frontmatter data
+- [`veryfront/head`](../reference/veryfront/head.md): Head component API reference
+- [`veryfront/fonts`](../reference/veryfront/fonts.md): fonts API reference
+- [`veryfront/context`](../reference/veryfront/context.md): access frontmatter data

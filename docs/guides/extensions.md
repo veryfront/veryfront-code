@@ -77,5 +77,5 @@ If the extension factory throws during setup, the dev server reports the setup e
 
 ## Related
 
-- [`veryfront/extensions`](../reference/extensions.md): extension API reference
+- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference
 - [Project structure](./project-structure.md): where local extensions live

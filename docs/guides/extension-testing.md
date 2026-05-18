@@ -77,4 +77,4 @@ deno test --no-check --allow-all extensions/my-cache/src/
 ## Related
 
 - [Extension authoring](./extension-authoring.md): writing extension factories
-- [`veryfront/testing`](../reference/testing.md): testing API reference
+- [`veryfront/testing`](../reference/veryfront/testing.md): testing API reference

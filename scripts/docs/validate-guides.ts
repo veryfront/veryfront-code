@@ -15,7 +15,7 @@
 
 const ROOT = Deno.cwd();
 const GUIDES_DIR = `${ROOT}/docs/guides`;
-const REF_DIR = `${ROOT}/docs/reference`;
+const REF_DIR = `${ROOT}/docs/reference/veryfront`;
 
 interface Issue {
   file: string;
@@ -121,11 +121,18 @@ for (const filename of guideFiles) {
   }
 
   // --- API reference links (relative) ---
-  const refLinkRe = /\(\.\.\/reference\/([a-z0-9-]+)\.md\)/g;
-  while ((match = refLinkRe.exec(content))) {
-    const slug = match[1];
+  const refLinkRe = /\(\.\.\/reference\/veryfront\/([a-z0-9-]+)\.md\)/g;
+  for (
+    let refMatch = refLinkRe.exec(content);
+    refMatch !== null;
+    refMatch = refLinkRe.exec(content)
+  ) {
+    const slug = refMatch[1];
     if (!REF_SLUG_TO_FILE[slug]) {
-      addWarning(shortName, `Reference link: ../reference/${slug}.md (no matching file)`);
+      addWarning(
+        shortName,
+        `Reference link: ../reference/veryfront/${slug}.md (no matching file)`,
+      );
     }
   }
 

@@ -38,4 +38,4 @@ Use semver for package releases. Treat contract shape changes as breaking change
 
 - [Extensions](./extensions.md): extension overview
 - [Extension testing](./extension-testing.md): test before publishing
-- [`veryfront/extensions`](../reference/extensions.md): extension API reference
+- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference

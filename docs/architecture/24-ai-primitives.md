@@ -73,6 +73,6 @@ flowchart TD
   or project id hydration.
 - Add prompt and resource tests when changing interpolation, loader behavior,
   params validation, or registry lookup.
-- Update [Tools](../guides/tools.md), [`veryfront/tool`](../reference/tool.md),
-  [`veryfront/prompt`](../reference/prompt.md), or
-  [`veryfront/resource`](../reference/resource.md) when public behavior changes.
+- Update [Tools](../guides/tools.md), [`veryfront/tool`](../reference/veryfront/tool.md),
+  [`veryfront/prompt`](../reference/veryfront/prompt.md), or
+  [`veryfront/resource`](../reference/veryfront/resource.md) when public behavior changes.
