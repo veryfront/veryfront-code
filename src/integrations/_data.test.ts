@@ -93,7 +93,7 @@ describe("integration endpoint specs", () => {
 
   it("adds callable endpoint specs for remaining configured OAuth providers", () => {
     const expectedEndpointCounts = new Map([
-      ["asana", 5],
+      ["asana", 10],
       ["gitlab", 10],
       ["jira", 9],
       ["confluence", 5],
@@ -124,6 +124,32 @@ describe("integration endpoint specs", () => {
       "https://app.asana.com/api/1.0/tasks",
     );
     assertEquals(asanaListTasks.endpoint?.params?.project?.in, "query");
+
+    const asanaListWorkspaces = getTool("asana", "list_workspaces");
+    assertEquals(
+      asanaListWorkspaces.endpoint?.url,
+      "https://app.asana.com/api/1.0/workspaces",
+    );
+
+    const asanaListUsers = getTool("asana", "list_users");
+    assertEquals(asanaListUsers.endpoint?.params?.workspace?.required, true);
+
+    const asanaListTeams = getTool("asana", "list_teams");
+    assertEquals(
+      asanaListTeams.endpoint?.url,
+      "https://app.asana.com/api/1.0/workspaces/{workspaceGid}/teams",
+    );
+    assertEquals(asanaListTeams.endpoint?.params?.workspaceGid?.required, true);
+
+    const asanaAddTaskComment = getTool("asana", "add_task_comment");
+    assertEquals(asanaAddTaskComment.endpoint?.method, "POST");
+    assertEquals(asanaAddTaskComment.endpoint?.body?.data?.required, true);
+
+    const asanaListTaskComments = getTool("asana", "list_task_comments");
+    assertEquals(
+      asanaListTaskComments.endpoint?.url,
+      "https://app.asana.com/api/1.0/tasks/{taskGid}/stories",
+    );
 
     const gitlabGetIssue = getTool("gitlab", "get_issue");
     assertEquals(
