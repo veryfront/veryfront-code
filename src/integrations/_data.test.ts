@@ -64,7 +64,7 @@ describe("integration endpoint specs", () => {
       ["dropbox", 4],
       ["drive", 4],
       ["docs-google", 4],
-      ["sheets", 5],
+      ["sheets", 16],
       ["onedrive", 3],
       ["sharepoint", 4],
     ]);
@@ -356,6 +356,39 @@ describe("integration endpoint specs", () => {
       return tool.id.replaceAll("_", "-");
     }).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
+  });
+
+  it("keeps sheets connector aligned with standard spreadsheet automation tools", async () => {
+    const sheets = getConnector("sheets");
+    const expectedToolIds = [
+      "list_spreadsheets",
+      "get_spreadsheet",
+      "read_range",
+      "write_range",
+      "create_spreadsheet",
+      "append_rows",
+      "clear_range",
+      "batch_update",
+      "add_sheet",
+      "delete_sheet",
+      "rename_sheet",
+      "delete_spreadsheet",
+      "find_replace",
+      "copy_sheet",
+      "create_chart",
+      "set_data_validation",
+    ];
+
+    assertEquals(sheets.tools.map((tool) => tool.id), expectedToolIds);
+
+    const toolFiles: string[] = [];
+    for await (const entry of Deno.readDir("cli/templates/integrations/sheets/files/tools")) {
+      if (entry.isFile && entry.name.endsWith(".ts")) {
+        toolFiles.push(entry.name.replace(/\.ts$/, ""));
+      }
+    }
+
+    assertEquals(toolFiles.sort(), expectedToolIds.map((id) => id.replaceAll("_", "-")).sort());
   });
 
   it("keeps github list-issues on GraphQL so pull requests stay separate", () => {
