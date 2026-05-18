@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 export default tool({
   id: "delete-event",
@@ -12,7 +13,7 @@ export default tool({
     })
   )(),
   execute: async ({ eventId, calendarId }, context) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
     const calendar = createCalendarClient(userId);
     await calendar.deleteEvent(eventId, calendarId);
 

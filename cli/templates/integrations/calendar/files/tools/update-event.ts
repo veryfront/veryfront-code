@@ -1,6 +1,7 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
 import { createCalendarClient } from "../../lib/calendar-client.ts";
+import { requireUserIdFromContext } from "../../lib/user-id.ts";
 
 export default tool({
   id: "update-event",
@@ -40,7 +41,7 @@ export default tool({
     },
     context,
   ) => {
-    const userId = context?.userId ?? "current-user";
+    const userId = requireUserIdFromContext(context);
     const calendar = createCalendarClient(userId);
     const event = await calendar.updateEvent(
       eventId,
