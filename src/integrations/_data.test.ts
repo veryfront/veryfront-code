@@ -1,9 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import {
-  assertEquals,
-  assertExists,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors } from "./_data.ts";
@@ -420,9 +416,7 @@ describe("integration endpoint specs", () => {
       }
     }
 
-    const expectedFiles = airtable.tools.map((tool) =>
-      tool.id?.replaceAll("_", "-")
-    ).sort();
+    const expectedFiles = airtable.tools.map((tool) => tool.id?.replaceAll("_", "-")).sort();
     assertEquals(toolFiles.sort(), expectedFiles);
   });
 
