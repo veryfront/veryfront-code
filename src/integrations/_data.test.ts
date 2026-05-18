@@ -19,7 +19,13 @@ function getTool(connectorName: string, toolId: string) {
 
 describe("integration endpoint specs", () => {
   it("adds endpoint specs for all 53 tools across the 5 targeted integrations", () => {
-    const targetedConnectors = ["calendar", "github", "gmail", "linear", "slack"];
+    const targetedConnectors = [
+      "calendar",
+      "github",
+      "gmail",
+      "linear",
+      "slack",
+    ];
     let totalEndpointTools = 0;
 
     for (const connectorName of targetedConnectors) {
@@ -46,7 +52,9 @@ describe("integration endpoint specs", () => {
       ["notion", 4],
     ]);
 
-    for (const [connectorName, expectedEndpointCount] of expectedEndpointCounts) {
+    for (
+      const [connectorName, expectedEndpointCount] of expectedEndpointCounts
+    ) {
       const connector = getConnector(connectorName);
       const endpointTools = connector.tools.filter((tool) => tool.endpoint);
 
@@ -69,7 +77,9 @@ describe("integration endpoint specs", () => {
       ["sharepoint", 4],
     ]);
 
-    for (const [connectorName, expectedEndpointCount] of expectedEndpointCounts) {
+    for (
+      const [connectorName, expectedEndpointCount] of expectedEndpointCounts
+    ) {
       const connector = getConnector(connectorName);
       const endpointTools = connector.tools.filter((tool) => tool.endpoint);
 
@@ -84,7 +94,7 @@ describe("integration endpoint specs", () => {
   it("adds callable endpoint specs for remaining configured OAuth providers", () => {
     const expectedEndpointCounts = new Map([
       ["asana", 5],
-      ["gitlab", 5],
+      ["gitlab", 10],
       ["jira", 5],
       ["confluence", 5],
       ["salesforce", 5],
@@ -93,7 +103,9 @@ describe("integration endpoint specs", () => {
       ["discord", 2],
     ]);
 
-    for (const [connectorName, expectedEndpointCount] of expectedEndpointCounts) {
+    for (
+      const [connectorName, expectedEndpointCount] of expectedEndpointCounts
+    ) {
       const connector = getConnector(connectorName);
       const endpointTools = connector.tools.filter((tool) => tool.endpoint);
 
@@ -107,7 +119,10 @@ describe("integration endpoint specs", () => {
 
   it("keeps remaining OAuth provider endpoints executor-compatible", () => {
     const asanaListTasks = getTool("asana", "list_tasks");
-    assertEquals(asanaListTasks.endpoint?.url, "https://app.asana.com/api/1.0/tasks");
+    assertEquals(
+      asanaListTasks.endpoint?.url,
+      "https://app.asana.com/api/1.0/tasks",
+    );
     assertEquals(asanaListTasks.endpoint?.params?.project?.in, "query");
 
     const gitlabGetIssue = getTool("gitlab", "get_issue");
@@ -116,6 +131,40 @@ describe("integration endpoint specs", () => {
       "https://gitlab.com/api/v4/projects/{projectId}/issues/{issueIid}",
     );
     assertEquals(gitlabGetIssue.endpoint?.params?.issueIid?.required, true);
+
+    const gitlabGetProject = getTool("gitlab", "get_project");
+    assertEquals(
+      gitlabGetProject.endpoint?.url,
+      "https://gitlab.com/api/v4/projects/{projectId}",
+    );
+    assertEquals(gitlabGetProject.endpoint?.params?.projectId?.required, true);
+
+    const gitlabUpdateIssue = getTool("gitlab", "update_issue");
+    assertEquals(gitlabUpdateIssue.endpoint?.method, "PUT");
+    assertEquals(
+      gitlabUpdateIssue.endpoint?.body?.state_event?.description,
+      "close or reopen",
+    );
+
+    const gitlabAddIssueComment = getTool("gitlab", "add_issue_comment");
+    assertEquals(gitlabAddIssueComment.endpoint?.method, "POST");
+    assertEquals(gitlabAddIssueComment.endpoint?.body?.body?.required, true);
+
+    const gitlabGetMergeRequest = getTool("gitlab", "get_merge_request");
+    assertEquals(
+      gitlabGetMergeRequest.endpoint?.url,
+      "https://gitlab.com/api/v4/projects/{projectId}/merge_requests/{mergeRequestIid}",
+    );
+
+    const gitlabAddMergeRequestComment = getTool(
+      "gitlab",
+      "add_merge_request_comment",
+    );
+    assertEquals(gitlabAddMergeRequestComment.endpoint?.method, "POST");
+    assertEquals(
+      gitlabAddMergeRequestComment.endpoint?.body?.body?.required,
+      true,
+    );
 
     const jiraSearchIssues = getTool("jira", "search_issues");
     assertEquals(
@@ -129,17 +178,26 @@ describe("integration endpoint specs", () => {
       confluenceGetPage.endpoint?.url,
       "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content/{pageId}",
     );
-    assertEquals(confluenceGetPage.endpoint?.params?.expand?.default, "body.storage,version");
+    assertEquals(
+      confluenceGetPage.endpoint?.params?.expand?.default,
+      "body.storage,version",
+    );
 
     const salesforceListAccounts = getTool("salesforce", "list_accounts");
     assertEquals(
       salesforceListAccounts.endpoint?.url,
       "{{oauth.raw.instance_url}}/services/data/v61.0/query",
     );
-    assertStringIncludes(salesforceListAccounts.endpoint?.params?.q?.default as string, "Account");
+    assertStringIncludes(
+      salesforceListAccounts.endpoint?.params?.q?.default as string,
+      "Account",
+    );
 
     const outlookSendEmail = getTool("outlook", "send_email");
-    assertEquals(outlookSendEmail.endpoint?.url, "https://graph.microsoft.com/v1.0/me/sendMail");
+    assertEquals(
+      outlookSendEmail.endpoint?.url,
+      "https://graph.microsoft.com/v1.0/me/sendMail",
+    );
     assertEquals(outlookSendEmail.endpoint?.body?.message?.required, true);
 
     const teamsListChannels = getTool("teams", "list_channels");
@@ -152,7 +210,10 @@ describe("integration endpoint specs", () => {
     assertEquals(teams.auth.scopes?.includes("Channel.ReadBasic.All"), true);
 
     const confluence = getConnector("confluence");
-    assertEquals(confluence.auth.additionalAuthParams?.audience, "api.atlassian.com");
+    assertEquals(
+      confluence.auth.additionalAuthParams?.audience,
+      "api.atlassian.com",
+    );
   });
 
   it("keeps newly added static endpoints executor-compatible", () => {
@@ -165,21 +226,33 @@ describe("integration endpoint specs", () => {
 
     const hubspotCreateContact = getTool("hubspot", "create_contact");
     assertEquals(hubspotCreateContact.endpoint?.method, "POST");
-    assertEquals(hubspotCreateContact.endpoint?.body?.properties?.required, true);
+    assertEquals(
+      hubspotCreateContact.endpoint?.body?.properties?.required,
+      true,
+    );
 
     const dropboxListFiles = getTool("dropbox", "list_files");
-    assertEquals(dropboxListFiles.endpoint?.url, "https://api.dropboxapi.com/2/files/list_folder");
+    assertEquals(
+      dropboxListFiles.endpoint?.url,
+      "https://api.dropboxapi.com/2/files/list_folder",
+    );
     assertEquals(dropboxListFiles.endpoint?.body?.path?.default, "");
 
     const driveCreateFolder = getTool("drive", "create_folder");
-    assertEquals(driveCreateFolder.endpoint?.url, "https://www.googleapis.com/drive/v3/files");
+    assertEquals(
+      driveCreateFolder.endpoint?.url,
+      "https://www.googleapis.com/drive/v3/files",
+    );
     assertEquals(
       driveCreateFolder.endpoint?.body?.mimeType?.default,
       "application/vnd.google-apps.folder",
     );
 
     const docsCreateDocument = getTool("docs-google", "create_document");
-    assertEquals(docsCreateDocument.endpoint?.url, "https://docs.googleapis.com/v1/documents");
+    assertEquals(
+      docsCreateDocument.endpoint?.url,
+      "https://docs.googleapis.com/v1/documents",
+    );
     assertEquals(docsCreateDocument.endpoint?.body?.title?.required, true);
 
     const sheetsReadRange = getTool("sheets", "read_range");
@@ -192,10 +265,16 @@ describe("integration endpoint specs", () => {
       "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}",
     );
     assertEquals(sheetsWriteRange.endpoint?.method, "PUT");
-    assertEquals(sheetsWriteRange.endpoint?.params?.spreadsheetId?.required, true);
+    assertEquals(
+      sheetsWriteRange.endpoint?.params?.spreadsheetId?.required,
+      true,
+    );
     assertEquals(sheetsWriteRange.endpoint?.params?.range?.required, true);
     assertEquals(sheetsWriteRange.endpoint?.body?.values?.required, true);
-    assertEquals(sheetsWriteRange.endpoint?.params?.valueInputOption?.default, "USER_ENTERED");
+    assertEquals(
+      sheetsWriteRange.endpoint?.params?.valueInputOption?.default,
+      "USER_ENTERED",
+    );
 
     const oneDriveListFiles = getTool("onedrive", "list_files");
     assertEquals(
@@ -224,9 +303,9 @@ describe("integration endpoint specs", () => {
           oauthMetadataTemplate,
           "https://oauth.example",
         );
-        const pathParams = Object.entries(endpoint.params ?? {}).filter(([, param]) =>
-          param.in === "path"
-        );
+        const pathParams = Object.entries(endpoint.params ?? {}).filter((
+          [, param],
+        ) => param.in === "path");
 
         for (const [paramName] of pathParams) {
           assertStringIncludes(
@@ -238,7 +317,11 @@ describe("integration endpoint specs", () => {
           );
         }
 
-        for (const placeholder of urlWithoutOAuthTemplates.matchAll(/{([A-Za-z0-9_$.-]+)}/g)) {
+        for (
+          const placeholder of urlWithoutOAuthTemplates.matchAll(
+            /{([A-Za-z0-9_$.-]+)}/g,
+          )
+        ) {
           const placeholderName = placeholder[1]!;
           assertExists(
             endpoint.params?.[placeholderName],
@@ -277,12 +360,24 @@ describe("integration endpoint specs", () => {
     ]);
 
     for (const tool of airtable.tools) {
-      assertExists(tool.endpoint, `Expected airtable:${tool.id} to have an endpoint spec`);
+      assertExists(
+        tool.endpoint,
+        `Expected airtable:${tool.id} to have an endpoint spec`,
+      );
     }
 
-    assertEquals(getTool("airtable", "update_record").endpoint?.method, "PATCH");
-    assertEquals(getTool("airtable", "delete_record").endpoint?.method, "DELETE");
-    assertEquals(getTool("airtable", "create_records").endpoint?.response?.transform, "records");
+    assertEquals(
+      getTool("airtable", "update_record").endpoint?.method,
+      "PATCH",
+    );
+    assertEquals(
+      getTool("airtable", "delete_record").endpoint?.method,
+      "DELETE",
+    );
+    assertEquals(
+      getTool("airtable", "create_records").endpoint?.response?.transform,
+      "records",
+    );
     assertEquals(
       getTool("airtable", "create_table").endpoint?.url,
       "https://api.airtable.com/v0/meta/bases/{baseId}/tables",
@@ -301,14 +396,21 @@ describe("integration endpoint specs", () => {
     const airtable = getConnector("airtable");
 
     assertEquals(airtable.auth?.scopes, airtableConfig.defaultScopes);
-    assertStringIncludes(airtableConfig.defaultScopes.join(" "), "schema.bases:write");
+    assertStringIncludes(
+      airtableConfig.defaultScopes.join(" "),
+      "schema.bases:write",
+    );
   });
 
   it("keeps Airtable connector tools aligned with scaffolded tool files", async () => {
     const airtable = getConnector("airtable");
     const toolFiles: string[] = [];
 
-    for await (const entry of Deno.readDir("cli/templates/integrations/airtable/files/tools")) {
+    for await (
+      const entry of Deno.readDir(
+        "cli/templates/integrations/airtable/files/tools",
+      )
+    ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
         toolFiles.push(entry.name.replace(/\.ts$/, ""));
       }
@@ -345,7 +447,11 @@ describe("integration endpoint specs", () => {
     const gmail = getConnector("gmail");
     const toolFiles: string[] = [];
 
-    for await (const entry of Deno.readDir("cli/templates/integrations/gmail/files/tools")) {
+    for await (
+      const entry of Deno.readDir(
+        "cli/templates/integrations/gmail/files/tools",
+      )
+    ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
         toolFiles.push(entry.name.replace(/\.ts$/, ""));
       }
@@ -382,13 +488,20 @@ describe("integration endpoint specs", () => {
     assertEquals(sheets.tools.map((tool) => tool.id), expectedToolIds);
 
     const toolFiles: string[] = [];
-    for await (const entry of Deno.readDir("cli/templates/integrations/sheets/files/tools")) {
+    for await (
+      const entry of Deno.readDir(
+        "cli/templates/integrations/sheets/files/tools",
+      )
+    ) {
       if (entry.isFile && entry.name.endsWith(".ts")) {
         toolFiles.push(entry.name.replace(/\.ts$/, ""));
       }
     }
 
-    assertEquals(toolFiles.sort(), expectedToolIds.map((id) => id.replaceAll("_", "-")).sort());
+    assertEquals(
+      toolFiles.sort(),
+      expectedToolIds.map((id) => id.replaceAll("_", "-")).sort(),
+    );
   });
 
   it("keeps github list-issues on GraphQL so pull requests stay separate", () => {
@@ -397,8 +510,14 @@ describe("integration endpoint specs", () => {
     assertEquals(tool.endpoint?.type, "graphql");
     assertEquals(tool.endpoint?.url, "https://api.github.com/graphql");
     assertEquals(tool.endpoint?.response?.transform, "repository.issues.nodes");
-    assertStringIncludes(tool.endpoint?.query ?? "", "repository(owner: $owner, name: $repo)");
-    assertStringIncludes(tool.endpoint?.query ?? "", "issues(first: $first, states: $states");
+    assertStringIncludes(
+      tool.endpoint?.query ?? "",
+      "repository(owner: $owner, name: $repo)",
+    );
+    assertStringIncludes(
+      tool.endpoint?.query ?? "",
+      "issues(first: $first, states: $states",
+    );
   });
 
   it("preserves executor-compatible defaults and GraphQL variable shapes", () => {
@@ -412,8 +531,14 @@ describe("integration endpoint specs", () => {
     assertEquals(calendarDeleteEvent.endpoint?.params?.eventId?.required, true);
 
     const calendarListEvents = getTool("calendar", "list_events");
-    assertEquals(calendarListEvents.endpoint?.params?.calendarId?.default, "primary");
-    assertEquals(calendarListEvents.endpoint?.params?.orderBy?.default, "startTime");
+    assertEquals(
+      calendarListEvents.endpoint?.params?.calendarId?.default,
+      "primary",
+    );
+    assertEquals(
+      calendarListEvents.endpoint?.params?.orderBy?.default,
+      "startTime",
+    );
 
     const gmailListEmails = getTool("gmail", "list_emails");
     assertEquals(gmailListEmails.endpoint?.params?.labelIds?.type, "string[]");
@@ -428,11 +553,23 @@ describe("integration endpoint specs", () => {
     );
 
     const linearCreateIssue = getTool("linear", "create_issue");
-    assertStringIncludes(linearCreateIssue.endpoint?.query ?? "", "issueCreate(input: {");
-    assertStringIncludes(linearCreateIssue.endpoint?.query ?? "", "teamId: $teamId");
+    assertStringIncludes(
+      linearCreateIssue.endpoint?.query ?? "",
+      "issueCreate(input: {",
+    );
+    assertStringIncludes(
+      linearCreateIssue.endpoint?.query ?? "",
+      "teamId: $teamId",
+    );
 
     const linearUpdateIssue = getTool("linear", "update_issue");
-    assertStringIncludes(linearUpdateIssue.endpoint?.query ?? "", "issueUpdate(id: $id, input: {");
-    assertStringIncludes(linearUpdateIssue.endpoint?.query ?? "", "stateId: $stateId");
+    assertStringIncludes(
+      linearUpdateIssue.endpoint?.query ?? "",
+      "issueUpdate(id: $id, input: {",
+    );
+    assertStringIncludes(
+      linearUpdateIssue.endpoint?.query ?? "",
+      "stateId: $stateId",
+    );
   });
 });

@@ -6,16 +6,18 @@ export default tool({
   id: "get-issue",
   description:
     "Get detailed information about a specific GitLab issue including full description, comments, time tracking, and metadata.",
-  inputSchema: defineSchema((v) => v.object({
-    projectId: v
-      .union([v.number(), v.string()])
-      .describe('Project ID or path (e.g., "gitlab-org/gitlab" or 278964)'),
-    issueIid: v
-      .number()
-      .describe(
-        "Issue IID (internal ID, the number shown in the issue URL like #123)",
-      ),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      projectId: v
+        .union([v.number(), v.string()])
+        .describe('Project ID or path (e.g., "gitlab-org/gitlab" or 278964)'),
+      issueIid: v
+        .number()
+        .describe(
+          "Issue IID (internal ID, the number shown in the issue URL like #123)",
+        ),
+    })
+  )(),
   async execute({ projectId, issueIid }) {
     const issue = await getIssue(projectId, issueIid);
 

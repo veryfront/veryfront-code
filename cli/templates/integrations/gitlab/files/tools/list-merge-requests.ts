@@ -1,30 +1,37 @@
 import { tool } from "veryfront/tool";
 import { defineSchema } from "veryfront/schemas";
-import { formatMergeRequestForDisplay, listMergeRequests } from "../../lib/gitlab-client.ts";
+import {
+  formatMergeRequestForDisplay,
+  listMergeRequests,
+} from "../../lib/gitlab-client.ts";
 
 export default tool({
   id: "list-merge-requests",
   description:
     "List merge requests in GitLab. Can filter by scope, state, labels, and specific project. Returns MR titles, states, branches, assignees, and reviewers.",
-  inputSchema: defineSchema((v) => v.object({
-    scope: v
-      .enum(["created_by_me", "assigned_to_me", "all"])
-      .default("all")
-      .describe("Scope of merge requests to list"),
-    state: v
-      .enum(["opened", "closed", "merged", "all"])
-      .default("opened")
-      .describe("State of merge requests to list"),
-    labels: v
-      .array(v.string())
-      .optional()
-      .describe('Filter by labels (e.g., ["feature", "review-needed"])'),
-    projectId: v
-      .union([v.number(), v.string()])
-      .optional()
-      .describe('Project ID or path (e.g., "gitlab-org/gitlab" or 278964)'),
-    limit: v.number().min(1).max(100).default(20).describe("Maximum number of results to return"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      scope: v
+        .enum(["created_by_me", "assigned_to_me", "all"])
+        .default("all")
+        .describe("Scope of merge requests to list"),
+      state: v
+        .enum(["opened", "closed", "merged", "all"])
+        .default("opened")
+        .describe("State of merge requests to list"),
+      labels: v
+        .array(v.string())
+        .optional()
+        .describe('Filter by labels (e.g., ["feature", "review-needed"])'),
+      projectId: v
+        .union([v.number(), v.string()])
+        .optional()
+        .describe('Project ID or path (e.g., "gitlab-org/gitlab" or 278964)'),
+      limit: v.number().min(1).max(100).default(20).describe(
+        "Maximum number of results to return",
+      ),
+    })
+  )(),
   async execute({ scope, state, labels, projectId, limit }) {
     const mergeRequests = await listMergeRequests({
       scope,
@@ -46,8 +53,9 @@ export default tool({
       count: mergeRequests.length,
       mergeRequests: mergeRequests.map((mr) => {
         const description = mr.description ?? "";
-        const truncatedDescription =
-          description.length > 200 ? `${description.substring(0, 200)}...` : description;
+        const truncatedDescription = description.length > 200
+          ? `${description.substring(0, 200)}...`
+          : description;
 
         return {
           id: mr.id,
