@@ -1,9 +1,6 @@
 import type { Agent } from "#veryfront/agent";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
-import {
-  CONTROL_PLANE_AGENT_STREAM_PATH,
-  type RuntimeAgentDiscoveryDeps,
-} from "#veryfront/channels/control-plane.ts";
+import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
 import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
@@ -52,6 +49,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
   resolveRuntimeOwnerInvokeUrl,
 };
 const logger = serverLogger.component("agent-stream-handler");
+const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
 
 type SourceContextFsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -132,12 +130,17 @@ function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamReques
   return internalAgentStreamRequestSchema.parse(rawPayload);
 }
 
+function getPathRunId(pathname: string): string | null {
+  const match = RUN_STREAM_PATH_REGEX.exec(pathname);
+  return match?.[1] ? decodeURIComponent(match[1]) : null;
+}
+
 export class AgentStreamHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "AgentStreamHandler",
     priority: PRIORITY_MEDIUM_API as HandlerPriority,
     patterns: [
-      { pattern: CONTROL_PLANE_AGENT_STREAM_PATH, exact: true, method: "POST" },
+      { pattern: RUN_STREAM_PATH_REGEX, method: "POST" },
     ],
   };
 
@@ -180,11 +183,15 @@ export class AgentStreamHandler extends BaseHandler {
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
       try {
+        const pathRunId = getPathRunId(new URL(req.url).pathname);
         const rawBody = await readInternalAgentRequestBody(
           req,
           INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
         );
         const payload = parseAgentStreamPayload(JSON.parse(rawBody));
+        if (!pathRunId || pathRunId !== payload.runId) {
+          return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
+        }
         await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: payload.runId,
           expectedSurface: "studio",

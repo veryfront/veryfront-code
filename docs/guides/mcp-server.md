@@ -8,7 +8,7 @@ order: 23
 
 Expose tools, prompts, and resources over Model Context Protocol.
 
-This guide covers the application-facing MCP server exposed by `veryfront/mcp`. It is separate from the internal AG-UI transport used by Veryfront Studio and internal agent control-plane flows.
+This guide covers the application-facing MCP server exposed by `veryfront/mcp`. It is separate from the internal AG-UI transport and signed control-plane run flows used by Veryfront Studio.
 
 ## Setup
 
