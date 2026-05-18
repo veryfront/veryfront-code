@@ -72,6 +72,17 @@ export interface WriteRangeOptions {
   valueInputOption?: "RAW" | "USER_ENTERED";
 }
 
+export interface AppendRangeOptions extends WriteRangeOptions {
+  insertDataOption?: "OVERWRITE" | "INSERT_ROWS";
+}
+
+export interface BatchUpdateOptions {
+  spreadsheetId: string;
+  requests: Array<Record<string, unknown>>;
+  includeSpreadsheetInResponse?: boolean;
+  responseRanges?: string[];
+}
+
 export const sheetsOAuthProvider = {
   name: "sheets",
   authorizationUrl: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -81,6 +92,7 @@ export const sheetsOAuthProvider = {
   scopes: [
     "https://www.googleapis.com/auth/spreadsheets",
     "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/drive.file",
   ],
   callbackPath: "/api/auth/sheets/callback",
 };
@@ -99,12 +111,7 @@ export function createSheetsClient(userId: string): {
     updatedColumns: number;
     updatedCells: number;
   }>;
-  appendRange(
-    spreadsheetId: string,
-    range: string,
-    values: unknown[][],
-    valueInputOption?: "RAW" | "USER_ENTERED",
-  ): Promise<{
+  appendRange(options: AppendRangeOptions): Promise<{
     updates: {
       updatedRange: string;
       updatedRows: number;
@@ -112,7 +119,11 @@ export function createSheetsClient(userId: string): {
       updatedCells: number;
     };
   }>;
-  clearRange(spreadsheetId: string, range: string): Promise<{ clearedRange: string }>;
+  clearRange(
+    spreadsheetId: string,
+    range: string,
+  ): Promise<{ clearedRange: string }>;
+  batchUpdate(options: BatchUpdateOptions): Promise<unknown>;
   createSpreadsheet(options: CreateSpreadsheetOptions): Promise<Spreadsheet>;
   addSheet(
     spreadsheetId: string,
@@ -120,11 +131,47 @@ export function createSheetsClient(userId: string): {
     options?: { rowCount?: number; columnCount?: number },
   ): Promise<Sheet>;
   deleteSheet(spreadsheetId: string, sheetId: number): Promise<void>;
+  renameSheet(
+    spreadsheetId: string,
+    sheetId: number,
+    title: string,
+  ): Promise<unknown>;
+  deleteSpreadsheet(
+    spreadsheetId: string,
+    options?: { permanentlyDelete?: boolean },
+  ): Promise<
+    { deleted: true; spreadsheetId: string; permanentlyDeleted: boolean }
+  >;
+  findReplace(options: {
+    spreadsheetId: string;
+    find: string;
+    replacement: string;
+    sheetId?: number;
+    matchCase?: boolean;
+    matchEntireCell?: boolean;
+    searchByRegex?: boolean;
+  }): Promise<unknown>;
+  copySheet(options: {
+    spreadsheetId: string;
+    sheetId: number;
+    destinationSpreadsheetId: string;
+  }): Promise<unknown>;
+  createChart(
+    spreadsheetId: string,
+    chart: Record<string, unknown>,
+  ): Promise<unknown>;
+  setDataValidation(options: {
+    spreadsheetId: string;
+    range: Record<string, unknown>;
+    rule: Record<string, unknown>;
+  }): Promise<unknown>;
 } {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(sheetsOAuthProvider, userId, "sheets");
     if (token) return token;
-    throw new Error("Google Sheets not connected. Please connect your Google account first.");
+    throw new Error(
+      "Google Sheets not connected. Please connect your Google account first.",
+    );
   }
 
   async function apiRequest<T>(
@@ -146,17 +193,26 @@ export function createSheetsClient(userId: string): {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`${serviceName} API error: ${response.status} - ${error}`);
+      throw new Error(
+        `${serviceName} API error: ${response.status} - ${error}`,
+      );
     }
 
+    if (response.status === 204) return undefined as T;
     return response.json();
   }
 
-  function sheetsApiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  function sheetsApiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
     return apiRequest<T>(SHEETS_API_BASE, "Sheets", endpoint, options);
   }
 
-  function driveApiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  function driveApiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
     return apiRequest<T>(DRIVE_API_BASE, "Drive", endpoint, options);
   }
 
@@ -172,7 +228,9 @@ export function createSheetsClient(userId: string): {
         orderBy: `${options.orderBy ?? "modifiedTime"} desc`,
       });
 
-      const result = await driveApiRequest<{ files?: SpreadsheetFile[] }>(`/files?${params.toString()}`);
+      const result = await driveApiRequest<{ files?: SpreadsheetFile[] }>(
+        `/files?${params.toString()}`,
+      );
       return result.files ?? [];
     },
 
@@ -181,14 +239,19 @@ export function createSheetsClient(userId: string): {
     },
 
     async readRange(spreadsheetId: string, range: string): Promise<CellData> {
-      const result = await sheetsApiRequest<{ values?: unknown[][]; range: string }>(
+      const result = await sheetsApiRequest<
+        { values?: unknown[][]; range: string }
+      >(
         `/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}`,
       );
 
       return { values: result.values ?? [], range: result.range };
     },
 
-    async readRanges(spreadsheetId: string, ranges: string[]): Promise<CellData[]> {
+    async readRanges(
+      spreadsheetId: string,
+      ranges: string[],
+    ): Promise<CellData[]> {
       const params = new URLSearchParams();
       ranges.forEach((range) => params.append("ranges", range));
 
@@ -196,7 +259,10 @@ export function createSheetsClient(userId: string): {
         valueRanges: Array<{ values?: unknown[][]; range: string }>;
       }>(`/spreadsheets/${spreadsheetId}/values:batchGet?${params.toString()}`);
 
-      return result.valueRanges.map((vr) => ({ values: vr.values ?? [], range: vr.range }));
+      return result.valueRanges.map((vr) => ({
+        values: vr.values ?? [],
+        range: vr.range,
+      }));
     },
 
     writeRange(options: WriteRangeOptions): Promise<{
@@ -208,7 +274,9 @@ export function createSheetsClient(userId: string): {
       const valueInputOption = options.valueInputOption ?? "USER_ENTERED";
 
       return sheetsApiRequest(
-        `/spreadsheets/${options.spreadsheetId}/values/${encodeURIComponent(options.range)}?valueInputOption=${valueInputOption}`,
+        `/spreadsheets/${options.spreadsheetId}/values/${
+          encodeURIComponent(options.range)
+        }?valueInputOption=${valueInputOption}`,
         {
           method: "PUT",
           body: JSON.stringify({ values: options.values }),
@@ -216,12 +284,7 @@ export function createSheetsClient(userId: string): {
       );
     },
 
-    appendRange(
-      spreadsheetId: string,
-      range: string,
-      values: unknown[][],
-      valueInputOption: "RAW" | "USER_ENTERED" = "USER_ENTERED",
-    ): Promise<{
+    appendRange(options: AppendRangeOptions): Promise<{
       updates: {
         updatedRange: string;
         updatedRows: number;
@@ -229,19 +292,48 @@ export function createSheetsClient(userId: string): {
         updatedCells: number;
       };
     }> {
+      const params = new URLSearchParams({
+        valueInputOption: options.valueInputOption ?? "USER_ENTERED",
+        insertDataOption: options.insertDataOption ?? "INSERT_ROWS",
+      });
+
       return sheetsApiRequest(
-        `/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:append?valueInputOption=${valueInputOption}`,
+        `/spreadsheets/${options.spreadsheetId}/values/${
+          encodeURIComponent(options.range)
+        }:append?${params.toString()}`,
         {
           method: "POST",
-          body: JSON.stringify({ values }),
+          body: JSON.stringify({ values: options.values }),
         },
       );
     },
 
-    clearRange(spreadsheetId: string, range: string): Promise<{ clearedRange: string }> {
-      return sheetsApiRequest(`/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(range)}:clear`, {
-        method: "POST",
-      });
+    clearRange(
+      spreadsheetId: string,
+      range: string,
+    ): Promise<{ clearedRange: string }> {
+      return sheetsApiRequest(
+        `/spreadsheets/${spreadsheetId}/values/${
+          encodeURIComponent(range)
+        }:clear`,
+        {
+          method: "POST",
+        },
+      );
+    },
+
+    batchUpdate(options: BatchUpdateOptions): Promise<unknown> {
+      return sheetsApiRequest(
+        `/spreadsheets/${options.spreadsheetId}:batchUpdate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            requests: options.requests,
+            includeSpreadsheetInResponse: options.includeSpreadsheetInResponse,
+            responseRanges: options.responseRanges,
+          }),
+        },
+      );
     },
 
     createSpreadsheet(options: CreateSpreadsheetOptions): Promise<Spreadsheet> {
@@ -312,6 +404,126 @@ export function createSheetsClient(userId: string): {
           requests: [{ deleteSheet: { sheetId } }],
         }),
       });
+    },
+
+    renameSheet(
+      spreadsheetId: string,
+      sheetId: number,
+      title: string,
+    ): Promise<unknown> {
+      return sheetsApiRequest(`/spreadsheets/${spreadsheetId}:batchUpdate`, {
+        method: "POST",
+        body: JSON.stringify({
+          requests: [{
+            updateSheetProperties: {
+              properties: { sheetId, title },
+              fields: "title",
+            },
+          }],
+        }),
+      });
+    },
+
+    async deleteSpreadsheet(
+      spreadsheetId: string,
+      options: { permanentlyDelete?: boolean } = {},
+    ): Promise<
+      { deleted: true; spreadsheetId: string; permanentlyDeleted: boolean }
+    > {
+      if (options.permanentlyDelete) {
+        await driveApiRequest(`/files/${spreadsheetId}`, { method: "DELETE" });
+      } else {
+        await driveApiRequest(`/files/${spreadsheetId}`, {
+          method: "PATCH",
+          body: JSON.stringify({ trashed: true }),
+        });
+      }
+
+      return {
+        deleted: true,
+        spreadsheetId,
+        permanentlyDeleted: Boolean(options.permanentlyDelete),
+      };
+    },
+
+    findReplace(options: {
+      spreadsheetId: string;
+      find: string;
+      replacement: string;
+      sheetId?: number;
+      matchCase?: boolean;
+      matchEntireCell?: boolean;
+      searchByRegex?: boolean;
+    }): Promise<unknown> {
+      return sheetsApiRequest(
+        `/spreadsheets/${options.spreadsheetId}:batchUpdate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            requests: [{
+              findReplace: {
+                find: options.find,
+                replacement: options.replacement,
+                sheetId: options.sheetId,
+                matchCase: options.matchCase,
+                matchEntireCell: options.matchEntireCell,
+                searchByRegex: options.searchByRegex,
+                allSheets: options.sheetId === undefined ? true : undefined,
+              },
+            }],
+          }),
+        },
+      );
+    },
+
+    copySheet(options: {
+      spreadsheetId: string;
+      sheetId: number;
+      destinationSpreadsheetId: string;
+    }): Promise<unknown> {
+      return sheetsApiRequest(
+        `/spreadsheets/${options.spreadsheetId}/sheets/${options.sheetId}:copyTo`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            destinationSpreadsheetId: options.destinationSpreadsheetId,
+          }),
+        },
+      );
+    },
+
+    createChart(
+      spreadsheetId: string,
+      chart: Record<string, unknown>,
+    ): Promise<unknown> {
+      return sheetsApiRequest(`/spreadsheets/${spreadsheetId}:batchUpdate`, {
+        method: "POST",
+        body: JSON.stringify({
+          requests: [{ addChart: { chart } }],
+        }),
+      });
+    },
+
+    setDataValidation(options: {
+      spreadsheetId: string;
+      range: Record<string, unknown>;
+      rule: Record<string, unknown>;
+    }): Promise<unknown> {
+      return sheetsApiRequest(
+        `/spreadsheets/${options.spreadsheetId}:batchUpdate`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            requests: [{
+              repeatCell: {
+                range: options.range,
+                cell: { dataValidation: options.rule },
+                fields: "dataValidation",
+              },
+            }],
+          }),
+        },
+      );
     },
   };
 }
