@@ -1950,6 +1950,7 @@ User guides:
 - [multi-agent](../../guides/multi-agent.md): Compose multi-agent systems
 - [memory-and-streaming](../../guides/memory-and-streaming.md): Memory, streaming, and lifecycle
 - [agent-service-runtime](../../guides/agent-service-runtime.md): Deploy agents as standalone services
+- [skills](../../guides/skills.md): Attach project skills to agents
 
 Architecture:
 

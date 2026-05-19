@@ -199,3 +199,4 @@ service list after the first heartbeat
 
 - [Agent service runtime reference](../reference/veryfront/agent.md): complete service runtime API reference
 - [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
+- [`veryfront/channels`](../reference/veryfront/channels.md): control-plane and invoke channel contracts
