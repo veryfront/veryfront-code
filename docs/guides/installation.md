@@ -8,13 +8,15 @@ order: 34
 
 Install the `veryfront` CLI and framework so you can scaffold, run, and build Veryfront projects.
 
-Most users want the Quickstart flow that follows. The four install methods below all produce the same `veryfront` CLI; pick the one that matches your toolchain.
+Most users want the Quickstart flow that follows. The install methods below all produce the same `veryfront` CLI; pick the one that matches your toolchain.
 
 ## Prerequisites
 
 - A terminal with shell access (`bash`, `zsh`, or PowerShell).
 - One of the supported runtimes installed (see [System requirements](#system-requirements)).
-- Network access to `https://veryfront.com` (binary installer) or your npm registry (npm/npx).
+- Network access:
+  - **Binary installer (`curl`, PowerShell, Homebrew):** reachable hosts include `veryfront.com` (installer script), `api.github.com` (release metadata), and `github.com` (binary download from the `veryfront/veryfront` releases page).
+  - **`npm` / `npx`:** access to your configured npm registry (default `registry.npmjs.org`).
 
 ## System requirements
 
@@ -22,11 +24,11 @@ Veryfront ships as a standalone binary and as an npm package. Pick the rows that
 
 ### Operating system
 
-| OS                       | Binary installer (curl, brew) | npm / npx |
-| ------------------------ | ----------------------------- | --------- |
-| macOS 12 or later (Intel and Apple Silicon) | Yes                           | Yes       |
-| Linux x86_64 and arm64 (glibc)              | Yes                           | Yes       |
-| Windows 10 or later                          | Use WSL2                      | Yes       |
+| OS                                                              | Binary installer                | npm / npx |
+| --------------------------------------------------------------- | ------------------------------- | --------- |
+| macOS 12 or later (Intel and Apple Silicon)                     | Yes (`curl` or Homebrew)        | Yes       |
+| Linux x86_64 and arm64 (glibc)                                  | Yes (`curl` or Homebrew)        | Yes       |
+| Windows 10 or later, x86_64 and arm64                           | Yes (PowerShell `install.ps1`)  | Yes       |
 
 ### Runtime
 
@@ -53,7 +55,7 @@ Older browsers may work but are not part of the supported matrix.
 
 ## Install
 
-### curl (standalone binary)
+### curl (standalone binary, macOS and Linux)
 
 ```bash
 curl -fsSL https://veryfront.com/install.sh | sh
@@ -65,6 +67,20 @@ Pin a version or change the install directory:
 
 ```bash
 curl -fsSL https://veryfront.com/install.sh | sh -s -- --version 0.1.0 --dir /usr/local/bin
+```
+
+### PowerShell (standalone binary, Windows)
+
+```powershell
+irm https://veryfront.com/install.ps1 | iex
+```
+
+Installs the latest standalone binary to `%USERPROFILE%\.veryfront\bin\veryfront.exe`. Supports Windows 10 or later on `x86_64` and `arm64`.
+
+Pin a version or change the install directory:
+
+```powershell
+& ([scriptblock]::Create((irm https://veryfront.com/install.ps1))) -Version 0.1.0 -Dir C:\Tools\veryfront
 ```
 
 ### Homebrew
