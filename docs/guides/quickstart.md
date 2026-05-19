@@ -13,7 +13,7 @@ The npm package, CLI, and import name remain `veryfront`.
 
 ## Prerequisites
 
-- Node.js 18 or later, with `npm`, `pnpm`, or `yarn` on your PATH.
+- The current Node.js LTS, with `npm`, `pnpm`, or `yarn` on your PATH.
 - A terminal in which you can run global `npm install` (use `npx veryfront` if
   global installs aren't possible).
 

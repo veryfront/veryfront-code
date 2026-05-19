@@ -39,7 +39,7 @@ describe("doctor/version-checks", () => {
       const result = await checkDenoVersion();
 
       // In test environment (Deno 2.x), should pass
-      // If running in Node.js 18+, should also pass
+      // If running in a supported Node.js runtime, should also pass
       assertEquals(["pass", "warn"].includes(result.status), true);
     });
   });
