@@ -121,6 +121,10 @@ Reference modules:
 
 User guides:
 
+- [index](../../guides/index.md): Browse the guide map
+- [quickstart](../../guides/quickstart.md): Create and run a project
+- [choose-a-primitive](../../guides/choose-a-primitive.md): Choose the right primitive
+- [production-path](../../guides/production-path.md): Move a route toward production checks
 - [configuration](../../guides/configuration.md): Configure your Veryfront project
 - [project-structure](../../guides/project-structure.md): Project layout and conventions
 - [data-fetching](../../guides/data-fetching.md): Server data, static data, params

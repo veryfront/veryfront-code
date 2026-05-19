@@ -8,7 +8,7 @@ interface GuideContract {
 
 const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "agent-service-runtime.md": {
-    references: ["../reference/veryfront/agent.md"],
+    references: ["../reference/veryfront/agent.md", "../reference/veryfront/channels.md"],
     snippets: ["startAgentService", "VERYFRONT_AGENT_SERVICE_URL", "/api/runs"],
   },
   "agents.md": {
@@ -32,7 +32,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: ["theme", "attachments", "Context providers"],
   },
   "chat-ui.md": {
-    references: ["../reference/veryfront/chat.md", "../reference/veryfront/agent.md"],
+    references: [
+      "../reference/veryfront/chat.md",
+      "../reference/veryfront/agent.md",
+      "../reference/veryfront/markdown.md",
+    ],
     snippets: ["Chat", "useChat", "createAgUiHandler"],
   },
   "cli-knowledge-ingestion.md": {
@@ -48,6 +52,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../reference/veryfront/integrations.md",
       "../reference/veryfront/mcp.md",
       "../reference/veryfront/sandbox.md",
+      "../reference/veryfront/extensions.md",
     ],
     snippets: ["Agent", "Tool", "Workflow", "Task", "Job", "Integration", "MCP", "Sandbox"],
   },
@@ -79,7 +84,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: ["getServerData", "getStaticData", "redirect"],
   },
   "deploying.md": {
-    references: ["../reference/veryfront/index.md"],
+    references: [
+      "../reference/veryfront/index.md",
+      "../reference/veryfront/server.md",
+      "../reference/veryfront/observability.md",
+      "../reference/veryfront/utils.md",
+    ],
     snippets: ["veryfront build", "veryfront start", "veryfront deploy", "veryfront open"],
   },
   "extension-authoring.md": {
@@ -154,7 +164,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: ["createOAuthInitHandler", "getTokens", "OAuthService"],
   },
   "pages-and-routing.md": {
-    references: ["../reference/veryfront/router.md", "../reference/veryfront/context.md"],
+    references: [
+      "../reference/veryfront/router.md",
+      "../reference/veryfront/context.md",
+      "../reference/veryfront/mdx.md",
+    ],
     snippets: ["app router", "useRouter", "Link"],
   },
   "project-structure.md": {
@@ -162,7 +176,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: ["app/", "agents/", "tools/"],
   },
   "providers.md": {
-    references: ["../reference/veryfront/provider.md"],
+    references: ["../reference/veryfront/provider.md", "../reference/veryfront/embedding.md"],
     snippets: ["provider/model", "OPENAI_API_KEY", "registerModelProvider"],
   },
   "quickstart.md": {
@@ -170,15 +184,15 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: ["veryfront init", "veryfront dev", "veryfront build"],
   },
   "sandbox.md": {
-    references: ["../reference/veryfront/sandbox.md"],
+    references: ["../reference/veryfront/sandbox.md", "../reference/veryfront/fs.md"],
     snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
   },
   "skills.md": {
-    references: [],
+    references: ["../reference/veryfront/agent.md"],
     snippets: ["SKILL.md", "allowed_tools", "veryfront skills validate"],
   },
   "tasks.md": {
-    references: [],
+    references: ["../reference/veryfront/jobs.md"],
     snippets: ["veryfront task sync-data", "schedulable", "VeryfrontJobsClient"],
   },
   "tools.md": {

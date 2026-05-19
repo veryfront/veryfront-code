@@ -347,6 +347,10 @@ const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
 
 const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = {
   "veryfront": [
+    { path: "index", reason: "Browse the guide map" },
+    { path: "quickstart", reason: "Create and run a project" },
+    { path: "choose-a-primitive", reason: "Choose the right primitive" },
+    { path: "production-path", reason: "Move a route toward production checks" },
     { path: "configuration", reason: "Configure your Veryfront project" },
     { path: "project-structure", reason: "Project layout and conventions" },
     { path: "data-fetching", reason: "Server data, static data, params" },
@@ -380,6 +384,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
     { path: "multi-agent", reason: "Compose multi-agent systems" },
     { path: "memory-and-streaming", reason: "Memory, streaming, and lifecycle" },
     { path: "agent-service-runtime", reason: "Deploy agents as standalone services" },
+    { path: "skills", reason: "Attach project skills to agents" },
   ],
   "veryfront/tool": [
     { path: "tools", reason: "Define and call tools" },
@@ -396,6 +401,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
   ],
   "veryfront/jobs": [
     { path: "jobs", reason: "Schedule and run background jobs" },
+    { path: "tasks", reason: "Define task targets for jobs" },
   ],
   "veryfront/mcp": [
     { path: "mcp-server", reason: "Build and host MCP servers" },

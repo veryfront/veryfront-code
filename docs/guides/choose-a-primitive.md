@@ -80,3 +80,4 @@ primitives.
 - [`veryfront/integrations`](../reference/veryfront/integrations.md): integrations API reference
 - [`veryfront/mcp`](../reference/veryfront/mcp.md): MCP API reference
 - [`veryfront/sandbox`](../reference/veryfront/sandbox.md): sandbox API reference
+- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference

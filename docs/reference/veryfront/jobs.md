@@ -133,6 +133,7 @@ const events = await jobs.events(job.id);
 User guides:
 
 - [jobs](../../guides/jobs.md): Schedule and run background jobs
+- [tasks](../../guides/tasks.md): Define task targets for jobs
 
 Architecture:
 

@@ -127,3 +127,6 @@ After `veryfront deploy`:
 ## Related
 
 - [`veryfront` (root)](../reference/veryfront/index.md): `defineConfig`, build options
+- [`veryfront/server`](../reference/veryfront/server.md): production server APIs
+- [`veryfront/observability`](../reference/veryfront/observability.md): tracing, metrics, and runtime logs
+- [`veryfront/utils`](../reference/veryfront/utils.md): runtime constants and logging helpers
