@@ -54,6 +54,69 @@ describe("internal-agents/schema", () => {
     );
   });
 
+  it("accepts server-resolved integration metadata above the old 64 KB forwarded props budget", () => {
+    const largeIntegrationDefinitions = Array.from({ length: 8 }, (_, index) => ({
+      name: `github__bulk_tool_${index}`,
+      description: `Definition for github__bulk_tool_${index} `.repeat(300),
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description: `Input for github__bulk_tool_${index} `.repeat(300),
+          },
+        },
+      },
+    }));
+    const forwardedProps = {
+      runtimeOverrides: {
+        allowedTools: largeIntegrationDefinitions.map((definition) => definition.name),
+        serverResolvedIntegrationTools: largeIntegrationDefinitions.map((definition) =>
+          definition.name
+        ),
+        integrationToolDefinitions: largeIntegrationDefinitions,
+      },
+    };
+
+    assertEquals(
+      new TextEncoder().encode(JSON.stringify(forwardedProps)).byteLength > 64 * 1024,
+      true,
+    );
+
+    const parsed = getInternalAgentStreamRequestSchema().parse({
+      agentId: "agent_1",
+      threadId: "10000000-1000-4000-8000-100000000001",
+      runId: "run_1",
+      messages: [],
+      forwardedProps,
+    });
+
+    assertEquals(parsed.forwardedProps, forwardedProps);
+  });
+
+  it("rejects forwarded props above the 192 KB runtime budget", () => {
+    assertThrows(
+      () =>
+        getInternalAgentStreamRequestSchema().parse({
+          agentId: "agent_1",
+          threadId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          messages: [],
+          forwardedProps: {
+            runtimeOverrides: {
+              integrationToolDefinitions: [{
+                name: "github__large_tool",
+                description: "x".repeat(192 * 1024),
+                inputSchema: { type: "object" },
+              }],
+            },
+          },
+        }),
+      Error,
+      "forwardedProps must be less than 192 KB",
+    );
+  });
+
   it("defaults resume signals to non-error tool results", () => {
     assertEquals(
       getResumeSignalSchema().parse({

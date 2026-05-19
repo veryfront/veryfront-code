@@ -21,7 +21,7 @@ import {
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 
 const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-const MAX_FORWARDED_PROPS_BYTES = 65_536;
+const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_TOOL_RESULT_BYTES = 65_536;
 const MAX_RUNTIME_MESSAGES = 100;
 
@@ -76,7 +76,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     agentSource: getRuntimeAgentSourceContextSchema().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-      { message: "forwardedProps must be less than 64 KB" },
+      { message: "forwardedProps must be less than 192 KB" },
     ),
   })
 );

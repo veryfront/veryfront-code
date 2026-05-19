@@ -6,7 +6,7 @@ const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
 const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
-const MAX_FORWARDED_PROPS_BYTES = 65_536;
+const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_RUNTIME_MESSAGES = 100;
 
 const encoder = new TextEncoder();
@@ -177,7 +177,7 @@ export const getAgUiRuntimeRequestSchema = defineSchema((v) =>
     ),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-      { message: "forwardedProps must be less than 64 KB" },
+      { message: "forwardedProps must be less than 192 KB" },
     ),
   })
 );
