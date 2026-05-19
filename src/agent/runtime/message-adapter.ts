@@ -42,6 +42,7 @@ type AgentRuntimeMessageLikePart =
   | { type: "image"; url: string; mediaType: string }
   | { type: "file"; url: string; mediaType: string };
 
+/** Public API contract for agent runtime message part. */
 export type AgentRuntimeMessagePart =
   | { type: "text"; text: string }
   | {
@@ -59,6 +60,7 @@ export type AgentRuntimeMessagePart =
   | { type: "image"; url: string; mediaType: string }
   | { type: "file"; url: string; mediaType: string };
 
+/** Message shape for agent runtime. */
 export interface AgentRuntimeMessage {
   id: string;
   role: ProviderModelMessage["role"];
@@ -82,6 +84,7 @@ type ProviderToolCallPart = {
   input: Record<string, unknown>;
 };
 
+/** Error shape for agent runtime message conversion. */
 export class AgentRuntimeMessageConversionError extends Error {
   constructor(message: string) {
     super(message);
@@ -271,12 +274,14 @@ function toToolResultOutput(value: unknown): { type: "json"; value: JsonValue } 
   };
 }
 
+/** Return a runtime text part when the value carries text. */
 export function getAgentRuntimeTextPart(part: unknown): { type: "text"; text: string } | null {
   return isRecord(part) && part.type === "text" && typeof part.text === "string"
     ? { type: "text", text: part.text }
     : null;
 }
 
+/** Return a runtime tool-call part when the value carries a tool call. */
 export function getAgentRuntimeToolCallPart(
   part: unknown,
 ): { toolCallId: string; toolName: string; input: Record<string, unknown> } | null {
@@ -301,6 +306,7 @@ export function getAgentRuntimeToolCallPart(
   };
 }
 
+/** Return a runtime tool-result part when the value carries a tool result. */
 export function getAgentRuntimeToolResultPart(
   part: unknown,
 ): { toolCallId: string; toolName: string; output: unknown } | null {
@@ -321,6 +327,7 @@ export function getAgentRuntimeToolResultPart(
   };
 }
 
+/** Create a chat tool-result part. */
 export function createToolResultPart(part: {
   toolCallId: string;
   toolName: string;
@@ -451,6 +458,7 @@ function createProviderMessageFromAgentRuntimeMessage(
   }
 }
 
+/** Convert provider messages to agent runtime messages. */
 export function convertProviderMessagesToAgentRuntimeMessages(
   messages: readonly ProviderModelMessage[],
 ): AgentRuntimeMessage[] {
@@ -462,6 +470,7 @@ export function convertProviderMessagesToAgentRuntimeMessages(
   }));
 }
 
+/** Convert agent runtime messages to provider messages. */
 export function convertAgentRuntimeMessagesToProviderMessages(
   messages: ReadonlyArray<
     Pick<AgentRuntimeMessage, "role"> & { parts: ReadonlyArray<AgentRuntimeMessageLikePart> }

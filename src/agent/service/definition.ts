@@ -20,6 +20,7 @@ export interface DurableRunSink<
  */
 export type AgentServiceRouteMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "OPTIONS";
 
+/** Configuration used by agent service cors. */
 export interface AgentServiceCorsConfig {
   origins?: string[];
   credentials?: boolean;
@@ -28,12 +29,14 @@ export interface AgentServiceCorsConfig {
   maxAgeSeconds?: number;
 }
 
+/** Configuration used by agent service server. */
 export interface AgentServiceServerConfig {
   port?: number;
   basePath?: string;
   cors?: boolean | AgentServiceCorsConfig;
 }
 
+/** Public API contract for agent service route. */
 export interface AgentServiceRoute {
   method: AgentServiceRouteMethod;
   path: string;
@@ -52,6 +55,7 @@ export interface AgentServiceRuntime<
   setShuttingDown(shuttingDown?: boolean): void;
 }
 
+/** Public API contract for agent registry. */
 export type AgentRegistry = Record<string, Agent>;
 
 export interface AgentServiceContractBase<
@@ -106,6 +110,7 @@ export type AgentContract<
   | AgentServiceRegistryContract<TStartInput, TRun, TEvent, TTerminalState>
   | AgentServiceSingleAgentContract<TStartInput, TRun, TEvent, TTerminalState>;
 
+/** Public API contract for normalized agent service contract. */
 export interface NormalizedAgentServiceContract<
   TStartInput = void,
   TRun = unknown,

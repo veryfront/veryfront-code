@@ -46,18 +46,22 @@ const byName = new Map(
 const iconMap = new Map(Object.entries(icons));
 const connectorNames: readonly string[] = connectors.map((c) => c.name);
 
+/** Return connector. */
 export function getConnector(name: IntegrationName | string): IntegrationConfig | undefined {
   return byName.get(name);
 }
 
+/** List connectors. */
 export function listConnectors(): readonly IntegrationConfig[] {
   return connectors;
 }
 
+/** Return connector names. */
 export function getConnectorNames(): readonly string[] {
   return connectorNames;
 }
 
+/** Return icon. */
 export function getIcon(name: IntegrationName | string): string | undefined {
   return iconMap.get(name);
 }

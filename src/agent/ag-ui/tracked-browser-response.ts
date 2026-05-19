@@ -7,6 +7,7 @@ import {
 } from "./runtime-browser-response.ts";
 import type { AgentResponse } from "../types.ts";
 
+/** Input payload for create AG-UI tracked browser response. */
 export interface CreateAgUiTrackedBrowserResponseInput<TChunk> extends
   Omit<
     CreateAgUiRuntimeBrowserResponseInput<TChunk, null>,
@@ -19,6 +20,7 @@ export interface CreateAgUiTrackedBrowserResponseInput<TChunk> extends
   >;
 }
 
+/** Response payload for create AG-UI tracked browser. */
 export function createAgUiTrackedBrowserResponse<TChunk>(
   input: CreateAgUiTrackedBrowserResponseInput<TChunk>,
 ): Response {

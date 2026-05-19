@@ -6,6 +6,7 @@
 
 import { defineError } from "#veryfront/errors/types.ts";
 
+/** Shared missing extension error value. */
 export const MISSING_EXTENSION_ERROR = defineError({
   slug: "missing-extension",
   category: "RUNTIME",
@@ -14,6 +15,7 @@ export const MISSING_EXTENSION_ERROR = defineError({
   suggestion: "Install the missing extension package and add it to your configuration",
 });
 
+/** Shared extension validation error value. */
 export const EXTENSION_VALIDATION_ERROR = defineError({
   slug: "extension-validation",
   category: "CONFIG",
@@ -22,6 +24,7 @@ export const EXTENSION_VALIDATION_ERROR = defineError({
   suggestion: "Check that the extension exports a valid name, version, and capabilities array",
 });
 
+/** Shared circular dependency error value. */
 export const CIRCULAR_DEPENDENCY_ERROR = defineError({
   slug: "extension-circular-dependency",
   category: "CONFIG",
@@ -30,6 +33,7 @@ export const CIRCULAR_DEPENDENCY_ERROR = defineError({
   suggestion: "Review the 'extends' fields in your extensions to break the cycle",
 });
 
+/** Shared extension conflict error value. */
 export const EXTENSION_CONFLICT_ERROR = defineError({
   slug: "extension-conflict",
   category: "CONFIG",

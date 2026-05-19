@@ -41,6 +41,7 @@ import type { FeedbackValue } from "../components/message-feedback.tsx";
 import { StepIndicator } from "../components/step-indicator.tsx";
 import { ModelAvatar } from "./model-avatar.tsx";
 
+/** Props accepted by chat message list. */
 export interface ChatMessageListProps {
   messages: ChatMessage[];
   isLoading?: boolean;
@@ -72,6 +73,7 @@ export interface ChatMessageListProps {
   children?: React.ReactNode;
 }
 
+/** Render chat message list. */
 export const ChatMessageList = React.forwardRef<HTMLDivElement, ChatMessageListProps>(
   function ChatMessageList(
     {

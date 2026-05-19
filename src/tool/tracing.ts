@@ -1,19 +1,23 @@
 import type { HostToolSet } from "./host-tools.ts";
 import type { ToolExecutionContext } from "./types.ts";
 
+/** Public API contract for host tool trace runner. */
 export type HostToolTraceRunner = <TResult>(
   spanName: string,
   operation: () => TResult,
 ) => TResult;
 
+/** Public API contract for host tool trace attributes. */
 export type HostToolTraceAttributes = Record<string, unknown>;
 
+/** Input payload for host tool trace attribute. */
 export type HostToolTraceAttributeInput = {
   toolName: string;
   toolCallId: string | undefined;
   context: ToolExecutionContext | undefined;
 };
 
+/** Options accepted by trace host tools. */
 export type TraceHostToolsOptions<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
@@ -33,6 +37,7 @@ function getToolCallId(context: ToolExecutionContext | undefined): string | unde
   return typeof context?.toolCallId === "string" ? context.toolCallId : undefined;
 }
 
+/** Wrap host tools with tracing metadata. */
 export function traceHostTools<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(

@@ -36,6 +36,11 @@ describe("hydration-script-builder/prod-scripts", () => {
       assertEquals(result.includes("import * as React from 'react'"), true);
     });
 
+    it("should import createRoot for RSC module client rendering", () => {
+      const result = generateProdHydrationModule();
+      assertEquals(result.includes("import { createRoot } from 'react-dom/client'"), true);
+    });
+
     it("should import RouterProvider from veryfront/router", () => {
       const result = generateProdHydrationModule();
       assertEquals(result.includes("from 'veryfront/router'"), true);

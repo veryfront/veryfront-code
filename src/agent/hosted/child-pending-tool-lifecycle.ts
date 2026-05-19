@@ -1,25 +1,30 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import { toChildRunToolInputRecord } from "../child-run/execution-support.ts";
 
+/** Public API contract for hosted child pending tool call phase. */
 export type HostedChildPendingToolCallPhase = "input_streaming" | "awaiting_result";
 
+/** State for hosted child pending tool call. */
 export interface HostedChildPendingToolCallState {
   phase: HostedChildPendingToolCallPhase;
   toolName?: string;
   input?: unknown;
 }
 
+/** Public API contract for hosted child pending tool lifecycle close reason. */
 export type HostedChildPendingToolLifecycleCloseReason =
   | { kind: "ended" }
   | { kind: "aborted" }
   | { kind: "error"; error: unknown };
 
+/** Public API contract for hosted child pending tool lifecycle close log. */
 export interface HostedChildPendingToolLifecycleCloseLog {
   reason: HostedChildPendingToolLifecycleCloseReason["kind"];
   toolCallIds: string[];
   errorMessage: string | null;
 }
 
+/** Public API contract for hosted child pending tool lifecycle unknown tool log. */
 export interface HostedChildPendingToolLifecycleUnknownToolLog {
   toolCallId: string;
   phase: HostedChildPendingToolCallPhase;
@@ -27,21 +32,25 @@ export interface HostedChildPendingToolLifecycleUnknownToolLog {
   hasInputSnapshot: boolean;
 }
 
+/** Public API contract for hosted child pending tool lifecycle logger. */
 export interface HostedChildPendingToolLifecycleLogger {
   warnIncompleteToolLifecycles?: (input: HostedChildPendingToolLifecycleCloseLog) => void;
   warnUnknownToolIdentity?: (input: HostedChildPendingToolLifecycleUnknownToolLog) => void;
 }
 
+/** Context for hosted child pending tool lifecycle log. */
 export interface HostedChildPendingToolLifecycleLogContext {
   conversationId?: string;
   parentRunId?: string;
   description: string;
 }
 
+/** Public API contract for hosted child pending tool lifecycle log writer. */
 export interface HostedChildPendingToolLifecycleLogWriter {
   warn: (message: string, context: Record<string, unknown>) => void;
 }
 
+/** Create hosted child pending tool lifecycle logger. */
 export function createHostedChildPendingToolLifecycleLogger(
   context: HostedChildPendingToolLifecycleLogContext,
   writer: HostedChildPendingToolLifecycleLogWriter,
@@ -71,11 +80,13 @@ export function createHostedChildPendingToolLifecycleLogger(
   };
 }
 
+/** Input payload for hosted child pending tool lifecycle. */
 export interface HostedChildPendingToolLifecycleInput {
   appendMirrorChunk: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => Promise<void> | void;
   logger?: HostedChildPendingToolLifecycleLogger;
 }
 
+/** Create hosted child pending tool lifecycle. */
 export function createHostedChildPendingToolLifecycle(input: HostedChildPendingToolLifecycleInput) {
   const startedToolCallIds = new Set<string>();
   const pendingToolCalls = new Map<string, HostedChildPendingToolCallState>();

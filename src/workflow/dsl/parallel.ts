@@ -8,6 +8,7 @@ import type {
 import { validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+/** Options accepted by parallel. */
 export interface ParallelOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   strategy?: "all" | "race" | "allSettled";
   checkpoint?: boolean;

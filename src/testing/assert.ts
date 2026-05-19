@@ -3,6 +3,7 @@ import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { deepEquals, safeStringify } from "./utils.ts";
 
 // deno-lint-ignore no-explicit-any -- any[] required: constructor params are contravariant
+/** Public API contract for error class. */
 type ErrorClass = new (...args: any[]) => Error;
 
 interface AssertImpl {
@@ -263,26 +264,32 @@ if (isDeno) {
   impl = createNodeAssertImpl();
 }
 
+/** Assert that two values are deeply equal. */
 export function assertEquals<T>(actual: T, expected: T, msg?: string): void {
   impl.assertEquals(actual, expected, msg);
 }
 
+/** Assert that two values are not deeply equal. */
 export function assertNotEquals<T>(actual: T, expected: T, msg?: string): void {
   impl.assertNotEquals(actual, expected, msg);
 }
 
+/** Assert that two values are strictly equal. */
 export function assertStrictEquals<T>(actual: T, expected: T, msg?: string): void {
   impl.assertStrictEquals(actual, expected, msg);
 }
 
+/** Assert that a value is truthy. */
 export function assert(expr: unknown, msg?: string): asserts expr {
   impl.assert(expr, msg);
 }
 
+/** Assert that a value is not null or undefined. */
 export function assertExists<T>(actual: T, msg?: string): asserts actual is NonNullable<T> {
   impl.assertExists(actual, msg);
 }
 
+/** Assert that a synchronous function throws. */
 export function assertThrows(
   fn: () => unknown,
   errorClassOrMsg?: ErrorClass | string,
@@ -292,6 +299,7 @@ export function assertThrows(
   impl.assertThrows(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
 }
 
+/** Assert that an async function rejects. */
 export function assertRejects(
   fn: () => Promise<unknown>,
   errorClassOrMsg?: ErrorClass | string,
@@ -301,14 +309,17 @@ export function assertRejects(
   return impl.assertRejects(fn, errorClassOrMsg, msgIncludesOrMsg, msg);
 }
 
+/** Assert that a string contains another string. */
 export function assertStringIncludes(actual: string, expected: string, msg?: string): void {
   impl.assertStringIncludes(actual, expected, msg);
 }
 
+/** Assert that a string matches a regular expression. */
 export function assertMatch(actual: string, expected: RegExp, msg?: string): void {
   impl.assertMatch(actual, expected, msg);
 }
 
+/** Assert that a value is an instance of a constructor. */
 export function assertInstanceOf<T>(
   actual: unknown,
   // deno-lint-ignore no-explicit-any -- any[] required: constructor params are contravariant
@@ -318,14 +329,17 @@ export function assertInstanceOf<T>(
   impl.assertInstanceOf(actual, expectedType, msg);
 }
 
+/** Fail the current assertion immediately. */
 export function fail(msg?: string): never {
   impl.fail(msg);
 }
 
+/** Assert that two values are not strictly equal. */
 export function assertNotStrictEquals<T>(actual: T, expected: T, msg?: string): void {
   impl.assertNotStrictEquals(actual, expected, msg);
 }
 
+/** Assert that an object contains matching properties. */
 export function assertObjectMatch(
   actual: Record<string, unknown>,
   expected: Record<string, unknown>,
@@ -334,18 +348,22 @@ export function assertObjectMatch(
   impl.assertObjectMatch(actual, expected, msg);
 }
 
+/** Assert that a number is greater than another number. */
 export function assertGreater(actual: number, expected: number, msg?: string): void {
   impl.assertGreater(actual, expected, msg);
 }
 
+/** Assert that a number is greater than or equal to another number. */
 export function assertGreaterOrEqual(actual: number, expected: number, msg?: string): void {
   impl.assertGreaterOrEqual(actual, expected, msg);
 }
 
+/** Assert that a number is less than another number. */
 export function assertLess(actual: number, expected: number, msg?: string): void {
   impl.assertLess(actual, expected, msg);
 }
 
+/** Assert that a number is less than or equal to another number. */
 export function assertLessOrEqual(actual: number, expected: number, msg?: string): void {
   impl.assertLessOrEqual(actual, expected, msg);
 }

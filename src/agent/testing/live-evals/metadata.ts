@@ -1,8 +1,10 @@
 import type { LiveEvalCaseMetadata } from "./report.ts";
 import type { LiveEvalCase } from "./runner.ts";
 
+/** Public API contract for live eval case surface. */
 export type LiveEvalCaseSurface = "read-only" | "write" | "experimental";
 
+/** Public API contract for live eval case tag rule. */
 export interface LiveEvalCaseTagRule {
   tag: string;
   equals?: string | readonly string[];
@@ -10,24 +12,28 @@ export interface LiveEvalCaseTagRule {
   includes?: string | readonly string[];
 }
 
+/** Options accepted by live eval case metadata. */
 export interface LiveEvalCaseMetadataOptions {
   releaseGateCaseIds?: readonly string[] | ReadonlySet<string>;
   optionalJudgeCasePrefixes?: readonly string[];
   areaTagRules?: readonly LiveEvalCaseTagRule[];
 }
 
+/** Input payload for build live eval case metadata. */
 export interface BuildLiveEvalCaseMetadataInput extends LiveEvalCaseMetadataOptions {
   caseId: string;
   surface: LiveEvalCaseSurface;
   requireProject: boolean;
 }
 
+/** Default value for live eval optional judge case prefixes. */
 export const DEFAULT_LIVE_EVAL_OPTIONAL_JUDGE_CASE_PREFIXES: readonly string[] = [
   "knowledge-",
   "grounded-",
   "judged-",
 ];
 
+/** Default value for live eval area tag rules. */
 export const DEFAULT_LIVE_EVAL_AREA_TAG_RULES: readonly LiveEvalCaseTagRule[] = [
   { startsWith: "starter-", tag: "area:starter-routing" },
   { startsWith: "starter-task-", tag: "area:starter-artifact-flow" },
@@ -112,6 +118,7 @@ function buildAreaTags(caseId: string, rules: readonly LiveEvalCaseTagRule[]): s
   return [...tags];
 }
 
+/** Builds live eval case metadata. */
 export function buildLiveEvalCaseMetadata(
   input: BuildLiveEvalCaseMetadataInput,
 ): LiveEvalCaseMetadata {
@@ -150,6 +157,7 @@ export function buildLiveEvalCaseMetadata(
   };
 }
 
+/** Applies live eval metadata. */
 export function withLiveEvalMetadata<TCase extends LiveEvalCase>(
   cases: readonly TCase[],
   surface: LiveEvalCaseSurface,

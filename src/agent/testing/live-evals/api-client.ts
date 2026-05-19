@@ -5,6 +5,7 @@ import type { LiveEvalProjectFile } from "./runner.ts";
 
 ensureBuiltinSchemaValidator();
 
+/** Context for live eval API. */
 export interface LiveEvalApiContext {
   apiUrl: string;
   authToken: string;
@@ -12,18 +13,22 @@ export interface LiveEvalApiContext {
   fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 }
 
+/** Input payload for live eval request timeout. */
 export interface LiveEvalRequestTimeoutInput {
   requestTimeoutMs: number;
 }
 
+/** Input payload for live eval create conversation. */
 export interface LiveEvalCreateConversationInput extends LiveEvalRequestTimeoutInput {
   title: string;
 }
 
+/** Input payload for live eval conversation. */
 export interface LiveEvalConversationInput extends LiveEvalRequestTimeoutInput {
   conversationId: string;
 }
 
+/** Input payload for live eval project upload fixture. */
 export interface LiveEvalProjectUploadFixtureInput extends LiveEvalRequestTimeoutInput {
   filePath: string;
   contentType: string;
@@ -33,30 +38,36 @@ export interface LiveEvalProjectUploadFixtureInput extends LiveEvalRequestTimeou
   maxAttempts?: number;
 }
 
+/** Input payload for live eval project file. */
 export interface LiveEvalProjectFileInput extends LiveEvalRequestTimeoutInput {
   filePath: string;
 }
 
+/** Input payload for live eval create release. */
 export interface LiveEvalCreateReleaseInput extends LiveEvalRequestTimeoutInput {
   description?: string;
 }
 
+/** Input payload for live eval wait for open input request. */
 export interface LiveEvalWaitForOpenInputRequestInput extends LiveEvalConversationInput {
   abortSignal: AbortSignal;
   pollIntervalMs?: number;
   timeoutMs?: number;
 }
 
+/** Public API contract for live eval input response values. */
 export interface LiveEvalInputResponseValues {
   [key: string]: string | boolean | number | null;
 }
 
+/** Input payload for live eval submit input response. */
 export interface LiveEvalSubmitInputResponseInput extends LiveEvalRequestTimeoutInput {
   conversationId: string;
   inputRequestId: string;
   values: LiveEvalInputResponseValues;
 }
 
+/** Input payload for live eval input request. */
 export interface LiveEvalInputRequestInput extends LiveEvalRequestTimeoutInput {
   conversationId: string;
   inputRequestId: string;
@@ -101,10 +112,12 @@ const getInputRequestListResponseSchema = defineSchema((v) =>
   })
 );
 
+/** Record shape for live eval input request. */
 export type LiveEvalInputRequestRecord = InferSchema<
   ReturnType<typeof getInputRequestRecordSchema>
 >;
 
+/** Public API contract for live eval API client. */
 export interface LiveEvalApiClient {
   createConversation(input: LiveEvalCreateConversationInput): Promise<string>;
   deleteConversation(input: LiveEvalConversationInput): Promise<void>;
@@ -250,6 +263,7 @@ async function waitForProjectUploadFixture(
   throw new Error(`Project upload fixture did not appear in time: ${input.filePath}`);
 }
 
+/** Create live eval API client. */
 export function createLiveEvalApiClient(context: LiveEvalApiContext): LiveEvalApiClient {
   return {
     createConversation: (input) => createLiveEvalConversation(context, input),
@@ -265,6 +279,7 @@ export function createLiveEvalApiClient(context: LiveEvalApiContext): LiveEvalAp
   } satisfies LiveEvalApiClient;
 }
 
+/** Create live eval conversation. */
 export async function createLiveEvalConversation(
   context: LiveEvalApiContext,
   input: LiveEvalCreateConversationInput,
@@ -293,6 +308,7 @@ export async function createLiveEvalConversation(
   return payload.id;
 }
 
+/** Delete live eval conversation helper. */
 export async function deleteLiveEvalConversation(
   context: LiveEvalApiContext,
   input: LiveEvalConversationInput,
@@ -315,6 +331,7 @@ export async function deleteLiveEvalConversation(
   }
 }
 
+/** Create live eval project upload fixture. */
 export async function createLiveEvalProjectUploadFixture(
   context: LiveEvalApiContext,
   input: LiveEvalProjectUploadFixtureInput,
@@ -375,6 +392,7 @@ export async function createLiveEvalProjectUploadFixture(
   });
 }
 
+/** Return live eval project file. */
 export async function getLiveEvalProjectFile(
   context: LiveEvalApiContext,
   input: LiveEvalProjectFileInput,
@@ -408,6 +426,7 @@ export async function getLiveEvalProjectFile(
   };
 }
 
+/** Create live eval release. */
 export async function createLiveEvalRelease(
   context: LiveEvalApiContext,
   input: LiveEvalCreateReleaseInput,
@@ -442,6 +461,7 @@ export async function createLiveEvalRelease(
   return payload.id;
 }
 
+/** Delete live eval project file helper. */
 export async function deleteLiveEvalProjectFile(
   context: LiveEvalApiContext,
   input: LiveEvalProjectFileInput,
@@ -467,6 +487,7 @@ export async function deleteLiveEvalProjectFile(
   }
 }
 
+/** List open live eval input requests. */
 export async function listOpenLiveEvalInputRequests(
   context: LiveEvalApiContext,
   input: LiveEvalConversationInput,
@@ -492,6 +513,7 @@ export async function listOpenLiveEvalInputRequests(
   });
 }
 
+/** Request payload for wait for open live eval input. */
 export async function waitForOpenLiveEvalInputRequest(
   context: LiveEvalApiContext,
   input: LiveEvalWaitForOpenInputRequestInput,
@@ -519,6 +541,7 @@ export async function waitForOpenLiveEvalInputRequest(
   );
 }
 
+/** Response payload for submit live eval input. */
 export async function submitLiveEvalInputResponse(
   context: LiveEvalApiContext,
   input: LiveEvalSubmitInputResponseInput,
@@ -543,6 +566,7 @@ export async function submitLiveEvalInputResponse(
   }
 }
 
+/** Request payload for cancel live eval input. */
 export async function cancelLiveEvalInputRequest(
   context: LiveEvalApiContext,
   input: LiveEvalInputRequestInput,

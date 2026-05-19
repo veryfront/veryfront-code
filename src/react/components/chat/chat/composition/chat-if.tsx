@@ -8,12 +8,14 @@ import type * as React from "react";
 import { useChatContextOptional } from "../contexts/chat-context.tsx";
 import type { ChatContextValue } from "../contexts/chat-context.tsx";
 
+/** Props accepted by chat if. */
 export interface ChatIfProps {
   children: React.ReactNode;
   condition: boolean | ((ctx: ChatContextValue) => boolean);
   fallback?: React.ReactNode;
 }
 
+/** Render chat if. */
 export function ChatIf(
   { children, condition, fallback = null }: ChatIfProps,
 ): React.ReactNode {

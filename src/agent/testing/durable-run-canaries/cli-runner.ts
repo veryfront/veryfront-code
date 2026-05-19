@@ -12,11 +12,13 @@ import {
 
 type EnvRecord = Record<string, string | undefined>;
 
+/** Input payload for durable run canary cli case factory. */
 export interface DurableRunCanaryCliCaseFactoryInput {
   context: LiveEvalApiContext;
   requestTimeoutMs: number;
 }
 
+/** Input payload for run durable run canary cli. */
 export interface RunDurableRunCanaryCliInput {
   env: EnvRecord;
   agentId: string;
@@ -40,6 +42,7 @@ function createTimestampedReportPath(input: {
   );
 }
 
+/** Run durable run canary cli. */
 export async function runDurableRunCanaryCli(
   input: RunDurableRunCanaryCliInput,
 ): Promise<number> {

@@ -69,9 +69,10 @@ function createInitErrorResponse(error: unknown): Response {
   );
 }
 
-/** Signature for resolving the authenticated user's id from a request. */
+/** Signature for resolving the authenticated user's ID from a request. */
 export type GetUserIdFn = (req: Request) => string | null | Promise<string | null>;
 
+/** Options accepted by oauth init handler. */
 export interface OAuthInitHandlerOptions {
   /** Token store to use (defaults to memory store) */
   tokenStore?: TokenStore;
@@ -104,6 +105,7 @@ export interface OAuthInitHandlerOptions {
   getUserId: GetUserIdFn;
 }
 
+/** Handler for create oauth init. */
 export function createOAuthInitHandler(
   config: OAuthServiceConfig,
   options: OAuthInitHandlerOptions,
@@ -164,10 +166,11 @@ export interface OAuthStatusHandlerOptions {
   /** Optional authentication check — return true if the request is authenticated */
   isAuthenticated?: (req: Request) => boolean | Promise<boolean>;
 
-  /** REQUIRED. Resolve the authenticated user's id (see OAuthInitHandlerOptions). */
+  /** REQUIRED. Resolve the authenticated user's ID (see OAuthInitHandlerOptions). */
   getUserId: GetUserIdFn;
 }
 
+/** Handler for create oauth status. */
 export function createOAuthStatusHandler(
   config: OAuthServiceConfig,
   options: OAuthStatusHandlerOptions,
@@ -208,10 +211,11 @@ export interface OAuthDisconnectHandlerOptions {
   tokenStore?: TokenStore;
   /** Optional authentication check — return true if the request is authenticated */
   isAuthenticated?: (req: Request) => boolean | Promise<boolean>;
-  /** REQUIRED. Resolve the authenticated user's id (see OAuthInitHandlerOptions). */
+  /** REQUIRED. Resolve the authenticated user's ID (see OAuthInitHandlerOptions). */
   getUserId: GetUserIdFn;
 }
 
+/** Handler for create oauth disconnect. */
 export function createOAuthDisconnectHandler(
   config: OAuthServiceConfig,
   options: OAuthDisconnectHandlerOptions,

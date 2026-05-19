@@ -32,6 +32,7 @@ export {
 };
 export type { RuntimeUsage };
 
+/** Message shape for runtime prompt. */
 export type RuntimePromptMessage =
   | { role: "system"; content: string }
   | {
@@ -265,6 +266,7 @@ type OpenAICompatibleLanguageOptions = {
    */
   mcpServers?: Array<Record<string, unknown>>;
 };
+/** Message shape for OpenAI-compatible chat requests. */
 export type OpenAICompatibleChatMessage =
   | { role: "system"; content: string }
   | {
@@ -298,6 +300,7 @@ type OpenAICompatibleUserContent = Extract<
   OpenAICompatibleChatMessage,
   { role: "user" }
 >["content"];
+/** Request payload for OpenAI-compatible chat completion providers. */
 export type OpenAICompatibleChatRequest = {
   model: string;
   messages: OpenAICompatibleChatMessage[];
@@ -348,6 +351,7 @@ type WarningCollector = {
   drain(): ProviderWarning[];
 };
 
+/** Create warning collector. */
 export function createWarningCollector(): WarningCollector {
   const list: ProviderWarning[] = [];
   return {
@@ -360,6 +364,7 @@ export function createWarningCollector(): WarningCollector {
   };
 }
 
+/** Serialize a JSON-compatible value. */
 export function stringifyJsonValue(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -368,6 +373,7 @@ export function stringifyJsonValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Read text content parts from provider messages. */
 export function readTextParts(parts: Array<{ type: string; text?: string }>): string {
   let text = "";
   for (const part of parts) {
@@ -402,6 +408,7 @@ function toOpenAICompatibleUserContent(
   return content.length > 0 ? content : readTextParts(parts);
 }
 
+/** Convert runtime prompt messages into OpenAI-compatible chat messages. */
 export function toOpenAICompatibleMessages(
   prompt: RuntimePromptMessage[],
 ): OpenAICompatibleChatMessage[] {
@@ -464,6 +471,7 @@ export function toOpenAICompatibleMessages(
   return messages;
 }
 
+/** Convert runtime tool definitions into OpenAI-compatible function tools. */
 export function toOpenAICompatibleTools(
   tools: RuntimeToolDefinition[] | undefined,
 ): OpenAICompatibleChatRequest["tools"] | undefined {
@@ -487,6 +495,7 @@ export function toOpenAICompatibleTools(
   return functions.length > 0 ? functions : undefined;
 }
 
+/** Options accepted by read provider. */
 export function readProviderOptions(
   providerOptions: Record<string, unknown> | undefined,
   ...providerNames: string[]
@@ -507,6 +516,7 @@ export function readProviderOptions(
   return merged;
 }
 
+/** Zod schema for unwrap tool input. */
 export function unwrapToolInputSchema(inputSchema: unknown): unknown {
   if (typeof inputSchema !== "object" || inputSchema === null || Array.isArray(inputSchema)) {
     return inputSchema;

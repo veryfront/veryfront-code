@@ -1,3 +1,4 @@
+/** Configuration used by embedding. */
 export interface EmbeddingConfig {
   /**
    * Optional model string in "provider/model" format.
@@ -12,6 +13,7 @@ export interface EmbeddingConfig {
   batchSize?: number; // max texts per embedMany API call (default 100)
 }
 
+/** Public API contract for embedding. */
 export interface Embedding {
   model: string;
   /** Embed a single text. Applies queryPrefix if configured. */
@@ -20,16 +22,19 @@ export interface Embedding {
   embedMany(texts: string[]): Promise<number[][]>;
 }
 
+/** Options accepted by chunk. */
 export interface ChunkOptions {
   maxChars?: number; // default 2000 (~512 tokens)
   overlap?: number; // default 200 chars
   separators?: string[]; // default ["\n\n", "\n", " ", ""]
 }
 
+/** Configuration used by vector store. */
 export interface VectorStoreConfig {
   embedder: Embedding;
 }
 
+/** Options accepted by search. */
 export interface SearchOptions {
   topK?: number; // default 5
   threshold?: number; // minimum similarity score (0-1), discard below
@@ -38,12 +43,14 @@ export interface SearchOptions {
   lambda?: number; // MMR diversity param (0 = max diversity, 1 = max relevance, default 0.5)
 }
 
+/** Result returned from search. */
 export interface SearchResult {
   text: string;
   score: number;
   metadata?: Record<string, unknown>;
 }
 
+/** Public API contract for vector store. */
 export interface VectorStore {
   add(texts: string[], metadata?: Record<string, unknown>[]): Promise<void>;
   search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
@@ -55,6 +62,7 @@ export interface VectorStore {
 // RAG Store
 // ---------------------------------------------------------------------------
 
+/** Public API contract for rag document meta. */
 export interface RagDocumentMeta {
   id: string;
   title: string;
@@ -64,6 +72,7 @@ export interface RagDocumentMeta {
   url?: string;
 }
 
+/** Public API contract for rag chunk. */
 export interface RagChunk {
   id: string;
   documentId: string;
@@ -72,13 +81,16 @@ export interface RagChunk {
   index: number;
 }
 
+/** Public API contract for rag store data. */
 export interface RagStoreData {
   documents: RagDocumentMeta[];
   chunks: RagChunk[];
 }
 
+/** Public API contract for rag store backend. */
 export type RagStoreBackend = "auto" | "local-json" | "veryfront-cloud";
 
+/** Configuration used by rag store. */
 export interface RagStoreConfig {
   model?: string;
   backend?: RagStoreBackend;
@@ -92,6 +104,7 @@ export interface RagStoreConfig {
   batchSize?: number;
 }
 
+/** Result returned from rag search. */
 export interface RagSearchResult {
   text: string;
   score: number;
@@ -101,11 +114,13 @@ export interface RagSearchResult {
   type: string;
 }
 
+/** Options accepted by rag search. */
 export interface RagSearchOptions {
   topK?: number; // default 5
   threshold?: number; // minimum similarity score
 }
 
+/** Public API contract for rag store. */
 export interface RagStore {
   ingest(title: string, text: string, meta?: { source?: string; type?: string }): Promise<string>;
   search(query: string, options?: RagSearchOptions): Promise<RagSearchResult[]>;

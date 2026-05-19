@@ -72,7 +72,9 @@
             "description": "Page token for pagination"
           }
         },
-        "response": { "transform": "messages" }
+        "response": {
+          "transform": "messages"
+        }
       }
     },
     {
@@ -89,7 +91,10 @@
             "description": "Base64url-encoded RFC 2822 email message",
             "required": true
           },
-          "threadId": { "type": "string", "description": "Thread ID for a reply" }
+          "threadId": {
+            "type": "string",
+            "description": "Thread ID for a reply"
+          }
         }
       }
     },
@@ -144,7 +149,9 @@
             "description": "Page token for pagination"
           }
         },
-        "response": { "transform": "messages" }
+        "response": {
+          "transform": "messages"
+        }
       }
     },
     {
@@ -167,7 +174,9 @@
           "removeLabelIds": {
             "type": "array",
             "description": "Label IDs to remove, use UNREAD",
-            "default": ["UNREAD"]
+            "default": [
+              "UNREAD"
+            ]
           }
         }
       }
@@ -192,7 +201,9 @@
           "removeLabelIds": {
             "type": "array",
             "description": "Label IDs to remove, use INBOX",
-            "default": ["INBOX"]
+            "default": [
+              "INBOX"
+            ]
           }
         }
       }
@@ -205,7 +216,9 @@
       "endpoint": {
         "method": "GET",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
-        "response": { "transform": "labels" }
+        "response": {
+          "transform": "labels"
+        }
       }
     },
     {
@@ -217,7 +230,12 @@
         "method": "GET",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels/{labelId}",
         "params": {
-          "labelId": { "type": "string", "in": "path", "description": "Label ID", "required": true }
+          "labelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Label ID",
+            "required": true
+          }
         }
       }
     },
@@ -230,13 +248,23 @@
         "method": "POST",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
         "body": {
-          "name": { "type": "string", "description": "Label display name", "required": true },
+          "name": {
+            "type": "string",
+            "description": "Label display name",
+            "required": true
+          },
           "messageListVisibility": {
             "type": "string",
             "description": "Message list visibility: show or hide"
           },
-          "labelListVisibility": { "type": "string", "description": "Label list visibility" },
-          "color": { "type": "object", "description": "Label color object" }
+          "labelListVisibility": {
+            "type": "string",
+            "description": "Label list visibility"
+          },
+          "color": {
+            "type": "object",
+            "description": "Label color object"
+          }
         }
       }
     },
@@ -249,16 +277,31 @@
         "method": "PUT",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels/{labelId}",
         "params": {
-          "labelId": { "type": "string", "in": "path", "description": "Label ID", "required": true }
+          "labelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Label ID",
+            "required": true
+          }
         },
         "body": {
-          "name": { "type": "string", "description": "Label display name", "required": true },
+          "name": {
+            "type": "string",
+            "description": "Label display name",
+            "required": true
+          },
           "messageListVisibility": {
             "type": "string",
             "description": "Message list visibility: show or hide"
           },
-          "labelListVisibility": { "type": "string", "description": "Label list visibility" },
-          "color": { "type": "object", "description": "Label color object" }
+          "labelListVisibility": {
+            "type": "string",
+            "description": "Label list visibility"
+          },
+          "color": {
+            "type": "object",
+            "description": "Label color object"
+          }
         }
       }
     },
@@ -271,7 +314,12 @@
         "method": "DELETE",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels/{labelId}",
         "params": {
-          "labelId": { "type": "string", "in": "path", "description": "Label ID", "required": true }
+          "labelId": {
+            "type": "string",
+            "in": "path",
+            "description": "Label ID",
+            "required": true
+          }
         }
       }
     },
@@ -292,8 +340,14 @@
           }
         },
         "body": {
-          "addLabelIds": { "type": "array", "description": "Label IDs to add" },
-          "removeLabelIds": { "type": "array", "description": "Label IDs to remove" }
+          "addLabelIds": {
+            "type": "array",
+            "description": "Label IDs to add"
+          },
+          "removeLabelIds": {
+            "type": "array",
+            "description": "Label IDs to remove"
+          }
         }
       }
     },
@@ -314,8 +368,14 @@
           }
         },
         "body": {
-          "addLabelIds": { "type": "array", "description": "Label IDs to add" },
-          "removeLabelIds": { "type": "array", "description": "Label IDs to remove" }
+          "addLabelIds": {
+            "type": "array",
+            "description": "Label IDs to add"
+          },
+          "removeLabelIds": {
+            "type": "array",
+            "description": "Label IDs to remove"
+          }
         }
       }
     },
@@ -382,9 +442,19 @@
         "method": "POST",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchModify",
         "body": {
-          "ids": { "type": "array", "description": "Email message IDs", "required": true },
-          "addLabelIds": { "type": "array", "description": "Label IDs to add" },
-          "removeLabelIds": { "type": "array", "description": "Label IDs to remove" }
+          "ids": {
+            "type": "array",
+            "description": "Email message IDs",
+            "required": true
+          },
+          "addLabelIds": {
+            "type": "array",
+            "description": "Label IDs to add"
+          },
+          "removeLabelIds": {
+            "type": "array",
+            "description": "Label IDs to remove"
+          }
         }
       }
     },
@@ -397,7 +467,11 @@
         "method": "POST",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/batchDelete",
         "body": {
-          "ids": { "type": "array", "description": "Email message IDs", "required": true }
+          "ids": {
+            "type": "array",
+            "description": "Email message IDs",
+            "required": true
+          }
         }
       }
     },
@@ -416,7 +490,11 @@
             "description": "Maximum number of threads to return (1-500)",
             "default": 20
           },
-          "q": { "type": "string", "in": "query", "description": "Gmail search query" },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Gmail search query"
+          },
           "labelIds": {
             "type": "string[]",
             "in": "query",
@@ -428,7 +506,9 @@
             "description": "Page token for pagination"
           }
         },
-        "response": { "transform": "threads" }
+        "response": {
+          "transform": "threads"
+        }
       }
     },
     {
@@ -472,8 +552,14 @@
           }
         },
         "body": {
-          "addLabelIds": { "type": "array", "description": "Label IDs to add" },
-          "removeLabelIds": { "type": "array", "description": "Label IDs to remove" }
+          "addLabelIds": {
+            "type": "array",
+            "description": "Label IDs to add"
+          },
+          "removeLabelIds": {
+            "type": "array",
+            "description": "Label IDs to remove"
+          }
         }
       }
     },
@@ -563,14 +649,20 @@
             "description": "Maximum number of drafts to return (1-500)",
             "default": 20
           },
-          "q": { "type": "string", "in": "query", "description": "Gmail search query" },
+          "q": {
+            "type": "string",
+            "in": "query",
+            "description": "Gmail search query"
+          },
           "pageToken": {
             "type": "string",
             "in": "query",
             "description": "Page token for pagination"
           }
         },
-        "response": { "transform": "drafts" }
+        "response": {
+          "transform": "drafts"
+        }
       }
     },
     {
@@ -606,7 +698,12 @@
         "method": "PUT",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draftId}",
         "params": {
-          "draftId": { "type": "string", "in": "path", "description": "Draft ID", "required": true }
+          "draftId": {
+            "type": "string",
+            "in": "path",
+            "description": "Draft ID",
+            "required": true
+          }
         },
         "body": {
           "message": {
@@ -626,7 +723,11 @@
         "method": "POST",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts/send",
         "body": {
-          "id": { "type": "string", "description": "Draft ID", "required": true }
+          "id": {
+            "type": "string",
+            "description": "Draft ID",
+            "required": true
+          }
         }
       }
     },
@@ -639,7 +740,12 @@
         "method": "DELETE",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/drafts/{draftId}",
         "params": {
-          "draftId": { "type": "string", "in": "path", "description": "Draft ID", "required": true }
+          "draftId": {
+            "type": "string",
+            "in": "path",
+            "description": "Draft ID",
+            "required": true
+          }
         }
       }
     },
@@ -715,38 +821,6 @@
           }
         }
       }
-    },
-    {
-      "id": "watch_mailbox",
-      "name": "Watch Mailbox",
-      "description": "Start Gmail push notifications for mailbox changes",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "POST",
-        "url": "https://gmail.googleapis.com/gmail/v1/users/me/watch",
-        "body": {
-          "topicName": {
-            "type": "string",
-            "description": "Cloud Pub/Sub topic name",
-            "required": true
-          },
-          "labelIds": { "type": "array", "description": "Labels used to filter notifications" },
-          "labelFilterBehavior": {
-            "type": "string",
-            "description": "Label filter behavior: include or exclude"
-          }
-        }
-      }
-    },
-    {
-      "id": "stop_mailbox_watch",
-      "name": "Stop Mailbox Watch",
-      "description": "Stop Gmail push notifications",
-      "requiresWrite": true,
-      "endpoint": {
-        "method": "POST",
-        "url": "https://gmail.googleapis.com/gmail/v1/users/me/stop"
-      }
     }
   ],
   "prompts": [
@@ -772,5 +846,8 @@
       "icon": "search"
     }
   ],
-  "suggestedWith": ["calendar", "slack"]
+  "suggestedWith": [
+    "calendar",
+    "slack"
+  ]
 }

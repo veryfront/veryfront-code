@@ -5,6 +5,7 @@ import { applyCORSHeaders } from "./headers.ts";
 import { validateCORSConfig } from "./validators.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
+/** Create CORS middleware. */
 export function cors(config?: boolean | CORSConfig): MiddlewareHandler {
   const validation = validateCORSConfig(config);
   if (!validation.valid) {

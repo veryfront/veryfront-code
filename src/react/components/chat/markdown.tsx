@@ -4,6 +4,7 @@ import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 import { validateTrustedHtml } from "#veryfront/security/client/html-sanitizer.ts";
 import { RichCodeBlock } from "./chat/components/code-block.tsx";
 
+/** Props accepted by markdown. */
 export interface MarkdownProps {
   /** Markdown content to render */
   children: string;
@@ -15,6 +16,7 @@ export interface MarkdownProps {
   renderCodeBlock?: (props: CodeBlockProps) => React.ReactNode;
 }
 
+/** Props accepted by code block. */
 export interface CodeBlockProps {
   language: string | undefined;
   code: string;
@@ -181,6 +183,7 @@ function FallbackMarkdown({
   );
 }
 
+/** Render markdown. */
 export function Markdown({
   children,
   className,

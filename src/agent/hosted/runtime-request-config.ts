@@ -9,16 +9,19 @@ import {
   type RuntimeClientProfile,
 } from "../runtime/client-profile.ts";
 
+/** Request payload for hosted runtime request config. */
 export type HostedRuntimeRequestConfigRequest = Pick<
   HostedChatRequest,
   "model" | "forwardedProps" | "runtimeOverrides"
 >;
 
+/** Public API contract for hosted runtime request config agent. */
 export type HostedRuntimeRequestConfigAgent = Pick<
   RuntimeAgentMarkdownDefinition,
   "model" | "thinking" | "maxSteps"
 >;
 
+/** Input payload for resolve hosted runtime request config. */
 export type ResolveHostedRuntimeRequestConfigInput = {
   request: HostedRuntimeRequestConfigRequest;
   agentConfig: HostedRuntimeRequestConfigAgent;
@@ -28,6 +31,7 @@ export type ResolveHostedRuntimeRequestConfigInput = {
   ) => RuntimeAgentThinkingConfig | undefined;
 };
 
+/** Configuration used by resolved hosted runtime request. */
 export type ResolvedHostedRuntimeRequestConfig = {
   effectiveRuntimeOverrides: ChatRuntimeOverrides | undefined;
   requestedModel: string | undefined;
@@ -40,6 +44,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Return forwarded hosted model ID. */
 export function getForwardedHostedModelId(
   forwardedProps: Record<string, unknown> | undefined,
 ): string | undefined {
@@ -49,6 +54,7 @@ export function getForwardedHostedModelId(
     : undefined;
 }
 
+/** Return forwarded hosted runtime overrides. */
 export function getForwardedHostedRuntimeOverrides(
   forwardedProps: Record<string, unknown> | undefined,
 ): ChatRuntimeOverrides | undefined {
@@ -69,6 +75,7 @@ export function getForwardedHostedRuntimeOverrides(
     : undefined;
 }
 
+/** Resolves hosted runtime thinking override. */
 export function resolveHostedRuntimeThinkingOverride(input: {
   configuredThinking: RuntimeAgentThinkingConfig | undefined;
   requestedThinking: false | number | undefined;
@@ -87,6 +94,7 @@ export function resolveHostedRuntimeThinkingOverride(input: {
   };
 }
 
+/** Configuration used by resolve hosted runtime request. */
 export function resolveHostedRuntimeRequestConfig(
   input: ResolveHostedRuntimeRequestConfigInput,
 ): ResolvedHostedRuntimeRequestConfig {

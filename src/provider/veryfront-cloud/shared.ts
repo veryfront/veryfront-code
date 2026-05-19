@@ -1,6 +1,7 @@
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";
 
+/** Public API contract for Veryfront Cloud provider ID. */
 export type VeryfrontCloudProviderId =
   | "anthropic"
   | "openai"

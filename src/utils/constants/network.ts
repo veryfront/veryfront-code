@@ -4,6 +4,7 @@ export const DEFAULT_API_SERVER_PORT = 8080;
 export const DEFAULT_PREVIEW_SERVER_PORT = 5000;
 export const DEFAULT_METRICS_PORT = 9000;
 
+/** Shared bytes per kb value. */
 export const BYTES_PER_KB = 1024;
 export const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB;
 
@@ -14,8 +15,10 @@ export const DEFAULT_IMAGE_LARGE_SIZE = 2048;
 export const RESPONSIVE_IMAGE_WIDTH_XS = 320;
 export const RESPONSIVE_IMAGE_WIDTH_SM = 640;
 export const RESPONSIVE_IMAGE_WIDTH_MD = 1024;
+/** Shared responsive image width lg value. */
 export const RESPONSIVE_IMAGE_WIDTH_LG = 1920;
 
+/** Shared responsive image widths value. */
 export const RESPONSIVE_IMAGE_WIDTHS = [
   RESPONSIVE_IMAGE_WIDTH_XS,
   RESPONSIVE_IMAGE_WIDTH_SM,

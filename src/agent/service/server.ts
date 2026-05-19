@@ -9,11 +9,13 @@ import {
 } from "../../server/service-server.ts";
 import type { AgentServiceRuntime } from "./definition.ts";
 
+/** Public API contract for agent service server lifecycle. */
 export type AgentServiceServerLifecycle = {
   setShuttingDown?: () => void;
   stop?: () => void | Promise<void>;
 };
 
+/** Options accepted by create agent service server runtime. */
 export type CreateAgentServiceServerRuntimeOptions = {
   runtime: AgentServiceRuntime;
   serviceName?: string;
@@ -21,6 +23,7 @@ export type CreateAgentServiceServerRuntimeOptions = {
   logger?: VeryfrontServiceServerLogger;
 };
 
+/** Options accepted by start node agent service server. */
 export type StartNodeAgentServiceServerOptions = CreateAgentServiceServerRuntimeOptions & {
   port: number;
   bindAddress?: string;
@@ -28,6 +31,7 @@ export type StartNodeAgentServiceServerOptions = CreateAgentServiceServerRuntime
   hardShutdownTimeoutMs?: number;
 };
 
+/** Options accepted by start agent service server. */
 export type StartAgentServiceServerOptions = CreateAgentServiceServerRuntimeOptions & {
   port: number;
   bindAddress?: string;
@@ -35,7 +39,9 @@ export type StartAgentServiceServerOptions = CreateAgentServiceServerRuntimeOpti
   hardShutdownTimeoutMs?: number;
 };
 
+/** Public API contract for node agent service server. */
 export type NodeAgentServiceServer = NodeVeryfrontServiceServer;
+/** Public API contract for agent service server. */
 export type AgentServiceServer = VeryfrontServiceServer | NodeVeryfrontServiceServer;
 
 function getAgentServiceServerName(
@@ -44,6 +50,7 @@ function getAgentServiceServerName(
   return options.serviceName ?? options.runtime.contract.serviceName;
 }
 
+/** Create agent service server runtime. */
 export function createAgentServiceServerRuntime(
   options: CreateAgentServiceServerRuntimeOptions,
 ): VeryfrontServiceServerRuntime {
@@ -65,6 +72,7 @@ export function createAgentServiceServerRuntime(
   });
 }
 
+/** Starts node agent service server. */
 export async function startNodeAgentServiceServer(
   options: StartNodeAgentServiceServerOptions,
 ): Promise<NodeAgentServiceServer> {
@@ -81,6 +89,7 @@ export async function startNodeAgentServiceServer(
   return server;
 }
 
+/** Starts agent service server. */
 export async function startAgentServiceServer(
   options: StartAgentServiceServerOptions,
 ): Promise<AgentServiceServer> {

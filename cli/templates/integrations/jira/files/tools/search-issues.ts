@@ -6,25 +6,27 @@ export default tool({
   id: "search-issues",
   description:
     'Search for Jira issues using JQL (Jira Query Language). Returns matching issues with key details. Common JQL examples: "assignee = currentUser() AND status != Done", "project = PROJ AND type = Bug", "created >= -7d".',
-  inputSchema: defineSchema((v) => v.object({
-    jql: v
-      .string()
-      .describe(
-        'JQL query string to search issues. Examples: "assignee = currentUser()", "project = PROJ", "status = Open"',
-      ),
-    maxResults: v
-      .number()
-      .min(1)
-      .max(100)
-      .default(20)
-      .describe("Maximum number of results to return"),
-    fields: v
-      .array(v.string())
-      .optional()
-      .describe(
-        'Specific fields to include (e.g., ["summary", "status", "assignee"])',
-      ),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      jql: v
+        .string()
+        .describe(
+          'JQL query string to search issues. Examples: "assignee = currentUser()", "project = PROJ", "status = Open"',
+        ),
+      maxResults: v
+        .number()
+        .min(1)
+        .max(100)
+        .default(20)
+        .describe("Maximum number of results to return"),
+      fields: v
+        .array(v.string())
+        .optional()
+        .describe(
+          'Specific fields to include (e.g., ["summary", "status", "assignee"])',
+        ),
+    })
+  )(),
   async execute({ jql, maxResults, fields }) {
     const result = await searchIssues(jql, { maxResults, fields });
 

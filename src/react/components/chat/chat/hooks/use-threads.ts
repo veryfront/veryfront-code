@@ -2,6 +2,7 @@ import * as React from "react";
 import type { ChatMessage } from "#veryfront/agent/react";
 import { isBrowserEnvironment } from "#veryfront/platform/compat/runtime.ts";
 
+/** Public API contract for thread. */
 export interface Thread {
   id: string;
   title: string;
@@ -14,11 +15,13 @@ interface ThreadIndex {
   ids: string[];
 }
 
+/** Options accepted by use threads. */
 export interface UseThreadsOptions {
   /** localStorage key prefix. Default: "vf-threads" */
   storageKey?: string;
 }
 
+/** Result returned from use threads. */
 export interface UseThreadsResult {
   threads: Thread[];
   activeThreadId: string | null;
@@ -77,6 +80,7 @@ function removeThread(key: string, id: string): void {
   localStorage.removeItem(`${key}-${id}`);
 }
 
+/** React hook for threads. */
 export function useThreads(options?: UseThreadsOptions): UseThreadsResult {
   const storageKey = options?.storageKey ?? "vf-threads";
 

@@ -1,15 +1,18 @@
 import type { RemoteToolSource, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
+/** Options accepted by project scoped remote tool. */
 export type ProjectScopedRemoteToolOptions = {
   projectNavigationToolNames?: readonly string[];
 };
 
+/** Public API contract for project scoped remote tool default project ID. */
 export type ProjectScopedRemoteToolDefaultProjectId =
   | string
   | null
   | undefined
   | (() => string | null | undefined);
 
+/** Options accepted by project scoped remote tool catalog. */
 export type ProjectScopedRemoteToolCatalogOptions = {
   source: RemoteToolSource;
   defaultProjectId?: ProjectScopedRemoteToolDefaultProjectId;
@@ -23,23 +26,27 @@ export type ProjectScopedRemoteToolCatalogOptions = {
   }) => Promise<ToolDefinition[]> | ToolDefinition[];
 };
 
+/** Public API contract for project scoped remote tool definitions. */
 export type ProjectScopedRemoteToolDefinitions = {
   activeProjectId: string | null;
   toolDefinitions: ToolDefinition[];
 };
 
+/** Input payload for project scoped remote tool execution. */
 export type ProjectScopedRemoteToolExecutionInput = {
   toolName: string;
   toolInput: Record<string, unknown>;
   context?: ToolExecutionContext;
 };
 
+/** Public API contract for project scoped remote tool execution. */
 export type ProjectScopedRemoteToolExecution = ProjectScopedRemoteToolDefinitions & {
   toolDefinition: ToolDefinition | undefined;
   toolInput: Record<string, unknown>;
   executeContext: ToolExecutionContext | undefined;
 };
 
+/** Public API contract for project scoped remote tool catalog. */
 export type ProjectScopedRemoteToolCatalog = {
   id: string;
   listActiveToolDefinitions(
@@ -51,6 +58,7 @@ export type ProjectScopedRemoteToolCatalog = {
   ): Promise<ProjectScopedRemoteToolExecution>;
 };
 
+/** Options accepted by list project scoped remote tool name. */
 export type ListProjectScopedRemoteToolNameOptions = {
   projectId: string | null;
   context?: ToolExecutionContext;
@@ -91,6 +99,7 @@ function requiresProjectReference(toolDefinition: ToolDefinition): boolean {
   return getRequiredToolProperties(toolDefinition).includes("project_reference");
 }
 
+/** Check whether a remote tool is project-navigation scoped. */
 export function isProjectNavigationRemoteTool(
   toolName: string,
   options: ProjectScopedRemoteToolOptions = {},
@@ -102,6 +111,7 @@ export function isProjectNavigationRemoteTool(
   return getProjectNavigationToolNames(options).has(toolName);
 }
 
+/** Check whether a remote tool name is allowed. */
 export function isRemoteToolNameAllowed(
   toolName: string,
   allowedToolNames: ReadonlySet<string> | null | undefined,
@@ -109,6 +119,7 @@ export function isRemoteToolNameAllowed(
   return !allowedToolNames || allowedToolNames.has(toolName);
 }
 
+/** Filter project scoped remote tool definitions. */
 export function filterProjectScopedRemoteToolDefinitions(
   toolDefinitions: readonly ToolDefinition[],
   projectId: string | null,
@@ -123,6 +134,7 @@ export function filterProjectScopedRemoteToolDefinitions(
   );
 }
 
+/** Input payload for hydrate project scoped remote tool. */
 export function hydrateProjectScopedRemoteToolInput(input: {
   toolDefinition: ToolDefinition | undefined;
   activeProjectId: string | null;
@@ -145,6 +157,7 @@ export function hydrateProjectScopedRemoteToolInput(input: {
   };
 }
 
+/** Resolves project scoped remote tool project ID. */
 export function resolveProjectScopedRemoteToolProjectId(
   context: ToolExecutionContext | undefined,
   defaultProjectId: string | null | undefined,
@@ -183,6 +196,7 @@ function withActiveProjectContext(
   };
 }
 
+/** Create project scoped remote tool catalog. */
 export function createProjectScopedRemoteToolCatalog(
   input: ProjectScopedRemoteToolCatalogOptions,
 ): ProjectScopedRemoteToolCatalog {
@@ -270,6 +284,7 @@ export function createProjectScopedRemoteToolCatalog(
   };
 }
 
+/** List project scoped remote tool names. */
 export async function listProjectScopedRemoteToolNames(
   remoteSources: readonly RemoteToolSource[],
   options: ListProjectScopedRemoteToolNameOptions,

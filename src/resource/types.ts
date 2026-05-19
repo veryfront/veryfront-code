@@ -14,6 +14,7 @@ export type { CachePolicy, McpConfig } from "./schemas/index.ts";
 // Import for use in interface definitions
 import type { McpConfig } from "./schemas/index.ts";
 
+/** Configuration used by resource. */
 export interface ResourceConfig<TParams = unknown, TData = unknown> {
   pattern?: string;
   description: string;
@@ -24,6 +25,7 @@ export interface ResourceConfig<TParams = unknown, TData = unknown> {
   mcp?: McpConfig;
 }
 
+/** Public API contract for resource. */
 export interface Resource<TParams = unknown, TData = unknown> {
   id: string;
   pattern: string;

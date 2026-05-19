@@ -8,11 +8,13 @@ import { cn } from "../../theme.ts";
 import { CheckCircleIcon, SparklesIcon, XCircleIcon } from "../../icons/index.ts";
 import type { ChatDynamicToolPart, ChatToolPart } from "#veryfront/agent/react";
 
+/** Props accepted by skill badge. */
 export interface SkillBadgeProps {
   tool: ChatToolPart | ChatDynamicToolPart;
   className?: string;
 }
 
+/** Render skill badge. */
 export function SkillBadge({ tool, className }: SkillBadgeProps): React.JSX.Element {
   const input = tool.input as Record<string, unknown> | undefined;
   const skillId = input?.skillId as string | undefined;

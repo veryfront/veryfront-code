@@ -4,6 +4,7 @@ import { parseCookies } from "#veryfront/utils/cookie-utils.ts";
 
 export { parseCookies };
 
+/** Context object passed to API route handlers. */
 export interface APIContext {
   request: Request;
   req: Request;

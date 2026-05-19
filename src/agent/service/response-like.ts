@@ -1,3 +1,4 @@
+/** Check whether a value behaves like a Response. */
 export function isResponseLike(value: unknown): value is Response {
   if (value instanceof Response) {
     return true;

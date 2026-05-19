@@ -1,9 +1,11 @@
+/** Context for mutable agent project. */
 export interface MutableAgentProjectContext {
   projectId: string;
   branchId?: string | null;
   availableSkillIds?: string[];
 }
 
+/** Apply agent project context change helper. */
 export function applyAgentProjectContextChange(
   context: MutableAgentProjectContext,
   projectId: string,
@@ -45,6 +47,7 @@ function getProjectContextSwitchContent(result: unknown): Record<string, unknown
   return null;
 }
 
+/** Return confirmed project context switch ID. */
 export function getConfirmedProjectContextSwitchId(
   result: unknown,
   requestedProjectId: string,

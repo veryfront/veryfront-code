@@ -15,6 +15,7 @@ export function exit(code?: number): never {
   throw new Error("exit() is not supported in this runtime");
 }
 
+/** Return the current working directory. */
 export function cwd(): string {
   if (IS_DENO) return Deno.cwd();
   if (runtimeProcess) return runtimeProcess.cwd();

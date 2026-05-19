@@ -2,6 +2,7 @@ import { type Span, SpanStatusCode } from "#veryfront/observability/tracing/api-
 import { endSpan, setSpanAttributes, SpanNames, startSpan, withSpan } from "../tracing/index.ts";
 import { recordRenderError } from "../metrics/index.ts";
 
+/** Instrument a React render operation. */
 export function instrumentReactRender<T>(
   renderFn: () => Promise<T> | T,
   componentName: string,
@@ -29,6 +30,7 @@ export function instrumentReactRender<T>(
   );
 }
 
+/** Handler for instrument error. */
 export function instrumentErrorHandler(
   handler: (error: Error, request?: Request) => Promise<Response> | Response,
   captureToSpan = true,

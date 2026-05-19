@@ -4,6 +4,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Normalize provider tool input by removing transient empty-object prefixes. */
 export function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
   let normalized = rawArgs.trim();
 
@@ -47,6 +48,7 @@ export function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
  */
 const MIN_OVERLAP_DEDUP_LENGTH = 4;
 
+/** Merge tool input delta helper. */
 export function mergeToolInputDelta(currentArguments: string, nextDelta: string): string {
   const normalizedDelta = nextDelta.trimStart();
   const candidateDeltas = normalizedDelta.startsWith('"')
@@ -104,6 +106,7 @@ export function mergeToolInputDelta(currentArguments: string, nextDelta: string)
   return currentArguments + nextDelta;
 }
 
+/** Input payload for merge tool call. */
 export function mergeToolCallInput(currentArguments: string, nextInput: string): string {
   if (currentArguments.length === 0) {
     return nextInput;
@@ -126,6 +129,7 @@ export function mergeToolCallInput(currentArguments: string, nextInput: string):
   return nextInput;
 }
 
+/** Parses tool input object. */
 export function parseToolInputObject(input: unknown): Record<string, unknown> {
   if (isRecord(input)) {
     return input;
@@ -145,6 +149,7 @@ export function parseToolInputObject(input: unknown): Record<string, unknown> {
   return {};
 }
 
+/** Parses data stream sse events. */
 export function parseDataStreamSseEvents(chunk: string): {
   events: AgUiRuntimeStreamEvent[];
   remainder: string;
@@ -170,6 +175,7 @@ export function parseDataStreamSseEvents(chunk: string): {
   return { events, remainder };
 }
 
+/** Stream data stream events helper. */
 export async function* streamDataStreamEvents(
   stream: ReadableStream<Uint8Array>,
 ): AsyncGenerator<AgUiRuntimeStreamEvent> {

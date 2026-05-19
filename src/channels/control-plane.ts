@@ -7,8 +7,11 @@ import type { InferSchema, Schema } from "#veryfront/extensions/schema/index.ts"
 
 const SIGNATURE_SKEW_SECONDS = 5;
 
+/** Shared control plane agents list path value. */
 export const CONTROL_PLANE_AGENTS_LIST_PATH = "/api/control-plane/agents/list";
+/** Shared control plane runs path prefix value. */
 export const CONTROL_PLANE_RUNS_PATH_PREFIX = "/api/control-plane/runs/";
+/** Shared control plane run stream path value. */
 export const CONTROL_PLANE_RUN_STREAM_PATH = "/api/control-plane/runs/:runId/stream";
 
 const getCompactJwsHeaderSchema = defineSchema((v) =>
@@ -20,11 +23,14 @@ const getCompactJwsHeaderSchema = defineSchema((v) =>
 );
 const compactJwsHeaderSchema = lazySchema(getCompactJwsHeaderSchema);
 
+/** Zod schema for get control plane surface. */
 export const getControlPlaneSurfaceSchema = defineSchema((v) =>
   v.enum(["studio", "channels", "a2a", "mcp"])
 );
+/** Zod schema for control plane surface. */
 export const ControlPlaneSurfaceSchema = lazySchema(getControlPlaneSurfaceSchema);
 
+/** Zod schema for get control plane agents list request. */
 export const getControlPlaneAgentsListRequestSchema = defineSchema((v) =>
   v.object({
     requestId: v.string().min(1),
@@ -32,10 +38,12 @@ export const getControlPlaneAgentsListRequestSchema = defineSchema((v) =>
     surface: getControlPlaneSurfaceSchema(),
   })
 );
+/** Zod schema for control plane agents list request. */
 export const ControlPlaneAgentsListRequestSchema = lazySchema(
   getControlPlaneAgentsListRequestSchema,
 );
 
+/** Zod schema for get runtime agent skill. */
 export const getRuntimeAgentSkillSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
@@ -45,8 +53,10 @@ export const getRuntimeAgentSkillSchema = defineSchema((v) =>
     examples: v.array(v.string()).optional(),
   })
 );
+/** Zod schema for runtime agent skill. */
 export const RuntimeAgentSkillSchema = lazySchema(getRuntimeAgentSkillSchema);
 
+/** Zod schema for get runtime suggestion. */
 export const getRuntimeSuggestionSchema = defineSchema((v) =>
   v.union([
     v.object({
@@ -64,16 +74,20 @@ export const getRuntimeSuggestionSchema = defineSchema((v) =>
     }).strict(),
   ])
 );
+/** Zod schema for runtime suggestion. */
 export const RuntimeSuggestionSchema = lazySchema(getRuntimeSuggestionSchema);
 
+/** Zod schema for get runtime suggestions. */
 export const getRuntimeSuggestionsSchema = defineSchema((v) =>
   v.object({
     welcomeMessage: v.string().min(1).optional(),
     suggestions: v.array(getRuntimeSuggestionSchema()),
   })
 );
+/** Zod schema for runtime suggestions. */
 export const RuntimeSuggestionsSchema = lazySchema(getRuntimeSuggestionsSchema);
 
+/** Zod schema for get runtime agent. */
 export const getRuntimeAgentSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
@@ -85,15 +99,19 @@ export const getRuntimeAgentSchema = defineSchema((v) =>
     suggestions: getRuntimeSuggestionsSchema().optional(),
   })
 );
+/** Zod schema for runtime agent. */
 export const RuntimeAgentSchema = lazySchema(getRuntimeAgentSchema);
 
+/** Zod schema for get runtime agent list response. */
 export const getRuntimeAgentListResponseSchema = defineSchema((v) =>
   v.object({
     agents: v.array(getRuntimeAgentSchema()),
   })
 );
+/** Zod schema for runtime agent list response. */
 export const RuntimeAgentListResponseSchema = lazySchema(getRuntimeAgentListResponseSchema);
 
+/** Zod schema for get dispatch claims. */
 const getDispatchClaimsSchema = defineSchema((v) =>
   v.object({
     iss: v.string(),
@@ -108,6 +126,7 @@ const getDispatchClaimsSchema = defineSchema((v) =>
 );
 const dispatchClaimsSchema = lazySchema(getDispatchClaimsSchema);
 
+/** Zod schema for get control plane claims. */
 const getControlPlaneClaimsSchema = defineSchema((v) =>
   v.object({
     iss: v.string(),
@@ -122,24 +141,34 @@ const getControlPlaneClaimsSchema = defineSchema((v) =>
 );
 const controlPlaneClaimsSchema = lazySchema(getControlPlaneClaimsSchema);
 
+/** Public API contract for control plane surface. */
 export type ControlPlaneSurface = InferSchema<ReturnType<typeof getControlPlaneSurfaceSchema>>;
+/** Request payload for control plane agents list. */
 export type ControlPlaneAgentsListRequest = InferSchema<
   ReturnType<typeof getControlPlaneAgentsListRequestSchema>
 >;
+/** Public API contract for runtime agent skill. */
 export type RuntimeAgentSkill = InferSchema<ReturnType<typeof getRuntimeAgentSkillSchema>>;
+/** Public API contract for runtime suggestion. */
 export type RuntimeSuggestion = InferSchema<
   ReturnType<typeof getRuntimeSuggestionSchema>
 >;
+/** Public API contract for runtime suggestions. */
 export type RuntimeSuggestions = InferSchema<
   ReturnType<typeof getRuntimeSuggestionsSchema>
 >;
+/** Public API contract for runtime agent. */
 export type RuntimeAgent = InferSchema<ReturnType<typeof getRuntimeAgentSchema>>;
+/** Response payload for runtime agent list. */
 export type RuntimeAgentListResponse = InferSchema<
   ReturnType<typeof getRuntimeAgentListResponseSchema>
 >;
+/** Public API contract for dispatch claims. */
 export type DispatchClaims = InferSchema<ReturnType<typeof getDispatchClaimsSchema>>;
+/** Public API contract for control plane claims. */
 export type ControlPlaneClaims = InferSchema<ReturnType<typeof getControlPlaneClaimsSchema>>;
 
+/** Public API contract for runtime agent discovery deps. */
 export interface RuntimeAgentDiscoveryDeps {
   ensureProjectDiscovery: (ctx: HandlerContext) => Promise<void>;
   getAgent: (id: string) => Agent | undefined;
@@ -321,6 +350,7 @@ function getRuntimeAgentMetadata(id: string, agent: Agent): RuntimeAgent {
   });
 }
 
+/** List runtime agents. */
 export async function listRuntimeAgents(
   ctx: HandlerContext,
   deps: RuntimeAgentDiscoveryDeps,
@@ -388,6 +418,7 @@ export async function verifyDispatchJwsSignature(
   }
 }
 
+/** Verify dispatch JWS. */
 export async function verifyDispatchJws(
   jws: string,
   body: string,
@@ -420,6 +451,7 @@ export async function verifyDispatchJws(
   });
 }
 
+/** Verify control plane JWS. */
 export async function verifyControlPlaneJws(
   jws: string,
   body: string,

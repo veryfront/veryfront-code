@@ -3,12 +3,14 @@ import { VeryfrontError } from "./errors.ts";
 import { parseJsonBody, parseQueryParams } from "./parsers.ts";
 import { type RequestLimits, type ValidatedData } from "./types.ts";
 
+/** Configuration for `createValidatedHandler()`. */
 export interface ValidatedHandlerConfig<TBody = unknown, TQuery = unknown> {
   body?: Schema<TBody>;
   query?: Schema<TQuery>;
   limits?: RequestLimits;
 }
 
+/** Handler signature that receives validated request data. */
 export type ValidatedHandlerFunction<TBody = unknown, TQuery = unknown> = (
   request: Request,
   validated: ValidatedData<TBody, TQuery>,

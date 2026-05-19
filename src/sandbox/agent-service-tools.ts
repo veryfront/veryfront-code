@@ -13,6 +13,7 @@ const SANDBOX_WORKING_DIRECTORY = "/workspace";
 const SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN =
   /^\s*(?:mkdir -p \/tmp\/bash-tool\s*&&\s*)?cd\s+"\/workspace"\s*&&\s*/i;
 
+/** Public API contract for agent service sandbox job client. */
 export interface AgentServiceSandboxJobClient {
   startCommandJob(command: string): Promise<CommandJob>;
   getCommandJob(jobId: string): Promise<CommandJob>;
@@ -20,6 +21,7 @@ export interface AgentServiceSandboxJobClient {
   cancelCommandJob(jobId: string): Promise<CommandJob>;
 }
 
+/** Public API contract for agent service sandbox client. */
 export interface AgentServiceSandboxClient
   extends BashToolSandboxLike, AgentServiceSandboxJobClient {
   ensure(): Promise<void>;
@@ -29,19 +31,23 @@ export interface AgentServiceSandboxClient
   readonly url: string | null;
 }
 
+/** Options accepted by agent service sandbox client. */
 export interface AgentServiceSandboxClientOptions extends LazySandboxOptions {}
 
+/** Options accepted by agent service sandbox tools. */
 export interface AgentServiceSandboxToolsOptions extends AgentServiceSandboxClientOptions {
   /** Sandbox shell tools provider. Kept as createBashTool for caller compatibility. */
   createBashTool: CreateSandboxBashTool;
 }
 
+/** Result returned from agent service sandbox tools. */
 export interface AgentServiceSandboxToolsResult {
   tools: SandboxShellToolSet;
   sandbox: AgentServiceSandboxClient;
   closeSandbox: () => Promise<void>;
 }
 
+/** Unwrap sandbox working directory command. */
 export function unwrapSandboxWorkingDirectoryCommand(command: string): string {
   const trimmedCommand = command.trim();
   if (!SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN.test(trimmedCommand)) {
@@ -51,6 +57,7 @@ export function unwrapSandboxWorkingDirectoryCommand(command: string): string {
   return trimmedCommand.replace(SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN, "").trim();
 }
 
+/** Options accepted by create project scoped exec. */
 export function createProjectScopedExecOptions(
   projectReference: string | null | undefined,
 ): ExecOptions {
@@ -82,6 +89,7 @@ function normalizeSandboxWriteFile(file: unknown): { path: string; content: stri
   };
 }
 
+/** Create agent service sandbox client. */
 export function createAgentServiceSandboxClient(
   input: AgentServiceSandboxClientOptions = {},
 ): AgentServiceSandboxClient {
@@ -134,6 +142,7 @@ const getCommandJobIdInputSchema = defineSchema((v) =>
   })
 );
 
+/** Create agent service sandbox tools. */
 export async function createAgentServiceSandboxTools(
   input: AgentServiceSandboxToolsOptions,
 ): Promise<AgentServiceSandboxToolsResult> {
@@ -174,11 +183,18 @@ export async function createAgentServiceSandboxTools(
   };
 }
 
+/** Public API contract for hosted sandbox job client. */
 export type HostedSandboxJobClient = AgentServiceSandboxJobClient;
+/** Public API contract for hosted sandbox client. */
 export type HostedSandboxClient = AgentServiceSandboxClient;
+/** Options accepted by hosted sandbox client. */
 export type HostedSandboxClientOptions = AgentServiceSandboxClientOptions;
+/** Options accepted by hosted sandbox tools. */
 export type HostedSandboxToolsOptions = AgentServiceSandboxToolsOptions;
+/** Result returned from hosted sandbox tools. */
 export type HostedSandboxToolsResult = AgentServiceSandboxToolsResult;
 
+/** Create hosted sandbox client. */
 export const createHostedSandboxClient = createAgentServiceSandboxClient;
+/** Create hosted sandbox tools. */
 export const createHostedSandboxTools = createAgentServiceSandboxTools;

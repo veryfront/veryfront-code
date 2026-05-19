@@ -8,6 +8,7 @@ function escapePdfText(input: string): string {
   );
 }
 
+/** Create plain text pdf. */
 export function createPlainTextPdf(lines: string[]): Buffer {
   const contentLines = [
     "BT",
@@ -54,6 +55,7 @@ export function createPlainTextPdf(lines: string[]): Buffer {
   return Buffer.from(pdf, "utf8");
 }
 
+/** Builds progress line. */
 export function buildProgressLine(input: {
   caseId: string;
   startedAt: number;
@@ -74,6 +76,7 @@ export function buildProgressLine(input: {
   return `[progress] ${input.caseId} ${elapsedSeconds}s events=${input.progress.eventCount} last=${lastEvent}${lastTool}${toolSummary}${textSummary}`;
 }
 
+/** Builds failure suffix. */
 export function buildFailureSuffix(progress: EvalProgressSnapshot): string {
   const details = [
     `events=${progress.eventCount}`,
@@ -86,6 +89,7 @@ export function buildFailureSuffix(progress: EvalProgressSnapshot): string {
   return details.length > 0 ? ` Progress: ${details.join(" ")}` : "";
 }
 
+/** Contains ordered subsequence helper. */
 export function containsOrderedSubsequence(
   haystack: string[],
   needle: string[],

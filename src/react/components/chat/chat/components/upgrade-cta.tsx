@@ -3,10 +3,12 @@ import type { InferenceMode } from "#veryfront/agent/react";
 
 const DISMISS_KEY = "vf-upgrade-cta-dismissed";
 
+/** Props accepted by the upgrade CTA. */
 export interface UpgradeCTAProps {
   inferenceMode: InferenceMode;
 }
 
+/** Render upgrade CTA. */
 export function UpgradeCTA({ inferenceMode }: UpgradeCTAProps): React.ReactElement | null {
   const [dismissed, setDismissed] = React.useState(() => {
     try {

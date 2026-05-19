@@ -10,6 +10,7 @@ import {
 } from "../runtime/ag-ui-contract.ts";
 import type { AgentResponse } from "../types.ts";
 
+/** Input payload for create AG-UI runtime browser response. */
 export interface CreateAgUiRuntimeBrowserResponseInput<TChunk, TState> {
   agUiInput: AgUiRuntimeRequest;
   defaults?: {
@@ -24,6 +25,7 @@ export interface CreateAgUiRuntimeBrowserResponseInput<TChunk, TState> {
   getFinalResponse?: (state: TState) => AgentResponse | null;
 }
 
+/** Response payload for create AG-UI runtime browser. */
 export function createAgUiRuntimeBrowserResponse<TChunk, TState>(
   input: CreateAgUiRuntimeBrowserResponseInput<TChunk, TState>,
 ): Response {

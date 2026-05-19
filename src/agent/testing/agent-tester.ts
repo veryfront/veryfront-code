@@ -8,6 +8,7 @@
 
 import type { Agent, AgentResponse, Message } from "../types.ts";
 
+/** Public API contract for test case. */
 export interface TestCase {
   /** Test name */
   name: string;
@@ -28,6 +29,7 @@ export interface TestCase {
   validate?: (response: AgentResponse) => boolean | Promise<boolean>;
 }
 
+/** Result returned from test. */
 export interface TestResult {
   /** Test case name */
   name: string;
@@ -48,6 +50,7 @@ export interface TestResult {
   toolCalls: string[];
 }
 
+/** Public API contract for test suite. */
 export interface TestSuite {
   /** Suite name */
   name: string;
@@ -62,6 +65,7 @@ export interface TestSuite {
   totalTime: number;
 }
 
+/** Test agent helper. */
 export async function testAgent(agent: Agent, testCases: TestCase[]): Promise<TestSuite> {
   const suiteStartTime = Date.now();
   const results = await Promise.all(testCases.map((testCase) => runTestCase(agent, testCase)));
@@ -166,6 +170,7 @@ async function validateTestCase(
   return { passed: true };
 }
 
+/** Print test results helper. */
 export function printTestResults(suite: TestSuite): void {
   console.log(`\n=== Test Suite: ${suite.name} ===\n`);
 
@@ -187,14 +192,17 @@ export function printTestResults(suite: TestSuite): void {
   console.log(`Status: ${suite.passed ? "✅ PASSED" : "❌ FAILED"}\n`);
 }
 
+/** Assert contains helper. */
 export function assertContains(response: AgentResponse, text: string): boolean {
   return response.text.toLowerCase().includes(text.toLowerCase());
 }
 
+/** Assert tool called helper. */
 export function assertToolCalled(response: AgentResponse, toolName: string): boolean {
   return response.toolCalls.some((tc) => tc.name === toolName);
 }
 
+/** Assert completed helper. */
 export function assertCompleted(response: AgentResponse): boolean {
   return response.status === "completed";
 }

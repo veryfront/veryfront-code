@@ -28,6 +28,7 @@ const AG_UI_HEADERS: Record<string, string> = {
 
 type AgUiRuntimePart = Record<string, unknown> & { type: string };
 
+/** Context for AG-UI runtime lifecycle. */
 export interface AgUiRuntimeLifecycleContext {
   request: AgUiRuntimeRequest;
   toolCallId?: string;
@@ -309,6 +310,7 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
   });
 }
 
+/** Input payload for AG-UI runtime handler execute. */
 export interface AgUiRuntimeHandlerExecuteInput {
   request: Request;
   agUiInput: AgUiRuntimeRequest;
@@ -316,6 +318,7 @@ export interface AgUiRuntimeHandlerExecuteInput {
   createDefaultResponse?: () => Promise<Response>;
 }
 
+/** Public API contract for AG-UI runtime handler execute. */
 export type AgUiRuntimeHandlerExecute = (
   input: AgUiRuntimeHandlerExecuteInput,
 ) => Promise<Response> | Response;
@@ -337,6 +340,7 @@ export type AgUiRuntimeValidationErrorResponse = (
   input: AgUiRuntimeValidationErrorInput,
 ) => Promise<Response> | Response;
 
+/** Options accepted by AG-UI runtime handler. */
 export interface AgUiRuntimeHandlerOptions {
   context?:
     | Record<string, unknown>
@@ -350,14 +354,17 @@ export interface AgUiRuntimeHandlerOptions {
   onError?: (context: AgUiRuntimeLifecycleContext) => Promise<void> | void;
 }
 
+/** Public API contract for AG-UI runtime handler config with agent. */
 export interface AgUiRuntimeHandlerConfigWithAgent extends AgUiRuntimeHandlerOptions {
   agent: Agent;
 }
 
+/** Configuration used by AG-UI runtime handler. */
 export type AgUiRuntimeHandlerConfig =
   | AgUiRuntimeHandlerConfigWithAgent
   | (AgUiRuntimeHandlerOptions & { agent?: undefined; execute: AgUiRuntimeHandlerExecute });
 
+/** Handler for create AG-UI runtime. */
 export function createAgUiRuntimeHandler(
   config: AgUiRuntimeHandlerConfig,
 ): (requestOrCtx: unknown) => Promise<Response> {

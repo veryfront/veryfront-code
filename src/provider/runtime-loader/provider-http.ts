@@ -44,6 +44,7 @@ export class ProviderQuotaError extends ProviderError {}
 /** Non-retryable 4xx/5xx that doesn't fit another bucket. */
 export class ProviderRequestError extends ProviderError {}
 
+/** Parses retry after ms. */
 export function parseRetryAfterMs(header: string | null): number | undefined {
   if (!header) return undefined;
   const asNumber = Number(header);
@@ -163,6 +164,7 @@ export async function buildProviderError(
   });
 }
 
+/** Request and parse a JSON response. */
 export async function requestJson(options: {
   url: string;
   fetchImpl: typeof globalThis.fetch;
@@ -180,6 +182,7 @@ export async function requestJson(options: {
   return response.json();
 }
 
+/** Request a streaming response. */
 export async function requestStream(options: {
   url: string;
   fetchImpl: typeof globalThis.fetch;

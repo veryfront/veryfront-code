@@ -6,6 +6,7 @@ type HostToolExecute = {
   bivarianceHack: (input: unknown, options?: ToolExecutionContext) => Promise<unknown> | unknown;
 }["bivarianceHack"];
 
+/** Definition for host tool. */
 export type HostToolDefinition = {
   id?: string;
   type?: Tool["type"];
@@ -19,6 +20,7 @@ export type HostToolDefinition = {
   mcp?: ToolConfig["mcp"];
 };
 
+/** Public API contract for host tool set. */
 export type HostToolSet = Record<string, HostToolDefinition>;
 
 type RunnableHostToolDefinition = HostToolDefinition & {
@@ -27,6 +29,7 @@ type RunnableHostToolDefinition = HostToolDefinition & {
   execute: HostToolExecute;
 };
 
+/** Options accepted by host tool materialization. */
 export interface HostToolMaterializationOptions {
   generateToolCallId?: (toolName: string) => string;
 }
@@ -80,14 +83,17 @@ function normalizeExecutionContext(
   };
 }
 
+/** Create tools from host definitions. */
 export function createToolsFromHostDefinitions(
   definitions: HostToolSet,
   options?: HostToolMaterializationOptions,
 ): ToolSet;
+/** Create tools from host definitions. */
 export function createToolsFromHostDefinitions(
   definitions: Record<string, unknown>,
   options?: HostToolMaterializationOptions,
 ): ToolSet;
+/** Create tools from host definitions. */
 export function createToolsFromHostDefinitions(
   definitions: Record<string, unknown>,
   options: HostToolMaterializationOptions = {},

@@ -6,12 +6,14 @@ import { requireUserIdFromContext } from "../../lib/user-id.ts";
 export default tool({
   id: "get-pr-diff",
   description: "Get the diff for a pull request to review code changes",
-  inputSchema: defineSchema((v) => v.object({
-    repo: v
-      .string()
-      .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
-    prNumber: v.number().int().positive().describe("Pull request number"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      repo: v
+        .string()
+        .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
+      prNumber: v.number().int().positive().describe("Pull request number"),
+    })
+  )(),
   execute: async ({ repo, prNumber }, context) => {
     const userId = requireUserIdFromContext(context);
 
@@ -30,7 +32,9 @@ export default tool({
       let truncatedDiff = diff;
 
       if (diff.length > maxDiffLength) {
-        truncatedDiff = `${diff.substring(0, maxDiffLength)}\n\n... (diff truncated, ${
+        truncatedDiff = `${
+          diff.substring(0, maxDiffLength)
+        }\n\n... (diff truncated, ${
           diff.length - maxDiffLength
         } characters remaining)`;
       }
@@ -55,7 +59,8 @@ export default tool({
           deletions: pr.deletions,
           changedFiles: pr.changed_files,
         },
-        message: `Retrieved diff for PR #${prNumber} (${pr.additions} additions, ${pr.deletions} deletions across ${pr.changed_files} files).`,
+        message:
+          `Retrieved diff for PR #${prNumber} (${pr.additions} additions, ${pr.deletions} deletions across ${pr.changed_files} files).`,
       };
     } catch (error) {
       if (error instanceof Error && error.message.includes("not connected")) {

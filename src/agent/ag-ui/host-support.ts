@@ -8,12 +8,13 @@ const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
 const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
-const MAX_FORWARDED_PROPS_BYTES = 65_536;
+const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_TEXT_PART_LENGTH = 10_000;
 const MAX_MESSAGES_PER_REQUEST = 100;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
+/** Event emitted for AG-UI sse. */
 export interface AgUiSseEvent {
   event: string;
   payload: Record<string, unknown>;
@@ -102,7 +103,7 @@ export const getAgUiRequestSchema = defineSchema((v) =>
     ),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-      { message: "forwardedProps must be less than 64 KB" },
+      { message: "forwardedProps must be less than 192 KB" },
     ),
     model: v.string().optional(),
     maxOutputTokens: v.number().int().positive().optional(),
@@ -113,11 +114,16 @@ export const getAgUiRequestSchema = defineSchema((v) =>
 export const AgUiInjectedToolSchema = lazySchema(getAgUiInjectedToolSchema);
 /** @deprecated Use getAgUiContextItemSchema() */
 export const AgUiContextItemSchema = lazySchema(getAgUiContextItemSchema);
-/** @deprecated Use getAgUiRequestSchema() */
+/** Schema for AG-UI request.
+ * @deprecated Use getAgUiRequestSchema()
+ */
 export const AgUiRequestSchema = lazySchema(getAgUiRequestSchema);
 
+/** Public API contract for AG-UI injected tool. */
 export type AgUiInjectedTool = InferSchema<ReturnType<typeof getAgUiInjectedToolSchema>>;
+/** Public API contract for AG-UI context item. */
 export type AgUiContextItem = InferSchema<ReturnType<typeof getAgUiContextItemSchema>>;
+/** Request payload for AG-UI. */
 export type AgUiRequest = InferSchema<ReturnType<typeof getAgUiRequestSchema>>;
 
 function normalizeToolArgs(part: Record<string, unknown>): Record<string, unknown> {
@@ -240,10 +246,12 @@ function extractAssistantToolOutputMessages(message: AgUiRequest["messages"][num
   }) as Message[];
 }
 
+/** Request payload for parse AG-UI. */
 export async function parseAgUiRequest(request: Request): Promise<AgUiRequest> {
   return getAgUiRequestSchema().parse(await request.json());
 }
 
+/** Error shape for parse AG-UI request or. */
 export async function parseAgUiRequestOrError(
   request: Request,
 ): Promise<AgUiRequest | Response> {
@@ -253,6 +261,7 @@ export async function parseAgUiRequestOrError(
   );
 }
 
+/** Normalizes AG-UI messages. */
 export function normalizeAgUiMessages(messages: AgUiRequest["messages"]): Message[] {
   return messages.flatMap((message) => {
     const normalizedMessage = {
@@ -272,6 +281,7 @@ export function normalizeAgUiMessages(messages: AgUiRequest["messages"]): Messag
   });
 }
 
+/** Event emitted for create AG-UI run error. */
 export function createAgUiRunErrorEvent(message: string, code?: string): AgUiSseEvent {
   return {
     event: "RunError",
@@ -282,6 +292,7 @@ export function createAgUiRunErrorEvent(message: string, code?: string): AgUiSse
   };
 }
 
+/** Response payload for create AG-UI sse error. */
 export function createAgUiSseErrorResponse(event: AgUiSseEvent, status: number): Response {
   return new Response(decoder.decode(formatAgUiEvent(event.event, event.payload)), {
     status,
@@ -294,6 +305,7 @@ export function createAgUiSseErrorResponse(event: AgUiSseEvent, status: number):
   });
 }
 
+/** Response payload for create AG-UI sse. */
 export function createAgUiSseResponse(stream: ReadableStream<Uint8Array>): Response {
   return new Response(stream, {
     headers: {

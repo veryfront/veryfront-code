@@ -16,6 +16,7 @@ export interface LoopContext {
   isLastAllowedIteration: boolean;
 }
 
+/** Options accepted by loop. */
 export interface LoopOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   while: (context: WorkflowContext, loop: LoopContext) => boolean | Promise<boolean>;
   steps: WorkflowNode[] | ((context: WorkflowContext, loop: LoopContext) => WorkflowNode[]);
@@ -51,6 +52,7 @@ export interface LoopNodeConfig {
   delay?: number | string;
 }
 
+/** Create a loop workflow step. */
 export function loop(id: string, options: LoopOptions): WorkflowNode {
   validateNodeId(id);
 
@@ -97,6 +99,7 @@ export function loop(id: string, options: LoopOptions): WorkflowNode {
   };
 }
 
+/** Create a do-while workflow loop. */
 export function doWhile(
   id: string,
   options: Omit<LoopOptions, "while"> & {
@@ -114,6 +117,7 @@ export function doWhile(
   });
 }
 
+/** Create a fixed-count workflow loop. */
 export function times(
   id: string,
   count: number,

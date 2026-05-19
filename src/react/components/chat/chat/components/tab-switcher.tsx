@@ -9,8 +9,10 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Public API contract for chat tab. */
 export type ChatTab = "chat" | "uploads";
 
+/** Props accepted by tab switcher. */
 export interface TabSwitcherProps {
   activeTab: ChatTab;
   onTabChange: (tab: ChatTab) => void;
@@ -22,6 +24,7 @@ const TABS: { value: ChatTab; label: string }[] = [
   { value: "uploads", label: "Uploads" },
 ];
 
+/** Render tab switcher. */
 export function TabSwitcher({
   activeTab,
   onTabChange,

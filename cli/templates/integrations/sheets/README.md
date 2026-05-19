@@ -1,14 +1,18 @@
 # Google Sheets Integration for Veryfront
 
-A complete Google Sheets integration following the Notion integration pattern. Provides AI tools for reading, writing, and managing Google Sheets spreadsheets.
+A complete Google Sheets integration following the Notion integration pattern.
+Provides AI tools for reading, writing, and managing Google Sheets spreadsheets.
 
 ## Features
 
 - **OAuth 2.0 Authentication** - Secure Google OAuth flow with token refresh
 - **Read Operations** - List spreadsheets, read metadata, and fetch cell data
-- **Write Operations** - Create spreadsheets, write data, and update ranges
+- **Write Operations** - Create spreadsheets, write, append, clear, and update
+  ranges
+- **Sheet Management** - Add, delete, rename, copy sheets, batch update, charts,
+  and validation
 - **Type-Safe Client** - Fully typed TypeScript API client
-- **AI Tools** - Five AI tools for spreadsheet operations
+- **AI Tools** - Sixteen AI tools for spreadsheet automation
 
 ## Directory Structure
 
@@ -29,6 +33,17 @@ sheets/
         ├── get-spreadsheet.ts              # Get spreadsheet metadata
         ├── read-range.ts                   # Read cell data from range
         ├── write-range.ts                  # Write data to range
+        ├── append-rows.ts                  # Append rows to a range
+        ├── clear-range.ts                  # Clear values from a range
+        ├── batch-update.ts                 # Advanced Sheets batchUpdate
+        ├── add-sheet.ts                    # Add a sheet/tab
+        ├── delete-sheet.ts                 # Delete a sheet/tab
+        ├── rename-sheet.ts                 # Rename a sheet/tab
+        ├── delete-spreadsheet.ts           # Trash/delete a spreadsheet file
+        ├── find-replace.ts                 # Find and replace text
+        ├── copy-sheet.ts                   # Copy a sheet to another spreadsheet
+        ├── create-chart.ts                 # Add an embedded chart
+        ├── set-data-validation.ts          # Set data validation rules
         └── create-spreadsheet.ts           # Create new spreadsheet
 ```
 
@@ -36,7 +51,8 @@ sheets/
 
 ### 1. Create Google OAuth Credentials
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
+1. Go to
+   [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
 2. Create a new OAuth 2.0 Client ID (or use existing)
 3. Add authorized redirect URI: `http://localhost:3000/api/auth/sheets/callback`
 4. Copy Client ID and Client Secret
@@ -44,6 +60,7 @@ sheets/
 ### 2. Enable Required APIs
 
 Enable these APIs in your Google Cloud project:
+
 - [Google Sheets API](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
 - [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
 
@@ -57,8 +74,12 @@ GOOGLE_CLIENT_SECRET=your_client_secret_here
 ### 4. OAuth Scopes
 
 The integration requests these scopes:
+
 - `https://www.googleapis.com/auth/spreadsheets` - Full access to spreadsheets
-- `https://www.googleapis.com/auth/drive.readonly` - Read-only access to Drive (for listing)
+- `https://www.googleapis.com/auth/drive.readonly` - Read-only access to Drive
+  (for listing)
+- `https://www.googleapis.com/auth/drive.file` - App-created/opened Drive file
+  access for cleanup
 
 ## API Client Usage
 
@@ -144,7 +165,7 @@ Get spreadsheet metadata including all sheets and properties.
 
 ```typescript
 {
-  spreadsheetId: "abc123..."
+  spreadsheetId: "abc123...";
 }
 ```
 
@@ -188,17 +209,65 @@ Create a new spreadsheet with optional initial data.
 }
 ```
 
+### 6. append-rows
+
+Append rows to an existing table/range.
+
+```typescript
+{
+  spreadsheetId: "abc123...",
+  range: "Sheet1!A:C",
+  values: [["new", "row", 1]],
+  valueInputOption: "USER_ENTERED",
+  insertDataOption: "INSERT_ROWS"
+}
+```
+
+### 7. clear-range
+
+Clear values while preserving formatting.
+
+```typescript
+{ spreadsheetId: "abc123...", range: "Sheet1!A2:D100" }
+```
+
+### 8. batch-update
+
+Run raw Google Sheets `batchUpdate` requests for formatting and structural
+changes.
+
+```typescript
+{
+  spreadsheetId: "abc123...",
+  requests: [{ updateSheetProperties: { properties: { sheetId: 0, title: "Data" }, fields: "title" } }]
+}
+```
+
+### 9-16. Standard spreadsheet management
+
+Additional tools cover common spreadsheet automation:
+
+- `add-sheet` / `delete-sheet` / `rename-sheet`
+- `delete-spreadsheet`
+- `find-replace`
+- `copy-sheet`
+- `create-chart`
+- `set-data-validation`
+
 ## Suggested Prompts
 
 The integration includes three AI prompts:
 
-1. **Analyze spreadsheet data** - Read and analyze data with insights and statistics
-2. **Create a report spreadsheet** - Generate formatted spreadsheets with calculations
+1. **Analyze spreadsheet data** - Read and analyze data with insights and
+   statistics
+2. **Create a report spreadsheet** - Generate formatted spreadsheets with
+   calculations
 3. **Update a tracker** - Update tracking spreadsheets with new data
 
 ## Integration with Other Services
 
 This integration works well with:
+
 - **Gmail** - Export email data to sheets
 - **Calendar** - Create event trackers
 - **Notion** - Sync data between Notion and Sheets
@@ -208,6 +277,7 @@ This integration works well with:
 ### Token Management
 
 The integration includes automatic token refresh:
+
 - Tokens expire after 1 hour
 - Refresh tokens are used automatically
 - Failed refreshes trigger re-authentication
@@ -273,6 +343,7 @@ const client = createSheetsClient(userId);
 ### Error Handling
 
 The client throws descriptive errors:
+
 - `"Google Sheets not connected"` - User needs to authenticate
 - `"Sheets API error: 404"` - Spreadsheet not found
 - `"Token refresh failed"` - Re-authentication required

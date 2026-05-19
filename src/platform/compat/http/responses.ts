@@ -62,6 +62,7 @@ export function errorResponse(
   });
 }
 
+/** Create a JSON response with the correct content type. */
 export function jsonResponse<T>(
   data: T,
   status: HttpStatusCode = HttpStatus.OK,
@@ -86,6 +87,7 @@ export function jsonResponse<T>(
   }
 }
 
+/** Create an HTTP redirect response. */
 export function redirectResponse(
   url: string,
   permanent = false,
@@ -107,22 +109,27 @@ export function redirectResponse(
   });
 }
 
+/** Create a 404 Not Found response. */
 export function notFound(message?: string, options?: ResponseOptions): Response {
   return errorResponse(HttpStatus.NOT_FOUND, message, options);
 }
 
+/** Create a 400 Bad Request response. */
 export function badRequest(message?: string, options?: ResponseOptions): Response {
   return errorResponse(HttpStatus.BAD_REQUEST, message, options);
 }
 
+/** Create a 401 Unauthorized response. */
 export function unauthorized(message?: string, options?: ResponseOptions): Response {
   return errorResponse(HttpStatus.UNAUTHORIZED, message, options);
 }
 
+/** Create a 403 Forbidden response. */
 export function forbidden(message?: string, options?: ResponseOptions): Response {
   return errorResponse(HttpStatus.FORBIDDEN, message, options);
 }
 
+/** Create a 500 Internal Server Error response. */
 export function internalServerError(message?: string, options?: ResponseOptions): Response {
   return errorResponse(HttpStatus.INTERNAL_SERVER_ERROR, message, options);
 }

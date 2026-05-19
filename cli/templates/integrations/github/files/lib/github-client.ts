@@ -96,18 +96,63 @@ export function createGitHubClient(userId: string): {
     perPage?: number;
     type?: "all" | "owner" | "public" | "private" | "member";
   }): Promise<GitHubRepo[]>;
+  getRepo(owner: string, repo: string): Promise<GitHubRepo>;
   listPullRequests(
     owner: string,
     repo: string,
     options?: { state?: "open" | "closed" | "all"; perPage?: number },
   ): Promise<GitHubPullRequest[]>;
-  getPullRequest(owner: string, repo: string, pullNumber: number): Promise<GitHubPullRequest>;
-  getPullRequestDiff(owner: string, repo: string, pullNumber: number): Promise<string>;
+  getPullRequest(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<GitHubPullRequest>;
+  getPullRequestDiff(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+  ): Promise<string>;
   createIssue(
     owner: string,
     repo: string,
-    options: { title: string; body?: string; labels?: string[]; assignees?: string[] },
+    options: {
+      title: string;
+      body?: string;
+      labels?: string[];
+      assignees?: string[];
+    },
   ): Promise<GitHubIssue>;
+  getIssue(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+  ): Promise<GitHubIssue>;
+  updateIssue(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    options: {
+      title?: string;
+      body?: string;
+      state?: "open" | "closed";
+      labels?: string[];
+      assignees?: string[];
+    },
+  ): Promise<GitHubIssue>;
+  addIssueComment(
+    owner: string,
+    repo: string,
+    issueNumber: number,
+    body: string,
+  ): Promise<
+    {
+      id: number;
+      html_url: string;
+      body: string;
+      user: { login: string };
+      created_at: string;
+    }
+  >;
   listIssues(
     owner: string,
     repo: string,
@@ -122,11 +167,18 @@ export function createGitHubClient(userId: string): {
 } {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(githubOAuthProvider, userId, "github");
-    if (!token) throw new Error("GitHub not connected. Please connect your GitHub account first.");
+    if (!token) {
+      throw new Error(
+        "GitHub not connected. Please connect your GitHub account first.",
+      );
+    }
     return token;
   }
 
-  async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  async function apiRequest<T>(
+    endpoint: string,
+    options: RequestInit = {},
+  ): Promise<T> {
     const accessToken = await getAccessToken();
 
     const response = await fetch(`${GITHUB_API_BASE}${endpoint}`, {
@@ -147,7 +199,10 @@ export function createGitHubClient(userId: string): {
     return response.json() as Promise<T>;
   }
 
-  async function apiTextRequest(endpoint: string, accept: string): Promise<string> {
+  async function apiTextRequest(
+    endpoint: string,
+    accept: string,
+  ): Promise<string> {
     const accessToken = await getAccessToken();
 
     const response = await fetch(`${GITHUB_API_BASE}${endpoint}`, {
@@ -178,6 +233,10 @@ export function createGitHubClient(userId: string): {
       return apiRequest<GitHubRepo[]>(`/user/repos${toQueryString(params)}`);
     },
 
+    getRepo(owner, repo): Promise<GitHubRepo> {
+      return apiRequest<GitHubRepo>(`/repos/${owner}/${repo}`);
+    },
+
     listPullRequests(owner, repo, options = {}): Promise<GitHubPullRequest[]> {
       const params = new URLSearchParams();
       params.set("state", options.state ?? "open");
@@ -189,7 +248,9 @@ export function createGitHubClient(userId: string): {
     },
 
     getPullRequest(owner, repo, pullNumber): Promise<GitHubPullRequest> {
-      return apiRequest<GitHubPullRequest>(`/repos/${owner}/${repo}/pulls/${pullNumber}`);
+      return apiRequest<GitHubPullRequest>(
+        `/repos/${owner}/${repo}/pulls/${pullNumber}`,
+      );
     },
 
     getPullRequestDiff(owner, repo, pullNumber): Promise<string> {
@@ -206,12 +267,40 @@ export function createGitHubClient(userId: string): {
       });
     },
 
+    getIssue(owner, repo, issueNumber): Promise<GitHubIssue> {
+      return apiRequest<GitHubIssue>(
+        `/repos/${owner}/${repo}/issues/${issueNumber}`,
+      );
+    },
+
+    updateIssue(owner, repo, issueNumber, options): Promise<GitHubIssue> {
+      return apiRequest<GitHubIssue>(
+        `/repos/${owner}/${repo}/issues/${issueNumber}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify(options),
+        },
+      );
+    },
+
+    addIssueComment(owner, repo, issueNumber, body) {
+      return apiRequest(
+        `/repos/${owner}/${repo}/issues/${issueNumber}/comments`,
+        {
+          method: "POST",
+          body: JSON.stringify({ body }),
+        },
+      );
+    },
+
     listIssues(owner, repo, options = {}): Promise<GitHubIssue[]> {
       const params = new URLSearchParams();
       params.set("state", options.state ?? "open");
       if (options.perPage) params.set("per_page", String(options.perPage));
 
-      return apiRequest<GitHubIssue[]>(`/repos/${owner}/${repo}/issues${toQueryString(params)}`);
+      return apiRequest<GitHubIssue[]>(
+        `/repos/${owner}/${repo}/issues${toQueryString(params)}`,
+      );
     },
 
     listCommits(owner, repo, options = {}): Promise<GitHubCommit[]> {
@@ -219,7 +308,9 @@ export function createGitHubClient(userId: string): {
       if (options.sha) params.set("sha", options.sha);
       if (options.perPage) params.set("per_page", String(options.perPage));
 
-      return apiRequest<GitHubCommit[]>(`/repos/${owner}/${repo}/commits${toQueryString(params)}`);
+      return apiRequest<GitHubCommit[]>(
+        `/repos/${owner}/${repo}/commits${toQueryString(params)}`,
+      );
     },
 
     getUser(): Promise<{ login: string; name: string; email: string }> {

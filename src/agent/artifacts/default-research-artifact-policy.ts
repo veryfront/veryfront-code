@@ -63,6 +63,7 @@ function extractResearchTopic(input: { description: string; prompt: string }): s
   return promptTopic;
 }
 
+/** Public API contract for default research artifact paths. */
 export interface DefaultResearchArtifactPaths {
   topicSlug: string;
   topicRootPath: string;
@@ -72,6 +73,7 @@ export interface DefaultResearchArtifactPaths {
   sourcesPath: string;
 }
 
+/** Should inject default research artifact path helper. */
 export function shouldInjectDefaultResearchArtifactPath(input: {
   description: string;
   prompt: string;
@@ -90,6 +92,7 @@ export function shouldInjectDefaultResearchArtifactPath(input: {
   return !hasAnyArtifactPath(input.prompt);
 }
 
+/** Builds default research artifact path reminder. */
 export function buildDefaultResearchArtifactPathReminder(input: {
   description: string;
   prompt: string;
@@ -111,6 +114,7 @@ export function buildDefaultResearchArtifactPathReminder(input: {
   ].join("\n");
 }
 
+/** Builds default research artifact paths. */
 export function buildDefaultResearchArtifactPaths(input: {
   description: string;
   prompt: string;
@@ -157,6 +161,7 @@ export function buildDefaultResearchArtifactPathsFromCurrentReportPath(input: {
   };
 }
 
+/** Applies default research artifact path. */
 export function withDefaultResearchArtifactPath(input: {
   description: string;
   prompt: string;

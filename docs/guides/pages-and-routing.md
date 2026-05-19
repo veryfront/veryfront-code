@@ -223,3 +223,4 @@ to confirm the React component renders without console errors.
 
 - [`veryfront/router`](../reference/veryfront/router.md): router API reference
 - [`veryfront/context`](../reference/veryfront/context.md): params, page data, and frontmatter hooks
+- [`veryfront/mdx`](../reference/veryfront/mdx.md): MDX component overrides

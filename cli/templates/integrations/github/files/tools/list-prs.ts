@@ -23,21 +23,23 @@ type PullRequest = {
 export default tool({
   id: "list-prs",
   description: "List pull requests for a GitHub repository",
-  inputSchema: defineSchema((v) => v.object({
-    repo: v
-      .string()
-      .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
-    state: v
-      .enum(["open", "closed", "all"])
-      .default("open")
-      .describe("State of pull requests to list"),
-    limit: v
-      .number()
-      .min(1)
-      .max(100)
-      .default(10)
-      .describe("Maximum number of pull requests to return"),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      repo: v
+        .string()
+        .describe("Repository in format 'owner/repo' (e.g., 'facebook/react')"),
+      state: v
+        .enum(["open", "closed", "all"])
+        .default("open")
+        .describe("State of pull requests to list"),
+      limit: v
+        .number()
+        .min(1)
+        .max(100)
+        .default(10)
+        .describe("Maximum number of pull requests to return"),
+    })
+  )(),
   execute: async ({ repo, state, limit }, context) => {
     const userId = requireUserIdFromContext(context);
     const [owner, repoName] = repo.split("/");

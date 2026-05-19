@@ -8,6 +8,7 @@ import {
 import { runHostedLifecycle } from "./lifecycle.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 
+/** Public API contract for prepared hosted chat execution. */
 export type PreparedHostedChatExecution =
   & Omit<
     CreateBootstrappedHostedChatExecutionRuntimeInput,
@@ -28,6 +29,7 @@ export type PreparedHostedChatExecution =
     runtimeKind?: string;
   };
 
+/** Options accepted by prepared hosted chat execution runtime. */
 export type PreparedHostedChatExecutionRuntimeOptions =
   & Pick<
     CreateBootstrappedHostedChatExecutionRuntimeInput,
@@ -47,6 +49,7 @@ export type PreparedHostedChatExecutionRuntimeOptions =
     setActiveSpanAttributes?: (attributes: AgentTraceAttributes) => void;
   };
 
+/** Input payload for prepared hosted chat execution stream. */
 export type PreparedHostedChatExecutionStreamInput<
   TExecution extends PreparedHostedChatExecution = PreparedHostedChatExecution,
 > = TExecution & {
@@ -54,6 +57,7 @@ export type PreparedHostedChatExecutionStreamInput<
   agUiInput: AgUiRuntimeRequest;
 };
 
+/** Input payload for prepared hosted chat execution detached. */
 export type PreparedHostedChatExecutionDetachedInput<
   TExecution extends PreparedHostedChatExecution = PreparedHostedChatExecution,
 > = TExecution & {
@@ -105,6 +109,7 @@ function createBootstrappedPreparedHostedChatExecutionRuntime(input: {
   });
 }
 
+/** Response payload for stream prepared hosted chat execution to AG-UI. */
 export async function streamPreparedHostedChatExecutionToAgUiResponse<
   TExecution extends PreparedHostedChatExecution,
 >(input: {
@@ -139,6 +144,7 @@ export async function streamPreparedHostedChatExecutionToAgUiResponse<
   });
 }
 
+/** Run prepared hosted chat execution detached. */
 export async function runPreparedHostedChatExecutionDetached<
   TExecution extends PreparedHostedChatExecution,
 >(input: {

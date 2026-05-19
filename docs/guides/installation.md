@@ -1,7 +1,7 @@
 ---
 title: "Installation"
 description: "Install the Veryfront CLI and framework on macOS, Linux, or Windows."
-order: 34
+order: 36
 ---
 
 # Installation
@@ -54,6 +54,32 @@ Veryfront renders React Server Components and ships modern ES2022 client bundles
 Older browsers may work but are not part of the supported matrix.
 
 ## Install
+
+Pick the method that matches your toolchain. All five produce the same `veryfront` CLI; the tabs below give you the one-liner, and the sections that follow add detail and version-pinning options.
+
+<CodeGroup>
+
+```bash curl
+curl -fsSL https://veryfront.com/install.sh | sh
+```
+
+```powershell PowerShell
+irm https://veryfront.com/install.ps1 | iex
+```
+
+```bash Homebrew
+brew install veryfront/tap/veryfront
+```
+
+```bash npm
+npm create veryfront
+```
+
+```bash npx
+npx veryfront
+```
+
+</CodeGroup>
 
 ### curl (standalone binary, macOS and Linux)
 
@@ -121,6 +147,8 @@ veryfront --version
 ```
 
 You should see the installed version printed. If the command is not found after a fresh install, restart your shell so the new `PATH` entry takes effect.
+
+On Windows, run the same command in PowerShell or in a new terminal session so the updated `PATH` is picked up.
 
 ## Next
 

@@ -7,6 +7,7 @@ import type {
   WorkflowRun,
 } from "../types.ts";
 
+/** Configuration used by backend. */
 export interface BackendConfig {
   url?: string;
   prefix?: string;
@@ -21,6 +22,7 @@ export interface Lock {
   expiresAt: Date;
 }
 
+/** Public API contract for workflow backend. */
 export interface WorkflowBackend {
   createRun(run: WorkflowRun): Promise<void>;
   getRun(runId: string): Promise<WorkflowRun | null>;
@@ -132,6 +134,7 @@ type WithWorkerSupport =
     >
   >;
 
+/** Check whether worker support is present. */
 export function hasWorkerSupport(backend: WorkflowBackend): backend is WithWorkerSupport {
   return (
     hasQueueSupport(backend) &&

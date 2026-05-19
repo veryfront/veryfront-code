@@ -4,7 +4,7 @@
  */
 
 import { resource } from "veryfront/resource";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema } from "veryfront/schemas";
 
 export default resource({
   description: "Get user profile information",

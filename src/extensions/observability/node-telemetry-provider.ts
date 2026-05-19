@@ -8,21 +8,25 @@
 
 export const NodeTelemetryProviderName = "NodeTelemetryProvider";
 
+/** Configuration used by node telemetry instrumentation. */
 export type NodeTelemetryInstrumentationConfig = {
   http: boolean;
   express: boolean;
   fs: boolean;
 };
 
+/** Public API contract for node telemetry logger. */
 export type NodeTelemetryLogger = {
   info(message: string, metadata?: Record<string, unknown>): void;
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+/** Public API contract for node telemetry process target. */
 export type NodeTelemetryProcessTarget = {
   on(event: "SIGTERM", listener: () => void | Promise<void>): unknown;
 };
 
+/** Options accepted by node telemetry initialize. */
 export type NodeTelemetryInitializeOptions = {
   serviceName: string;
   serviceVersion: string;

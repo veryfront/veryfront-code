@@ -6,7 +6,7 @@ const AGENT_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
 const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
-const MAX_FORWARDED_PROPS_BYTES = 65_536;
+const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const MAX_RUNTIME_MESSAGES = 100;
 
 const encoder = new TextEncoder();
@@ -42,6 +42,7 @@ const agUiRuntimeToolJsonSchemaDocumentSchema = (v: SchemaValidator) =>
     { message: "Tool schema metadata must be less than 16 KB" },
   );
 
+/** Zod schema for get AG-UI runtime injected tool. */
 export const getAgUiRuntimeInjectedToolSchema = defineSchema((v) =>
   v.object({
     name: agUiRuntimeInjectedToolNameSchema(v),
@@ -55,6 +56,7 @@ export const getAgUiRuntimeInjectedToolSchema = defineSchema((v) =>
   })
 );
 
+/** Zod schema for get AG-UI runtime context item. */
 export const getAgUiRuntimeContextItemSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({
@@ -140,6 +142,7 @@ export const getAgUiRuntimeToolMessageSchema = defineSchema((v) =>
   }).strict()
 );
 
+/** Zod schema for get AG-UI runtime message. */
 export const getAgUiRuntimeMessageSchema = defineSchema((v) =>
   v.discriminatedUnion("role", [
     getAgUiRuntimeSystemMessageSchema(),
@@ -159,6 +162,7 @@ export const getAgUiRuntimeContextSchema = defineSchema((v) =>
   ])
 );
 
+/** Zod schema for get AG-UI runtime request. */
 export const getAgUiRuntimeRequestSchema = defineSchema((v) =>
   v.object({
     threadId: v.string().uuid(),
@@ -173,20 +177,25 @@ export const getAgUiRuntimeRequestSchema = defineSchema((v) =>
     ),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-      { message: "forwardedProps must be less than 64 KB" },
+      { message: "forwardedProps must be less than 192 KB" },
     ),
   })
 );
 
+/** Public API contract for AG-UI runtime injected tool. */
 export type AgUiRuntimeInjectedTool = InferSchema<
   ReturnType<typeof getAgUiRuntimeInjectedToolSchema>
 >;
+/** Public API contract for AG-UI runtime context item. */
 export type AgUiRuntimeContextItem = InferSchema<
   ReturnType<typeof getAgUiRuntimeContextItemSchema>
 >;
+/** Message shape for AG-UI runtime. */
 export type AgUiRuntimeMessage = InferSchema<ReturnType<typeof getAgUiRuntimeMessageSchema>>;
+/** Request payload for AG-UI runtime. */
 export type AgUiRuntimeRequest = InferSchema<ReturnType<typeof getAgUiRuntimeRequestSchema>>;
 
+/** Request payload for normalize AG-UI browser runtime. */
 export function normalizeAgUiBrowserRuntimeRequest(
   input: AgUiRuntimeRequest,
   defaults?: {
@@ -210,10 +219,12 @@ export function normalizeAgUiBrowserRuntimeRequest(
   } as AgUiRuntimeRequest;
 }
 
+/** Request payload for parse AG-UI runtime. */
 export async function parseAgUiRuntimeRequest(request: Request): Promise<AgUiRuntimeRequest> {
   return getAgUiRuntimeRequestSchema().parse(await request.json());
 }
 
+/** Error shape for parse AG-UI runtime request or. */
 export async function parseAgUiRuntimeRequestOrError(
   request: Request,
 ): Promise<AgUiRuntimeRequest | Response> {

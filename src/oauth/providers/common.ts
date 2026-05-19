@@ -1,5 +1,6 @@
 import type { OAuthServiceConfig } from "../types.ts";
 
+/** Configuration used by github. */
 export const githubConfig: OAuthServiceConfig = {
   providerId: "github",
   serviceId: "github",
@@ -12,6 +13,7 @@ export const githubConfig: OAuthServiceConfig = {
   defaultScopes: ["repo", "user"],
 };
 
+/** Configuration used by slack. */
 export const slackConfig: OAuthServiceConfig = {
   providerId: "slack",
   serviceId: "slack",
@@ -21,9 +23,21 @@ export const slackConfig: OAuthServiceConfig = {
   clientIdEnvVar: "SLACK_CLIENT_ID",
   clientSecretEnvVar: "SLACK_CLIENT_SECRET",
   apiBaseUrl: "https://slack.com/api",
-  defaultScopes: ["channels:read", "chat:write", "users:read"],
+  defaultScopes: [
+    "channels:history",
+    "channels:read",
+    "chat:write",
+    "groups:history",
+    "groups:read",
+    "im:history",
+    "im:read",
+    "mpim:history",
+    "mpim:read",
+    "users:read",
+  ],
 };
 
+/** Configuration used by notion. */
 export const notionConfig: OAuthServiceConfig = {
   providerId: "notion",
   serviceId: "notion",
@@ -40,6 +54,7 @@ export const notionConfig: OAuthServiceConfig = {
   },
 };
 
+/** Configuration used by figma. */
 export const figmaConfig: OAuthServiceConfig = {
   providerId: "figma",
   serviceId: "figma",
@@ -52,6 +67,7 @@ export const figmaConfig: OAuthServiceConfig = {
   defaultScopes: ["file_read"],
 };
 
+/** Configuration used by discord. */
 export const discordConfig: OAuthServiceConfig = {
   providerId: "discord",
   serviceId: "discord",
@@ -64,6 +80,7 @@ export const discordConfig: OAuthServiceConfig = {
   defaultScopes: ["identify", "guilds"],
 };
 
+/** Configuration used by linear. */
 export const linearConfig: OAuthServiceConfig = {
   providerId: "linear",
   serviceId: "linear",
@@ -76,6 +93,7 @@ export const linearConfig: OAuthServiceConfig = {
   defaultScopes: ["read", "write"],
 };
 
+/** Configuration used by gitlab. */
 export const gitlabConfig: OAuthServiceConfig = {
   providerId: "gitlab",
   serviceId: "gitlab",
@@ -88,6 +106,7 @@ export const gitlabConfig: OAuthServiceConfig = {
   defaultScopes: ["read_user", "api"],
 };
 
+/** Configuration used by airtable. */
 export const airtableConfig: OAuthServiceConfig = {
   providerId: "airtable",
   serviceId: "airtable",
@@ -97,10 +116,16 @@ export const airtableConfig: OAuthServiceConfig = {
   clientIdEnvVar: "AIRTABLE_CLIENT_ID",
   clientSecretEnvVar: "AIRTABLE_CLIENT_SECRET",
   apiBaseUrl: "https://api.airtable.com/v0",
-  defaultScopes: ["data.records:read", "data.records:write", "schema.bases:read"],
+  defaultScopes: [
+    "data.records:read",
+    "data.records:write",
+    "schema.bases:read",
+    "schema.bases:write",
+  ],
   useBasicAuth: true,
 };
 
+/** Configuration used by dropbox. */
 export const dropboxConfig: OAuthServiceConfig = {
   providerId: "dropbox",
   serviceId: "dropbox",
@@ -116,6 +141,7 @@ export const dropboxConfig: OAuthServiceConfig = {
   },
 };
 
+/** Configuration used by hubspot. */
 export const hubspotConfig: OAuthServiceConfig = {
   providerId: "hubspot",
   serviceId: "hubspot",
@@ -128,6 +154,7 @@ export const hubspotConfig: OAuthServiceConfig = {
   defaultScopes: ["crm.objects.contacts.read", "crm.objects.contacts.write"],
 };
 
+/** Configuration used by salesforce. */
 export const salesforceConfig: OAuthServiceConfig = {
   providerId: "salesforce",
   serviceId: "salesforce",
@@ -140,6 +167,7 @@ export const salesforceConfig: OAuthServiceConfig = {
   defaultScopes: ["api", "refresh_token"],
 };
 
+/** Configuration used by twitter. */
 export const twitterConfig: OAuthServiceConfig = {
   providerId: "twitter",
   serviceId: "twitter",
@@ -153,6 +181,7 @@ export const twitterConfig: OAuthServiceConfig = {
   useBasicAuth: true,
 };
 
+/** Configuration used by asana. */
 export const asanaConfig: OAuthServiceConfig = {
   providerId: "asana",
   serviceId: "asana",
@@ -165,6 +194,7 @@ export const asanaConfig: OAuthServiceConfig = {
   defaultScopes: ["default"],
 };
 
+/** Configuration used by monday. */
 export const mondayConfig: OAuthServiceConfig = {
   providerId: "monday",
   serviceId: "monday",
@@ -177,6 +207,7 @@ export const mondayConfig: OAuthServiceConfig = {
   defaultScopes: ["me:read", "boards:read", "boards:write"],
 };
 
+/** Configuration used by zoom. */
 export const zoomConfig: OAuthServiceConfig = {
   providerId: "zoom",
   serviceId: "zoom",
@@ -190,6 +221,7 @@ export const zoomConfig: OAuthServiceConfig = {
   useBasicAuth: true,
 };
 
+/** Configuration used by intercom. */
 export const intercomConfig: OAuthServiceConfig = {
   providerId: "intercom",
   serviceId: "intercom",
@@ -202,6 +234,7 @@ export const intercomConfig: OAuthServiceConfig = {
   defaultScopes: [],
 };
 
+/** Configuration used by freshdesk. */
 export const freshdeskConfig: OAuthServiceConfig = {
   providerId: "freshdesk",
   serviceId: "freshdesk",
@@ -214,6 +247,7 @@ export const freshdeskConfig: OAuthServiceConfig = {
   defaultScopes: ["freshdesk"],
 };
 
+/** Configuration used by mailchimp. */
 export const mailchimpConfig: OAuthServiceConfig = {
   providerId: "mailchimp",
   serviceId: "mailchimp",
@@ -226,6 +260,7 @@ export const mailchimpConfig: OAuthServiceConfig = {
   defaultScopes: [],
 };
 
+/** Configuration used by shopify. */
 export const shopifyConfig: OAuthServiceConfig = {
   providerId: "shopify",
   serviceId: "shopify",
@@ -238,6 +273,7 @@ export const shopifyConfig: OAuthServiceConfig = {
   defaultScopes: ["read_products", "write_products", "read_orders"],
 };
 
+/** Configuration used by quickbooks. */
 export const quickbooksConfig: OAuthServiceConfig = {
   providerId: "quickbooks",
   serviceId: "quickbooks",
@@ -250,6 +286,7 @@ export const quickbooksConfig: OAuthServiceConfig = {
   defaultScopes: ["com.intuit.quickbooks.accounting"],
 };
 
+/** Configuration used by xero. */
 export const xeroConfig: OAuthServiceConfig = {
   providerId: "xero",
   serviceId: "xero",
@@ -268,6 +305,7 @@ export const xeroConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by box. */
 export const boxConfig: OAuthServiceConfig = {
   providerId: "box",
   serviceId: "box",
@@ -280,6 +318,7 @@ export const boxConfig: OAuthServiceConfig = {
   defaultScopes: [],
 };
 
+/** Configuration used by webex. */
 export const webexConfig: OAuthServiceConfig = {
   providerId: "webex",
   serviceId: "webex",
@@ -292,6 +331,7 @@ export const webexConfig: OAuthServiceConfig = {
   defaultScopes: ["spark:all", "spark:kms"],
 };
 
+/** Configuration used by trello. */
 export const trelloConfig: OAuthServiceConfig = {
   providerId: "trello",
   serviceId: "trello",
@@ -307,6 +347,7 @@ export const trelloConfig: OAuthServiceConfig = {
   },
 };
 
+/** Configuration used by clickup. */
 export const clickupConfig: OAuthServiceConfig = {
   providerId: "clickup",
   serviceId: "clickup",
@@ -319,6 +360,7 @@ export const clickupConfig: OAuthServiceConfig = {
   defaultScopes: [],
 };
 
+/** Configuration used by pipedrive. */
 export const pipedriveConfig: OAuthServiceConfig = {
   providerId: "pipedrive",
   serviceId: "pipedrive",

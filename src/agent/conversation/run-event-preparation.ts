@@ -25,6 +25,7 @@ function normalizeFinishReason(reason?: string): ChatFinishReason | undefined {
   }
 }
 
+/** Event emitted for to conversation run stream. */
 export function toConversationRunStreamEvent(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
 ): ChatStreamEvent {
@@ -52,6 +53,7 @@ export function toConversationRunStreamEvent(
   }
 }
 
+/** Prepare conversation run stream events. */
 export function prepareConversationRunStreamEvents(
   events: ChatStreamEvent[],
   encoder = new ConversationRunEventEncoder(),
@@ -59,6 +61,7 @@ export function prepareConversationRunStreamEvents(
   return normalizeConversationRunEvents(encodeConversationRunEvents(events, encoder));
 }
 
+/** Prepare conversation run chunk events. */
 export function prepareConversationRunChunkEvents(
   chunks: ChatUiMessageChunk<ChatMessageMetadata>[],
   encoder = new ConversationRunEventEncoder(),
@@ -69,6 +72,7 @@ export function prepareConversationRunChunkEvents(
   );
 }
 
+/** Prepare conversation run external events. */
 export function prepareConversationRunExternalEvents(
   events: ConversationRunEvent[],
 ): ConversationRunEvent[] {

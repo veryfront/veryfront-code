@@ -8,16 +8,19 @@ import {
 } from "./browser-encoder.ts";
 import type { AgentResponse } from "../types.ts";
 
+/** Public API contract for AG-UI chunk encoder bridge. */
 export interface AgUiChunkEncoderBridge<TChunk> {
   encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];
   finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
   state: AgUiBrowserEncoderState;
 }
 
+/** Options accepted by create AG-UI chunk encoder bridge. */
 export interface CreateAgUiChunkEncoderBridgeOptions<TChunk> {
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
 }
 
+/** Create AG-UI chunk encoder bridge. */
 export function createAgUiChunkEncoderBridge<TChunk>(
   options: CreateAgUiChunkEncoderBridgeOptions<TChunk>,
 ): AgUiChunkEncoderBridge<TChunk> {

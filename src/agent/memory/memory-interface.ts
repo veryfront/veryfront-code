@@ -15,6 +15,7 @@ export interface MemoryConfigBase {
   maxMessages?: number;
 }
 
+/** Public API contract for memory stats. */
 export interface MemoryStats {
   totalMessages: number;
   estimatedTokens: number;
@@ -29,6 +30,7 @@ export interface MinimalMessage {
   metadata?: Record<string, unknown>;
 }
 
+/** Public API contract for memory. */
 export interface Memory<M extends MinimalMessage = MinimalMessage> {
   add(message: M): Promise<void>;
   getMessages(): Promise<M[]>;
@@ -36,6 +38,7 @@ export interface Memory<M extends MinimalMessage = MinimalMessage> {
   getStats(): Promise<MemoryStats>;
 }
 
+/** Public API contract for memory persistence. */
 export interface MemoryPersistence<M extends MinimalMessage = MinimalMessage> {
   save(agentId: string, messages: M[]): Promise<void>;
   load(agentId: string): Promise<M[]>;

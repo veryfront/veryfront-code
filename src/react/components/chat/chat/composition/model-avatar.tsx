@@ -10,6 +10,7 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { SparklesIcon } from "../../icons/index.ts";
 
+/** Props accepted by model avatar. */
 export interface ModelAvatarProps {
   model?: string;
   className?: string;
@@ -60,6 +61,7 @@ const PROVIDER_STYLES = {
   unknown: "bg-[var(--muted-foreground)]",
 } as const;
 
+/** Render model avatar. */
 export function ModelAvatar(
   { model, className }: ModelAvatarProps,
 ): React.ReactElement {

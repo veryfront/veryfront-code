@@ -1,0 +1,31 @@
+import { tool } from "veryfront/tool";
+import { defineSchema } from "veryfront/schemas";
+import { addComment } from "../../lib/linear-client.ts";
+
+export default tool({
+  id: "add-comment",
+  description: "Add a comment to a Linear issue.",
+  inputSchema: defineSchema((v) => v.object({
+    issueId: v.string().describe("Linear issue ID"),
+    body: v.string().min(1).describe("Comment body in markdown"),
+  }))(),
+  async execute({ issueId, body }) {
+    const comment = await addComment({ issueId, body });
+
+    return {
+      id: comment.id,
+      body: comment.body,
+      createdAt: comment.createdAt,
+      user: comment.user
+        ? { id: comment.user.id, name: comment.user.name }
+        : null,
+      issue: comment.issue
+        ? {
+          id: comment.issue.id,
+          identifier: comment.issue.identifier,
+          title: comment.issue.title,
+        }
+        : null,
+    };
+  },
+});

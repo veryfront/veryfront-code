@@ -8,7 +8,7 @@ ensureBuiltinSchemaValidator();
 const MAX_TOOL_PARAMETERS_BYTES = 16_384;
 const MAX_CONTEXT_ITEM_BYTES = 16_384;
 const MAX_CONTEXT_TOTAL_BYTES = 65_536;
-const MAX_FORWARDED_PROPS_BYTES = 65_536;
+const MAX_FORWARDED_PROPS_BYTES = 196_608;
 const encoder = new TextEncoder();
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
@@ -23,12 +23,16 @@ export const getRuntimeAgentRunIdSchema = defineSchema((v) =>
   v.string().min(1).max(128).regex(/^[a-zA-Z0-9_-]+$/)
 );
 
-/** @deprecated Use getRuntimeAgentRunIdSchema() */
+/** Schema for runtime agent run ID.
+ * @deprecated Use getRuntimeAgentRunIdSchema()
+ */
 export const RuntimeAgentRunIdSchema = lazySchema(getRuntimeAgentRunIdSchema);
 
 export const getRuntimeAgentToolCallIdSchema = defineSchema((v) => v.string().min(1).max(128));
 
-/** @deprecated Use getRuntimeAgentToolCallIdSchema() */
+/** Schema for runtime agent tool call ID.
+ * @deprecated Use getRuntimeAgentToolCallIdSchema()
+ */
 export const RuntimeAgentToolCallIdSchema = lazySchema(getRuntimeAgentToolCallIdSchema);
 
 export const getRuntimeAgentServiceIdSchema = defineSchema((v) =>
@@ -38,12 +42,16 @@ export const getRuntimeAgentServiceIdSchema = defineSchema((v) =>
   )
 );
 
-/** @deprecated Use getRuntimeAgentServiceIdSchema() */
+/** Schema for runtime agent service ID.
+ * @deprecated Use getRuntimeAgentServiceIdSchema()
+ */
 export const RuntimeAgentServiceIdSchema = lazySchema(getRuntimeAgentServiceIdSchema);
 
 export const getRuntimeAgentIdSchema = defineSchema((v) => v.string().min(1).max(128));
 
-/** @deprecated Use getRuntimeAgentIdSchema() */
+/** Schema for runtime agent ID.
+ * @deprecated Use getRuntimeAgentIdSchema()
+ */
 export const RuntimeAgentIdSchema = lazySchema(getRuntimeAgentIdSchema);
 
 export const getRuntimeAgentToolNameSchema = defineSchema((v) =>
@@ -53,7 +61,9 @@ export const getRuntimeAgentToolNameSchema = defineSchema((v) =>
   )
 );
 
-/** @deprecated Use getRuntimeAgentToolNameSchema() */
+/** Schema for runtime agent tool name.
+ * @deprecated Use getRuntimeAgentToolNameSchema()
+ */
 export const RuntimeAgentToolNameSchema = lazySchema(getRuntimeAgentToolNameSchema);
 
 const getRuntimeAgentToolJsonSchemaDocumentSchema = defineSchema((v) =>
@@ -76,7 +86,9 @@ export const getRuntimeAgentToolSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getRuntimeAgentToolSchema() */
+/** Schema for runtime agent tool.
+ * @deprecated Use getRuntimeAgentToolSchema()
+ */
 export const RuntimeAgentToolSchema = lazySchema(getRuntimeAgentToolSchema);
 
 export const getRuntimeAgentContextItemSchema = defineSchema((v) =>
@@ -104,7 +116,9 @@ export const getRuntimeAgentContextItemSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getRuntimeAgentContextItemSchema() */
+/** Schema for runtime agent context item.
+ * @deprecated Use getRuntimeAgentContextItemSchema()
+ */
 export const RuntimeAgentContextItemSchema = lazySchema(getRuntimeAgentContextItemSchema);
 
 export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
@@ -125,14 +139,18 @@ export const getRuntimeAgentSourceContextSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getRuntimeAgentSourceContextSchema() */
+/** Schema for runtime agent source context.
+ * @deprecated Use getRuntimeAgentSourceContextSchema()
+ */
 export const RuntimeAgentSourceContextSchema = lazySchema(getRuntimeAgentSourceContextSchema);
 
 export const getRuntimeAgentTargetKindSchema = defineSchema((v) =>
   v.enum(["main_branch", "environment", "preview_branch"])
 );
 
-/** @deprecated Use getRuntimeAgentTargetKindSchema() */
+/** Schema for runtime agent target kind.
+ * @deprecated Use getRuntimeAgentTargetKindSchema()
+ */
 export const RuntimeAgentTargetKindSchema = lazySchema(getRuntimeAgentTargetKindSchema);
 
 type RuntimeAgentTargetSelectionInput = {
@@ -141,6 +159,7 @@ type RuntimeAgentTargetSelectionInput = {
   runtimeTargetBranchId?: string | null;
 };
 
+/** Validates runtime agent target selection. */
 export function validateRuntimeAgentTargetSelection(
   input: RuntimeAgentTargetSelectionInput,
   ctx: RefinementCtx,
@@ -189,7 +208,9 @@ export const getRuntimeAgentProjectContextSchema = defineSchema((v) =>
   }).superRefine(validateRuntimeAgentTargetSelection)
 );
 
-/** @deprecated Use getRuntimeAgentProjectContextSchema() */
+/** Schema for runtime agent project context.
+ * @deprecated Use getRuntimeAgentProjectContextSchema()
+ */
 export const RuntimeAgentProjectContextSchema = lazySchema(getRuntimeAgentProjectContextSchema);
 
 export const getRuntimeAgentValidatedClaimsSchema = defineSchema((v) =>
@@ -201,7 +222,9 @@ export const getRuntimeAgentValidatedClaimsSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getRuntimeAgentValidatedClaimsSchema() */
+/** Schema for runtime agent validated claims.
+ * @deprecated Use getRuntimeAgentValidatedClaimsSchema()
+ */
 export const RuntimeAgentValidatedClaimsSchema = lazySchema(getRuntimeAgentValidatedClaimsSchema);
 
 export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
@@ -268,7 +291,9 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getRuntimeAgentRunContextSchema() */
+/** Schema for runtime agent run context.
+ * @deprecated Use getRuntimeAgentRunContextSchema()
+ */
 export const RuntimeAgentRunContextSchema = lazySchema(getRuntimeAgentRunContextSchema);
 
 export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
@@ -283,37 +308,48 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
     agentSource: getRuntimeAgentSourceContextSchema().optional(),
     forwardedProps: v.record(v.string(), v.unknown()).optional().refine(
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
-      { message: "forwardedProps must be less than 64 KB" },
+      { message: "forwardedProps must be less than 192 KB" },
     ),
   })
 );
 
-/** @deprecated Use getRuntimeAgentRunInvocationSchema() */
+/** Schema for runtime agent run invocation.
+ * @deprecated Use getRuntimeAgentRunInvocationSchema()
+ */
 export const RuntimeAgentRunInvocationSchema = lazySchema(getRuntimeAgentRunInvocationSchema);
 
+/** Public API contract for runtime agent tool. */
 export type RuntimeAgentTool = InferSchema<ReturnType<typeof getRuntimeAgentToolSchema>>;
+/** Public API contract for runtime agent context item. */
 export type RuntimeAgentContextItem = InferSchema<
   ReturnType<typeof getRuntimeAgentContextItemSchema>
 >;
+/** Context for runtime agent source. */
 export type RuntimeAgentSourceContext = InferSchema<
   ReturnType<typeof getRuntimeAgentSourceContextSchema>
 >;
+/** Public API contract for runtime agent target kind. */
 export type RuntimeAgentTargetKind = InferSchema<
   ReturnType<typeof getRuntimeAgentTargetKindSchema>
 >;
+/** Context for runtime agent project. */
 export type RuntimeAgentProjectContext = InferSchema<
   ReturnType<typeof getRuntimeAgentProjectContextSchema>
 >;
+/** Public API contract for runtime agent validated claims. */
 export type RuntimeAgentValidatedClaims = InferSchema<
   ReturnType<typeof getRuntimeAgentValidatedClaimsSchema>
 >;
+/** Context for runtime agent run. */
 export type RuntimeAgentRunContext = InferSchema<
   ReturnType<typeof getRuntimeAgentRunContextSchema>
 >;
+/** Public API contract for runtime agent run invocation. */
 export type RuntimeAgentRunInvocation = InferSchema<
   ReturnType<typeof getRuntimeAgentRunInvocationSchema>
 >;
 
+/** Request payload for runtime agent control plane stream. */
 export type RuntimeAgentControlPlaneStreamRequest = {
   agentId: RuntimeAgentRunContext["agentId"];
   threadId: RuntimeAgentRunContext["conversationId"];
@@ -327,6 +363,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   forwardedProps?: RuntimeAgentRunInvocation["forwardedProps"];
 };
 
+/** Builds runtime agent control plane stream request from invocation. */
 export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
   input: RuntimeAgentRunInvocation,
 ): RuntimeAgentControlPlaneStreamRequest {
@@ -344,12 +381,14 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
   };
 }
 
+/** Parses runtime agent run invocation. */
 export async function parseRuntimeAgentRunInvocation(
   request: Request,
 ): Promise<RuntimeAgentRunInvocation> {
   return getRuntimeAgentRunInvocationSchema().parse(await request.json());
 }
 
+/** Error shape for parse runtime agent run invocation or. */
 export async function parseRuntimeAgentRunInvocationOrError(
   request: Request,
 ): Promise<RuntimeAgentRunInvocation | Response> {

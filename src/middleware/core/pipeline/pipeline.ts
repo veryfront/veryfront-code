@@ -5,6 +5,7 @@ import { executeMiddlewarePipeline } from "./executor.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 
+/** Implement middleware pipeline. */
 export class MiddlewarePipeline {
   private middlewares: MiddlewareHandler[] = [];
   private teardownCallbacks: Array<() => void | Promise<void>> = [];

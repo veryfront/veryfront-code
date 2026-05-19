@@ -1,5 +1,6 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 
+/** Check whether a durable chunk mirrors tool output. */
 export function isDurableMirroredOutputChunk(
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
 ): boolean {
@@ -24,6 +25,7 @@ export function isDurableMirroredOutputChunk(
   }
 }
 
+/** State for mirrored tool chunk. */
 export interface MirroredToolChunkState {
   startedToolCallIds: Set<string>;
   inputAvailableToolCallIds: Set<string>;
@@ -33,6 +35,7 @@ export interface MirroredToolChunkState {
   toolCallNames: Map<string, string>;
 }
 
+/** State for create mirrored tool chunk. */
 export function createMirroredToolChunkState(): MirroredToolChunkState {
   return {
     startedToolCallIds: new Set<string>(),
@@ -44,6 +47,7 @@ export function createMirroredToolChunkState(): MirroredToolChunkState {
   };
 }
 
+/** State for clone mirrored tool chunk. */
 export function cloneMirroredToolChunkState(
   state: MirroredToolChunkState,
 ): MirroredToolChunkState {
@@ -57,6 +61,7 @@ export function cloneMirroredToolChunkState(
   };
 }
 
+/** State for record mirrored tool chunk. */
 export function recordMirroredToolChunkState(
   state: MirroredToolChunkState,
   chunk: ChatUiMessageChunk<ChatMessageMetadata>,
@@ -100,24 +105,29 @@ export function recordMirroredToolChunkState(
   }
 }
 
+/** Public API contract for open tool calls. */
 export interface OpenToolCalls {
   needsInputClose: Array<{ toolCallId: string; toolName: string }>;
   needsOutputClose: Array<{ toolCallId: string; toolName: string }>;
 }
 
+/** Public API contract for hosted mirrored open tool call logger. */
 export interface HostedMirroredOpenToolCallLogger {
   warn: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
+/** Public API contract for hosted mirrored UI stream logger. */
 export interface HostedMirroredUiStreamLogger extends HostedMirroredOpenToolCallLogger {
   error: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
+/** Public API contract for hosted mirrored UI stream watchdog. */
 export interface HostedMirroredUiStreamWatchdog {
   observe: (chunk: ChatUiMessageChunk<ChatMessageMetadata>) => void;
   dispose: () => void;
 }
 
+/** Input payload for create hosted mirrored UI stream. */
 export interface CreateHostedMirroredUiStreamInput {
   sourceStream: AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>>;
   rootStreamWatchdog: HostedMirroredUiStreamWatchdog;
@@ -129,6 +139,7 @@ export interface CreateHostedMirroredUiStreamInput {
   logger?: HostedMirroredUiStreamLogger;
 }
 
+/** Input payload for close hosted mirrored open tool calls. */
 export interface CloseHostedMirroredOpenToolCallsInput {
   mirroredToolChunkState: MirroredToolChunkState;
   errorText: string;
@@ -146,6 +157,7 @@ function isAbortErrorLike(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+/** Return hosted mirrored abort error text. */
 export function getHostedMirroredAbortErrorText(streamError: unknown): string {
   if (isAbortErrorLike(streamError)) {
     return "Chat stream aborted before tool call completed";
@@ -156,6 +168,7 @@ export function getHostedMirroredAbortErrorText(streamError: unknown): string {
   }`;
 }
 
+/** Compute open tool calls. */
 export function computeOpenToolCalls(
   state: MirroredToolChunkState,
 ): OpenToolCalls {
@@ -185,6 +198,7 @@ export function computeOpenToolCalls(
   };
 }
 
+/** Close hosted mirrored open tool calls helper. */
 export async function closeHostedMirroredOpenToolCalls(
   input: CloseHostedMirroredOpenToolCallsInput,
 ): Promise<void> {
@@ -231,6 +245,7 @@ export async function closeHostedMirroredOpenToolCalls(
   }
 }
 
+/** Create hosted mirrored UI stream. */
 export async function* createHostedMirroredUiStream(
   input: CreateHostedMirroredUiStreamInput,
 ): AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>> {

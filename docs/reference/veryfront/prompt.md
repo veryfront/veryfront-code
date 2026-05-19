@@ -35,7 +35,7 @@ const content = await summarize.getContent({
 
 ### `prompt(config)`
 
-Create MCP-discoverable prompt
+Create a typed prompt definition.
 
 **Returns:** `Prompt`
 
@@ -43,22 +43,22 @@ Create MCP-discoverable prompt
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `prompt` | Create MCP-discoverable prompt |
+| Name | Description | Source |
+|------|-------------|--------|
+| `prompt` | Create a typed prompt definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L9) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `Prompt` | `prompt()` return type |
-| `PromptConfig` | `prompt()` config |
+| Name | Description | Source |
+|------|-------------|--------|
+| `Prompt` | Public API contract for prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L3) |
+| `PromptConfig` | Configuration used by prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L15) |
 
 ### Constants
 
-| Name | Description |
-|------|-------------|
-| `promptRegistry` | Global prompt registry |
+| Name | Description | Source |
+|------|-------------|--------|
+| `promptRegistry` | Shared prompt registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L29) |
 
 ## Related
 

@@ -11,10 +11,12 @@ import {
 } from "./child-status.ts";
 import { composeAbortSignals } from "./child-stream-watchdog.ts";
 
+/** Public API contract for hosted child run status monitor. */
 export type HostedChildRunStatusMonitor = (
   input: MonitorHostedChildRunStatusInput,
 ) => Promise<void>;
 
+/** Input payload for start hosted child fork runtime with host tools. */
 export type StartHostedChildForkRuntimeWithHostToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = StartAgentRuntimeForkWithHostToolsInput<TAttributes> & {
@@ -23,6 +25,7 @@ export type StartHostedChildForkRuntimeWithHostToolsInput<
   monitorChildRunStatus?: HostedChildRunStatusMonitor;
 };
 
+/** Public API contract for started hosted child fork runtime. */
 export interface StartedHostedChildForkRuntime {
   forkStreamAbortController: AbortController;
   childRunMonitorAbortController: AbortController | null;
@@ -31,6 +34,7 @@ export interface StartedHostedChildForkRuntime {
   forkToolNames: string[];
 }
 
+/** Starts hosted child fork runtime with host tools. */
 export function startHostedChildForkRuntimeWithHostTools<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(

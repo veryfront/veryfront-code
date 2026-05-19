@@ -1,3 +1,4 @@
+/** Public API contract for live eval request body. */
 export interface LiveEvalRequestBody {
   threadId: string;
   runId: string;
@@ -14,6 +15,7 @@ export interface LiveEvalRequestBody {
   }>;
 }
 
+/** Input payload for build live eval request body. */
 export interface BuildLiveEvalRequestBodyInput {
   testCaseId: string;
   prompt: string;
@@ -27,6 +29,7 @@ export interface BuildLiveEvalRequestBodyInput {
   maxSteps?: number;
 }
 
+/** Builds live eval request body. */
 export function buildLiveEvalRequestBody(
   input: BuildLiveEvalRequestBodyInput,
 ): LiveEvalRequestBody {

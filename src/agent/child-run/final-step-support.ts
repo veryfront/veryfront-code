@@ -11,6 +11,7 @@ interface ToolResultLike {
   output: unknown;
 }
 
+/** Append missing child run tool calls. */
 export function appendMissingChildRunToolCalls(
   toolCalls: ToolCallLike[],
   fallbackToolCalls: ToolCallLike[],
@@ -26,6 +27,7 @@ export function appendMissingChildRunToolCalls(
   }
 }
 
+/** Append missing child run tool results. */
 export function appendMissingChildRunToolResults(
   toolResults: ToolResultLike[],
   fallbackToolResults: ToolResultLike[],
@@ -41,6 +43,7 @@ export function appendMissingChildRunToolResults(
   }
 }
 
+/** Message shape for build child run exhausted step budget error. */
 export function buildChildRunExhaustedStepBudgetErrorMessage(
   stepCount: number,
   toolCalls: Array<{ toolName: string }>,

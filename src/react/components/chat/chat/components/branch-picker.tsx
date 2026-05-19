@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Props accepted by branch picker. */
 export interface BranchPickerProps {
   current: number;
   total: number;
@@ -8,6 +9,7 @@ export interface BranchPickerProps {
   onNext: () => void;
 }
 
+/** Render branch picker. */
 export function BranchPicker({
   current,
   total,

@@ -2,6 +2,7 @@ import { type Dirent, existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { normalizeRuntimeSkillReferencePath } from "./skill-metadata.ts";
 
+/** Result returned from runtime builtin skill entries. */
 export type RuntimeBuiltinSkillEntriesResult = { ok: true; entries: Dirent[] } | {
   ok: false;
   errorMessage: string;
@@ -12,6 +13,7 @@ function hasRuntimeBuiltinSkillFiles(path: string): boolean {
     existsSync(resolve(path, "veryfront", "SKILL.md"));
 }
 
+/** Resolves runtime builtin skills dir. */
 export function resolveRuntimeBuiltinSkillsDir(baseDir: string): string {
   const firstCandidate = resolve(baseDir, "skills");
   const candidates = [
@@ -24,6 +26,7 @@ export function resolveRuntimeBuiltinSkillsDir(baseDir: string): string {
   return candidates.find((candidate) => hasRuntimeBuiltinSkillFiles(candidate)) ?? firstCandidate;
 }
 
+/** Read runtime builtin skill entries helper. */
 export function readRuntimeBuiltinSkillEntries(
   skillsDir: string,
 ): RuntimeBuiltinSkillEntriesResult {
@@ -40,6 +43,7 @@ export function readRuntimeBuiltinSkillEntries(
   }
 }
 
+/** Resolves runtime builtin skill reference file path. */
 export function resolveRuntimeBuiltinSkillReferenceFilePath(
   skillsDir: string,
   skillId: string,
@@ -61,6 +65,7 @@ export function resolveRuntimeBuiltinSkillReferenceFilePath(
   return filePath;
 }
 
+/** Read runtime builtin skill reference file helper. */
 export function readRuntimeBuiltinSkillReferenceFile(
   skillsDir: string,
   skillId: string,
@@ -74,6 +79,7 @@ export function readRuntimeBuiltinSkillReferenceFile(
   return readFileSync(filePath, "utf-8");
 }
 
+/** Read runtime builtin directory skill helper. */
 export function readRuntimeBuiltinDirectorySkill(
   skillsDir: string,
   skillId: string,
@@ -86,6 +92,7 @@ export function readRuntimeBuiltinDirectorySkill(
   return readFileSync(directorySkillPath, "utf-8");
 }
 
+/** Read runtime builtin flat skill helper. */
 export function readRuntimeBuiltinFlatSkill(skillsDir: string, skillId: string): string | null {
   const flatSkillPath = resolve(skillsDir, `${skillId}.md`);
   if (!existsSync(flatSkillPath)) {
@@ -95,11 +102,13 @@ export function readRuntimeBuiltinFlatSkill(skillsDir: string, skillId: string):
   return readFileSync(flatSkillPath, "utf-8");
 }
 
+/** Read runtime builtin skill helper. */
 export function readRuntimeBuiltinSkill(skillsDir: string, skillId: string): string | null {
   return readRuntimeBuiltinDirectorySkill(skillsDir, skillId) ??
     readRuntimeBuiltinFlatSkill(skillsDir, skillId);
 }
 
+/** List runtime builtin skill reference files. */
 export function listRuntimeBuiltinSkillReferenceFiles(
   skillsDir: string,
   skillId: string,
@@ -115,6 +124,7 @@ export function listRuntimeBuiltinSkillReferenceFiles(
     .sort();
 }
 
+/** List runtime builtin skill references. */
 export function listRuntimeBuiltinSkillReferences(skillsDir: string, skillId: string): string[] {
   return listRuntimeBuiltinSkillReferenceFiles(skillsDir, skillId).map((file) =>
     `references/${file}`

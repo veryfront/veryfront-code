@@ -1,12 +1,15 @@
 import { throwIfChildRunAborted } from "../child-run/execution-support.ts";
 
+/** Public API contract for hosted child stream watchdog phase. */
 export type HostedChildStreamWatchdogPhase = "tool_running" | "post_tool_idle" | "generic_idle";
 
+/** State for hosted child stream watchdog. */
 export interface HostedChildStreamWatchdogState {
   phase: HostedChildStreamWatchdogPhase;
   timeoutMs: number;
 }
 
+/** Error shape for hosted child stream idle timeout. */
 export class HostedChildStreamIdleTimeoutError extends Error {
   readonly timeoutMs: number;
   readonly phase: HostedChildStreamWatchdogPhase;
@@ -23,8 +26,10 @@ export class HostedChildStreamIdleTimeoutError extends Error {
   }
 }
 
+/** Shared hosted child stream timeout token value. */
 export const HOSTED_CHILD_STREAM_TIMEOUT_TOKEN = Symbol("hosted-child-stream-timeout");
 
+/** State for resolve hosted child stream watchdog. */
 export function resolveHostedChildStreamWatchdogState(input: {
   activeToolCallId: string | null;
   completedToolResults: number;
@@ -52,6 +57,7 @@ export function resolveHostedChildStreamWatchdogState(input: {
   };
 }
 
+/** Compose abort signals helper. */
 export function composeAbortSignals(
   signals: Array<AbortSignal | undefined>,
 ): AbortSignal | undefined {
@@ -65,6 +71,7 @@ export function composeAbortSignals(
   return AbortSignal.any(activeSignals);
 }
 
+/** Applies hosted child stream idle timeout. */
 export async function* withHostedChildStreamIdleTimeout<T>(input: {
   stream: AsyncIterable<T>;
   getWatchdogState: () => HostedChildStreamWatchdogState;
@@ -121,6 +128,7 @@ export async function* withHostedChildStreamIdleTimeout<T>(input: {
   }
 }
 
+/** Resolves hosted child promise with timeout. */
 export async function resolveHostedChildPromiseWithTimeout<T>(
   promise: PromiseLike<T>,
   timeoutMs: number,

@@ -35,27 +35,34 @@ import {
 } from "./server.ts";
 import type { VeryfrontServiceServerLogger } from "../../server/service-server.ts";
 
+/** Configuration used by hosted agent service runtime. */
 export type HostedAgentServiceRuntimeConfig = AgentServiceAuthConfig & {
   PORT: number;
   ALLOWED_ORIGINS: string[];
 };
 
+/** Configuration used by agent service runtime. */
 export type AgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig;
 
+/** Public API contract for hosted agent service runtime logger. */
 export type HostedAgentServiceRuntimeLogger = VeryfrontServiceServerLogger & {
   info(message: string, metadata?: Record<string, unknown>): void;
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+/** Public API contract for agent service runtime logger. */
 export type AgentServiceRuntimeLogger = HostedAgentServiceRuntimeLogger;
 
+/** Public API contract for hosted agent service runtime trace. */
 export type HostedAgentServiceRuntimeTrace = <TResult>(
   operationName: string,
   operation: () => Promise<TResult>,
 ) => Promise<TResult>;
 
+/** Public API contract for agent service runtime trace. */
 export type AgentServiceRuntimeTrace = HostedAgentServiceRuntimeTrace;
 
+/** Options accepted by create hosted agent service runtime. */
 export type CreateHostedAgentServiceRuntimeOptions<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -81,11 +88,13 @@ export type CreateHostedAgentServiceRuntimeOptions<
   drainTimeoutMs?: number;
 };
 
+/** Options accepted by create agent service runtime. */
 export type CreateAgentServiceRuntimeOptions<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
 > = CreateHostedAgentServiceRuntimeOptions<TExecution, TConfig>;
 
+/** Public API contract for hosted agent service runtime bundle. */
 export type HostedAgentServiceRuntimeBundle<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -99,11 +108,13 @@ export type HostedAgentServiceRuntimeBundle<
   runtime: AgentServiceRuntime;
 };
 
+/** Public API contract for agent service runtime bundle. */
 export type AgentServiceRuntimeBundle<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
 > = HostedAgentServiceRuntimeBundle<TExecution, TConfig>;
 
+/** Options accepted by start node hosted agent service. */
 export type StartNodeHostedAgentServiceOptions<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -114,11 +125,13 @@ export type StartNodeHostedAgentServiceOptions<
   lifecycle?: AgentServiceServerLifecycle;
 };
 
+/** Options accepted by start node agent service. */
 export type StartNodeAgentServiceOptions<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
 > = StartNodeHostedAgentServiceOptions<TExecution, TConfig>;
 
+/** Options accepted by start agent service runtime. */
 export type StartAgentServiceRuntimeOptions<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
@@ -129,6 +142,7 @@ export type StartAgentServiceRuntimeOptions<
   lifecycle?: AgentServiceServerLifecycle;
 };
 
+/** Result returned from start node hosted agent service. */
 export type StartNodeHostedAgentServiceResult<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -136,11 +150,13 @@ export type StartNodeHostedAgentServiceResult<
   nodeServer: NodeAgentServiceServer;
 };
 
+/** Result returned from start node agent service. */
 export type StartNodeAgentServiceResult<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
 > = StartNodeHostedAgentServiceResult<TExecution, TConfig>;
 
+/** Result returned from start agent service runtime. */
 export type StartAgentServiceRuntimeResult<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
@@ -175,6 +191,7 @@ function combineAgentServiceLifecycle(
   };
 }
 
+/** Create agent service runtime. */
 export function createAgentServiceRuntime<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
@@ -236,6 +253,7 @@ export function createAgentServiceRuntime<
   };
 }
 
+/** Create hosted agent service runtime. */
 export function createHostedAgentServiceRuntime<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -245,6 +263,7 @@ export function createHostedAgentServiceRuntime<
   return createAgentServiceRuntime(options);
 }
 
+/** Starts node agent service. */
 export async function startNodeAgentService<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,
@@ -269,6 +288,7 @@ export async function startNodeAgentService<
   };
 }
 
+/** Starts node hosted agent service. */
 export async function startNodeHostedAgentService<
   TExecution extends object,
   TConfig extends HostedAgentServiceRuntimeConfig = HostedAgentServiceRuntimeConfig,
@@ -278,6 +298,7 @@ export async function startNodeHostedAgentService<
   return startNodeAgentService(options);
 }
 
+/** Starts agent service runtime. */
 export async function startAgentServiceRuntime<
   TExecution extends object,
   TConfig extends AgentServiceRuntimeConfig = AgentServiceRuntimeConfig,

@@ -1,5 +1,7 @@
+/** Public API contract for run session status. */
 export type RunSessionStatus = "running" | "waiting" | "completed" | "cancelled" | "failed";
 
+/** Error shape for run cancelled. */
 export class RunCancelledError extends Error {
   constructor(message = "Run cancelled") {
     super(message);
@@ -7,6 +9,7 @@ export class RunCancelledError extends Error {
   }
 }
 
+/** Error shape for run already exists. */
 export class RunAlreadyExistsError extends Error {
   constructor(runId: string) {
     super(`Run "${runId}" is already active`);
@@ -14,6 +17,7 @@ export class RunAlreadyExistsError extends Error {
   }
 }
 
+/** Error shape for run not active. */
 export class RunNotActiveError extends Error {
   constructor(runId: string) {
     super(`Run "${runId}" is not active`);
@@ -21,6 +25,7 @@ export class RunNotActiveError extends Error {
   }
 }
 
+/** Error shape for wait not pending. */
 export class WaitNotPendingError extends Error {
   constructor(runId: string, waitKey: string) {
     super(`Run "${runId}" is not waiting for "${waitKey}"`);
@@ -28,6 +33,7 @@ export class WaitNotPendingError extends Error {
   }
 }
 
+/** Error shape for wait conflict. */
 export class WaitConflictError extends Error {
   constructor(runId: string, waitKey: string) {
     super(`Conflicting resume value for run "${runId}" and wait key "${waitKey}"`);
@@ -35,6 +41,7 @@ export class WaitConflictError extends Error {
   }
 }
 
+/** Public API contract for submit resume value outcome. */
 export interface SubmitResumeValueOutcome {
   accepted: true;
   duplicate?: true;
@@ -65,6 +72,7 @@ type RunSession<T> = {
 const DEFAULT_WAITING_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_MAX_CONCURRENT_SESSIONS = 100;
 
+/** Options accepted by run resume session manager. */
 export interface RunResumeSessionManagerOptions<T> {
   waitingTtlMs?: number;
   sessionTtlMs?: number | null;
@@ -78,6 +86,7 @@ function defaultConflictKey(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** Implement run resume session manager. */
 export class RunResumeSessionManager<T> {
   private readonly sessions = new Map<string, RunSession<T>>();
 

@@ -10,12 +10,14 @@ import {
 } from "./runtime-event-encoder.ts";
 import type { AgentResponse } from "../types.ts";
 
+/** Public API contract for AG-UI browser chunk encoder. */
 export interface AgUiBrowserChunkEncoder<TChunk> {
   state: AgUiBrowserEncoderState;
   encode: (chunk: TChunk) => AgUiBrowserEncodedEvent[];
   finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
 }
 
+/** Options accepted by create AG-UI browser chunk encoder. */
 export interface CreateAgUiBrowserChunkEncoderOptions<TChunk> {
   getRuntimeEvents: (chunk: TChunk) => readonly AgUiRuntimeStreamEvent[];
   getMetadataFromChunk?: (
@@ -40,6 +42,7 @@ function mergeMetadata(
   if (typeof metadata.finishReason === "string") target.finishReason = metadata.finishReason;
 }
 
+/** Create AG-UI browser chunk encoder. */
 export function createAgUiBrowserChunkEncoder<TChunk>(
   options: CreateAgUiBrowserChunkEncoderOptions<TChunk>,
 ): AgUiBrowserChunkEncoder<TChunk> {

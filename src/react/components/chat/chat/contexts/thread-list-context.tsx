@@ -11,6 +11,7 @@ import * as React from "react";
 import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { Thread } from "../hooks/use-threads.ts";
 
+/** Public API contract for thread list context value. */
 export interface ThreadListContextValue {
   threads: Thread[];
   activeThreadId: string | null;
@@ -26,6 +27,7 @@ export interface ThreadListContextValue {
 
 const ThreadListContext = React.createContext<ThreadListContextValue | null>(null);
 
+/** Context for use thread list. */
 export function useThreadListContext(): ThreadListContextValue {
   const context = React.useContext(ThreadListContext);
   if (!context) {
@@ -36,8 +38,10 @@ export function useThreadListContext(): ThreadListContextValue {
   return context;
 }
 
+/** React hook for thread list context optional. */
 export function useThreadListContextOptional(): ThreadListContextValue | null {
   return React.useContext(ThreadListContext);
 }
 
+/** Render thread list context provider. */
 export const ThreadListContextProvider = ThreadListContext.Provider;

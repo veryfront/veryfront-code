@@ -31,6 +31,7 @@ function extractParentContext(headers: Headers) {
   }
 }
 
+/** Handler for instrument HTTP. */
 export function instrumentHttpHandler(
   handler: (request: Request) => Promise<Response> | Response,
 ): (request: Request) => Promise<Response> {
@@ -67,7 +68,7 @@ export function instrumentHttpHandler(
     }
   };
 }
-
+/** Create a fetch implementation instrumented with observability spans. */
 export function createInstrumentedFetch(
   baseFetch: typeof fetch = globalThis.fetch,
 ): typeof fetch {

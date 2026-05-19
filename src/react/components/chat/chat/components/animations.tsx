@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Render shimmer. */
 export function Shimmer({ children }: { children: React.ReactNode }): React.ReactElement {
   return (
     <span className="relative inline-block overflow-hidden">
@@ -9,6 +10,7 @@ export function Shimmer({ children }: { children: React.ReactNode }): React.Reac
   );
 }
 
+/** Render loader. */
 export function Loader({
   className,
   size = 16,
@@ -31,6 +33,7 @@ export function Loader({
   );
 }
 
+/** Render fade in. */
 export function FadeIn({
   children,
   duration = 300,

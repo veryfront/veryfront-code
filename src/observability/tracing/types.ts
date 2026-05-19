@@ -1,5 +1,6 @@
 import type { Context, Span, SpanKind, TextMapPropagator, Tracer } from "./api-shim.ts";
 
+/** Configuration used by tracing. */
 export interface TracingConfig {
   enabled: boolean;
   exporter: "jaeger" | "zipkin" | "otlp" | "console";
@@ -9,6 +10,7 @@ export interface TracingConfig {
   debug?: boolean;
 }
 
+/** Options accepted by span. */
 export interface SpanOptions {
   kind?: "internal" | "server" | "client" | "producer" | "consumer";
   attributes?: Record<string, string | number | boolean>;

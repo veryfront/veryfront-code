@@ -1,6 +1,8 @@
 import { isResponseLike } from "./response-like.ts";
+/** Result returned from cached request auth. */
 export type CachedRequestAuthResult<TAuth> = TAuth | Response;
 
+/** Options accepted by create request auth cache. */
 export interface CreateRequestAuthCacheOptions<TAuth> {
   authenticate: (
     request: Request,
@@ -8,10 +10,12 @@ export interface CreateRequestAuthCacheOptions<TAuth> {
   shouldCache?: (result: CachedRequestAuthResult<TAuth>) => boolean;
 }
 
+/** Public API contract for request auth cache. */
 export interface RequestAuthCache<TAuth> {
   authenticate: (request: Request) => Promise<CachedRequestAuthResult<TAuth>>;
 }
 
+/** Create request auth cache. */
 export function createRequestAuthCache<TAuth>(
   options: CreateRequestAuthCacheOptions<TAuth>,
 ): RequestAuthCache<TAuth> {

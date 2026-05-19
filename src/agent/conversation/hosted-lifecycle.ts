@@ -17,6 +17,7 @@ import type {
 } from "../hosted/child-lifecycle.ts";
 import type { HostedLifecycleAdapter, HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 
+/** Input payload for conversation hosted lifecycle finalize. */
 export interface ConversationHostedLifecycleFinalizeInput {
   model: string;
   provider: string;
@@ -25,6 +26,7 @@ export interface ConversationHostedLifecycleFinalizeInput {
   terminalErrorMessage?: string | null;
 }
 
+/** Options accepted by create conversation hosted lifecycle adapter. */
 export interface CreateConversationHostedLifecycleAdapterOptions<TChunk> {
   authToken: string;
   apiUrl: string;
@@ -43,6 +45,7 @@ export interface CreateConversationHostedLifecycleAdapterOptions<TChunk> {
     | ConversationHostedLifecycleFinalizeInput;
 }
 
+/** Create conversation hosted lifecycle adapter. */
 export function createConversationHostedLifecycleAdapter<TChunk>(
   options: CreateConversationHostedLifecycleAdapterOptions<TChunk>,
 ): HostedLifecycleAdapter<ConversationRunProjection, TChunk> {
@@ -102,6 +105,7 @@ export function createConversationHostedLifecycleAdapter<TChunk>(
   };
 }
 
+/** Create conversation hosted stream lifecycle adapter. */
 export function createConversationHostedStreamLifecycleAdapter(
   options: Omit<
     CreateConversationHostedLifecycleAdapterOptions<ChatStreamEvent>,
@@ -114,6 +118,7 @@ export function createConversationHostedStreamLifecycleAdapter(
   });
 }
 
+/** Context for conversation child lifecycle. */
 export interface ConversationChildLifecycleContext {
   authToken: string;
   apiUrl: string;
@@ -160,6 +165,7 @@ async function publishConversationChildProgress(
   );
 }
 
+/** Create conversation child lifecycle adapter. */
 export function createConversationChildLifecycleAdapter(
   ctx: ConversationChildLifecycleContext,
 ): HostedChildLifecycleAdapter {

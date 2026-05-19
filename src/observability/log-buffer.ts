@@ -1,5 +1,7 @@
+/** Public API contract for log level. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
+/** Entry shape for log. */
 export interface LogEntry {
   id: string;
   level: LogLevel;
@@ -8,7 +10,7 @@ export interface LogEntry {
   timestamp: number;
   source: string;
 }
-
+/** Filter options for reading buffered log entries. */
 export interface LogFilter {
   level?: LogLevel | LogLevel[];
   source?: string | string[];
@@ -17,8 +19,10 @@ export interface LogFilter {
   limit?: number;
 }
 
+/** Public API contract for log subscriber. */
 export type LogSubscriber = (entry: LogEntry) => void;
 
+/** Implement log buffer. */
 export class LogBuffer {
   private entries: LogEntry[] = [];
   private subscribers = new Set<LogSubscriber>();
@@ -161,16 +165,19 @@ export class LogBuffer {
 
 let globalBuffer: LogBuffer | null = null;
 
+/** Return log buffer. */
 export function getLogBuffer(): LogBuffer {
   globalBuffer ??= new LogBuffer();
   return globalBuffer;
 }
 
+/** Reset the in-memory log buffer. */
 export function resetLogBuffer(): void {
   globalBuffer?.clear();
   globalBuffer = null;
 }
 
+/** Capture console output in the log buffer. */
 export function interceptConsole(buffer: LogBuffer, source = "console"): () => void {
   const original = {
     log: console.log,

@@ -20,12 +20,16 @@ const ROOT = Deno.cwd();
 // ---------------------------------------------------------------------------
 
 const args = parseArgs(Deno.args, {
-  string: ["output"],
-  default: { output: "docs/reference" },
+  string: ["output", "source-base-url"],
+  default: {
+    output: "docs/reference",
+    "source-base-url": "https://github.com/veryfront/veryfront-code/blob/main",
+  },
 });
 
 const OUTPUT_DIR = args.output.startsWith("/") ? args.output : `${ROOT}/${args.output}`;
 const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
+const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/\/+$/, "");
 
 // ---------------------------------------------------------------------------
 // Types
@@ -83,7 +87,7 @@ interface TsType {
     typeParams?: unknown[];
   };
   typeLiteral?: {
-    properties: Array<{ name: string; optional: boolean; tsType?: TsType; jsDoc?: { doc?: string }; params?: unknown[]; typeParams?: unknown[] }>;
+    properties: InterfaceProperty[];
     callSignatures?: unknown[];
     indexSignatures?: unknown[];
     constructors?: unknown[];
@@ -125,6 +129,7 @@ interface InterfaceProperty {
   jsDoc?: { doc?: string };
   params?: unknown[];
   typeParams?: unknown[];
+  location?: DenoDocLocation;
 }
 
 interface InterfaceMethod {
@@ -174,14 +179,40 @@ interface DocNode {
   classDef?: ClassDef;
   variableDef?: Record<string, unknown>;
   enumDef?: Record<string, unknown>;
+  location?: DenoDocLocation;
+  referenceTarget?: DenoDocLocation;
+}
+
+interface DenoDocSymbol {
+  name: string;
+  declarations?: Array<Record<string, unknown>>;
+}
+
+interface DenoDocLocation {
+  filename?: string;
+  line?: number;
+  col?: number;
+  byteIndex?: number;
+}
+
+interface ExportSummary {
+  name: string;
+  description: string;
+  sourceHref: string;
 }
 
 interface CategorizedExports {
-  functions: Array<{ name: string; description: string }>;
-  types: Array<{ name: string; description: string }>;
-  classes: Array<{ name: string; description: string }>;
-  constants: Array<{ name: string; description: string }>;
-  components: Array<{ name: string; description: string }>;
+  functions: ExportSummary[];
+  types: ExportSummary[];
+  classes: ExportSummary[];
+  constants: ExportSummary[];
+  components: ExportSummary[];
+}
+
+interface SourceDocStats {
+  total: number;
+  documented: number;
+  missing: number;
 }
 
 const EMPTY_BARREL_JSDOC: BarrelJSDoc = {
@@ -317,6 +348,11 @@ const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
 
 const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = {
   "veryfront": [
+    { path: "index", reason: "Browse the guide map" },
+    { path: "installation", reason: "Install the CLI and framework" },
+    { path: "quickstart", reason: "Create and run a project" },
+    { path: "choose-a-primitive", reason: "Choose the right primitive" },
+    { path: "production-path", reason: "Move a route toward production checks" },
     { path: "configuration", reason: "Configure your Veryfront project" },
     { path: "project-structure", reason: "Project layout and conventions" },
     { path: "data-fetching", reason: "Server data, static data, params" },
@@ -350,6 +386,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
     { path: "multi-agent", reason: "Compose multi-agent systems" },
     { path: "memory-and-streaming", reason: "Memory, streaming, and lifecycle" },
     { path: "agent-service-runtime", reason: "Deploy agents as standalone services" },
+    { path: "skills", reason: "Attach project skills to agents" },
   ],
   "veryfront/tool": [
     { path: "tools", reason: "Define and call tools" },
@@ -366,6 +403,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
   ],
   "veryfront/jobs": [
     { path: "jobs", reason: "Schedule and run background jobs" },
+    { path: "tasks", reason: "Define task targets for jobs" },
   ],
   "veryfront/mcp": [
     { path: "mcp-server", reason: "Build and host MCP servers" },
@@ -1034,6 +1072,12 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
   let exampleLines: string[] = [];
   let inCodeBlock = false;
 
+  const finishExample = (): void => {
+    finalizeExample(examples, exampleTitle, exampleLines);
+    exampleTitle = "";
+    exampleLines = [];
+  };
+
   for (const line of lines) {
     if (line.startsWith("@module")) {
       moduleName = line.replace("@module", "").trim();
@@ -1041,7 +1085,7 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
 
     if (line.startsWith("@example")) {
-      finalizeExample(examples, exampleTitle, exampleLines);
+      finishExample();
       exampleTitle = line.replace("@example", "").trim();
       exampleLines = [];
       inExample = true;
@@ -1050,7 +1094,7 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
 
     if (line.startsWith("@")) {
-      finalizeExample(examples, exampleTitle, exampleLines);
+      finishExample();
       inExample = false;
       continue;
     }
@@ -1067,7 +1111,7 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
     }
   }
 
-  finalizeExample(examples, exampleTitle, exampleLines);
+  finishExample();
 
   const description = descLines.join(" ").replace(/\s+/g, " ").trim();
   return { description, moduleName, examples };
@@ -1107,16 +1151,282 @@ async function getDenoDoc(filePath: string): Promise<DocNode[]> {
 
   try {
     const parsed = JSON.parse(new TextDecoder().decode(stdout));
-    if (Array.isArray(parsed)) return parsed;
-    if (parsed && Array.isArray(parsed.nodes)) return parsed.nodes;
-    return [];
+    return normalizeDenoDoc(parsed);
   } catch {
     return [];
   }
 }
 
+function normalizeDenoDoc(parsed: unknown): DocNode[] {
+  if (Array.isArray(parsed)) return parsed as DocNode[];
+
+  const root = asRecord(parsed);
+  if (!root) return [];
+
+  if (Array.isArray(root.nodes)) return root.nodes as DocNode[];
+
+  const nodes = asRecord(root.nodes);
+  if (!nodes) return [];
+
+  const symbols = Object.values(nodes).flatMap((node) => {
+    const record = asRecord(node);
+    return Array.isArray(record?.symbols) ? record.symbols : [];
+  });
+
+  return resolveDenoDocReferences(
+    symbols.flatMap((symbol) => normalizeDenoDocSymbol(symbol)),
+  );
+}
+
+function normalizeDenoDocSymbol(symbol: unknown): DocNode[] {
+  const record = asRecord(symbol) as DenoDocSymbol | undefined;
+  if (!record?.name || !Array.isArray(record.declarations)) return [];
+
+  return record.declarations
+    .map((declaration) => normalizeDenoDocDeclaration(record.name, declaration))
+    .filter((node): node is DocNode => node !== undefined);
+}
+
+function normalizeDenoDocDeclaration(
+  name: string,
+  declaration: Record<string, unknown>,
+): DocNode | undefined {
+  if (declaration.declarationKind === "private") return undefined;
+
+  const kind = typeof declaration.kind === "string" ? declaration.kind : "";
+  if (!kind) return undefined;
+
+  const node: DocNode = {
+    name,
+    kind,
+    jsDoc: declaration.jsDoc as DocNode["jsDoc"],
+    location: normalizeLocation(declaration.location),
+  };
+  const def = asRecord(declaration.def) ?? {};
+
+  if (kind === "function") {
+    node.functionDef = normalizeFunctionDef(def);
+  } else if (kind === "interface") {
+    node.interfaceDef = normalizeInterfaceDef(def);
+  } else if (kind === "class") {
+    node.classDef = normalizeClassDef(def);
+  } else if (kind === "typeAlias") {
+    node.typeAliasDef = { tsType: normalizeTsType(def.tsType) };
+  } else if (kind === "variable") {
+    node.variableDef = def;
+  } else if (kind === "enum") {
+    node.enumDef = def;
+  } else if (kind === "reference") {
+    node.referenceTarget = normalizeLocation(def.target);
+  }
+
+  return node;
+}
+
+function resolveDenoDocReferences(nodes: DocNode[]): DocNode[] {
+  const concreteByLocation = new Map<string, DocNode>();
+
+  for (const node of nodes) {
+    if (node.kind === "reference") continue;
+    const key = locationKey(node.location);
+    if (key && !concreteByLocation.has(key)) {
+      concreteByLocation.set(key, node);
+    }
+  }
+
+  return nodes.map((node) => {
+    if (node.kind !== "reference") return node;
+
+    const key = locationKey(node.referenceTarget);
+    const target = key ? concreteByLocation.get(key) : undefined;
+    if (!target) return node;
+
+    return {
+      ...target,
+      name: node.name,
+      jsDoc: node.jsDoc ?? target.jsDoc,
+      referenceTarget: node.referenceTarget,
+    };
+  });
+}
+
+function normalizeLocation(value: unknown): DenoDocLocation | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+
+  return {
+    filename: typeof record.filename === "string" ? record.filename : undefined,
+    line: typeof record.line === "number" ? record.line : undefined,
+    col: typeof record.col === "number" ? record.col : undefined,
+    byteIndex: typeof record.byteIndex === "number"
+      ? record.byteIndex
+      : undefined,
+  };
+}
+
+function locationKey(location: DenoDocLocation | undefined): string | undefined {
+  if (
+    !location?.filename ||
+    typeof location.line !== "number" ||
+    typeof location.col !== "number"
+  ) {
+    return undefined;
+  }
+
+  return `${location.filename}:${location.line}:${location.col}`;
+}
+
+function normalizeFunctionDef(def: Record<string, unknown>): FunctionDef {
+  return {
+    ...def,
+    params: normalizeParams(def.params),
+    returnType: normalizeTsType(def.returnType),
+  } as FunctionDef;
+}
+
+function normalizeInterfaceDef(def: Record<string, unknown>): InterfaceDef {
+  return {
+    ...def,
+    extends: Array.isArray(def.extends) ? def.extends : [],
+    constructors: Array.isArray(def.constructors) ? def.constructors : [],
+    methods: normalizeMethods(def.methods),
+    properties: normalizeProperties(def.properties),
+  } as InterfaceDef;
+}
+
+function normalizeClassDef(def: Record<string, unknown>): ClassDef {
+  return {
+    ...def,
+    constructors: Array.isArray(def.constructors)
+      ? def.constructors.map((constructor) => {
+        const record = asRecord(constructor) ?? {};
+        return { ...record, params: normalizeParams(record.params) };
+      })
+      : [],
+    methods: normalizeClassMethods(def.methods),
+    properties: normalizeProperties(def.properties),
+  } as ClassDef;
+}
+
+function normalizeMethods(methods: unknown): InterfaceMethod[] {
+  if (!Array.isArray(methods)) return [];
+  return methods.map((method) => {
+    const record = asRecord(method) ?? {};
+    return {
+      ...record,
+      params: normalizeParams(record.params),
+      returnType: normalizeTsType(record.returnType),
+    } as InterfaceMethod;
+  });
+}
+
+function normalizeClassMethods(methods: unknown): ClassMethod[] {
+  if (!Array.isArray(methods)) return [];
+  return methods.map((method) => {
+    const record = asRecord(method) ?? {};
+    return {
+      ...record,
+      functionDef: normalizeFunctionDef(asRecord(record.functionDef) ?? {}),
+    } as ClassMethod;
+  });
+}
+
+function normalizeProperties(properties: unknown): InterfaceProperty[] {
+  if (!Array.isArray(properties)) return [];
+  return properties.map((property) => {
+    const record = asRecord(property) ?? {};
+    return {
+      ...record,
+      location: normalizeLocation(record.location),
+      tsType: normalizeTsType(record.tsType),
+    } as InterfaceProperty;
+  });
+}
+
+function normalizeParams(params: unknown): FunctionParam[] {
+  if (!Array.isArray(params)) return [];
+  return params.map((param) => {
+    const record = asRecord(param) ?? {};
+    return {
+      ...record,
+      tsType: normalizeTsType(record.tsType),
+    } as FunctionParam;
+  });
+}
+
+function normalizeTsType(type: unknown): TsType | undefined {
+  const record = asRecord(type);
+  if (!record) return undefined;
+
+  const normalized: Record<string, unknown> = { ...record };
+  const kind = typeof record.kind === "string" ? record.kind : "";
+  const value = record.value;
+
+  if (kind === "keyword" && typeof value === "string") {
+    normalized.keyword = value;
+  } else if (kind === "typeRef") {
+    const typeRef = asRecord(value) ?? {};
+    normalized.typeRef = {
+      ...typeRef,
+      typeParams: Array.isArray(typeRef.typeParams)
+        ? typeRef.typeParams.map((param) => normalizeTsType(param))
+        : undefined,
+    };
+  } else if (kind === "union" && Array.isArray(value)) {
+    normalized.union = value.map((item) => normalizeTsType(item));
+  } else if (kind === "intersection" && Array.isArray(value)) {
+    normalized.intersection = value.map((item) => normalizeTsType(item));
+  } else if (kind === "array") {
+    normalized.array = normalizeTsType(value);
+  } else if (kind === "fnOrConstructor") {
+    const fn = asRecord(value) ?? {};
+    normalized.fnOrConstructor = {
+      ...fn,
+      params: normalizeParams(fn.params),
+      tsType: normalizeTsType(fn.tsType),
+    };
+  } else if (kind === "typeLiteral") {
+    const literal = asRecord(value) ?? {};
+    normalized.typeLiteral = {
+      ...literal,
+      properties: normalizeProperties(literal.properties),
+    };
+  } else if (kind === "parenthesized") {
+    normalized.parenthesized = normalizeTsType(value);
+  } else if (kind === "literal") {
+    normalized.literal = asRecord(value);
+  } else if (kind === "tuple" && Array.isArray(value)) {
+    normalized.tuple = value.map((item) => normalizeTsType(item));
+  } else if (kind === "indexedAccess") {
+    const indexed = asRecord(value) ?? {};
+    normalized.indexedAccess = {
+      objType: normalizeTsType(indexed.objType),
+      indexType: normalizeTsType(indexed.indexType),
+    };
+  } else if (kind === "typeOperator") {
+    const operator = asRecord(value) ?? {};
+    normalized.typeOperator = {
+      ...operator,
+      tsType: normalizeTsType(operator.tsType),
+    };
+  } else if (kind === "rest") {
+    normalized.rest = normalizeTsType(value);
+  } else if (kind === "optional") {
+    normalized.optional = normalizeTsType(value);
+  }
+
+  return normalized as unknown as TsType;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
-// 4. Categorize doc nodes with fallback descriptions
+// 4. Categorize doc nodes with source-owned descriptions
 // ---------------------------------------------------------------------------
 
 function categorizeNodes(nodes: DocNode[], importPath: string): CategorizedExports {
@@ -1128,43 +1438,111 @@ function categorizeNodes(nodes: DocNode[], importPath: string): CategorizedExpor
     components: [],
   };
 
-  const fallbacks = DESCRIPTIONS[importPath] ?? {};
-
   for (const node of nodes) {
     const name = node.name;
-    const desc = getNodeDescription(node, fallbacks);
+    const desc = getNodeDescription(node);
+    const sourceHref = getNodeSourceHref(node);
 
     switch (node.kind) {
       case "function": {
-        pushNodeSummary(isComponentLikeName(name) ? result.components : result.functions, name, desc);
+        pushNodeSummary(
+          isComponentLikeName(name) ? result.components : result.functions,
+          name,
+          desc,
+          sourceHref,
+        );
         break;
       }
       case "interface":
       case "typeAlias":
       case "enum":
-        pushNodeSummary(result.types, name, desc);
+        pushNodeSummary(result.types, name, desc, sourceHref);
         break;
       case "class":
-        pushNodeSummary(result.classes, name, desc);
+        pushNodeSummary(result.classes, name, desc, sourceHref);
         break;
       case "variable":
-        pushNodeSummary(isComponentLikeName(name) ? result.components : result.constants, name, desc);
+        pushNodeSummary(
+          isComponentLikeName(name) ? result.components : result.constants,
+          name,
+          desc,
+          sourceHref,
+        );
         break;
       default:
         break;
     }
   }
 
-  for (const cat of Object.values(result) as Array<Array<{ name: string; description: string }>>) {
+  for (const cat of Object.values(result) as ExportSummary[][]) {
     cat.sort((a, b) => a.name.localeCompare(b.name));
   }
 
   return result;
 }
 
-function getNodeDescription(node: DocNode, fallbacks: Record<string, string>): string {
-  const upstreamDescription = node.jsDoc?.doc?.split("\n")[0] ?? "";
-  return upstreamDescription || fallbacks[node.name] || "";
+function getNodeDescription(node: DocNode): string {
+  return node.jsDoc?.doc ? oneLineDoc(node.jsDoc.doc) : "";
+}
+
+function getNodeSourceHref(node: DocNode): string {
+  return getSourceHref(node.location);
+}
+
+function getSourceHref(location: DenoDocLocation | undefined): string {
+  const relativePath = getRelativeSourcePath(location);
+  if (!relativePath) return "";
+
+  const lineNumber = location?.line;
+  const line = typeof lineNumber === "number" && lineNumber > 0 ? `#L${lineNumber}` : "";
+  return `${SOURCE_BASE_URL}/${relativePath}${line}`;
+}
+
+function getRelativeSourcePath(location: DenoDocLocation | undefined): string {
+  const filename = location?.filename;
+  if (!filename) return "";
+
+  let path = filename;
+  if (path.startsWith("file://")) {
+    path = decodeURIComponent(new URL(path).pathname);
+  }
+
+  const rootPrefix = `${ROOT}/`;
+  if (!path.startsWith(rootPrefix)) return "";
+
+  return path.slice(rootPrefix.length);
+}
+
+function summarizeSourceDocs(nodes: DocNode[]): SourceDocStats {
+  const supportedKinds = new Set([
+    "function",
+    "interface",
+    "typeAlias",
+    "enum",
+    "class",
+    "variable",
+  ]);
+
+  let total = 0;
+  let documented = 0;
+
+  for (const node of nodes) {
+    if (!supportedKinds.has(node.kind)) continue;
+    total += 1;
+    if (getNodeDescription(node)) documented += 1;
+  }
+
+  return {
+    total,
+    documented,
+    missing: total - documented,
+  };
+}
+
+function addSourceDocStats(target: SourceDocStats, next: SourceDocStats): void {
+  target.total += next.total;
+  target.documented += next.documented;
+  target.missing += next.missing;
 }
 
 function isComponentLikeName(name: string): boolean {
@@ -1172,11 +1550,12 @@ function isComponentLikeName(name: string): boolean {
 }
 
 function pushNodeSummary(
-  target: Array<{ name: string; description: string }>,
+  target: ExportSummary[],
   name: string,
   description: string,
+  sourceHref: string,
 ): void {
-  target.push({ name, description });
+  target.push({ name, description, sourceHref });
 }
 
 // ---------------------------------------------------------------------------
@@ -1694,23 +2073,43 @@ function findNode(nodes: DocNode[], name: string): DocNode | undefined {
 
 function getPropertyDescription(typeName: string, propName: string, prop: InterfaceProperty): string {
   // Prefer upstream JSDoc
-  if (prop.jsDoc?.doc) return prop.jsDoc.doc.split("\n")[0] ?? "";
+  if (prop.jsDoc?.doc) return oneLineDoc(prop.jsDoc.doc);
   // Fall back to curated
   return PROPERTY_DESCRIPTIONS[typeName]?.[propName] ?? "";
+}
+
+function oneLineDoc(doc: string): string {
+  const paragraph = doc.split(/\n\s*\n/)[0] ?? "";
+  const lines: string[] = [];
+
+  for (const rawLine of paragraph.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (lines.length > 0 && /^[-*]\s+/.test(line)) break;
+    lines.push(line);
+  }
+
+  return lines.join(" ")
+    .replace(/[\u2014\u2013]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function renderPropertyTable(
   typeName: string,
   properties: InterfaceProperty[],
+  fallbackLocation?: DenoDocLocation,
 ): string[] {
   const lines: string[] = [];
-  lines.push("| Property | Type | Description |");
-  lines.push("|----------|------|-------------|");
+  lines.push("| Property | Type | Description | Source |");
+  lines.push("|----------|------|-------------|--------|");
   for (const prop of properties) {
     const name = prop.optional ? `${prop.name}?` : prop.name;
     const rawType = renderType(prop.tsType);
     const desc = getPropertyDescription(typeName, prop.name, prop);
-    lines.push(`| \`${name}\` | ${mdxType(rawType)} | ${desc} |`);
+    const sourceHref = getSourceHref(prop.location ?? fallbackLocation);
+    const source = sourceHref ? `[source](${sourceHref})` : "";
+    lines.push(`| \`${name}\` | ${mdxType(rawType)} | ${desc} | ${source} |`);
   }
   return lines;
 }
@@ -1741,7 +2140,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
       lines.push("");
 
       // Description
-      const desc = node.jsDoc?.doc?.split("\n")[0] ?? fallbacks[fnName] ?? "";
+      const desc = node.jsDoc?.doc
+        ? oneLineDoc(node.jsDoc.doc)
+        : fallbacks[fnName] ?? "";
       if (desc) {
         lines.push(desc);
         lines.push("");
@@ -1751,7 +2152,13 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
       if (fnSpec.configType) {
         const configNode = findNode(nodes, fnSpec.configType);
         if (configNode?.interfaceDef?.properties && configNode.interfaceDef.properties.length > 0) {
-          lines.push(...renderPropertyTable(fnSpec.configType, configNode.interfaceDef.properties));
+          lines.push(
+            ...renderPropertyTable(
+              fnSpec.configType,
+              configNode.interfaceDef.properties,
+              configNode.location,
+            ),
+          );
           lines.push("");
         }
       }
@@ -1785,7 +2192,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           lines.push("");
 
           // Method description: upstream JSDoc first, then curated fallback
-          const methodDesc = method.jsDoc?.doc?.split("\n")[0] ?? methodMeta[method.name]?.desc ?? "";
+          const methodDesc = method.jsDoc?.doc
+            ? oneLineDoc(method.jsDoc.doc)
+            : methodMeta[method.name]?.desc ?? "";
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");
@@ -1803,8 +2212,15 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
                 tsType: p.tsType,
                 // Prefer curated param description, then upstream JSDoc
                 jsDoc: paramDescs[p.name] ? { doc: paramDescs[p.name] } : p.jsDoc,
+                location: p.location,
               }));
-              lines.push(...renderPropertyTable(`${typeName}.${method.name}`, interfaceProps));
+              lines.push(
+                ...renderPropertyTable(
+                  `${typeName}.${method.name}`,
+                  interfaceProps,
+                  node.location,
+                ),
+              );
               lines.push("");
             }
           }
@@ -1841,7 +2257,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           lines.push(`### \`${signature}\``);
           lines.push("");
 
-          const methodDesc = method.jsDoc?.doc?.split("\n")[0] ?? methodMeta[method.name]?.desc ?? "";
+          const methodDesc = method.jsDoc?.doc
+            ? oneLineDoc(method.jsDoc.doc)
+            : methodMeta[method.name]?.desc ?? "";
           if (methodDesc) {
             lines.push(methodDesc);
             lines.push("");
@@ -1892,6 +2310,8 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
         name: p.name,
         optional: p.optional,
         tsType: p.tsType,
+        jsDoc: p.jsDoc,
+        location: p.location,
       }));
     }
 
@@ -1906,13 +2326,15 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
     lines.push(`### \`${typeName}\``);
     lines.push("");
 
-    const desc = node?.jsDoc?.doc?.split("\n")[0] ?? fallbacks[typeName] ?? "";
+    const desc = node?.jsDoc?.doc
+      ? oneLineDoc(node.jsDoc.doc)
+      : fallbacks[typeName] ?? "";
     if (desc) {
       lines.push(desc);
       lines.push("");
     }
 
-    lines.push(...renderPropertyTable(typeName, properties));
+    lines.push(...renderPropertyTable(typeName, properties, node?.location));
     lines.push("");
   }
 
@@ -2051,10 +2473,10 @@ function generateMD(
       if (items.length === 0) continue;
       lines.push(`### ${title}`);
       lines.push("");
-      lines.push("| Name | Description |");
-      lines.push("|------|-------------|");
+      lines.push("| Name | Description | Source |");
+      lines.push("|------|-------------|--------|");
       for (const e of items) {
-        lines.push(`| \`${e.name}\` | ${e.description} |`);
+        lines.push(`| \`${e.name}\` | ${e.description} | ${sourceCell(e)} |`);
       }
       lines.push("");
     }
@@ -2096,10 +2518,10 @@ function generateMD(
         if (items.length === 0) continue;
         lines.push(`#### ${label}`);
         lines.push("");
-        lines.push("| Name | Description |");
-        lines.push("|------|-------------|");
+        lines.push("| Name | Description | Source |");
+        lines.push("|------|-------------|--------|");
         for (const item of items) {
-          lines.push(`| \`${item.name}\` | ${item.description || ""} |`);
+          lines.push(`| \`${item.name}\` | ${item.description || ""} | ${sourceCell(item)} |`);
         }
         lines.push("");
       }
@@ -2162,6 +2584,10 @@ function pickDeepImportSample(exports: CategorizedExports): string[] {
   return all.slice(0, 3);
 }
 
+function sourceCell(summary: ExportSummary): string {
+  return summary.sourceHref ? `[source](${summary.sourceHref})` : "";
+}
+
 // ---------------------------------------------------------------------------
 // 7. Generate README for docs/reference/
 // ---------------------------------------------------------------------------
@@ -2215,6 +2641,27 @@ function generateReadmeMD(
   return lines.join("\n");
 }
 
+async function removeStaleReferencePages(expectedSlugs: Set<string>): Promise<void> {
+  const staleFiles: string[] = [];
+
+  try {
+    for await (const entry of Deno.readDir(VERYFRONT_DIR)) {
+      if (!entry.isFile || !entry.name.endsWith(".md")) continue;
+      const slug = entry.name.replace(/\.md$/, "");
+      if (!expectedSlugs.has(slug)) {
+        staleFiles.push(`${VERYFRONT_DIR}/${entry.name}`);
+      }
+    }
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+
+  for (const file of staleFiles) {
+    await Deno.remove(file);
+    console.log(`  Removed stale ${file}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -2226,8 +2673,16 @@ async function main() {
 
   await ensureDir(OUTPUT_DIR);
   await ensureDir(VERYFRONT_DIR);
+  await removeStaleReferencePages(
+    new Set(groups.map((group) => group.parent.slug)),
+  );
 
   const indexData: Array<{ entry: ExportEntry; jsdoc: BarrelJSDoc }> = [];
+  const sourceDocStats: SourceDocStats = {
+    total: 0,
+    documented: 0,
+    missing: 0,
+  };
 
   for (const [idx, group] of groups.entries()) {
     const entry = group.parent;
@@ -2261,6 +2716,7 @@ async function main() {
         jsdoc = { description: "", moduleName: "", examples: [] };
       }
       nodes = await getDenoDoc(entry.filePath);
+      addSourceDocStats(sourceDocStats, summarizeSourceDocs(nodes));
       exports = categorizeNodes(nodes, entry.importPath);
     }
 
@@ -2277,6 +2733,7 @@ async function main() {
         deepJsdoc = { description: "", moduleName: "", examples: [] };
       }
       const deepNodes = await getDenoDoc(deep.filePath);
+      addSourceDocStats(sourceDocStats, summarizeSourceDocs(deepNodes));
       const deepExports = categorizeNodes(deepNodes, deep.importPath);
       deepRenders.push({ deep, jsdoc: deepJsdoc, exports: deepExports });
     }
@@ -2294,6 +2751,9 @@ async function main() {
   await Deno.writeTextFile(readmePath, readmeMD);
   console.log(`\nWrote ${readmePath}`);
   console.log(`Generated ${groups.length} MD files in ${VERYFRONT_DIR}`);
+  console.log(
+    `Source JSDoc coverage: ${sourceDocStats.documented}/${sourceDocStats.total} public declarations documented (${sourceDocStats.missing} missing).`,
+  );
 }
 
 main();

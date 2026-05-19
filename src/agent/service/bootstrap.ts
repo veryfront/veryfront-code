@@ -4,15 +4,19 @@ import {
   installAbortRejectionGuard,
 } from "./abort-rejection-guard.ts";
 
+/** Context for agent service trace. */
 export type AgentServiceTraceContext = {
   traceId?: string;
   spanId?: string;
 };
 
+/** Public API contract for agent service trace context getter. */
 export type AgentServiceTraceContextGetter = () => AgentServiceTraceContext;
 
+/** Public API contract for agent service bootstrap exit. */
 export type AgentServiceBootstrapExit = (code: number) => never | void;
 
+/** Options accepted by bootstrap agent service. */
 export type BootstrapAgentServiceOptions = {
   loadLogger?: () => AbortRejectionGuardLogger | Promise<AbortRejectionGuardLogger>;
   initializeTelemetry?: () => boolean | Promise<boolean>;
@@ -22,6 +26,7 @@ export type BootstrapAgentServiceOptions = {
   start: () => void | Promise<void>;
 };
 
+/** Options accepted by run agent service main. */
 export type RunAgentServiceMainOptions = BootstrapAgentServiceOptions & {
   onStartupError?: (error: unknown) => void | Promise<void>;
   exit?: AgentServiceBootstrapExit;
@@ -47,6 +52,7 @@ async function registerTraceContext(
   await options.registerTraceContextGetter(options.getTraceContext);
 }
 
+/** Bootstrap agent service helper. */
 export async function bootstrapAgentService(
   options: BootstrapAgentServiceOptions,
 ): Promise<void> {
@@ -59,6 +65,7 @@ export async function bootstrapAgentService(
   await options.start();
 }
 
+/** Run agent service main. */
 export function runAgentServiceMain(options: RunAgentServiceMainOptions): Promise<void> {
   installAbortRejectionGuard({
     loadLogger: options.loadLogger,

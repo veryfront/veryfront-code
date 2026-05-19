@@ -242,6 +242,7 @@ export const ParallelStrategySchema = lazySchema(getParallelStrategySchema);
 export const WaitTypeSchema = lazySchema(getWaitTypeSchema);
 
 // Inferred types
+/** Public API contract for workflow status. */
 export type WorkflowStatus = InferSchema<ReturnType<typeof getWorkflowStatusSchema>>;
 export type NodeStatus = InferSchema<ReturnType<typeof getNodeStatusSchema>>;
 export type WorkflowNodeType = InferSchema<ReturnType<typeof getWorkflowNodeTypeSchema>>;

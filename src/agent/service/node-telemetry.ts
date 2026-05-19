@@ -8,14 +8,19 @@ import {
   NodeTelemetryProviderName,
 } from "#veryfront/extensions/observability/index.ts";
 
+/** Public API contract for node hosted agent service telemetry env. */
 export type NodeHostedAgentServiceTelemetryEnv = Record<string, string | undefined>;
 
+/** Public API contract for node agent service telemetry env. */
 export type NodeAgentServiceTelemetryEnv = NodeHostedAgentServiceTelemetryEnv;
 
+/** Configuration used by node hosted agent service instrumentation. */
 export type NodeHostedAgentServiceInstrumentationConfig = NodeTelemetryInstrumentationConfig;
 
+/** Configuration used by node agent service instrumentation. */
 export type NodeAgentServiceInstrumentationConfig = NodeHostedAgentServiceInstrumentationConfig;
 
+/** Configuration used by node hosted agent service telemetry. */
 export type NodeHostedAgentServiceTelemetryConfig = {
   enabled: boolean;
   serviceName: string;
@@ -26,8 +31,10 @@ export type NodeHostedAgentServiceTelemetryConfig = {
   instrumentation: NodeHostedAgentServiceInstrumentationConfig;
 };
 
+/** Configuration used by node agent service telemetry. */
 export type NodeAgentServiceTelemetryConfig = NodeHostedAgentServiceTelemetryConfig;
 
+/** Options accepted by resolve node hosted agent service telemetry config. */
 export type ResolveNodeHostedAgentServiceTelemetryConfigOptions = {
   env: NodeHostedAgentServiceTelemetryEnv;
   defaultServiceName: string;
@@ -35,17 +42,23 @@ export type ResolveNodeHostedAgentServiceTelemetryConfigOptions = {
   defaultEnabled?: boolean;
 };
 
+/** Options accepted by resolve node agent service telemetry config. */
 export type ResolveNodeAgentServiceTelemetryConfigOptions =
   ResolveNodeHostedAgentServiceTelemetryConfigOptions;
 
+/** Public API contract for node hosted agent service telemetry logger. */
 export type NodeHostedAgentServiceTelemetryLogger = NodeTelemetryLogger;
 
+/** Public API contract for node agent service telemetry logger. */
 export type NodeAgentServiceTelemetryLogger = NodeHostedAgentServiceTelemetryLogger;
 
+/** Public API contract for node hosted agent service telemetry process target. */
 export type NodeHostedAgentServiceTelemetryProcessTarget = NodeTelemetryProcessTarget;
 
+/** Public API contract for node agent service telemetry process target. */
 export type NodeAgentServiceTelemetryProcessTarget = NodeHostedAgentServiceTelemetryProcessTarget;
 
+/** Options accepted by initialize node hosted agent service telemetry. */
 export type InitializeNodeHostedAgentServiceTelemetryOptions =
   & NodeHostedAgentServiceTelemetryConfig
   & {
@@ -54,6 +67,7 @@ export type InitializeNodeHostedAgentServiceTelemetryOptions =
     telemetryProvider?: NodeTelemetryProvider;
   };
 
+/** Options accepted by initialize node agent service telemetry. */
 export type InitializeNodeAgentServiceTelemetryOptions =
   InitializeNodeHostedAgentServiceTelemetryOptions;
 
@@ -100,6 +114,7 @@ function resolveInstrumentationConfig(
   };
 }
 
+/** Configuration used by resolve node hosted agent service telemetry. */
 export function resolveNodeHostedAgentServiceTelemetryConfig(
   options: ResolveNodeHostedAgentServiceTelemetryConfigOptions,
 ): NodeHostedAgentServiceTelemetryConfig {
@@ -116,6 +131,7 @@ export function resolveNodeHostedAgentServiceTelemetryConfig(
   };
 }
 
+/** Configuration used by resolve node agent service telemetry. */
 export function resolveNodeAgentServiceTelemetryConfig(
   options: ResolveNodeAgentServiceTelemetryConfigOptions,
 ): NodeAgentServiceTelemetryConfig {
@@ -152,6 +168,7 @@ function logError(
   );
 }
 
+/** Initialize node hosted agent service open telemetry. */
 export async function initializeNodeHostedAgentServiceOpenTelemetry(
   options: InitializeNodeHostedAgentServiceTelemetryOptions,
 ): Promise<boolean> {
@@ -190,6 +207,7 @@ export async function initializeNodeHostedAgentServiceOpenTelemetry(
   }
 }
 
+/** Initialize node agent service open telemetry. */
 export async function initializeNodeAgentServiceOpenTelemetry(
   options: InitializeNodeAgentServiceTelemetryOptions,
 ): Promise<boolean> {

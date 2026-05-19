@@ -17,6 +17,7 @@ function normalizeAllowedTools(value: string | string[] | undefined): string[] {
 
 // Hand-written transform output type. The contract DSL erases the parameter
 // type through `.transform()`, so we annotate explicitly.
+/** Public API contract for runtime skill frontmatter. */
 export interface RuntimeSkillFrontmatter {
   name: string | undefined;
   description: string | undefined;
@@ -51,9 +52,12 @@ export const getRuntimeSkillFrontmatterSchema = defineSchema((v) =>
     })
 );
 
-/** @deprecated Use getRuntimeSkillFrontmatterSchema() */
+/** Schema for runtime skill frontmatter.
+ * @deprecated Use getRuntimeSkillFrontmatterSchema()
+ */
 export const RuntimeSkillFrontmatterSchema = lazySchema(getRuntimeSkillFrontmatterSchema);
 
+/** Definition for runtime skill. */
 export type RuntimeSkillDefinition = {
   id: string;
   name: string;
@@ -66,6 +70,7 @@ export type RuntimeSkillDefinition = {
   references?: string[];
 };
 
+/** Public API contract for runtime loaded skill response messages. */
 export type RuntimeLoadedSkillResponseMessages = {
   allowedToolsNote: string;
   noCurrentRunToolsNote: string;
@@ -74,6 +79,7 @@ export type RuntimeLoadedSkillResponseMessages = {
   referenceNote: string;
 };
 
+/** Response payload for runtime loaded skill. */
 export type RuntimeLoadedSkillResponse = {
   skillId: string;
   instructions: string;
@@ -91,10 +97,12 @@ export type RuntimeLoadedSkillResponse = {
   referenceNote?: string;
 };
 
+/** Public API contract for runtime skill metadata logger. */
 export type RuntimeSkillMetadataLogger = {
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Public API contract for parsed runtime skill document. */
 export type ParsedRuntimeSkillDocument = {
   metadata: RuntimeSkillFrontmatter;
   body: string;
@@ -122,6 +130,7 @@ function extractDescriptionFromMarkdown(content: string, fallback: string): stri
   return fallback;
 }
 
+/** Parses runtime skill document. */
 export function parseRuntimeSkillDocument(
   content: string,
   options: { logger?: RuntimeSkillMetadataLogger } = {},
@@ -149,6 +158,7 @@ export function parseRuntimeSkillDocument(
   }
 }
 
+/** Parses runtime skill metadata. */
 export function parseRuntimeSkillMetadata(
   content: string,
   options: { logger?: RuntimeSkillMetadataLogger } = {},
@@ -156,6 +166,7 @@ export function parseRuntimeSkillMetadata(
   return parseRuntimeSkillDocument(content, options)?.metadata ?? null;
 }
 
+/** Definition for build runtime skill. */
 export function buildRuntimeSkillDefinition(input: {
   id: string;
   content: string;
@@ -184,6 +195,7 @@ export function buildRuntimeSkillDefinition(input: {
   };
 }
 
+/** Normalizes runtime skill reference path. */
 export function normalizeRuntimeSkillReferencePath(path: string): string | null {
   const normalized = path.trim().replaceAll("\\", "/");
 
@@ -199,6 +211,7 @@ export function normalizeRuntimeSkillReferencePath(path: string): string | null 
   return segments.join("/");
 }
 
+/** Response payload for build runtime loaded skill. */
 export function buildRuntimeLoadedSkillResponse(input: {
   skillId: string;
   instructions: string;

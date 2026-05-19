@@ -6,6 +6,7 @@ import type { Tool } from "#veryfront/tool/types.ts";
 import type { RunResumeSessionManager } from "../runtime/index.ts";
 import type { Agent } from "../types.ts";
 
+/** Public API contract for AG-UI resume value. */
 export type AgUiResumeValue = { result: unknown; isError: boolean };
 
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));

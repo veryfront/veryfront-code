@@ -6,9 +6,11 @@ export default tool({
   id: "get-issue",
   description:
     "Get detailed information about a specific Jira issue by its key (e.g., PROJ-123) or ID. Returns all fields including description, comments, history, etc.",
-  inputSchema: defineSchema((v) => v.object({
-    issueKey: v.string().describe('The issue key (e.g., "PROJ-123") or ID'),
-  }))(),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      issueKey: v.string().describe('The issue key (e.g., "PROJ-123") or ID'),
+    })
+  )(),
   async execute({ issueKey }) {
     const issue = await getIssue(issueKey);
     const { fields } = issue;
@@ -19,18 +21,18 @@ export default tool({
 
     const assignee = fields.assignee
       ? {
-          displayName: fields.assignee.displayName,
-          email: fields.assignee.emailAddress,
-          accountId: fields.assignee.accountId,
-        }
+        displayName: fields.assignee.displayName,
+        email: fields.assignee.emailAddress,
+        accountId: fields.assignee.accountId,
+      }
       : null;
 
     const reporter = fields.reporter
       ? {
-          displayName: fields.reporter.displayName,
-          email: fields.reporter.emailAddress,
-          accountId: fields.reporter.accountId,
-        }
+        displayName: fields.reporter.displayName,
+        email: fields.reporter.emailAddress,
+        accountId: fields.reporter.accountId,
+      }
       : null;
 
     return {

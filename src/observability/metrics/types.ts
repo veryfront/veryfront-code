@@ -60,6 +60,7 @@ export interface MetricsInstruments {
   errorCounter: Counter | null;
 }
 
+/** Configuration used by metrics. */
 export interface MetricsConfig {
   enabled: boolean;
   exporter: "prometheus" | "otlp" | "console";

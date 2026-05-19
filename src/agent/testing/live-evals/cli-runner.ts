@@ -23,12 +23,14 @@ import type { LiveEvalResultRecord } from "./result.ts";
 
 type EnvRecord = Record<string, string | undefined>;
 
+/** Public API contract for live eval cli case groups. */
 export interface LiveEvalCliCaseGroups {
   readOnlyCases: LiveEvalCase[];
   writeCases: LiveEvalCase[];
   experimentalWriteCases: LiveEvalCase[];
 }
 
+/** Input payload for live eval cli case factory. */
 export interface LiveEvalCliCaseFactoryInput {
   authToken: string;
   endpoint: string;
@@ -45,6 +47,7 @@ export interface LiveEvalCliCaseFactoryInput {
   judgeLlm: ReturnType<typeof createLiveEvalCaseSupport>["judgeLlm"];
 }
 
+/** Input payload for run live eval cli. */
 export interface RunLiveEvalCliInput {
   env: EnvRecord;
   caseSets: Record<string, readonly string[]>;
@@ -79,6 +82,7 @@ function createTimestampedReportPath(input: {
   );
 }
 
+/** Run live eval cli. */
 export async function runLiveEvalCli(input: RunLiveEvalCliInput): Promise<number> {
   const log = input.log ?? console.log;
   const error = input.error ?? console.error;

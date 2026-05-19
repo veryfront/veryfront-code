@@ -124,7 +124,30 @@
       "id": "update_document",
       "name": "Update Document",
       "description": "Update document content using batch requests",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://docs.googleapis.com/v1/documents/{documentId}:batchUpdate",
+        "params": {
+          "documentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Docs document ID",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "Google Docs batchUpdate requests, e.g. insertText/updateTextStyle requests",
+            "required": true
+          },
+          "writeControl": {
+            "type": "object",
+            "description": "Optional Google Docs write control"
+          }
+        }
+      }
     },
     {
       "id": "search_documents",

@@ -1,11 +1,14 @@
 type TracePrimitive = string | number | boolean;
+/** Public API contract for a value can be used as an agent trace attribute. */
 export type AgentTraceAttributeValue =
   | TracePrimitive
   | readonly TracePrimitive[]
   | null
   | undefined;
+/** Public API contract for agent trace attributes. */
 export type AgentTraceAttributes = Record<string, AgentTraceAttributeValue>;
 
+/** Public API contract for agent trace usage. */
 export type AgentTraceUsage = {
   inputTokens?: number;
   outputTokens?: number;
@@ -22,6 +25,7 @@ function isAgentTraceAttributePrimitive(value: unknown): value is TracePrimitive
   return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
 
+/** Check whether a value can be used as an agent trace attribute. */
 export function isAgentTraceAttributeValue(value: unknown): value is AgentTraceAttributeValue {
   if (value === null || value === undefined || isAgentTraceAttributePrimitive(value)) {
     return true;
@@ -30,6 +34,7 @@ export function isAgentTraceAttributeValue(value: unknown): value is AgentTraceA
   return Array.isArray(value) && value.every(isAgentTraceAttributePrimitive);
 }
 
+/** Filter agent trace attributes. */
 export function filterAgentTraceAttributes(
   attributes: Record<string, unknown>,
 ): AgentTraceAttributes {
@@ -79,6 +84,7 @@ function buildUsageTraceAttributes(usage?: AgentTraceUsage): AgentTraceAttribute
   });
 }
 
+/** Builds agent run trace attributes. */
 export function buildAgentRunTraceAttributes(input: {
   operationName: "chat" | "invoke_agent";
   conversationId?: string;
@@ -107,6 +113,7 @@ export function buildAgentRunTraceAttributes(input: {
   });
 }
 
+/** Builds execute tool trace attributes. */
 export function buildExecuteToolTraceAttributes(input: {
   toolName: string;
   toolCallId?: string | null;
@@ -121,6 +128,7 @@ export function buildExecuteToolTraceAttributes(input: {
   });
 }
 
+/** Builds invoke agent trace attributes. */
 export function buildInvokeAgentTraceAttributes(input: {
   conversationId?: string;
   projectId?: string | null;
@@ -166,6 +174,7 @@ export function buildInvokeAgentTraceAttributes(input: {
   });
 }
 
+/** Builds finalized agent run trace attributes. */
 export function buildFinalizedAgentRunTraceAttributes(input: {
   status: "completed" | "failed" | "cancelled";
   modelId?: string | null;

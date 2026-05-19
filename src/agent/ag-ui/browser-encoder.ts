@@ -1,7 +1,9 @@
 import type { AgentResponse } from "../types.ts";
 
+/** Event emitted for AG-UI runtime stream. */
 export type AgUiRuntimeStreamEvent = Record<string, unknown> & { type: string };
 
+/** Public API contract for AG-UI browser run finished metadata. */
 export interface AgUiBrowserRunFinishedMetadata {
   provider?: string;
   model?: string;
@@ -11,6 +13,7 @@ export interface AgUiBrowserRunFinishedMetadata {
   finishReason?: string;
 }
 
+/** State for AG-UI browser encoder. */
 export interface AgUiBrowserEncoderState {
   messageId: string | null;
   textOpen: boolean;
@@ -23,11 +26,13 @@ export interface AgUiBrowserEncoderState {
   metadata: AgUiBrowserRunFinishedMetadata;
 }
 
+/** Event emitted for AG-UI browser encoded. */
 export interface AgUiBrowserEncodedEvent {
   event: string;
   payload: Record<string, unknown>;
 }
 
+/** State for create AG-UI browser encoder. */
 export function createAgUiBrowserEncoderState(): AgUiBrowserEncoderState {
   return {
     messageId: null,
@@ -133,6 +138,7 @@ function applyResponseMetadata(
   }
 }
 
+/** Response payload for build AG-UI browser finalize. */
 export function buildAgUiBrowserFinalizeResponse(
   metadata: AgUiBrowserRunFinishedMetadata,
 ): AgentResponse | null {
@@ -288,6 +294,7 @@ function closeOpenReasoningEvent(state: AgUiBrowserEncoderState): AgUiBrowserEnc
   }];
 }
 
+/** Map runtime stream event to AG-UI browser events. */
 export function mapRuntimeStreamEventToAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   event: AgUiRuntimeStreamEvent,
@@ -501,6 +508,7 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
   }
 }
 
+/** Finalize AG-UI browser events helper. */
 export function finalizeAgUiBrowserEvents(
   state: AgUiBrowserEncoderState,
   response: AgentResponse | null,

@@ -53,6 +53,7 @@ import {
 // Message.Root
 // ---------------------------------------------------------------------------
 
+/** Props accepted by message root. */
 export interface MessageRootProps {
   message: ChatMessage;
   isStreaming?: boolean;
@@ -333,6 +334,7 @@ MessageBranchPicker.displayName = "Message.BranchPicker";
 
 export type { MessageContentProps as MessageCompoundContentProps, MessageContextValue };
 
+/** Message shape for message. */
 export const Message = Object.assign(MessageRoot, {
   Root: MessageRoot,
   Avatar: MessageAvatar,

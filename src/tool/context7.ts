@@ -2,6 +2,7 @@ import { getEnv } from "#veryfront/platform/compat/process.ts";
 import { createRemoteMCPToolSource } from "./remote-mcp.ts";
 import type { RemoteToolSource } from "./types.ts";
 
+/** Configuration used by context7 tool source. */
 export interface Context7ToolSourceConfig {
   /** Context7 API key. Falls back to CONTEXT7_API_KEY env var. */
   apiKey?: string;
@@ -21,6 +22,7 @@ function resolveApiKey(config: Context7ToolSourceConfig): string {
   return key;
 }
 
+/** Create context7 tool source. */
 export function createContext7ToolSource(
   config: Context7ToolSourceConfig = {},
 ): RemoteToolSource {

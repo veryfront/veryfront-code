@@ -40,6 +40,7 @@ const DEFAULT_INITIAL_RETRY_DELAY_MS = 1_000;
 const DEFAULT_MAX_RETRY_DELAY_MS = 10_000;
 const DEFAULT_KNOWLEDGE_INGEST_JOB_NAME = "Ingest knowledge";
 
+/** Configuration used by veryfront jobs client. */
 export interface VeryfrontJobsClientConfig {
   apiUrl?: string;
   authToken?: string;
@@ -47,10 +48,12 @@ export interface VeryfrontJobsClientConfig {
   retry?: Partial<RetryConfig>;
 }
 
+/** Options accepted by project scoped. */
 export interface ProjectScopedOptions {
   projectReference?: string;
 }
 
+/** Options accepted by list jobs. */
 export interface ListJobsOptions extends ProjectScopedOptions {
   cursor?: string;
   limit?: number;
@@ -60,12 +63,14 @@ export interface ListJobsOptions extends ProjectScopedOptions {
   batchId?: string;
 }
 
+/** Options accepted by list job events. */
 export interface ListJobEventsOptions extends ProjectScopedOptions {
   cursor?: string;
   limit?: number;
   direction?: "forward" | "backward";
 }
 
+/** Input payload for create job. */
 export interface CreateJobInput extends ProjectScopedOptions {
   name: string;
   target: string;
@@ -76,6 +81,7 @@ export interface CreateJobInput extends ProjectScopedOptions {
   backoffLimit?: number;
 }
 
+/** Options accepted by knowledge ingest job. */
 export interface KnowledgeIngestJobOptions extends ProjectScopedOptions {
   name?: string;
   environmentId?: string;
@@ -84,24 +90,29 @@ export interface KnowledgeIngestJobOptions extends ProjectScopedOptions {
   backoffLimit?: number;
 }
 
+/** Input payload for knowledge ingest by upload IDs. */
 export interface KnowledgeIngestByUploadIdsInput extends KnowledgeIngestJobOptions {
   uploadIds: string[];
 }
 
+/** Input payload for knowledge ingest by upload paths. */
 export interface KnowledgeIngestByUploadPathsInput extends KnowledgeIngestJobOptions {
   uploadPaths: string[];
 }
 
+/** Input payload for knowledge ingest by upload prefix. */
 export interface KnowledgeIngestByUploadPrefixInput extends KnowledgeIngestJobOptions {
   uploadPrefix: string;
 }
 
+/** Options accepted by list batch jobs. */
 export interface ListBatchJobsOptions extends ProjectScopedOptions {
   cursor?: string;
   limit?: number;
   status?: JobStatus;
 }
 
+/** Input payload for create cron job. */
 export interface CreateCronJobInput extends ProjectScopedOptions {
   name: string;
   target: string;
@@ -114,6 +125,7 @@ export interface CreateCronJobInput extends ProjectScopedOptions {
   concurrencyPolicy?: "Allow" | "Forbid" | "Replace";
 }
 
+/** Options accepted by list cron jobs. */
 export interface ListCronJobsOptions extends ProjectScopedOptions {
   cursor?: string;
   limit?: number;
@@ -121,6 +133,7 @@ export interface ListCronJobsOptions extends ProjectScopedOptions {
   environmentId?: string;
 }
 
+/** Input payload for update cron job. */
 export interface UpdateCronJobInput extends ProjectScopedOptions {
   name?: string;
   schedule?: string;
@@ -154,6 +167,7 @@ function withQuery(path: string, params: URLSearchParams): string {
   return query.length > 0 ? `${path}?${query}` : path;
 }
 
+/** Implement veryfront jobs client. */
 export class VeryfrontJobsClient {
   private readonly retryConfig: RetryConfig;
   private requestToken?: string;
@@ -560,6 +574,7 @@ export class VeryfrontJobsClient {
   }
 }
 
+/** Create jobs client. */
 export function createJobsClient(config?: VeryfrontJobsClientConfig): VeryfrontJobsClient {
   return new VeryfrontJobsClient(config);
 }

@@ -39,6 +39,7 @@ async function acquireOrThrow(
   });
 }
 
+/** Run parallel map. */
 export function parallelMap<T, R>(
   items: T[],
   fn: (item: T, index: number) => Promise<R>,

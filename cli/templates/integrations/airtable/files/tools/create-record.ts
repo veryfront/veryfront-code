@@ -14,9 +14,10 @@ export default tool({
       .describe(
         'Object with field names as keys and their values. Field names must match exactly. Example: { "Name": "John Doe", "Email": "john@example.com", "Status": "Active" }',
       ),
+    typecast: v.boolean().optional().describe("Allow Airtable to typecast field values"),
   }))(),
-  async execute({ baseId, tableIdOrName, fields }) {
-    const record = await createRecord(baseId, tableIdOrName, fields);
+  async execute({ baseId, tableIdOrName, fields, typecast }) {
+    const record = await createRecord(baseId, tableIdOrName, fields, { typecast });
 
     return { id: record.id, createdTime: record.createdTime, fields: record.fields };
   },

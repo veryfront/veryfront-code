@@ -8,6 +8,7 @@ export const REACT_VERSION_18_3 = "18.3.1";
 export const REACT_VERSION_19_RC = "19.0.0-rc.0";
 export const REACT_VERSION_19 = "19.1.1";
 
+/** Shared React default version value. */
 export const REACT_DEFAULT_VERSION = REACT_VERSION_19;
 
 import {
@@ -41,6 +42,7 @@ export function getReactUrls(version = REACT_DEFAULT_VERSION): Record<string, st
   };
 }
 
+/** Return React import map. */
 export function getReactImportMap(version = REACT_DEFAULT_VERSION): Record<string, string> {
   return buildReactImportMap(version);
 }
@@ -71,10 +73,12 @@ export function getReactJSXDevRuntimeCDNUrl(
   return getReactUrls(version)["react/jsx-dev-runtime"]!;
 }
 
+/** Default value for allowed cdn hosts. */
 export const DEFAULT_ALLOWED_CDN_HOSTS = [ESM_CDN_BASE, DENO_STD_BASE];
 
 export const DENO_STD_VERSION = "0.220.0";
 
+/** Return Deno std node base. */
 export function getDenoStdNodeBase(): string {
   return `${DENO_STD_BASE}/std@${DENO_STD_VERSION}/node`;
 }

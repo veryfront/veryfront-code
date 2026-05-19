@@ -8,6 +8,7 @@ import type {
 import { validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+/** Options accepted by branch. */
 export interface BranchOptions extends Omit<BaseNodeConfig, "checkpoint"> {
   condition: (context: WorkflowContext) => boolean | Promise<boolean>;
   then: WorkflowNode[];

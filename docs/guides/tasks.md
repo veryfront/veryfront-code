@@ -148,3 +148,4 @@ a `succeeded` status. See the verification block in
 ## Related
 
 - [Jobs and cron jobs](./jobs.md): the jobs system that executes scheduled tasks
+- [`veryfront/jobs`](../reference/veryfront/jobs.md): jobs API reference

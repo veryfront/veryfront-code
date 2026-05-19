@@ -1,6 +1,7 @@
 export const SECONDS_PER_MINUTE = 60;
 export const MINUTES_PER_HOUR = 60;
 export const HOURS_PER_DAY = 24;
+/** Shared ms per second value. */
 export const MS_PER_SECOND = 1000;
 
 export const MS_PER_MINUTE = SECONDS_PER_MINUTE * MS_PER_SECOND;
@@ -40,6 +41,7 @@ function isProductionMode(): boolean {
 }
 
 // Cache entry limits (override via env vars)
+/** Default value for lru max entries. */
 export const DEFAULT_LRU_MAX_ENTRIES = getEnvNumber("LRU_DEFAULT_MAX_ENTRIES", 100);
 
 export const COMPONENT_LOADER_MAX_ENTRIES = getEnvNumber("COMPONENT_LOADER_MAX_ENTRIES", 200);
@@ -51,6 +53,7 @@ export const MDX_RENDERER_TTL_MS = 10 * MS_PER_MINUTE;
 export const RENDERER_CORE_MAX_ENTRIES = getEnvNumber("RENDERER_CORE_MAX_ENTRIES", 200);
 export const RENDERER_CORE_TTL_MS = 5 * MS_PER_MINUTE;
 
+/** Shared TSX layout max entries value. */
 export const TSX_LAYOUT_MAX_ENTRIES = getEnvNumber("TSX_LAYOUT_MAX_ENTRIES", 100);
 export const TSX_LAYOUT_TTL_MS = 10 * MS_PER_MINUTE;
 
@@ -66,6 +69,7 @@ export const BUNDLE_CACHE_TTL_DEVELOPMENT_MS = 5 * MS_PER_MINUTE;
 export const BUNDLE_MANIFEST_PROD_TTL_MS = 7 * ONE_DAY_MS;
 export const BUNDLE_MANIFEST_DEV_TTL_MS = MS_PER_HOUR;
 
+/** Shared RSC manifest cache ttl ms value. */
 export const RSC_MANIFEST_CACHE_TTL_MS = 5000;
 
 export const SERVER_ACTION_DEFAULT_TTL_SEC = MINUTES_PER_HOUR * SECONDS_PER_MINUTE;

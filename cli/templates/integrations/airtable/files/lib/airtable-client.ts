@@ -39,6 +39,25 @@ export interface AirtableRecord {
   fields: Record<string, unknown>;
 }
 
+export interface AirtableFieldDefinition {
+  name: string;
+  type: string;
+  description?: string;
+  options?: Record<string, unknown>;
+}
+
+export interface AirtableTableDefinition {
+  id: string;
+  name: string;
+  primaryFieldId: string;
+  fields: AirtableFieldDefinition[];
+  views: Array<{
+    id: string;
+    name: string;
+    type: string;
+  }>;
+}
+
 function getTokenOrThrow(): string {
   const token = getAccessToken();
   if (token) return token;
@@ -139,10 +158,11 @@ export function createRecord(
   baseId: string,
   tableIdOrName: string,
   fields: Record<string, unknown>,
+  options?: { typecast?: boolean },
 ): Promise<AirtableRecord> {
   return airtableFetch<AirtableRecord>(`/${baseId}/${encodeURIComponent(tableIdOrName)}`, {
     method: "POST",
-    body: JSON.stringify({ fields }),
+    body: JSON.stringify({ fields, typecast: options?.typecast }),
   });
 }
 
@@ -150,12 +170,13 @@ export async function createRecords(
   baseId: string,
   tableIdOrName: string,
   records: Array<{ fields: Record<string, unknown> }>,
+  options?: { typecast?: boolean },
 ): Promise<AirtableRecord[]> {
   const response = await airtableFetch<{ records: AirtableRecord[] }>(
     `/${baseId}/${encodeURIComponent(tableIdOrName)}`,
     {
       method: "POST",
-      body: JSON.stringify({ records }),
+      body: JSON.stringify({ records, typecast: options?.typecast }),
     },
   );
 
@@ -167,13 +188,13 @@ export function updateRecord(
   tableIdOrName: string,
   recordId: string,
   fields: Record<string, unknown>,
-  options?: { destructive?: boolean },
+  options?: { destructive?: boolean; typecast?: boolean },
 ): Promise<AirtableRecord> {
   return airtableFetch<AirtableRecord>(
     `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
     {
       method: options?.destructive ? "PUT" : "PATCH",
-      body: JSON.stringify({ fields }),
+      body: JSON.stringify({ fields, typecast: options?.typecast }),
     },
   );
 }
@@ -186,6 +207,43 @@ export function deleteRecord(
   return airtableFetch<{ id: string; deleted: boolean }>(
     `/${baseId}/${encodeURIComponent(tableIdOrName)}/${recordId}`,
     { method: "DELETE" },
+  );
+}
+
+export function createTable(
+  baseId: string,
+  name: string,
+  fields: AirtableFieldDefinition[],
+  options?: { description?: string },
+): Promise<AirtableTableDefinition> {
+  return metaFetch<AirtableTableDefinition>(`/bases/${baseId}/tables`, {
+    method: "POST",
+    body: JSON.stringify({ name, description: options?.description, fields }),
+  });
+}
+
+export function updateTable(
+  baseId: string,
+  tableId: string,
+  updates: { name?: string; description?: string },
+): Promise<AirtableTableDefinition> {
+  return metaFetch<AirtableTableDefinition>(`/bases/${baseId}/tables/${tableId}`, {
+    method: "PATCH",
+    body: JSON.stringify(updates),
+  });
+}
+
+export function createField(
+  baseId: string,
+  tableId: string,
+  field: AirtableFieldDefinition,
+): Promise<AirtableFieldDefinition & { id: string }> {
+  return metaFetch<AirtableFieldDefinition & { id: string }>(
+    `/bases/${baseId}/tables/${tableId}/fields`,
+    {
+      method: "POST",
+      body: JSON.stringify(field),
+    },
   );
 }
 

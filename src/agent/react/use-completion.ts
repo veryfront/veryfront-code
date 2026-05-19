@@ -7,6 +7,7 @@
 import { useCallback, useRef, useState } from "react";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
+/** Options accepted by use completion. */
 export interface UseCompletionOptions {
   /** API endpoint for completion */
   api: string;
@@ -27,6 +28,7 @@ export interface UseCompletionOptions {
   onError?: (error: Error) => void;
 }
 
+/** Result returned from use completion. */
 export interface UseCompletionResult {
   /** Generated completion text */
   completion: string;

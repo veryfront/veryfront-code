@@ -7,11 +7,13 @@ import {
 } from "../runtime/message-adapter.ts";
 import type { Message as AgentMessage, MessagePart } from "../schemas/index.ts";
 
+/** Public API contract for hosted child fork runtime step system resolver. */
 export type HostedChildForkRuntimeStepSystemResolver = (input: {
   system: string;
   compactedMessages: readonly ProviderModelMessage[];
 }) => string | null | undefined;
 
+/** Input payload for prepare hosted child fork runtime step messages. */
 export type PrepareHostedChildForkRuntimeStepMessagesInput = {
   messages: AgentMessage[];
   buildInstructions: () => string;
@@ -19,6 +21,7 @@ export type PrepareHostedChildForkRuntimeStepMessagesInput = {
   resolveSystem?: HostedChildForkRuntimeStepSystemResolver;
 };
 
+/** Public API contract for hosted child fork runtime step messages. */
 export type HostedChildForkRuntimeStepMessages = {
   messages: AgentMessage[];
   system: string;
@@ -63,6 +66,7 @@ function convertAgentRuntimePartToChildForkMessagePart(
   );
 }
 
+/** Convert compacted provider messages to child fork runtime messages. */
 export function convertCompactedProviderMessagesToChildForkRuntimeMessages(
   compactedMessages: readonly ProviderModelMessage[],
 ): AgentMessage[] {
@@ -74,6 +78,7 @@ export function convertCompactedProviderMessagesToChildForkRuntimeMessages(
   }));
 }
 
+/** Prepare hosted child fork runtime step messages. */
 export function prepareHostedChildForkRuntimeStepMessages(
   input: PrepareHostedChildForkRuntimeStepMessagesInput,
 ): HostedChildForkRuntimeStepMessages {

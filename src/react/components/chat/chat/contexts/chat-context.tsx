@@ -16,6 +16,7 @@ import type { FeedbackValue } from "../components/message-feedback.tsx";
 import type { Source } from "../components/sources.tsx";
 import type { BranchInfo } from "#veryfront/agent/react";
 
+/** Public API contract for chat context value. */
 export interface ChatContextValue {
   // Messages
   messages: ChatMessage[];
@@ -64,6 +65,7 @@ export interface ChatContextValue {
 
 const ChatContext = React.createContext<ChatContextValue | null>(null);
 
+/** Context for use chat. */
 export function useChatContext(): ChatContextValue {
   const context = React.useContext(ChatContext);
   if (!context) {
@@ -74,8 +76,10 @@ export function useChatContext(): ChatContextValue {
   return context;
 }
 
+/** React hook for chat context optional. */
 export function useChatContextOptional(): ChatContextValue | null {
   return React.useContext(ChatContext);
 }
 
+/** Render chat context provider. */
 export const ChatContextProvider = ChatContext.Provider;

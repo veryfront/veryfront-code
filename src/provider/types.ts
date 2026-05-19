@@ -17,6 +17,7 @@ export interface ModelRuntimeStreamResult {
   warnings?: unknown[];
 }
 
+/** Public API contract for model runtime. */
 export interface ModelRuntime extends RuntimeMetadata {
   readonly _isVfLocalModel?: boolean;
   doGenerate(options: unknown): PromiseLike<ModelRuntimeGenerateResult>;

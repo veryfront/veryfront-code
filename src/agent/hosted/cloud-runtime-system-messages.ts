@@ -7,6 +7,7 @@ import type { HostedChatRuntimeInstructionsInput } from "./chat-preparation.ts";
 import { createRuntimePromptBlock } from "../runtime/prompt-block.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 
+/** Input payload for create Veryfront Cloud runtime system messages. */
 export type CreateVeryfrontCloudRuntimeSystemMessagesInput = {
   agent: RuntimeAgentMarkdownDefinition;
   instructions?: string;
@@ -39,6 +40,7 @@ CRITICAL: Do NOT guess or invent project references. If a tool requires project_
   });
 }
 
+/** Create Veryfront Cloud runtime system messages. */
 export function createVeryfrontCloudRuntimeSystemMessages(
   input: CreateVeryfrontCloudRuntimeSystemMessagesInput,
 ): ChatSystemMessage[] {
@@ -65,6 +67,7 @@ export function createVeryfrontCloudRuntimeSystemMessages(
   });
 }
 
+/** Builds Veryfront Cloud runtime instructions. */
 export function buildVeryfrontCloudRuntimeInstructions(
   input: HostedChatRuntimeInstructionsInput<RuntimeAgentMarkdownDefinition>,
 ): ChatSystemMessage[] {

@@ -22,6 +22,7 @@ export function getRequest(ctx: AnyMiddlewareContext): Request {
 
 export type OriginValidator = (origin: string) => boolean | Promise<boolean>;
 
+/** Options accepted by cors. */
 export interface CorsOptions {
   origin?: string | string[] | OriginValidator;
   methods?: string[];

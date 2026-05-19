@@ -165,17 +165,31 @@ export const getAgentContextSchema = defineSchema((v) =>
 );
 
 // Inferred types
+/** Public API contract for model provider. */
 export type ModelProvider = InferSchema<ReturnType<typeof getModelProviderSchema>>;
+/** Public API contract for agent status. */
 export type AgentStatus = InferSchema<ReturnType<typeof getAgentStatusSchema>>;
+/** Configuration used by memory. */
 export type MemoryConfig = InferSchema<ReturnType<typeof getMemoryConfigSchema>>;
+/** Configuration used by edge. */
 export type EdgeConfig = InferSchema<ReturnType<typeof getEdgeConfigSchema>>;
+/** Tool-call message part that stores arguments. */
 export type ToolCallPartWithArgs = InferSchema<ReturnType<typeof getToolCallPartWithArgsSchema>>;
+/** Tool-call message part that stores input. */
 export type ToolCallPartWithInput = InferSchema<ReturnType<typeof getToolCallPartWithInputSchema>>;
+/** Agent message part for a tool call. */
 export type ToolCallPart = InferSchema<ReturnType<typeof getToolCallPartSchema>>;
+/** Agent message part for a tool result. */
 export type ToolResultPart = InferSchema<ReturnType<typeof getToolResultPartSchema>>;
+/** Public API contract for message part. */
 export type MessagePart = InferSchema<ReturnType<typeof getMessagePartSchema>>;
+/** Message exchanged with an agent. */
 export type Message = InferSchema<ReturnType<typeof getMessageSchema>>;
+/** Public API contract for stream tool call. */
 export type StreamToolCall = InferSchema<ReturnType<typeof getStreamToolCallSchema>>;
+/** Public API contract for tool call. */
 export type ToolCall = InferSchema<ReturnType<typeof getToolCallSchema>>;
+/** Response payload for agent. */
 export type AgentResponse = InferSchema<ReturnType<typeof getAgentResponseSchema>>;
+/** Context for agent. */
 export type AgentContext = InferSchema<ReturnType<typeof getAgentContextSchema>>;

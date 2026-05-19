@@ -41,9 +41,23 @@
         "method": "GET",
         "url": "https://api.github.com/user/repos",
         "params": {
-          "type": { "type": "string", "in": "query", "description": "Type: all, owner, public, private, member" },
-          "sort": { "type": "string", "in": "query", "description": "Sort: created, updated, pushed, full_name", "default": "updated" },
-          "per_page": { "type": "number", "in": "query", "description": "Results per page (max 100)", "default": 30 }
+          "type": {
+            "type": "string",
+            "in": "query",
+            "description": "Type: all, owner, public, private, member"
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort: created, updated, pushed, full_name",
+            "default": "updated"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 30
+          }
         }
       }
     },
@@ -56,8 +70,18 @@
         "method": "GET",
         "url": "https://api.github.com/repos/{owner}/{repo}",
         "params": {
-          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
-          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true }
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          }
         }
       }
     },
@@ -70,10 +94,30 @@
         "method": "GET",
         "url": "https://api.github.com/repos/{owner}/{repo}/pulls",
         "params": {
-          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
-          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true },
-          "state": { "type": "string", "in": "query", "description": "State: open, closed, all", "default": "open" },
-          "per_page": { "type": "number", "in": "query", "description": "Results per page", "default": 30 }
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          },
+          "state": {
+            "type": "string",
+            "in": "query",
+            "description": "State: open, closed, all",
+            "default": "open"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page",
+            "default": 30
+          }
         }
       }
     },
@@ -86,14 +130,37 @@
         "method": "POST",
         "url": "https://api.github.com/repos/{owner}/{repo}/issues",
         "params": {
-          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
-          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true }
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          }
         },
         "body": {
-          "title": { "type": "string", "description": "Issue title", "required": true },
-          "body": { "type": "string", "description": "Issue body (markdown)" },
-          "labels": { "type": "array", "description": "Label names" },
-          "assignees": { "type": "array", "description": "Usernames to assign" }
+          "title": {
+            "type": "string",
+            "description": "Issue title",
+            "required": true
+          },
+          "body": {
+            "type": "string",
+            "description": "Issue body (markdown)"
+          },
+          "labels": {
+            "type": "array",
+            "description": "Label names"
+          },
+          "assignees": {
+            "type": "array",
+            "description": "Usernames to assign"
+          }
         }
       }
     },
@@ -106,10 +173,30 @@
         "method": "GET",
         "url": "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}",
         "params": {
-          "owner": { "type": "string", "in": "path", "description": "Repository owner", "required": true },
-          "repo": { "type": "string", "in": "path", "description": "Repository name", "required": true },
-          "pull_number": { "type": "number", "in": "path", "description": "Pull request number", "required": true },
-          "Accept": { "type": "string", "in": "header", "description": "Response format", "default": "application/vnd.github.v3.diff" }
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          },
+          "pull_number": {
+            "type": "number",
+            "in": "path",
+            "description": "Pull request number",
+            "required": true
+          },
+          "Accept": {
+            "type": "string",
+            "in": "header",
+            "description": "Response format",
+            "default": "application/vnd.github.v3.diff"
+          }
         }
       }
     },
@@ -124,12 +211,155 @@
         "url": "https://api.github.com/graphql",
         "query": "query($owner: String!, $repo: String!, $first: Int, $states: [IssueState!]) { repository(owner: $owner, name: $repo) { issues(first: $first, states: $states, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { id number title body state url createdAt updatedAt author { login } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } } } }",
         "params": {
-          "owner": { "type": "string", "in": "body", "description": "Repository owner", "required": true },
-          "repo": { "type": "string", "in": "body", "description": "Repository name", "required": true },
-          "states": { "type": "string[]", "in": "body", "description": "Issue states to include (e.g. OPEN, CLOSED)", "default": ["OPEN"] },
-          "first": { "type": "number", "in": "body", "description": "Results per page", "default": 30 }
+          "owner": {
+            "type": "string",
+            "in": "body",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "body",
+            "description": "Repository name",
+            "required": true
+          },
+          "states": {
+            "type": "string[]",
+            "in": "body",
+            "description": "Issue states to include (e.g. OPEN, CLOSED)",
+            "default": [
+              "OPEN"
+            ]
+          },
+          "first": {
+            "type": "number",
+            "in": "body",
+            "description": "Results per page",
+            "default": 30
+          }
         },
-        "response": { "transform": "repository.issues.nodes" }
+        "response": {
+          "transform": "repository.issues.nodes"
+        }
+      }
+    },
+    {
+      "id": "get_issue",
+      "name": "Get Issue",
+      "description": "Get details of a GitHub issue",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}",
+        "params": {
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          },
+          "issue_number": {
+            "type": "number",
+            "in": "path",
+            "description": "Issue number",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_issue",
+      "name": "Update Issue",
+      "description": "Update, close, or reopen a GitHub issue",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}",
+        "params": {
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          },
+          "issue_number": {
+            "type": "number",
+            "in": "path",
+            "description": "Issue number",
+            "required": true
+          }
+        },
+        "body": {
+          "title": {
+            "type": "string",
+            "description": "Updated issue title"
+          },
+          "body": {
+            "type": "string",
+            "description": "Updated issue body (markdown)"
+          },
+          "state": {
+            "type": "string",
+            "description": "Issue state: open or closed"
+          },
+          "labels": {
+            "type": "array",
+            "description": "Replacement label names"
+          },
+          "assignees": {
+            "type": "array",
+            "description": "Replacement assignee usernames"
+          }
+        }
+      }
+    },
+    {
+      "id": "add_issue_comment",
+      "name": "Add Issue Comment",
+      "description": "Add a comment to a GitHub issue or pull request",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/{owner}/{repo}/issues/{issue_number}/comments",
+        "params": {
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          },
+          "issue_number": {
+            "type": "number",
+            "in": "path",
+            "description": "Issue or pull request number",
+            "required": true
+          }
+        },
+        "body": {
+          "body": {
+            "type": "string",
+            "description": "Comment body (markdown)",
+            "required": true
+          }
+        }
       }
     }
   ],
@@ -156,5 +386,8 @@
       "icon": "git-commit"
     }
   ],
-  "suggestedWith": ["jira", "slack"]
+  "suggestedWith": [
+    "jira",
+    "slack"
+  ]
 }

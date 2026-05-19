@@ -6,10 +6,12 @@ import { getHumanInputFieldSchema, humanInputRequestBaseFields } from "./human-i
 // `formInputToolInputSchema` is `HumanInputRequestSchema` minus its `metadata`
 // field. The contract DSL doesn't expose `.omit(...)`, so we share the base
 // shape via `humanInputRequestBaseFields(v)` and construct two object schemas.
+/** Zod schema for get form input tool input. */
 export const getFormInputToolInputSchema = defineSchema((v) =>
   v.object(humanInputRequestBaseFields(v))
 );
 
+/** Zod schema for get input response values. */
 export const getInputResponseValuesSchema = defineSchema((v) =>
   v.record(
     v.string(),
@@ -17,6 +19,7 @@ export const getInputResponseValuesSchema = defineSchema((v) =>
   )
 );
 
+/** Zod schema for get create input request request. */
 export const getCreateInputRequestRequestSchema = defineSchema((v) =>
   v.object({
     run_id: v.string().min(1),
@@ -49,6 +52,7 @@ export interface InputResponseRestOutput {
   createdAt: string;
 }
 
+/** Zod schema for get input response rest. */
 export const getInputResponseRestSchema = defineSchema((v) =>
   v
     .object({
@@ -99,6 +103,7 @@ export interface InputRequestRestOutput {
   latestResponse: InputResponseRestOutput | null;
 }
 
+/** Zod schema for get input request rest. */
 export const getInputRequestRestSchema = defineSchema((v) =>
   v
     .object({
@@ -148,9 +153,12 @@ export const getInputRequestRestSchema = defineSchema((v) =>
     })
 );
 
+/** Zod schema for get create input request response. */
 export const getCreateInputRequestResponseSchema = getInputRequestRestSchema;
+/** Zod schema for get get input request response. */
 export const getGetInputRequestResponseSchema = getInputRequestRestSchema;
 
+/** Zod schema for get input request output. */
 export const getInputRequestOutputSchema = defineSchema((v) =>
   v.object({
     id: v.string().uuid(),
@@ -174,6 +182,7 @@ export const getInputRequestOutputSchema = defineSchema((v) =>
   })
 );
 
+/** Zod schema for get input request lifecycle data event. */
 export const getInputRequestLifecycleDataEventSchema = defineSchema((v) =>
   v.object({
     type: v.literal("veryfront.input_request.lifecycle"),
@@ -189,11 +198,14 @@ export const getInputRequestLifecycleDataEventSchema = defineSchema((v) =>
   })
 );
 
+/** Input payload for form input tool. */
 export type FormInputToolInput = InferSchema<ReturnType<typeof getFormInputToolInputSchema>>;
 // `InputRequestOutput` mirrors `InputRequestRestOutput` (the transform result
 // of `getInputRequestRestSchema`); both share the camelCase output shape.
+/** Output from input request. */
 export type InputRequestOutput = InputRequestRestOutput;
 
+/** Request payload for create input. */
 export async function createInputRequest(input: {
   authToken: string;
   apiUrl: string;
@@ -235,6 +247,7 @@ export async function createInputRequest(input: {
   return getCreateInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;
 }
 
+/** Request payload for get input. */
 export async function getInputRequest(input: {
   authToken: string;
   apiUrl: string;
@@ -260,6 +273,7 @@ export async function getInputRequest(input: {
   return getGetInputRequestResponseSchema().parse(await response.json()) as InputRequestOutput;
 }
 
+/** Event emitted for build input request lifecycle data. */
 export function buildInputRequestLifecycleDataEvent(input: {
   action: "created" | "updated";
   inputRequest: InputRequestOutput;

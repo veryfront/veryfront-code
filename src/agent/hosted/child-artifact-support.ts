@@ -10,6 +10,7 @@ const CREATE_FILE_ALREADY_EXISTS_PATTERN = /file already exists/i;
 const TOOL_ERROR_VALUES = new Set(["error", "tool_error"]);
 const MAX_NESTED_TOOL_RESULT_DEPTH = 8;
 
+/** Input payload for hosted child written artifact path. */
 export interface HostedChildWrittenArtifactPathInput {
   toolName: string;
   toolInput: unknown;
@@ -17,19 +18,23 @@ export interface HostedChildWrittenArtifactPathInput {
   writingToolNames?: readonly string[];
 }
 
+/** Public API contract for hosted child file write fallback tool execute. */
 export type HostedChildFileWriteFallbackToolExecute = (
   toolInput: unknown,
   execOptions?: ToolExecutionContext,
 ) => Promise<unknown> | unknown;
 
+/** Public API contract for hosted child file write fallback tool. */
 export interface HostedChildFileWriteFallbackTool {
   execute?: HostedChildFileWriteFallbackToolExecute;
 }
 
+/** Public API contract for hosted child file write fallback logger. */
 export interface HostedChildFileWriteFallbackLogger {
   info?: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
+/** Applies hosted child rerunnable file write fallbacks. */
 export function withHostedChildRerunnableFileWriteFallbacks(input: {
   tools: Record<string, HostedChildFileWriteFallbackTool>;
   createToolName?: string;
@@ -92,15 +97,18 @@ export function withHostedChildRerunnableFileWriteFallbacks(input: {
   };
 }
 
+/** Check whether a prompt asks for a hosted child text project artifact. */
 export function isHostedChildTextProjectArtifactPrompt(prompt: string): boolean {
   return TEXT_PROJECT_ARTIFACT_CUE_PATTERN.test(prompt) ||
     TEXT_PROJECT_ARTIFACT_PATH_PATTERN.test(prompt);
 }
 
+/** Result returned from is hosted child create file already exists. */
 export function isHostedChildCreateFileAlreadyExistsResult(result: unknown): boolean {
   return isHostedChildCreateFileAlreadyExistsResultAtDepth(result, 0);
 }
 
+/** Return hosted child written artifact path. */
 export function getHostedChildWrittenArtifactPath(
   input: HostedChildWrittenArtifactPathInput,
 ): string | null {
@@ -121,6 +129,7 @@ export function getHostedChildWrittenArtifactPath(
   return typeof path === "string" ? normalizeHostedChildArtifactPath(path) : null;
 }
 
+/** Normalizes hosted child artifact path. */
 export function normalizeHostedChildArtifactPath(path: string): string | null {
   const trimmedPath = path.trim().replace(/^[`"'(]+|[`"'),.;:!?]+$/g, "");
   if (trimmedPath.length === 0) {

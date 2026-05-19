@@ -10,6 +10,7 @@ import {
 import { normalizeConversationRunEvents } from "./run-event-normalization.ts";
 import { type ConversationRunEventQueueController } from "./durable.ts";
 
+/** Public API contract for conversation run stream mirror. */
 export interface ConversationRunStreamMirror {
   handleStreamEvent(event: ChatStreamEvent): void;
   appendEvents(events: ConversationRunEvent[]): void;
@@ -18,6 +19,7 @@ export interface ConversationRunStreamMirror {
   dispose(): void;
 }
 
+/** Create conversation run stream mirror. */
 export function createConversationRunStreamMirror(input: {
   queueController: ConversationRunEventQueueController;
   immediateFlushEventCount: number;

@@ -1,15 +1,18 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import type { HostedStreamPartForUiChunkMapping } from "#veryfront/chat/hosted-ui-chunk-mapping.ts";
 
+/** Public API contract for hosted child chunk mirror. */
 export interface HostedChildChunkMirror {
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void> | void;
 }
 
+/** State for hosted child mirror. */
 export interface HostedChildMirrorState {
   reasoningStarted: boolean;
   textStarted: boolean;
 }
 
+/** Context for hosted child mirror. */
 export interface HostedChildMirrorContext {
   mirror: HostedChildChunkMirror | null;
   messageId: string | null;
@@ -46,6 +49,7 @@ const ALREADY_MIRRORED_CHUNK_TYPES_BY_PART_TYPE: Readonly<
   "tool-error": ["tool-input-start", "tool-input-error"],
 };
 
+/** Check whether a hosted chunk was already mirrored. */
 export function isAlreadyMirroredHostedChunk(
   partType: MirroredPartType,
   mirroredChunkType: DurableMirrorChunkType,
@@ -78,8 +82,10 @@ type HostedMirrorBasePart =
 
 type ExtraMirroredHostedStreamPart = Extract<HostedStreamPartForUiChunkMapping, { type: "source" }>;
 
+/** Public API contract for hosted child mirror part. */
 export type HostedChildMirrorPart = HostedMirrorBasePart | ExtraMirroredHostedStreamPart;
 
+/** Converts a value to mirrored hosted stream part. */
 export function toMirroredHostedStreamPart(
   part: HostedChildMirrorPart,
   ids: {
@@ -170,6 +176,7 @@ export function toMirroredHostedStreamPart(
   }
 }
 
+/** Append hosted child mirror chunk. */
 export async function appendHostedChildMirrorChunk(input: {
   mirror: HostedChildChunkMirror | null;
   chunk: ChatUiMessageChunk<ChatMessageMetadata>;
@@ -182,6 +189,7 @@ export async function appendHostedChildMirrorChunk(input: {
   return true;
 }
 
+/** Close hosted child reasoning segment helper. */
 export async function closeHostedChildReasoningSegment(input: {
   mirror: HostedChildChunkMirror | null;
   reasoningMessageId: string | null;
@@ -201,6 +209,7 @@ export async function closeHostedChildReasoningSegment(input: {
   });
 }
 
+/** Close hosted child text segment helper. */
 export async function closeHostedChildTextSegment(input: {
   mirror: HostedChildChunkMirror | null;
   messageId: string | null;
@@ -220,6 +229,7 @@ export async function closeHostedChildTextSegment(input: {
   });
 }
 
+/** Context for create hosted child mirror. */
 export function createHostedChildMirrorContext(input: {
   mirror: HostedChildChunkMirror | null;
   messageId?: string | null;

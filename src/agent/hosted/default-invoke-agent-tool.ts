@@ -61,6 +61,7 @@ import { prepareDefaultHostedChildForkToolAssembly } from "./child-requested-too
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { withRootOwnedChildResultHint } from "../conversation/delegation-policy.ts";
 
+/** Context for default hosted invoke agent. */
 export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
   authToken: string;
   clientProfile?: RuntimeClientProfile | null;
@@ -73,6 +74,7 @@ export type DefaultHostedInvokeAgentContext = MutableAgentProjectContext & {
   steeringRevision?: number;
 };
 
+/** Configuration used by default hosted invoke agent. */
 export type DefaultHostedInvokeAgentConfig = {
   apiUrl: string;
   apiMcpUrl: string;
@@ -81,6 +83,7 @@ export type DefaultHostedInvokeAgentConfig = {
   enableDurableInvokeAgent?: boolean;
 };
 
+/** Public API contract for default hosted invoke agent logger. */
 export type DefaultHostedInvokeAgentLogger = {
   debug(message: string, metadata?: Record<string, unknown>): void;
   info(message: string, metadata?: Record<string, unknown>): void;
@@ -88,26 +91,31 @@ export type DefaultHostedInvokeAgentLogger = {
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+/** Public API contract for default hosted invoke agent trace attributes. */
 export type DefaultHostedInvokeAgentTraceAttributes = Record<
   string,
   string | number | boolean | readonly (string | number | boolean)[] | null | undefined
 >;
 
+/** Public API contract for default hosted invoke agent trace. */
 export type DefaultHostedInvokeAgentTrace = <TResult>(
   operationName: string,
   operation: () => TResult,
 ) => TResult;
 
+/** Result returned from default hosted invoke agent tool. */
 export type DefaultHostedInvokeAgentToolResult =
   | ChildRunExecutionResult
   | HostedDurableChildInvokeResult;
 
+/** Public API contract for default hosted invoke agent project refresh. */
 export type DefaultHostedInvokeAgentProjectRefresh<
   TContext extends DefaultHostedInvokeAgentContext,
 > = (
   context: TContext,
 ) => Promise<void> | void;
 
+/** Options accepted by default hosted invoke agent tool. */
 export type DefaultHostedInvokeAgentToolOptions<TContext extends DefaultHostedInvokeAgentContext> =
   {
     context: TContext;
@@ -146,7 +154,9 @@ export const getDefaultHostedInvokeAgentSelectionSchema = defineSchema((v) =>
   v.object(defaultHostedInvokeAgentSelectionFields(v))
 );
 
-/** @deprecated Use getDefaultHostedInvokeAgentSelectionSchema() */
+/** Schema for default hosted invoke agent selection.
+ * @deprecated Use getDefaultHostedInvokeAgentSelectionSchema()
+ */
 export const defaultHostedInvokeAgentSelectionSchema = lazySchema(
   getDefaultHostedInvokeAgentSelectionSchema,
 );
@@ -155,11 +165,14 @@ export const getDefaultHostedInvokeAgentInputSchema = defineSchema((v) =>
   getHostedChildForkToolInputSchema().extend(defaultHostedInvokeAgentSelectionFields(v))
 );
 
-/** @deprecated Use getDefaultHostedInvokeAgentInputSchema() */
+/** Schema for default hosted invoke agent input.
+ * @deprecated Use getDefaultHostedInvokeAgentInputSchema()
+ */
 export const defaultHostedInvokeAgentInputSchema = lazySchema(
   getDefaultHostedInvokeAgentInputSchema,
 );
 
+/** Input payload for default hosted invoke agent. */
 export type DefaultHostedInvokeAgentInput = InferSchema<
   ReturnType<typeof getDefaultHostedInvokeAgentInputSchema>
 >;
@@ -388,6 +401,7 @@ function getAbortSignal(executionContext?: ToolExecutionContext): AbortSignal | 
     : undefined;
 }
 
+/** Execute default hosted invoke agent tool. */
 export async function executeDefaultHostedInvokeAgentTool<
   TContext extends DefaultHostedInvokeAgentContext,
 >(
@@ -554,6 +568,7 @@ export async function executeDefaultHostedInvokeAgentTool<
   }
 }
 
+/** Create default hosted invoke agent tool. */
 export function createDefaultHostedInvokeAgentTool<
   TContext extends DefaultHostedInvokeAgentContext,
 >(

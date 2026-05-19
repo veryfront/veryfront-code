@@ -22,9 +22,12 @@ export const getAgUiResumeSignalSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getAgUiResumeSignalSchema() */
+/** Schema for AG-UI resume signal.
+ * @deprecated Use getAgUiResumeSignalSchema()
+ */
 export const AgUiResumeSignalSchema = lazySchema(getAgUiResumeSignalSchema);
 
+/** Public API contract for AG-UI resume signal. */
 export type AgUiResumeSignal = InferSchema<ReturnType<typeof getAgUiResumeSignalSchema>>;
 
 type ResumeValue = {
@@ -42,10 +45,12 @@ export interface AgUiRunControlHandlerOptions {
     | ((input: { request: Request; requestOrCtx: unknown }) => Promise<string | null>);
 }
 
+/** Options accepted by AG-UI resume handler. */
 export interface AgUiResumeHandlerOptions extends AgUiRunControlHandlerOptions {
   sessionManager: RunResumeSessionManager<ResumeValue>;
 }
 
+/** Options accepted by AG-UI cancel handler. */
 export interface AgUiCancelHandlerOptions<T = unknown> extends AgUiRunControlHandlerOptions {
   sessionManager: RunResumeSessionManager<T>;
 }
@@ -61,6 +66,7 @@ async function resolveRunId(
   return getRunId(new URL(request.url).pathname, regex);
 }
 
+/** Handler for create AG-UI resume. */
 export function createAgUiResumeHandler(
   options: AgUiResumeHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response> {
@@ -124,6 +130,7 @@ export function createAgUiResumeHandler(
   };
 }
 
+/** Handler for create AG-UI cancel. */
 export function createAgUiCancelHandler<T = unknown>(
   options: AgUiCancelHandlerOptions<T>,
 ): (requestOrCtx: unknown) => Promise<Response> {

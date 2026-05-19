@@ -18,6 +18,7 @@ import { INVALID_ARGUMENT } from "#veryfront/errors";
 
 export type { Workflow } from "../types.ts";
 
+/** Options accepted by workflow. */
 export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   id: string;
   description?: string;
@@ -37,6 +38,7 @@ export interface WorkflowOptions<TInput = unknown, TOutput = unknown> {
   ) => void | Promise<void>;
 }
 
+/** Create a workflow definition. */
 export function workflow<TInput = unknown, TOutput = unknown>(
   options: WorkflowOptions<TInput, TOutput>,
 ): Workflow<TInput, TOutput> {
@@ -72,6 +74,7 @@ export function workflow<TInput = unknown, TOutput = unknown>(
   return wf;
 }
 
+/** Create a sequential workflow definition. */
 export function sequence(...nodes: WorkflowNode[]): WorkflowNode[] {
   return nodes.map((node, index) => {
     if (index === 0) return node;
@@ -85,6 +88,7 @@ export function sequence(...nodes: WorkflowNode[]): WorkflowNode[] {
 
 type DagNodeInput = WorkflowNode | { node: WorkflowNode; dependsOn: string[] };
 
+/** Create a directed workflow graph. */
 export function dag(nodes: Record<string, DagNodeInput>): WorkflowNode[] {
   const result: WorkflowNode[] = [];
   const seenIds = new Set<string>();
@@ -111,6 +115,7 @@ export function dag(nodes: Record<string, DagNodeInput>): WorkflowNode[] {
   return result;
 }
 
+/** Declare workflow step dependencies. */
 export function dependsOn(
   node: WorkflowNode,
   ...dependencies: string[]

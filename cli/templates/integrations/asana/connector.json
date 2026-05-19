@@ -198,6 +198,179 @@
           "transform": "data"
         }
       }
+    },
+    {
+      "id": "list_workspaces",
+      "name": "List Workspaces",
+      "description": "List Asana workspaces accessible to the authenticated user",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/workspaces",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum workspaces to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset from Asana"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List users in an Asana workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/users",
+        "params": {
+          "workspace": {
+            "type": "string",
+            "in": "query",
+            "description": "Workspace GID",
+            "required": true
+          },
+          "team": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional team GID"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum users to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset from Asana"
+          },
+          "opt_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated user fields",
+            "default": "gid,name,email"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_teams",
+      "name": "List Teams",
+      "description": "List teams in an Asana workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/workspaces/{workspaceGid}/teams",
+        "params": {
+          "workspaceGid": {
+            "type": "string",
+            "in": "path",
+            "description": "Workspace GID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum teams to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset from Asana"
+          },
+          "opt_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated team fields",
+            "default": "gid,name,description"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "add_task_comment",
+      "name": "Add Task Comment",
+      "description": "Add a story/comment to an Asana task",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://app.asana.com/api/1.0/tasks/{taskGid}/stories",
+        "params": {
+          "taskGid": {
+            "type": "string",
+            "in": "path",
+            "description": "Asana task GID",
+            "required": true
+          }
+        },
+        "body": {
+          "data": {
+            "type": "object",
+            "description": "Story payload, e.g. { text: 'Comment text' }",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
+    },
+    {
+      "id": "list_task_comments",
+      "name": "List Task Comments",
+      "description": "List comment stories for an Asana task",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://app.asana.com/api/1.0/tasks/{taskGid}/stories",
+        "params": {
+          "taskGid": {
+            "type": "string",
+            "in": "path",
+            "description": "Asana task GID",
+            "required": true
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum stories to return",
+            "default": 50
+          },
+          "offset": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination offset from Asana"
+          },
+          "opt_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated story fields",
+            "default": "gid,type,text,created_at,created_by.name"
+          }
+        },
+        "response": {
+          "transform": "data"
+        }
+      }
     }
   ],
   "prompts": [

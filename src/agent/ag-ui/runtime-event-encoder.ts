@@ -9,16 +9,19 @@ import {
 } from "./browser-encoder.ts";
 import type { AgentResponse } from "../types.ts";
 
+/** Public API contract for AG-UI runtime event encoder. */
 export interface AgUiRuntimeEventEncoder {
   state: AgUiBrowserEncoderState;
   encode: (event: AgUiRuntimeStreamEvent) => AgUiBrowserEncodedEvent[];
   finalize: (response: AgentResponse | null) => AgUiBrowserEncodedEvent[];
 }
 
+/** Options accepted by create AG-UI runtime event encoder. */
 export interface CreateAgUiRuntimeEventEncoderOptions {
   initialMetadata?: Partial<AgUiBrowserRunFinishedMetadata>;
 }
 
+/** Create AG-UI runtime event encoder. */
 export function createAgUiRuntimeEventEncoder(
   options: CreateAgUiRuntimeEventEncoderOptions = {},
 ): AgUiRuntimeEventEncoder {

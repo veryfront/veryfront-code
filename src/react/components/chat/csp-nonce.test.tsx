@@ -77,6 +77,10 @@ async function waitFor(
   }
 }
 
+async function flushHydrationTimers(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 async function hydrateAndReadStyleNonce(element: React.ReactElement): Promise<string | null> {
   const serverMarkup = injectNonceIntoStyleTags(renderToString(element), TEST_NONCE);
   const dom = new JSDOM(`<!doctype html><div id="root">${serverMarkup}</div>`, {
@@ -94,8 +98,10 @@ async function hydrateAndReadStyleNonce(element: React.ReactElement): Promise<st
     const style = root.querySelector("style");
     assert(style, "Expected hydrated tree to contain an inline style tag");
 
+    const nonce = style.getAttribute("nonce");
     hydratedRoot.unmount();
-    return style.getAttribute("nonce");
+    await flushHydrationTimers();
+    return nonce;
   } finally {
     restore();
   }
@@ -118,8 +124,10 @@ async function hydrateAndReadScriptNonce(element: React.ReactElement): Promise<s
     const script = root.querySelector("script");
     assert(script, "Expected hydrated tree to contain an inline script tag");
 
+    const nonce = script.getAttribute("nonce");
     hydratedRoot.unmount();
-    return script.getAttribute("nonce");
+    await flushHydrationTimers();
+    return nonce;
   } finally {
     restore();
   }
@@ -147,8 +155,10 @@ async function hydrateAndReadManagedHeadStyleNonce(
     const style = document.head.querySelector('style[data-veryfront-managed="1"]');
     assert(style, "Expected Head to append a managed inline style tag");
 
+    const nonce = style.getAttribute("nonce");
     hydratedRoot.unmount();
-    return style.getAttribute("nonce");
+    await flushHydrationTimers();
+    return nonce;
   } finally {
     restore();
   }

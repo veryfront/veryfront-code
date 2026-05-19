@@ -1,5 +1,6 @@
 import { type ConversationRunEventQueueController } from "./durable.ts";
 
+/** Public API contract for conversation run mirror snapshot. */
 export interface ConversationRunMirrorSnapshot {
   latestEventId: number;
   latestExternalEventSequence: number;
@@ -11,6 +12,7 @@ export interface ConversationRunMirrorSnapshot {
   inFlight: boolean;
 }
 
+/** State for conversation run mirror stopped. */
 export interface ConversationRunMirrorStoppedState {
   latestEventId: number;
   latestExternalEventSequence: number;
@@ -20,6 +22,7 @@ export interface ConversationRunMirrorStoppedState {
   disableReason?: "cursor_resyncs_exhausted" | "non_appendable" | "ignorable_append_rejection";
 }
 
+/** State for conversation run mirror retry scheduled. */
 export interface ConversationRunMirrorRetryScheduledState {
   latestEventId: number;
   latestExternalEventSequence: number;
@@ -39,6 +42,7 @@ export interface ConversationRunMirrorHighBacklogState {
   threshold: number;
 }
 
+/** Public API contract for conversation run mirror. */
 export interface ConversationRunMirror {
   enqueue(events: unknown[]): void;
   flush(): Promise<void>;
@@ -69,6 +73,7 @@ function scheduleMirrorTimer(input: {
   return setTimeout(input.onFire, input.delayMs);
 }
 
+/** Create conversation run mirror. */
 export function createConversationRunMirror(input: {
   queueController: ConversationRunEventQueueController;
   immediateFlushEventCount: number;

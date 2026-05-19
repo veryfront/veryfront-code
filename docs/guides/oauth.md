@@ -178,7 +178,7 @@ A working setup:
 - Stores tokens for the signed-in user. Confirm via:
 
   ```ts
-  const tokens = await tokenStore.get(userId, githubConfig.id);
+  const tokens = await tokenStore.getTokens(githubConfig.serviceId, userId);
   console.log(tokens.accessToken ? "ok" : "missing");
   ```
 

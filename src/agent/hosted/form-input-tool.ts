@@ -13,6 +13,7 @@ import { executeDurableHumanInputFlow, type HumanInputResult } from "../input/hu
 const INPUT_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const INPUT_REQUEST_POLL_INTERVAL_MS = 500;
 
+/** Context for hosted form input tool. */
 export interface HostedFormInputToolContext {
   authToken: string;
   conversationId?: string;
@@ -20,6 +21,7 @@ export interface HostedFormInputToolContext {
   slashCommandArtifactPathSeen?: boolean;
 }
 
+/** Create hosted form input tool. */
 export function createHostedFormInputTool(context: HostedFormInputToolContext, apiUrl: string) {
   return tool<FormInputToolInput, unknown>({
     description:

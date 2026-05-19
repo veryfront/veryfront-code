@@ -1,6 +1,7 @@
 import type { Context, ExecutionContext } from "./types.ts";
 import { HTTP_REDIRECT_FOUND } from "#veryfront/utils";
 
+/** Context for middleware. */
 export class MiddlewareContext implements Context {
   req: Request;
   request: Request;

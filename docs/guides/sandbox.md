@@ -159,3 +159,4 @@ id and close it manually.
 ## Related
 
 - [`veryfront/sandbox`](../reference/veryfront/sandbox.md): sandbox API reference
+- [`veryfront/fs`](../reference/veryfront/fs.md): filesystem helpers used with isolated workspaces

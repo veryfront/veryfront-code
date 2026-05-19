@@ -31,6 +31,7 @@ interface MemoryBackendConfig extends BackendConfig {
 /** Default max queue size */
 const DEFAULT_MAX_QUEUE_SIZE = 10_000;
 
+/** Implement memory backend. */
 export class MemoryBackend implements WorkflowBackend {
   private runs = new Map<string, WorkflowRun>();
   private checkpoints = new Map<string, Checkpoint[]>();

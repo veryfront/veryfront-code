@@ -45,6 +45,81 @@
   ],
   "tools": [
     {
+      "id": "list_sites",
+      "name": "List Atlassian Sites",
+      "description": "List Atlassian cloud sites/resources the OAuth token can access; use the returned id as cloudId for Jira and Confluence tools",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/oauth/token/accessible-resources",
+        "response": {
+          "transform": ""
+        }
+      }
+    },
+    {
+      "id": "list_projects",
+      "name": "List Projects",
+      "description": "List all accessible Jira projects",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/search",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from accessible-resources",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Search text for project name or key"
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum projects to return",
+            "default": 50
+          },
+          "startAt": {
+            "type": "number",
+            "in": "query",
+            "description": "Pagination offset",
+            "default": 0
+          }
+        },
+        "response": {
+          "transform": "values"
+        }
+      }
+    },
+    {
+      "id": "get_project",
+      "name": "Get Project",
+      "description": "Get detailed information about a Jira project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/{projectIdOrKey}",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from OAuth accessible resources",
+            "required": true
+          },
+          "projectIdOrKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Jira project ID or key",
+            "required": true
+          }
+        }
+      }
+    },
+    {
       "id": "search_issues",
       "name": "Search Issues",
       "description": "Search Jira issues using JQL (Jira Query Language)",
@@ -175,40 +250,93 @@
       }
     },
     {
-      "id": "list_projects",
-      "name": "List Projects",
-      "description": "List all accessible Jira projects",
+      "id": "list_comments",
+      "name": "List Comments",
+      "description": "List comments on a Jira issue",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/project/search",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/comment",
         "params": {
           "cloudId": {
             "type": "string",
             "in": "path",
-            "description": "Atlassian cloud ID from accessible-resources",
+            "description": "Atlassian cloud ID from OAuth accessible resources",
             "required": true
           },
-          "query": {
+          "issueIdOrKey": {
             "type": "string",
-            "in": "query",
-            "description": "Search text for project name or key"
-          },
-          "maxResults": {
-            "type": "number",
-            "in": "query",
-            "description": "Maximum projects to return",
-            "default": 50
+            "in": "path",
+            "description": "Jira issue ID or key",
+            "required": true
           },
           "startAt": {
             "type": "number",
             "in": "query",
             "description": "Pagination offset",
             "default": 0
+          },
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum comments to return",
+            "default": 50
+          }
+        }
+      }
+    },
+    {
+      "id": "add_comment",
+      "name": "Add Comment",
+      "description": "Add a comment to a Jira issue",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/comment",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from OAuth accessible resources",
+            "required": true
+          },
+          "issueIdOrKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Jira issue ID or key",
+            "required": true
           }
         },
-        "response": {
-          "transform": "values"
+        "body": {
+          "body": {
+            "type": "object",
+            "description": "Comment body in Atlassian Document Format",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_transitions",
+      "name": "Get Transitions",
+      "description": "List available workflow transitions for a Jira issue",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from OAuth accessible resources",
+            "required": true
+          },
+          "issueIdOrKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Jira issue ID or key",
+            "required": true
+          }
         }
       }
     }

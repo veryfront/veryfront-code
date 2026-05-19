@@ -9,8 +9,10 @@ import {
   type DefaultResearchArtifactPaths,
 } from "./default-research-artifact-policy.ts";
 
+/** Public API contract for default research artifacts. */
 export type DefaultResearchArtifacts = DefaultResearchArtifactPaths;
 
+/** Context for default research artifact. */
 export interface DefaultResearchArtifactContext {
   availableToolNames?: string[];
   projectId?: string | null;
@@ -18,6 +20,7 @@ export interface DefaultResearchArtifactContext {
   defaultResearchArtifacts?: DefaultResearchArtifacts | null;
 }
 
+/** Public API contract for default research artifact logger. */
 export interface DefaultResearchArtifactLogger {
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
 }
@@ -61,6 +64,7 @@ function buildDefaultArtifactsFromResultPath(input: {
     : null;
 }
 
+/** Extract latest user text. */
 export function extractLatestUserText(messages: readonly unknown[]): string | null {
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     const message = messages[index];
@@ -104,6 +108,7 @@ function extractLatestUserDescription(text: string): string {
   return withoutLeadingSlashCommand.trim();
 }
 
+/** Fetch latest conversation user text helper. */
 export async function fetchLatestConversationUserText(input: {
   apiUrl: string;
   authToken: string;
@@ -157,6 +162,7 @@ export async function fetchLatestConversationUserText(input: {
   }
 }
 
+/** Update default research artifacts helper. */
 export function updateDefaultResearchArtifacts(input: {
   taskContext: DefaultResearchArtifactContext;
   latestUserText: string | null;
@@ -208,6 +214,7 @@ function appendSystemReminder(
   ];
 }
 
+/** Apply default research artifact path helper. */
 export function applyDefaultResearchArtifactPath(
   toolName: string,
   toolInput: Record<string, unknown>,
@@ -245,6 +252,7 @@ export function applyDefaultResearchArtifactPath(
   };
 }
 
+/** Should retry create research artifact as update helper. */
 export function shouldRetryCreateResearchArtifactAsUpdate(input: {
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -279,6 +287,7 @@ export function shouldRetryCreateResearchArtifactAsUpdate(input: {
   return path === topicRootPath || path.startsWith(`${topicRootPath}/`);
 }
 
+/** Mirror default research run artifact helper. */
 export async function mirrorDefaultResearchRunArtifact(input: {
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -341,6 +350,7 @@ export async function mirrorDefaultResearchRunArtifact(input: {
   }
 }
 
+/** Handler for create default research run artifact mirror. */
 export function createDefaultResearchRunArtifactMirrorHandler(input: {
   taskContext: DefaultResearchArtifactContext;
   remoteToolSource?: Pick<RemoteToolSource, "executeTool"> | null;

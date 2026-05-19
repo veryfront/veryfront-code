@@ -19,6 +19,7 @@ import {
 
 const CHARS_PER_TOKEN = 4;
 
+/** Estimate tokens. */
 export function estimateTokens(value: unknown): number {
   return Math.ceil(JSON.stringify(value ?? "").length / CHARS_PER_TOKEN);
 }
@@ -28,6 +29,7 @@ function truncate(text: string, maxLen: number): string {
   return `${text.slice(0, maxLen)}…`;
 }
 
+/** Compress turn. */
 export function compressTurn(
   messages: ProviderModelMessage[],
   startIdx: number,
@@ -102,6 +104,7 @@ function collectTurns(messages: ProviderModelMessage[]): TurnWindow[] {
   return turns;
 }
 
+/** Enforce token budget with turn compression. */
 export function enforceTokenBudgetWithTurnCompression(
   messages: ProviderModelMessage[],
   budget: number,
@@ -202,11 +205,13 @@ interface ToolCallInfo {
   input: unknown;
 }
 
+/** Check whether the model supports the file media type. */
 export function isModelSupportedFileMediaType(mediaType: string): boolean {
   return mediaType.startsWith("image/") || mediaType === "application/pdf" ||
     mediaType === "text/plain";
 }
 
+/** Normalizes message file part media types. */
 export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): ChatUiMessage[] {
   return messages.map((message) => {
     if (!message.parts.some((part) => part.type === "file")) {
@@ -233,6 +238,7 @@ export function normalizeMessageFilePartMediaTypes(messages: ChatUiMessage[]): C
   });
 }
 
+/** Rewrite unsupported file parts as annotations. */
 export function rewriteUnsupportedFilePartsAsAnnotations(
   messages: ChatUiMessage[],
 ): ChatUiMessage[] {
@@ -303,6 +309,7 @@ function isPendingToolPart(part: unknown): boolean {
   return part.type === "dynamic-tool" || part.type === "tool_call" || part.type.startsWith("tool-");
 }
 
+/** Strip pending tool parts. */
 export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[] {
   return messages.flatMap((message) => {
     if (message.role !== "assistant" || message.parts.length === 0) {
@@ -365,6 +372,7 @@ function cleanContent<T>(content: T[]): T[] {
   return content.filter((part) => isKeepableModelPart(part, hasSubstantiveContent));
 }
 
+/** Sanitize provider model messages. */
 export function sanitizeProviderModelMessages(
   messages: ProviderModelMessage[],
 ): ProviderModelMessage[] {
@@ -396,6 +404,7 @@ export function sanitizeProviderModelMessages(
 /**
  * @deprecated Use sanitizeProviderModelMessages for provider-facing model payloads.
  */
+/** Shared sanitize model messages value. */
 export const sanitizeModelMessages = sanitizeProviderModelMessages;
 
 function filterValidMessages(messages: ProviderModelMessage[]): ProviderModelMessage[] {
@@ -408,6 +417,7 @@ function filterValidMessages(messages: ProviderModelMessage[]): ProviderModelMes
   });
 }
 
+/** Prepare provider model messages from UI messages. */
 export function prepareProviderModelMessagesFromUiMessages(
   messages: ChatUiMessage[],
 ): ProviderModelMessage[] {
@@ -516,6 +526,7 @@ function wrapToolResultOutput(
   return original;
 }
 
+/** Mask old tool outputs. */
 export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -597,6 +608,7 @@ function createSyntheticToolResult(toolCallId: string, toolName: string): ChatTo
   };
 }
 
+/** Repair tool pairs. */
 export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   const result = [...messages];
   let mutated = false;
@@ -739,11 +751,13 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
   return mutated ? result : messages;
 }
 
+/** Estimate overhead. */
 export function estimateOverhead(instructions: unknown, toolCount: number): number {
   const instructionTokens = estimateTokens(instructions);
   return instructionTokens + toolCount * TOKENS_PER_TOOL;
 }
 
+/** Ensure tool call inputs helper. */
 export function ensureToolCallInputs(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   let mutated = false;
 
@@ -774,6 +788,7 @@ export function ensureToolCallInputs(messages: ProviderModelMessage[]): Provider
   return mutated ? result : messages;
 }
 
+/** Compact for step. */
 export function compactForStep(
   messages: ProviderModelMessage[],
   overhead: number = 0,
@@ -794,6 +809,7 @@ export function compactForStep(
   return ensureToolCallInputs(repairToolPairs(dedupeToolHistory(trimmed)));
 }
 
+/** Dedupe tool history. */
 export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   const seenToolCallIds = new Set<string>();
   const seenToolResultIds = new Set<string>();
@@ -854,6 +870,7 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
   return mutated ? deduped : messages;
 }
 
+/** Enforce token budget. */
 export function enforceTokenBudget(
   messages: ProviderModelMessage[],
   budget: number = DEFAULT_TOKEN_BUDGET,
@@ -869,4 +886,5 @@ export function enforceTokenBudget(
 /**
  * @deprecated Use prepareProviderModelMessagesFromUiMessages for provider-facing model payloads.
  */
+/** Shared prepare model messages from UI messages value. */
 export const prepareModelMessagesFromUiMessages = prepareProviderModelMessagesFromUiMessages;

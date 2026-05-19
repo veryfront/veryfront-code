@@ -7,6 +7,7 @@ function stripTrailingSlash(pathname: string): string {
   return pathname.replace(/\/+$/, "");
 }
 
+/** Normalizes path. */
 export function normalizePath(pathname: string): string {
   if (!pathname) return pathname;
   return stripTrailingSlash(normalize(pathname.replace(/\\+/g, "/")));

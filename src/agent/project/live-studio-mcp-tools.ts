@@ -8,6 +8,7 @@ import {
 } from "#veryfront/tool";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
 
+/** Options accepted by live studio MCP tools. */
 export type LiveStudioMcpToolsOptions = {
   authToken: string;
   clientProfile?: RuntimeClientProfile | null;
@@ -24,6 +25,7 @@ type StudioMcpState = {
   tools: HostToolSet;
 };
 
+/** Builds studio MCP headers. */
 export function buildStudioMcpHeaders(
   authToken: string,
   projectId: string | null,
@@ -64,6 +66,7 @@ async function loadStudioMcpState(input: {
   };
 }
 
+/** Create live studio MCP tools. */
 export async function createLiveStudioMcpTools(input: LiveStudioMcpToolsOptions): Promise<{
   tools: HostToolSet;
   close: () => Promise<void>;

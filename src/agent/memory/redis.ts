@@ -42,6 +42,7 @@ export interface RedisMemoryConfig extends MemoryConfigBase {
 const DEFAULT_TTL = 86_400; // 24 hours
 const DEFAULT_KEY_PREFIX = "veryfront:agent:memory:";
 
+/** Implement redis memory. */
 export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements Memory<M> {
   private client: RedisClient;
   private agentId: string;
@@ -160,6 +161,7 @@ export class RedisMemory<M extends MinimalMessage = MinimalMessage> implements M
   }
 }
 
+/** Create redis memory. */
 export function createRedisMemory<M extends MinimalMessage = MinimalMessage>(
   agentId: string,
   config: RedisMemoryConfig,

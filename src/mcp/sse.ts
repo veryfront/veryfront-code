@@ -10,10 +10,12 @@ export function formatSSEEvent(data: unknown, id?: string): string {
   return event;
 }
 
+/** Formats sseretry. */
 export function formatSSERetry(ms: number): string {
   return `retry: ${ms}\n\n`;
 }
 
+/** Event emitted for format ssepriming. */
 export function formatSSEPrimingEvent(id: string): string {
   return `id: ${id}\ndata: \n\n`;
 }

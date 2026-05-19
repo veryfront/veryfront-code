@@ -51,12 +51,18 @@ import {
   type ResolveHostedChildForkRuntimeConfigInput,
 } from "./child-tool-input.ts";
 
+/** Default value for hosted child fork stream idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_IDLE_TIMEOUT_MS = 45_000;
+/** Default value for hosted child fork stream active tool timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_ACTIVE_TOOL_TIMEOUT_MS = 5 * 60_000;
+/** Default value for hosted child fork stream post tool idle timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_POST_TOOL_IDLE_TIMEOUT_MS = 2 * 60_000;
+/** Default value for hosted child fork stream finalization timeout ms. */
 export const DEFAULT_HOSTED_CHILD_FORK_STREAM_FINALIZATION_TIMEOUT_MS = 10_000;
+/** Default value for hosted child status poll interval ms. */
 export const DEFAULT_HOSTED_CHILD_STATUS_POLL_INTERVAL_MS = 2_000;
 
+/** Public API contract for hosted child fork execution instrumentation. */
 export type HostedChildForkExecutionInstrumentation<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
@@ -87,6 +93,7 @@ export type HostedChildForkExecutionRunContextFactoryInput<
   pendingToolLogWriter?: { warn: (message: string, metadata?: Record<string, unknown>) => void };
 };
 
+/** Input payload for execute hosted child fork with prepared tools. */
 export type ExecuteHostedChildForkWithPreparedToolsInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
@@ -178,6 +185,7 @@ function defaultResolveSystem(input: {
   return typeof remindedSystem === "string" ? remindedSystem : input.system;
 }
 
+/** Options accepted by execute hosted child fork tool input. */
 export type ExecuteHostedChildForkToolInputOptions<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > =
@@ -214,6 +222,7 @@ export type ExecuteHostedChildForkToolInputOptions<
     onRuntimeConfig?: (runtimeConfig: HostedChildForkRuntimeConfig) => void | Promise<void>;
   };
 
+/** Input payload for execute hosted child fork tool. */
 export async function executeHostedChildForkToolInput<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(
@@ -256,6 +265,7 @@ export async function executeHostedChildForkToolInput<
   });
 }
 
+/** Execute hosted child fork with prepared tools. */
 export async function executeHostedChildForkWithPreparedTools<
   TAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(

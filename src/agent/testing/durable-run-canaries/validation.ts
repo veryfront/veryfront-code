@@ -28,7 +28,7 @@ function hasCreateFileInput(value: unknown): boolean {
 
   return getStringProperty(value, "path") !== null && getStringProperty(value, "content") !== null;
 }
-
+/** Assert that a durable run canary completed successfully. */
 export function assertCompleted(run: DurableRunCanaryRunSummary): void {
   if (run.status !== "completed") {
     throw new Error(
@@ -39,6 +39,7 @@ export function assertCompleted(run: DurableRunCanaryRunSummary): void {
   }
 }
 
+/** Message shape for find assistant. */
 export function findAssistantMessage(
   messages: DurableRunCanaryMessage[],
   messageId: string,
@@ -53,6 +54,7 @@ export function findAssistantMessage(
   return message;
 }
 
+/** Stringify unknown helper. */
 export function stringifyUnknown(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -65,6 +67,7 @@ export function stringifyUnknown(value: unknown): string {
   }
 }
 
+/** Collect assistant text helper. */
 export function collectAssistantText(message: DurableRunCanaryMessage): string {
   return message.parts
     .filter((part) => part.type === "text" && typeof part.text === "string")
@@ -72,6 +75,7 @@ export function collectAssistantText(message: DurableRunCanaryMessage): string {
     .join("\n");
 }
 
+/** Assert no malformed create file tool calls helper. */
 export function assertNoMalformedCreateFileToolCalls(messages: DurableRunCanaryMessage[]): void {
   for (const message of messages) {
     for (const part of message.parts) {

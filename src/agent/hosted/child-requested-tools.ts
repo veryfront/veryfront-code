@@ -15,6 +15,7 @@ import {
   type ProjectSteeringPaths,
 } from "../project/steering-mutation.ts";
 
+/** Input payload for hosted child requested tools. */
 export interface HostedChildRequestedToolsInput {
   prompt: string;
   requestedTools?: readonly string[];
@@ -29,12 +30,14 @@ export interface HostedChildRequestedToolsInput {
 const DEFAULT_SANDBOX_TOOL_NAMES = ["bash", "readFile", "writeFile"];
 const DEFAULT_ARTIFACT_TOOL_NAMES = ["create_file", "update_file"];
 
+/** Default value for hosted child excluded tool names. */
 export const DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new Set([
   "studio_panel_control",
   "studio_suggestions",
   "form_input",
 ]);
 
+/** Default value for hosted child requested tool companions. */
 export const DEFAULT_HOSTED_CHILD_REQUESTED_TOOL_COMPANIONS: Readonly<
   Record<string, readonly string[]>
 > = {
@@ -42,9 +45,11 @@ export const DEFAULT_HOSTED_CHILD_REQUESTED_TOOL_COMPANIONS: Readonly<
   update_file: ["create_file"],
 };
 
+/** Default value for hosted child sandbox required cue pattern. */
 export const DEFAULT_HOSTED_CHILD_SANDBOX_REQUIRED_CUE_PATTERN =
   /\b(bash|shell|terminal|command line|cli|\/workspace|workspace\/|python|node|npm|pnpm|yarn|curl|jq|csv|json|pdf|zip|unzip|archive|repo|git|test|build|script)\b/i;
 
+/** Sanitize hosted child requested tools. */
 export function sanitizeHostedChildRequestedTools(
   input: HostedChildRequestedToolsInput,
 ): string[] | undefined {
@@ -74,6 +79,7 @@ export function sanitizeHostedChildRequestedTools(
   return expandedTools.filter((toolName) => !sandboxToolNames.has(toolName));
 }
 
+/** Expand hosted child requested tools helper. */
 export function expandHostedChildRequestedTools(input: {
   requestedTools?: readonly string[];
   excludedTools?: ReadonlySet<string>;
@@ -108,6 +114,7 @@ export function expandHostedChildRequestedTools(input: {
   return [...expandedTools];
 }
 
+/** Request payload for should prune sandbox tools from hosted child. */
 export function shouldPruneSandboxToolsFromHostedChildRequest(input: {
   prompt: string;
   requestedTools?: readonly string[];
@@ -142,6 +149,7 @@ export function shouldPruneSandboxToolsFromHostedChildRequest(input: {
   return !matchesSandboxRequiredCue(input.sandboxRequiredCuePattern, input.prompt);
 }
 
+/** Result returned from hosted child fork runtime tool selection. */
 export type HostedChildForkRuntimeToolSelectionResult =
   | {
     ok: true;
@@ -152,6 +160,7 @@ export type HostedChildForkRuntimeToolSelectionResult =
     errorMessage: string;
   };
 
+/** Result returned from default hosted child fork runtime tool preparation. */
 export type DefaultHostedChildForkRuntimeToolPreparationResult =
   | {
     ok: true;
@@ -163,6 +172,7 @@ export type DefaultHostedChildForkRuntimeToolPreparationResult =
     errorMessage: string;
   };
 
+/** Result returned from default hosted child fork tool assembly source. */
 export type DefaultHostedChildForkToolAssemblySourceResult =
   | {
     ok: true;
@@ -175,6 +185,7 @@ export type DefaultHostedChildForkToolAssemblySourceResult =
     errorMessage: string;
   };
 
+/** Result returned from default hosted child fork tool assembly. */
 export type DefaultHostedChildForkToolAssemblyResult =
   | {
     ok: true;
@@ -188,6 +199,7 @@ export type DefaultHostedChildForkToolAssemblyResult =
     errorMessage: string;
   };
 
+/** Select hosted child fork runtime tools helper. */
 export function selectHostedChildForkRuntimeTools(input: {
   provider: string;
   forkModel?: string;
@@ -234,6 +246,7 @@ export function selectHostedChildForkRuntimeTools(input: {
   };
 }
 
+/** Sanitize default hosted child requested tools. */
 export function sanitizeDefaultHostedChildRequestedTools(input: {
   prompt: string;
   requestedTools?: readonly string[];
@@ -248,6 +261,7 @@ export function sanitizeDefaultHostedChildRequestedTools(input: {
   });
 }
 
+/** Select default hosted child fork runtime tools helper. */
 export function selectDefaultHostedChildForkRuntimeTools(input: {
   provider: string;
   forkModel?: string;
@@ -268,6 +282,7 @@ export function selectDefaultHostedChildForkRuntimeTools(input: {
   });
 }
 
+/** Prepare default hosted child fork runtime tools. */
 export function prepareDefaultHostedChildForkRuntimeTools(input: {
   provider: string;
   forkModel?: string;
@@ -321,6 +336,7 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
   };
 }
 
+/** Prepare default hosted child fork tool assembly. */
 export async function prepareDefaultHostedChildForkToolAssembly(input: {
   prepareToolSources: () => Promise<DefaultHostedChildForkToolAssemblySourceResult>;
   provider: string;
@@ -365,6 +381,7 @@ export async function prepareDefaultHostedChildForkToolAssembly(input: {
   };
 }
 
+/** Builds default hosted child fork tool set. */
 export function buildDefaultHostedChildForkToolSet(
   ...toolSets: readonly HostToolSet[]
 ): HostToolSet {
@@ -389,6 +406,7 @@ export function buildDefaultHostedChildForkToolSet(
   return forkTools;
 }
 
+/** Builds hosted child tool description. */
 export function buildHostedChildToolDescription(): string {
   return `Invoke a focused child agent on an isolated subtask.
 Call multiple times in one response to run child agents in parallel.

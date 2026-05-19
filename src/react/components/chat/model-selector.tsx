@@ -25,7 +25,7 @@ export interface ModelOption {
   badge?: string;
 }
 
-/** Props for `<ModelSelector>`. */
+/** Props accepted by `<ModelSelector>`. */
 export interface ModelSelectorProps {
   /** Available models */
   models: ModelOption[];
@@ -53,6 +53,7 @@ function groupByProvider(models: ModelOption[]): Map<string, ModelOption[]> {
   return groups;
 }
 
+/** Render model selector. */
 export function ModelSelector({
   models,
   value,

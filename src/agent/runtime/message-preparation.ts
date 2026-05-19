@@ -12,12 +12,14 @@ import {
 const DEFAULT_EMPTY_CONVERSATION_PROMPT =
   "Please provide 3-4 specific suggestions for what I could build or improve based on the current project context.";
 
+/** Options accepted by prepare agent runtime messages from UI messages. */
 export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
   messages: readonly ChatUiMessage[];
   emptyConversationPrompt?: string;
   resolveFileUrl?: RuntimeFileUrlResolver;
 };
 
+/** Prepare agent runtime messages from UI messages. */
 export async function prepareAgentRuntimeMessagesFromUiMessages(
   options: PrepareAgentRuntimeMessagesFromUiMessagesOptions,
 ): Promise<AgentRuntimeMessage[]> {

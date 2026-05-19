@@ -1,8 +1,10 @@
+/** Context for execution. */
 export interface ExecutionContext {
   waitUntil(promise: Promise<unknown>): void;
   passThroughOnException(): void;
 }
 
+/** Context for context. */
 export interface Context {
   req: Request;
   request: Request;
@@ -17,11 +19,14 @@ export interface Context {
   get(key: string): unknown;
 }
 
+/** Public API contract for next. */
 export type Next = () => Promise<Response | undefined> | Response;
 
+/** Handler for middleware. */
 export type MiddlewareHandler = (
   c: Context,
   next: Next,
 ) => Promise<Response | undefined> | Response | undefined;
 
+/** Public API contract for middleware factory. */
 export type MiddlewareFactory<T = unknown> = (options?: T) => MiddlewareHandler;

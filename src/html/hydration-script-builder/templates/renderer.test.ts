@@ -33,7 +33,15 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "__veryfrontSetStudioEmbed");
     });
 
-    it("should use pathToModuleUrl for page loading", () => {
+    it("should use the RSC module endpoint only for app router RSC client pages", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "data.clientModuleStrategy === 'rsc-module'");
+      assertIncludes(result, "normalizedPagePath.startsWith('app/')");
+      assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)");
+      assertIncludes(result, "const moduleUrl = shouldRenderRscClientPage");
+    });
+
+    it("should use pathToModuleUrl for non-RSC page loading", () => {
       assertIncludes(getRendererScript(), "pathToModuleUrl(data.pagePath");
     });
 
@@ -57,7 +65,9 @@ describe("hydration-script-builder/templates/renderer", () => {
     });
 
     it("should wrap with layouts from innermost to outermost", () => {
-      assertIncludes(getRendererScript(), "layouts.length - 1; i >= 0; i--");
+      const result = getRendererScript();
+      assertIncludes(result, "const layouts = shouldRenderRscClientPage ? [] : data.layouts");
+      assertIncludes(result, "layouts.length - 1; i >= 0; i--");
     });
 
     it("should wrap with App component when appPath is provided", () => {
@@ -89,6 +99,16 @@ describe("hydration-script-builder/templates/renderer", () => {
 
     it("should use hydrateRoot for initial render", () => {
       assertIncludes(getRendererScript(), "hydrateRoot");
+    });
+
+    it("should client-render RSC module pages into the root container", () => {
+      const result = getRendererScript();
+      assertIncludes(
+        result,
+        "data.clientModuleStrategy === 'rsc-module' && normalizedPagePath.startsWith('app/')",
+      );
+      assertIncludes(result, "container.__reactRoot = createRoot(container)");
+      assertIncludes(result, "container.__reactRoot.render(tree)");
     });
 
     it("should use identifierPrefix 'vf'", () => {

@@ -22,51 +22,64 @@ import { createRequestAuthCache } from "./request-auth-cache.ts";
 import { isResponseLike } from "./response-like.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 
+/** Public API contract for hosted agent service routes logger. */
 export type HostedAgentServiceRoutesLogger = {
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+/** Public API contract for agent service routes logger. */
 export type AgentServiceRoutesLogger = HostedAgentServiceRoutesLogger;
 
+/** Public API contract for hosted agent service routes trace. */
 export type HostedAgentServiceRoutesTrace = <TResult>(
   operationName: string,
   operation: () => Promise<TResult>,
 ) => Promise<TResult>;
 
+/** Public API contract for agent service routes trace. */
 export type AgentServiceRoutesTrace = HostedAgentServiceRoutesTrace;
 
+/** Public API contract for hosted agent service active span attributes. */
 export type HostedAgentServiceActiveSpanAttributes = Record<
   string,
   string | number | boolean | readonly (string | number | boolean)[] | null | undefined
 >;
 
+/** Public API contract for agent service active span attributes. */
 export type AgentServiceActiveSpanAttributes = HostedAgentServiceActiveSpanAttributes;
 
+/** Input payload for hosted agent service stream execution. */
 export type HostedAgentServiceStreamExecutionInput<TExecution extends object> = TExecution & {
   requestAbortSignal: AbortSignal;
   agUiInput: AgUiRuntimeRequest;
 };
 
+/** Input payload for agent service stream execution. */
 export type AgentServiceStreamExecutionInput<TExecution extends object> =
   HostedAgentServiceStreamExecutionInput<TExecution>;
 
+/** Input payload for hosted agent service detached execution. */
 export type HostedAgentServiceDetachedExecutionInput<TExecution extends object> = {
   execution: TExecution;
   abortSignal: AbortSignal;
 };
 
+/** Input payload for agent service detached execution. */
 export type AgentServiceDetachedExecutionInput<TExecution extends object> =
   HostedAgentServiceDetachedExecutionInput<TExecution>;
 
+/** Input payload for hosted agent service detached cleanup. */
 export type HostedAgentServiceDetachedCleanupInput<TExecution extends object> = {
   execution: TExecution;
   runId: string;
   conversationId: string;
 };
 
+/** Input payload for agent service detached cleanup. */
 export type AgentServiceDetachedCleanupInput<TExecution extends object> =
   HostedAgentServiceDetachedCleanupInput<TExecution>;
 
+/** Options accepted by hosted agent service route set. */
 export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
   forwardedConfigNamespace?: string;
   authenticateRequest: (
@@ -99,6 +112,7 @@ export type HostedAgentServiceRouteSetOptions<TExecution extends object> = {
 export type AgentServiceRouteSetOptions<TExecution extends object> =
   HostedAgentServiceRouteSetOptions<TExecution>;
 
+/** Public API contract for hosted agent service route set. */
 export type HostedAgentServiceRouteSet<TExecution extends object> = {
   routes: AgentServiceRoute[];
   authenticateAgUiRequest: (
@@ -172,6 +186,7 @@ function createAgUiSetupErrorResponse(input: {
   return createAgUiSseErrorResponse(createAgUiRunErrorEvent(message, code), statusCode);
 }
 
+/** Create hosted agent service route set. */
 export function createHostedAgentServiceRouteSet<TExecution extends object>(
   options: HostedAgentServiceRouteSetOptions<TExecution>,
 ): HostedAgentServiceRouteSet<TExecution> {

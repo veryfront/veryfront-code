@@ -10,7 +10,8 @@
     "tokenUrl": "https://oauth2.googleapis.com/token",
     "scopes": [
       "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/drive.readonly"
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.file"
     ],
     "callbackPath": "/api/auth/sheets/callback",
     "requiredApis": [
@@ -146,7 +147,49 @@
       "id": "write_range",
       "name": "Write Range",
       "description": "Write data to a spreadsheet range",
-      "requiresWrite": true
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          },
+          "range": {
+            "type": "string",
+            "in": "path",
+            "description": "A1 notation range to write",
+            "required": true
+          },
+          "valueInputOption": {
+            "type": "string",
+            "in": "query",
+            "description": "How input values should be interpreted",
+            "default": "USER_ENTERED"
+          },
+          "includeValuesInResponse": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether the response should include written values",
+            "default": false
+          }
+        },
+        "body": {
+          "values": {
+            "type": "array",
+            "description": "2D array of row values to write",
+            "required": true
+          },
+          "majorDimension": {
+            "type": "string",
+            "description": "Major dimension of provided values",
+            "default": "ROWS"
+          }
+        }
+      }
     },
     {
       "id": "create_spreadsheet",
@@ -165,6 +208,320 @@
           "sheets": {
             "type": "array",
             "description": "Optional initial sheet definitions"
+          }
+        }
+      }
+    },
+    {
+      "id": "append_rows",
+      "name": "Append Rows",
+      "description": "Append rows to a spreadsheet range",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}:append",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          },
+          "range": {
+            "type": "string",
+            "in": "path",
+            "description": "A1 notation range/table to append to",
+            "required": true
+          },
+          "valueInputOption": {
+            "type": "string",
+            "in": "query",
+            "description": "How input values should be interpreted",
+            "default": "USER_ENTERED"
+          },
+          "insertDataOption": {
+            "type": "string",
+            "in": "query",
+            "description": "How inserted data should be handled",
+            "default": "INSERT_ROWS"
+          },
+          "includeValuesInResponse": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether the response should include appended values",
+            "default": false
+          }
+        },
+        "body": {
+          "values": {
+            "type": "array",
+            "description": "2D array of row values to append",
+            "required": true
+          },
+          "majorDimension": {
+            "type": "string",
+            "description": "Major dimension of provided values",
+            "default": "ROWS"
+          }
+        }
+      }
+    },
+    {
+      "id": "clear_range",
+      "name": "Clear Range",
+      "description": "Clear values from a spreadsheet range",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/values/{range}:clear",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          },
+          "range": {
+            "type": "string",
+            "in": "path",
+            "description": "A1 notation range to clear",
+            "required": true
+          }
+        },
+        "body": {}
+      }
+    },
+    {
+      "id": "batch_update",
+      "name": "Batch Update",
+      "description": "Run raw Google Sheets batchUpdate requests for formatting and structural changes",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}:batchUpdate",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "Google Sheets API batchUpdate request objects",
+            "required": true
+          },
+          "includeSpreadsheetInResponse": {
+            "type": "boolean",
+            "description": "Whether to include the updated spreadsheet in the response"
+          }
+        }
+      }
+    },
+    {
+      "id": "add_sheet",
+      "name": "Add Sheet",
+      "description": "Add a new sheet/tab to a spreadsheet",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}:batchUpdate",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "A batchUpdate requests array containing an addSheet request",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_sheet",
+      "name": "Delete Sheet",
+      "description": "Delete a sheet/tab from a spreadsheet by sheet ID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}:batchUpdate",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "A batchUpdate requests array containing a deleteSheet request",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "rename_sheet",
+      "name": "Rename Sheet",
+      "description": "Rename a sheet/tab by sheet ID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}:batchUpdate",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "A batchUpdate requests array containing an updateSheetProperties request",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_spreadsheet",
+      "name": "Delete Spreadsheet",
+      "description": "Move an app-accessible spreadsheet file to trash",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://www.googleapis.com/drive/v3/files/{spreadsheetId}",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID / Drive file ID",
+            "required": true
+          }
+        },
+        "body": {
+          "trashed": {
+            "type": "boolean",
+            "description": "Whether to move the spreadsheet file to trash",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "find_replace",
+      "name": "Find and Replace",
+      "description": "Find and replace text in a spreadsheet or sheet",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}:batchUpdate",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "A batchUpdate requests array containing a findReplace request",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "copy_sheet",
+      "name": "Copy Sheet",
+      "description": "Copy a sheet/tab to another spreadsheet",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}/sheets/{sheetId}:copyTo",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Source spreadsheet ID",
+            "required": true
+          },
+          "sheetId": {
+            "type": "number",
+            "in": "path",
+            "description": "Source sheet ID",
+            "required": true
+          }
+        },
+        "body": {
+          "destinationSpreadsheetId": {
+            "type": "string",
+            "description": "Destination spreadsheet ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_chart",
+      "name": "Create Chart",
+      "description": "Create an embedded chart using a Sheets API chart specification",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}:batchUpdate",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "A batchUpdate requests array containing an addChart request",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "set_data_validation",
+      "name": "Set Data Validation",
+      "description": "Set data validation rules on a sheet range",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://sheets.googleapis.com/v4/spreadsheets/{spreadsheetId}:batchUpdate",
+        "params": {
+          "spreadsheetId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Sheets spreadsheet ID",
+            "required": true
+          }
+        },
+        "body": {
+          "requests": {
+            "type": "array",
+            "description": "A batchUpdate requests array containing a setDataValidation request",
+            "required": true
           }
         }
       }

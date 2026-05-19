@@ -21,6 +21,7 @@ import type { BranchInfo } from "#veryfront/agent/react";
 import { ChatContextProvider } from "../contexts/chat-context.tsx";
 import type { ChatContextValue } from "../contexts/chat-context.tsx";
 
+/** Props accepted by chat root. */
 export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "children"> {
   children: React.ReactNode;
 
@@ -65,6 +66,7 @@ export interface ChatRootProps extends Omit<React.HTMLAttributes<HTMLDivElement>
   maxHeight?: string;
 }
 
+/** Render chat root. */
 export const ChatRoot = React.forwardRef<HTMLDivElement, ChatRootProps>(
   function ChatRoot(
     {

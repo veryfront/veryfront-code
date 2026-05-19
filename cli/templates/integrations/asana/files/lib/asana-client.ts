@@ -166,3 +166,69 @@ export async function getMe(): Promise<{ gid: string; name: string; email: strin
   );
   return data;
 }
+
+interface AsanaUser {
+  gid: string;
+  name: string;
+  email?: string;
+}
+
+interface AsanaTeam {
+  gid: string;
+  name: string;
+  description?: string;
+}
+
+interface AsanaStory {
+  gid: string;
+  type: string;
+  text?: string;
+  created_at: string;
+  created_by?: { gid: string; name: string };
+}
+
+export async function listUsers(options: {
+  workspaceGid: string;
+  teamGid?: string;
+}): Promise<AsanaUser[]> {
+  const params = new URLSearchParams({
+    workspace: options.workspaceGid,
+    opt_fields: "gid,name,email",
+  });
+
+  if (options.teamGid) params.set("team", options.teamGid);
+
+  const { data } = await asanaFetch<AsanaResponse<AsanaUser[]>>(`/users?${params}`);
+  return data;
+}
+
+export async function listTeams(workspaceGid: string): Promise<AsanaTeam[]> {
+  const { data } = await asanaFetch<AsanaResponse<AsanaTeam[]>>(
+    `/workspaces/${workspaceGid}/teams?opt_fields=gid,name,description`,
+  );
+  return data;
+}
+
+export async function addTaskComment(options: {
+  taskGid: string;
+  text: string;
+}): Promise<AsanaStory> {
+  const { data } = await asanaFetch<AsanaResponse<AsanaStory>>(
+    `/tasks/${options.taskGid}/stories`,
+    {
+      method: "POST",
+      body: JSON.stringify({ data: { text: options.text } }),
+    },
+  );
+  return data;
+}
+
+export async function listTaskComments(taskGid: string): Promise<AsanaStory[]> {
+  const params = new URLSearchParams({
+    opt_fields: "gid,type,text,created_at,created_by.name",
+  });
+  const { data } = await asanaFetch<AsanaResponse<AsanaStory[]>>(
+    `/tasks/${taskGid}/stories?${params}`,
+  );
+  return data.filter((story) => story.type === "comment");
+}

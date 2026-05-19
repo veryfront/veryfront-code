@@ -2,11 +2,13 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 import type { AgUiRuntimeRequest } from "../runtime/ag-ui-contract.ts";
 
+/** Options accepted by AG-UI forwarded config. */
 export type AgUiForwardedConfigOptions<TConfig> = {
   schema: Schema<TConfig>;
   namespace?: string;
 };
 
+/** Create AG-UI runtime context map. */
 export function createAgUiRuntimeContextMap(
   input: Pick<AgUiRuntimeRequest, "context">,
 ): Map<string, string> {
@@ -21,6 +23,7 @@ export function createAgUiRuntimeContextMap(
   return contextMap;
 }
 
+/** Parses AG-UI context JSON value. */
 export function parseAgUiContextJsonValue(raw: string | undefined): unknown {
   if (raw === undefined) {
     return undefined;
@@ -33,11 +36,13 @@ export function parseAgUiContextJsonValue(raw: string | undefined): unknown {
   }
 }
 
+/** Parses AG-UI context string. */
 export function parseAgUiContextString(raw: string | undefined): string | undefined {
   const parsed = parseAgUiContextJsonValue(raw);
   return typeof parsed === "string" && parsed.trim().length > 0 ? parsed : undefined;
 }
 
+/** Parses AG-UI context nullable string. */
 export function parseAgUiContextNullableString(raw: string | undefined): string | null | undefined {
   const parsed = parseAgUiContextJsonValue(raw);
   if (parsed === null) {
@@ -47,11 +52,13 @@ export function parseAgUiContextNullableString(raw: string | undefined): string 
   return typeof parsed === "string" && parsed.trim().length > 0 ? parsed : undefined;
 }
 
+/** Parses AG-UI context boolean. */
 export function parseAgUiContextBoolean(raw: string | undefined): boolean | undefined {
   const parsed = parseAgUiContextJsonValue(raw);
   return typeof parsed === "boolean" ? parsed : undefined;
 }
 
+/** Zod schema for parse AG-UI context. */
 export function parseAgUiContextSchema<TValue>(
   raw: string | undefined,
   schema: Schema<TValue>,
@@ -61,6 +68,7 @@ export function parseAgUiContextSchema<TValue>(
   return result.success ? result.data : undefined;
 }
 
+/** Configuration used by derive AG-UI forwarded. */
 export function deriveAgUiForwardedConfig<TConfig>(
   input: Pick<AgUiRuntimeRequest, "forwardedProps">,
   options: AgUiForwardedConfigOptions<TConfig>,

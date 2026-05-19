@@ -3,6 +3,7 @@ import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import { withDefaultResearchArtifactPath } from "../artifacts/default-research-artifact-policy.ts";
 import type { RuntimeAgentThinkingConfig } from "../runtime/agent-definition.ts";
 
+/** Default value for hosted child agent ID. */
 export const DEFAULT_HOSTED_CHILD_AGENT_ID = "invoke-agent-child";
 
 export const getHostedChildForkToolInputSchema = defineSchema((v) =>
@@ -25,13 +26,17 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getHostedChildForkToolInputSchema() */
+/** Schema for hosted child fork tool input.
+ * @deprecated Use getHostedChildForkToolInputSchema()
+ */
 export const hostedChildForkToolInputSchema = lazySchema(getHostedChildForkToolInputSchema);
 
+/** Input payload for hosted child fork tool. */
 export type HostedChildForkToolInput = InferSchema<
   ReturnType<typeof getHostedChildForkToolInputSchema>
 >;
 
+/** Configuration used by hosted child fork runtime. */
 export type HostedChildForkRuntimeConfig = {
   description: string;
   effectivePrompt: string;
@@ -42,6 +47,7 @@ export type HostedChildForkRuntimeConfig = {
   thinkingConfig: RuntimeAgentThinkingConfig | undefined;
 };
 
+/** Input payload for resolve hosted child fork runtime config. */
 export type ResolveHostedChildForkRuntimeConfigInput = {
   forkInput: Pick<
     HostedChildForkToolInput,
@@ -55,6 +61,7 @@ export type ResolveHostedChildForkRuntimeConfigInput = {
   resolveProvider: (modelId: string) => string;
 };
 
+/** Resolves hosted child fork thinking override. */
 export function resolveHostedChildForkThinkingOverride(
   thinking: HostedChildForkToolInput["thinking"],
 ): RuntimeAgentThinkingConfig | undefined {
@@ -69,6 +76,7 @@ export function resolveHostedChildForkThinkingOverride(
   return undefined;
 }
 
+/** Configuration used by resolve hosted child fork runtime. */
 export function resolveHostedChildForkRuntimeConfig(
   input: ResolveHostedChildForkRuntimeConfigInput,
 ): HostedChildForkRuntimeConfig {

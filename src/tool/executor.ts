@@ -2,6 +2,7 @@ import type { ToolExecutionContext } from "./types.ts";
 import { toolRegistry } from "./registry.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
+/** Execute a tool definition with validated input. */
 export function executeTool(
   toolId: string,
   input: unknown,

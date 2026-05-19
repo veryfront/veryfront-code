@@ -8,6 +8,7 @@ import type {
 import { validateNodeId } from "./validation.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+/** Options accepted by sub workflow. */
 export interface SubWorkflowOptions extends BaseNodeConfig {
   workflow: WorkflowDefinition;
   input?: unknown | ((context: WorkflowContext) => unknown);
