@@ -245,7 +245,7 @@ describe("agent testing durable run canary runner", () => {
         owner: { kind: "conversation", id: conversationId },
         public_id: "run_1",
         request: {
-          mode: "default_chat",
+          mode: "agent",
           agent_id: "agent-b",
           initial_status: "pending",
           source_target_kind: "preview_branch",
@@ -266,7 +266,7 @@ describe("agent testing durable run canary runner", () => {
       owner: { kind: "conversation", id: conversationId },
       public_id: "run_1",
       request: {
-        mode: "default_chat",
+        mode: "agent",
         agent_id: "agent-b",
         input: {
           messages: [
@@ -329,7 +329,7 @@ describe("agent testing durable run canary runner", () => {
         owner: { kind: "conversation", id: conversationId },
         public_id: "run_1",
         request: {
-          mode: "default_chat",
+          mode: "agent",
           agent_id: "agent-b",
           initial_status: "pending",
           source_target_kind: "project",

@@ -157,7 +157,7 @@ describe("agent/durable", () => {
         },
         public_id: "run_root_1",
         request: {
-          mode: "default_chat",
+          mode: "agent",
           agent_id: "default-chat",
           initial_status: "running",
         },
@@ -198,7 +198,7 @@ describe("agent/durable", () => {
         },
         public_id: "run_child_1",
         request: {
-          mode: "default_chat",
+          mode: "agent",
           agent_id: "invoke-agent-child",
           initial_status: "running",
           source_target_kind: "preview_branch",

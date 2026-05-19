@@ -199,7 +199,7 @@ function buildCreateRootRunBody(
     },
     public_id: input.runId,
     request: {
-      mode: "default_chat",
+      mode: "agent",
       agent_id: config.agentId,
       initial_status: "pending",
       ...buildCreateRootRunTargetFields(config),
@@ -219,7 +219,7 @@ function buildStartRunBody(
     },
     public_id: input.runId,
     request: {
-      mode: "default_chat",
+      mode: "agent",
       agent_id: config.agentId,
       input: {
         messages: [

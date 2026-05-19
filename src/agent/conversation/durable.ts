@@ -1370,7 +1370,7 @@ export async function createConversationAgentRun(
         : {}),
     }
     : {
-      mode: "default_chat" as const,
+      mode: "agent" as const,
       agent_id: input.agentId,
       initial_status: "running" as const,
       ...(targets.sourceTargetKind ? { source_target_kind: targets.sourceTargetKind } : {}),
