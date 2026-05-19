@@ -43,6 +43,21 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../reference/veryfront/cli.md"],
     snippets: ["knowledge_ingest", "jq '.ingested'", "veryfront knowledge ingest"],
   },
+  "coding-agents.md": {
+    references: [
+      "../reference/veryfront/mcp.md",
+      "../reference/veryfront/cli.md",
+    ],
+    snippets: [
+      "veryfront mcp",
+      "veryfront dev",
+      "mcpServers",
+      "~/.claude.json",
+      "vf_get_errors",
+      "vf_scaffold",
+      "tools/list",
+    ],
+  },
   "choose-a-primitive.md": {
     references: [
       "../reference/veryfront/agent.md",
@@ -197,9 +212,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "agents/assistant.ts",
-      "import { agent } from \"veryfront/agent\"",
+      'import { agent } from "veryfront/agent"',
       "export async function POST(request: Request)",
-      "getAgent(\"assistant\")",
+      'getAgent("assistant")',
       "assistant.generate({ input: question })",
       "veryfront dev",
     ],
