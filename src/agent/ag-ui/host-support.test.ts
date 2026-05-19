@@ -78,6 +78,47 @@ describe("agent/ag-ui-host-support", () => {
     );
   });
 
+  it("accepts forwarded props above the old 64 KB AG-UI budget", async () => {
+    const forwardedProps = {
+      runtimeOverrides: {
+        integrationToolDefinitions: Array.from({ length: 8 }, (_, index) => ({
+          name: `github__bulk_tool_${index}`,
+          description: `Definition for github__bulk_tool_${index} `.repeat(300),
+          inputSchema: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description: `Input for github__bulk_tool_${index} `.repeat(300),
+              },
+            },
+          },
+        })),
+      },
+    };
+    const request = new Request("http://localhost/api/ag-ui", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{
+          id: "msg-1",
+          role: "user",
+          parts: [{ type: "text", text: "hello" }],
+        }],
+        forwardedProps,
+      }),
+    });
+
+    assertEquals(
+      new TextEncoder().encode(JSON.stringify(forwardedProps)).byteLength > 64 * 1024,
+      true,
+    );
+
+    const parsed = await parseAgUiRequest(request);
+
+    assertEquals(parsed.forwardedProps, forwardedProps);
+  });
+
   it("returns a 400 Response from parseAgUiRequestOrError for malformed JSON bodies", async () => {
     const request = new Request("http://localhost/api/ag-ui", {
       method: "POST",
