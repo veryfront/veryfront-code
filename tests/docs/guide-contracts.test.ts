@@ -175,6 +175,15 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../reference/veryfront/index.md"],
     snippets: ["app/", "agents/", "tools/"],
   },
+  "installation.md": {
+    references: [],
+    snippets: [
+      "npm create veryfront",
+      "brew install veryfront/tap/veryfront",
+      "veryfront.com/install.sh",
+      "veryfront.com/install.ps1",
+    ],
+  },
   "providers.md": {
     references: ["../reference/veryfront/provider.md", "../reference/veryfront/embedding.md"],
     snippets: ["provider/model", "OPENAI_API_KEY", "registerModelProvider"],

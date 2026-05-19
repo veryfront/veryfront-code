@@ -17,6 +17,7 @@ matches your goal.
 
 | Guide                                         | What you will do                                                              |
 | --------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Installation](./installation.md)             | Install the Veryfront CLI and framework on macOS, Linux, or Windows.          |
 | [Quickstart](./quickstart.md)                 | Install Veryfront, create a project, and run the dev server.                  |
 | [Choose a primitive](./choose-a-primitive.md) | Pick the smallest Veryfront primitive that matches the work.                  |
 | [Production path](./production-path.md)       | Build one route from local project to production verification.                |

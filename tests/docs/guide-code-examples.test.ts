@@ -79,6 +79,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "extension-testing.md",
   "extensions.md",
   "head-and-seo.md",
+  "installation.md",
   "integrations.md",
   "pages-and-routing.md",
   "production-path.md",
@@ -457,6 +458,41 @@ describe("Guide: project-structure.md", () => {
 
     assertEquals(hello.id, "hello");
     assertEquals(hello.config.system, "Say hi.");
+  });
+});
+
+describe("Guide: installation.md", () => {
+  it("documents every supported install method with the expected one-liner", async () => {
+    const guide = await readGuide("installation.md");
+
+    const expectedOneLiners = [
+      "curl -fsSL https://veryfront.com/install.sh | sh",
+      "irm https://veryfront.com/install.ps1 | iex",
+      "brew install veryfront/tap/veryfront",
+      "npm create veryfront",
+      "npx veryfront",
+    ];
+
+    for (const command of expectedOneLiners) {
+      assertStringIncludes(guide, command);
+    }
+  });
+
+  it("documents the runtime, OS, browser, and verify-it-worked sections", async () => {
+    const guide = await readGuide("installation.md");
+
+    for (const heading of [
+      "## Prerequisites",
+      "## System requirements",
+      "### Operating system",
+      "### Runtime",
+      "### Hardware",
+      "## Supported browsers",
+      "## Install",
+      "## Verify it worked",
+    ]) {
+      assertStringIncludes(guide, heading);
+    }
   });
 });
 
