@@ -69,6 +69,7 @@ matches your goal.
 | Guide                                                   | What you will do                                                                      |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | [MCP server](./mcp-server.md)                           | Expose tools, prompts, and resources over Model Context Protocol.                     |
+| [Coding agents](./coding-agents.md)                     | Connect Claude Code, Cursor, Codex, and other MCP-aware agents to the dev server.     |
 | [OAuth](./oauth.md)                                     | Sign users in with OAuth 2.0 and the built-in provider catalog.                       |
 | [Integrations](./integrations.md)                       | Wire config-driven integration tools with OAuth, token management, and API execution. |
 | [Sandbox](./sandbox.md)                                 | Run isolated commands and file operations in an ephemeral sandbox session.            |
