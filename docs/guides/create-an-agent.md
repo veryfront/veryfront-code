@@ -1,0 +1,96 @@
+---
+title: "Create an agent"
+description: "Define an AI agent and invoke it from server code in under five minutes."
+order: 37
+---
+
+# Create an agent
+
+Define an AI agent in a fresh Veryfront project, send it a message, and read back the response. This guide is the smallest end-to-end agent you can build with Veryfront; deeper topics — tools, memory, skills, hosting, streaming — live in [Agents](./agents.md) and the AI guides that follow it.
+
+## Prerequisites
+
+- [Veryfront installed](./installation.md) and a project created with [Quickstart](./quickstart.md). The `ai-agent` template gives you the file layout below by default.
+- An `agents/` directory in the project root. If you started from the `minimal` template, create one: `mkdir agents`.
+- A provider configured for inference. The simplest path is to set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in `.env`; the framework picks the matching provider automatically. See [Providers](./providers.md) for other options.
+
+## Define the agent
+
+Create `agents/assistant.ts`:
+
+```ts
+// agents/assistant.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "assistant",
+  system: "You are a concise assistant. Answer in one short paragraph.",
+});
+```
+
+The file name (without extension) becomes the agent id. Veryfront auto-discovers every file under `agents/` at startup, so there is nothing else to register.
+
+For a one-shot persona without TypeScript, you can write the same agent as `agents/assistant.md`:
+
+```md
+---
+name: Assistant
+description: Concise general-purpose assistant
+---
+
+You are a concise assistant. Answer in one short paragraph.
+```
+
+Both forms register the same `assistant` id and are interchangeable from the call sites below.
+
+## Invoke the agent
+
+From any server-side context (an API route, `getServerData`, a workflow step, a CLI command), resolve the agent by id and call `generate`:
+
+```ts
+// app/api/ask/route.ts
+import { getAgent } from "veryfront/agent";
+import { json } from "veryfront";
+import type { APIContext } from "veryfront";
+
+export async function POST(ctx: APIContext) {
+  const { question } = await ctx.request.json();
+  const assistant = getAgent("assistant");
+
+  const result = await assistant.generate({ input: question });
+
+  return json({
+    answer: result.text,
+    toolCalls: result.toolCalls,
+    usage: result.usage,
+  });
+}
+```
+
+`generate` returns the full response. Use `stream` when you want to send chunks back over Server-Sent Events; the [Memory and streaming](./memory-and-streaming.md) guide covers that path.
+
+## Run it
+
+Start the dev server:
+
+```bash
+veryfront dev
+```
+
+Send a request from another terminal:
+
+```bash
+curl -X POST http://localhost:3000/api/ask \
+  -H "content-type: application/json" \
+  -d '{"question":"What is Veryfront in one sentence?"}'
+```
+
+## Verify it worked
+
+You should see a JSON response whose `answer` is a short paragraph from the model. The `usage` object reports input and output tokens. If the dev server logs an error mentioning a missing provider, recheck that `OPENAI_API_KEY` (or your provider's variable) is exported in the shell that runs `veryfront dev`.
+
+## Next
+
+- [Agents](./agents.md): full agent surface — tools, dynamic system prompts, multi-step runs, memory, AG-UI handlers, hosted runs.
+- [Tools](./tools.md): let the agent call typed functions.
+- [Chat UI](./chat-ui.md): drop a streaming chat interface into a React page that talks to this agent.
