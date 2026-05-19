@@ -95,8 +95,8 @@ describe("integration endpoint specs", () => {
     const expectedEndpointCounts = new Map([
       ["asana", 10],
       ["gitlab", 10],
-      ["jira", 9],
-      ["confluence", 5],
+      ["jira", 10],
+      ["confluence", 6],
       ["salesforce", 5],
       ["outlook", 5],
       ["teams", 5],
@@ -192,6 +192,13 @@ describe("integration endpoint specs", () => {
       true,
     );
 
+    const jiraListSites = getTool("jira", "list_sites");
+    assertEquals(
+      jiraListSites.endpoint?.url,
+      "https://api.atlassian.com/oauth/token/accessible-resources",
+    );
+    assertEquals(jiraListSites.requiresWrite, false);
+
     const jiraSearchIssues = getTool("jira", "search_issues");
     assertEquals(
       jiraSearchIssues.endpoint?.url,
@@ -247,6 +254,12 @@ describe("integration endpoint specs", () => {
     const notionUpdatePage = getTool("notion", "update_page");
     assertEquals(notionUpdatePage.endpoint?.method, "PATCH");
     assertEquals(notionUpdatePage.endpoint?.body?.archived?.type, "boolean");
+
+    const confluenceListSites = getTool("confluence", "list_sites");
+    assertEquals(
+      confluenceListSites.endpoint?.url,
+      "https://api.atlassian.com/oauth/token/accessible-resources",
+    );
 
     const confluenceGetPage = getTool("confluence", "get_page");
     assertEquals(
