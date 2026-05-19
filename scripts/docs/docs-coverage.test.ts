@@ -1,12 +1,25 @@
 import { assert, assertEquals, assertStringIncludes } from "#std/assert";
 import { collectDocsCoverage, formatDocsCoverage } from "./docs-coverage.ts";
 
+const API_DECLARATION_BASELINE = {
+  total: 3282,
+  withSourceLinks: 3131,
+  withoutSourceLinks: 151,
+} as const;
+
 Deno.test("collectDocsCoverage reports generated reference and guide coverage", async () => {
   const report = await collectDocsCoverage(".");
 
   assert(report.publicExports.total > 0);
-  assert(report.apiDeclarations.total > 2000);
-  assert(report.apiDeclarations.withSourceLinks > 2000);
+  assert(report.apiDeclarations.total >= API_DECLARATION_BASELINE.total);
+  assert(
+    report.apiDeclarations.withSourceLinks >=
+      API_DECLARATION_BASELINE.withSourceLinks,
+  );
+  assert(
+    report.apiDeclarations.withoutSourceLinks <=
+      API_DECLARATION_BASELINE.withoutSourceLinks,
+  );
   assertEquals(report.referencePages.missing, []);
   assertEquals(report.referencePages.extra, []);
   assertEquals(report.guides.withContracts, report.guides.total);
