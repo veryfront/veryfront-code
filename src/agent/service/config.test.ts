@@ -67,6 +67,9 @@ describe("agent/agent-service-config", () => {
       VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled",
       VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: "45000",
       VERYFRONT_AGENT_SERVICE_REGION: "iad",
+      POD_NAME: "veryfront-agent-7dd7b6f4d8-a1b2c",
+      POD_UID: "11111111-1111-4111-a111-111111111111",
+      POD_IP: "10.192.4.10",
     });
 
     assertEquals(config.VERYFRONT_API_URL, "https://api.example.com");
@@ -87,6 +90,9 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGISTRATION, "enabled");
     assertEquals(config.VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS, 45000);
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGION, "iad");
+    assertEquals(config.POD_NAME, "veryfront-agent-7dd7b6f4d8-a1b2c");
+    assertEquals(config.POD_UID, "11111111-1111-4111-a111-111111111111");
+    assertEquals(config.POD_IP, "10.192.4.10");
   });
 
   it("rejects invalid API URLs", () => {

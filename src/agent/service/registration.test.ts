@@ -36,6 +36,24 @@ const serviceResponse = {
   },
 };
 
+function globalAgentServiceConfig(podIdentity: {
+  POD_NAME?: string;
+  POD_UID?: string;
+  POD_IP?: string;
+}) {
+  return {
+    VERYFRONT_API_URL: "https://api.example.com",
+    VERYFRONT_API_TOKEN: "token-1",
+    VERYFRONT_PROJECT_ID: undefined,
+    VERYFRONT_AGENT_SERVICE_URL: "https://veryfront-agent.veryfront-staging.svc.cluster.local",
+    VERYFRONT_AGENT_SERVICE_KEY: undefined,
+    VERYFRONT_AGENT_SERVICE_REGISTRATION: "enabled" as const,
+    VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: 30_000,
+    VERYFRONT_AGENT_SERVICE_REGION: "iad",
+    ...podIdentity,
+  };
+}
+
 describe("agent/agent-service-registration", () => {
   it("resolves auto registration only when token and public service URL are present", async () => {
     const input = await resolveAgentServiceRegistrationInput({
@@ -65,6 +83,36 @@ describe("agent/agent-service-registration", () => {
     assertEquals(input?.version, "0.1.0");
     assertEquals(input?.runtime, "node");
     assertEquals(input?.serviceKey.startsWith("docs-agent:"), true);
+  });
+
+  it("derives distinct default service keys for Kubernetes replicas behind the same service URL", async () => {
+    const firstReplica = await resolveAgentServiceRegistrationInput({
+      config: globalAgentServiceConfig({
+        POD_NAME: "veryfront-agent-7dd7b6f4d8-a1b2c",
+        POD_UID: "11111111-1111-4111-a111-111111111111",
+        POD_IP: "10.192.4.10",
+      }),
+      serviceName: "veryfront-agent",
+      agentId: "veryfront",
+      version: "0.1.0",
+      runtime: "node",
+    });
+    const secondReplica = await resolveAgentServiceRegistrationInput({
+      config: globalAgentServiceConfig({
+        POD_NAME: "veryfront-agent-7dd7b6f4d8-d4e5f",
+        POD_UID: "22222222-2222-4222-a222-222222222222",
+        POD_IP: "10.192.4.11",
+      }),
+      serviceName: "veryfront-agent",
+      agentId: "veryfront",
+      version: "0.1.0",
+      runtime: "node",
+    });
+
+    assertEquals(firstReplica?.baseUrl, secondReplica?.baseUrl);
+    assertEquals(firstReplica?.serviceKey.startsWith("veryfront-agent:"), true);
+    assertEquals(secondReplica?.serviceKey.startsWith("veryfront-agent:"), true);
+    assertEquals(firstReplica?.serviceKey !== secondReplica?.serviceKey, true);
   });
 
   it("skips auto registration when the token or public URL is missing", async () => {
