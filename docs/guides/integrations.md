@@ -21,22 +21,39 @@ tool definitions and execute calls through the configured API layer.
 
 ## How it works
 
-```
-veryfront.config.ts            Runtime helpers                    API / service layer
-┌──────────────────┐     ┌────────────────────────────┐     ┌────────────────────────┐
-│ integrations:    │────▶│ 1. Read config             │     │ Connector specs (JSON) │
-│   github: {}     │     │ 2. Sync integration config │────▶│ OAuth / token flows    │
-│   slack:         │     │ 3. Fetch remote tools      │     │ Token storage          │
-│     tools:       │     │    and schemas             │     │ Remote tool execution  │
-│       - send-msg │     │ 4. On tool call:           │     │                        │
-│   linear:        │     │    a. Resolve API auth     │────▶│ Provider auth state    │
-│     perUser: true│     │    b. Call remote tool     │     │ Tool response          │
-└──────────────────┘     └─────────────┬──────────────┘     └────────────────────────┘
-                                       │ Auth token
-                                       ▼
-                         ┌────────────────────────────┐
-                         │ External API (GitHub, etc.) │
-                         └────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph Project["veryfront.config.ts"]
+        cfg["integrations:<br/>&nbsp;&nbsp;github: {}<br/>&nbsp;&nbsp;slack: { tools: [&quot;send-message&quot;] }<br/>&nbsp;&nbsp;linear: { perUser: true }"]
+    end
+
+    subgraph Runtime["Runtime helpers"]
+        step1["1. Read config"]
+        step2["2. Sync integration config"]
+        step3["3. Fetch remote tools and schemas"]
+        step4["4. On tool call:<br/>a. Resolve API auth<br/>b. Call remote tool"]
+    end
+
+    subgraph Service["API / service layer"]
+        specs["Connector specs (JSON)"]
+        exec["Remote tool execution<br/>(/integrations/tools/call)"]
+        oauth["OAuth / token flows<br/>Token storage"]
+        authState["Provider auth state"]
+    end
+
+    api["External API<br/>(GitHub, Slack, Linear, ...)"]
+
+    cfg --> step1
+    step1 --> step2
+    step2 --> specs
+    specs --> step3
+    step3 --> step4
+    step4 -- "Auth token + tool call" --> exec
+    exec --> oauth
+    oauth --> authState
+    exec --> api
+    api -- "Tool response" --> exec
+    exec --> step4
 ```
 
 **Key points:**
