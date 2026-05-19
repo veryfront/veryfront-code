@@ -471,8 +471,11 @@ describe("Guide: create-an-agent.md", () => {
       'export default agent({',
       'id: "assistant"',
       'import { getAgent } from "veryfront/agent"',
+      'export async function POST(request: Request)',
+      'const { question } = await request.json()',
       'const assistant = getAgent("assistant")',
       'await assistant.generate({ input: question })',
+      'Response.json({',
     ]) {
       assertStringIncludes(guide, snippet);
     }

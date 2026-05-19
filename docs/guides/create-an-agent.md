@@ -50,22 +50,22 @@ From any server-side context (an API route, `getServerData`, a workflow step, a 
 ```ts
 // app/api/ask/route.ts
 import { getAgent } from "veryfront/agent";
-import { json } from "veryfront";
-import type { APIContext } from "veryfront";
 
-export async function POST(ctx: APIContext) {
-  const { question } = await ctx.request.json();
+export async function POST(request: Request) {
+  const { question } = await request.json();
   const assistant = getAgent("assistant");
 
   const result = await assistant.generate({ input: question });
 
-  return json({
+  return Response.json({
     answer: result.text,
     toolCalls: result.toolCalls,
     usage: result.usage,
   });
 }
 ```
+
+App-router handlers receive the raw `Request` directly. If you prefer the pages router, the same route lives at `pages/api/ask.ts` and receives an `APIContext` (`ctx.request.json()`, `ctx.json(...)`); see [API routes](./api-routes.md).
 
 `generate` returns the full response. Use `stream` when you want to send chunks back over Server-Sent Events; the [Memory and streaming](./memory-and-streaming.md) guide covers that path.
 

@@ -185,10 +185,20 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
   },
   "create-an-agent.md": {
-    references: ["./agents.md", "./tools.md", "./chat-ui.md", "./installation.md", "./quickstart.md", "./providers.md", "./memory-and-streaming.md"],
+    references: [
+      "./agents.md",
+      "./api-routes.md",
+      "./tools.md",
+      "./chat-ui.md",
+      "./installation.md",
+      "./quickstart.md",
+      "./providers.md",
+      "./memory-and-streaming.md",
+    ],
     snippets: [
       "agents/assistant.ts",
       "import { agent } from \"veryfront/agent\"",
+      "export async function POST(request: Request)",
       "getAgent(\"assistant\")",
       "assistant.generate({ input: question })",
       "veryfront dev",
