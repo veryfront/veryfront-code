@@ -51,6 +51,25 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["Agent", "Tool", "Workflow", "Task", "Job", "Integration", "MCP", "Sandbox"],
   },
+  "production-path.md": {
+    references: [
+      "./quickstart.md",
+      "./choose-a-primitive.md",
+      "./pages-and-routing.md",
+      "./api-routes.md",
+      "./deploying.md",
+      "../reference/veryfront/index.md",
+    ],
+    snippets: [
+      "veryfront init",
+      "veryfront dev",
+      "veryfront build",
+      "veryfront start",
+      "veryfront deploy",
+      "veryfront open",
+      "production path",
+    ],
+  },
   "configuration.md": {
     references: ["../reference/veryfront/index.md"],
     snippets: ["defineConfig", "VERYFRONT_API_TOKEN", "getEnv"],
@@ -61,7 +80,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "deploying.md": {
     references: ["../reference/veryfront/index.md"],
-    snippets: ["veryfront build", "veryfront start", "veryfront deploy"],
+    snippets: ["veryfront build", "veryfront start", "veryfront deploy", "veryfront open"],
   },
   "extension-authoring.md": {
     references: ["../reference/veryfront/extensions.md"],
@@ -93,7 +112,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "index.md": {
     references: [],
-    snippets: ["Quickstart", "Choose a primitive", "Build pages and APIs", "Ship to production"],
+    snippets: [
+      "Quickstart",
+      "Choose a primitive",
+      "Production path",
+      "Build pages and APIs",
+      "Ship to production",
+    ],
   },
   "integrations.md": {
     references: ["../reference/veryfront/integrations.md"],

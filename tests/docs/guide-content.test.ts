@@ -17,4 +17,14 @@ describe("guide content contracts", () => {
     assertStringIncludes(guide, "tokenStore.getTokens(githubConfig.serviceId, userId)");
     assertEquals(guide.includes("tokenStore.get(userId, githubConfig.id)"), false);
   });
+
+  it("does not claim deploy prints the production URL", async () => {
+    for (const filename of ["deploying.md", "production-path.md"]) {
+      const guide = await Deno.readTextFile(`docs/guides/${filename}`);
+
+      assertEquals(guide.includes("deploy` prints a URL"), false);
+      assertEquals(guide.includes("CLI prints a production URL"), false);
+      assertStringIncludes(guide, "veryfront open");
+    }
+  });
 });

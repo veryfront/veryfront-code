@@ -19,6 +19,7 @@ matches your goal.
 | --------------------------------------------- | ----------------------------------------------------------------------------- |
 | [Quickstart](./quickstart.md)                 | Install Veryfront, create a project, and run the dev server.                  |
 | [Choose a primitive](./choose-a-primitive.md) | Pick the smallest Veryfront primitive that matches the work.                  |
+| [Production path](./production-path.md)       | Build one route from local project to production verification.                |
 | [Project structure](./project-structure.md)   | Learn the file conventions and how auto-discovery wires your project up.      |
 | [Configuration](./configuration.md)           | Configure `veryfront.config.ts`, environment variables, and runtime settings. |
 
@@ -85,4 +86,5 @@ matches your goal.
 
 | Guide                                    | What you will do                                                |
 | ---------------------------------------- | --------------------------------------------------------------- |
+| [Production path](./production-path.md)  | Follow the shortest route from dev server to production checks. |
 | [Building and deploying](./deploying.md) | Build for production, configure static export, and pick a host. |
