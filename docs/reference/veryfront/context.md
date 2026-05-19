@@ -26,21 +26,21 @@ import { PageContextProvider, usePageContext } from "veryfront/context";
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `PageContextProvider` | Provides page context to route and MDX descendants. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L184) |
+| `PageContextProvider` | Provides page context to route and MDX descendants. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L185) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `usePageContext` | Reads the current page context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L196) |
+| `usePageContext` | Reads the current page context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L197) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MdxHeading` | Heading metadata extracted from MDX content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L43) |
-| `PageContextProviderProps` | Props accepted by `<PageContextProvider>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L71) |
-| `PageContextValue` | Page context exposed to route and MDX components. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L53) |
+| `MdxHeading` | Heading metadata extracted from MDX content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L44) |
+| `PageContextProviderProps` | Props accepted by `<PageContextProvider>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L72) |
+| `PageContextValue` | Page context exposed to route and MDX components. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L54) |
 
 ## Related
 

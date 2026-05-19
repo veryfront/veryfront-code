@@ -72,6 +72,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "chat-theming.md",
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
+  "create-an-agent.md",
   "deploying.md",
   "extension-authoring.md",
   "extension-lifecycle.md",
@@ -458,6 +459,35 @@ describe("Guide: project-structure.md", () => {
 
     assertEquals(hello.id, "hello");
     assertEquals(hello.config.system, "Say hi.");
+  });
+});
+
+describe("Guide: create-an-agent.md", () => {
+  it("uses the public agent factory and getAgent.generate path", async () => {
+    const guide = await readGuide("create-an-agent.md");
+
+    for (const snippet of [
+      'import { agent } from "veryfront/agent"',
+      'export default agent({',
+      'id: "assistant"',
+      'import { getAgent } from "veryfront/agent"',
+      'export async function POST(request: Request)',
+      'const { question } = await request.json()',
+      'const assistant = getAgent("assistant")',
+      'await assistant.generate({ input: question })',
+      'Response.json({',
+    ]) {
+      assertStringIncludes(guide, snippet);
+    }
+  });
+
+  it("compiles the inline agent definition against the public agent factory", () => {
+    const assistant = agent({
+      id: "assistant",
+      system: "You are a concise assistant. Answer in one short paragraph.",
+    });
+
+    assertEquals(assistant.id, "assistant");
   });
 });
 

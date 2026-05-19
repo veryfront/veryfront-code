@@ -32,19 +32,19 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MDXProvider` | Render MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L12) |
+| `MDXProvider` | Render MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L13) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `useMDXComponents` | React hook for mdxcomponents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L20) |
+| `useMDXComponents` | React hook for mdxcomponents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L21) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MDXProviderProps` | Props accepted by MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L6) |
+| `MDXProviderProps` | Props accepted by MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |
 
 ## Related
 

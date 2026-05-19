@@ -351,6 +351,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
     { path: "index", reason: "Browse the guide map" },
     { path: "installation", reason: "Install the CLI and framework" },
     { path: "quickstart", reason: "Create and run a project" },
+    { path: "create-an-agent", reason: "Define and invoke a first agent" },
     { path: "choose-a-primitive", reason: "Choose the right primitive" },
     { path: "production-path", reason: "Move a route toward production checks" },
     { path: "configuration", reason: "Configure your Veryfront project" },

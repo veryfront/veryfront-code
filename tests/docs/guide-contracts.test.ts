@@ -184,6 +184,26 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "veryfront.com/install.ps1",
     ],
   },
+  "create-an-agent.md": {
+    references: [
+      "./agents.md",
+      "./api-routes.md",
+      "./tools.md",
+      "./chat-ui.md",
+      "./installation.md",
+      "./quickstart.md",
+      "./providers.md",
+      "./memory-and-streaming.md",
+    ],
+    snippets: [
+      "agents/assistant.ts",
+      "import { agent } from \"veryfront/agent\"",
+      "export async function POST(request: Request)",
+      "getAgent(\"assistant\")",
+      "assistant.generate({ input: question })",
+      "veryfront dev",
+    ],
+  },
   "providers.md": {
     references: ["../reference/veryfront/provider.md", "../reference/veryfront/embedding.md"],
     snippets: ["provider/model", "OPENAI_API_KEY", "registerModelProvider"],
