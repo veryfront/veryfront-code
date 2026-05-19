@@ -65,19 +65,19 @@ const contentPipeline = workflow({
 
 Create a workflow definition.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `id` | `string` | Unique workflow identifier |
-| `description?` | `string` | Human-readable description |
-| `version?` | `string` | Semantic version string |
-| `inputSchema?` | <code>Schema&lt;TInput&gt;</code> | Zod schema for workflow input validation |
-| `outputSchema?` | <code>Schema&lt;TOutput&gt;</code> | Zod schema for workflow output validation |
-| `retry?` | `RetryConfig` | Retry configuration for failed steps |
-| `timeout?` | `string \| number` | Max execution time (ms) |
-| `introspect?` | `boolean` | Enable runtime introspection for debugging |
-| `steps` | <code>WorkflowNode[] &#124; ((context: StepBuilderContext&lt;TInput&gt;) =&gt; WorkflowNode[])</code> | Workflow step definitions |
-| `onError?` | <code>(error: Error, context: WorkflowContext) =&gt; void &#124; Promise&lt;void&gt;</code> | Error handler called when a step fails |
-| `onComplete?` | <code>(result: TOutput, context: WorkflowContext) =&gt; void &#124; Promise&lt;void&gt;</code> | Callback fired after workflow completes |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `id` | `string` | Unique workflow identifier | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L22) |
+| `description?` | `string` | Human-readable description | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L23) |
+| `version?` | `string` | Semantic version string | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L24) |
+| `inputSchema?` | <code>Schema&lt;TInput&gt;</code> | Zod schema for workflow input validation | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L25) |
+| `outputSchema?` | <code>Schema&lt;TOutput&gt;</code> | Zod schema for workflow output validation | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L26) |
+| `retry?` | `RetryConfig` | Retry configuration for failed steps | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L27) |
+| `timeout?` | `string \| number` | Max execution time (ms) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L28) |
+| `introspect?` | `boolean` | Enable runtime introspection for debugging | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L29) |
+| `steps` | <code>WorkflowNode[] &#124; ((context: StepBuilderContext&lt;TInput&gt;) =&gt; WorkflowNode[])</code> | Workflow step definitions | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L30) |
+| `onError?` | <code>(error: Error, context: WorkflowContext) =&gt; void &#124; Promise&lt;void&gt;</code> | Error handler called when a step fails | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L33) |
+| `onComplete?` | <code>(result: TOutput, context: WorkflowContext) =&gt; void &#124; Promise&lt;void&gt;</code> | Callback fired after workflow completes | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/workflow.ts#L34) |
 
 **Returns:** <code>Workflow&lt;TInput, TOutput&gt;</code>
 
@@ -87,41 +87,41 @@ Create a workflow definition.
 
 Options accepted by step.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `agent?` | `string \| Agent` | Agent to run (by ID or instance) |
-| `tool?` | `string \| Tool` | Tool to execute (by ID or instance) |
-| `input?` | <code>string &#124; Record&lt;string, unknown&gt; &#124; ((context: WorkflowContext) =&gt; unknown)</code> | Step input: static value or function of workflow context |
-| `checkpoint?` | `boolean` | Persist state after this step |
-| `retry?` | `RetryConfig` | Retry configuration for this step |
-| `timeout?` | `string \| number` | Step timeout (ms) |
-| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate: skip this step if returns true |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `agent?` | `string \| Agent` | Agent to run (by ID or instance) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L14) |
+| `tool?` | `string \| Tool` | Tool to execute (by ID or instance) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L15) |
+| `input?` | <code>string &#124; Record&lt;string, unknown&gt; &#124; ((context: WorkflowContext) =&gt; unknown)</code> | Step input: static value or function of workflow context | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L16) |
+| `checkpoint?` | `boolean` | Persist state after this step | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L17) |
+| `retry?` | `RetryConfig` | Retry configuration for this step | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L18) |
+| `timeout?` | `string \| number` | Step timeout (ms) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L19) |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate: skip this step if returns true | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/step.ts#L20) |
 
 ### `BranchOptions`
 
 Options accepted by branch.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `condition` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Branch predicate function |
-| `then` | `WorkflowNode[]` | Steps when condition is true |
-| `else?` | `WorkflowNode[]` | Steps when condition is false |
-| `checkpoint?` | `boolean` | Persist state after this node |
-| `retry?` | `RetryConfig` | Retry configuration |
-| `timeout?` | `string \| number` | Node timeout (ms or duration string) |
-| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate: skip if returns true |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `condition` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Branch predicate function | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L12) |
+| `then` | `WorkflowNode[]` | Steps when condition is true | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L13) |
+| `else?` | `WorkflowNode[]` | Steps when condition is false | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L14) |
+| `checkpoint?` | `boolean` | Persist state after this node | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L15) |
+| `retry?` | `RetryConfig` | Retry configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L16) |
+| `timeout?` | `string \| number` | Node timeout (ms or duration string) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L17) |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate: skip if returns true | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/branch.ts#L18) |
 
 ### `ParallelOptions`
 
 Options accepted by parallel.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `strategy?` | `"all" \| "race" \| "allSettled"` | Completion strategy (`"all"`, `"race"`, `"allSettled"`) |
-| `checkpoint?` | `boolean` | Persist state after this node |
-| `retry?` | `RetryConfig` | Retry configuration |
-| `timeout?` | `string \| number` | Node timeout (ms or duration string) |
-| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate: skip if returns true |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `strategy?` | `"all" \| "race" \| "allSettled"` | Completion strategy (`"all"`, `"race"`, `"allSettled"`) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L12) |
+| `checkpoint?` | `boolean` | Persist state after this node | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L13) |
+| `retry?` | `RetryConfig` | Retry configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L14) |
+| `timeout?` | `string \| number` | Node timeout (ms or duration string) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L15) |
+| `skip?` | <code>(context: WorkflowContext) =&gt; boolean &#124; Promise&lt;boolean&gt;</code> | Predicate: skip if returns true | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/dsl/parallel.ts#L16) |
 
 ## Exports
 

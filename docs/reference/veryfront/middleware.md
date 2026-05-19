@@ -99,45 +99,45 @@ List registered middleware with metadata.
 
 Options accepted by cors.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `origin?` | `string \| string[] \| OriginValidator` | Allowed origins (string, regex, array, or function) |
-| `methods?` | `string[]` | Allowed HTTP methods |
-| `allowedHeaders?` | `string[]` | Allowed request headers |
-| `exposedHeaders?` | `string[]` | Headers exposed to client |
-| `credentials?` | `boolean` | Allow credentials |
-| `maxAge?` | `number` | Preflight cache duration (seconds) |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `origin?` | `string \| string[] \| OriginValidator` | Allowed origins (string, regex, array, or function) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L26) |
+| `methods?` | `string[]` | Allowed HTTP methods | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L27) |
+| `allowedHeaders?` | `string[]` | Allowed request headers | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L28) |
+| `exposedHeaders?` | `string[]` | Headers exposed to client | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L29) |
+| `credentials?` | `boolean` | Allow credentials | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L30) |
+| `maxAge?` | `number` | Preflight cache duration (seconds) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/types.ts#L31) |
 
 ### `RateLimitOptions`
 
 Options accepted by rate limit.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `maxRequests?` | `number` | Max requests per window |
-| `windowMs?` | `number` | Time window (ms) |
-| `store?` | `RateLimitStore` | Storage backend |
-| `keyGenerator?` | <code>(req: Request) =&gt; string</code> | Function to derive rate limit key from request |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `maxRequests?` | `number` | Max requests per window | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L79) |
+| `windowMs?` | `number` | Time window (ms) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L80) |
+| `store?` | `RateLimitStore` | Storage backend | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L81) |
+| `keyGenerator?` | <code>(req: Request) =&gt; string</code> | Function to derive rate limit key from request | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/rate-limit.ts#L82) |
 
 ### `LoggerOptions`
 
 Options accepted by logger.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `format?` | `LogFormat` | Log format (combined, common, dev, short) |
-| `skip?` | <code>(req: Request) =&gt; boolean</code> | Skip logging for matching requests |
-| `log?` | <code>(message: string) =&gt; void</code> | Custom log output function |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `format?` | `LogFormat` | Log format (combined, common, dev, short) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L17) |
+| `skip?` | <code>(req: Request) =&gt; boolean</code> | Skip logging for matching requests | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L18) |
+| `log?` | <code>(message: string) =&gt; void</code> | Custom log output function | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/logger.ts#L19) |
 
 ### `TimeoutOptions`
 
 Options accepted by timeout.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `timeoutMs?` | `number` | Timeout in milliseconds (default: 60000) |
-| `message?` | `string` | Custom message for timeout response |
-| `exclude?` | `string[]` | Paths to exclude from timeout (e.g., health checks) |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `timeoutMs?` | `number` | Timeout in milliseconds (default: 60000) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L18) |
+| `message?` | `string` | Custom message for timeout response | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L21) |
+| `exclude?` | `string[]` | Paths to exclude from timeout (e.g., health checks) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L24) |
 
 ## Exports
 

@@ -95,14 +95,14 @@ const result = await assistant.generate({
 
 Create a typed tool definition.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `id?` | `string` | Tool identifier (optional, inferred from filename) |
-| `description` | `string` | Tool description for the AI model |
-| `inputSchema` | <code>Schema&lt;TInput&gt;</code> | Input schema produced via `defineSchema((v) => …)` (or any `SchemaValidator`-backed builder). Validates input before `execute` runs and seeds the JSON Schema exposed to AI providers. |
-| `allowUnknownSchema?` | `boolean` | Allow unknown/non-contract schemas to fall back to a permissive JSON schema. Use only for truly dynamic tools; prefer `v.unknown()` or `v.any()` from the SchemaValidator DSL instead. |
-| `execute` | <code>(input: TInput, context?: ToolExecutionContext) =&gt; Promise&lt;TOutput&gt; &#124; TOutput</code> | Tool execution function |
-| `mcp?` | `object` | MCP configuration |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `id?` | `string` | Tool identifier (optional, inferred from filename) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L14) |
+| `description` | `string` | Tool description for the AI model | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L17) |
+| `inputSchema` | <code>Schema&lt;TInput&gt;</code> | Input schema produced via `defineSchema((v) => …)` (or any `SchemaValidator`-backed builder). Validates input before `execute` runs and seeds the JSON Schema exposed to AI providers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L24) |
+| `allowUnknownSchema?` | `boolean` | Allow unknown/non-contract schemas to fall back to a permissive JSON schema. Use only for truly dynamic tools; prefer `v.unknown()` or `v.any()` from the SchemaValidator DSL instead. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L31) |
+| `execute` | <code>(input: TInput, context?: ToolExecutionContext) =&gt; Promise&lt;TOutput&gt; &#124; TOutput</code> | Tool execution function | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L36) |
+| `mcp?` | `object` | MCP configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/types.ts#L39) |
 
 **Returns:** <code>Tool&lt;TInput, TOutput&gt;</code>
 

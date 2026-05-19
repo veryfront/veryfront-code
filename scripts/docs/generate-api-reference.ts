@@ -87,7 +87,7 @@ interface TsType {
     typeParams?: unknown[];
   };
   typeLiteral?: {
-    properties: Array<{ name: string; optional: boolean; tsType?: TsType; jsDoc?: { doc?: string }; params?: unknown[]; typeParams?: unknown[] }>;
+    properties: InterfaceProperty[];
     callSignatures?: unknown[];
     indexSignatures?: unknown[];
     constructors?: unknown[];
@@ -129,6 +129,7 @@ interface InterfaceProperty {
   jsDoc?: { doc?: string };
   params?: unknown[];
   typeParams?: unknown[];
+  location?: DenoDocLocation;
 }
 
 interface InterfaceMethod {
@@ -1335,6 +1336,7 @@ function normalizeProperties(properties: unknown): InterfaceProperty[] {
     const record = asRecord(property) ?? {};
     return {
       ...record,
+      location: normalizeLocation(record.location),
       tsType: normalizeTsType(record.tsType),
     } as InterfaceProperty;
   });
@@ -1483,10 +1485,14 @@ function getNodeDescription(node: DocNode): string {
 }
 
 function getNodeSourceHref(node: DocNode): string {
-  const relativePath = getRelativeSourcePath(node.location);
+  return getSourceHref(node.location);
+}
+
+function getSourceHref(location: DenoDocLocation | undefined): string {
+  const relativePath = getRelativeSourcePath(location);
   if (!relativePath) return "";
 
-  const lineNumber = node.location?.line;
+  const lineNumber = location?.line;
   const line = typeof lineNumber === "number" && lineNumber > 0 ? `#L${lineNumber}` : "";
   return `${SOURCE_BASE_URL}/${relativePath}${line}`;
 }
@@ -2091,15 +2097,18 @@ function oneLineDoc(doc: string): string {
 function renderPropertyTable(
   typeName: string,
   properties: InterfaceProperty[],
+  fallbackLocation?: DenoDocLocation,
 ): string[] {
   const lines: string[] = [];
-  lines.push("| Property | Type | Description |");
-  lines.push("|----------|------|-------------|");
+  lines.push("| Property | Type | Description | Source |");
+  lines.push("|----------|------|-------------|--------|");
   for (const prop of properties) {
     const name = prop.optional ? `${prop.name}?` : prop.name;
     const rawType = renderType(prop.tsType);
     const desc = getPropertyDescription(typeName, prop.name, prop);
-    lines.push(`| \`${name}\` | ${mdxType(rawType)} | ${desc} |`);
+    const sourceHref = getSourceHref(prop.location ?? fallbackLocation);
+    const source = sourceHref ? `[source](${sourceHref})` : "";
+    lines.push(`| \`${name}\` | ${mdxType(rawType)} | ${desc} | ${source} |`);
   }
   return lines;
 }
@@ -2142,7 +2151,13 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
       if (fnSpec.configType) {
         const configNode = findNode(nodes, fnSpec.configType);
         if (configNode?.interfaceDef?.properties && configNode.interfaceDef.properties.length > 0) {
-          lines.push(...renderPropertyTable(fnSpec.configType, configNode.interfaceDef.properties));
+          lines.push(
+            ...renderPropertyTable(
+              fnSpec.configType,
+              configNode.interfaceDef.properties,
+              configNode.location,
+            ),
+          );
           lines.push("");
         }
       }
@@ -2196,8 +2211,15 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
                 tsType: p.tsType,
                 // Prefer curated param description, then upstream JSDoc
                 jsDoc: paramDescs[p.name] ? { doc: paramDescs[p.name] } : p.jsDoc,
+                location: p.location,
               }));
-              lines.push(...renderPropertyTable(`${typeName}.${method.name}`, interfaceProps));
+              lines.push(
+                ...renderPropertyTable(
+                  `${typeName}.${method.name}`,
+                  interfaceProps,
+                  node.location,
+                ),
+              );
               lines.push("");
             }
           }
@@ -2287,6 +2309,8 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
         name: p.name,
         optional: p.optional,
         tsType: p.tsType,
+        jsDoc: p.jsDoc,
+        location: p.location,
       }));
     }
 
@@ -2309,7 +2333,7 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
       lines.push("");
     }
 
-    lines.push(...renderPropertyTable(typeName, properties));
+    lines.push(...renderPropertyTable(typeName, properties, node?.location));
     lines.push("");
   }
 

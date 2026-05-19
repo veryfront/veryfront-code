@@ -148,31 +148,31 @@ Get the sandbox endpoint URL.
 
 Options for creating a sandbox session.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `apiUrl?` | `string` | Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL, then the Veryfront Cloud API. |
-| `authToken?` | `string` | Explicit Veryfront auth token or API key override. |
-| `projectId?` | `string` | Optional project context for project-billed / project-scoped sandbox sessions. |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `apiUrl?` | `string` | Base URL of the Veryfront API. Defaults to VERYFRONT_API_URL, then the Veryfront Cloud API. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L15) |
+| `authToken?` | `string` | Explicit Veryfront auth token or API key override. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L17) |
+| `projectId?` | `string` | Optional project context for project-billed / project-scoped sandbox sessions. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L19) |
 
 ### `ExecResult`
 
 Result of a command execution: stdout, stderr, and exit code.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `stdout` | `string` | Buffered standard output from command execution. |
-| `stderr` | `string` | Buffered standard error from command execution. |
-| `exitCode` | `number` | Process exit code. |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `stdout` | `string` | Buffered standard output from command execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L24) |
+| `stderr` | `string` | Buffered standard error from command execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L25) |
+| `exitCode` | `number` | Process exit code. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L26) |
 
 ### `ExecStreamEvent`
 
 Streaming event emitted during command execution.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `type` | `"stdout" \| "stderr" \| "exit" \| "error"` | Event type (`stdout`, `stderr`, `exit`, `error`). |
-| `data?` | `string` | Chunk payload for stdout/stderr/error events. |
-| `exitCode?` | `number` | Exit code for `exit` events. |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `type` | `"stdout" \| "stderr" \| "exit" \| "error"` | Event type (`stdout`, `stderr`, `exit`, `error`). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L31) |
+| `data?` | `string` | Chunk payload for stdout/stderr/error events. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L32) |
+| `exitCode?` | `number` | Exit code for `exit` events. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L33) |
 
 ## Exports
 
