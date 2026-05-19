@@ -3,8 +3,8 @@ import { collectDocsCoverage, formatDocsCoverage } from "./docs-coverage.ts";
 
 const API_DECLARATION_BASELINE = {
   total: 3282,
-  withSourceLinks: 3131,
-  withoutSourceLinks: 151,
+  withSourceLinks: 3282,
+  withoutSourceLinks: 0,
 } as const;
 
 Deno.test("collectDocsCoverage reports generated reference and guide coverage", async () => {
@@ -20,6 +20,7 @@ Deno.test("collectDocsCoverage reports generated reference and guide coverage", 
     report.apiDeclarations.withoutSourceLinks <=
       API_DECLARATION_BASELINE.withoutSourceLinks,
   );
+  assertEquals(report.apiDeclarations.missingSourceLinkSamples, []);
   assertEquals(report.referencePages.missing, []);
   assertEquals(report.referencePages.extra, []);
   assertEquals(report.links.referenceModulesMissingGuideLinks, []);

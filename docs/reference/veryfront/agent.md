@@ -129,29 +129,29 @@ const orchestrator = agent({
 
 Agent helper.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `id?` | `string` | Unique identifier (auto-generated if omitted) |
-| `name?` | `string` | Human-readable display name for registry and control-plane listings. |
-| `description?` | `string` | Optional summary shown in registry and control-plane listings. |
-| `model?` | `ModelString` | Optional model string in "provider/model" format. |
-| `system` | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code> | System prompt: string, function, or async function |
-| `tools?` | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code> | Tools available to the agent |
-| `remoteTools?` | `RemoteToolSource[]` |  |
-| `allowedRemoteTools?` | `string[]` | Optional remote tool name allowlist. When set, only matching tools from `remoteTools` are exposed to the model and executable at runtime. |
-| `maxSteps?` | `number` | Max tool-call iterations per request |
-| `streaming?` | `boolean` | Enable streaming responses |
-| `memory?` | `MemoryConfig` | Conversation memory settings |
-| `middleware?` | `AgentMiddleware[]` | Execution middleware pipeline |
-| `edge?` | `EdgeConfig` | Edge runtime configuration |
-| `multimodal?` | <code>&#123; vision?: boolean; audio?: boolean &#125;</code> | Enable vision and/or audio |
-| `allowedModels?` | `ModelString[]` | Restrict runtime model overrides to these "provider/model" strings. |
-| `resolveModelTransport?` | `ModelTransportResolver` | Optional request-aware hook for overriding the resolved model runtime and provider transport options on a per-call basis. |
-| `resolveRuntimeState?` | `RuntimeStateResolver` | Optional step-boundary hook for refreshing the runtime system prompt and host-owned context during a long-lived run. |
-| `onToolResult?` | `ToolExecutionResultHandler` | Optional hook invoked after the runtime executes a configured local, registry, integration, or remote tool and before the tool result is persisted or streamed back to callers. |
-| `skills?` | `true \| string[]` | Enable skills for this agent. |
-| `suggestions?` | `Suggestions` |  |
-| `security?` | `false` | Set to false to disable the default security middleware |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `id?` | `string` | Unique identifier (auto-generated if omitted) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L81) |
+| `name?` | `string` | Human-readable display name for registry and control-plane listings. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L83) |
+| `description?` | `string` | Optional summary shown in registry and control-plane listings. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L85) |
+| `model?` | `ModelString` | Optional model string in "provider/model" format. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L93) |
+| `system` | <code>string &#124; (() =&gt; string) &#124; (() =&gt; Promise&lt;string&gt;)</code> | System prompt: string, function, or async function | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L94) |
+| `tools?` | <code>true &#124; Record&lt;string, Tool &#124; boolean&gt;</code> | Tools available to the agent | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L95) |
+| `remoteTools?` | `RemoteToolSource[]` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L96) |
+| `allowedRemoteTools?` | `string[]` | Optional remote tool name allowlist. When set, only matching tools from `remoteTools` are exposed to the model and executable at runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L101) |
+| `maxSteps?` | `number` | Max tool-call iterations per request | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L102) |
+| `streaming?` | `boolean` | Enable streaming responses | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L103) |
+| `memory?` | `MemoryConfig` | Conversation memory settings | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L104) |
+| `middleware?` | `AgentMiddleware[]` | Execution middleware pipeline | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L105) |
+| `edge?` | `EdgeConfig` | Edge runtime configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L106) |
+| `multimodal?` | <code>&#123; vision?: boolean; audio?: boolean &#125;</code> | Enable vision and/or audio | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L107) |
+| `allowedModels?` | `ModelString[]` | Restrict runtime model overrides to these "provider/model" strings. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L112) |
+| `resolveModelTransport?` | `ModelTransportResolver` | Optional request-aware hook for overriding the resolved model runtime and provider transport options on a per-call basis. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L117) |
+| `resolveRuntimeState?` | `RuntimeStateResolver` | Optional step-boundary hook for refreshing the runtime system prompt and host-owned context during a long-lived run. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L122) |
+| `onToolResult?` | `ToolExecutionResultHandler` | Optional hook invoked after the runtime executes a configured local, registry, integration, or remote tool and before the tool result is persisted or streamed back to callers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L128) |
+| `skills?` | `true \| string[]` | Enable skills for this agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L138) |
+| `suggestions?` | `Suggestions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L139) |
+| `security?` | `false` | Set to false to disable the default security middleware | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L141) |
 
 **Returns:** `Agent`
 
@@ -159,12 +159,12 @@ Agent helper.
 
 Run the agent and return a complete response. Accepts a string or message array as input.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `input` | `string \| Message[]` | Prompt string or message history |
-| `context?` | <code>Record&lt;string, unknown&gt;</code> | Additional context passed to the agent |
-| `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. |
-| `maxOutputTokens?` | `number` | Override the maximum model output tokens for this request. |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `input` | `string \| Message[]` | Prompt string or message history | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L258) |
+| `context?` | <code>Record&lt;string, unknown&gt;</code> | Additional context passed to the agent | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L259) |
+| `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L261) |
+| `maxOutputTokens?` | `number` | Override the maximum model output tokens for this request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L263) |
 
 **Returns:** <code>Promise&lt;AgentResponse&gt;</code>
 
@@ -172,17 +172,17 @@ Run the agent and return a complete response. Accepts a string or message array 
 
 Run the agent and stream the response. Returns a result with `.toDataStreamResponse()` for API routes.
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `input?` | `string` | Prompt string |
-| `messages?` | `Message[]` | Conversation message history |
-| `context?` | <code>Record&lt;string, unknown&gt;</code> | Additional context passed to the agent |
-| `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. |
-| `maxOutputTokens?` | `number` | Override the maximum model output tokens for this request. |
-| `onToolCall?` | <code>(toolCall: ToolCall) =&gt; void</code> | Callback fired when a tool is invoked |
-| `onChunk?` | <code>(chunk: string) =&gt; void</code> | Callback fired for each text chunk |
-| `onFinish?` | <code>(response: AgentResponse) =&gt; void</code> |  |
-| `abortSignal?` | `AbortSignal` |  |
+| Property | Type | Description | Source |
+|----------|------|-------------|--------|
+| `input?` | `string` | Prompt string | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L267) |
+| `messages?` | `Message[]` | Conversation message history | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L268) |
+| `context?` | <code>Record&lt;string, unknown&gt;</code> | Additional context passed to the agent | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L269) |
+| `model?` | `ModelString` | Override the agent's default model for this request. Must be in `allowedModels` if configured. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L271) |
+| `maxOutputTokens?` | `number` | Override the maximum model output tokens for this request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L273) |
+| `onToolCall?` | <code>(toolCall: ToolCall) =&gt; void</code> | Callback fired when a tool is invoked | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L274) |
+| `onChunk?` | <code>(chunk: string) =&gt; void</code> | Callback fired for each text chunk | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L275) |
+| `onFinish?` | <code>(response: AgentResponse) =&gt; void</code> |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L276) |
+| `abortSignal?` | `AbortSignal` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L277) |
 
 **Returns:** <code>Promise&lt;AgentStreamResult&gt;</code>
 
