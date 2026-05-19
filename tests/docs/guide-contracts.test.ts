@@ -39,6 +39,18 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../reference/veryfront/cli.md"],
     snippets: ["knowledge_ingest", "jq '.ingested'", "veryfront knowledge ingest"],
   },
+  "choose-a-primitive.md": {
+    references: [
+      "../reference/veryfront/agent.md",
+      "../reference/veryfront/tool.md",
+      "../reference/veryfront/workflow.md",
+      "../reference/veryfront/jobs.md",
+      "../reference/veryfront/integrations.md",
+      "../reference/veryfront/mcp.md",
+      "../reference/veryfront/sandbox.md",
+    ],
+    snippets: ["Agent", "Tool", "Workflow", "Task", "Job", "Integration", "MCP", "Sandbox"],
+  },
   "configuration.md": {
     references: ["../reference/veryfront/index.md"],
     snippets: ["defineConfig", "VERYFRONT_API_TOKEN", "getEnv"],
@@ -81,7 +93,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "index.md": {
     references: [],
-    snippets: ["Quickstart", "Build pages and APIs", "Ship to production"],
+    snippets: ["Quickstart", "Choose a primitive", "Build pages and APIs", "Ship to production"],
   },
   "integrations.md": {
     references: ["../reference/veryfront/integrations.md"],
