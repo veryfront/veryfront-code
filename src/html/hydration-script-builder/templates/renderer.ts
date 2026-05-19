@@ -36,9 +36,13 @@ export const getRendererScript = () => `
 
       try {
         let pageModule;
+        const pagePath = typeof data.pagePath === 'string' ? data.pagePath : '';
+        const normalizedPagePath = pagePath.replace(/^\\/+/, '');
+        const shouldRenderRscClientPage =
+          data.clientModuleStrategy === 'rsc-module' && normalizedPagePath.startsWith('app/');
 
         if (data.pagePath) {
-          const moduleUrl = data.clientModuleStrategy === 'rsc-module'
+          const moduleUrl = shouldRenderRscClientPage
             ? '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)
             : pathToModuleUrl(data.pagePath, data.studioEmbed);
           log('Loading page from hydration data:', moduleUrl);
@@ -79,7 +83,6 @@ export const getRendererScript = () => `
         const pageProps = { ...(data.props || {}), params: data.params || {} };
         let tree = React.createElement(PageComponent, pageProps);
 
-        const shouldRenderRscClientPage = data.clientModuleStrategy === 'rsc-module';
         const layouts = shouldRenderRscClientPage ? [] : data.layouts;
         if (layouts?.length) {
           for (let i = layouts.length - 1; i >= 0; i--) {
