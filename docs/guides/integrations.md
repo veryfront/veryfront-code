@@ -36,7 +36,8 @@ flowchart LR
 
     subgraph Service["API / service layer"]
         specs["Connector specs (JSON)"]
-        oauth["OAuth / token flows<br/>Token storage<br/>Remote tool execution"]
+        exec["Remote tool execution<br/>(/integrations/tools/call)"]
+        oauth["OAuth / token flows<br/>Token storage"]
         authState["Provider auth state"]
     end
 
@@ -47,10 +48,12 @@ flowchart LR
     step2 --> specs
     specs --> step3
     step3 --> step4
-    step4 -- "Auth token" --> oauth
+    step4 -- "Auth token + tool call" --> exec
+    exec --> oauth
     oauth --> authState
-    step4 --> api
-    api -- "Tool response" --> step4
+    exec --> api
+    api -- "Tool response" --> exec
+    exec --> step4
 ```
 
 **Key points:**
