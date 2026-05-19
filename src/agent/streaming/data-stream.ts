@@ -4,7 +4,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Strip leading empty object placeholder. */
+/** Normalize provider tool input by removing transient empty-object prefixes. */
 export function stripLeadingEmptyObjectPlaceholder(rawArgs: string): string {
   let normalized = rawArgs.trim();
 

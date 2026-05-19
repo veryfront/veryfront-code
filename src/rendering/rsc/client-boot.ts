@@ -58,16 +58,16 @@ export function selectHydrationRoot<T extends HydrationRootCandidate>(
   ) ?? fallback;
 }
 
-export function shouldClientRenderPageRoot<T>(root: T, fallback: T): boolean {
+export function shouldWrapPageHydrationRoot<T>(root: T, fallback: T): boolean {
   return root === fallback;
 }
 
-function createClientRenderRoot(
+function createPageHydrationRoot(
   children: readonly Element[],
   fallback: HTMLElement,
 ): HTMLElement {
   const mount = document.createElement("div");
-  mount.setAttribute("data-veryfront-client-root", "page");
+  mount.setAttribute("data-veryfront-hydration-root", "page");
 
   const firstRenderable = children.find((element) => !isHiddenHydrationPlaceholder(element));
   if (firstRenderable?.parentNode === fallback) {
@@ -87,6 +87,17 @@ function createClientRenderRoot(
 
 interface RSCBootDocument {
   getElementById(id: string): Element | null;
+}
+
+interface PageRendererWindow {
+  __veryfrontRenderPage?: unknown;
+}
+
+export function shouldUsePageRendererHydration(
+  win: PageRendererWindow | undefined,
+  hydrationData: ClientRuntimeHydrationData | null,
+): boolean {
+  return !!hydrationData?.pagePath && typeof win?.__veryfrontRenderPage === "function";
 }
 
 export function shouldAttemptRSCTransport(
@@ -152,16 +163,15 @@ async function hydratePageComponent(
 
     const bodyChildren = Array.from(document.body.children);
     const root = selectHydrationRoot(bodyChildren, document.body);
+    const hydrationRoot = shouldWrapPageHydrationRoot(root, document.body)
+      ? createPageHydrationRoot(bodyChildren, document.body)
+      : root;
     const component = React.createElement(Component, {});
 
-    if (shouldClientRenderPageRoot(root, document.body)) {
-      ReactDOM.createRoot(createClientRenderRoot(bodyChildren, document.body)).render(component);
-    } else {
-      ReactDOM.hydrateRoot(root, component, {
-        identifierPrefix: "vf",
-        onRecoverableError: () => {},
-      });
-    }
+    ReactDOM.hydrateRoot(hydrationRoot, component, {
+      identifierPrefix: "vf",
+      onRecoverableError: () => {},
+    });
 
     console.debug?.("[RSC] Page component hydrated successfully");
     return true;
@@ -205,6 +215,10 @@ export async function boot(): Promise<void> {
     const pagePath = hydrationData?.pagePath;
     const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
     if (pagePath) {
+      if (shouldUsePageRendererHydration(globalThis.window as PageRendererWindow, hydrationData)) {
+        console.debug?.("[RSC] Page renderer owns hydration");
+        return;
+      }
       console.debug?.("[RSC] Found page component in hydration data:", pagePath);
       if (await hydratePageComponent(pagePath, clientModuleStrategy)) {
         console.debug?.("[RSC] Client component hydrated successfully");

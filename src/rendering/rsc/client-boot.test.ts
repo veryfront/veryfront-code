@@ -4,8 +4,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   selectHydrationRoot,
   shouldAttemptRSCTransport,
-  shouldClientRenderPageRoot,
   shouldHydrateOnly,
+  shouldUsePageRendererHydration,
+  shouldWrapPageHydrationRoot,
 } from "./client-boot.ts";
 
 type MockElement = {
@@ -62,6 +63,26 @@ describe("rendering/rsc/client-boot", () => {
     });
   });
 
+  describe("shouldUsePageRendererHydration", () => {
+    it("lets the production page renderer own client-page hydration when present", () => {
+      const shouldUseRenderer = shouldUsePageRendererHydration(
+        { __veryfrontRenderPage: () => {} },
+        { pagePath: "app/page.tsx", clientModuleStrategy: "rsc-module" },
+      );
+
+      assertEquals(shouldUseRenderer, true);
+    });
+
+    it("keeps RSC boot ownership when the page renderer is absent", () => {
+      const shouldUseRenderer = shouldUsePageRendererHydration(
+        {},
+        { pagePath: "app/page.tsx", clientModuleStrategy: "rsc-module" },
+      );
+
+      assertEquals(shouldUseRenderer, false);
+    });
+  });
+
   describe("shouldHydrateOnly", () => {
     it("detects hydrate-only imports", () => {
       assertEquals(shouldHydrateOnly("/_veryfront/rsc/client.js?hydrate=1"), true);
@@ -107,18 +128,18 @@ describe("rendering/rsc/client-boot", () => {
     });
   });
 
-  describe("shouldClientRenderPageRoot", () => {
-    it("uses client rendering when the fallback parent is the selected root", () => {
+  describe("shouldWrapPageHydrationRoot", () => {
+    it("wraps the server markup when the fallback parent is the selected root", () => {
       const body = toCandidate(createElement("BODY"));
 
-      assertEquals(shouldClientRenderPageRoot(body, body), true);
+      assertEquals(shouldWrapPageHydrationRoot(body, body), true);
     });
 
-    it("keeps hydration when an explicit wrapper is selected", () => {
+    it("uses the explicit wrapper directly when one is selected", () => {
       const wrapper = toCandidate(createElement("DIV", { class: "page-shell" }));
       const body = toCandidate(createElement("BODY"));
 
-      assertEquals(shouldClientRenderPageRoot(wrapper, body), false);
+      assertEquals(shouldWrapPageHydrationRoot(wrapper, body), false);
     });
   });
 });

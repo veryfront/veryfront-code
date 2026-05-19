@@ -278,6 +278,7 @@ export interface Agent {
     abortSignal?: AbortSignal;
   }): Promise<AgentStreamResult>;
 
+  /** Convert an HTTP request into an AG-UI streaming response for route handlers. */
   respond(request: Request): Promise<Response>;
 
   getMemory(): Memory<Message>;

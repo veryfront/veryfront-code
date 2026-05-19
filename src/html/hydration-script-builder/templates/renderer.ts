@@ -38,7 +38,9 @@ export const getRendererScript = () => `
         let pageModule;
 
         if (data.pagePath) {
-          const moduleUrl = pathToModuleUrl(data.pagePath, data.studioEmbed);
+          const moduleUrl = data.clientModuleStrategy === 'rsc-module'
+            ? '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)
+            : pathToModuleUrl(data.pagePath, data.studioEmbed);
           log('Loading page from hydration data:', moduleUrl);
 
           try {
@@ -77,7 +79,8 @@ export const getRendererScript = () => `
         const pageProps = { ...(data.props || {}), params: data.params || {} };
         let tree = React.createElement(PageComponent, pageProps);
 
-        const layouts = data.layouts;
+        const shouldRenderRscClientPage = data.clientModuleStrategy === 'rsc-module';
+        const layouts = shouldRenderRscClientPage ? [] : data.layouts;
         if (layouts?.length) {
           for (let i = layouts.length - 1; i >= 0; i--) {
             const LayoutComponent = await loadComponent(layouts[i].path);
@@ -117,18 +120,24 @@ export const getRendererScript = () => `
           return;
         }
 
-        const { hydrateRoot } = await import('react-dom/client');
-        const options = {
-          identifierPrefix: 'vf',
-          onRecoverableError: (error) => {
-            if (data.dev && typeof DEBUG !== 'undefined' && DEBUG) {
-              log('Hydration mismatch (suppressed):', error.message);
-            }
-          },
-        };
+        if (shouldRenderRscClientPage) {
+          container.__reactRoot = createRoot(container);
+          container.__reactRoot.render(tree);
+          log('Client-side React app rendered successfully');
+        } else {
+          const { hydrateRoot } = await import('react-dom/client');
+          const options = {
+            identifierPrefix: 'vf',
+            onRecoverableError: (error) => {
+              if (data.dev && typeof DEBUG !== 'undefined' && DEBUG) {
+                log('Hydration mismatch (suppressed):', error.message);
+              }
+            },
+          };
 
-        container.__reactRoot = hydrateRoot(container, tree, options);
-        log('Client-side React app hydrated successfully');
+          container.__reactRoot = hydrateRoot(container, tree, options);
+          log('Client-side React app hydrated successfully');
+        }
 
         if (window.__veryfrontHydrationComplete) {
           window.__veryfrontHydrationComplete();
