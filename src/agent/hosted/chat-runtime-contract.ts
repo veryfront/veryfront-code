@@ -10,6 +10,7 @@ import type { ConversationRunEvent } from "../conversation/run-events.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 
+/** Public API contract for hosted chat runtime finish part. */
 export type HostedChatRuntimeFinishPart = {
   type: "finish";
   finishReason: ChatFinishReason;
@@ -32,6 +33,7 @@ export type HostedChatRuntimeFinishPart = {
   };
 };
 
+/** Event emitted for hosted chat runtime on finish. */
 export type HostedChatRuntimeOnFinishEvent<TMessageMetadata = MessageMetadata> = {
   messages: Array<ChatUiMessage<TMessageMetadata>>;
   isContinuation: boolean;
@@ -40,6 +42,7 @@ export type HostedChatRuntimeOnFinishEvent<TMessageMetadata = MessageMetadata> =
   finishReason: ChatFinishReason;
 };
 
+/** Options accepted by hosted chat runtime to UI message stream. */
 export type HostedChatRuntimeToUiMessageStreamOptions<TMessageMetadata = MessageMetadata> = {
   sendReasoning?: boolean;
   originalMessages?: Array<ChatUiMessage<TMessageMetadata>>;
@@ -49,11 +52,13 @@ export type HostedChatRuntimeToUiMessageStreamOptions<TMessageMetadata = Message
   messageMetadata?: (input: { part: HostedChatRuntimeFinishPart }) => TMessageMetadata | undefined;
 };
 
+/** Input payload for hosted chat runtime stream. */
 export type HostedChatRuntimeStreamInput = {
   messages: AgentRuntimeMessage[];
   abortSignal: AbortSignal;
 };
 
+/** Result returned from hosted chat runtime stream. */
 export type HostedChatRuntimeStreamResult<TMessageMetadata = MessageMetadata> = {
   steps: PromiseLike<readonly unknown[]>;
   toUIMessageStream: (
@@ -61,12 +66,14 @@ export type HostedChatRuntimeStreamResult<TMessageMetadata = MessageMetadata> = 
   ) => AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>;
 };
 
+/** Public API contract for hosted chat runtime agent. */
 export type HostedChatRuntimeAgent<TMessageMetadata = MessageMetadata> = {
   stream: (
     input: HostedChatRuntimeStreamInput,
   ) => Promise<HostedChatRuntimeStreamResult<TMessageMetadata>>;
 };
 
+/** Result returned from hosted chat runtime creation. */
 export type HostedChatRuntimeCreationResult<TMessageMetadata = MessageMetadata> = {
   runtimeKind: "framework";
   agent: HostedChatRuntimeAgent<TMessageMetadata>;
@@ -74,6 +81,7 @@ export type HostedChatRuntimeCreationResult<TMessageMetadata = MessageMetadata> 
   cleanup: () => Promise<void>;
 };
 
+/** Public API contract for hosted chat runtime project steering. */
 export type HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> = {
   agent: TRuntimeAgentDefinition;
   environmentContext?: string;
@@ -81,6 +89,7 @@ export type HostedChatRuntimeProjectSteering<TRuntimeAgentDefinition> = {
   initialSkills?: RuntimeSkillDefinition[];
 };
 
+/** Options accepted by hosted chat runtime creation. */
 export type HostedChatRuntimeCreationOptions<TRuntimeAgentDefinition, TThinkingConfig> = {
   projectId: string | null;
   branchId?: string | null;

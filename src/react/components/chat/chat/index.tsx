@@ -193,6 +193,7 @@ export {
 // ChatProps — Preset interface
 // ---------------------------------------------------------------------------
 
+/** Props accepted by chat. */
 export interface ChatProps {
   messages: ChatMessage[];
   input: string;
@@ -260,6 +261,7 @@ export interface ChatProps {
 // building blocks directly.
 // ---------------------------------------------------------------------------
 
+/** Render chat. */
 export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
   {
     messages,
@@ -518,6 +520,7 @@ export type ChatComponentsType = typeof Chat & {
   ErrorBanner: typeof ErrorBanner;
 };
 
+/** Render chat components. */
 export const ChatComponents: ChatComponentsType = Object.assign(Chat, {
   Root: ChatRoot,
   MessageList: ChatMessageList,

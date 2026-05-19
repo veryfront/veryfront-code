@@ -20,7 +20,9 @@ export const getHostedDurableRootRunDescriptorSchema = defineSchema((v) =>
   }).strict()
 );
 
-/** @deprecated Use getHostedDurableRootRunDescriptorSchema() */
+/** Schema for hosted durable root run descriptor.
+ * @deprecated Use getHostedDurableRootRunDescriptorSchema()
+ */
 export const hostedDurableRootRunDescriptorSchema = lazySchema(
   getHostedDurableRootRunDescriptorSchema,
 );
@@ -33,7 +35,9 @@ export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
   }).strip()
 );
 
-/** @deprecated Use getHostedChatRuntimeOverridesSchema() */
+/** Schema for hosted chat runtime overrides.
+ * @deprecated Use getHostedChatRuntimeOverridesSchema()
+ */
 export const hostedChatRuntimeOverridesSchema = lazySchema(getHostedChatRuntimeOverridesSchema);
 
 export const getHostedChatRequestSchema = defineSchema((v) =>
@@ -48,10 +52,14 @@ export const getHostedChatRequestSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getHostedChatRequestSchema() */
+/** Schema for hosted chat request.
+ * @deprecated Use getHostedChatRequestSchema()
+ */
 export const hostedChatRequestSchema = lazySchema(getHostedChatRequestSchema);
 
+/** Request payload for hosted chat. */
 export type HostedChatRequest = InferSchema<ReturnType<typeof getHostedChatRequestSchema>>;
+/** Input payload for hosted chat request. */
 export type HostedChatRequestInput = {
   messages: RuntimeAgentRunInvocation["messages"];
   context: InferSchema<ReturnType<typeof getChatRequestContextSchema>>;
@@ -66,6 +74,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+/** Builds hosted chat request forwarded props from runtime agent invocation. */
 export function buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,
 ): HostedChatRequest["forwardedProps"] {
@@ -84,6 +93,7 @@ export function buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
   return Object.keys(forwardedProps).length > 0 ? forwardedProps : undefined;
 }
 
+/** Builds hosted chat request input from runtime agent invocation. */
 export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,
 ): HostedChatRequestInput {
@@ -105,6 +115,7 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
   };
 }
 
+/** Builds hosted chat request from runtime agent invocation. */
 export function buildHostedChatRequestFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,
 ): HostedChatRequest {

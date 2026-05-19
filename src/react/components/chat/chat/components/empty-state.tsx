@@ -2,6 +2,7 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { ArrowDownIcon } from "../../icons/index.ts";
 
+/** Props accepted by suggestion. */
 export interface SuggestionProps {
   suggestion: string;
   onClick?: (suggestion: string) => void;
@@ -9,6 +10,7 @@ export interface SuggestionProps {
   icon?: React.ReactNode;
 }
 
+/** Render suggestion. */
 export function Suggestion({
   suggestion,
   onClick,
@@ -36,12 +38,14 @@ export function Suggestion({
   );
 }
 
+/** Props accepted by suggestions. */
 export interface SuggestionsProps {
   children: React.ReactNode;
   className?: string;
   layout?: "grid" | "horizontal";
 }
 
+/** Render suggestions. */
 export function Suggestions({
   children,
   className,
@@ -54,6 +58,7 @@ export function Suggestions({
   return <div className={cn(containerClassName, className)}>{children}</div>;
 }
 
+/** Props accepted by conversation empty state. */
 export interface ConversationEmptyStateProps {
   icon?: React.ReactNode;
   title?: string;
@@ -62,6 +67,7 @@ export interface ConversationEmptyStateProps {
   className?: string;
 }
 
+/** State for conversation empty. */
 export function ConversationEmptyState({
   icon,
   title = "What can I help with?",
@@ -93,12 +99,14 @@ export function ConversationEmptyState({
   );
 }
 
+/** Props accepted by conversation scroll button. */
 export interface ConversationScrollButtonProps {
   onClick?: () => void;
   visible?: boolean;
   className?: string;
 }
 
+/** Render conversation scroll button. */
 export function ConversationScrollButton({
   onClick,
   visible = true,

@@ -30,6 +30,7 @@ import {
 
 const logger = serverLogger.component("otel");
 
+/** Configuration used by otlpconfig. */
 export interface OTLPConfig {
   serviceName: string;
   endpoint: string;
@@ -74,6 +75,7 @@ function getConfig(): OTLPConfig {
 
 let initialized = false;
 
+/** Initialize OTLP tracing export. */
 export async function initializeOTLP(): Promise<void> {
   if (initialized) {
     logger.debug("Already initialized");
@@ -85,15 +87,18 @@ export async function initializeOTLP(): Promise<void> {
   logger.debug("OTLP setup delegated to ext-observability-opentelemetry extension");
 }
 
+/** Shut down OTLP tracing export. */
 export async function shutdownOTLP(): Promise<void> {
   // Actual shutdown is handled by the extension loader teardown.
   logger.debug("OTLP shutdown delegated to ext-observability-opentelemetry extension");
 }
 
+/** Check whether OTLP export is enabled. */
 export function isOTLPEnabled(): boolean {
   return initialized;
 }
 
+/** Initialize OTLP tracing with explicit API adapters. */
 export async function initializeOTLPWithApis(): Promise<void> {
   await initializeOTLP();
 }
@@ -110,6 +115,7 @@ function setSpanErrorStatus(span: Span, error: unknown): void {
   if (error instanceof Error) span.recordException(error);
 }
 
+/** Applies span. */
 export async function withSpan<T>(
   name: string,
   fn: () => Promise<T>,
@@ -139,6 +145,7 @@ export async function withSpan<T>(
   }
 }
 
+/** Applies span sync. */
 export function withSpanSync<T>(
   name: string,
   fn: () => T,
@@ -166,6 +173,7 @@ export function withSpanSync<T>(
   }
 }
 
+/** Context for extract. */
 export function extractContext(headers: Headers): Context | undefined {
   const carrier: Record<string, string> = {};
   for (const [k, v] of headers) carrier[k.toLowerCase()] = v;
@@ -173,12 +181,14 @@ export function extractContext(headers: Headers): Context | undefined {
   return shimPropagation.extract(shimContext.active(), carrier, defaultTextMapGetter);
 }
 
+/** Context for inject. */
 export function injectContext(headers: Headers): void {
   const carrier: Record<string, string> = {};
   shimPropagation.inject(shimContext.active(), carrier, defaultTextMapSetter);
   for (const [k, v] of Object.entries(carrier)) headers.set(k, v);
 }
 
+/** Starts server span. */
 export function startServerSpan(
   method: string,
   path: string,
@@ -195,6 +205,7 @@ export function startServerSpan(
   return { span, context: shimTrace.setSpan(ctx, span) };
 }
 
+/** End an active server tracing span. */
 export function endServerSpan(span: unknown, statusCode: number, error?: Error): void {
   if (!span) return;
 
@@ -217,6 +228,7 @@ export function endServerSpan(span: unknown, statusCode: number, error?: Error):
   otelSpan.end();
 }
 
+/** Sets span attributes. */
 export function setSpanAttributes(
   span: unknown,
   attributes: Record<string, string | number | boolean>,
@@ -227,6 +239,7 @@ export function setSpanAttributes(
   for (const [key, value] of Object.entries(attributes)) otelSpan.setAttribute(key, value);
 }
 
+/** Sets active span attributes. */
 export function setActiveSpanAttributes(
   attributes: Record<string, string | number | boolean>,
 ): void {
@@ -236,10 +249,12 @@ export function setActiveSpanAttributes(
   for (const [key, value] of Object.entries(attributes)) span.setAttribute(key, value);
 }
 
+/** Context for with. */
 export async function withContext<T>(spanContext: unknown, fn: () => Promise<T>): Promise<T> {
   return shimContext.with(spanContext as Context, fn);
 }
 
+/** Context for get trace. */
 export function getTraceContext(): { traceId?: string; spanId?: string } {
   const span = shimTrace.getActiveSpan?.();
   if (!span) return {};

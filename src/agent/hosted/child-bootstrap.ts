@@ -2,6 +2,7 @@ import { bootstrapConversationAgentRun } from "../conversation/bootstrap.ts";
 import { type ConversationRunProjection } from "../conversation/durable.ts";
 import { type HostedChildRunIdentifiers } from "./child-status.ts";
 
+/** Input payload for hosted child conversation body. */
 export interface HostedChildConversationBodyInput {
   ensureProjectId?: string | null;
   parentConversationId: string;
@@ -11,6 +12,7 @@ export interface HostedChildConversationBodyInput {
   description: string;
 }
 
+/** Input payload for bootstrap hosted child run. */
 export interface BootstrapHostedChildRunInput extends HostedChildConversationBodyInput {
   authToken: string;
   apiUrl: string;
@@ -22,10 +24,12 @@ export interface BootstrapHostedChildRunInput extends HostedChildConversationBod
   branchId?: string | null;
 }
 
+/** Result returned from bootstrap hosted child run. */
 export interface BootstrapHostedChildRunResult extends HostedChildRunIdentifiers {
   status: ConversationRunProjection["status"];
 }
 
+/** Builds hosted child conversation body. */
 export function buildHostedChildConversationBody(input: HostedChildConversationBodyInput) {
   return {
     ...(input.ensureProjectId ? { project_id: input.ensureProjectId } : {}),
@@ -44,6 +48,7 @@ export function buildHostedChildConversationBody(input: HostedChildConversationB
   };
 }
 
+/** Bootstrap hosted child run helper. */
 export async function bootstrapHostedChildRun(
   input: BootstrapHostedChildRunInput,
 ): Promise<BootstrapHostedChildRunResult> {

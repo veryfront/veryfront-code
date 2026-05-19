@@ -17,6 +17,7 @@ import {
   recordMirroredToolChunkState,
 } from "../streaming/mirrored-tool-chunk-state.ts";
 
+/** Input payload for build finalized message state. */
 export interface BuildFinalizedMessageStateInput {
   responseMessage: ChatUiMessage;
   isAborted: boolean;
@@ -24,6 +25,7 @@ export interface BuildFinalizedMessageStateInput {
   incompleteToolCallsPartErrorText: string;
 }
 
+/** Input payload for build detached fallback message. */
 export interface BuildDetachedFallbackMessageInput {
   capturedMessageId: string | null;
   finalStep: unknown;
@@ -31,17 +33,20 @@ export interface BuildDetachedFallbackMessageInput {
   incompleteToolCallsPartErrorText: string;
 }
 
+/** State for finalized message. */
 export interface FinalizedMessageState {
   persistedMessage: ChatUiMessage;
   sanitizedFinalizedMessage: ChatUiMessage;
   hasIncompleteFinalizedToolParts: boolean;
 }
 
+/** State for detached fallback message. */
 export interface DetachedFallbackMessageState {
   finalizedFallbackMessage: ChatUiMessage;
   hasIncompleteFallbackToolParts: boolean;
 }
 
+/** Input payload for build finalized message fallback chunks. */
 export interface BuildFinalizedMessageFallbackChunksInput {
   persistedMessage: ChatUiMessage;
   sanitizedFinalizedMessage: ChatUiMessage;
@@ -51,6 +56,7 @@ export interface BuildFinalizedMessageFallbackChunksInput {
   hasIncompleteFinalizedToolParts: boolean;
 }
 
+/** Input payload for build detached fallback chunks. */
 export interface BuildDetachedFallbackChunksInput {
   fallbackParts: ChatUiMessage["parts"];
   finalStep: unknown;
@@ -60,6 +66,7 @@ export interface BuildDetachedFallbackChunksInput {
   hasIncompleteFallbackToolParts: boolean;
 }
 
+/** State for build finalized message. */
 export function buildFinalizedMessageState(
   input: BuildFinalizedMessageStateInput,
 ): FinalizedMessageState {
@@ -91,6 +98,7 @@ export function buildFinalizedMessageState(
   };
 }
 
+/** State for build detached fallback message. */
 export function buildDetachedFallbackMessageState(
   input: BuildDetachedFallbackMessageInput,
 ): DetachedFallbackMessageState {
@@ -114,6 +122,7 @@ export function buildDetachedFallbackMessageState(
   };
 }
 
+/** Builds finalized message fallback chunks. */
 export function buildFinalizedMessageFallbackChunks(
   input: BuildFinalizedMessageFallbackChunksInput,
 ): ChatUiMessageChunk<MessageMetadata>[] {
@@ -149,6 +158,7 @@ export function buildFinalizedMessageFallbackChunks(
   ];
 }
 
+/** Builds detached fallback chunks. */
 export function buildDetachedFallbackChunks(
   input: BuildDetachedFallbackChunksInput,
 ): ChatUiMessageChunk<MessageMetadata>[] {

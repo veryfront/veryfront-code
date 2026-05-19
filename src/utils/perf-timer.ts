@@ -32,6 +32,7 @@ function formatPct(duration: number, total: number): string {
   return ((duration / total) * 100).toFixed(1);
 }
 
+/** Request payload for start. */
 export function startRequest(requestId: string): void {
   if (!getEnabled()) return;
 
@@ -39,6 +40,7 @@ export function startRequest(requestId: string): void {
   timings.set(requestId, []);
 }
 
+/** Starts timer. */
 export function startTimer(label: string, parent?: string): () => void {
   if (!getEnabled() || !currentRequestId) return () => {};
 
@@ -51,6 +53,7 @@ export function startTimer(label: string, parent?: string): () => void {
   };
 }
 
+/** Time async. */
 export async function timeAsync<T>(
   label: string,
   fn: () => Promise<T>,
@@ -66,6 +69,7 @@ export async function timeAsync<T>(
   }
 }
 
+/** Request payload for end. */
 export function endRequest(requestId: string): void {
   if (!getEnabled()) return;
 
@@ -135,6 +139,7 @@ export function endRequest(requestId: string): void {
   currentRequestId = null;
 }
 
+/** Check whether request performance timing is enabled. */
 export function isEnabled(): boolean {
   return getEnabled();
 }

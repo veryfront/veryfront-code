@@ -1,5 +1,6 @@
 export type { PromptConfig } from "./schemas/prompt.schema.ts";
 
+/** Public API contract for prompt. */
 export interface Prompt {
   id: string;
   description: string;

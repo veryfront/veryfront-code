@@ -152,6 +152,7 @@ function markGeneratedToolId<TInput, TOutput>(tool: Tool<TInput, TOutput>): Tool
   };
 }
 
+/** Create a typed tool definition. */
 export function tool<TInput = unknown, TOutput = unknown>(
   config: ToolConfig<TInput, TOutput>,
 ): Tool<TInput, TOutput> {
@@ -193,6 +194,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
   return explicitId ? createdTool : markGeneratedToolId(createdTool);
 }
 
+/** Configuration used by dynamic tool. */
 export interface DynamicToolConfig {
   id?: string;
   description: string;
@@ -203,6 +205,7 @@ export interface DynamicToolConfig {
   mcp?: ToolConfig["mcp"];
 }
 
+/** Create a dynamic tool definition. */
 export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
   const explicitId = typeof config.id === "string" && config.id.length > 0 ? config.id : undefined;
   const id = explicitId ?? generateToolId();

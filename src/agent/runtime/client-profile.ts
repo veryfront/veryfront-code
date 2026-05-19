@@ -1,10 +1,12 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 
+/** Zod schema for get runtime client type. */
 export const getRuntimeClientTypeSchema = defineSchema((v) =>
   v.enum(["web", "cli", "api", "internal"])
 );
 
+/** Zod schema for get runtime client capability. */
 export const getRuntimeClientCapabilitySchema = defineSchema((v) =>
   v.enum([
     "ui_panels",
@@ -14,6 +16,7 @@ export const getRuntimeClientCapabilitySchema = defineSchema((v) =>
   ])
 );
 
+/** Zod schema for get runtime client profile. */
 export const getRuntimeClientProfileSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1).max(128),
@@ -23,17 +26,26 @@ export const getRuntimeClientProfileSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getRuntimeClientTypeSchema() */
+/** Schema for runtime client type.
+ * @deprecated Use getRuntimeClientTypeSchema()
+ */
 export const runtimeClientTypeSchema = lazySchema(getRuntimeClientTypeSchema);
-/** @deprecated Use getRuntimeClientCapabilitySchema() */
+/** Schema for runtime client capability.
+ * @deprecated Use getRuntimeClientCapabilitySchema()
+ */
 export const runtimeClientCapabilitySchema = lazySchema(getRuntimeClientCapabilitySchema);
-/** @deprecated Use getRuntimeClientProfileSchema() */
+/** Schema for runtime client profile.
+ * @deprecated Use getRuntimeClientProfileSchema()
+ */
 export const runtimeClientProfileSchema = lazySchema(getRuntimeClientProfileSchema);
 
+/** Public API contract for runtime client type. */
 export type RuntimeClientType = InferSchema<ReturnType<typeof getRuntimeClientTypeSchema>>;
+/** Public API contract for runtime client capability. */
 export type RuntimeClientCapability = InferSchema<
   ReturnType<typeof getRuntimeClientCapabilitySchema>
 >;
+/** Public API contract for runtime client profile. */
 export type RuntimeClientProfile = InferSchema<ReturnType<typeof getRuntimeClientProfileSchema>>;
 
 const getClientMetadataSchema = defineSchema((v) =>
@@ -76,6 +88,7 @@ const FIRST_PARTY_CLIENTS: Readonly<Record<string, FirstPartyClientProfile>> = {
   },
 };
 
+/** Resolves runtime client profile. */
 export function resolveRuntimeClientProfile(
   forwardedProps: Record<string, unknown> | undefined,
 ): RuntimeClientProfile | null {
@@ -108,6 +121,7 @@ export function resolveRuntimeClientProfile(
   });
 }
 
+/** Client allows studio MCP helper. */
 export function clientAllowsStudioMcp(
   clientProfile: RuntimeClientProfile | null | undefined,
 ): boolean {

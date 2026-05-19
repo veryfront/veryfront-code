@@ -12,6 +12,7 @@ import { COMPONENT_ERROR } from "#veryfront/errors/error-registry.ts";
 import type { AttachmentInfo } from "../components/attachment-pill.tsx";
 import type { ModelOption } from "../../model-selector.tsx";
 
+/** Public API contract for composer context value. */
 export interface ComposerContextValue {
   // Input
   input: string;
@@ -45,6 +46,7 @@ export interface ComposerContextValue {
 
 const ComposerContext = React.createContext<ComposerContextValue | null>(null);
 
+/** Context for use composer. */
 export function useComposerContext(): ComposerContextValue {
   const context = React.useContext(ComposerContext);
   if (!context) {
@@ -55,8 +57,10 @@ export function useComposerContext(): ComposerContextValue {
   return context;
 }
 
+/** React hook for composer context optional. */
 export function useComposerContextOptional(): ComposerContextValue | null {
   return React.useContext(ComposerContext);
 }
 
+/** Render composer context provider. */
 export const ComposerContextProvider = ComposerContext.Provider;

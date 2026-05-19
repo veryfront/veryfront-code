@@ -44,7 +44,7 @@ export interface TraverseVisitor {
 export interface ParseOptions {
   /** Source code to parse. */
   code: string;
-  /** File path hint for parser configuration (e.g. `.tsx`). */
+  /** File path hint for parser configuration (e.g. `.TSX`). */
   filePath?: string;
   /** Additional parser-specific options. */
   [key: string]: unknown;
@@ -80,6 +80,7 @@ export interface InjectJsxNodePositionsOptions {
   filePath: string;
 }
 
+/** Public API contract for code parser. */
 export interface CodeParser {
   /** Parse source code into an abstract syntax tree. */
   parse(options: ParseOptions): Promise<ASTNode>;

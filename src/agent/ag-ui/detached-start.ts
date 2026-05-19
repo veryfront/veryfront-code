@@ -87,14 +87,20 @@ export const getAgUiDetachedStartAcceptedSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getAgUiDetachedStartRequestSchema() */
+/** Schema for AG-UI detached start request.
+ * @deprecated Use getAgUiDetachedStartRequestSchema()
+ */
 export const AgUiDetachedStartRequestSchema = lazySchema(getAgUiDetachedStartRequestSchema);
-/** @deprecated Use getAgUiDetachedStartAcceptedSchema() */
+/** Schema for AG-UI detached start accepted.
+ * @deprecated Use getAgUiDetachedStartAcceptedSchema()
+ */
 export const AgUiDetachedStartAcceptedSchema = lazySchema(getAgUiDetachedStartAcceptedSchema);
 
+/** Request payload for AG-UI detached start. */
 export type AgUiDetachedStartRequest = InferSchema<
   ReturnType<typeof getAgUiDetachedStartRequestSchema>
 >;
+/** Public API contract for AG-UI detached start accepted. */
 export type AgUiDetachedStartAccepted = InferSchema<
   ReturnType<typeof getAgUiDetachedStartAcceptedSchema>
 >;
@@ -128,6 +134,7 @@ function toDetachedAgUiMessageMetadata(
   return Object.keys(normalizedMetadata).length > 0 ? normalizedMetadata : undefined;
 }
 
+/** Request payload for build detached AG-UI start. */
 export function buildDetachedAgUiStartRequest(input: {
   runId: string;
   threadId: string;
@@ -171,6 +178,7 @@ export function buildDetachedAgUiStartRequest(input: {
   };
 }
 
+/** Input payload for execute AG-UI detached start. */
 export interface ExecuteAgUiDetachedStartInput {
   request: AgUiDetachedStartRequest;
   rawRequest?: Request;
@@ -208,6 +216,7 @@ interface AgUiDetachedStartHandlerOptionsBase {
   onError?: (input: { runId: string; threadId: string; error: unknown }) => Promise<void> | void;
 }
 
+/** Options accepted by AG-UI detached start handler. */
 export type AgUiDetachedStartHandlerOptions =
   | (AgUiDetachedStartHandlerOptionsBase & { agent: Agent })
   | (AgUiDetachedStartHandlerOptionsBase & {
@@ -282,6 +291,7 @@ function assertDetachedStartRawRequest(
   });
 }
 
+/** Execute AG-UI detached start. */
 export async function executeAgUiDetachedStart(
   options: AgUiDetachedStartHandlerOptions,
   input: ExecuteAgUiDetachedStartInput,
@@ -375,6 +385,7 @@ export async function executeAgUiDetachedStart(
   }
 }
 
+/** Handler for create AG-UI detached start. */
 export function createAgUiDetachedStartHandler(
   options: AgUiDetachedStartHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response> {

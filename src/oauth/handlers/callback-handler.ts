@@ -10,6 +10,7 @@ import type { OAuthServiceConfig, StoredOAuthState, TokenStore } from "../types.
 
 const logger = baseLogger.component("o-auth");
 
+/** Options accepted by oauth callback handler. */
 export interface OAuthCallbackHandlerOptions {
   /** Token store to use (defaults to memory store) */
   tokenStore?: TokenStore;
@@ -23,7 +24,7 @@ export interface OAuthCallbackHandlerOptions {
   /** Error redirect path */
   errorRedirect?: string;
 
-  /** Custom success callback (called with the user id the tokens were stored under) */
+  /** Custom success callback (called with the user ID the tokens were stored under) */
   onSuccess?: (serviceId: string, tokens: unknown, userId: string) => void | Promise<void>;
 
   /** Custom error callback */
@@ -39,6 +40,7 @@ export interface OAuthCallbackHandlerOptions {
   envReader?: EnvReader;
 }
 
+/** Handler for create oauth callback. */
 export function createOAuthCallbackHandler(
   config: OAuthServiceConfig,
   options: OAuthCallbackHandlerOptions = {},

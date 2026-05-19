@@ -1,9 +1,11 @@
+/** Context for hosted child fork instructions. */
 export type HostedChildForkInstructionsContext = {
   projectId?: string | null;
   branchId?: string | null;
   availableSkillIds?: readonly string[];
 };
 
+/** Shared hosted child fork instructions base value. */
 export const HOSTED_CHILD_FORK_INSTRUCTIONS_BASE =
   `You are a child fork, an isolated sub-agent handling a specific task.
 
@@ -59,6 +61,7 @@ export const HOSTED_CHILD_FORK_INSTRUCTIONS_BASE =
 - If an MCP tool returns "Project not found", use the project_reference from <project_context>.
 - Do NOT guess project references, branch IDs, or skill names.`;
 
+/** Builds hosted child fork instructions. */
 export function buildHostedChildForkInstructions(
   context: HostedChildForkInstructionsContext = {},
 ): string {

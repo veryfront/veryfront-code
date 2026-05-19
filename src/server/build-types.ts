@@ -24,6 +24,7 @@ export interface BuildOptions {
   dryRun?: boolean;
 }
 
+/** Public API contract for build stats. */
 export interface BuildStats {
   pages: number;
   components: number;

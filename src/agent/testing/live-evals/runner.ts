@@ -17,6 +17,7 @@ import {
   type LiveEvalResultRecord,
 } from "./result.ts";
 
+/** Input payload for prepared live eval. */
 export interface PreparedLiveEvalInput {
   prompt?: string;
   metadata?: Record<string, string>;
@@ -25,12 +26,14 @@ export interface PreparedLiveEvalInput {
   startSidecar?: () => Promise<(() => Promise<void>) | void>;
 }
 
+/** Context for live eval. */
 export interface LiveEvalContext {
   apiUrl: string;
   authToken: string;
   projectId: string | null;
 }
 
+/** Public API contract for live eval case. */
 export interface LiveEvalCase {
   readonly id: string;
   readonly label: string;
@@ -54,16 +57,19 @@ interface FileCheckInput {
   description?: string;
 }
 
+/** Public API contract for live eval project file. */
 export interface LiveEvalProjectFile {
   path: string;
   content: string;
 }
 
+/** Input payload for live eval project file reader. */
 export interface LiveEvalProjectFileReaderInput {
   filePath: string;
   requestTimeoutMs: number;
 }
 
+/** Configuration used by live eval runner. */
 export interface LiveEvalRunnerConfig {
   endpoint: string;
   authToken: string;
@@ -464,18 +470,22 @@ function extractRunId(run: ParsedRun): string | null {
   return null;
 }
 
+/** Check whether finished is present. */
 export function hasFinished(run: ParsedRun): boolean {
   return run.eventTypes.includes(agUiSseEventTypes.runFinished) && !run.runError;
 }
 
+/** Contains skill load helper. */
 export function containsSkillLoad(run: ParsedRun, skillId: string): boolean {
   return run.toolStarts.includes("load_skill") && run.toolArgs.join("").includes(skillId);
 }
 
+/** Count step started events helper. */
 export function countStepStartedEvents(run: ParsedRun): number {
   return run.eventTypes.filter((eventType) => eventType === agUiSseEventTypes.stepStarted).length;
 }
 
+/** Create live eval case support. */
 export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
   runEval: (testCase: LiveEvalCase, runtime: LiveEvalRuntime) => Promise<LiveEvalResultRecord>;
   verifyFileExists: (input: FileCheckInput) => Promise<string | null>;
@@ -618,6 +628,7 @@ export function createLiveEvalCaseSupport(config: LiveEvalRunnerConfig): {
   };
 }
 
+/** White-box helpers used by live eval runner tests. */
 export const liveEvalRunnerInternals = {
   collectPreparedArtifactPaths,
   createFailedRunEvalResult,

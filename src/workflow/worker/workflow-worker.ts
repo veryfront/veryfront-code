@@ -95,6 +95,7 @@ type ResolvedConfig =
   & Required<Omit<WorkflowWorkerConfig, OptionalConfigKeys>>
   & Pick<WorkflowWorkerConfig, OptionalConfigKeys>;
 
+/** Implement workflow worker. */
 export class WorkflowWorker {
   private config: ResolvedConfig;
   private status: WorkerStatus = "idle";

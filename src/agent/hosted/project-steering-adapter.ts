@@ -38,10 +38,12 @@ import type {
   RuntimeSkillMetadataLogger,
 } from "../runtime/skill-metadata.ts";
 
+/** Public API contract for hosted project steering logger. */
 export type HostedProjectSteeringLogger =
   & RuntimeSkillMetadataLogger
   & RuntimeProjectSkillLoaderLogger;
 
+/** Options accepted by hosted project steering adapter. */
 export type HostedProjectSteeringAdapterOptions = {
   apiUrl: string | URL;
   skillsDir: string;
@@ -54,10 +56,12 @@ export type HostedProjectSteeringAdapterOptions = {
   builtinStore?: RuntimeLoadSkillBuiltinStore;
 };
 
+/** Context for hosted project skill IDs. */
 export type HostedProjectSkillIdsContext = MutableAgentProjectContext & {
   authToken: string;
 };
 
+/** Public API contract for hosted project steering adapter. */
 export type HostedProjectSteeringAdapter = {
   listBuiltinSkillIds: () => string[];
   getProjectInstructions: (lookup: RuntimeProjectSteeringLookup) => Promise<string>;
@@ -122,6 +126,7 @@ function createDefaultBuiltinStore(): RuntimeLoadSkillBuiltinStore {
   };
 }
 
+/** Create hosted project steering adapter. */
 export function createHostedProjectSteeringAdapter(
   options: HostedProjectSteeringAdapterOptions,
 ): HostedProjectSteeringAdapter {

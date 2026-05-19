@@ -5,6 +5,7 @@ const ANTHROPIC_PROVIDER_NATIVE_TOOL_NAMES = [
   "web_search",
 ] as const;
 
+/** Options accepted by provider native tool inventory. */
 export interface ProviderNativeToolInventoryOptions {
   model?: string;
   provider?: string;
@@ -39,6 +40,7 @@ function resolveProvider(options?: ProviderNativeToolInventoryOptions): string |
   return resolveHostedProvider(options?.model);
 }
 
+/** Return provider native tool names. */
 export function getProviderNativeToolNames(
   options?: ProviderNativeToolInventoryOptions,
 ): string[] {
@@ -50,6 +52,7 @@ export function getProviderNativeToolNames(
   }
 }
 
+/** Expand allowed remote tool names helper. */
 export function expandAllowedRemoteToolNames(
   options: ExpandAllowedRemoteToolNamesOptions,
 ): string[] {
@@ -61,6 +64,7 @@ export function expandAllowedRemoteToolNames(
   ].sort();
 }
 
+/** Return fork runtime allowed tool names. */
 export function getForkRuntimeAllowedToolNames(input: {
   provider: string;
   forkModel?: string;

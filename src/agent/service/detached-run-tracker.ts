@@ -1,15 +1,18 @@
 import { RunResumeSessionManager } from "../runtime/resume-session.ts";
 
+/** Result returned from detached run drain. */
 export interface DetachedRunDrainResult {
   drained: boolean;
   pendingRunIds: string[];
 }
 
+/** Options accepted by detached run tracker. */
 export interface DetachedRunTrackerOptions<TResumeValue> {
   sessionManager?: RunResumeSessionManager<TResumeValue>;
   pollIntervalMs?: number;
 }
 
+/** Public API contract for detached run tracker. */
 export interface DetachedRunTracker<TResumeValue> {
   readonly sessionManager: RunResumeSessionManager<TResumeValue>;
   trackRun(runId: string): void;
@@ -23,16 +26,19 @@ export interface DetachedRunTracker<TResumeValue> {
   reset(): void;
 }
 
+/** Public API contract for detached run shutdown logger. */
 export interface DetachedRunShutdownLogger {
   info(message: string, metadata?: Record<string, unknown>): void;
   error(message: string, metadata?: Record<string, unknown>): void;
 }
 
+/** Public API contract for detached run shutdown lifecycle. */
 export interface DetachedRunShutdownLifecycle {
   setShuttingDown(): void;
   stop(): Promise<void>;
 }
 
+/** Options accepted by detached run shutdown lifecycle. */
 export interface DetachedRunShutdownLifecycleOptions<TResumeValue> {
   tracker: DetachedRunTracker<TResumeValue>;
   logger: DetachedRunShutdownLogger;
@@ -50,6 +56,7 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
+/** Create detached run tracker. */
 export function createDetachedRunTracker<TResumeValue = unknown>(
   options: DetachedRunTrackerOptions<TResumeValue> = {},
 ): DetachedRunTracker<TResumeValue> {
@@ -132,6 +139,7 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
   };
 }
 
+/** Create detached run shutdown lifecycle. */
 export function createDetachedRunShutdownLifecycle<TResumeValue = unknown>(
   options: DetachedRunShutdownLifecycleOptions<TResumeValue>,
 ): DetachedRunShutdownLifecycle {

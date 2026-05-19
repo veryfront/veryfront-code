@@ -9,6 +9,7 @@
 import type { Resource, ResourceConfig } from "./types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
+/** Create a typed resource definition. */
 export function resource<TParams = unknown, TData = unknown>(
   config: ResourceConfig<TParams, TData>,
 ): Resource<TParams, TData> {

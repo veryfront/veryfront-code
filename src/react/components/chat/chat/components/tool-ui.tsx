@@ -41,6 +41,7 @@ const TOOL_STATUS_CONFIG: Record<string, { label: string; icon: React.ReactNode 
   error: { label: "Error", icon: <XCircleIcon className="size-3.5 text-red-600" /> },
 };
 
+/** Render tool status badge. */
 export function ToolStatusBadge({ state }: { state: string }): React.JSX.Element {
   const config = TOOL_STATUS_CONFIG[state];
 

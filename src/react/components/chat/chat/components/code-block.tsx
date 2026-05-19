@@ -2,6 +2,7 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { CheckIcon, CopyIcon } from "../../icons/index.ts";
 
+/** Props accepted by code block. */
 export interface CodeBlockProps {
   language?: string;
   code: string;
@@ -9,6 +10,7 @@ export interface CodeBlockProps {
   className?: string;
 }
 
+/** Render rich code block. */
 export const RichCodeBlock = React.forwardRef<HTMLDivElement, CodeBlockProps>(
   function RichCodeBlock({ language, code, inline, className }, ref) {
     const [copied, setCopied] = React.useState(false);

@@ -1,5 +1,6 @@
 import { type ConversationRunProjection, getConversationRun } from "../conversation/durable.ts";
 
+/** Public API contract for hosted child run identifiers. */
 export interface HostedChildRunIdentifiers {
   childConversationId: string;
   childRunId: string;
@@ -10,15 +11,18 @@ export interface HostedChildRunIdentifiers {
 
 type HostedConversationRunStatus = ConversationRunProjection["status"];
 
+/** Shared hosted child terminal error codes value. */
 export const hostedChildTerminalErrorCodes = Object.freeze({
   cancelled: "DURABLE_CHILD_CANCELLED",
   failed: "DURABLE_CHILD_FAILED",
   completedExternally: "DURABLE_CHILD_COMPLETED_EXTERNALLY",
 });
 
+/** Public API contract for a code is a hosted child terminal error. */
 export type HostedChildTerminalErrorCode =
   (typeof hostedChildTerminalErrorCodes)[keyof typeof hostedChildTerminalErrorCodes];
 
+/** Check whether a code is a hosted child terminal error. */
 export function isHostedChildTerminalErrorCode(
   value: unknown,
 ): value is HostedChildTerminalErrorCode {
@@ -29,6 +33,7 @@ export function isHostedChildTerminalErrorCode(
   );
 }
 
+/** Public API contract for hosted child same turn retry block signal. */
 export interface HostedChildSameTurnRetryBlockSignal {
   terminalErrorCode?: string | null;
   terminalErrorMessage?: string | null;
@@ -39,6 +44,7 @@ function getOptionalStringProperty(value: object, property: string): string | nu
   return typeof descriptor?.value === "string" ? descriptor.value : null;
 }
 
+/** Should block hosted child same turn retry helper. */
 export function shouldBlockHostedChildSameTurnRetry(
   result: unknown,
 ): result is HostedChildSameTurnRetryBlockSignal {
@@ -56,11 +62,13 @@ export function shouldBlockHostedChildSameTurnRetry(
   );
 }
 
+/** Public API contract for hosted child terminal status. */
 export type HostedChildTerminalStatus = Extract<
   HostedConversationRunStatus,
   "completed" | "failed" | "cancelled"
 >;
 
+/** Error shape for hosted child terminal state. */
 export class HostedChildTerminalStateError extends Error {
   constructor(
     readonly status: HostedChildTerminalStatus,
@@ -79,6 +87,7 @@ function isActiveHostedChildStatus(
   return status === "pending" || status === "running" || status === "waiting_for_tool";
 }
 
+/** Resolves a code is a hosted child terminal error. */
 export function resolveHostedChildTerminalErrorCode(
   status: HostedChildTerminalStatus,
 ): HostedChildTerminalErrorCode {
@@ -119,6 +128,7 @@ function isAbortError(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
+/** Input payload for monitor hosted child run status. */
 export interface MonitorHostedChildRunStatusInput {
   authToken: string;
   apiUrl: string;
@@ -128,6 +138,7 @@ export interface MonitorHostedChildRunStatusInput {
   onTerminal: (error: HostedChildTerminalStateError) => void;
 }
 
+/** Monitor hosted child run status helper. */
 export async function monitorHostedChildRunStatus(
   input: MonitorHostedChildRunStatusInput,
 ): Promise<void> {

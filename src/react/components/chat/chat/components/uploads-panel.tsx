@@ -2,6 +2,7 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { FileTextIcon, TrashIcon } from "../../icons/index.ts";
 
+/** Public API contract for uploaded file. */
 export interface UploadedFile {
   id: string;
   name: string;
@@ -10,6 +11,7 @@ export interface UploadedFile {
   url?: string;
 }
 
+/** Props accepted by uploads panel. */
 export interface UploadsPanelProps {
   uploads?: UploadedFile[];
   onRemoveUpload?: (id: string) => void;
@@ -24,6 +26,7 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Render uploads panel. */
 export function UploadsPanel({
   uploads = [],
   onRemoveUpload,

@@ -149,11 +149,13 @@ interface ServerOptions {
   localProjects?: Record<string, string>;
 }
 
+/** Public API contract for server handle. */
 export interface ServerHandle {
   ready: Promise<void>;
   stop: () => Promise<void>;
 }
 
+/** Options accepted by start production server. */
 export interface StartProductionServerOptions extends ServerOptions {
   debug?: boolean;
   adapter?: RuntimeAdapter;
@@ -161,6 +163,7 @@ export interface StartProductionServerOptions extends ServerOptions {
   bootstrapResult?: BootstrapResult;
 }
 
+/** Starts production server. */
 export function startProductionServer(
   options: StartProductionServerOptions,
 ): Promise<ServerHandle> {

@@ -8,6 +8,7 @@
 import type { ErrorCategory } from "#veryfront/errors/types.ts";
 import { INVALID_ARGUMENT } from "#veryfront/errors";
 
+/** Public API contract for error type. */
 export type ErrorType = "compile" | "runtime" | "bundle" | "hmr" | "module";
 
 /**
@@ -21,6 +22,7 @@ const ERROR_TYPE_TO_CATEGORY: Record<ErrorType, ErrorCategory> = {
   module: "MODULE",
 };
 
+/** Error shape for dev. */
 export interface DevError {
   /** Unique error identifier */
   id: string;
@@ -46,6 +48,7 @@ export interface DevError {
   context?: Record<string, unknown>;
 }
 
+/** Public API contract for error filter. */
 export interface ErrorFilter {
   /** Filter by type */
   type?: ErrorType | ErrorType[];
@@ -57,8 +60,10 @@ export interface ErrorFilter {
   since?: number;
 }
 
+/** Public API contract for error subscriber. */
 export type ErrorSubscriber = (error: DevError) => void;
 
+/** Implement error collector. */
 export class ErrorCollector {
   private errors = new Map<string, DevError>();
   private subscribers = new Set<ErrorSubscriber>();
@@ -339,16 +344,19 @@ export class ErrorCollector {
 
 let globalCollector: ErrorCollector | null = null;
 
+/** Return error collector. */
 export function getErrorCollector(): ErrorCollector {
   globalCollector ??= new ErrorCollector();
   return globalCollector;
 }
 
+/** Reset captured runtime errors. */
 export function resetErrorCollector(): void {
   globalCollector?.clear();
   globalCollector = null;
 }
 
+/** Error shape for parse compile. */
 export function parseCompileError(output: string): Partial<DevError> | null {
   const tsMatch = output.match(
     /^(.+?)\((\d+),(\d+)\):\s*error\s+\w+:\s*(.+)$/m,

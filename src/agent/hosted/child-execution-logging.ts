@@ -1,19 +1,23 @@
 import { HostedChildStreamIdleTimeoutError } from "./child-stream-watchdog.ts";
 
+/** Public API contract for hosted child execution log level. */
 export type HostedChildExecutionLogLevel = "error" | "info" | "warn";
 
+/** Entry shape for hosted child execution log. */
 export interface HostedChildExecutionLogEntry {
   level: HostedChildExecutionLogLevel;
   message: string;
   context: Record<string, unknown>;
 }
 
+/** Public API contract for hosted child execution log writer. */
 export interface HostedChildExecutionLogWriter {
   error: (message: string, context: Record<string, unknown>) => void;
   info: (message: string, context: Record<string, unknown>) => void;
   warn: (message: string, context: Record<string, unknown>) => void;
 }
 
+/** Entry shape for write hosted child execution log. */
 export function writeHostedChildExecutionLogEntry(
   entry: HostedChildExecutionLogEntry,
   writer: HostedChildExecutionLogWriter,
@@ -31,6 +35,7 @@ export function writeHostedChildExecutionLogEntry(
   writer.warn(entry.message, entry.context);
 }
 
+/** Create hosted child execution log writer. */
 export function createHostedChildExecutionLogWriter(
   writer: HostedChildExecutionLogWriter,
 ): (entry: HostedChildExecutionLogEntry) => void {
@@ -39,6 +44,7 @@ export function createHostedChildExecutionLogWriter(
   };
 }
 
+/** Builds hosted child exhausted step budget log. */
 export function buildHostedChildExhaustedStepBudgetLog(input: {
   description: string;
   kind: string;
@@ -59,6 +65,7 @@ export function buildHostedChildExhaustedStepBudgetLog(input: {
   };
 }
 
+/** Builds hosted child completed log. */
 export function buildHostedChildCompletedLog(input: {
   description: string;
   kind: string;
@@ -78,6 +85,7 @@ export function buildHostedChildCompletedLog(input: {
   };
 }
 
+/** Builds hosted child error log. */
 export function buildHostedChildErrorLog(input: {
   description: string;
   kind: string;

@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "#veryfront/tool";
 import type { JsonSchema } from "#veryfront/tool/schema";
 
+/** Public API contract for provider tool compat provider. */
 export type ProviderToolCompatProvider =
   | "anthropic"
   | "google"
@@ -8,12 +9,14 @@ export type ProviderToolCompatProvider =
   | "openai"
   | "unknown";
 
+/** Public API contract for provider tool profile. */
 export interface ProviderToolProfile {
   provider: ProviderToolCompatProvider;
   maxTools?: number;
   sanitizeSchema: boolean;
 }
 
+/** Options accepted by provider tool compat. */
 export interface ProviderToolCompatOptions {
   model?: string;
   requiredToolNames?: readonly string[];
@@ -39,6 +42,7 @@ function normalizeModel(model?: string): string {
   return model?.trim().toLowerCase() ?? "";
 }
 
+/** Return provider tool profile. */
 export function getProviderToolProfile(model?: string): ProviderToolProfile {
   const normalized = normalizeModel(model);
   const parts = normalized.split("/").filter(Boolean);
@@ -76,6 +80,7 @@ function uniqueInOrder(values: readonly string[]): string[] {
   return result;
 }
 
+/** Select provider compatible tool names helper. */
 export function selectProviderCompatibleToolNames(
   toolNames: readonly string[],
   options: ProviderToolCompatOptions = {},
@@ -103,6 +108,7 @@ export function selectProviderCompatibleToolNames(
   return selected.slice(0, profile.maxTools);
 }
 
+/** Select provider compatible tools helper. */
 export function selectProviderCompatibleTools(
   tools: readonly ToolDefinition[],
   options: ProviderToolCompatOptions = {},
@@ -287,6 +293,7 @@ function sanitizeGoogleSchemaValue(value: unknown): unknown {
   return sanitized;
 }
 
+/** Zod schema for sanitize provider tool. */
 export function sanitizeProviderToolSchema(
   schema: JsonSchema,
   options: Pick<ProviderToolCompatOptions, "model"> = {},

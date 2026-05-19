@@ -14,6 +14,7 @@ const atlassianBase = {
   },
 } satisfies Omit<OAuthServiceConfig, "serviceId" | "apiBaseUrl" | "defaultScopes">;
 
+/** Configuration used by jira. */
 export const jiraConfig: OAuthServiceConfig = {
   ...atlassianBase,
   serviceId: "jira",
@@ -27,6 +28,7 @@ export const jiraConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by confluence. */
 export const confluenceConfig: OAuthServiceConfig = {
   ...atlassianBase,
   serviceId: "confluence",
@@ -41,6 +43,7 @@ export const confluenceConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by bitbucket. */
 export const bitbucketConfig: OAuthServiceConfig = {
   ...atlassianBase,
   serviceId: "bitbucket",

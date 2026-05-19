@@ -2,6 +2,7 @@ import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { ChatUiMessage, ChatUiMessagePart, ProviderModelMessage } from "./types.ts";
 
+/** Zod schema for get message part. */
 export const getMessagePartSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
     v.object({ type: v.literal("text"), text: v.string() }),
@@ -53,25 +54,37 @@ export const getMessagePartSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getMessagePartSchema() */
+/** Schema for message part.
+ * @deprecated Use getMessagePartSchema()
+ */
 export const messagePartSchema = lazySchema(getMessagePartSchema);
 
+/** Public API contract for message part. */
 export type MessagePart = InferSchema<ReturnType<typeof getMessagePartSchema>>;
 
+/** Zod schema for get conversation type. */
 export const getConversationTypeSchema = defineSchema((v) =>
   v.enum(["chat", "agent_task", "support", "channel", "project_agent"])
 );
-/** @deprecated Use getConversationTypeSchema() */
+/** Schema for conversation type.
+ * @deprecated Use getConversationTypeSchema()
+ */
 export const conversationTypeSchema = lazySchema(getConversationTypeSchema);
+/** Public API contract for conversation type. */
 export type ConversationType = InferSchema<ReturnType<typeof getConversationTypeSchema>>;
 
+/** Zod schema for get message status. */
 export const getMessageStatusSchema = defineSchema((v) =>
   v.enum(["pending", "streaming", "completed", "error", "failed", "cancelled", "stopped"])
 );
-/** @deprecated Use getMessageStatusSchema() */
+/** Schema for message status.
+ * @deprecated Use getMessageStatusSchema()
+ */
 export const messageStatusSchema = lazySchema(getMessageStatusSchema);
+/** Public API contract for message status. */
 export type MessageStatus = InferSchema<ReturnType<typeof getMessageStatusSchema>>;
 
+/** Zod schema for get API conversation. */
 export const getApiConversationSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
@@ -90,11 +103,15 @@ export const getApiConversationSchema = defineSchema((v) =>
     updatedAt: v.string(),
   })
 );
-/** @deprecated Use getApiConversationSchema() */
+/** Schema for API conversation.
+ * @deprecated Use getApiConversationSchema()
+ */
 export const apiConversationSchema = lazySchema(getApiConversationSchema);
 
+/** Public API contract for API conversation. */
 export type ApiConversation = InferSchema<ReturnType<typeof getApiConversationSchema>>;
 
+/** Zod schema for get API message. */
 export const getApiMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
@@ -116,11 +133,15 @@ export const getApiMessageSchema = defineSchema((v) =>
     updatedAt: v.string().nullable(),
   })
 );
-/** @deprecated Use getApiMessageSchema() */
+/** Schema for API message.
+ * @deprecated Use getApiMessageSchema()
+ */
 export const apiMessageSchema = lazySchema(getApiMessageSchema);
 
+/** Message shape for API. */
 export type ApiMessage = InferSchema<ReturnType<typeof getApiMessageSchema>>;
 
+/** Public API contract for tool call like. */
 export interface ToolCallLike {
   type: "tool-call";
   toolCallId: string;
@@ -129,6 +150,7 @@ export interface ToolCallLike {
   providerExecuted?: boolean;
 }
 
+/** Public API contract for tool result like. */
 export interface ToolResultLike {
   type: "tool-result";
   toolCallId: string;
@@ -137,31 +159,38 @@ export interface ToolResultLike {
   providerOptions?: unknown;
 }
 
+/** Text-like provider message part. */
 export interface TextPartLike {
   type: "text";
   text: string;
 }
 
+/** Reasoning-like provider message part. */
 export interface ReasoningPartLike {
   type: "reasoning";
   text: string;
 }
 
+/** Chat UI tool part with a call ID and state. */
 type ToolUiPart = Extract<ChatUiMessagePart, { toolCallId: string; state: string }>;
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
+/** Shared UUID pattern value. */
 export const UUID_PATTERN =
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i;
 
+/** Check whether a value is a UUID. */
 export function isUuid(value: string | null | undefined): value is string {
   return typeof value === "string" && UUID_PATTERN.test(value);
 }
 
+/** Extract upload ID. */
 export function extractUploadId(url: string): string | null {
   const match = url.match(UUID_PATTERN);
   return match ? match[0] : null;
 }
 
+/** State for map tool. */
 export function mapToolState(sdkState: string): "streaming" | "pending" | "completed" | "error" {
   switch (sdkState) {
     case "input-streaming":
@@ -181,10 +210,12 @@ export function mapToolState(sdkState: string): "streaming" | "pending" | "compl
   }
 }
 
+/** Record shape for is. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Return string field. */
 export function getStringField(value: unknown, field: string, fallback: string): string {
   if (!isRecord(value) || typeof value[field] !== "string") {
     return fallback;
@@ -211,6 +242,7 @@ function toRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? Object.fromEntries(Object.entries(value)) : {};
 }
 
+/** Stringify unknown helper. */
 export function stringifyUnknown(value: unknown): string {
   if (typeof value === "string") return value;
   try {
@@ -221,12 +253,14 @@ export function stringifyUnknown(value: unknown): string {
   }
 }
 
+/** Check whether a chat part is a custom data part. */
 export function isDataUiPart(
   part: ChatUiMessagePart,
 ): part is ChatUiMessagePart & { type: `data-${string}`; data: unknown } {
   return part.type.startsWith("data-") && "data" in part;
 }
 
+/** Check whether a chat part is a tool UI part. */
 export function isToolUiPart(part: ChatUiMessagePart): part is ToolUiPart {
   return (
     (part.type === "dynamic-tool" || part.type.startsWith("tool-")) &&
@@ -235,6 +269,7 @@ export function isToolUiPart(part: ChatUiMessagePart): part is ToolUiPart {
   );
 }
 
+/** Return UI tool name. */
 export function getUiToolName(part: ToolUiPart): string | undefined {
   const explicitToolName = getOptionalStringField(part, "toolName");
   if (explicitToolName) {
@@ -244,6 +279,7 @@ export function getUiToolName(part: ToolUiPart): string | undefined {
   return part.type.startsWith("tool-") ? part.type.replace(/^tool-/, "") : undefined;
 }
 
+/** Push tool parts. */
 export function pushToolParts(
   parts: MessagePart[],
   toolName: string,
@@ -314,6 +350,7 @@ function pushFileConversationPart(
   });
 }
 
+/** Message shape for to conversation parts from UI. */
 export function toConversationPartsFromUiMessage(message: ChatUiMessage): MessagePart[] {
   const parts: MessagePart[] = [];
 
@@ -386,14 +423,17 @@ function isToolComplete(part: ToolUiPart): boolean {
     part.state === "output-denied";
 }
 
+/** Check whether incomplete tool parts is present. */
 export function hasIncompleteToolParts(message: ChatUiMessage): boolean {
   return message.parts.some((part) => isToolUiPart(part) && !isToolComplete(part));
 }
 
+/** Mark incomplete tool parts as stopped. */
 export function markIncompleteToolPartsAsStopped(message: ChatUiMessage): ChatUiMessage {
   return markIncompleteToolPartsAsErrored(message, "Stopped by user");
 }
 
+/** Mark incomplete tool parts as errored. */
 export function markIncompleteToolPartsAsErrored(
   message: ChatUiMessage,
   errorText: string,
@@ -440,6 +480,7 @@ function markToolPartAsErrored(part: ToolUiPart, errorText: string): ChatUiMessa
   };
 }
 
+/** Check whether a value is a tool-call part. */
 export function isToolCallPart(value: unknown): value is ToolCallLike {
   return (
     isRecord(value) &&
@@ -449,6 +490,7 @@ export function isToolCallPart(value: unknown): value is ToolCallLike {
   );
 }
 
+/** Check whether a value is a tool-result part. */
 export function isToolResultPart(value: unknown): value is ToolResultLike {
   return (
     isRecord(value) &&
@@ -458,14 +500,17 @@ export function isToolResultPart(value: unknown): value is ToolResultLike {
   );
 }
 
+/** Check whether a value is a text part. */
 export function isTextPart(value: unknown): value is TextPartLike {
   return isRecord(value) && value.type === "text" && typeof value.text === "string";
 }
 
+/** Check whether a value is a reasoning part. */
 export function isReasoningPart(value: unknown): value is ReasoningPartLike {
   return isRecord(value) && value.type === "reasoning" && typeof value.text === "string";
 }
 
+/** Message shape for extract text from. */
 export function extractTextFromMessage(message: ProviderModelMessage): string {
   if (!message || !message.content) return "";
 
@@ -917,6 +962,7 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
   return messages;
 }
 
+/** Convert UI messages to provider model messages. */
 export function convertUiMessagesToProviderModelMessages(
   messages: ChatUiMessage[],
 ): ProviderModelMessage[] {
@@ -937,4 +983,5 @@ export function convertUiMessagesToProviderModelMessages(
 /**
  * @deprecated Use convertUiMessagesToProviderModelMessages for provider-facing model payloads.
  */
+/** Shared convert UI messages to model messages value. */
 export const convertUiMessagesToModelMessages = convertUiMessagesToProviderModelMessages;

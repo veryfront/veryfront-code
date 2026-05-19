@@ -60,56 +60,56 @@ export function getServerData(ctx: DataContext) {
 
 ### Components
 
-| Name | Description |
-|------|-------------|
-| `CommonSchemas` | Lazy-getter object that preserves the `CommonSchemas.email` call shape. |
-| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError) |
+| Name | Description | Source |
+|------|-------------|--------|
+| `CommonSchemas` | Lazy-getter object that preserves the `CommonSchemas.email` call shape. Each access returns the cached `Schema<T>` (memoized inside `defineSchema`), so chained calls like `CommonSchemas.email.parse(x)` work as before. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/schemas/common.ts#L64) |
+| `INPUT_VALIDATION_FAILED` | HTTP request input validation failures (replaces ValidationError) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/errors/error-registry.ts#L684) |
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `apiNotFound` | 404 Not Found response |
-| `apiRedirect` | Redirect response |
-| `badRequest` | 400 Bad Request response |
-| `createHandler` | Create HTTP request handler |
-| `createValidatedHandler` | Create a validated API handler wrapper that auto-validates body/query with Zod schemas |
-| `createValidationError` | Create an input validation error. |
-| `defineConfig` | Define project configuration |
-| `forbidden` | 403 Forbidden response |
-| `getEnv` | Read environment variable (typed) |
-| `json` | JSON response helper |
-| `notFound` | Throw 404 in data loaders |
-| `parseFormData` | Parse multipart form data |
-| `parseJsonBody` | Parse and validate JSON body |
-| `parseQueryParams` | Parse and validate query params |
-| `redirect` | Throw redirect in data loaders |
-| `sanitizeData` | Sanitize data to prevent XSS and prototype pollution attacks. |
-| `serverError` | 500 Internal Server Error response |
-| `startServer` | Start a Veryfront server in development or production mode. |
-| `toNodeHandler` | Convert a Web API request handler into a Node.js HTTP request listener |
-| `unauthorized` | 401 Unauthorized response |
+| Name | Description | Source |
+|------|-------------|--------|
+| `apiNotFound` | Create a 404 Not Found response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L112) |
+| `apiRedirect` | Create an HTTP redirect response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L90) |
+| `badRequest` | Create a 400 Bad Request response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L117) |
+| `createHandler` | Create a Veryfront request handler for development or production. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L194) |
+| `createValidatedHandler` | Create a validated API handler wrapper that auto-validates body/query with Zod schemas | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L19) |
+| `createValidationError` | Create an input validation error. Convenience wrapper around INPUT_VALIDATION_FAILED.create(). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/errors.ts#L11) |
+| `defineConfig` | Define a Veryfront project configuration object. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/define-config.ts#L5) |
+| `forbidden` | Create a 403 Forbidden response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L127) |
+| `getEnv` | Read an environment variable from the active project scope. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/process/env.ts#L103) |
+| `json` | Create a JSON response with the correct content type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L65) |
+| `notFound` | Return a 404 result from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L8) |
+| `parseFormData` | Parse and validate multipart or URL-encoded form data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L46) |
+| `parseJsonBody` | Parse and validate a JSON request body. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L10) |
+| `parseQueryParams` | Parse and validate query parameters from a request URL. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/parsers.ts#L79) |
+| `redirect` | Return a redirect result from a data loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/helpers.ts#L3) |
+| `sanitizeData` | Sanitize data to prevent XSS and prototype pollution attacks. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/sanitizers.ts#L1) |
+| `serverError` | Create a 500 Internal Server Error response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L132) |
+| `startServer` | Start a Veryfront server in development or production mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L328) |
+| `toNodeHandler` | Convert a Web API request handler into a Node.js HTTP listener. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/node-handler.ts#L3) |
+| `unauthorized` | Create a 401 Unauthorized response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/http/responses.ts#L122) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `APIContext` | API route handler context |
-| `APIHandler` | API route handler signature |
-| `APIResponse` | API handler response type |
-| `APIRoute` | Route with method handlers |
-| `DataContext` | `getServerData` context |
-| `InferGetServerDataProps` | Utility type to infer props from a page with data |
-| `MDXFrontmatter` | Parsed MDX frontmatter |
-| `PageContext` | Page runtime context |
-| `PageWithData` | Page with data fetching capabilities |
-| `StartServerOptions` | Server options. Defaults to development mode with HMR. |
-| `StaticPathsResult` | `getStaticPaths` return type |
-| `ValidatedHandlerConfig` | `createValidatedHandler` config |
-| `ValidatedHandlerFunction` | Handler with validated inputs |
-| `VeryfrontConfig` | Project configuration. The underlying zod schema stores `extensions` as |
-| `VeryfrontHandler` | Web API request handler with WebSocket upgrade and HMR helpers. |
-| `VeryfrontServer` | Running server instance with lifecycle controls. |
+| Name | Description | Source |
+|------|-------------|--------|
+| `APIContext` | Context object passed to API route handlers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/routing/api/context-builder.ts#L7) |
+| `APIHandler` | Function signature for API route handlers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/routing/api/handler.ts#L58) |
+| `APIResponse` | Structured response shape for API route helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/routing/api/handler.ts#L51) |
+| `APIRoute` | Route module shape with method handlers and an optional default handler. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/routing/api/module-loader/types.ts#L27) |
+| `DataContext` | Context passed to `getServerData()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/schemas/data.schema.ts#L53) |
+| `InferGetServerDataProps` | Utility type to infer props from a page with data | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/types.ts#L27) |
+| `MDXFrontmatter` | Parsed frontmatter values from an MDX page. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/index.ts#L87) |
+| `PageContext` | Runtime page context passed to page components. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/types/index.ts#L104) |
+| `PageWithData` | Page with data fetching capabilities | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/types.ts#L15) |
+| `StartServerOptions` | Server options. Defaults to development mode with HMR. Set `mode: "production"` for a production server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L126) |
+| `StaticPathsResult` | Return type for `getStaticPaths()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/data/schemas/data.schema.ts#L60) |
+| `ValidatedHandlerConfig` | Configuration for `createValidatedHandler()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L6) |
+| `ValidatedHandlerFunction` | Handler signature that receives validated request data. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/security/input-validation/handler.ts#L13) |
+| `VeryfrontConfig` | Project configuration. The underlying zod schema stores `extensions` as `unknown[]`; this tightened alias surfaces the expected `ExtensionConfigEntry[]` shape to TypeScript consumers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/config/schemas/index.ts#L24) |
+| `VeryfrontHandler` | Web API request handler with WebSocket upgrade and HMR helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L141) |
+| `VeryfrontServer` | Running server instance with lifecycle controls. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L129) |
 
 ## Related
 

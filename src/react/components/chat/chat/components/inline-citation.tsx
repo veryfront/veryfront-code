@@ -2,6 +2,7 @@ import * as React from "react";
 import type { Source } from "./sources.tsx";
 import { cn } from "../../theme.ts";
 
+/** Props accepted by inline citation. */
 export interface InlineCitationProps {
   index: number;
   source?: Source;
@@ -9,6 +10,7 @@ export interface InlineCitationProps {
   onClick?: (index: number) => void;
 }
 
+/** Render inline citation. */
 export function InlineCitation({
   index,
   source,

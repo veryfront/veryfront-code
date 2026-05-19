@@ -14,6 +14,7 @@ import { auditCapabilities } from "./capabilities.ts";
 import { detectConflicts, selectContractProviders, validateExtension } from "./validation.ts";
 import type { Extension, ExtensionContext, ExtensionLogger, ResolvedExtension } from "./types.ts";
 
+/** Implement extension loader. */
 export class ExtensionLoader {
   private logger: ExtensionLogger;
   private setupOrder: ResolvedExtension[] = [];

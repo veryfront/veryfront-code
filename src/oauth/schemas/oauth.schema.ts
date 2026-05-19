@@ -86,14 +86,21 @@ export const getTokenExchangeOptionsSchema = defineSchema((v) =>
 );
 
 // Inferred types
+/** Configuration used by oauth provider. */
 export type OAuthProviderConfig = InferSchema<ReturnType<typeof getOAuthProviderConfigSchema>>;
+/** Configuration used by oauth service. */
 export type OAuthServiceConfig = InferSchema<ReturnType<typeof getOAuthServiceConfigSchema>>;
+/** Public API contract for oauth tokens. */
 export type OAuthTokens = InferSchema<ReturnType<typeof getOAuthTokensSchema>>;
+/** State for oauth. */
 export type OAuthState = InferSchema<ReturnType<typeof getOAuthStateSchema>>;
+/** Result returned from token exchange. */
 export type TokenExchangeResult = InferSchema<ReturnType<typeof getTokenExchangeResultSchema>>;
+/** Options accepted by authorization URL. */
 export type AuthorizationUrlOptions = InferSchema<
   ReturnType<typeof getAuthorizationUrlOptionsSchema>
 >;
+/** Options accepted by token exchange. */
 export type TokenExchangeOptions = InferSchema<ReturnType<typeof getTokenExchangeOptionsSchema>>;
 
 // Backward compat aliases

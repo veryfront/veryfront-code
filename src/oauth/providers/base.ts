@@ -43,6 +43,7 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
     .replace(/=+$/, "");
 }
 
+/** Implement oauth provider. */
 export class OAuthProvider {
   protected config: OAuthProviderConfig;
   protected envReader: EnvReader;
@@ -290,6 +291,7 @@ export class OAuthProvider {
   }
 }
 
+/** Implement oauth service. */
 export class OAuthService extends OAuthProvider {
   protected serviceConfig: OAuthServiceConfig;
   protected tokenStore?: TokenStore;

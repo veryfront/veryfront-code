@@ -117,6 +117,7 @@ import { prepareVeryfrontCloudHostedChatExecution } from "./cloud-chat-execution
 import { applyAgentProjectContextChange } from "../project/context.ts";
 import { getAgent } from "../composition/index.ts";
 
+/** Public API contract for node Veryfront Cloud agent service process target. */
 export type NodeVeryfrontCloudAgentServiceProcessTarget =
   & NonNullable<RunAgentServiceMainOptions["processTarget"]>
   & NonNullable<CreateNodeAgentServiceRuntimeInfrastructureOptions["processTarget"]>
@@ -127,10 +128,13 @@ export type NodeVeryfrontCloudAgentServiceProcessTarget =
 
 export type NodeVeryfrontCloudAgentServiceAgentSource = ProjectAgentRuntimeAgentSource;
 
+/** Public API contract for veryfront MCP server kind. */
 export type VeryfrontMcpServerKind = "api" | "studio";
 
+/** Public API contract for node Veryfront Cloud agent service MCP server. */
 export type NodeVeryfrontCloudAgentServiceMcpServer = AgentServiceMcpServerConfig;
 
+/** Veryfront MCP server helper. */
 export function veryfrontMcpServer(
   kind: VeryfrontMcpServerKind = "api",
 ): AgentServiceMcpServerConfig {
@@ -143,6 +147,7 @@ export function veryfrontMcpServer(
 
 type AgentServicePathOption = string | URL;
 
+/** Options accepted by node Veryfront Cloud agent service. */
 export type NodeVeryfrontCloudAgentServiceOptions = {
   /**
    * Stable service identity used by the control plane and service runtime.
@@ -180,7 +185,9 @@ export type NodeVeryfrontCloudAgentServiceOptions = {
   signals?: readonly NodeJS.Signals[];
 };
 
+/** Options accepted by Veryfront Cloud agent service. */
 export type VeryfrontCloudAgentServiceOptions = NodeVeryfrontCloudAgentServiceOptions;
+/** Options accepted by agent service. */
 export type AgentServiceOptions = NodeVeryfrontCloudAgentServiceOptions;
 
 type ResolvedNodeVeryfrontCloudAgentServiceOptions =
@@ -190,6 +197,7 @@ type ResolvedNodeVeryfrontCloudAgentServiceOptions =
     serviceName: string;
   };
 
+/** Public API contract for node Veryfront Cloud agent service prepared execution. */
 export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChatExecution & {
   config: AgentServiceRuntimeConfig;
   agent: HostedChatRuntimeCreationResult["agent"];
@@ -198,7 +206,9 @@ export type NodeVeryfrontCloudAgentServicePreparedExecution = PreparedHostedChat
   messages: PreparedHostedChatExecution["messages"];
   rootRunContext: HostedConversationRootRunContext;
 };
+/** Public API contract for agent service prepared execution. */
 export type AgentServicePreparedExecution = NodeVeryfrontCloudAgentServicePreparedExecution;
+/** Public API contract for agent service process target. */
 export type AgentServiceProcessTarget = NodeVeryfrontCloudAgentServiceProcessTarget;
 
 type NodeVeryfrontCloudAgentServiceContext = ReturnType<
@@ -985,6 +995,7 @@ function createNodeVeryfrontCloudAgentServiceRuntimeOptions(
   };
 }
 
+/** Create node Veryfront Cloud agent service runtime. */
 export async function createNodeVeryfrontCloudAgentServiceRuntime(
   options: NodeVeryfrontCloudAgentServiceOptions = {},
 ): Promise<AgentServiceRuntimeBundle<NodeVeryfrontCloudAgentServicePreparedExecution>> {
@@ -994,6 +1005,7 @@ export async function createNodeVeryfrontCloudAgentServiceRuntime(
   return createAgentServiceRuntime(createNodeVeryfrontCloudAgentServiceRuntimeOptions(context));
 }
 
+/** Starts node Veryfront Cloud agent service. */
 export async function startNodeVeryfrontCloudAgentService(
   options: NodeVeryfrontCloudAgentServiceOptions = {},
 ): Promise<StartNodeAgentServiceResult<NodeVeryfrontCloudAgentServicePreparedExecution>> {
@@ -1014,6 +1026,7 @@ export async function startNodeVeryfrontCloudAgentService(
   }
 }
 
+/** Starts agent service. */
 export async function startAgentService(
   options: NodeVeryfrontCloudAgentServiceOptions = {},
 ): Promise<void> {

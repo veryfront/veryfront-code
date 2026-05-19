@@ -1,14 +1,17 @@
 import { type HostedLifecycleExecution, runHostedLifecycle } from "./lifecycle.ts";
 
+/** Public API contract for hosted response stream writer. */
 export interface HostedResponseStreamWriter<TChunk> {
   write: (chunk: TChunk) => void;
 }
 
+/** State for hosted response stream heartbeat. */
 export interface HostedResponseStreamHeartbeatState {
   heartbeatCount: number;
   elapsedSeconds: number;
 }
 
+/** Public API contract for hosted response stream heartbeat. */
 export interface HostedResponseStreamHeartbeat<TChunk> {
   intervalMs?: number;
   buildChunk: () => TChunk;
@@ -58,6 +61,7 @@ function startHostedResponseStreamHeartbeat<TChunk>(input: {
   };
 }
 
+/** Run hosted response stream with heartbeat. */
 export async function runHostedResponseStreamWithHeartbeat<TChunk>(
   options: RunHostedResponseStreamWithHeartbeatOptions<TChunk>,
 ): Promise<void> {

@@ -10,8 +10,10 @@ import {
   serverLogger,
 } from "#veryfront/utils";
 
+/** Public API contract for log format. */
 export type LogFormat = "combined" | "common" | "dev" | "short" | "tiny" | "json";
 
+/** Options accepted by logger. */
 export interface LoggerOptions {
   format?: LogFormat;
   skip?: (req: Request) => boolean;
@@ -185,6 +187,7 @@ function formatLog(format: LogFormat, req: Request, status: number, duration: nu
   }
 }
 
+/** Create request logging middleware. */
 export function logger(options?: LoggerOptions): Middleware {
   const format = options?.format ?? "dev";
   const skip = options?.skip;
@@ -237,10 +240,12 @@ export function logger(options?: LoggerOptions): Middleware {
   };
 }
 
+/** Create development request logging middleware. */
 export function devLogger(): Middleware {
   return logger({ format: "dev" });
 }
 
+/** Create production request logging middleware. */
 export function prodLogger(): Middleware {
   return logger({ format: "json" });
 }

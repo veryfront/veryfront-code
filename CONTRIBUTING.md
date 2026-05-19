@@ -26,13 +26,13 @@ The CLA grants Veryfront GmbH the ability to distribute your contributions under
 
 ### Module Structure
 
-Veryfront is organized into focused modules with clear boundaries. See [src/README.md](./src/README.md) for detailed module descriptions and [ARCHITECTURE.md](./ARCHITECTURE.md) for design philosophy and system architecture.
+Veryfront is organized into focused modules with clear boundaries. See [src/README.md](./src/README.md) for detailed module descriptions and [architecture docs](./docs/architecture/README.md) for design philosophy and system architecture.
 
 ### Utils Pattern Guidelines
 
-#### When to use `core/utils/`
+#### When to use `src/utils/`
 
-Place utilities in `src/core/utils/` when they:
+Place utilities in `src/utils/` when they:
 - Are used by **3 or more modules**
 - Provide framework-level abstractions (logging, caching, hashing)
 - Are platform-agnostic helpers
@@ -40,9 +40,9 @@ Place utilities in `src/core/utils/` when they:
 
 **Examples:**
 ```typescript
-// core/utils/logger/  - Logging used everywhere
-// core/utils/cache/   - Caching abstractions
-// core/utils/hash-utils.ts - Hash functions used by multiple modules
+// src/utils/logger/  - Logging used everywhere
+// src/utils/cache/   - Caching abstractions
+// src/utils/hash-utils.ts - Hash functions used by multiple modules
 ```
 
 #### When to use module-level `utils/`
@@ -62,7 +62,7 @@ Place utilities in `src/{module}/utils/` when they:
 
 #### Guidelines
 
-1. **Default to core/utils/** if unsure (can be moved later)
+1. **Default to src/utils/** if unsure (can be moved later)
 2. **Never duplicate** - if a utility exists in core, use it
 3. **Document** - add JSDoc comments explaining purpose and usage
 4. **Test** - add unit tests for all utilities
@@ -504,7 +504,7 @@ Report security issues to: security@veryfront.com
 ## Questions?
 
 - **Documentation**: See [veryfront.com/docs](https://veryfront.com/docs/framework)
-- **Architecture**: See [ARCHITECTURE.md](./ARCHITECTURE.md)
+- **Architecture**: See [docs/architecture/README.md](./docs/architecture/README.md)
 - **Issues**: https://github.com/veryfront/veryfront/issues
 - **Discussions**: https://github.com/veryfront/veryfront/discussions
 

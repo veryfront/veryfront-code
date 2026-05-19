@@ -24,9 +24,9 @@ import { Head } from "veryfront/head";
 
 ### Components
 
-| Name | Description |
-|------|-------------|
-| `Head` | Render `<title>`, `<meta>`, `<link>` tags |
+| Name | Description | Source |
+|------|-------------|--------|
+| `Head` | Applies document head elements during SSR and client rendering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L201) |
 
 ## Related
 

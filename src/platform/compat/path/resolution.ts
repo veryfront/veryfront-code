@@ -12,6 +12,7 @@ function normSep(p: string): string {
 /** Match Windows drive letter prefix like "C:/" */
 const DRIVE_LETTER = /^[A-Za-z]:\//;
 
+/** Resolve path segments to an absolute path. */
 export function resolve(...paths: string[]): string {
   if (!isDeno && nodePath && !paths.some(hasWindowsLikePath)) return nodePath.resolve(...paths);
 

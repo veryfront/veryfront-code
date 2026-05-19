@@ -41,7 +41,7 @@ const result = await docs.load({ section: "agents" });
 
 ### `resource(config)`
 
-Create MCP-discoverable resource
+Create a typed resource definition.
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -59,22 +59,22 @@ Create MCP-discoverable resource
 
 ### Functions
 
-| Name | Description |
-|------|-------------|
-| `resource` | Create MCP-discoverable resource |
+| Name | Description | Source |
+|------|-------------|--------|
+| `resource` | Create a typed resource definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/factory.ts#L12) |
 
 ### Types
 
-| Name | Description |
-|------|-------------|
-| `Resource` | `resource()` return type |
-| `ResourceConfig` | `resource()` config |
+| Name | Description | Source |
+|------|-------------|--------|
+| `Resource` | Public API contract for resource. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L28) |
+| `ResourceConfig` | Configuration used by resource. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/types.ts#L17) |
 
 ### Constants
 
-| Name | Description |
-|------|-------------|
-| `resourceRegistry` | Global resource registry |
+| Name | Description | Source |
+|------|-------------|--------|
+| `resourceRegistry` | Shared resource registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L41) |
 
 ## Related
 

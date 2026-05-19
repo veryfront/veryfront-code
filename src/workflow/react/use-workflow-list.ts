@@ -5,6 +5,7 @@ import type { RunFilter, WorkflowRun, WorkflowStatus } from "#veryfront/workflow
 /** Default interval for auto-refreshing the workflow list */
 const DEFAULT_REFRESH_INTERVAL_MS = 5_000;
 
+/** Options accepted by use workflow list. */
 export interface UseWorkflowListOptions {
   workflowId?: string;
   status?: WorkflowStatus | WorkflowStatus[];
@@ -16,6 +17,7 @@ export interface UseWorkflowListOptions {
   refreshInterval?: number;
 }
 
+/** Result returned from use workflow list. */
 export interface UseWorkflowListResult {
   runs: WorkflowRun[];
   totalCount?: number;

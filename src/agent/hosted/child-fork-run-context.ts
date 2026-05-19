@@ -33,12 +33,14 @@ import type {
 import { isChildRunAbortError } from "../child-run/execution-support.ts";
 import { type HostedChildRunIdentifiers, HostedChildTerminalStateError } from "./child-status.ts";
 
+/** Public API contract for hosted child fork tool call snapshot. */
 export interface HostedChildForkToolCallSnapshot {
   toolName: string;
   toolCallId: string;
   input?: unknown;
 }
 
+/** Public API contract for hosted child fork tool result snapshot. */
 export interface HostedChildForkToolResultSnapshot {
   toolName: string;
   toolCallId: string;
@@ -46,10 +48,12 @@ export interface HostedChildForkToolResultSnapshot {
   output: unknown;
 }
 
+/** State for hosted child fork stream. */
 export interface HostedChildForkStreamState {
   finalText: string;
 }
 
+/** Context for hosted child fork stream mirror. */
 export interface HostedChildForkStreamMirrorContext {
   durableRunMirror: boolean;
   durableMessageId: string | null;
@@ -63,6 +67,7 @@ export interface HostedChildForkStreamMirrorContext {
   hasEmittedProgress: () => boolean;
 }
 
+/** Context for hosted child fork run. */
 export interface HostedChildForkRunContext {
   mirrorContext: HostedChildMirrorContext;
   streamMirrorContext: HostedChildForkStreamMirrorContext;
@@ -72,10 +77,12 @@ export interface HostedChildForkRunContext {
   streamState: HostedChildForkStreamState;
 }
 
+/** Context for hosted durable child fork run. */
 export type HostedDurableChildForkRunContext = HostedChildForkRunContext & {
   durableRunMirror: ConversationRunChunkMirror | null;
 };
 
+/** Input payload for hosted child fork run context. */
 export interface HostedChildForkRunContextInput {
   mirror: HostedChildChunkMirror | null;
   messageId?: string | null;
@@ -84,6 +91,7 @@ export interface HostedChildForkRunContextInput {
   pendingToolLogWriter?: HostedChildPendingToolLifecycleLogWriter;
 }
 
+/** Input payload for hosted durable child fork run context. */
 export interface HostedDurableChildForkRunContextInput {
   authToken: string;
   apiUrl: string;
@@ -93,6 +101,7 @@ export interface HostedDurableChildForkRunContextInput {
   pendingToolLogWriter?: HostedChildPendingToolLifecycleLogWriter;
 }
 
+/** Input payload for handle hosted child fork run context error. */
 export interface HandleHostedChildForkRunContextErrorInput {
   error: unknown;
   abortSignal?: AbortSignal;
@@ -106,6 +115,7 @@ export interface HandleHostedChildForkRunContextErrorInput {
   writeLog?: HandleHostedChildForkFailureInput["writeLog"];
 }
 
+/** Input payload for finalize hosted child fork run context resources. */
 export interface FinalizeHostedChildForkRunContextResourcesInput {
   runContext: HostedChildForkRunContext;
   monitorAbortController?: AbortController | null;
@@ -115,6 +125,7 @@ export interface FinalizeHostedChildForkRunContextResourcesInput {
   closeRuntime?: () => Promise<void>;
 }
 
+/** Context for create hosted child fork run. */
 export function createHostedChildForkRunContext(
   input: HostedChildForkRunContextInput,
 ): HostedChildForkRunContext {
@@ -154,6 +165,7 @@ export function createHostedChildForkRunContext(
   };
 }
 
+/** Context for create hosted durable child fork run. */
 export function createHostedDurableChildForkRunContext(
   input: HostedDurableChildForkRunContextInput,
 ): HostedDurableChildForkRunContext {
@@ -180,6 +192,7 @@ export function createHostedDurableChildForkRunContext(
   };
 }
 
+/** Input payload for execute hosted child fork run context stream. */
 export type ExecuteHostedChildForkRunContextStreamInput =
   & Pick<
     ExecuteHostedChildForkStreamInput,
@@ -206,6 +219,7 @@ export type ExecuteHostedChildForkRunContextStreamInput =
     runContext: HostedChildForkRunContext;
   };
 
+/** Execute hosted child fork run context stream. */
 export function executeHostedChildForkRunContextStream(
   input: ExecuteHostedChildForkRunContextStreamInput,
 ) {
@@ -247,6 +261,7 @@ export function executeHostedChildForkRunContextStream(
   });
 }
 
+/** Error shape for handle hosted child fork run context. */
 export async function handleHostedChildForkRunContextError(
   input: HandleHostedChildForkRunContextErrorInput,
 ): Promise<ChildRunExecutionResult> {
@@ -285,6 +300,7 @@ export async function handleHostedChildForkRunContextError(
   });
 }
 
+/** Finalize hosted child fork run context resources helper. */
 export async function finalizeHostedChildForkRunContextResources(
   input: FinalizeHostedChildForkRunContextResourcesInput,
 ): Promise<void> {

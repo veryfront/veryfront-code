@@ -2,12 +2,14 @@ import * as React from "react";
 import { cn } from "../../theme.ts";
 import { CheckCircleIcon } from "../../icons/index.ts";
 
+/** Props accepted by step indicator. */
 export interface StepIndicatorProps {
   stepIndex: number;
   isComplete: boolean;
   className?: string;
 }
 
+/** Render step indicator. */
 export function StepIndicator({
   stepIndex,
   isComplete,

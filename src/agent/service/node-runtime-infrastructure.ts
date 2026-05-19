@@ -17,6 +17,7 @@ import {
   resolveNodeAgentServiceTelemetryConfig,
 } from "./node-telemetry.ts";
 
+/** Options accepted by create node agent service runtime infrastructure. */
 export type CreateNodeAgentServiceRuntimeInfrastructureOptions = {
   serviceName: string;
   env: AgentServiceConfigInput & NodeAgentServiceTelemetryEnv;
@@ -24,9 +25,11 @@ export type CreateNodeAgentServiceRuntimeInfrastructureOptions = {
   processTarget?: NodeAgentServiceTelemetryProcessTarget;
 };
 
+/** Options accepted by create node hosted agent service runtime infrastructure. */
 export type CreateNodeHostedAgentServiceRuntimeInfrastructureOptions =
   CreateNodeAgentServiceRuntimeInfrastructureOptions;
 
+/** Public API contract for node agent service runtime infrastructure. */
 export type NodeAgentServiceRuntimeInfrastructure = {
   getConfig(): AgentServiceConfig;
   logger: Logger;
@@ -36,8 +39,10 @@ export type NodeAgentServiceRuntimeInfrastructure = {
   initializeOpenTelemetry(): Promise<boolean>;
 };
 
+/** Public API contract for node hosted agent service runtime infrastructure. */
 export type NodeHostedAgentServiceRuntimeInfrastructure = NodeAgentServiceRuntimeInfrastructure;
 
+/** Create node agent service runtime infrastructure. */
 export function createNodeAgentServiceRuntimeInfrastructure(
   options: CreateNodeAgentServiceRuntimeInfrastructureOptions,
 ): NodeAgentServiceRuntimeInfrastructure {
@@ -67,5 +72,6 @@ export function createNodeAgentServiceRuntimeInfrastructure(
   };
 }
 
+/** Create node hosted agent service runtime infrastructure. */
 export const createNodeHostedAgentServiceRuntimeInfrastructure =
   createNodeAgentServiceRuntimeInfrastructure;

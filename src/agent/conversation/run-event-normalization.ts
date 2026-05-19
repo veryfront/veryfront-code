@@ -15,6 +15,7 @@ function hasStringField<TField extends "delta" | "content">(
   return typeof event[field] === "string";
 }
 
+/** Return conversation run event JSON byte length. */
 export function getConversationRunEventJsonByteLength(value: unknown): number {
   try {
     return encoder.encode(JSON.stringify(value)).byteLength;
@@ -23,6 +24,7 @@ export function getConversationRunEventJsonByteLength(value: unknown): number {
   }
 }
 
+/** Event emitted for normalize conversation run. */
 export function normalizeConversationRunEvent(
   event: ConversationRunEventRecord,
 ): ConversationRunEventRecord[] {
@@ -45,6 +47,7 @@ export function normalizeConversationRunEvent(
   }
 }
 
+/** Normalizes conversation run events. */
 export function normalizeConversationRunEvents(
   events: ConversationRunEventRecord[],
 ): ConversationRunEventRecord[] {

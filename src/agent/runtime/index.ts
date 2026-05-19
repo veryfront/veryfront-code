@@ -476,6 +476,7 @@ type RuntimeStepState = {
   context?: Record<string, unknown>;
 };
 
+/** Implement agent runtime. */
 export class AgentRuntime {
   private id: string;
   private config: AgentConfig;

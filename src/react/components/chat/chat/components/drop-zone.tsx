@@ -1,11 +1,13 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Props accepted by drop zone overlay. */
 export interface DropZoneOverlayProps {
   visible: boolean;
   accept?: string;
 }
 
+/** Render drop zone overlay. */
 export function DropZoneOverlay({
   visible,
   accept,

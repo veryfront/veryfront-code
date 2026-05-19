@@ -17,13 +17,16 @@ import {
 } from "../runtime/agent-markdown-adapter.ts";
 import type { Agent, AgentConfig } from "../types.ts";
 
+/** Public API contract for project agent runtime agent source. */
 export type ProjectAgentRuntimeAgentSource = "auto" | "code" | "markdown";
 
+/** Public API contract for project agent runtime agent ID candidates. */
 export type ProjectAgentRuntimeAgentIdCandidates = {
   codeAgentIds: string[];
   markdownAgentIds: string[];
 };
 
+/** Input payload for discover project agent runtime. */
 export type DiscoverProjectAgentRuntimeInput = {
   projectDir: string;
   adapter: RuntimeAdapter;
@@ -34,6 +37,7 @@ function resolveAgentSystem(system: AgentConfig["system"]): Promise<string> | st
   return typeof system === "function" ? system() : system;
 }
 
+/** Clear project agent runtime registries. */
 export function clearProjectAgentRuntimeRegistries(): void {
   clearTrackedAgents();
   clearTranspileCache();
@@ -42,6 +46,7 @@ export function clearProjectAgentRuntimeRegistries(): void {
   workflowRegistry.clear();
 }
 
+/** Discover project agent runtime helper. */
 export async function discoverProjectAgentRuntime(
   input: DiscoverProjectAgentRuntimeInput,
 ): Promise<DiscoveryResult> {
@@ -57,6 +62,7 @@ export async function discoverProjectAgentRuntime(
   return await discoverAll(discoveryOptions);
 }
 
+/** Does project agent runtime agent match source helper. */
 export function doesProjectAgentRuntimeAgentMatchSource(
   runtimeAgent: Agent,
   source: ProjectAgentRuntimeAgentSource,
@@ -69,6 +75,7 @@ export function doesProjectAgentRuntimeAgentMatchSource(
   return source === "markdown" ? markdownAgent : !markdownAgent;
 }
 
+/** Create runtime agent definition from agent. */
 export async function createRuntimeAgentDefinitionFromAgent(
   runtimeAgent: Agent,
 ): Promise<RuntimeAgentMarkdownDefinition> {
@@ -87,6 +94,7 @@ export async function createRuntimeAgentDefinitionFromAgent(
   };
 }
 
+/** Return project agent runtime agent ID candidates. */
 export function getProjectAgentRuntimeAgentIdCandidates(
   discoveryResult: Pick<DiscoveryResult, "agents"> | null | undefined,
 ): ProjectAgentRuntimeAgentIdCandidates {
@@ -107,6 +115,7 @@ export function getProjectAgentRuntimeAgentIdCandidates(
   };
 }
 
+/** Describe project agent runtime agent ID candidates helper. */
 export function describeProjectAgentRuntimeAgentIdCandidates(
   input: ProjectAgentRuntimeAgentIdCandidates,
 ): string {
@@ -116,6 +125,7 @@ export function describeProjectAgentRuntimeAgentIdCandidates(
   return ids.length > 0 ? ids.join(", ") : "none";
 }
 
+/** Resolves single project agent runtime agent ID. */
 export function resolveSingleProjectAgentRuntimeAgentId(input: {
   candidates: ProjectAgentRuntimeAgentIdCandidates;
   source: ProjectAgentRuntimeAgentSource;

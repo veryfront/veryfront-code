@@ -8,34 +8,41 @@ import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import type { DetachedRunTracker } from "../service/detached-run-tracker.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
 
+/** Public API contract for hosted durable run setup error status code. */
 export type HostedDurableRunSetupErrorStatusCode = 400 | 402 | 413 | 429 | 500 | 503;
 
+/** Public API contract for hosted durable run accepted. */
 export type HostedDurableRunAccepted = {
   accepted: boolean;
   duplicate: boolean;
 };
 
+/** Response payload for hosted durable run auth error. */
 export type HostedDurableRunAuthErrorResponse = {
   errorCode: string;
   statusCode: number;
   metadata?: Record<string, unknown>;
 };
 
+/** Public API contract for hosted durable run logger. */
 export type HostedDurableRunLogger = {
   error(message: string, metadata?: Record<string, unknown>): void;
 };
 
+/** Input payload for hosted durable run start execution. */
 export type HostedDurableRunStartExecutionInput<TExecution> = {
   execution: TExecution;
   abortSignal: AbortSignal;
 };
 
+/** Input payload for hosted durable run start cleanup. */
 export type HostedDurableRunStartCleanupInput<TExecution> = {
   execution: TExecution;
   runId: string;
   conversationId: string;
 };
 
+/** Input payload for execute hosted durable chat run. */
 export type ExecuteHostedDurableChatRunInput<TExecution> = {
   req: ParsedHostedChatRequest;
   rawRequest: Request;
@@ -74,6 +81,7 @@ function fallbackDurableRunSetupErrorStatusCode(
   return 500;
 }
 
+/** Response payload for resolve hosted durable run setup error. */
 export function resolveHostedDurableRunSetupErrorResponse(input: {
   code: string;
   status?: number;
@@ -183,6 +191,7 @@ async function executeHostedDurableChatRunStart<TExecution>(
   return await parseAcceptedDetachedStartResponse(detachedStartResponse);
 }
 
+/** Execute hosted durable chat run. */
 export async function executeHostedDurableChatRun<TExecution>(
   input: ExecuteHostedDurableChatRunInput<TExecution>,
 ): Promise<Response> {

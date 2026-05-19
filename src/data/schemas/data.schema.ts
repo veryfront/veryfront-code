@@ -50,12 +50,14 @@ export const getCacheEntrySchema = defineSchema((v) =>
 );
 
 // Inferred types
+/** Context passed to `getServerData()`. */
 export type DataContext = InferSchema<ReturnType<typeof getDataContextSchema>>;
 export type Redirect = InferSchema<ReturnType<typeof getRedirectSchema>>;
 export type DataResult<T = unknown> = InferSchema<ReturnType<typeof getDataResultSchema>> & {
   props?: T;
 };
 export type StaticPathEntry = InferSchema<ReturnType<typeof getStaticPathEntrySchema>>;
+/** Return type for `getStaticPaths()`. */
 export type StaticPathsResult = InferSchema<ReturnType<typeof getStaticPathsResultSchema>>;
 export type CacheEntry<T = unknown> = InferSchema<ReturnType<typeof getCacheEntrySchema>> & {
   data: DataResult<T>;

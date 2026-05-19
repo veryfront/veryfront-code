@@ -7,6 +7,7 @@ import {
 
 const AG_UI_CUSTOM_EVENT_TYPE = "CUSTOM";
 
+/** Zod schema for get invoke agent child run lifecycle value. */
 export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
   v.object({
     toolCallId: v.string().min(1),
@@ -25,15 +26,19 @@ export const getInvokeAgentChildRunLifecycleValueSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getInvokeAgentChildRunLifecycleValueSchema() */
+/** Schema for invoke agent child run lifecycle value.
+ * @deprecated Use getInvokeAgentChildRunLifecycleValueSchema()
+ */
 export const InvokeAgentChildRunLifecycleValueSchema = lazySchema(
   getInvokeAgentChildRunLifecycleValueSchema,
 );
 
+/** Public API contract for invoke agent child run lifecycle value. */
 export type InvokeAgentChildRunLifecycleValue = InferSchema<
   ReturnType<typeof getInvokeAgentChildRunLifecycleValueSchema>
 >;
 
+/** Zod schema for get invoke agent child run state delta. */
 export const getInvokeAgentChildRunStateDeltaSchema = defineSchema((v) =>
   v.object({
     type: v.literal("STATE_DELTA"),
@@ -47,15 +52,19 @@ export const getInvokeAgentChildRunStateDeltaSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getInvokeAgentChildRunStateDeltaSchema() */
+/** Schema for invoke agent child run state delta.
+ * @deprecated Use getInvokeAgentChildRunStateDeltaSchema()
+ */
 export const InvokeAgentChildRunStateDeltaSchema = lazySchema(
   getInvokeAgentChildRunStateDeltaSchema,
 );
 
+/** Public API contract for invoke agent child run state delta. */
 export type InvokeAgentChildRunStateDelta = InferSchema<
   ReturnType<typeof getInvokeAgentChildRunStateDeltaSchema>
 >;
 
+/** Zod schema for get invoke agent child run lifecycle custom event. */
 export const getInvokeAgentChildRunLifecycleCustomEventSchema = defineSchema((v) =>
   v.object({
     type: v.literal(AG_UI_CUSTOM_EVENT_TYPE),
@@ -64,15 +73,19 @@ export const getInvokeAgentChildRunLifecycleCustomEventSchema = defineSchema((v)
   })
 );
 
-/** @deprecated Use getInvokeAgentChildRunLifecycleCustomEventSchema() */
+/** Schema for invoke agent child run lifecycle custom event.
+ * @deprecated Use getInvokeAgentChildRunLifecycleCustomEventSchema()
+ */
 export const InvokeAgentChildRunLifecycleCustomEventSchema = lazySchema(
   getInvokeAgentChildRunLifecycleCustomEventSchema,
 );
 
+/** Event emitted for invoke agent child run lifecycle custom. */
 export type InvokeAgentChildRunLifecycleCustomEvent = InferSchema<
   ReturnType<typeof getInvokeAgentChildRunLifecycleCustomEventSchema>
 >;
 
+/** Input payload for invoke agent child run progress. */
 export type InvokeAgentChildRunProgressInput = {
   toolCallId: string;
   childConversationId: string;
@@ -87,6 +100,7 @@ export type InvokeAgentChildRunProgressInput = {
   targetBranchId?: string | null;
 };
 
+/** Event emitted for invoke agent child run progress. */
 export type InvokeAgentChildRunProgressEvent =
   | InvokeAgentChildRunStateDelta
   | InvokeAgentChildRunLifecycleCustomEvent;
@@ -113,6 +127,7 @@ function buildInvokeAgentChildRunLifecycleValue(
   });
 }
 
+/** Builds invoke agent child run state delta. */
 export function buildInvokeAgentChildRunStateDelta(
   input: InvokeAgentChildRunProgressInput,
 ): InvokeAgentChildRunStateDelta {
@@ -129,6 +144,7 @@ export function buildInvokeAgentChildRunStateDelta(
   });
 }
 
+/** Event emitted for build invoke agent child run lifecycle custom. */
 export function buildInvokeAgentChildRunLifecycleCustomEvent(
   input: InvokeAgentChildRunProgressInput,
 ): InvokeAgentChildRunLifecycleCustomEvent {
@@ -139,6 +155,7 @@ export function buildInvokeAgentChildRunLifecycleCustomEvent(
   });
 }
 
+/** Builds invoke agent child run progress events. */
 export function buildInvokeAgentChildRunProgressEvents(
   input: InvokeAgentChildRunProgressInput,
 ): readonly [InvokeAgentChildRunStateDelta, InvokeAgentChildRunLifecycleCustomEvent] {
@@ -148,6 +165,7 @@ export function buildInvokeAgentChildRunProgressEvents(
   ] as const;
 }
 
+/** Publish invoke agent child run progress helper. */
 export async function publishInvokeAgentChildRunProgress(input: {
   authToken: string;
   apiUrl: string;

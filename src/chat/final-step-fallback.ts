@@ -13,20 +13,25 @@ function toToolInput(value: unknown): Record<string, unknown> {
 }
 
 const STREAM_PROMISE_TIMEOUT_TOKEN = Symbol("stream-promise-timeout");
+/** Default value for stream promise timeout ms. */
 export const DEFAULT_STREAM_PROMISE_TIMEOUT_MS = 10_000;
 
 // --- Shared types ---
 
+/** Public API contract for chat fallback part. */
 export type ChatFallbackPart = ChatUiMessage["parts"][number];
+/** Public API contract for chat part. */
 type ChatPart = ChatFallbackPart;
 type ToolUiPart = ChatDynamicToolUiPart | ChatNamedToolUiPart;
 
+/** Public API contract for final step tool call. */
 export interface FinalStepToolCall {
   toolCallId: string;
   toolName: string;
   input: unknown;
 }
 
+/** Result returned from final step tool. */
 export interface FinalStepToolResult {
   toolCallId: string;
   toolName: string;
@@ -34,6 +39,7 @@ export interface FinalStepToolResult {
   output: unknown;
 }
 
+/** State for fallback tool chunk. */
 export interface FallbackToolChunkState {
   startedToolCallIds: ReadonlySet<string>;
   inputAvailableToolCallIds: ReadonlySet<string>;
@@ -718,6 +724,7 @@ function buildMissingFallbackToolChunksFromPartsFromInput(
   return buildToolFallbackChunks(buildToolChunkDescriptorsFromParts(parts), state);
 }
 
+/** Error shape for final step terminal. */
 interface FinalStepTerminalError {
   code: string;
   message: string;
@@ -752,6 +759,7 @@ async function resolveStreamPromiseWithTimeout<T>(
   }
 }
 
+/** Return last stream step. */
 export async function getLastStreamStep(
   result: { steps: PromiseLike<readonly unknown[]> },
   timeoutMs = DEFAULT_STREAM_PROMISE_TIMEOUT_MS,
@@ -760,6 +768,7 @@ export async function getLastStreamStep(
   return steps.at(-1) ?? null;
 }
 
+/** Return stream steps. */
 export async function getStreamSteps(
   result: { steps: PromiseLike<readonly unknown[]> },
   timeoutMs = DEFAULT_STREAM_PROMISE_TIMEOUT_MS,
@@ -768,6 +777,7 @@ export async function getStreamSteps(
   return { steps, lastStep: steps.at(-1) ?? null };
 }
 
+/** Extract final step finish reason. */
 export function extractFinalStepFinishReason(step: unknown): string | null {
   if (!isRecord(step) || typeof step.finishReason !== "string") {
     return null;
@@ -776,6 +786,7 @@ export function extractFinalStepFinishReason(step: unknown): string | null {
   return step.finishReason;
 }
 
+/** Extract final step text. */
 export function extractFinalStepText(step: unknown): string {
   if (isRecord(step) && typeof step.text === "string" && step.text.trim().length > 0) {
     return step.text.trim();
@@ -784,6 +795,7 @@ export function extractFinalStepText(step: unknown): string {
   return extractTextFromResponseMessages(step);
 }
 
+/** Extract final step tool calls. */
 export function extractFinalStepToolCalls(step: unknown): FinalStepToolCall[] {
   if (!isRecord(step) || !Array.isArray(step.toolCalls)) {
     return [];
@@ -807,6 +819,7 @@ export function extractFinalStepToolCalls(step: unknown): FinalStepToolCall[] {
   });
 }
 
+/** Extract final step tool results. */
 export function extractFinalStepToolResults(step: unknown): FinalStepToolResult[] {
   if (!isRecord(step) || !Array.isArray(step.toolResults)) {
     return [];
@@ -854,6 +867,7 @@ function parseProblemBody(body: unknown): FinalStepTerminalError | null {
   return { code: match.code, message: match.message };
 }
 
+/** Error shape for extract final step terminal. */
 export function extractFinalStepTerminalError(step: unknown): FinalStepTerminalError | null {
   const responseBody = parseFinalStepResponseBody(step);
   if (responseBody == null) {
@@ -872,6 +886,7 @@ export function extractFinalStepTerminalError(step: unknown): FinalStepTerminalE
   return parseProblemBody(responseBody);
 }
 
+/** Builds fallback UI message parts. */
 export function buildFallbackUiMessageParts(step: unknown): ChatPart[] {
   return buildFallbackUiMessagePartsFromInput({
     step,
@@ -881,6 +896,7 @@ export function buildFallbackUiMessageParts(step: unknown): ChatPart[] {
   });
 }
 
+/** Append missing fallback text part. */
 export function appendMissingFallbackTextPart(
   parts: readonly ChatPart[],
   step: unknown,
@@ -892,6 +908,7 @@ export function appendMissingFallbackTextPart(
   });
 }
 
+/** Builds fallback UI message chunks. */
 export function buildFallbackUiMessageChunks(
   step: unknown,
   messageId: string,
@@ -918,6 +935,7 @@ export function buildFallbackUiMessageChunks(
   return chunks;
 }
 
+/** Builds missing fallback tool chunks. */
 export function buildMissingFallbackToolChunks(
   step: unknown,
   state?: Partial<FallbackToolChunkState>,
@@ -930,6 +948,7 @@ export function buildMissingFallbackToolChunks(
   });
 }
 
+/** Builds missing fallback tool chunks from parts. */
 export function buildMissingFallbackToolChunksFromParts(
   parts: readonly ChatPart[],
   state?: Partial<FallbackToolChunkState>,
@@ -941,6 +960,7 @@ export function buildMissingFallbackToolChunksFromParts(
   return buildMissingFallbackToolChunksFromPartsFromInput(parts, state);
 }
 
+/** Builds missing fallback text chunks. */
 export function buildMissingFallbackTextChunks(
   parts: readonly ChatPart[],
   step: unknown,

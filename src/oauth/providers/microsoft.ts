@@ -15,6 +15,7 @@ const microsoftBase = {
   },
 } satisfies Omit<OAuthServiceConfig, "serviceId" | "apiBaseUrl" | "defaultScopes">;
 
+/** Configuration used by outlook. */
 export const outlookConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "outlook",
@@ -31,6 +32,7 @@ export const outlookConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by teams. */
 export const teamsConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "teams",
@@ -47,6 +49,7 @@ export const teamsConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by share point. */
 export const sharePointConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "sharepoint",
@@ -62,6 +65,7 @@ export const sharePointConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by one drive. */
 export const oneDriveConfig: OAuthServiceConfig = {
   ...microsoftBase,
   serviceId: "onedrive",

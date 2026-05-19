@@ -6,6 +6,7 @@ import { createRuntimePromptBlock } from "./prompt-block.ts";
 import { buildRuntimeAvailableSkillsPromptBlock } from "./skill-prompt.ts";
 import type { RuntimeSkillDefinition } from "./skill-metadata.ts";
 
+/** Zod schema for get runtime agent thinking config. */
 export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
   v.object({
     enabled: v.boolean(),
@@ -13,13 +14,17 @@ export const getRuntimeAgentThinkingConfigSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getRuntimeAgentThinkingConfigSchema() */
+/** Schema for runtime agent thinking config.
+ * @deprecated Use getRuntimeAgentThinkingConfigSchema()
+ */
 export const runtimeAgentThinkingConfigSchema = lazySchema(getRuntimeAgentThinkingConfigSchema);
 
+/** Configuration used by runtime agent thinking. */
 export type RuntimeAgentThinkingConfig = InferSchema<
   ReturnType<typeof getRuntimeAgentThinkingConfigSchema>
 >;
 
+/** Zod schema for get runtime agent markdown definition. */
 export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
@@ -32,17 +37,22 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
   })
 );
 
+/** Default value for runtime agent context marker. */
 export const DEFAULT_RUNTIME_AGENT_CONTEXT_MARKER = "<!-- veryfront-runtime-context -->";
 
-/** @deprecated Use getRuntimeAgentMarkdownDefinitionSchema() */
+/** Schema for runtime agent markdown definition.
+ * @deprecated Use getRuntimeAgentMarkdownDefinitionSchema()
+ */
 export const runtimeAgentMarkdownDefinitionSchema = lazySchema(
   getRuntimeAgentMarkdownDefinitionSchema,
 );
 
+/** Definition for runtime agent markdown. */
 export type RuntimeAgentMarkdownDefinition = InferSchema<
   ReturnType<typeof getRuntimeAgentMarkdownDefinitionSchema>
 >;
 
+/** Zod schema for get parse runtime agent markdown definition input. */
 export const getParseRuntimeAgentMarkdownDefinitionInputSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
@@ -50,15 +60,19 @@ export const getParseRuntimeAgentMarkdownDefinitionInputSchema = defineSchema((v
   })
 );
 
-/** @deprecated Use getParseRuntimeAgentMarkdownDefinitionInputSchema() */
+/** Schema for parse runtime agent markdown definition input.
+ * @deprecated Use getParseRuntimeAgentMarkdownDefinitionInputSchema()
+ */
 export const parseRuntimeAgentMarkdownDefinitionInputSchema = lazySchema(
   getParseRuntimeAgentMarkdownDefinitionInputSchema,
 );
 
+/** Input payload for parse runtime agent markdown definition. */
 export type ParseRuntimeAgentMarkdownDefinitionInput = InferSchema<
   ReturnType<typeof getParseRuntimeAgentMarkdownDefinitionInputSchema>
 >;
 
+/** Input payload for create runtime agent system messages. */
 export type CreateRuntimeAgentSystemMessagesInput = {
   agent: RuntimeAgentMarkdownDefinition;
   runtimeBlocks?: readonly string[];
@@ -80,6 +94,7 @@ function parseThinking(value: unknown): RuntimeAgentThinkingConfig | undefined {
   return undefined;
 }
 
+/** Definition for parse runtime agent markdown. */
 export function parseRuntimeAgentMarkdownDefinition(
   input: ParseRuntimeAgentMarkdownDefinitionInput,
 ): RuntimeAgentMarkdownDefinition {
@@ -118,6 +133,7 @@ function splitRuntimeAgentInstructions(input: {
   };
 }
 
+/** Create runtime agent system messages. */
 export function createRuntimeAgentSystemMessages(
   input: CreateRuntimeAgentSystemMessagesInput,
 ): ChatSystemMessage[] {

@@ -9,6 +9,7 @@ function normSep(p: string): string {
   return p.includes("\\") ? p.replace(/\\/g, "/") : p;
 }
 
+/** Join path segments. */
 export function join(...paths: string[]): string {
   const joined = paths
     .map(normSep)
@@ -20,6 +21,7 @@ export function join(...paths: string[]): string {
   return joined || "/";
 }
 
+/** Return the parent directory path. */
 export function dirname(path: string): string {
   if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.dirname(path);
 
@@ -30,6 +32,7 @@ export function dirname(path: string): string {
   return p.slice(0, lastSlash);
 }
 
+/** Return the last path segment. */
 export function basename(path: string, ext?: string): string {
   if (!isDeno && nodePath && !hasWindowsLikePath(path)) {
     // Only pass ext if defined - Bun is strict about this parameter
@@ -49,6 +52,7 @@ export function basename(path: string, ext?: string): string {
   return base;
 }
 
+/** Return the file extension for a path. */
 export function extname(path: string): string {
   if (!isDeno && nodePath && !hasWindowsLikePath(path)) return nodePath.extname(path);
 

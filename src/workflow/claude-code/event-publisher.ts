@@ -99,6 +99,7 @@ interface RedisClient {
   close(): Promise<void>;
 }
 
+/** Implement redis event publisher. */
 export class RedisEventPublisher implements ClaudeCodeEventPublisher, ClaudeCodeEventSubscriber {
   private config: Required<RedisEventPublisherConfig>;
   private publishClient: RedisClient | null = null;

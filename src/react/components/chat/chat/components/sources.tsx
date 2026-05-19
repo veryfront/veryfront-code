@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Public API contract for source. */
 export interface Source {
   title: string;
   url?: string;
@@ -8,12 +9,14 @@ export interface Source {
   snippet?: string;
 }
 
+/** Props accepted by sources. */
 export interface SourcesProps {
   sources: Source[];
   className?: string;
   onSourceClick?: (source: Source, index: number) => void;
 }
 
+/** Render sources. */
 export const Sources = React.forwardRef<HTMLDivElement, SourcesProps>(
   function Sources({ sources, className, onSourceClick }, ref) {
     if (sources.length === 0) return null;

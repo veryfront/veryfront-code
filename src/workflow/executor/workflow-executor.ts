@@ -65,9 +65,7 @@ export interface WorkflowExecutorConfig {
   onWaiting?: (run: WorkflowRun, nodeId: string) => void;
 }
 
-/**
- * Handle for a running workflow
- */
+/** Controller for a running workflow. */
 export interface WorkflowHandle<TOutput = unknown> {
   /** Run ID */
   runId: string;

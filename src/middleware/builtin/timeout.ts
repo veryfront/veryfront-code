@@ -13,6 +13,7 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const TIMEOUT_SENTINEL = Symbol("timeout");
 const DEFAULT_EXCLUDE_PATHS = ["/healthz", "/readyz", "/_health"];
 
+/** Options accepted by timeout. */
 export interface TimeoutOptions {
   /** Timeout in milliseconds (default: 60000) */
   timeoutMs?: number;

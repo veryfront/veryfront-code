@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Public API contract for attachment info. */
 export interface AttachmentInfo {
   id: string;
   name: string;
@@ -10,6 +11,7 @@ export interface AttachmentInfo {
   preview?: string;
 }
 
+/** Props accepted by attachment pill. */
 export interface AttachmentPillProps {
   attachment: AttachmentInfo;
   onRemove?: (id: string) => void;
@@ -35,6 +37,7 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/** Render attachment pill. */
 export function AttachmentPill({
   attachment,
   onRemove,

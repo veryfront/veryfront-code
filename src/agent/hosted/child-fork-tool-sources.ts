@@ -30,10 +30,12 @@ import {
 } from "./child-requested-tools.ts";
 import { filterVeryfrontApiToolDefinitionsWithAccessProfile } from "./veryfront-api-tool-access.ts";
 
+/** Public API contract for hosted child fork tool sources logger. */
 export type HostedChildForkToolSourcesLogger = {
   error: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Input payload for prepare default hosted child fork tool sources. */
 export type PrepareDefaultHostedChildForkToolSourcesInput = {
   authToken: string;
   apiMcpUrl: string;
@@ -55,6 +57,7 @@ export type PrepareDefaultHostedChildForkToolSourcesInput = {
   logger?: HostedChildForkToolSourcesLogger;
 };
 
+/** Result returned from default hosted child fork tool sources. */
 export type DefaultHostedChildForkToolSourcesResult =
   | {
     ok: true;
@@ -66,6 +69,7 @@ export type DefaultHostedChildForkToolSourcesResult =
     errorMessage: string;
   };
 
+/** Input payload for prepare default hosted child fork sandbox tool sources. */
 export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
   & PrepareDefaultHostedChildForkToolSourcesInput
   & {
@@ -76,6 +80,7 @@ export type PrepareDefaultHostedChildForkSandboxToolSourcesInput =
     ) => Promise<AgentServiceSandboxToolsResult>;
   };
 
+/** Prepare default hosted child fork tool sources. */
 export async function prepareDefaultHostedChildForkToolSources(
   input: PrepareDefaultHostedChildForkToolSourcesInput,
 ): Promise<DefaultHostedChildForkToolSourcesResult> {
@@ -172,6 +177,7 @@ export async function prepareDefaultHostedChildForkToolSources(
   };
 }
 
+/** Prepare default hosted child fork sandbox tool sources. */
 export async function prepareDefaultHostedChildForkSandboxToolSources(
   input: PrepareDefaultHostedChildForkSandboxToolSourcesInput,
 ): Promise<DefaultHostedChildForkToolAssemblySourceResult> {

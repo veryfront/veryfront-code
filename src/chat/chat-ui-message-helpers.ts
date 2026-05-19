@@ -5,6 +5,7 @@ type StreamChunkMetadataPart = {
   totalUsage?: unknown;
 };
 
+/** Input payload for build chat stream chunk message metadata. */
 export interface BuildChatStreamChunkMessageMetadataInput {
   agentId: string;
   modelId: string;
@@ -85,6 +86,7 @@ function getReplayState(stateMap: Map<string, ReplayState>, id: string): ReplayS
   return created;
 }
 
+/** Normalizes chat message metadata. */
 export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadata {
   if (!isRecord(value)) {
     return {};
@@ -109,11 +111,13 @@ export function normalizeChatMessageMetadata(value: unknown): ChatMessageMetadat
   };
 }
 
+/** Extract chat message metadata. */
 export function extractChatMessageMetadata(value: unknown): ChatMessageMetadata | undefined {
   const normalized = normalizeChatMessageMetadata(value);
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
+/** Builds chat stream chunk message metadata. */
 export function buildChatStreamChunkMessageMetadata(
   input: BuildChatStreamChunkMessageMetadataInput,
 ): ChatMessageMetadata {
@@ -132,6 +136,7 @@ export function buildChatStreamChunkMessageMetadata(
   return usage ? { ...baseMetadata, usage } : baseMetadata;
 }
 
+/** Normalizes chat UI message chunk. */
 export function normalizeChatUiMessageChunk(
   chunk: ChatUiMessageChunk<unknown>,
 ): ChatUiMessageChunk<ChatMessageMetadata> {
@@ -162,6 +167,7 @@ export function normalizeChatUiMessageChunk(
   }
 }
 
+/** Dedupe chat UI message chunks. */
 export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
   stream: AsyncIterable<ChatUiMessageChunk<TMessageMetadata>>,
 ): AsyncIterable<ChatUiMessageChunk<TMessageMetadata>> {
@@ -223,6 +229,7 @@ export async function* dedupeChatUiMessageChunks<TMessageMetadata>(
   }
 }
 
+/** Normalizes chat UI message stream. */
 export async function* normalizeChatUiMessageStream(
   stream: AsyncIterable<ChatUiMessageChunk<unknown>>,
 ): AsyncIterable<ChatUiMessageChunk<ChatMessageMetadata>> {

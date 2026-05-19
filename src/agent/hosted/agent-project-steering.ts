@@ -22,6 +22,7 @@ import type { RuntimeProjectSteeringLookup } from "../runtime/project-skill-cata
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 
+/** Public API contract for hosted agent project steering options data. */
 export type HostedAgentProjectSteeringOptionsData = {
   baseDir: string;
   agentId: string;
@@ -29,6 +30,7 @@ export type HostedAgentProjectSteeringOptionsData = {
   skillsDir?: string;
 };
 
+/** Zod schema for hosted agent project steering options. */
 export const hostedAgentProjectSteeringOptionsSchema = lazySchema(
   defineSchema<HostedAgentProjectSteeringOptionsData>((v) => {
     const runtimeAgentFileIdSchema = v.string().min(1).regex(/^[A-Za-z0-9._-]+$/);
@@ -45,10 +47,12 @@ export const hostedAgentProjectSteeringOptionsSchema = lazySchema(
   }),
 );
 
+/** Public API contract for hosted agent project steering logger. */
 export type HostedAgentProjectSteeringLogger = HostedProjectSteeringLogger & {
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Options accepted by hosted agent project steering. */
 export type HostedAgentProjectSteeringOptions = HostedAgentProjectSteeringOptionsData & {
   getApiUrl: () => string | URL;
   logger?: HostedAgentProjectSteeringLogger;
@@ -56,6 +60,7 @@ export type HostedAgentProjectSteeringOptions = HostedAgentProjectSteeringOption
   fetch?: RuntimeProjectFilesFetch;
 };
 
+/** Public API contract for hosted agent project steering. */
 export type HostedAgentProjectSteering = {
   getAgentConfig: () => RuntimeAgentMarkdownDefinition;
   getProjectInstructions: (lookup: RuntimeProjectSteeringLookup) => Promise<string>;
@@ -71,6 +76,7 @@ function stringifyError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Create hosted agent project steering. */
 export function createHostedAgentProjectSteering(
   options: HostedAgentProjectSteeringOptions,
 ): HostedAgentProjectSteering {

@@ -36,6 +36,7 @@ export type {
 
 type ToolOutputState = "output-available" | "output-error";
 
+/** Output from tool. */
 export interface ToolOutput {
   tool: string;
   toolCallId: string;
@@ -44,6 +45,7 @@ export interface ToolOutput {
   errorText?: string;
 }
 
+/** Public API contract for on tool call arg. */
 export interface OnToolCallArg {
   toolCall: {
     toolCallId: string;
@@ -53,6 +55,7 @@ export interface OnToolCallArg {
   };
 }
 
+/** Options accepted by use chat. */
 export interface UseChatOptions {
   api: string;
   /** Streaming response protocol used by the endpoint. AG-UI is the default. */
@@ -61,7 +64,7 @@ export interface UseChatOptions {
   body?: Record<string, unknown>;
   headers?: Record<string, string>;
   credentials?: RequestCredentials;
-  /** Override model at runtime (e.g. "openai/gpt-4o", "anthropic/claude-sonnet-4-5-20250929") */
+  /** Override model at runtime (e.g. "openai/gpt-4o", "Anthropic/claude-sonnet-4-5-20250929") */
   model?: string;
   /** System prompt for browser-side inference (server uses agent config) */
   systemPrompt?: string;
@@ -73,11 +76,13 @@ export interface UseChatOptions {
   onToolCall?: (arg: OnToolCallArg) => void | Promise<void>;
 }
 
+/** Public API contract for branch info. */
 export interface BranchInfo {
   current: number;
   total: number;
 }
 
+/** Result returned from use chat. */
 export interface UseChatResult {
   messages: ChatMessage[];
   input: string;
@@ -85,7 +90,7 @@ export interface UseChatResult {
   error: Error | null;
   /** Current model override (undefined = use agent default) */
   model: string | undefined;
-  /** The actual model being used after auto-upgrade (e.g. "anthropic/claude-sonnet-4-20250514") */
+  /** The actual model being used after auto-upgrade (e.g. "Anthropic/claude-sonnet-4-20250514") */
   activeModel: string | undefined;
   /** Where inference is currently happening */
   inferenceMode: InferenceMode;

@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import type { AgentStatus, Message as AgentMessage, ToolCall } from "#veryfront/agent/types.ts";
 import { createError, ensureError, toError } from "#veryfront/errors/veryfront-error.ts";
 
+/** Options accepted by use agent. */
 export interface UseAgentOptions {
   /** Agent ID or endpoint */
   agent: string;
@@ -16,6 +17,7 @@ export interface UseAgentOptions {
   onError?: (error: Error) => void;
 }
 
+/** Result returned from use agent. */
 export interface UseAgentResult {
   /** Message history */
   messages: AgentMessage[];
@@ -42,6 +44,7 @@ export interface UseAgentResult {
   error: Error | null;
 }
 
+/** React hook for agent. */
 export function useAgent(options: UseAgentOptions): UseAgentResult {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [toolCalls, setToolCalls] = useState<ToolCall[]>([]);

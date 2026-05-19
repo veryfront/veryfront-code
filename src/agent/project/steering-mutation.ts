@@ -1,8 +1,10 @@
+/** Default value for project steering paths. */
 export const DEFAULT_PROJECT_STEERING_PATHS = {
   instructions: ["AGENTS.md"],
   skills: [".veryfront/skills"],
 } as const;
 
+/** Shared project steering file mutation tool names value. */
 export const PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES = [
   "create_file",
   "update_file",
@@ -10,11 +12,13 @@ export const PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES = [
   "move_file",
 ] as const;
 
+/** Public API contract for project steering paths. */
 export type ProjectSteeringPaths = {
   instructions: readonly string[];
   skills: readonly string[];
 };
 
+/** Input payload for project steering mutation. */
 export type ProjectSteeringMutationInput = {
   toolName: string;
   toolInput: Record<string, unknown>;
@@ -23,6 +27,7 @@ export type ProjectSteeringMutationInput = {
   steeringPaths?: ProjectSteeringPaths;
 };
 
+/** Result returned from project steering mutation. */
 export type ProjectSteeringMutationResult = {
   instructionsChanged: boolean;
   skillsChanged: boolean;
@@ -74,6 +79,7 @@ function matchesActiveProjectTarget(input: {
   return targetBranchId === (input.activeBranchId ?? null);
 }
 
+/** Return project steering mutation. */
 export function getProjectSteeringMutation(
   input: ProjectSteeringMutationInput,
 ): ProjectSteeringMutationResult {
@@ -112,6 +118,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Result returned from is successful project steering mutation. */
 export function isSuccessfulProjectSteeringMutationResult(result: unknown): boolean {
   if (!isRecord(result)) {
     return true;

@@ -4,7 +4,7 @@
  */
 
 import { tool } from "veryfront/tool";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Search the web for information",

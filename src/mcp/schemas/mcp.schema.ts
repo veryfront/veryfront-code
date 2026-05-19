@@ -55,5 +55,7 @@ export const MCPServerConfigSchema = lazySchema(getMCPServerConfigSchema);
 export const MCPStatsSchema = lazySchema(getMCPStatsSchema);
 
 // Inferred types
+/** Configuration used by mcpserver. */
 export type MCPServerConfig = InferSchema<ReturnType<typeof getMCPServerConfigSchema>>;
+/** Public API contract for MCP stats. */
 export type MCPStats = InferSchema<ReturnType<typeof getMCPStatsSchema>>;

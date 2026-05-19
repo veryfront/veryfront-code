@@ -15,6 +15,7 @@ const googleBase = {
   },
 } satisfies Partial<OAuthServiceConfig>;
 
+/** Configuration used by gmail. */
 export const gmailConfig: OAuthServiceConfig = {
   ...googleBase,
   serviceId: "gmail",
@@ -30,6 +31,7 @@ export const gmailConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by calendar. */
 export const calendarConfig: OAuthServiceConfig = {
   ...googleBase,
   serviceId: "calendar",
@@ -41,6 +43,7 @@ export const calendarConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by sheets. */
 export const sheetsConfig: OAuthServiceConfig = {
   ...googleBase,
   serviceId: "sheets",
@@ -52,6 +55,7 @@ export const sheetsConfig: OAuthServiceConfig = {
   ],
 };
 
+/** Configuration used by drive. */
 export const driveConfig: OAuthServiceConfig = {
   ...googleBase,
   serviceId: "drive",

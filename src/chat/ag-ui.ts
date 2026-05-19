@@ -25,11 +25,13 @@ type JsonPatchOperation = {
   value?: unknown;
 };
 
+/** State for tool call. */
 type ToolCallState = {
   toolName: string;
   argsText: string;
 };
 
+/** Public API contract for AG-UI runtime tool call. */
 export type AgUiRuntimeToolCall = {
   id: string;
   type: "function";
@@ -39,6 +41,7 @@ export type AgUiRuntimeToolCall = {
   };
 };
 
+/** Message shape for AG-UI runtime. */
 export type AgUiRuntimeMessage =
   | {
     id: string;
@@ -64,25 +67,30 @@ export type AgUiRuntimeMessage =
     error?: string;
   };
 
+/** Event emitted for parsed sse. */
 export type ParsedSseEvent = {
   id: number | null;
   event: string | null;
   data: string;
 };
 
+/** Event emitted for AG-UI decoded. */
 export type AgUiDecodedEvent = {
   eventId: number | null;
   wireEvent: AgUiWireEvent;
   chatEvents: ChatStreamEvent[];
 };
 
+/** Public API contract for AG-UI decoded chunk. */
 export type AgUiDecodedChunk = {
   events: AgUiDecodedEvent[];
   remainder: string;
 };
 
+/** Public API contract for AG-UI decoder validation mode. */
 export type AgUiDecoderValidationMode = "permissive" | "strict";
 
+/** State for AG-UI chat event decoder. */
 export type AgUiChatEventDecoderState = {
   remainder: string;
   lastEventId: number;
@@ -118,6 +126,7 @@ const AG_UI_WIRE_EVENT_NAME_SET = new Set<string>(AG_UI_WIRE_EVENT_NAMES);
 
 type AgUiWireEventNameLiteral = typeof AG_UI_WIRE_EVENT_NAMES[number];
 
+/** Zod schema for get AG-UI run finished metadata. */
 export const getAgUiRunFinishedMetadataSchema = defineSchema((v) =>
   v.object({
     provider: v.string().optional(),
@@ -132,9 +141,12 @@ export const getAgUiRunFinishedMetadataSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getAgUiRunFinishedMetadataSchema() */
+/** Schema for AG-UI run finished metadata.
+ * @deprecated Use getAgUiRunFinishedMetadataSchema()
+ */
 export const AgUiRunFinishedMetadataSchema = lazySchema(getAgUiRunFinishedMetadataSchema);
 
+/** Zod schema for get AG-UI snapshot tool call. */
 export const getAgUiSnapshotToolCallSchema = defineSchema((v) =>
   v.object({
     id: v.string().min(1),
@@ -147,7 +159,9 @@ export const getAgUiSnapshotToolCallSchema = defineSchema((v) =>
   })
 );
 
-/** @deprecated Use getAgUiSnapshotToolCallSchema() */
+/** Schema for AG-UI snapshot tool call.
+ * @deprecated Use getAgUiSnapshotToolCallSchema()
+ */
 export const AgUiSnapshotToolCallSchema = lazySchema(getAgUiSnapshotToolCallSchema);
 
 const getAgUiUserInputContentSchema = defineSchema((v) =>
@@ -167,6 +181,7 @@ const getAgUiUserInputContentSchema = defineSchema((v) =>
   ])
 );
 
+/** Zod schema for get AG-UI snapshot message. */
 export const getAgUiSnapshotMessageSchema = defineSchema((v) =>
   v.discriminatedUnion("role", [
     v.object({
@@ -202,12 +217,17 @@ export const getAgUiSnapshotMessageSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getAgUiSnapshotMessageSchema() */
+/** Schema for AG-UI snapshot message.
+ * @deprecated Use getAgUiSnapshotMessageSchema()
+ */
 export const AgUiSnapshotMessageSchema = lazySchema(getAgUiSnapshotMessageSchema);
 
+/** Zod schema for get AG-UI wire event name. */
 export const getAgUiWireEventNameSchema = defineSchema((v) => v.enum(AG_UI_WIRE_EVENT_NAMES));
 
-/** @deprecated Use getAgUiWireEventNameSchema() */
+/** Schema for AG-UI wire event name.
+ * @deprecated Use getAgUiWireEventNameSchema()
+ */
 export const AgUiWireEventNameSchema = lazySchema(getAgUiWireEventNameSchema);
 
 function parseRuntimeToolInput(rawArguments: string): unknown {
@@ -367,6 +387,7 @@ function applyRuntimeToolResultMessage(
   });
 }
 
+/** Map AG-UI runtime messages to chat UI messages. */
 export function mapAgUiRuntimeMessagesToChatUiMessages(
   messages: AgUiRuntimeMessage[],
 ): ChatUiMessage[] {
@@ -399,6 +420,7 @@ export function mapAgUiRuntimeMessagesToChatUiMessages(
   return mappedMessages;
 }
 
+/** Zod schema for get AG-UI wire event. */
 export const getAgUiWireEventSchema = defineSchema((v) =>
   v.discriminatedUnion("eventName", [
     v.object({
@@ -522,14 +544,20 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
   ])
 );
 
-/** @deprecated Use getAgUiWireEventSchema() */
+/** Schema for AG-UI wire event.
+ * @deprecated Use getAgUiWireEventSchema()
+ */
 export const AgUiWireEventSchema = lazySchema(getAgUiWireEventSchema);
 
+/** Public API contract for AG-UI run finished metadata. */
 export type AgUiRunFinishedMetadata = InferSchema<
   ReturnType<typeof getAgUiRunFinishedMetadataSchema>
 >;
+/** Message shape for AG-UI snapshot. */
 export type AgUiSnapshotMessage = InferSchema<ReturnType<typeof getAgUiSnapshotMessageSchema>>;
+/** Public API contract for AG-UI wire event name. */
 export type AgUiWireEventName = InferSchema<ReturnType<typeof getAgUiWireEventNameSchema>>;
+/** Event emitted for AG-UI wire. */
 export type AgUiWireEvent = InferSchema<ReturnType<typeof getAgUiWireEventSchema>>;
 
 function getReasoningPartId(
@@ -879,6 +907,7 @@ function mapWireEventToChatEvents(
   }
 }
 
+/** Event emitted for parse sse. */
 export function parseSseEvent(raw: string): ParsedSseEvent {
   let id: number | null = null;
   let event: string | null = null;
@@ -912,6 +941,7 @@ export function parseSseEvent(raw: string): ParsedSseEvent {
   return { id, event, data: dataLines.join("\n") };
 }
 
+/** State for create AG-UI chat event decoder. */
 export function createAgUiChatEventDecoderState(
   input: {
     lastEventId?: number;
@@ -930,6 +960,7 @@ export function createAgUiChatEventDecoderState(
   };
 }
 
+/** Decode AG-UI SSE chunk. */
 export function decodeAgUiSseChunk(
   state: AgUiChatEventDecoderState,
   chunk: string,
@@ -974,6 +1005,7 @@ export function decodeAgUiSseChunk(
   };
 }
 
+/** Flush AG-UI SSE chunk. */
 export function flushAgUiSseChunk(state: AgUiChatEventDecoderState): AgUiDecodedChunk {
   if (state.remainder.length === 0) {
     return { events: [], remainder: "" };

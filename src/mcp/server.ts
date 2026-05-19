@@ -85,6 +85,7 @@ interface PendingTaskRun {
   abortController: AbortController;
 }
 
+/** Configuration used by integration loader. */
 export interface IntegrationLoaderConfig {
   integrations: Record<string, IntegrationRuntimeConfig | undefined>;
   apiBaseUrl: string;
@@ -93,6 +94,7 @@ export interface IntegrationLoaderConfig {
 
 const MCP_SUPPORTED_VERSIONS = ["2025-11-25", "2024-11-05"];
 
+/** Implement mcpserver. */
 export class MCPServer {
   private static LOG_LEVELS = [
     "debug",
@@ -785,6 +787,7 @@ export class MCPServer {
   }
 }
 
+/** Create mcpserver. */
 export function createMCPServer(config: MCPServerConfig): MCPServer {
   return new MCPServer(config);
 }

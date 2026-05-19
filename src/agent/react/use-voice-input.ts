@@ -1,5 +1,6 @@
 import * as React from "react";
 
+/** Options accepted by use voice input. */
 export interface UseVoiceInputOptions {
   /** Language for speech recognition (default: browser default) */
   language?: string;
@@ -23,6 +24,7 @@ export interface UseVoiceInputOptions {
   onEnd?: () => void;
 }
 
+/** Result returned from use voice input. */
 export interface UseVoiceInputResult {
   /** Whether voice input is supported in this browser */
   isSupported: boolean;
@@ -95,6 +97,7 @@ interface GlobalWithSpeechRecognition {
   webkitSpeechRecognition?: new () => SpeechRecognition;
 }
 
+/** Input payload for use voice. */
 export function useVoiceInput(
   options: UseVoiceInputOptions = {},
 ): UseVoiceInputResult {

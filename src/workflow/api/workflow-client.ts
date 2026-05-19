@@ -24,6 +24,7 @@ import type { Workflow } from "../dsl/workflow.ts";
 
 const logger = baseLogger.component("workflow-client");
 
+/** Configuration used by workflow client. */
 export interface WorkflowClientConfig {
   /** Backend for persistence (default: MemoryBackend) */
   backend?: WorkflowBackend;
@@ -35,6 +36,7 @@ export interface WorkflowClientConfig {
   debug?: boolean;
 }
 
+/** Implement workflow client. */
 export class WorkflowClient {
   private backend: WorkflowBackend;
   private executor: WorkflowExecutor;
@@ -176,6 +178,7 @@ export class WorkflowClient {
   }
 }
 
+/** Create workflow client. */
 export function createWorkflowClient(config?: WorkflowClientConfig): WorkflowClient {
   return new WorkflowClient(config);
 }

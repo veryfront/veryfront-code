@@ -19,6 +19,7 @@
 import React from "react";
 import { Head } from "../components/Head.tsx";
 
+/** Public API contract for font. */
 export interface Font {
   name: string;
   variable?: string;
@@ -26,6 +27,7 @@ export interface Font {
   italics?: boolean;
 }
 
+/** Props accepted by Google fonts. */
 export interface GoogleFontsProps {
   fonts: Array<Font>;
 }
@@ -82,6 +84,7 @@ ${variables}
 }`.trim();
 }
 
+/** Render Google fonts. */
 export function GoogleFonts({ fonts = [] }: GoogleFontsProps): React.ReactElement {
   const href = generateGoogleFontsHref(fonts);
   const cssVariables = generateCssVariables(fonts);

@@ -6,6 +6,7 @@ import { toolRegistry } from "#veryfront/tool";
 import { resourceRegistry } from "#veryfront/resource";
 import { promptRegistry } from "#veryfront/prompt";
 
+/** Return MCP registry. */
 export function getMCPRegistry(): MCPRegistry {
   return {
     tools: toolRegistry.getAll(),
@@ -14,18 +15,22 @@ export function getMCPRegistry(): MCPRegistry {
   };
 }
 
+/** Registers tool. */
 export function registerTool(id: string, tool: Tool): void {
   toolRegistry.register(id, tool);
 }
 
+/** Registers resource. */
 export function registerResource(id: string, resource: Resource): void {
   resourceRegistry.register(id, resource);
 }
 
+/** Registers prompt. */
 export function registerPrompt(id: string, prompt: Prompt): void {
   promptRegistry.register(id, prompt);
 }
 
+/** Return MCP stats. */
 export function getMCPStats(): MCPStats {
   const tools = toolRegistry.getAll().size;
   const resources = resourceRegistry.getAll().size;
@@ -34,6 +39,7 @@ export function getMCPStats(): MCPStats {
   return { tools, resources, prompts, total: tools + resources + prompts };
 }
 
+/** Clear MCP registry. */
 export function clearMCPRegistry(): void {
   toolRegistry.clear();
   resourceRegistry.clear();

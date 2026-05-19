@@ -10,21 +10,25 @@ import type {
 } from "./project-files-client.ts";
 import { normalizeRuntimeSkillReferencePath } from "./skill-metadata.ts";
 
+/** Context for runtime project skill. */
 export type RuntimeProjectSkillContext = {
   projectId?: string | null;
   authToken: string;
   branchId?: string | null;
 };
 
+/** Public API contract for runtime loaded project skill. */
 export type RuntimeLoadedProjectSkill = {
   instructions: string;
   references: string[];
 };
 
+/** Public API contract for runtime project skill loader logger. */
 export type RuntimeProjectSkillLoaderLogger = {
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Options accepted by runtime project skill loader. */
 export type RuntimeProjectSkillLoaderOptions = {
   getProjectFile: (options: RuntimeGetProjectFileOptions) => Promise<RuntimeProjectFile | null>;
   getProjectFiles: (
@@ -35,6 +39,7 @@ export type RuntimeProjectSkillLoaderOptions = {
   logger?: RuntimeProjectSkillLoaderLogger;
 };
 
+/** Public API contract for runtime project skill loader. */
 export type RuntimeProjectSkillLoader = {
   listProjectSkillReferences: (
     context: RuntimeProjectSkillContext,
@@ -204,6 +209,7 @@ async function loadProjectSkillReference(input: {
   return null;
 }
 
+/** Create runtime project skill loader. */
 export function createRuntimeProjectSkillLoader(
   options: RuntimeProjectSkillLoaderOptions,
 ): RuntimeProjectSkillLoader {

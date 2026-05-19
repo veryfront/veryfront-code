@@ -14,6 +14,7 @@ type ChatWithSidebarPassthroughProps = Omit<
 >;
 type TabChangeHandler = NonNullable<ChatProps["onTabChange"]>;
 
+/** Public API contract for chat with sidebar chat controller. */
 export interface ChatWithSidebarChatController {
   messages: ChatProps["messages"];
   input: ChatProps["input"];
@@ -40,6 +41,7 @@ interface ChatWithSidebarSidebarBaseConfig {
   visible?: boolean;
 }
 
+/** Configuration used by chat with sidebar sidebar. */
 export type ChatWithSidebarSidebarConfig =
   | (ChatWithSidebarSidebarBaseConfig & {
     open: boolean;
@@ -50,10 +52,12 @@ export type ChatWithSidebarSidebarConfig =
     onToggle?: () => void;
   });
 
+/** Configuration used by chat with sidebar model. */
 export interface ChatWithSidebarModelConfig {
   options?: ChatProps["models"];
 }
 
+/** Configuration used by chat with sidebar attachment. */
 export interface ChatWithSidebarAttachmentConfig {
   accept?: ChatProps["attachAccept"];
   items?: ChatProps["attachments"];
@@ -64,6 +68,7 @@ export interface ChatWithSidebarAttachmentConfig {
   onRemoveUpload?: ChatProps["onRemoveUpload"];
 }
 
+/** Configuration used by chat with sidebar quick actions. */
 export interface ChatWithSidebarQuickActionsConfig {
   suggestions?: ChatProps["suggestions"];
   onSuggestionClick?: ChatProps["onSuggestionClick"];
@@ -71,6 +76,7 @@ export interface ChatWithSidebarQuickActionsConfig {
   onAction?: ChatProps["onQuickAction"];
 }
 
+/** Configuration used by chat with sidebar message. */
 export interface ChatWithSidebarMessageConfig {
   render?: ChatProps["renderMessage"];
   renderTool?: ChatProps["renderTool"];
@@ -78,6 +84,7 @@ export interface ChatWithSidebarMessageConfig {
   onSourceClick?: ChatProps["onSourceClick"];
 }
 
+/** Configuration used by chat with sidebar feature. */
 export interface ChatWithSidebarFeatureConfig {
   steps?: ChatProps["showSteps"];
   tabs?: ChatProps["showTabs"];
@@ -87,6 +94,7 @@ export interface ChatWithSidebarFeatureConfig {
   messageActions?: ChatProps["showMessageActions"];
 }
 
+/** Configuration used by chat with sidebar tabs. */
 export type ChatWithSidebarTabsConfig =
   | {
     active: ChatProps["activeTab"];
@@ -97,11 +105,13 @@ export type ChatWithSidebarTabsConfig =
     onChange?: TabChangeHandler;
   };
 
+/** Configuration used by chat with sidebar voice. */
 export interface ChatWithSidebarVoiceConfig {
   enabled?: ChatProps["enableVoice"];
   onVoice?: ChatProps["onVoice"];
 }
 
+/** Props accepted by chat with sidebar grouped. */
 export interface ChatWithSidebarGroupedProps {
   chat: ChatWithSidebarChatController;
   sidebar?: ChatWithSidebarSidebarConfig;
@@ -120,8 +130,10 @@ export interface ChatWithSidebarGroupedProps {
   children?: ChatProps["children"];
 }
 
+/** Props accepted by chat with sidebar. */
 export type ChatWithSidebarProps = ChatWithSidebarGroupedProps;
 
+/** Render chat with sidebar. */
 export const ChatWithSidebar = React.forwardRef<HTMLDivElement, ChatWithSidebarProps>(
   function ChatWithSidebar(
     {

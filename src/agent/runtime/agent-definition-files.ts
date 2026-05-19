@@ -8,6 +8,7 @@ import {
   type RuntimeAgentMarkdownDefinition,
 } from "./agent-definition.ts";
 
+/** Input payload for resolve runtime agent definitions dir. */
 export type ResolveRuntimeAgentDefinitionsDirInput = {
   baseDir: string;
   id: string;
@@ -18,6 +19,7 @@ export type ListRuntimeAgentMarkdownDefinitionIdsInput = {
   baseDir: string;
 };
 
+/** Input payload for load runtime agent markdown definition from file. */
 export type LoadRuntimeAgentMarkdownDefinitionFromFileInput = {
   agentsDir: string;
   id: string;
@@ -36,6 +38,7 @@ const runtimeAgentDefinitionFileNameSchema = lazySchema(
   defineSchema<string>(runtimeAgentDefinitionFileName),
 );
 
+/** Zod schema for resolve runtime agent definitions dir input. */
 export const resolveRuntimeAgentDefinitionsDirInputSchema = lazySchema(
   defineSchema<ResolveRuntimeAgentDefinitionsDirInput>((v) =>
     v.object({
@@ -54,6 +57,7 @@ export const listRuntimeAgentMarkdownDefinitionIdsInputSchema = lazySchema(
   ),
 );
 
+/** Zod schema for load runtime agent markdown definition from file input. */
 export const loadRuntimeAgentMarkdownDefinitionFromFileInputSchema = lazySchema(
   defineSchema<LoadRuntimeAgentMarkdownDefinitionFromFileInput>((v) =>
     v.object({
@@ -88,6 +92,7 @@ function getRuntimeAgentDefinitionsDirCandidates(baseDir: string): string[] {
   return [...new Set(candidates)];
 }
 
+/** Resolves runtime agent definitions dir. */
 export function resolveRuntimeAgentDefinitionsDir(
   input: ResolveRuntimeAgentDefinitionsDirInput,
 ): string {
@@ -131,6 +136,7 @@ export function listRuntimeAgentMarkdownDefinitionIds(
   return [...ids].sort((left, right) => left.localeCompare(right));
 }
 
+/** Resolves runtime agent markdown definition file path. */
 export function resolveRuntimeAgentMarkdownDefinitionFilePath(
   input: LoadRuntimeAgentMarkdownDefinitionFromFileInput,
 ): string {
@@ -142,6 +148,7 @@ export function resolveRuntimeAgentMarkdownDefinitionFilePath(
   );
 }
 
+/** Loads runtime agent markdown definition from file. */
 export function loadRuntimeAgentMarkdownDefinitionFromFile(
   input: LoadRuntimeAgentMarkdownDefinitionFromFileInput,
 ): RuntimeAgentMarkdownDefinition {

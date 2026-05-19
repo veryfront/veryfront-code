@@ -11,6 +11,7 @@ import {
   type SandboxOptions,
 } from "./types.ts";
 
+/** Options accepted by lazy sandbox. */
 export interface LazySandboxOptions extends SandboxOptions {
   getProjectId?: () => string | null | undefined;
   startupTimeoutMs?: number;
@@ -50,6 +51,7 @@ const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
 ]);
 const VERYFRONT_SANDBOX_PUBLIC_HOST_PATTERN = /^([a-z0-9-]+)\.sandbox\.veryfront\.[a-z0-9.-]+$/i;
 
+/** Resolves default sandbox runtime endpoint. */
 export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }): string {
   if (!getHostEnv("KUBERNETES_SERVICE_HOST")) {
     return input.endpoint;

@@ -12,15 +12,18 @@ function readScale(): number {
   return parsed;
 }
 
+/** Return test time scale. */
 export function getTestTimeScale(): number {
   return readScale();
 }
 
+/** Scale a duration for the current test runtime. */
 export function scaleMs(ms: number, minMs = 1): number {
   return Math.max(minMs, Math.round(ms * readScale()));
 }
 
 // no cleanup needed: one-shot
+/** Wait for a test-scaled duration. */
 export function testDelay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, scaleMs(ms)));
 }

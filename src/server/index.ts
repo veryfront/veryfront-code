@@ -98,6 +98,7 @@ interface BaseServerOptions {
   requestInterceptor?: (req: Request) => Request | Promise<Request>;
 }
 
+/** Options accepted by start dev mode. */
 export interface StartDevModeOptions extends BaseServerOptions {
   mode?: "development";
   moduleServerPort?: number;
@@ -106,6 +107,7 @@ export interface StartDevModeOptions extends BaseServerOptions {
   fileWatcherDebounceMs?: number;
 }
 
+/** Options accepted by start production mode. */
 export interface StartProductionModeOptions extends BaseServerOptions {
   mode?: "production";
   /** When true, expose additional debug logging. */
@@ -189,6 +191,7 @@ function toNativeResponse(res: Response): Response {
   });
 }
 
+/** Create a Veryfront request handler for development or production. */
 export async function createHandler(
   options: { projectDir?: string; mode?: "development" | "production"; port?: number } = {},
 ): Promise<VeryfrontHandler> {

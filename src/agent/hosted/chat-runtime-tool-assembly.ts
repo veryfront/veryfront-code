@@ -29,6 +29,7 @@ import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 
+/** Context for hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContext & {
   authToken: string;
   projectId?: string | null;
@@ -39,8 +40,10 @@ export type HostedChatRuntimeToolAssemblyContext = DefaultResearchArtifactContex
   userId?: string | null;
 };
 
+/** Public API contract for hosted chat runtime allowed tool names. */
 export type HostedChatRuntimeAllowedToolNames = readonly string[] | ReadonlySet<string> | null;
 
+/** Result returned from hosted chat runtime tool assembly. */
 export type HostedChatRuntimeToolAssemblyResult = {
   runtimeTools: ToolSet;
   remoteToolSources: RemoteToolSource[];
@@ -51,6 +54,7 @@ export type HostedChatRuntimeToolAssemblyResult = {
   systemInstructions: string;
 };
 
+/** Input payload for prepare hosted chat runtime tool assembly. */
 export type PrepareHostedChatRuntimeToolAssemblyInput<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 > = {
@@ -93,6 +97,7 @@ function activeBranchId(taskContext: HostedChatRuntimeToolAssemblyContext): stri
   return taskContext.branchId ?? null;
 }
 
+/** Filter hosted chat runtime local tools. */
 export function filterHostedChatRuntimeLocalTools(input: {
   tools: HostToolSet;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
@@ -105,6 +110,7 @@ export function filterHostedChatRuntimeLocalTools(input: {
   return Object.fromEntries(entries.sort(([left], [right]) => left.localeCompare(right)));
 }
 
+/** Prepare hosted chat runtime tool assembly. */
 export async function prepareHostedChatRuntimeToolAssembly<
   TTraceAttributes extends HostToolTraceAttributes = HostToolTraceAttributes,
 >(

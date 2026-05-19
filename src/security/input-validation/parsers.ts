@@ -7,6 +7,7 @@ import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./
 // compatibility (engines.node >= 18.0.0).
 import { File } from "node:buffer";
 
+/** Parse and validate a JSON request body. */
 export async function parseJsonBody<T>(
   request: Request,
   schema: Schema<T>,
@@ -42,6 +43,7 @@ export async function parseJsonBody<T>(
   });
 }
 
+/** Parse and validate multipart or URL-encoded form data. */
 export async function parseFormData<T>(
   request: Request,
   schema: Schema<T>,
@@ -74,6 +76,7 @@ export async function parseFormData<T>(
   });
 }
 
+/** Parse and validate query parameters from a request URL. */
 export function parseQueryParams<T>(request: Request, schema: Schema<T>): T {
   const url = new URL(request.url);
   const params: Record<string, unknown> = {};

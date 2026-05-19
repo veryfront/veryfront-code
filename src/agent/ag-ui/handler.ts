@@ -303,6 +303,7 @@ async function createAgUiInjectedToolsStreamResponse(
   });
 }
 
+/** Options accepted by AG-UI handler. */
 export interface AgUiHandlerOptions {
   context?:
     | Record<string, unknown>
@@ -311,6 +312,7 @@ export interface AgUiHandlerOptions {
   beforeStream?: AgUiBeforeStream;
 }
 
+/** Public API contract for AG-UI handler config with agent. */
 export interface AgUiHandlerConfigWithAgent extends AgUiHandlerOptions {
   agent: Agent;
 }
@@ -323,14 +325,17 @@ function mergeConfig(
   return { ...options, ...config };
 }
 
+/** Handler for create AG-UI. */
 export function createAgUiHandler(
   agentId: string,
   options?: AgUiHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response>;
+/** Handler for create AG-UI. */
 export function createAgUiHandler(
   config: AgUiHandlerConfigWithAgent,
   options?: AgUiHandlerOptions,
 ): (requestOrCtx: unknown) => Promise<Response>;
+/** Handler for create AG-UI. */
 export function createAgUiHandler(
   agentIdOrConfig: string | AgUiHandlerConfigWithAgent,
   options?: AgUiHandlerOptions,

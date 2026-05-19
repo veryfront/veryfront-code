@@ -1,15 +1,18 @@
 import type { ChatUiMessage, FileUIPartWithUpload } from "../../chat/types.ts";
 
+/** Input payload for runtime file URL resolver. */
 export type RuntimeFileUrlResolverInput = {
   uploadId: string;
   part: FileUIPartWithUpload;
   message: ChatUiMessage;
 };
 
+/** Public API contract for runtime file URL resolver. */
 export type RuntimeFileUrlResolver = (
   input: RuntimeFileUrlResolverInput,
 ) => Promise<string | undefined>;
 
+/** Resolves runtime message file urls. */
 export async function resolveRuntimeMessageFileUrls(
   messages: readonly ChatUiMessage[],
   resolveFileUrl: RuntimeFileUrlResolver,

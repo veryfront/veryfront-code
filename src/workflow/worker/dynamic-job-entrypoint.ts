@@ -235,6 +235,7 @@ export interface CreateDynamicJobEntrypointOptions {
   debug?: boolean;
 }
 
+/** Create dynamic job entrypoint. */
 export async function createDynamicJobEntrypoint(
   options: CreateDynamicJobEntrypointOptions,
 ): Promise<() => Promise<number>> {

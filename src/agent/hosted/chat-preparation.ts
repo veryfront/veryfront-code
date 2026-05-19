@@ -28,12 +28,14 @@ import {
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
 
+/** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
   effectiveMessages: ChatUiMessage[];
   effectiveValidatedContext: ChatRequestContext;
   parentMessageId: string | undefined;
 };
 
+/** Options accepted by prepare hosted chat runtime messages. */
 export type PrepareHostedChatRuntimeMessagesOptions =
   & Pick<
     PrepareAgentRuntimeMessagesFromUiMessagesOptions,
@@ -45,17 +47,20 @@ export type PrepareHostedChatRuntimeMessagesOptions =
     projectId?: string | null;
   };
 
+/** Context for hosted chat runtime preparation root run. */
 export type HostedChatRuntimePreparationRootRunContext = {
   effectiveParentRunId?: string;
   effectiveParentMessageId?: string;
   publishParentRunEvents?: (events: ConversationRunEvent[]) => Promise<void>;
 };
 
+/** Public API contract for hosted chat runtime preparation steering. */
 export type HostedChatRuntimePreparationSteering = {
   instructions: string;
   skills: RuntimeSkillDefinition[];
 };
 
+/** Input payload for hosted chat runtime instructions. */
 export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
   agentConfig: TRuntimeAgentDefinition;
   projectId: string | null;
@@ -65,6 +70,7 @@ export type HostedChatRuntimeInstructionsInput<TRuntimeAgentDefinition> = {
   skills: RuntimeSkillDefinition[];
 };
 
+/** Input payload for hosted chat runtime creation preparation. */
 export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> = {
   request: ParsedHostedChatRequest;
   agentConfig: TRuntimeAgentDefinition & {
@@ -92,6 +98,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
   ) => string | ChatSystemMessage[];
 };
 
+/** Result returned from hosted chat runtime creation preparation. */
 export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> = {
   creationOptions: HostedChatRuntimeCreationOptions<
     TRuntimeAgentDefinition,
@@ -103,6 +110,7 @@ export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> 
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 };
 
+/** Options accepted by hosted chat execution preparation root run. */
 export type HostedChatExecutionPreparationRootRunOptions = Pick<
   PrepareHostedConversationRootRunContextInput,
   | "implementationKind"
@@ -112,6 +120,7 @@ export type HostedChatExecutionPreparationRootRunOptions = Pick<
   | "instrumentation"
 >;
 
+/** Input payload for hosted chat execution preparation. */
 export type HostedChatExecutionPreparationInput<
   TRuntimeAgentDefinition extends {
     id: string;
@@ -146,6 +155,7 @@ export type HostedChatExecutionPreparationInput<
   ) => Promise<TRuntimeResult>;
 };
 
+/** Result returned from hosted chat execution preparation. */
 export type HostedChatExecutionPreparationResult<
   TRuntimeAgentDefinition,
   TRuntimeResult extends HostedChatRuntimeCreationResult,
@@ -159,6 +169,7 @@ export type HostedChatExecutionPreparationResult<
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 };
 
+/** Request payload for normalize parsed hosted chat. */
 export function normalizeParsedHostedChatRequest(
   request: ParsedHostedChatRequest,
 ): NormalizedHostedChatRequest {
@@ -193,6 +204,7 @@ function buildHostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>(input: {
   };
 }
 
+/** Options accepted by prepare hosted chat runtime creation. */
 export async function prepareHostedChatRuntimeCreationOptions<
   TRuntimeAgentDefinition,
 >(
@@ -262,6 +274,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
   };
 }
 
+/** Prepare hosted chat execution. */
 export async function prepareHostedChatExecution<
   TRuntimeAgentDefinition extends {
     id: string;
@@ -330,6 +343,7 @@ export async function prepareHostedChatExecution<
   };
 }
 
+/** Prepare hosted chat runtime messages. */
 export async function prepareHostedChatRuntimeMessages(
   messages: readonly ChatUiMessage[],
   options: PrepareHostedChatRuntimeMessagesOptions = {},

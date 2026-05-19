@@ -5,6 +5,7 @@ import {
 } from "./durable.ts";
 import type { HostedLifecycleTerminalState } from "../hosted/lifecycle.ts";
 
+/** Input payload for conversation hosted terminal state. */
 export interface ConversationHostedTerminalStateInput {
   status: HostedLifecycleTerminalState["status"];
   metadata?: HostedLifecycleTerminalState["metadata"];
@@ -12,8 +13,11 @@ export interface ConversationHostedTerminalStateInput {
   terminalErrorMessage?: string | null;
 }
 
+/** Shared conversation hosted stream error terminal error code value. */
 export const CONVERSATION_HOSTED_STREAM_ERROR_TERMINAL_ERROR_CODE = "STREAM_ERROR";
+/** Shared conversation hosted aborted terminal error code value. */
 export const CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_CODE = "ABORTED";
+/** Shared conversation hosted incomplete tool calls terminal error code value. */
 export const CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_CODE =
   "INCOMPLETE_TOOL_CALLS";
 
@@ -21,6 +25,7 @@ const DEFAULT_CONVERSATION_HOSTED_ABORTED_TERMINAL_ERROR_MESSAGE = "Chat stream 
 const DEFAULT_CONVERSATION_HOSTED_INCOMPLETE_TOOL_CALLS_TERMINAL_ERROR_MESSAGE =
   "Assistant completed before tool execution completed";
 
+/** Input payload for resolve conversation hosted terminal state. */
 export interface ResolveConversationHostedTerminalStateInput {
   isAborted: boolean;
   hasIncompleteToolParts: boolean;
@@ -28,11 +33,13 @@ export interface ResolveConversationHostedTerminalStateInput {
   incompleteToolCallsTerminalErrorMessage?: string;
 }
 
+/** Public API contract for conversation hosted terminal state resolution. */
 export type ConversationHostedTerminalStateResolution = Pick<
   ConversationHostedTerminalStateInput,
   "status" | "terminalErrorCode" | "terminalErrorMessage"
 >;
 
+/** State for resolve conversation hosted terminal. */
 export function resolveConversationHostedTerminalState(
   input: ResolveConversationHostedTerminalStateInput,
 ): ConversationHostedTerminalStateResolution {
@@ -57,6 +64,7 @@ export function resolveConversationHostedTerminalState(
   return { status: "completed" };
 }
 
+/** State for resolve conversation hosted stream error. */
 export function resolveConversationHostedStreamErrorState(
   error: unknown,
 ): ConversationHostedTerminalStateResolution {
@@ -67,6 +75,7 @@ export function resolveConversationHostedStreamErrorState(
   };
 }
 
+/** Public API contract for conversation hosted terminal runtime adapter. */
 export interface ConversationHostedTerminalRuntimeAdapter {
   terminal: Pick<
     ConversationHostedTerminalAdapter,
@@ -74,6 +83,7 @@ export interface ConversationHostedTerminalRuntimeAdapter {
   >;
 }
 
+/** State for dispatch conversation hosted terminal. */
 export async function dispatchConversationHostedTerminalState(
   adapter: ConversationHostedTerminalRuntimeAdapter,
   state: ConversationHostedTerminalStateInput,
@@ -88,6 +98,7 @@ export async function dispatchConversationHostedTerminalState(
   return terminalState;
 }
 
+/** State for dispatch conversation hosted stream error. */
 export async function dispatchConversationHostedStreamErrorState(
   adapter: ConversationHostedTerminalRuntimeAdapter,
   error: unknown,
@@ -98,6 +109,7 @@ export async function dispatchConversationHostedStreamErrorState(
   );
 }
 
+/** Options accepted by create conversation hosted terminal adapter. */
 export interface CreateConversationHostedTerminalAdapterOptions {
   authToken: string;
   apiUrl: string;
@@ -107,6 +119,7 @@ export interface CreateConversationHostedTerminalAdapterOptions {
   onTerminalState?: (terminalState: HostedLifecycleTerminalState) => Promise<void> | void;
 }
 
+/** Public API contract for conversation hosted terminal adapter. */
 export interface ConversationHostedTerminalAdapter {
   toTerminalState: (state: ConversationHostedTerminalStateInput) => HostedLifecycleTerminalState;
   finalizeRun: (terminalState: HostedLifecycleTerminalState) => Promise<void>;
@@ -150,6 +163,7 @@ function buildConversationAgentRunUsage(
   };
 }
 
+/** State for to conversation hosted terminal. */
 export function toConversationHostedTerminalState(input: {
   fallbackModelId: string;
   state: ConversationHostedTerminalStateInput;
@@ -176,6 +190,7 @@ export function toConversationHostedTerminalState(input: {
   };
 }
 
+/** Create conversation hosted terminal adapter. */
 export function createConversationHostedTerminalAdapter(
   options: CreateConversationHostedTerminalAdapterOptions,
 ): ConversationHostedTerminalAdapter {

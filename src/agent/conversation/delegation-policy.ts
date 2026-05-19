@@ -3,31 +3,45 @@ import { buildRootOwnedChildRunResultHint } from "../child-run/result-summary.ts
 import { isRecord } from "../../chat/conversation.ts";
 import type { ChatSystemMessage } from "../../chat/types.ts";
 
+/** Shared keep root assistant visible owner value. */
 export const KEEP_ROOT_ASSISTANT_VISIBLE_OWNER = "Keep the root assistant visibly owning the work.";
+/** Shared delegate only when materially helpful value. */
 export const DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL =
   "Delegate only when isolation, parallelism, or a different tool/model budget materially helps.";
+/** Shared no delegation narration unless asked value. */
 export const NO_DELEGATION_NARRATION_UNLESS_ASKED =
   "Do not mention child agents, delegation, or tool/process narration unless the user explicitly asks about them.";
+/** Shared synthesize delegated findings in root voice value. */
 export const SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE =
   "After delegated work returns, synthesize the findings in the root assistant voice.";
 
+/** Shared load skill continue same turn value. */
 export const LOAD_SKILL_CONTINUE_SAME_TURN = "Continue the same turn after calling it.";
+/** Shared load skill continue same turn now value. */
 export const LOAD_SKILL_CONTINUE_SAME_TURN_NOW = "Continue the same turn now.";
+/** Shared load skill root ownership value. */
 export const LOAD_SKILL_ROOT_OWNERSHIP = KEEP_ROOT_ASSISTANT_VISIBLE_OWNER;
+/** Shared load skill use allowed tools value. */
 export const LOAD_SKILL_USE_ALLOWED_TOOLS =
   "For multi-step or isolated work, call invoke_agent; otherwise keep working directly with the allowed tools.";
+/** Shared load skill delegation threshold value. */
 export const LOAD_SKILL_DELEGATION_THRESHOLD = DELEGATE_ONLY_WHEN_MATERIALLY_HELPFUL;
+/** Shared load skill override forwarding value. */
 export const LOAD_SKILL_OVERRIDE_FORWARDING =
   "Pass through any returned model, thinking, or maxSteps overrides to invoke_agent when delegating.";
+/** Shared load skill tool intersection value. */
 export const LOAD_SKILL_TOOL_INTERSECTION =
   "If the current run exposes fewer tools than the loaded skill metadata, use only the tools that are actually available right now.";
 
+/** Builds root owned delegated findings instruction. */
 export function buildRootOwnedDelegatedFindingsInstruction(): string {
   return `Use these delegated findings directly in your next assistant response. ${KEEP_ROOT_ASSISTANT_VISIBLE_OWNER} ${NO_DELEGATION_NARRATION_UNLESS_ASKED}`;
 }
 
+/** Shared root owned child result instruction value. */
 export const ROOT_OWNED_CHILD_RESULT_INSTRUCTION = buildRootOwnedDelegatedFindingsInstruction();
 
+/** Builds root owned child result hint. */
 export function buildRootOwnedChildResultHint(
   text: string,
 ): { instruction: string; suggestedText: string } {
@@ -37,11 +51,13 @@ export function buildRootOwnedChildResultHint(
   });
 }
 
+/** Public API contract for root owned child result hint. */
 export interface RootOwnedChildResultHint {
   instruction: string;
   suggestedText: string;
 }
 
+/** Public API contract for root owned child result hinted. */
 export interface RootOwnedChildResultHinted {
   rootResponseHint?: RootOwnedChildResultHint;
 }
@@ -68,6 +84,7 @@ function getRootOwnedChildResultText(result: unknown): string | null {
     : null;
 }
 
+/** Applies root owned child result hint. */
 export function withRootOwnedChildResultHint<T extends object>(
   result: T,
 ): T & RootOwnedChildResultHinted {
@@ -82,29 +99,37 @@ export function withRootOwnedChildResultHint<T extends object>(
   };
 }
 
+/** Builds invoke agent followup instruction. */
 export function buildInvokeAgentFollowupInstruction(): string {
   return `${SYNTHESIZE_DELEGATED_FINDINGS_IN_ROOT_VOICE} ${NO_DELEGATION_NARRATION_UNLESS_ASKED}`;
 }
 
+/** Builds starter intent root ownership reminder. */
 export function buildStarterIntentRootOwnershipReminder(): string {
   return `CRITICAL: For first-turn /plan and /research starter requests, keep the root assistant visibly owning the work, continue in the same turn after load_skill, and delegate only when isolation, parallelism, or a different tool/model budget materially helps.`;
 }
 
+/** Message shape for build starter intent root ownership block. */
 export function buildStarterIntentRootOwnershipBlockMessage(): string {
   return `Keep the first /plan or /research turn root-owned. Continue in the main thread after load_skill, explain the approach first, and delegate only when isolation, parallelism, or a different tool/model budget materially helps.`;
 }
 
+/** Shared load skill continuation reminder value. */
 export const LOAD_SKILL_CONTINUATION_REMINDER =
   `CRITICAL: load_skill only loaded instructions. ${LOAD_SKILL_CONTINUE_SAME_TURN_NOW} ${LOAD_SKILL_ROOT_OWNERSHIP} Use the loaded skill guidance to proceed. ${LOAD_SKILL_DELEGATION_THRESHOLD} Do not stop immediately after load_skill.`;
+/** Shared slash command artifact reminder value. */
 export const SLASH_COMMAND_ARTIFACT_REMINDER =
   `CRITICAL: This slash-command task names an exact artifact path. ${LOAD_SKILL_ROOT_OWNERSHIP} Treat that path as a required deliverable, and continue in the same turn. Delegate only when isolation materially helps.`;
 const RICH_TEXT_COMMAND_PATTERN = /<span\s+data-command="([^"]+)">\s*\/([a-z0-9_-]+)\s*<\/span>/gi;
 const STARTER_INTENT_PATTERN = /^\s*\/([a-z0-9_-]+)\b/i;
 const CONVERSATION_FIRST_STARTER_INTENT_IDS = new Set(["plan", "research"]);
+/** Shared first turn starter intent root ownership reminder value. */
 export const FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER =
   buildStarterIntentRootOwnershipReminder();
+/** Shared first turn starter intent root ownership context key value. */
 export const FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_CONTEXT_KEY =
   "__vfStarterIntentRootOwnership";
+/** Shared first turn starter intent root ownership block message value. */
 export const FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_BLOCK_MESSAGE =
   buildStarterIntentRootOwnershipBlockMessage();
 
@@ -163,6 +188,7 @@ function hasToolCallOrResult(messages: readonly unknown[], toolName: string): bo
   });
 }
 
+/** Extract starter intent ID. */
 export function extractStarterIntentId(messages: readonly unknown[]): string | null {
   const latestUserText = extractLatestUserText(messages);
   if (!latestUserText) {
@@ -180,6 +206,7 @@ export function extractStarterIntentId(messages: readonly unknown[]): string | n
   return commandId ? commandId.toLowerCase() : null;
 }
 
+/** Evaluate starter intent turn policy helper. */
 export function evaluateStarterIntentTurnPolicy(
   input: StarterIntentTurnPolicyInput,
 ): StarterIntentTurnPolicy {
@@ -197,6 +224,7 @@ export function evaluateStarterIntentTurnPolicy(
   };
 }
 
+/** Add first turn starter intent root ownership reminder helper. */
 export function addFirstTurnStarterIntentRootOwnershipReminder(system: string): string {
   if (system.includes(FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER)) {
     return system;
@@ -205,10 +233,12 @@ export function addFirstTurnStarterIntentRootOwnershipReminder(system: string): 
   return `${system}\n\n${FIRST_TURN_STARTER_INTENT_ROOT_OWNERSHIP_REMINDER}`;
 }
 
+/** Check whether starter intent root ownership is required. */
 export function isStarterIntentRootOwnershipRequired(value: unknown): boolean {
   return value === true;
 }
 
+/** Should reinforce load skill continuation helper. */
 export function shouldReinforceLoadSkillContinuation(messages: readonly unknown[]): boolean {
   const lastMessage = messages.at(-1);
   const previousMessage = messages.at(-2);
@@ -258,6 +288,7 @@ export function shouldReinforceLoadSkillContinuation(messages: readonly unknown[
   return loadSkillCalls.every((part) => completedToolCallIds.has(part.toolCallId));
 }
 
+/** Add load skill continuation reminder helper. */
 export function addLoadSkillContinuationReminder(
   instructions: string | ChatSystemMessage[],
 ): string | ChatSystemMessage[] {
@@ -278,6 +309,7 @@ export function addLoadSkillContinuationReminder(
   ];
 }
 
+/** Add slash command artifact reminder helper. */
 export function addSlashCommandArtifactReminder(
   instructions: string | ChatSystemMessage[],
 ): string | ChatSystemMessage[] {

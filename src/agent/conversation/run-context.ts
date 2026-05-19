@@ -1,5 +1,6 @@
 import type { ConversationRunProjection } from "./durable.ts";
 
+/** Context for conversation run. */
 export interface ConversationRunContext {
   run: ConversationRunProjection | null;
   effectiveParentRunId?: string;
@@ -7,6 +8,7 @@ export interface ConversationRunContext {
   publishParentRunEvents?: (events: unknown[]) => Promise<void> | void;
 }
 
+/** Context for create conversation run. */
 export function createConversationRunContext(input: {
   run: ConversationRunProjection | null;
   parentRunId?: string;

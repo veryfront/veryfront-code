@@ -334,59 +334,94 @@ export const getPaginatedCronJobsResponseSchema = defineSchema((v) =>
 );
 
 // Backward-compat aliases
+/** Zod schema for job status. */
 export const JobStatusSchema = lazySchema(getJobStatusSchema);
+/** Zod schema for cron job status. */
 export const CronJobStatusSchema = lazySchema(getCronJobStatusSchema);
+/** Zod schema for job kind. */
 export const JobKindSchema = lazySchema(getJobKindSchema);
+/** Zod schema for reserved job target family. */
 export const ReservedJobTargetFamilySchema = lazySchema(getReservedJobTargetFamilySchema);
+/** Zod schema for page info. */
 export const PageInfoSchema = lazySchema(getPageInfoSchema);
+/** Zod schema for knowledge ingest file result. */
 export const KnowledgeIngestFileResultSchema = lazySchema(getKnowledgeIngestFileResultSchema);
+/** Zod schema for knowledge ingest skipped file result. */
 export const KnowledgeIngestSkippedFileResultSchema = lazySchema(
   getKnowledgeIngestSkippedFileResultSchema,
 );
+/** Zod schema for knowledge ingest failed file result. */
 export const KnowledgeIngestFailedFileResultSchema = lazySchema(
   getKnowledgeIngestFailedFileResultSchema,
 );
+/** Zod schema for knowledge ingest job result metadata. */
 export const KnowledgeIngestJobResultMetadataSchema = lazySchema(
   getKnowledgeIngestJobResultMetadataSchema,
 );
+/** Zod schema for knowledge ingest job result counts. */
 export const KnowledgeIngestJobResultCountsSchema = lazySchema(
   getKnowledgeIngestJobResultCountsSchema,
 );
+/** Zod schema for knowledge ingest job result. */
 export const KnowledgeIngestJobResultSchema = lazySchema(getKnowledgeIngestJobResultSchema);
+/** Zod schema for job result. */
 export const JobResultSchema = lazySchema(getJobResultSchema);
+/** Zod schema for job result summary. */
 export const JobResultSummarySchema = lazySchema(getJobResultSummarySchema);
+/** Zod schema for job. */
 export const JobSchema = lazySchema(getJobSchema);
+/** Zod schema for job list item. */
 export const JobListItemSchema = lazySchema(getJobListItemSchema);
+/** Zod schema for paginated jobs response. */
 export const PaginatedJobsResponseSchema = lazySchema(getPaginatedJobsResponseSchema);
+/** Zod schema for job event. */
 export const JobEventSchema = lazySchema(getJobEventSchema);
+/** Zod schema for job events response. */
 export const JobEventsResponseSchema = lazySchema(getJobEventsResponseSchema);
+/** Zod schema for job logs response. */
 export const JobLogsResponseSchema = lazySchema(getJobLogsResponseSchema);
+/** Zod schema for knowledge ingest batch source. */
 export const KnowledgeIngestBatchSourceSchema = lazySchema(getKnowledgeIngestBatchSourceSchema);
+/** Zod schema for knowledge ingest batch source with message. */
 export const KnowledgeIngestBatchSourceWithMessageSchema = lazySchema(
   getKnowledgeIngestBatchSourceWithMessageSchema,
 );
+/** Zod schema for job batch status counts. */
 export const JobBatchStatusCountsSchema = lazySchema(getJobBatchStatusCountsSchema);
+/** Zod schema for job batch result. */
 export const JobBatchResultSchema = lazySchema(getJobBatchResultSchema);
+/** Zod schema for job batch. */
 export const JobBatchSchema = lazySchema(getJobBatchSchema);
+/** Zod schema for job target definition. */
 export const JobTargetDefinitionSchema = lazySchema(getJobTargetDefinitionSchema);
+/** Zod schema for job target definitions response. */
 export const JobTargetDefinitionsResponseSchema = lazySchema(getJobTargetDefinitionsResponseSchema);
+/** Zod schema for cron job. */
 export const CronJobSchema = lazySchema(getCronJobSchema);
+/** Zod schema for paginated cron jobs response. */
 export const PaginatedCronJobsResponseSchema = lazySchema(getPaginatedCronJobsResponseSchema);
 
 // Inferred types
+/** Public API contract for job status. */
 export type JobStatus = InferSchema<ReturnType<typeof getJobStatusSchema>>;
+/** Public API contract for cron job status. */
 export type CronJobStatus = InferSchema<ReturnType<typeof getCronJobStatusSchema>>;
+/** Public API contract for job kind. */
 export type JobKind = InferSchema<ReturnType<typeof getJobKindSchema>>;
+/** Public API contract for reserved job target family. */
 export type ReservedJobTargetFamily = InferSchema<
   ReturnType<typeof getReservedJobTargetFamilySchema>
 >;
 
+/** Result returned from knowledge ingest file. */
 export type KnowledgeIngestFileResult = InferSchema<
   ReturnType<typeof getKnowledgeIngestFileResultSchema>
 >;
+/** Result returned from knowledge ingest skipped file. */
 export type KnowledgeIngestSkippedFileResult = InferSchema<
   ReturnType<typeof getKnowledgeIngestSkippedFileResultSchema>
 >;
+/** Result returned from knowledge ingest failed file. */
 export type KnowledgeIngestFailedFileResult = InferSchema<
   ReturnType<typeof getKnowledgeIngestFailedFileResultSchema>
 >;
@@ -396,34 +431,52 @@ export type KnowledgeIngestJobResultMetadata = InferSchema<
 export type KnowledgeIngestJobResultCounts = InferSchema<
   ReturnType<typeof getKnowledgeIngestJobResultCountsSchema>
 >;
+/** Result returned from knowledge ingest job. */
 export type KnowledgeIngestJobResult = InferSchema<
   ReturnType<typeof getKnowledgeIngestJobResultSchema>
 >;
+/** Result returned from job. */
 export type JobResult = InferSchema<ReturnType<typeof getJobResultSchema>>;
+/** Public API contract for job result summary. */
 export type JobResultSummary = InferSchema<ReturnType<typeof getJobResultSummarySchema>>;
+/** Public API contract for job. */
 export type Job = InferSchema<ReturnType<typeof getJobSchema>>;
+/** Public API contract for job list item. */
 export type JobListItem = InferSchema<ReturnType<typeof getJobListItemSchema>>;
+/** Response payload for paginated jobs. */
 export type PaginatedJobsResponse = InferSchema<ReturnType<typeof getPaginatedJobsResponseSchema>>;
+/** Event emitted for job. */
 export type JobEvent = InferSchema<ReturnType<typeof getJobEventSchema>>;
+/** Response payload for job events. */
 export type JobEventsResponse = InferSchema<ReturnType<typeof getJobEventsResponseSchema>>;
+/** Response payload for job logs. */
 export type JobLogsResponse = InferSchema<ReturnType<typeof getJobLogsResponseSchema>>;
 
+/** Public API contract for knowledge ingest batch source. */
 export type KnowledgeIngestBatchSource = InferSchema<
   ReturnType<typeof getKnowledgeIngestBatchSourceSchema>
 >;
+/** Message shape for knowledge ingest batch source with. */
 export type KnowledgeIngestBatchSourceWithMessage = InferSchema<
   ReturnType<typeof getKnowledgeIngestBatchSourceWithMessageSchema>
 >;
+/** Public API contract for job batch status counts. */
 export type JobBatchStatusCounts = InferSchema<ReturnType<typeof getJobBatchStatusCountsSchema>>;
+/** Result returned from job batch. */
 export type JobBatchResult = InferSchema<ReturnType<typeof getJobBatchResultSchema>>;
+/** Public API contract for job batch. */
 export type JobBatch = InferSchema<ReturnType<typeof getJobBatchSchema>>;
 
+/** Definition for job target. */
 export type JobTargetDefinition = InferSchema<ReturnType<typeof getJobTargetDefinitionSchema>>;
+/** Response payload for job target definitions. */
 export type JobTargetDefinitionsResponse = InferSchema<
   ReturnType<typeof getJobTargetDefinitionsResponseSchema>
 >;
 
+/** Public API contract for cron job. */
 export type CronJob = InferSchema<ReturnType<typeof getCronJobSchema>>;
+/** Response payload for paginated cron jobs. */
 export type PaginatedCronJobsResponse = InferSchema<
   ReturnType<typeof getPaginatedCronJobsResponseSchema>
 >;

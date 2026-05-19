@@ -43,6 +43,7 @@ export function createAnthropicRequestHeaders(options: {
   return headers;
 }
 
+/** Create request init options for OpenAI-compatible providers. */
 export function createOpenAIRequestInit(options: {
   apiKey: string;
   extraHeaders?: HeadersInit;
@@ -61,6 +62,7 @@ export function createOpenAIRequestInit(options: {
   };
 }
 
+/** Create Anthropic request init. */
 export function createAnthropicRequestInit(options: {
   apiKey?: string;
   authToken?: string;
@@ -82,6 +84,7 @@ export function createAnthropicRequestInit(options: {
   };
 }
 
+/** Create Google request init. */
 export function createGoogleRequestInit(options: {
   apiKey: string;
   extraHeaders?: HeadersInit;

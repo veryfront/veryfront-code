@@ -3,6 +3,7 @@ import { MessageContent, MessageItem, MessageRole } from "../../primitives/index
 import type { ChatMessage, ChatMessagePart, ChatToolPart } from "#veryfront/agent/react";
 import { type ChatTheme, cn, defaultChatTheme, mergeThemes } from "./theme.ts";
 
+/** Props accepted by message. */
 export interface MessageProps {
   /** Message to display */
   message: ChatMessage;
@@ -41,7 +42,7 @@ function getTextFromParts(parts: ChatMessagePart[]): string {
 function isToolPart(part: ChatMessagePart): part is ChatToolPart {
   return part.type.startsWith("tool-") && "toolCallId" in part;
 }
-
+/** Render a standalone chat message. */
 export const Message = React.forwardRef<HTMLDivElement, MessageProps>(function Message(
   {
     message,
@@ -131,6 +132,7 @@ export const Message = React.forwardRef<HTMLDivElement, MessageProps>(function M
 
 Message.displayName = "Message";
 
+/** Props accepted by streaming message. */
 export interface StreamingMessageProps {
   /** Streaming message parts */
   parts: ChatMessagePart[];
@@ -145,6 +147,7 @@ export interface StreamingMessageProps {
   theme?: Partial<ChatTheme>;
 }
 
+/** Message shape for streaming. */
 export const StreamingMessage = React.forwardRef<HTMLDivElement, StreamingMessageProps>(
   function StreamingMessage({ parts, showCursor = true, className, theme: userTheme }, ref) {
     const theme = mergeThemes(defaultChatTheme, userTheme);

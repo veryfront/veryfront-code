@@ -84,6 +84,7 @@ export type ComponentFunction = (
 
 export type MDXComponents = Record<string, React.ComponentType<unknown>>;
 
+/** Parsed frontmatter values from an MDX page. */
 export interface MDXFrontmatter {
   title?: string;
   description?: string;
@@ -100,6 +101,7 @@ export interface MDXGlobals {
   [key: string]: unknown;
 }
 
+/** Runtime page context passed to page components. */
 export interface PageContext {
   slug: string;
   path: string;

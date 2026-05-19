@@ -155,6 +155,7 @@ class ReloadNotifierImpl {
   }
 }
 
+/** Render reload notifier. */
 export const ReloadNotifier = new ReloadNotifierImpl();
 
 function normalizeProjectInfo(project?: ReloadProjectInput): ReloadProjectInfo | undefined {

@@ -1,9 +1,12 @@
 import { serverLogger } from "#veryfront/utils";
 import { toNodeHandler } from "./node-handler.ts";
 
+/** Public API contract for veryfront service server fetch. */
 export type VeryfrontServiceServerFetch = (request: Request) => Response | Promise<Response>;
+/** Response payload for veryfront service server module. */
 export type VeryfrontServiceServerModuleResponse = Response | null | undefined;
 
+/** Public API contract for veryfront service server module. */
 export type VeryfrontServiceServerModule = {
   name: string;
   handle: (
@@ -13,6 +16,7 @@ export type VeryfrontServiceServerModule = {
   stop?: () => void | Promise<void>;
 };
 
+/** Public API contract for veryfront service server logger. */
 export type VeryfrontServiceServerLogger = {
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
   info?: (message: string, metadata?: Record<string, unknown>) => void;
@@ -20,6 +24,7 @@ export type VeryfrontServiceServerLogger = {
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Options accepted by create veryfront server. */
 export type CreateVeryfrontServerOptions = {
   modules: readonly VeryfrontServiceServerModule[];
   notFound?: (request: Request) => Response | Promise<Response>;
@@ -27,12 +32,14 @@ export type CreateVeryfrontServerOptions = {
   logger?: VeryfrontServiceServerLogger;
 };
 
+/** Public API contract for veryfront service server runtime. */
 export type VeryfrontServiceServerRuntime = {
   fetch: VeryfrontServiceServerFetch;
   setShuttingDown: () => void;
   stop: () => Promise<void>;
 };
 
+/** Options accepted by start node veryfront server. */
 export type StartNodeVeryfrontServerOptions = {
   runtime: VeryfrontServiceServerRuntime;
   port: number;
@@ -42,6 +49,7 @@ export type StartNodeVeryfrontServerOptions = {
   hardShutdownTimeoutMs?: number;
 };
 
+/** Options accepted by start veryfront server. */
 export type StartVeryfrontServerOptions = {
   runtime: VeryfrontServiceServerRuntime;
   port: number;
@@ -51,8 +59,10 @@ export type StartVeryfrontServerOptions = {
   hardShutdownTimeoutMs?: number;
 };
 
+/** Public API contract for veryfront service server runtime kind. */
 export type VeryfrontServiceServerRuntimeKind = "node" | "deno" | "bun";
 
+/** Public API contract for veryfront service server. */
 export type VeryfrontServiceServer = {
   ready: Promise<void>;
   stop: () => Promise<void>;
@@ -61,6 +71,7 @@ export type VeryfrontServiceServer = {
   runtime: VeryfrontServiceServerRuntimeKind;
 };
 
+/** Public API contract for node veryfront service server. */
 export type NodeVeryfrontServiceServer = {
   server: import("node:http").Server;
   ready: Promise<void>;
@@ -134,6 +145,7 @@ function defaultErrorResponse(
   return new Response("Internal Server Error", { status: 500 });
 }
 
+/** Create veryfront server. */
 export function createVeryfrontServer(
   options: CreateVeryfrontServerOptions,
 ): VeryfrontServiceServerRuntime {
@@ -523,6 +535,7 @@ async function startBunVeryfrontServer(
   };
 }
 
+/** Starts veryfront server. */
 export async function startVeryfrontServer(
   options: StartVeryfrontServerOptions,
 ): Promise<VeryfrontServiceServer | NodeVeryfrontServiceServer> {
@@ -542,6 +555,7 @@ export async function startVeryfrontServer(
   return await startNodeVeryfrontServer(options);
 }
 
+/** Starts node veryfront server. */
 export async function startNodeVeryfrontServer(
   options: StartNodeVeryfrontServerOptions,
 ): Promise<NodeVeryfrontServiceServer> {

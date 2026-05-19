@@ -1,11 +1,13 @@
 import { type AgentServiceConfigInput, parseAgentServiceConfig } from "../../service/config.ts";
 
+/** Result returned from runtime confidence preflight. */
 export interface RuntimeConfidencePreflightResult {
   ok: boolean;
   resolvedApiUrl: string;
   messages: string[];
 }
 
+/** Evaluate runtime confidence env helper. */
 export function evaluateRuntimeConfidenceEnv(
   env: AgentServiceConfigInput = {},
   resolvedApiUrl: string = parseAgentServiceConfig(env).VERYFRONT_API_URL,
@@ -31,6 +33,7 @@ export function evaluateRuntimeConfidenceEnv(
   return { ok: false, resolvedApiUrl, messages };
 }
 
+/** Print runtime confidence preflight helper. */
 export function printRuntimeConfidencePreflight(
   result: RuntimeConfidencePreflightResult,
   output: Pick<Console, "error" | "log"> = console,

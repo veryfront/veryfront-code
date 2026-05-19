@@ -1,6 +1,7 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Public API contract for quick action. */
 export interface QuickAction {
   id: string;
   label: string;
@@ -8,12 +9,14 @@ export interface QuickAction {
   prompt?: string;
 }
 
+/** Props accepted by quick actions. */
 export interface QuickActionsProps {
   actions?: QuickAction[];
   onActionClick?: (action: QuickAction) => void;
   className?: string;
 }
 
+/** Render quick actions. */
 export function QuickActions({
   actions,
   onActionClick,

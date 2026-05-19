@@ -13,6 +13,8 @@ import { withoutHostBinaryInfraEnv, withProxyModeControlPlaneKey } from "../_hel
 export const BINARY_PATH = Deno.env.get("VERYFRONT_BINARY") ?? `/tmp/veryfront-e2e-bin-${Deno.pid}`;
 export const BINARY_HASH_PATH = `${BINARY_PATH}.srcHash`;
 
+let binaryTestCacheRoot: string | undefined;
+
 export function stripReactSSRMarkers(html: string): string {
   return html.replaceAll("<!-- -->", "");
 }
@@ -155,14 +157,26 @@ function collectLogs(logs: string[], stream: ReadableStream<Uint8Array>): void {
   })();
 }
 
+async function getBinaryTestCacheDir(nodeEnv: string): Promise<string> {
+  binaryTestCacheRoot ??= await Deno.makeTempDir({ prefix: "vf-e2e-binary-cache-" });
+  return join(binaryTestCacheRoot, nodeEnv === "production" ? "production" : "development");
+}
+
+export async function cleanupBinaryTestCache(): Promise<void> {
+  if (!binaryTestCacheRoot) return;
+  const cacheRoot = binaryTestCacheRoot;
+  binaryTestCacheRoot = undefined;
+  await Deno.remove(cacheRoot, { recursive: true }).catch(() => {});
+}
+
 async function waitForServer(port: number, deadlineMs = 60_000): Promise<void> {
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
     try {
-      const resp = await fetch(`http://127.0.0.1:${port}/`);
+      const resp = await fetch(`http://127.0.0.1:${port}/readyz`);
       // Consume the response body to avoid connection issues
       await resp.text();
-      return;
+      if (resp.status === 200) return;
     } catch {
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -180,13 +194,12 @@ async function startBinaryServer(
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const logs: string[] = [];
     const port = await getAvailablePort();
-    const cacheDir = await Deno.makeTempDir({
-      prefix: nodeEnv === "production" ? "vf-cache-prod-" : "vf-cache-",
-    });
+    const cacheDir = await getBinaryTestCacheDir(nodeEnv);
 
     const process = new Deno.Command(BINARY_PATH, {
       args: ["serve", "--mode=production", "-p", String(port)],
       cwd: projectDir,
+      clearEnv: true,
       env: withProxyModeControlPlaneKey({
         ...withoutHostBinaryInfraEnv(Deno.env.toObject()),
         NODE_ENV: nodeEnv,
@@ -214,9 +227,6 @@ async function startBinaryServer(
       // Retry on port collision
       const logOutput = logs.join("\n");
       if (attempt < maxRetries - 1 && logOutput.includes("already in use")) {
-        try {
-          await Deno.remove(cacheDir, { recursive: true });
-        } catch { /* ignore */ }
         continue;
       }
 
@@ -240,11 +250,6 @@ async function startBinaryServer(
           // already dead
         }
         await new Promise((r) => setTimeout(r, 500)); // Port release time (increased for CI)
-        try {
-          await Deno.remove(cacheDir, { recursive: true });
-        } catch {
-          // ignore
-        }
       },
     };
   }
@@ -311,7 +316,14 @@ export async function fetchOkHtml(server: TestServer, path = "/"): Promise<strin
   const response = await fetch(`http://127.0.0.1:${server.port}${path}`);
   const html = await response.text();
 
-  assertEquals(response.status, 200, "Should return 200");
+  const recentLogs = server.logs.join("").slice(-16000);
+  assertEquals(
+    response.status,
+    200,
+    `Should return 200 for ${path}\n\nResponse body:\n${
+      html.slice(0, 2000)
+    }\n\nRecent logs:\n${recentLogs}`,
+  );
   return html;
 }
 

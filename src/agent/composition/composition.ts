@@ -14,6 +14,7 @@ import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade
 import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { getAgentToolInputSchema } from "../schemas/index.ts";
 
+/** Agent as tool helper. */
 export function agentAsTool(agent: Agent, description: string): Tool {
   return {
     id: `agent_${agent.id}`,
@@ -43,6 +44,7 @@ export function agentAsTool(agent: Agent, description: string): Tool {
   };
 }
 
+/** Public API contract for workflow step. */
 export interface WorkflowStep {
   agent: Agent;
   name: string;
@@ -50,11 +52,13 @@ export interface WorkflowStep {
   skip?: (context: Record<string, unknown>) => boolean | Promise<boolean>;
 }
 
+/** Configuration used by workflow. */
 export interface WorkflowConfig {
   steps: WorkflowStep[];
   initialContext?: Record<string, unknown>;
 }
 
+/** Result returned from workflow. */
 export interface WorkflowResult {
   output: string;
   steps: Array<{
@@ -65,6 +69,7 @@ export interface WorkflowResult {
   context: Record<string, unknown>;
 }
 
+/** Create workflow. */
 export function createWorkflow(
   config: WorkflowConfig,
 ): { execute(input: string): Promise<WorkflowResult> } {
@@ -132,14 +137,17 @@ export const agentRegistry = new AgentRegistryClass(agentManager);
 
 export { AgentRegistryClass };
 
+/** Registers agent. */
 export function registerAgent(id: string, agent: Agent): void {
   agentRegistry.register(id, agent);
 }
 
+/** Return agent. */
 export function getAgent(id: string): Agent | undefined {
   return agentRegistry.get(id);
 }
 
+/** Return all agent IDs. */
 export function getAllAgentIds(): string[] {
   return agentRegistry.getAllIds();
 }
@@ -163,6 +171,7 @@ for (
   });
 }
 
+/** Return agents as tools. */
 export function getAgentsAsTools(descriptions?: Record<string, string>): Record<string, Tool> {
   const tools: Record<string, Tool> = {};
 

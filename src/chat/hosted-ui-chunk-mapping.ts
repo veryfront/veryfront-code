@@ -1,5 +1,6 @@
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "./protocol.ts";
 
+/** Options accepted by hosted UI chunk mapping. */
 export type HostedUiChunkMappingOptions = {
   messageId?: string | null;
   reasoningMessageId?: string | null;
@@ -25,6 +26,7 @@ export type HostedStreamSourcePart =
     filename?: string;
   };
 
+/** Public API contract for hosted stream part for UI chunk mapping. */
 export type HostedStreamPartForUiChunkMapping =
   | {
     type: "start";
@@ -211,6 +213,7 @@ function mapToolErrorPartToUiChunks(
   ];
 }
 
+/** Map hosted stream part to chat UI chunks. */
 export function mapHostedStreamPartToChatUiChunks(
   part: HostedStreamPartForUiChunkMapping,
   options: HostedUiChunkMappingOptions = {},

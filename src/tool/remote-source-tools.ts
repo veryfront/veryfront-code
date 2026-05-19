@@ -2,6 +2,7 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { dynamicTool } from "./factory.ts";
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "./types.ts";
 
+/** Options accepted by remote tool materialization. */
 export interface RemoteToolMaterializationOptions {
   context?: ToolExecutionContext;
   toolNameAliases?: Record<string, string>;
@@ -23,6 +24,7 @@ function toToolInputRecord(input: unknown): Record<string, unknown> {
   return Object.fromEntries(Object.entries(input));
 }
 
+/** Create tools from remote definitions. */
 export function createToolsFromRemoteDefinitions(
   source: RemoteToolSource,
   definitions: readonly ToolDefinition[],
@@ -51,6 +53,7 @@ export function createToolsFromRemoteDefinitions(
   );
 }
 
+/** Loads remote tools from source. */
 export async function loadRemoteToolsFromSource(
   source: RemoteToolSource,
   options: RemoteToolMaterializationOptions = {},

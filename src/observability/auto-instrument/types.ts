@@ -20,6 +20,7 @@ export interface MetricsConfig {
   prefix?: string;
 }
 
+/** Configuration used by auto instrument. */
 export interface AutoInstrumentConfig {
   tracing?: TracingConfig;
   metrics?: MetricsConfig;

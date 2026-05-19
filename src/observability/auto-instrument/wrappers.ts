@@ -2,6 +2,7 @@ import type { Span } from "#veryfront/observability/tracing/api-shim.ts";
 import { endSpan, setSpanAttributes, type SpanOptions, startSpan } from "../tracing/index.ts";
 import type { BatchOptions, InstrumentOptions } from "./types.ts";
 
+/** Instrument an async operation. */
 export function instrument<T extends (...args: unknown[]) => Promise<unknown>>(
   fn: T,
   spanName: string,
@@ -23,6 +24,7 @@ export function instrument<T extends (...args: unknown[]) => Promise<unknown>>(
   }) as T;
 }
 
+/** Instrument a synchronous operation. */
 export function instrumentSync<T extends (...args: unknown[]) => unknown>(
   fn: T,
   spanName: string,
@@ -44,6 +46,7 @@ export function instrumentSync<T extends (...args: unknown[]) => unknown>(
   }) as T;
 }
 
+/** Instrument a batch operation. */
 export async function instrumentBatch<T>(
   operationName: string,
   items: T[],

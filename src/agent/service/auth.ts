@@ -1,12 +1,14 @@
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
 import type { AuthProvider, TokenPayload } from "#veryfront/extensions/auth/index.ts";
 
+/** Public API contract for hosted service auth error code. */
 export type HostedServiceAuthErrorCode =
   | "UNAUTHENTICATED"
   | "FORBIDDEN"
   | "NOT_FOUND"
   | "SERVER_ERROR";
 
+/** Error shape for hosted service auth. */
 export class HostedServiceAuthError extends Error {
   readonly statusCode: number;
   readonly errorCode: HostedServiceAuthErrorCode;
@@ -19,6 +21,7 @@ export class HostedServiceAuthError extends Error {
   }
 }
 
+/** Error shape for is hosted service auth. */
 export function isHostedServiceAuthError(
   error: unknown,
 ): error is HostedServiceAuthError {
@@ -29,47 +32,56 @@ export const AgentServiceAuthError = HostedServiceAuthError;
 export type AgentServiceAuthError = HostedServiceAuthError;
 export type AgentServiceAuthErrorCode = HostedServiceAuthErrorCode;
 
+/** Request payload for hosted service authenticated. */
 export type HostedServiceAuthenticatedRequest = {
   authToken: string;
   userId: string;
 };
 
+/** Error shape for hosted service jwt. */
 export type HostedServiceJwtError = {
   statusCode: number;
   errorCode: HostedServiceAuthErrorCode;
   message: string;
 };
 
+/** Result returned from hosted service jwt. */
 export type HostedServiceJwtResult =
   | { success: true; userId: string; email: string; token: string }
   | { success: false; error: HostedServiceJwtError };
 
+/** Error shape for hosted service project access. */
 export type HostedServiceProjectAccessError = {
   statusCode: number;
   errorCode: HostedServiceAuthErrorCode;
   message: string;
 };
 
+/** Result returned from hosted service project access. */
 export type HostedServiceProjectAccessResult =
   | { success: true; projectId: string }
   | { success: false; error: HostedServiceProjectAccessError };
 
+/** Configuration used by hosted service auth. */
 export type HostedServiceAuthConfig = {
   OAUTH_PUBLIC_KEY?: string | null;
   NODE_ENV?: string | null;
   VERYFRONT_API_URL: string;
 };
 
+/** Public API contract for hosted service auth logger. */
 export type HostedServiceAuthLogger = {
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Public API contract for hosted service auth trace. */
 export type HostedServiceAuthTrace = <TResult>(
   operationName: string,
   operation: () => Promise<TResult>,
 ) => Promise<TResult>;
 
+/** Public API contract for hosted service auth fetch. */
 export type HostedServiceAuthFetch = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -77,6 +89,7 @@ export type HostedServiceAuthFetch = (
 
 export type HostedServiceJwtVerifier = Pick<AuthProvider, "verifyWithPublicKey">;
 
+/** Options accepted by hosted service auth. */
 export type HostedServiceAuthOptions = {
   getConfig: () => HostedServiceAuthConfig;
   logger?: HostedServiceAuthLogger;
@@ -86,6 +99,7 @@ export type HostedServiceAuthOptions = {
   projectAccessTimeoutMs?: number;
 };
 
+/** Public API contract for hosted service auth. */
 export type HostedServiceAuth = {
   authenticateRequest: (
     request: Request,
@@ -141,6 +155,7 @@ async function getAuthProvider(
     await getDefaultAuthProvider();
 }
 
+/** Request payload for get hosted service token from. */
 export function getHostedServiceTokenFromRequest(request: Request): string | null {
   const cookies = request.headers.get("cookie") || "";
   const cookieMatch = cookies.match(/(?:^|;\s*)authToken=([^;]+)/);
@@ -246,6 +261,7 @@ function decodeHostedServiceJwtWithoutVerify(
   }
 }
 
+/** Create hosted service auth. */
 export function createHostedServiceAuth(
   options: HostedServiceAuthOptions,
 ): HostedServiceAuth {

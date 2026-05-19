@@ -1,8 +1,10 @@
 import * as React from "react";
 import { cn } from "../../theme.ts";
 
+/** Public API contract for feedback value. */
 export type FeedbackValue = "positive" | "negative";
 
+/** Props accepted by message feedback. */
 export interface MessageFeedbackProps {
   messageId: string;
   feedback?: FeedbackValue | null;
@@ -13,6 +15,7 @@ export interface MessageFeedbackProps {
 const BUTTON_BASE =
   "inline-flex items-center justify-center size-7 rounded-full transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] focus-visible:ring-offset-2";
 
+/** Render message feedback. */
 export const MessageFeedback = React.forwardRef<HTMLDivElement, MessageFeedbackProps>(
   function MessageFeedback({ messageId, feedback, onFeedback, className }, ref) {
     return (

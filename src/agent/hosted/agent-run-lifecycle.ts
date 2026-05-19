@@ -12,16 +12,19 @@ import {
   buildFinalizedAgentRunTraceAttributes,
 } from "./trace-attributes.ts";
 
+/** Public API contract for hosted agent run span. */
 export interface HostedAgentRunSpan {
   setAttributes: (attributes: AgentTraceAttributes) => void;
   finish: () => void;
   withContext: <T>(fn: () => T) => T;
 }
 
+/** Public API contract for hosted agent run tracer. */
 export interface HostedAgentRunTracer {
   startSpan: (name: string) => HostedAgentRunSpan;
 }
 
+/** State for hosted agent run span final. */
 export interface HostedAgentRunSpanFinalState {
   status: "completed" | "failed" | "cancelled";
   modelId?: string | null;
@@ -34,6 +37,7 @@ export interface HostedAgentRunSpanFinalState {
   terminalErrorMessage?: string | null;
 }
 
+/** Public API contract for hosted agent run span controller. */
 export interface HostedAgentRunSpanController {
   withContext: <T>(fn: () => T) => T;
   setAttributes: (attributes: AgentTraceAttributes) => void;
@@ -41,6 +45,7 @@ export interface HostedAgentRunSpanController {
   finalize: (finalState: HostedAgentRunSpanFinalState) => void;
 }
 
+/** Input payload for create hosted agent run span controller. */
 export interface CreateHostedAgentRunSpanControllerInput {
   tracer: HostedAgentRunTracer;
   spanName?: string;
@@ -55,6 +60,7 @@ export interface CreateHostedAgentRunSpanControllerInput {
   spawnedFromToolCallId?: string;
 }
 
+/** Create hosted agent run span controller. */
 export function createHostedAgentRunSpanController(
   input: CreateHostedAgentRunSpanControllerInput,
 ): HostedAgentRunSpanController {
@@ -96,11 +102,13 @@ export function createHostedAgentRunSpanController(
   };
 }
 
+/** Public API contract for hosted root run lifecycle runtime adapter. */
 export interface HostedRootRunLifecycleRuntimeAdapter extends HostedChatExecutionLifecycleAdapter {
   durableRootRun: HostedConversationRootRunState | null;
   durableRunMirror: ConversationRunChunkMirror | null;
 }
 
+/** Input payload for create hosted root run lifecycle runtime adapter. */
 export interface CreateHostedRootRunLifecycleRuntimeAdapterInput {
   authToken: string;
   apiUrl: string;
@@ -128,6 +136,7 @@ function finalizeHostedAgentRunSpan(input: {
   });
 }
 
+/** Create hosted root run lifecycle runtime adapter. */
 export function createHostedRootRunLifecycleRuntimeAdapter(
   input: CreateHostedRootRunLifecycleRuntimeAdapterInput,
 ): HostedRootRunLifecycleRuntimeAdapter {

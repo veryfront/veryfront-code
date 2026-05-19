@@ -1,15 +1,18 @@
+/** Public API contract for child run execution usage. */
 export interface ChildRunExecutionUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
 }
 
+/** Public API contract for child run tool call snapshot. */
 export interface ChildRunToolCallSnapshot {
   toolName: string;
   toolCallId: string;
   input?: unknown;
 }
 
+/** Public API contract for child run tool result snapshot. */
 export interface ChildRunToolResultSnapshot {
   toolName: string;
   toolCallId: string;
@@ -17,6 +20,7 @@ export interface ChildRunToolResultSnapshot {
   output: unknown;
 }
 
+/** Public API contract for child run execution snapshot. */
 export interface ChildRunExecutionSnapshot {
   success: boolean;
   description: string;
@@ -29,6 +33,7 @@ export interface ChildRunExecutionSnapshot {
   durationMs: number;
 }
 
+/** Result returned from child run execution. */
 export type ChildRunExecutionResult =
   | {
     success: true;
@@ -51,6 +56,7 @@ export type ChildRunExecutionResult =
     durationMs: number;
   };
 
+/** Public API contract for child run result common. */
 export interface ChildRunResultCommon {
   description: string;
   steps: number;
@@ -60,12 +66,14 @@ export interface ChildRunResultCommon {
   durationMs: number;
 }
 
+/** Return child run snapshot usage. */
 export function getChildRunSnapshotUsage(
   snapshot: ChildRunExecutionSnapshot | null,
 ): ChildRunExecutionSnapshot["usage"] | undefined {
   return snapshot?.usage;
 }
 
+/** Builds child run execution snapshot. */
 export function buildChildRunExecutionSnapshot(
   result: ChildRunExecutionResult,
 ): ChildRunExecutionSnapshot {
@@ -82,10 +90,12 @@ export function buildChildRunExecutionSnapshot(
   };
 }
 
+/** Builds child run result common. */
 export function buildChildRunResultCommon(input: ChildRunResultCommon): ChildRunResultCommon {
   return input;
 }
 
+/** Result returned from build child run success. */
 export function buildChildRunSuccessResult(
   common: ChildRunResultCommon,
   summary: { text: string },
@@ -102,6 +112,7 @@ export function buildChildRunSuccessResult(
   };
 }
 
+/** Result returned from build child run failure. */
 export function buildChildRunFailureResult(
   common: ChildRunResultCommon,
   error: string,
@@ -118,6 +129,7 @@ export function buildChildRunFailureResult(
   };
 }
 
+/** Builds child run failure snapshot. */
 export function buildChildRunFailureSnapshot(
   common: ChildRunResultCommon,
   error: string,
@@ -136,6 +148,7 @@ export function buildChildRunFailureSnapshot(
   };
 }
 
+/** Builds child run success snapshot. */
 export function buildChildRunSuccessSnapshot(
   common: ChildRunResultCommon,
   fullResultText: string,

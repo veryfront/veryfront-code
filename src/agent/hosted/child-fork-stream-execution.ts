@@ -55,18 +55,21 @@ import type { ForkPart, ForkRuntimeStreamResult } from "../streaming/fork-runtim
 const SOFT_IDLE_HEARTBEAT_PHASE = "post_tool_idle";
 const MAX_SOFT_IDLE_HEARTBEATS = 2;
 
+/** State for hosted child fork stream handling. */
 export interface HostedChildForkStreamHandlingState {
   activeToolCallId: string | null;
   finalText: string;
   shouldSeparateNextTextBlock: boolean;
 }
 
+/** Public API contract for hosted child fork stream logger. */
 export interface HostedChildForkStreamLogger {
   debug?: (message: string, metadata?: Record<string, unknown>) => void;
   info?: (message: string, metadata?: Record<string, unknown>) => void;
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
 }
 
+/** Public API contract for hosted child fork pending tool lifecycle. */
 export interface HostedChildForkPendingToolLifecycle {
   emitToolInputStartIfNeeded: (toolCallId: string, toolName: string) => Promise<void> | void;
   upsertPendingToolCall: (toolCallId: string, state: HostedChildPendingToolCallState) => void;
@@ -76,12 +79,14 @@ export interface HostedChildForkPendingToolLifecycle {
   ) => Promise<void> | void;
 }
 
+/** Input payload for hosted child fork stream trace. */
 export interface HostedChildForkStreamTraceInput {
   conversationId?: string;
   parentRunId?: string;
   partType: ForkPart["type"];
 }
 
+/** Input payload for execute hosted child fork stream. */
 export interface ExecuteHostedChildForkStreamInput {
   streamResult: ForkRuntimeStreamResult;
   abortSignal?: AbortSignal;
@@ -116,6 +121,7 @@ export interface ExecuteHostedChildForkStreamInput {
   tracePart?: (input: HostedChildForkStreamTraceInput) => void | Promise<void>;
 }
 
+/** Input payload for handle hosted child fork failure. */
 export interface HandleHostedChildForkFailureInput {
   error: unknown;
   description: string;
@@ -144,6 +150,7 @@ function getStructuredContent(value: unknown): unknown {
   return value.structuredContent;
 }
 
+/** Finalize hosted child fork completion helper. */
 export async function finalizeHostedChildForkCompletion(input: {
   streamResult: ForkRuntimeStreamResult;
   finalText: string;
@@ -263,6 +270,7 @@ export async function finalizeHostedChildForkCompletion(input: {
   return buildChildRunSuccessResult(common, buildChildRunResultSummary(finalText));
 }
 
+/** Process a hosted child fork failure. */
 export async function handleHostedChildForkFailure(
   input: HandleHostedChildForkFailureInput,
 ): Promise<ChildRunExecutionResult> {
@@ -295,6 +303,7 @@ export async function handleHostedChildForkFailure(
   return buildChildRunFailureResult(common, errorText);
 }
 
+/** Process a hosted child fork stream part. */
 export async function handleHostedChildForkStreamPart(input: {
   part: ForkPart;
   conversationId?: string;
@@ -463,6 +472,7 @@ export async function handleHostedChildForkStreamPart(input: {
   return { activeToolCallId, finalText, shouldSeparateNextTextBlock };
 }
 
+/** Execute hosted child fork stream. */
 export async function executeHostedChildForkStream(
   input: ExecuteHostedChildForkStreamInput,
 ): Promise<ChildRunExecutionResult> {

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { rendererLogger as logger } from "#veryfront/utils";
+import { isCompiledBinary, rendererLogger as logger } from "#veryfront/utils";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { getReactDOMServer } from "./server-loader.ts";
@@ -25,8 +25,9 @@ export async function renderToStringAdapter(
   options: SSROptions = {},
 ): Promise<string> {
   const server = await getReactDOMServer();
+  const canUseReadableStream = server.renderToReadableStream && !isCompiledBinary();
 
-  if (server.renderToReadableStream) {
+  if (canUseReadableStream) {
     try {
       const stream = (await withSpan(
         SpanNames.SSR_REACT_RENDER_TO_STREAM,

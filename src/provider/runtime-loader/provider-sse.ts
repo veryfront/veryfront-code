@@ -1,3 +1,4 @@
+/** Parses sse chunk. */
 export function parseSseChunk(chunk: string): {
   events: Array<unknown | "[DONE]">;
   remainder: string;

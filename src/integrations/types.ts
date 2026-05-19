@@ -31,6 +31,7 @@ export interface IntegrationEndpoint {
   };
 }
 
+/** Public API contract for integration tool. */
 export interface IntegrationTool {
   id: string;
   name: string;
@@ -39,6 +40,7 @@ export interface IntegrationTool {
   endpoint?: IntegrationEndpoint;
 }
 
+/** Public API contract for integration connector. */
 export interface IntegrationConnector {
   name: string;
   display_name: string;
@@ -50,8 +52,10 @@ export interface IntegrationConnector {
   tools: IntegrationTool[];
 }
 
+/** Public API contract for integration scope. */
 export type IntegrationScope = "project" | "endUser";
 
+/** Configuration used by integration runtime. */
 export interface IntegrationRuntimeConfig {
   /** Token scope. "project" = shared project token, "endUser" = per-end-user token. */
   scope?: IntegrationScope;

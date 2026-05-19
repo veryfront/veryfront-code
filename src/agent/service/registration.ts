@@ -2,7 +2,9 @@ import type { Schema, SchemaValidator } from "#veryfront/extensions/schema/index
 import { defineSchema } from "../../schemas/define.ts";
 import { lazySchema } from "../../schemas/lazy.ts";
 
+/** Public API contract for agent service registration mode. */
 export type AgentServiceRegistrationMode = "auto" | "enabled" | "disabled";
+/** Configuration used by agent service registration. */
 export type AgentServiceRegistrationConfig = {
   VERYFRONT_API_URL: string;
   VERYFRONT_API_TOKEN?: string;
@@ -13,6 +15,7 @@ export type AgentServiceRegistrationConfig = {
   VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: number;
   VERYFRONT_AGENT_SERVICE_REGION?: string;
 };
+/** Input payload for resolved agent service registration. */
 export type ResolvedAgentServiceRegistrationInput = {
   apiUrl: string;
   authToken: string;
@@ -28,6 +31,7 @@ export type ResolvedAgentServiceRegistrationInput = {
   region?: string;
   heartbeatIntervalMs: number;
 };
+/** Public API contract for agent push runtime service rest. */
 export type AgentPushRuntimeServiceRest = {
   id: string;
   service_name: string;
@@ -48,6 +52,7 @@ export type AgentPushRuntimeServiceRest = {
   created_at: string;
   updated_at: string;
 };
+/** Request payload for register agent push runtime service. */
 export type RegisterAgentPushRuntimeServiceRequest = {
   service_name: string;
   service_key: string;
@@ -71,6 +76,7 @@ export const agentServiceRegistrationModeSchema = lazySchema(
   defineSchema<AgentServiceRegistrationMode>(agentServiceRegistrationMode),
 );
 
+/** Zod schema for agent service registration config. */
 export const agentServiceRegistrationConfigSchema = lazySchema(
   defineSchema<AgentServiceRegistrationConfig>((v) =>
     v.object({
@@ -86,6 +92,7 @@ export const agentServiceRegistrationConfigSchema = lazySchema(
   ),
 );
 
+/** Zod schema for resolved agent service registration input. */
 export const resolvedAgentServiceRegistrationInputSchema = lazySchema(
   defineSchema<ResolvedAgentServiceRegistrationInput>((v) =>
     v.object({
@@ -156,12 +163,14 @@ const registerAgentPushRuntimeServiceRequestSchema = lazySchema(
   ),
 );
 
+/** Public API contract for agent service registration logger. */
 export type AgentServiceRegistrationLogger = {
   info?: (message: string, metadata?: Record<string, unknown>) => void;
   warn?: (message: string, metadata?: Record<string, unknown>) => void;
   error?: (message: string, metadata?: Record<string, unknown>) => void;
 };
 
+/** Options accepted by resolve agent service registration input. */
 export type ResolveAgentServiceRegistrationInputOptions = {
   config: AgentServiceRegistrationConfig;
   serviceName: string;
@@ -170,6 +179,7 @@ export type ResolveAgentServiceRegistrationInputOptions = {
   runtime?: string;
 };
 
+/** Public API contract for agent service registration lifecycle. */
 export type AgentServiceRegistrationLifecycle = {
   serviceId: string;
   service: AgentPushRuntimeServiceRest;
@@ -177,6 +187,7 @@ export type AgentServiceRegistrationLifecycle = {
   stop: () => void;
 };
 
+/** Options accepted by create agent service registration lifecycle. */
 export type CreateAgentServiceRegistrationLifecycleOptions =
   & ResolvedAgentServiceRegistrationInput
   & {
@@ -240,6 +251,7 @@ function requireExplicitRegistrationValue(
   return value;
 }
 
+/** Input payload for resolve agent service registration. */
 export async function resolveAgentServiceRegistrationInput(
   options: ResolveAgentServiceRegistrationInputOptions,
 ): Promise<ResolvedAgentServiceRegistrationInput | null> {
@@ -347,6 +359,7 @@ async function heartbeatAgentPushRuntimeService(
   return await readAgentPushRuntimeServiceResponse(response);
 }
 
+/** Create agent service registration lifecycle. */
 export async function createAgentServiceRegistrationLifecycle(
   options: CreateAgentServiceRegistrationLifecycleOptions,
 ): Promise<AgentServiceRegistrationLifecycle> {

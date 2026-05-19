@@ -1,9 +1,11 @@
+/** Options accepted by runtime prompt block. */
 export type RuntimePromptBlockOptions = {
   name: string;
   content: string;
   attrs?: Record<string, string>;
 };
 
+/** Create runtime prompt block. */
 export function createRuntimePromptBlock({
   name,
   content,

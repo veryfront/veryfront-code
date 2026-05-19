@@ -117,6 +117,7 @@ export function generateTokenCSS(): string {
 // Theme interfaces
 // ---------------------------------------------------------------------------
 
+/** Public API contract for chat theme. */
 export interface ChatTheme {
   /** Container styles */
   container?: string;
@@ -155,6 +156,7 @@ export const defaultChatTheme: ChatTheme = {
   loading: "size-2 bg-[var(--border)] rounded-full animate-pulse",
 };
 
+/** Public API contract for agent theme. */
 export interface AgentTheme {
   container?: string;
   status?: string;

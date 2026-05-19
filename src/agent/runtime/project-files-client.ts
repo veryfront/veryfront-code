@@ -34,30 +34,41 @@ const getApiErrorBodySchema = defineSchema((v) =>
   }).passthrough()
 );
 
-/** @deprecated Use getRuntimeProjectFileSchema() */
+/** Schema for runtime project file.
+ * @deprecated Use getRuntimeProjectFileSchema()
+ */
 export const runtimeProjectFileSchema = lazySchema(getRuntimeProjectFileSchema);
-/** @deprecated Use getRuntimeProjectFileListItemSchema() */
+/** Schema for runtime project file list item.
+ * @deprecated Use getRuntimeProjectFileListItemSchema()
+ */
 export const runtimeProjectFileListItemSchema = lazySchema(getRuntimeProjectFileListItemSchema);
 
+/** Public API contract for runtime project file. */
 export type RuntimeProjectFile = InferSchema<ReturnType<typeof getRuntimeProjectFileSchema>>;
+/** Public API contract for runtime project file list item. */
 export type RuntimeProjectFileListItem = InferSchema<
   ReturnType<typeof getRuntimeProjectFileListItemSchema>
 >;
 
+/** Options accepted by runtime project files API. */
 export type RuntimeProjectFilesApiOptions = {
   projectId: string;
   authToken: string;
   branchId?: string | null;
 };
 
+/** Options accepted by runtime get project file. */
 export type RuntimeGetProjectFileOptions = RuntimeProjectFilesApiOptions & {
   path: string;
 };
 
+/** Public API contract for runtime project files fetch. */
 export type RuntimeProjectFilesFetch = (url: string, init: RequestInit) => Promise<Response>;
 
+/** Public API contract for runtime project files trace. */
 export type RuntimeProjectFilesTrace = <T>(name: string, fn: () => Promise<T>) => Promise<T>;
 
+/** Options accepted by runtime project files client. */
 export type RuntimeProjectFilesClientOptions = {
   apiUrl: string | URL;
   fetch?: RuntimeProjectFilesFetch;
@@ -67,6 +78,7 @@ export type RuntimeProjectFilesClientOptions = {
   createAccessDeniedError?: (statusCode: number, message: string) => Error;
 };
 
+/** Public API contract for runtime project files client. */
 export type RuntimeProjectFilesClient = {
   getProjectFile: (options: RuntimeGetProjectFileOptions) => Promise<RuntimeProjectFile | null>;
   getProjectFiles: (
@@ -74,6 +86,7 @@ export type RuntimeProjectFilesClient = {
   ) => Promise<RuntimeProjectFileListItem[]>;
 };
 
+/** Error shape for runtime project files API auth. */
 export class RuntimeProjectFilesApiAuthError extends Error {
   readonly statusCode: number;
   readonly errorCode: string;
@@ -86,6 +99,7 @@ export class RuntimeProjectFilesApiAuthError extends Error {
   }
 }
 
+/** Create runtime project files client. */
 export function createRuntimeProjectFilesClient(
   options: RuntimeProjectFilesClientOptions,
 ): RuntimeProjectFilesClient {
@@ -95,6 +109,7 @@ export function createRuntimeProjectFilesClient(
   };
 }
 
+/** Return runtime project file. */
 export async function getRuntimeProjectFile(
   options: RuntimeProjectFilesClientOptions & RuntimeGetProjectFileOptions,
 ): Promise<RuntimeProjectFile | null> {
@@ -128,6 +143,7 @@ export async function getRuntimeProjectFile(
   });
 }
 
+/** Return runtime project files. */
 export async function getRuntimeProjectFiles(
   options: RuntimeProjectFilesClientOptions & RuntimeProjectFilesApiOptions,
 ): Promise<RuntimeProjectFileListItem[]> {

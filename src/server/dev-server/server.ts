@@ -50,6 +50,7 @@ function deriveProjectSlug(projectDir: string): string {
   return slug || "local-project";
 }
 
+/** Implement dev server. */
 export class DevServer {
   private router: ApiRouteMatcher;
   private componentRegistry!: ComponentRegistry;
@@ -264,7 +265,7 @@ export class DevServer {
     this._isReady = true;
   }
 
-  /** Returns the request handler for use with external HTTP servers. */
+  /** Return the request handler for use with external HTTP servers. */
   get handler(): (req: Request) => Promise<Response> {
     if (!this._handler) {
       throw INITIALIZATION_ERROR.create({ detail: "DevServer not started. Call start() first." });

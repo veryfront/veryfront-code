@@ -48,12 +48,14 @@ function getDeps(): Required<APIRouteHandlerDeps> {
   };
 }
 
+/** Structured response shape for API route helpers. */
 export interface APIResponse {
   body?: unknown;
   status?: number;
   headers?: HeadersInit;
 }
 
+/** Function signature for API route handlers. */
 export type APIHandler = (ctx: APIContext) => Promise<Response> | Response;
 
 export class APIRouteHandler {
