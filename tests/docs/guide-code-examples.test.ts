@@ -81,6 +81,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "head-and-seo.md",
   "integrations.md",
   "pages-and-routing.md",
+  "production-path.md",
   "project-structure.md",
   "quickstart.md",
   "sandbox.md",
@@ -428,6 +429,24 @@ describe("Guide: pages-and-routing.md", () => {
 
     assertEquals(link.type, Link);
     assertEquals(router.type, RouterProvider);
+  });
+});
+
+describe("Guide: production-path.md", () => {
+  it("keeps the production path command sequence aligned with the CLI guides", async () => {
+    const guide = await readGuide("production-path.md");
+
+    for (
+      const command of [
+        "veryfront init",
+        "veryfront dev",
+        "veryfront build",
+        "veryfront start",
+        "veryfront deploy",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
   });
 });
 
