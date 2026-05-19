@@ -99,7 +99,7 @@ To ingest a specific list of files without ingesting the entire folder:
 veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploads/contracts/c.pdf --json
 ```
 
-The command preserves input order in the JSON result array, so agent workflows can match each output back to the original source path.
+The command preserves input order in the JSON `ingested` array, so agent workflows can match each output back to the original source path.
 Inside the sandbox, `knowledge ingest` may run longer than typical shell commands, since slow but valid `docling` runs are allowed to complete.
 
 ## Batch ingestion
@@ -122,25 +122,43 @@ Use `--path ... --all` only when you want everything under that uploads prefix o
 
 ## What the JSON output looks like
 
-With `--json`, the command returns a machine-readable summary for each ingested file:
+With `--json`, the command returns a machine-readable job result with
+`ingested`, `skipped`, and `failed` arrays:
 
 ```json
-[
-  {
-    "source": "uploads/demo/notes.txt",
-    "localSourcePath": "<LOCAL_SOURCE_PATH>",
-    "outputPath": "<OUTPUT_PATH>",
-    "remotePath": "knowledge/demo-notes.md",
-    "slug": "demo-notes",
-    "sourceType": "txt",
-    "summary": "Converted document to markdown (87 chars).",
-    "stats": {
-      "characters": 87,
-      "lines": 3
-    },
-    "warnings": []
-  }
-]
+{
+  "kind": "knowledge_ingest",
+  "version": 1,
+  "metadata": {
+    "requested_count": 1,
+    "source_mode": "explicit_sources",
+    "knowledge_path": "knowledge"
+  },
+  "summary": {
+    "requested_count": 1,
+    "ingested_count": 1,
+    "skipped_count": 0,
+    "failed_count": 0
+  },
+  "ingested": [
+    {
+      "source": "uploads/demo/notes.txt",
+      "localSourcePath": "<LOCAL_SOURCE_PATH>",
+      "outputPath": "<OUTPUT_PATH>",
+      "remotePath": "knowledge/demo-notes.md",
+      "slug": "demo-notes",
+      "sourceType": "txt",
+      "summary": "Converted document to markdown (87 chars).",
+      "stats": {
+        "characters": 87,
+        "lines": 3
+      },
+      "warnings": []
+    }
+  ],
+  "skipped": [],
+  "failed": []
+}
 ```
 
 This is useful for agent pipelines that want to confirm exactly what was created. The exact `stats`
@@ -152,7 +170,6 @@ The source path determines how the command behaves:
 
 - `uploads/...` means a remote project upload
 - `./uploads/...` means a local file or directory relative to the current working directory
-- `./uploads/...` means a local file inside the active workspace
 - multiple explicit sources are passed as positional arguments: `veryfront knowledge ingest <source...> --json`
 
 That distinction matters because `uploads/...` triggers the remote upload download step, while local paths skip it.
@@ -243,13 +260,12 @@ generated markdown and confirm the parsed content matches the original.
 For automation, capture the JSON output of the command directly:
 
 ```bash
-veryfront knowledge ingest uploads/sample.pdf --json | jq '.knowledgeFiles'
+veryfront knowledge ingest uploads/sample.pdf --json | jq '.ingested'
 ```
 
-The JSON output names every file the command wrote. If the array is empty
-or the command exited non-zero, the parser most likely fell back to an
-error path; check the command output for the reason and the
-troubleshooting section above.
+The `ingested` array names every file the command wrote. If the array is
+empty or the command exited non-zero, check `skipped`, `failed`, and the
+command output for the reason.
 
 ## Next
 

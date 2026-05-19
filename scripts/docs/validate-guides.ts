@@ -13,6 +13,8 @@
  * Usage: deno run --allow-read scripts/docs/validate-guides.ts
  */
 
+import { collectVeryfrontImports, createPublicImportValidator } from "./guide-validation.ts";
+
 const ROOT = Deno.cwd();
 const GUIDES_DIR = `${ROOT}/docs/guides`;
 const REF_DIR = `${ROOT}/docs/reference/veryfront`;
@@ -189,21 +191,15 @@ try {
 const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`)) as {
   exports?: Record<string, unknown>;
 };
-const validImports = new Set<string>(["veryfront"]);
-for (const exportPath of Object.keys(denoConfig.exports ?? {})) {
-  validImports.add(exportPath === "." ? "veryfront" : `veryfront${exportPath.slice(1)}`);
-}
+const isKnownPublicImport = createPublicImportValidator(denoConfig.exports ?? {});
 
 for (const filename of guideFiles) {
   const filepath = `${GUIDES_DIR}/${filename}`;
   const content = Deno.readTextFileSync(filepath);
   const shortName = `guides/${filename}`;
 
-  const importRe = /from ["'](veryfront(?:\/[a-z0-9-]+)*)["']/g;
-  let im: RegExpExecArray | null;
-  while ((im = importRe.exec(content))) {
-    const mod = im[1];
-    if (!validImports.has(mod)) {
+  for (const mod of collectVeryfrontImports(content)) {
+    if (!isKnownPublicImport(mod)) {
       addWarning(shortName, `Code example imports from "${mod}", not a known export path`);
     }
   }
