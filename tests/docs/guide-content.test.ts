@@ -27,4 +27,20 @@ describe("guide content contracts", () => {
       assertStringIncludes(guide, "veryfront open");
     }
   });
+
+  it("recommends the current Node.js LTS in onboarding docs", async () => {
+    const docs = [
+      "docs/guides/quickstart.md",
+      "docs/guides/production-path.md",
+      "cli/templates/features/mdx/files/app/docs/getting-started/page.mdx",
+    ];
+
+    for (const path of docs) {
+      const text = await Deno.readTextFile(path);
+
+      assertStringIncludes(text, "current Node.js LTS");
+      assertEquals(text.includes("Node.js 18"), false);
+      assertEquals(text.includes("Node.js 18+"), false);
+    }
+  });
 });

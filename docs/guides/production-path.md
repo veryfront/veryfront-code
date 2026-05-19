@@ -14,7 +14,7 @@ prove the same app works in production.
 
 ## Prerequisites
 
-- Node.js 18 or later.
+- The current Node.js LTS.
 - A terminal that can run the Veryfront CLI.
 - Production credentials for any provider, integration, or deployment target
   your project uses.
