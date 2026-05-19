@@ -112,9 +112,11 @@ After `veryfront build`:
 
 After `veryfront deploy`:
 
-- The CLI prints a production URL such as
-  `https://<slug>.production.veryfront.com`.
-- Open the URL and confirm the home page and any API routes respond.
+- The CLI confirms the deployed release and environment.
+- Run `veryfront open` to open the deployed project in a browser.
+- Use `veryfront open --json` when you need the deployed URL in terminal
+  output or automation.
+- Confirm the home page and any API routes respond on the deployed host.
 - The Cloud dashboard lists the new deployment under the project.
 
 ## Next

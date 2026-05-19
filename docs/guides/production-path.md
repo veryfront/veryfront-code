@@ -104,11 +104,13 @@ Use the same checks at each stage:
 | ------------------- | --------------------------------------------------------------------------------- |
 | Dev                 | `veryfront dev` prints a local URL and the route responds.                        |
 | Local production    | `veryfront build` exits successfully and `veryfront start` serves the same route. |
-| Deployed production | `veryfront deploy` prints a URL and the deployed route responds.                  |
+| Deployed production | `veryfront deploy` completes, then `veryfront open` opens the deployed route.     |
 
 For API routes, compare the dev and production responses with `curl`. For pages,
-open the same path in both environments. For agents, workflows, tasks, jobs, or
-integrations, trigger one minimal run and confirm the expected output or status.
+open the same path in both environments. Use `veryfront open --json` when you
+need the deployed URL for scripts or a terminal-only check. For agents,
+workflows, tasks, jobs, or integrations, trigger one minimal run and confirm the
+expected output or status.
 
 ## Next
 

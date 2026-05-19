@@ -66,6 +66,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "veryfront build",
       "veryfront start",
       "veryfront deploy",
+      "veryfront open",
       "production path",
     ],
   },
@@ -79,7 +80,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "deploying.md": {
     references: ["../reference/veryfront/index.md"],
-    snippets: ["veryfront build", "veryfront start", "veryfront deploy"],
+    snippets: ["veryfront build", "veryfront start", "veryfront deploy", "veryfront open"],
   },
   "extension-authoring.md": {
     references: ["../reference/veryfront/extensions.md"],

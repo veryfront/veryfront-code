@@ -443,6 +443,7 @@ describe("Guide: production-path.md", () => {
         "veryfront build",
         "veryfront start",
         "veryfront deploy",
+        "veryfront open",
       ]
     ) {
       assertStringIncludes(guide, command);
