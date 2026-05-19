@@ -45,6 +45,19 @@
   ],
   "tools": [
     {
+      "id": "list_sites",
+      "name": "List Atlassian Sites",
+      "description": "List Atlassian cloud sites/resources the OAuth token can access; use the returned id as cloudId for Jira and Confluence tools",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.atlassian.com/oauth/token/accessible-resources",
+        "response": {
+          "transform": ""
+        }
+      }
+    },
+    {
       "id": "list_projects",
       "name": "List Projects",
       "description": "List all accessible Jira projects",
