@@ -17,6 +17,7 @@ matches your goal.
 
 | Guide                                       | What you will do                                                              |
 | ------------------------------------------- | ----------------------------------------------------------------------------- |
+| [Installation](./installation.md)           | Install the Veryfront CLI and framework on macOS, Linux, or Windows.          |
 | [Quickstart](./quickstart.md)               | Install Veryfront, create a project, and run the dev server.                  |
 | [Project structure](./project-structure.md) | Learn the file conventions and how auto-discovery wires your project up.      |
 | [Configuration](./configuration.md)         | Configure `veryfront.config.ts`, environment variables, and runtime settings. |
