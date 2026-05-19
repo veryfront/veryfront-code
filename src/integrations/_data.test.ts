@@ -99,7 +99,7 @@ describe("integration endpoint specs", () => {
       ["confluence", 6],
       ["salesforce", 5],
       ["outlook", 5],
-      ["teams", 5],
+      ["teams", 6],
       ["discord", 5],
     ]);
 
@@ -294,6 +294,13 @@ describe("integration endpoint specs", () => {
       "https://graph.microsoft.com/v1.0/teams/{teamId}/channels",
     );
     assertEquals(teamsListChannels.endpoint?.params?.teamId?.required, true);
+    const teamsSendChatMessage = getTool("teams", "send_chat_message");
+    assertEquals(
+      teamsSendChatMessage.endpoint?.url,
+      "https://graph.microsoft.com/v1.0/chats/{chatId}/messages",
+    );
+    assertEquals(teamsSendChatMessage.endpoint?.params?.chatId?.required, true);
+    assertEquals(teamsSendChatMessage.endpoint?.body?.body?.required, true);
     const teams = getConnector("teams");
     assertEquals(teams.auth.scopes?.includes("Channel.ReadBasic.All"), true);
 

@@ -92,8 +92,8 @@
     },
     {
       "id": "send_message",
-      "name": "Send Message",
-      "description": "Send a message to a chat or channel",
+      "name": "Send Channel Message",
+      "description": "Send a message to a Teams channel",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
@@ -115,7 +115,32 @@
         "body": {
           "body": {
             "type": "object",
-            "description": "Chat message body, e.g. {contentType: 'html', content: '<p>Hello</p>'}",
+            "description": "Message body object with contentType ('text' or 'html') and content fields",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "send_chat_message",
+      "name": "Send Chat Message",
+      "description": "Send a message to a Teams 1:1 or group chat",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/chats/{chatId}/messages",
+        "params": {
+          "chatId": {
+            "type": "string",
+            "in": "path",
+            "description": "Teams chat ID (from list_chats)",
+            "required": true
+          }
+        },
+        "body": {
+          "body": {
+            "type": "object",
+            "description": "Message body object with contentType ('text' or 'html') and content fields",
             "required": true
           }
         }
