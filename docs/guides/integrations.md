@@ -370,4 +370,5 @@ After enabling an integration:
 - [Agents](./agents.md): agents use integration tools
 - [Tools](./tools.md): define custom tools
 - [OAuth](./oauth.md): configure OAuth-backed providers
+- [`veryfront/integrations`](../reference/veryfront/integrations.md): integration metadata reference
 - [Configuration](./configuration.md): configure project settings

@@ -33,12 +33,14 @@ Veryfront is organized into focused modules with clear boundaries. See [src/READ
 #### When to use `src/utils/`
 
 Place utilities in `src/utils/` when they:
+
 - Are used by **3 or more modules**
 - Provide framework-level abstractions (logging, caching, hashing)
 - Are platform-agnostic helpers
 - Could be useful across the entire codebase
 
 **Examples:**
+
 ```typescript
 // src/utils/logger/  - Logging used everywhere
 // src/utils/cache/   - Caching abstractions
@@ -48,12 +50,14 @@ Place utilities in `src/utils/` when they:
 #### When to use module-level `utils/`
 
 Place utilities in `src/{module}/utils/` when they:
+
 - Are **specific to that module's domain**
 - Are only used within that module
 - Provide module-specific transformations
 - Would be confusing if placed in core
 
 **Examples:**
+
 ```typescript
 // build/utils/       - Build-specific (asset utils, file types)
 // rendering/utils/   - Rendering helpers (React, streams)
@@ -83,6 +87,7 @@ import { createRenderer } from "../../../../rendering/index.ts";
 ```
 
 **Available aliases** (defined in `deno.json`):
+
 - `#veryfront/types` - Core types
 - `#veryfront/config` - Configuration
 - `#veryfront/utils` - Shared utilities
@@ -164,6 +169,7 @@ deno task typecheck
    - Follow code style guidelines
    - Add tests for new features
    - Update documentation
+   - For public API reference changes, update source JSDoc and run `deno task docs`
 
 3. **Run tests**
    ```bash
@@ -183,6 +189,25 @@ deno task typecheck
    git push origin feature/your-feature-name
    ```
 
+### Public API reference docs
+
+Public API reference pages in `docs/reference/veryfront/` are generated from
+source JSDoc comments. Do not hand-edit generated reference pages for API
+copy changes.
+
+When a public import, export, option, type, or example changes, update the
+source JSDoc first, then run:
+
+```bash
+deno task docs
+deno task docs:validate
+deno task docs:verify-npm
+```
+
+Commit the source changes and regenerated reference files together. If
+validation reports missing declarations or placeholder wording, improve the
+source JSDoc and rerun the generator.
+
 ## Code Style
 
 ### TypeScript Guidelines
@@ -194,6 +219,7 @@ deno task typecheck
 5. **Function signatures** - Document complex function signatures
 
 Example:
+
 ```typescript
 /**
  * Renders a page component to HTML
@@ -203,7 +229,7 @@ Example:
  */
 export async function renderPage(
   component: React.ComponentType<Props>,
-  props: Props
+  props: Props,
 ): Promise<string> {
   // Implementation
 }
@@ -212,6 +238,7 @@ export async function renderPage(
 ### Import Order
 
 Organize imports in this order:
+
 1. External dependencies (Node.js, Deno, npm packages)
 2. Framework internal imports (`#veryfront/*`)
 3. Relative imports from same module
@@ -239,6 +266,7 @@ import type { LocalType } from "./types.ts";
 - **Trailing commas**: Yes (multi-line)
 
 Run formatter:
+
 ```bash
 deno fmt
 ```
@@ -289,6 +317,7 @@ describe("MyModule", () => {
 - **Edge cases**: Always test error conditions and edge cases
 
 Run tests with coverage:
+
 ```bash
 deno task test:coverage
 deno task coverage:report
@@ -322,20 +351,24 @@ chore: update dependencies
 
 ```markdown
 ## Description
+
 Brief description of changes
 
 ## Type of Change
+
 - [ ] Bug fix
 - [ ] New feature
 - [ ] Breaking change
 - [ ] Documentation update
 
 ## Testing
+
 - [ ] Unit tests added/updated
 - [ ] Integration tests added/updated
 - [ ] Manual testing performed
 
 ## Checklist
+
 - [ ] Code follows style guidelines
 - [ ] Self-review completed
 - [ ] Tests pass locally
@@ -365,6 +398,7 @@ git push origin v0.0.68
 ```
 
 CI will automatically:
+
 - Validate tag matches `deno.json` version
 - Build the npm package (`deno task build:npm`)
 - Publish to npm
@@ -389,6 +423,7 @@ deno task release 1.2.3
 ```
 
 The script will:
+
 1. Run tests to ensure stability
 2. Update the version in `deno.json`
 3. Build the npm package
@@ -405,27 +440,31 @@ deno task release patch --dry-run
 ### Version Numbering
 
 We follow [Semantic Versioning](https://semver.org/):
+
 - **Patch** (0.0.x): Bug fixes, documentation updates
 - **Minor** (0.x.0): New features, backward-compatible changes
 - **Major** (x.0.0): Breaking changes
 
 ### CI/CD Pipeline
 
-| Trigger | Workflow | Action |
-|---------|----------|--------|
-| PR to main | `cicd.yml` | Runs format, lint, typecheck, unit, integration, binary e2e tests |
-| Push to main | `cicd.yml` | Runs tests, builds binaries, publishes RC to npm |
+| Trigger       | Workflow   | Action                                                                 |
+| ------------- | ---------- | ---------------------------------------------------------------------- |
+| PR to main    | `cicd.yml` | Runs format, lint, typecheck, unit, integration, binary e2e tests      |
+| Push to main  | `cicd.yml` | Runs tests, builds binaries, publishes RC to npm                       |
 | Push tag `v*` | `cicd.yml` | Validates version, builds binaries, publishes to npm, updates Homebrew |
 
 ### Troubleshooting
 
 **Tag doesn't match deno.json version:**
+
 ```
 Error: Tag version (0.0.68) doesn't match deno.json version (0.0.67)
 ```
+
 Fix: Update `deno.json` version before creating the tag.
 
 **npm publish fails:**
+
 - Check that `NPM_TOKEN` secret is set in GitHub repository settings
 - Verify the token has publish permissions
 
@@ -460,12 +499,15 @@ Fix: Update `deno.json` version before creating the tag.
    # New Module
 
    ## Purpose
+
    Brief description
 
    ## Usage
+
    Code examples
 
    ## API
+
    Reference documentation
    ```
 

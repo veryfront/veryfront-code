@@ -6,13 +6,30 @@ boundaries, or docs structure.
 ## Update rules
 
 - Update the guide page when behavior changes how a user builds with Veryfront.
-- Update the reference page when a public import, export, option, type, or
-  example changes.
+- Update source JSDoc when a public import, export, option, type, or example
+  changes. Do not hand-edit generated API reference pages.
 - Update the architecture page when implementation ownership or runtime
   boundaries change.
 - Add a new docs page only when it owns a separate concern.
 - Keep one file focused on one concern. Link to related pages instead of
   expanding a page into a bundle.
+
+## API reference generation
+
+Public API reference pages in `docs/reference/veryfront/` are generated from
+source JSDoc comments. Source comments own the public reference copy, and the
+generator only renders them.
+
+When a public API or its JSDoc changes, run:
+
+```bash
+deno task docs
+deno task docs:validate
+```
+
+Commit the source JSDoc changes and the regenerated reference files together.
+If validation reports missing declarations or placeholder wording, improve the
+source JSDoc and rerun the generator.
 
 ## Validation
 

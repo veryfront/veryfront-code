@@ -57,9 +57,12 @@ Use `provides` when the implementation does not need async initialization:
 
 ```ts
 import type { ExtensionFactory } from "veryfront/extensions";
-import type { AuthProvider } from "veryfront/extensions/auth";
 
-const authProvider: AuthProvider = {
+interface CurrentUserProvider {
+  getUser(): Promise<{ id: string } | null>;
+}
+
+const currentUserProvider: CurrentUserProvider = {
   async getUser() {
     return null;
   },
@@ -70,7 +73,7 @@ const authExtension: ExtensionFactory = () => ({
   version: "1.0.0",
   capabilities: [],
   provides: {
-    AuthProvider: authProvider,
+    CurrentUserProvider: currentUserProvider,
   },
 });
 
