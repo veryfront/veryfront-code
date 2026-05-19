@@ -14,6 +14,9 @@ export type AgentServiceRegistrationConfig = {
   VERYFRONT_AGENT_SERVICE_REGISTRATION: AgentServiceRegistrationMode;
   VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: number;
   VERYFRONT_AGENT_SERVICE_REGION?: string;
+  POD_NAME?: string;
+  POD_UID?: string;
+  POD_IP?: string;
 };
 /** Input payload for resolved agent service registration. */
 export type ResolvedAgentServiceRegistrationInput = {
@@ -88,6 +91,9 @@ export const agentServiceRegistrationConfigSchema = lazySchema(
       VERYFRONT_AGENT_SERVICE_REGISTRATION: agentServiceRegistrationMode(v),
       VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: v.number().positive(),
       VERYFRONT_AGENT_SERVICE_REGION: v.string().min(1).max(128).optional(),
+      POD_NAME: v.string().min(1).max(128).optional(),
+      POD_UID: v.string().min(1).max(128).optional(),
+      POD_IP: v.string().min(1).max(128).optional(),
     })
   ),
 );
@@ -225,6 +231,7 @@ async function stableServiceKey(input: {
   baseUrl: string;
   scopeKind: "global" | "project";
   projectId?: string;
+  podIdentity?: string;
 }): Promise<string> {
   const keySource = [
     input.serviceName,
@@ -232,6 +239,7 @@ async function stableServiceKey(input: {
     input.scopeKind,
     input.projectId ?? "global",
     input.baseUrl,
+    input.podIdentity ?? "no-pod-identity",
   ].join("|");
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(keySource));
   const hash = Array.from(new Uint8Array(digest))
@@ -276,12 +284,14 @@ export async function resolveAgentServiceRegistrationInput(
 
   const scopeKind = config.VERYFRONT_PROJECT_ID ? "project" : "global";
   const baseUrl = normalizeBaseUrl(serviceUrl);
+  const podIdentity = config.POD_UID ?? config.POD_NAME ?? config.POD_IP;
   const serviceKey = config.VERYFRONT_AGENT_SERVICE_KEY ?? await stableServiceKey({
     serviceName: options.serviceName,
     agentId: options.agentId,
     baseUrl,
     scopeKind,
     projectId: config.VERYFRONT_PROJECT_ID,
+    podIdentity,
   });
 
   return resolvedAgentServiceRegistrationInputSchema.parse({

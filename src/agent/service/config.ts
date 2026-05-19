@@ -23,6 +23,9 @@ export type AgentServiceConfig = {
   VERYFRONT_AGENT_SERVICE_REGISTRATION: AgentServiceRegistrationMode;
   VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: number;
   VERYFRONT_AGENT_SERVICE_REGION?: string;
+  POD_NAME?: string;
+  POD_UID?: string;
+  POD_IP?: string;
   VERYFRONT_STUDIO_MCP_URL: string;
   VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: boolean;
   VERYFRONT_ENABLE_DURABLE_TASK: boolean;
@@ -57,6 +60,9 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     VERYFRONT_AGENT_SERVICE_REGISTRATION: agentServiceRegistrationModeInputSchema,
     VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS: v.coerce.number().positive().default(30_000),
     VERYFRONT_AGENT_SERVICE_REGION: v.string().min(1).max(128).optional(),
+    POD_NAME: v.string().min(1).max(128).optional(),
+    POD_UID: v.string().min(1).max(128).optional(),
+    POD_IP: v.string().min(1).max(128).optional(),
     NODE_ENV: v.enum(["development", "test", "production"] as const).default("development"),
     PORT: v.coerce.number().default(3001),
     OAUTH_PUBLIC_KEY: v.string().optional(),
@@ -77,6 +83,9 @@ const getAgentServiceConfigSchema = defineSchema<AgentServiceConfig>((v) => {
     VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS:
       env.VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS,
     VERYFRONT_AGENT_SERVICE_REGION: env.VERYFRONT_AGENT_SERVICE_REGION,
+    POD_NAME: env.POD_NAME,
+    POD_UID: env.POD_UID,
+    POD_IP: env.POD_IP,
     VERYFRONT_STUDIO_MCP_URL: env.VERYFRONT_STUDIO_MCP_URL,
     VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT: env.VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT,
     VERYFRONT_ENABLE_DURABLE_TASK: env.VERYFRONT_ENABLE_DURABLE_TASK,
