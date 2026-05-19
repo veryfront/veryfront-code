@@ -1,7 +1,7 @@
 /** Default value for project steering paths. */
 export const DEFAULT_PROJECT_STEERING_PATHS = {
   instructions: ["AGENTS.md"],
-  skills: [".veryfront/skills"],
+  skills: ["skills", ".veryfront/skills"],
 } as const;
 
 /** Shared project steering file mutation tool names value. */

@@ -115,11 +115,11 @@ Deno.test("getRuntimeProjectSkillCatalog returns builtin skills when project fil
 Deno.test("getRuntimeProjectSkillCatalog parses project directory skills and references", async () => {
   const { catalog, filesCalls, fileCalls } = createSkillCatalog({
     paths: [
-      ".veryfront/skills/research/SKILL.md",
-      ".veryfront/skills/research/references/checklists/checklist.md",
+      "skills/research/SKILL.md",
+      "skills/research/references/checklists/checklist.md",
     ],
     contentsByPath: {
-      ".veryfront/skills/research/SKILL.md":
+      "skills/research/SKILL.md":
         "---\ndescription: Research deeply\nmodel: sonnet\nthinking: false\nmax-steps: 7\nallowed-tools:\n  - bash\n---\n\n# Research",
     },
   });
@@ -138,7 +138,7 @@ Deno.test("getRuntimeProjectSkillCatalog parses project directory skills and ref
   assertEquals(fileCalls, [
     {
       ...PROJECT_CONTEXT,
-      path: ".veryfront/skills/research/SKILL.md",
+      path: "skills/research/SKILL.md",
     },
   ]);
 });
@@ -163,15 +163,14 @@ Deno.test("getRuntimeProjectSkillCatalog prefers directory skills and lets proje
   const { catalog } = createSkillCatalog({
     builtinSkills,
     paths: [
-      ".veryfront/skills/shared.md",
-      ".veryfront/skills/shared/SKILL.md",
-      ".veryfront/skills/zeta.md",
+      "skills/shared.md",
+      "skills/shared/SKILL.md",
+      "skills/zeta.md",
     ],
     contentsByPath: {
-      ".veryfront/skills/shared.md": "---\ndescription: Flat shared\n---\n\n# Shared flat",
-      ".veryfront/skills/shared/SKILL.md":
-        "---\ndescription: Directory shared\n---\n\n# Shared directory",
-      ".veryfront/skills/zeta.md": "---\ndescription: Zeta\n---\n\n# Zeta",
+      "skills/shared.md": "---\ndescription: Flat shared\n---\n\n# Shared flat",
+      "skills/shared/SKILL.md": "---\ndescription: Directory shared\n---\n\n# Shared directory",
+      "skills/zeta.md": "---\ndescription: Zeta\n---\n\n# Zeta",
     },
   });
 
@@ -181,4 +180,18 @@ Deno.test("getRuntimeProjectSkillCatalog prefers directory skills and lets proje
   assertExists(shared);
   assertEquals(shared.description, "Directory shared");
   assertEquals(skills.map((skill) => skill.id), ["alpha", "shared", "zeta"]);
+});
+
+Deno.test("getRuntimeProjectSkillCatalog still parses legacy hidden project skills", async () => {
+  const { catalog, fileCalls } = createSkillCatalog({
+    paths: [".veryfront/skills/legacy/SKILL.md"],
+    contentsByPath: {
+      ".veryfront/skills/legacy/SKILL.md": "---\ndescription: Legacy\n---\n\n# Legacy",
+    },
+  });
+
+  const skills = await catalog();
+
+  assertEquals(skills.map((skill) => skill.id), ["legacy"]);
+  assertEquals(fileCalls.map((call) => call.path), [".veryfront/skills/legacy/SKILL.md"]);
 });

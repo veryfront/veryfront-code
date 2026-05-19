@@ -165,6 +165,14 @@ export function tool<TInput = unknown, TOutput = unknown>(
     "TOOL",
     config.allowUnknownSchema ?? false,
   );
+  const outputSchemaJson = config.outputSchema
+    ? convertSchemaToJson(
+      config.outputSchema,
+      id,
+      "TOOL_OUTPUT",
+      config.allowUnknownSchema ?? false,
+    )
+    : undefined;
 
   const createdTool: Tool<TInput, TOutput> = {
     id,
@@ -172,6 +180,8 @@ export function tool<TInput = unknown, TOutput = unknown>(
     description: config.description,
     inputSchema: config.inputSchema,
     inputSchemaJson,
+    outputSchema: config.outputSchema,
+    outputSchemaJson,
     execute: async (input: TInput, context?: ToolExecutionContext) => {
       if (hasSchemaParse(config.inputSchema)) {
         try {

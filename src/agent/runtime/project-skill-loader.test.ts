@@ -67,12 +67,12 @@ Deno.test("runtime project skill loader returns empty results without project co
 Deno.test("runtime project skill loader loads directory skills with normalized sorted references", async () => {
   const { loader } = createLoader({
     getProjectFile: async ({ path }) =>
-      path === ".veryfront/skills/research/SKILL.md" ? { path, content: "# Research" } : null,
+      path === "skills/research/SKILL.md" ? { path, content: "# Research" } : null,
     getProjectFiles: async () => [
-      { path: ".veryfront/skills/research/references/zeta.md" },
-      { path: ".veryfront/skills/research/references/checklists/checklist.md" },
-      { path: ".veryfront/skills/other/references/skip.md" },
-      { path: ".veryfront/skills/research/references//invalid.md" },
+      { path: "skills/research/references/zeta.md" },
+      { path: "skills/research/references/checklists/checklist.md" },
+      { path: "skills/other/references/skip.md" },
+      { path: "skills/research/references//invalid.md" },
     ],
   });
 
@@ -82,10 +82,36 @@ Deno.test("runtime project skill loader loads directory skills with normalized s
   });
 });
 
+Deno.test("runtime project skill loader isolates references to the selected skill source path", async () => {
+  const { loader } = createLoader({
+    getProjectFile: async ({ path }) =>
+      path === "skills/research/SKILL.md"
+        ? { path, content: "# Research" }
+        : path === ".veryfront/skills/research/SKILL.md"
+        ? { path, content: "# Legacy research" }
+        : null,
+    getProjectFiles: async () => [
+      { path: "skills/research/SKILL.md" },
+      { path: "skills/research/references/current.md" },
+      { path: ".veryfront/skills/research/SKILL.md" },
+      { path: ".veryfront/skills/research/references/stale.md" },
+    ],
+  });
+
+  assertEquals(await loader.loadProjectSkill(PROJECT_CONTEXT, "research"), {
+    instructions: "# Research",
+    references: ["references/current.md"],
+  });
+  assertEquals(
+    await loader.listProjectSkillReferences(PROJECT_CONTEXT, "research"),
+    ["references/current.md"],
+  );
+});
+
 Deno.test("runtime project skill loader falls back to flat project skills without references", async () => {
   const { loader, fileCalls } = createLoader({
     getProjectFile: async ({ path }) =>
-      path === ".veryfront/skills/custom.md" ? { path, content: "# Custom" } : null,
+      path === "skills/custom.md" ? { path, content: "# Custom" } : null,
   });
 
   assertEquals(await loader.loadProjectSkill(PROJECT_CONTEXT, "custom"), {
@@ -93,15 +119,17 @@ Deno.test("runtime project skill loader falls back to flat project skills withou
     references: [],
   });
   assertEquals(fileCalls.map((call) => call.path), [
-    ".veryfront/skills/custom/SKILL.md",
-    ".veryfront/skills/custom.md",
+    "skills/custom/SKILL.md",
+    "skills/custom.md",
   ]);
 });
 
 Deno.test("runtime project skill loader loads project skill reference content", async () => {
   const { loader } = createLoader({
     getProjectFile: async ({ path }) =>
-      path === ".veryfront/skills/research/references/guide.md"
+      path === "skills/research/SKILL.md"
+        ? { path, content: "# Research" }
+        : path === "skills/research/references/guide.md"
         ? { path, content: "# Guide" }
         : null,
   });
@@ -110,6 +138,39 @@ Deno.test("runtime project skill loader loads project skill reference content", 
     await loader.loadProjectSkillReference(PROJECT_CONTEXT, "research", "references/guide.md"),
     "# Guide",
   );
+});
+
+Deno.test("runtime project skill loader does not load stale legacy references for a source skill", async () => {
+  const { loader } = createLoader({
+    getProjectFile: async ({ path }) =>
+      path === "skills/research/SKILL.md"
+        ? { path, content: "# Research" }
+        : path === ".veryfront/skills/research/references/stale.md"
+        ? { path, content: "# Stale" }
+        : null,
+  });
+
+  assertEquals(
+    await loader.loadProjectSkillReference(PROJECT_CONTEXT, "research", "references/stale.md"),
+    null,
+  );
+});
+
+Deno.test("runtime project skill loader still loads legacy hidden skills", async () => {
+  const { loader, fileCalls } = createLoader({
+    getProjectFile: async ({ path }) =>
+      path === ".veryfront/skills/legacy/SKILL.md" ? { path, content: "# Legacy" } : null,
+  });
+
+  assertEquals(await loader.loadProjectSkill(PROJECT_CONTEXT, "legacy"), {
+    instructions: "# Legacy",
+    references: [],
+  });
+  assertEquals(fileCalls.map((call) => call.path), [
+    "skills/legacy/SKILL.md",
+    "skills/legacy.md",
+    ".veryfront/skills/legacy/SKILL.md",
+  ]);
 });
 
 Deno.test("runtime project skill loader returns null and logs when lookup is denied", async () => {

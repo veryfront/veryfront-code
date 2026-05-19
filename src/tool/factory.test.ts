@@ -76,6 +76,19 @@ describe("tool factory", () => {
       assertEquals(t.inputSchemaJson?.required?.includes("age"), true);
     });
 
+    it("should preserve an output schema and converted JSON schema", () => {
+      const t = tool({
+        id: "output-schema-test",
+        description: "desc",
+        inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+        outputSchema: defineSchema((v) => v.object({ result: v.string() }))(),
+        execute: async () => ({ result: "ok" }),
+      });
+
+      assertEquals(t.outputSchemaJson?.type, "object");
+      assertEquals(t.outputSchemaJson?.properties?.result, { type: "string" });
+    });
+
     it("should introspect schema-like objects by shape", () => {
       const t = tool({
         id: "shape-test",
