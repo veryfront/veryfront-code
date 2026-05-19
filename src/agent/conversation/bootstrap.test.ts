@@ -370,7 +370,7 @@ describe("agent/conversation-bootstrap", () => {
       },
       public_id: "run_child_targeted",
       request: {
-        mode: "default_chat",
+        mode: "agent",
         agent_id: "invoke-agent-child",
         initial_status: "running",
         source_target_kind: "preview_branch",
