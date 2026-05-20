@@ -1,7 +1,7 @@
 ---
 title: "Integrations"
 description: "Config-driven integration tools with OAuth, token management, and API execution across the built-in connector catalog."
-order: 25
+order: 30
 ---
 
 Veryfront integrations let agents call third-party services (GitHub, Slack, Linear, Stripe, and 50+ more) on behalf of users.

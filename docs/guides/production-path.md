@@ -1,7 +1,7 @@
 ---
 title: "Production path"
 description: "Build one Veryfront route from local project to production verification."
-order: 35
+order: 5
 ---
 
 Take one Veryfront route from local dev to a deployed production check. Each step adds one piece: a project, a primitive, a user-visible surface, then the production verification loop.

@@ -1,7 +1,7 @@
 ---
 title: "Chat UI"
 description: "Use the preset Chat component with the useChat hook."
-order: 14
+order: 18
 ---
 
 `Chat` is a complete chat interface in one component: composer, message list, streaming, loading state, and scroll behavior. Drop it in a client page, pair it with `useChat` and an AG-UI route, and you have a working chat.

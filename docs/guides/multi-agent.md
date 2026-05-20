@@ -1,7 +1,7 @@
 ---
 title: "Multi-agent"
 description: "Agent composition, delegation, and agent-as-tool patterns."
-order: 19
+order: 23
 ---
 
 Two ways to compose agents: wrap one agent as a tool the parent can call (`agentAsTool` / `getAgentsAsTools`), or run several agents as steps in a workflow. Use the first when the parent should decide the order at runtime. Use the second when the order is known in advance.

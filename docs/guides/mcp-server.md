@@ -1,7 +1,7 @@
 ---
 title: "MCP server"
 description: "Expose tools, prompts, and resources over Model Context Protocol."
-order: 23
+order: 27
 ---
 
 Mount an MCP server route in your app to expose your project's tools, prompts, and resources to MCP clients like Claude Desktop. The runtime auto-discovers everything under `tools/`, `prompts/`, and `resources/`, so the route handler is essentially a thin auth shim.

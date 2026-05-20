@@ -1,7 +1,7 @@
 ---
 title: "Memory and streaming"
 description: "Conversation memory strategies and streaming responses."
-order: 13
+order: 17
 ---
 
 Agents are stateless by default: each request gets the messages the client sends, and nothing else. Configure `memory` on the agent to persist history across requests, and use `createAgUiHandler` to stream the response back.
