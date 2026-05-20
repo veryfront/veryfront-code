@@ -4,9 +4,9 @@ description: "Connect Claude Code, Cursor, Codex, and other MCP-aware coding age
 order: 28
 ---
 
-Connect a coding agent like Claude Code, Cursor, or Codex to your Veryfront project so it can scaffold pages, read live errors and logs, run tests, and preview routes without leaving its chat surface.
+Connect Claude Code, Cursor, Codex, or any MCP-aware coding agent to your Veryfront dev server. The agent gets a focused dev toolset: live errors and logs, route listing, route preview, scaffolding, test and lint runners.
 
-The CLI ships a built-in MCP server for this. It is separate from the application-facing MCP server you might mount in your app (see [MCP server](./mcp-server.md)), which exposes _your_ tools to MCP clients. The CLI MCP exposes _Veryfront dev tools_ to your coding agent.
+This is the CLI's built-in MCP server. It is separate from the application-facing MCP server (see [MCP server](./mcp-server.md)), which exposes _your_ tools to MCP clients. The CLI MCP exposes _Veryfront dev tools_ to your coding agent.
 
 ## Prerequisites
 
@@ -88,7 +88,7 @@ The CLI MCP exposes a focused toolset for the development loop. The names below 
 | `vf_create_project`      | Bootstrap a new project from a template.                     |
 | `vf_list_local_projects` | Find Veryfront projects on the filesystem.                   |
 
-Use `vf_get_schema` from the agent (or `veryfront schema --json` from your shell) to enumerate the full toolset and current argument shapes — that command is the source of truth and stays in sync with the CLI you have installed.
+For the full toolset and current argument shapes, call `vf_get_schema` from the agent (or run `veryfront schema --json` from your shell). That command is the source of truth and stays in sync with the CLI you have installed.
 
 ## Verify it worked
 
@@ -108,7 +108,7 @@ curl -s -X POST http://localhost:3002/mcp \
 
 A working server returns a JSON-RPC response whose `result.tools` array lists `vf_get_errors`, `vf_scaffold`, and the other tools above. If you get a connection-refused error, the dev server is not running or is on a non-default port; check the dashboard for the printed MCP URL.
 
-From inside a connected coding agent, ask it to "list routes" or "show recent dev errors" — it should call the matching `vf_*` tool and stream the result back as text.
+From inside a connected coding agent, ask it to "list routes" or "show recent dev errors". It should call the matching `vf_*` tool and stream the result back as text.
 
 ## Troubleshooting
 

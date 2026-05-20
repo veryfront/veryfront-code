@@ -4,10 +4,9 @@ description: "Config-driven integration tools with OAuth, token management, and 
 order: 25
 ---
 
-Veryfront integrations let AI agents use third-party services on behalf of
-users. Developers enable integrations in `veryfront.config.ts`, and the runtime
-uses the built-in connector catalog plus remote integration helpers to fetch
-tool definitions and execute calls through the configured API layer.
+Veryfront integrations let agents call third-party services (GitHub, Slack, Linear, Stripe, and 50+ more) on behalf of users.
+
+Enable an integration by adding it to `integrations` in `veryfront.config.ts`. The runtime fetches the integration's tool definitions from the connector catalog and routes each tool call through the configured API/service layer, which handles OAuth, token storage, and remote execution.
 
 ## Prerequisites
 

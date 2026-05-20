@@ -4,9 +4,9 @@ description: "Expose tools, prompts, and resources over Model Context Protocol."
 order: 23
 ---
 
-Expose tools, prompts, and resources over Model Context Protocol.
+Mount an MCP server route in your app to expose your project's tools, prompts, and resources to MCP clients like Claude Desktop. The runtime auto-discovers everything under `tools/`, `prompts/`, and `resources/`, so the route handler is essentially a thin auth shim.
 
-This guide covers the application-facing MCP server exposed by `veryfront/mcp`. It is separate from the internal AG-UI transport and signed control-plane run flows used by Veryfront Studio.
+This is the application-facing MCP server. It is separate from `veryfront mcp` (the CLI's dev MCP server, see [Coding agents](./coding-agents.md)) and from the AG-UI transport Veryfront Studio uses.
 
 ## Prerequisites
 
