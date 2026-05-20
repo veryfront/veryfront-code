@@ -44,7 +44,7 @@ export default tool({
     return {
       id: updatedPage.id,
       title: updatedPage.title,
-      type: updatedPage.type,
+      type: updatedPage.type ?? "page",
       url: updatedPage._links.webui,
       version: updatedPage.version.number,
       versionMessage: updatedPage.version.message,

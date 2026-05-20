@@ -17,7 +17,7 @@ export default tool({
 
     return {
       id: page.id,
-      type: page.type,
+      type: page.type ?? "page",
       title: page.title,
       content,
       htmlContent,

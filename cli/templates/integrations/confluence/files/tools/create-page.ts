@@ -42,7 +42,7 @@ export default tool({
     return {
       id: page.id,
       title: page.title,
-      type: page.type,
+      type: page.type ?? "page",
       url: page._links.webui,
       version: page.version.number,
       spaceId: page.spaceId,
