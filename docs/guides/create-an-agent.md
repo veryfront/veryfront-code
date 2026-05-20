@@ -43,7 +43,18 @@ Both forms register the same `assistant` id and are interchangeable from the cal
 
 ## Invoke the agent
 
-From an API route, resolve the agent by id and call `stream`:
+Mount the agent through `createAgUiHandler` to get a streaming chat endpoint:
+
+```ts
+// app/api/ag-ui/route.ts
+import { createAgUiHandler } from "veryfront/agent";
+
+export const POST = createAgUiHandler("assistant");
+```
+
+The handler validates the request, runs the agent, and returns an AG-UI Server-Sent Events response. Pair it with `useChat({ api: "/api/ag-ui" })` in a React client (see [Chat UI](./chat-ui.md)) and tokens appear in the UI as the model produces them.
+
+For a buffered JSON response (cron jobs, batch calls, unit tests), resolve the agent yourself and call `generate`:
 
 ```ts
 // app/api/ask/route.ts
@@ -53,16 +64,12 @@ export async function POST(request: Request) {
   const { question } = await request.json();
   const assistant = getAgent("assistant");
 
-  const result = await assistant.stream({ input: question });
-  return result.toDataStreamResponse();
+  const result = await assistant.generate({ input: question });
+  return Response.json({ answer: result.text, usage: result.usage });
 }
 ```
 
-App-router handlers receive the raw `Request`. The same route on the pages router lives at `pages/api/ask.ts` and receives an `APIContext`. See [API routes](./api-routes.md).
-
-`stream` emits chunks as the model produces them. `toDataStreamResponse()` returns a `Response` with `Content-Type: text/event-stream` that the AI SDK chat hooks (`useChat`, `useAgent`) and any AG-UI client consume directly, so the user sees tokens appear instead of waiting for the full reply.
-
-For a single buffered JSON object (cron jobs, batch calls, unit tests), use `generate` instead and return `Response.json({ answer: result.text })`. See [Memory and streaming](./memory-and-streaming.md) for both paths.
+App-router handlers receive the raw `Request`. The same route on the pages router lives at `pages/api/ag-ui.ts` (or `pages/api/ask.ts`) and receives an `APIContext`. See [API routes](./api-routes.md). For lower-level streaming surfaces that are not AG-UI chat, see [Memory and streaming](./memory-and-streaming.md).
 
 ## Run it
 
@@ -72,21 +79,17 @@ Start the dev server:
 veryfront dev
 ```
 
-Send a request from another terminal. The `-N` flag tells curl to flush each chunk as it arrives:
+Send a chat message from another terminal. The `-N` flag tells curl to flush each chunk as it arrives:
 
 ```bash
-curl -N -X POST http://localhost:3000/api/ask \
-  -H "content-type: application/json" \
-  -d '{"question":"What is Veryfront in one sentence?"}'
+curl -N -X POST http://localhost:3000/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is Veryfront in one sentence?"}]}]}'
 ```
 
 ## Verify it worked
 
-The response is a Server-Sent Events stream. You should see `data:` lines arrive in three phases:
-
-1. Metadata events that open the run.
-2. `text-delta` chunks that assemble the model's reply.
-3. A final `finish` event with token usage.
+The response is an AG-UI Server-Sent Events stream. `data:` lines arrive progressively: a `message-start` event opens the run, text-delta events stream the model's reply piece by piece, and a `message-finish` event closes the message.
 
 If the whole body lands at once after a delay, that is curl or a TLS proxy buffering rather than the route. Run the same request without `-N` to confirm.
 
