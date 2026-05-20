@@ -122,3 +122,4 @@ any source file should hot-reload within a second.
 - [Pages and routing](./pages-and-routing.md): file-based routing and layouts
 - [Agents](./agents.md): create your first AI agent
 - [API routes](./api-routes.md): backend HTTP handlers
+- [Coding agents](./coding-agents.md): drive the project from Claude Code, Cursor, or Codex

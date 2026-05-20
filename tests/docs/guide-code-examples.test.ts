@@ -72,6 +72,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "chat-theming.md",
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
+  "coding-agents.md",
   "create-an-agent.md",
   "deploying.md",
   "extension-authoring.md",
@@ -186,6 +187,29 @@ describe("Guide: chat-theming.md", () => {
     assertExists(ComposerContextProvider);
     assertExists(MessageContextProvider);
     assertEquals(typeof useChatContextOptional, "function");
+  });
+});
+
+describe("Guide: coding-agents.md", () => {
+  it("documents both MCP transports, per-client config, and the vf_* tool surface", async () => {
+    const guide = await readGuide("coding-agents.md");
+
+    for (
+      const snippet of [
+        "veryfront dev",
+        "veryfront mcp",
+        "http://localhost:3002/mcp",
+        "~/.claude.json",
+        "mcpServers",
+        "vf_get_errors",
+        "vf_scaffold",
+        "vf_get_schema",
+        "veryfront schema --json",
+        "tools/list",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
+    }
   });
 });
 
@@ -466,17 +490,19 @@ describe("Guide: create-an-agent.md", () => {
   it("uses the public agent factory and getAgent.generate path", async () => {
     const guide = await readGuide("create-an-agent.md");
 
-    for (const snippet of [
-      'import { agent } from "veryfront/agent"',
-      'export default agent({',
-      'id: "assistant"',
-      'import { getAgent } from "veryfront/agent"',
-      'export async function POST(request: Request)',
-      'const { question } = await request.json()',
-      'const assistant = getAgent("assistant")',
-      'await assistant.generate({ input: question })',
-      'Response.json({',
-    ]) {
+    for (
+      const snippet of [
+        'import { agent } from "veryfront/agent"',
+        "export default agent({",
+        'id: "assistant"',
+        'import { getAgent } from "veryfront/agent"',
+        "export async function POST(request: Request)",
+        "const { question } = await request.json()",
+        'const assistant = getAgent("assistant")',
+        "await assistant.generate({ input: question })",
+        "Response.json({",
+      ]
+    ) {
       assertStringIncludes(guide, snippet);
     }
   });
@@ -511,16 +537,18 @@ describe("Guide: installation.md", () => {
   it("documents the runtime, OS, browser, and verify-it-worked sections", async () => {
     const guide = await readGuide("installation.md");
 
-    for (const heading of [
-      "## Prerequisites",
-      "## System requirements",
-      "### Operating system",
-      "### Runtime",
-      "### Hardware",
-      "## Supported browsers",
-      "## Install",
-      "## Verify it worked",
-    ]) {
+    for (
+      const heading of [
+        "## Prerequisites",
+        "## System requirements",
+        "### Operating system",
+        "### Runtime",
+        "### Hardware",
+        "## Supported browsers",
+        "## Install",
+        "## Verify it worked",
+      ]
+    ) {
       assertStringIncludes(guide, heading);
     }
   });
