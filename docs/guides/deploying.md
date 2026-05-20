@@ -1,7 +1,7 @@
 ---
 title: "Building and deploying"
 description: "Production builds, static export, and deployment targets."
-order: 39
+order: 42
 ---
 
 Build a Veryfront project for production with `veryfront build`, run the production server locally with `veryfront start`, then ship the build with `veryfront deploy` (Veryfront Cloud) or to any host that can run your chosen runtime.

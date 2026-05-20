@@ -82,11 +82,14 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "extensions.md",
   "head-and-seo.md",
   "installation.md",
+  "create-a-frontend.md",
+  "create-a-project.md",
+  "create-an-api.md",
+  "deploy-a-project.md",
   "integrations.md",
   "pages-and-routing.md",
   "production-path.md",
   "project-structure.md",
-  "quickstart.md",
   "sandbox.md",
   "skills.md",
   "tasks.md",
@@ -542,7 +545,6 @@ describe("Guide: installation.md", () => {
 
     for (
       const heading of [
-        "## Prerequisites",
         "## System requirements",
         "### Operating system",
         "### Runtime",
@@ -557,9 +559,9 @@ describe("Guide: installation.md", () => {
   });
 });
 
-describe("Guide: quickstart.md", () => {
+describe("Guide: create-a-project.md", () => {
   it("lists template IDs that exist in the CLI template registry", async () => {
-    const guide = await readGuide("quickstart.md");
+    const guide = await readGuide("create-a-project.md");
     const templateIds = [...guide.matchAll(/\| `([^`]+)`\s+\|/g)].map((match) => match[1]);
 
     assertEquals(templateIds, [
@@ -574,6 +576,57 @@ describe("Guide: quickstart.md", () => {
 
     for (const templateId of templateIds) {
       assertExists(await getTemplate(templateId as Parameters<typeof getTemplate>[0]));
+    }
+  });
+});
+
+describe("Guide: create-an-api.md", () => {
+  it("documents the minimal app router route handler shape", async () => {
+    const guide = await readGuide("create-an-api.md");
+
+    for (
+      const snippet of [
+        "// app/api/hello/route.ts",
+        "export function GET()",
+        "Response.json({ message",
+        "curl http://localhost:3000/api/hello",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
+    }
+  });
+});
+
+describe("Guide: create-a-frontend.md", () => {
+  it("documents adding a page and linking to it", async () => {
+    const guide = await readGuide("create-a-frontend.md");
+
+    for (
+      const snippet of [
+        "// app/about/page.tsx",
+        "export default function About",
+        'import { Link } from "veryfront/router"',
+        '<Link href="/about">',
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
+    }
+  });
+});
+
+describe("Guide: deploy-a-project.md", () => {
+  it("documents the build, start, deploy, and open sequence", async () => {
+    const guide = await readGuide("deploy-a-project.md");
+
+    for (
+      const command of [
+        "veryfront build",
+        "veryfront start",
+        "veryfront deploy",
+        "veryfront open",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
     }
   });
 });

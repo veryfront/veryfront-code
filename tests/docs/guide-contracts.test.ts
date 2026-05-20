@@ -73,7 +73,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "production-path.md": {
     references: [
-      "./quickstart.md",
+      "./create-a-project.md",
       "./choose-a-primitive.md",
       "./pages-and-routing.md",
       "./api-routes.md",
@@ -138,10 +138,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "index.md": {
     references: [],
     snippets: [
-      "Quickstart",
+      "Getting Started",
+      "Create a project",
+      "Create an agent",
       "Choose a primitive",
-      "Production path",
-      "Build pages and APIs",
+      "Pages and APIs",
       "Ship to production",
     ],
   },
@@ -206,7 +207,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "./tools.md",
       "./chat-ui.md",
       "./installation.md",
-      "./quickstart.md",
+      "./create-a-project.md",
       "./providers.md",
       "./memory-and-streaming.md",
     ],
@@ -227,9 +228,31 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../reference/veryfront/provider.md", "../reference/veryfront/embedding.md"],
     snippets: ["provider/model", "OPENAI_API_KEY", "registerModelProvider"],
   },
-  "quickstart.md": {
-    references: [],
-    snippets: ["veryfront init", "veryfront dev", "veryfront build"],
+  "create-a-project.md": {
+    references: ["./installation.md", "./create-an-agent.md"],
+    snippets: ["veryfront init test-app", "veryfront dev", "ai-agent", "minimal"],
+  },
+  "create-an-api.md": {
+    references: ["./create-a-project.md", "./create-a-frontend.md", "./api-routes.md"],
+    snippets: [
+      "app/api/hello/route.ts",
+      "Response.json",
+      "export function GET()",
+      "curl http://localhost:3000/api/hello",
+    ],
+  },
+  "create-a-frontend.md": {
+    references: ["./create-a-project.md", "./deploy-a-project.md", "./pages-and-routing.md"],
+    snippets: [
+      "app/about/page.tsx",
+      "export default function About",
+      'import { Link } from "veryfront/router"',
+      '<Link href="/about">',
+    ],
+  },
+  "deploy-a-project.md": {
+    references: ["./create-a-project.md", "./configuration.md", "../reference/veryfront/index.md"],
+    snippets: ["veryfront build", "veryfront start", "veryfront deploy", "veryfront open"],
   },
   "sandbox.md": {
     references: ["../reference/veryfront/sandbox.md", "../reference/veryfront/fs.md"],

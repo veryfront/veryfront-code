@@ -4,8 +4,6 @@ description: "OpenTelemetry tracing, metrics collection, auto-instrumentation fo
 order: 17
 ---
 
-# veryfront/observability
-
 OpenTelemetry tracing, metrics collection, auto-instrumentation for fetch/HTTP/React, OTLP export, and structured error and log buffering.
 
 ## Import

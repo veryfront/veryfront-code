@@ -4,8 +4,6 @@ description: "Channel transports for the Veryfront control plane and AG-UI invok
 order: 29
 ---
 
-# veryfront/channels
-
 Channel transports for the Veryfront control plane and AG-UI invoke route. These are deep-import-only modules.
 
 `veryfront/channels` has no direct exports. Use the deep imports below.

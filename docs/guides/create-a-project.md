@@ -1,24 +1,17 @@
 ---
-title: "Quickstart"
-description: "Create and run a Veryfront project in under 2 minutes."
+title: "Create a project"
+description: "Scaffold a new Veryfront project from a template and run it locally."
 order: 2
 ---
 
-Scaffold a Veryfront app, run it locally, and deploy it. The default deploy target is Veryfront Cloud. The same build can be self-hosted on other infrastructure. The npm package, CLI, and import name are all `veryfront`.
+Scaffold a new Veryfront project from a template, then run it locally on the dev server. This is the second step in the Getting Started flow, between [Installation](./installation.md) and [Create an agent](./create-an-agent.md).
 
 ## Prerequisites
 
-- The current Node.js LTS, with `npm`, `pnpm`, or `yarn` on your PATH.
-- A terminal in which you can run global `npm install` (use `npx veryfront` if
-  global installs aren't possible).
+- The Veryfront CLI installed (see [Installation](./installation.md)).
+- A terminal in which you can run `veryfront init`.
 
-## Install
-
-```bash
-npm install -g veryfront
-```
-
-## Create a project
+## Scaffold
 
 ```bash
 veryfront init test-app
@@ -43,7 +36,7 @@ To skip the prompt and pick a template up front, pass `--template`:
 veryfront init test-app --template ai-agent
 ```
 
-## Start the dev server
+## Run the dev server
 
 ```bash
 veryfront dev
@@ -84,35 +77,18 @@ test-app/
 
 Pages live in `app/`. Agents, tools, prompts, and workflows live at the project root: they're auto-discovered by the framework.
 
-## Build for production
-
-```bash
-veryfront build
-veryfront start
-```
-
-## Deploy
-
-```bash
-veryfront deploy
-```
-
-Your site is live at `https://<slug>.production.veryfront.com`.
-
-To deploy somewhere else, run `veryfront build` and ship the build output to your own host.
-
 ## Verify it worked
 
 `veryfront dev` prints `Ready on http://localhost:3000`. Open the URL: the template's home page should render, and saving any source file should hot-reload the browser within a second.
 
 ## Next
 
-- [Project structure](./project-structure.md): understand the full directory layout
-- [API reference](../reference/README.md): complete API documentation
+- [Create an agent](./create-an-agent.md): define an agent and expose it as a streaming chat endpoint
+- [Create an API](./create-an-api.md): add an HTTP endpoint to the project
+- [Create a frontend](./create-a-frontend.md): add a new page
 
 ## Related
 
-- [Pages and routing](./pages-and-routing.md): file-based routing and layouts
-- [Agents](./agents.md): create your first AI agent
-- [API routes](./api-routes.md): backend HTTP handlers
+- [Project structure](./project-structure.md): the file conventions used by `veryfront init`
+- [Configuration](./configuration.md): customize `veryfront.config.ts`
 - [Coding agents](./coding-agents.md): drive the project from Claude Code, Cursor, or Codex

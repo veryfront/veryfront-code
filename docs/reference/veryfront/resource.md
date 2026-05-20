@@ -4,8 +4,6 @@ description: "Declare and register resources exposable over MCP."
 order: 13
 ---
 
-# veryfront/resource
-
 Declare and register resources exposable over MCP.
 
 ## Import

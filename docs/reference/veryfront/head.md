@@ -4,8 +4,6 @@ description: "React head exports for document metadata rendering."
 order: 2
 ---
 
-# veryfront/head
-
 React head exports for document metadata rendering.
 
 ## Import

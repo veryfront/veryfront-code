@@ -1,7 +1,7 @@
 ---
 title: "Pages and routing"
 description: "File-based routing, layouts, dynamic routes, and MDX pages."
-order: 8
+order: 11
 ---
 
 Veryfront uses file-system based routing. Folders and files under `app/` (or `pages/`) define routes; layouts compose down the tree; brackets in path segments mark dynamic params.
@@ -10,7 +10,7 @@ Examples below use the default app router. Set `router: "pages"` in `veryfront.c
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Quickstart](./quickstart.md)).
+- A project created with `veryfront init` (see [Create a project](./create-a-project.md)).
 - The dev server is the easiest way to test routes:
   `veryfront dev`.
 

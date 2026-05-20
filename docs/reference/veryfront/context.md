@@ -4,8 +4,6 @@ description: "React page-context exports for MDX and route-aware rendering."
 order: 4
 ---
 
-# veryfront/context
-
 React page-context exports for MDX and route-aware rendering.
 
 ## Import

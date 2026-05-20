@@ -1,7 +1,7 @@
 ---
 title: "Coding agents"
 description: "Connect Claude Code, Cursor, Codex, and other MCP-aware coding agents to the Veryfront dev server."
-order: 29
+order: 32
 ---
 
 Connect Claude Code, Cursor, Codex, or any MCP-aware coding agent to your Veryfront dev server. The agent gets a focused dev toolset: live errors and logs, route listing, route preview, scaffolding, test and lint runners.
@@ -10,7 +10,7 @@ This is the CLI's built-in MCP server. It is separate from the application-facin
 
 ## Prerequisites
 
-- A Veryfront project (see [Quickstart](./quickstart.md)).
+- A Veryfront project (see [Create a project](./create-a-project.md)).
 - An MCP-aware coding agent such as Claude Code, Cursor, or any client that
   speaks Model Context Protocol over HTTP or stdio.
 
@@ -137,7 +137,7 @@ deno run -A cli/main.ts mcp
 
 - [MCP server](./mcp-server.md): expose _your_ app's tools, prompts, and resources to MCP clients
 - [Skills](./skills.md): give agents project-level instructions as `SKILL.md` files
-- [Quickstart](./quickstart.md): scaffold a project the agent can drive
+- [Create a project](./create-a-project.md): scaffold a project the agent can drive
 
 ## Related
 

@@ -1,7 +1,7 @@
 ---
 title: "Tools"
 description: "Define tools with schema-backed inputs that agents can call."
-order: 16
+order: 19
 ---
 
 A tool is a typed function an agent can call. Each tool declares an `inputSchema` (zod or any Veryfront schema), a `description` the model reads, and an `execute` function the framework runs when the model calls it.
@@ -10,7 +10,7 @@ Route examples use the default app router. To use `pages/api/**` instead, set `r
 
 ## Prerequisites
 
-- A Veryfront project running locally (see [Quickstart](./quickstart.md)).
+- A Veryfront project running locally (see [Create a project](./create-a-project.md)).
 - An agent that will call the tool, or an API route that invokes the tool
   directly (see [Agents](./agents.md) and [API routes](./api-routes.md)).
 - `zod` is available in the project (it is bundled with `veryfront`).

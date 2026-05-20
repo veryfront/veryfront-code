@@ -1,7 +1,7 @@
 ---
 title: "Tasks"
 description: "Define background task functions that can run locally or as cloud jobs."
-order: 27
+order: 30
 ---
 
 Tasks are user-defined functions in `tasks/` that can run locally via `veryfront task <name>` or in the cloud as Jobs and Cron Jobs.
@@ -9,7 +9,7 @@ Tasks are user-defined functions in `tasks/` that can run locally via `veryfront
 ## Prerequisites
 
 - A Veryfront project with the `tasks/` directory available (see
-  [Quickstart](./quickstart.md)).
+  [Create a project](./create-a-project.md)).
 - For cloud execution: a `VERYFRONT_API_TOKEN` and a project reference
   (see [Configuration](./configuration.md)).
 

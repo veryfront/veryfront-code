@@ -1,7 +1,7 @@
 ---
 title: "Workflows"
 description: "DAG-based multi-step workflows with branching and parallelism."
-order: 22
+order: 25
 ---
 
 A workflow is a file in `workflows/` that declares ordered steps. Each step runs an agent or a tool, and the workflow runtime threads outputs between them. Steps support parallel execution, branches, loops, retries, timeouts, and human-in-the-loop approvals.
@@ -9,7 +9,7 @@ A workflow is a file in `workflows/` that declares ordered steps. Each step runs
 ## Prerequisites
 
 - A Veryfront project with the `workflows/` directory available (see
-  [Quickstart](./quickstart.md)).
+  [Create a project](./create-a-project.md)).
 - Any agents or tools referenced by a step are defined in `agents/` or
   `tools/` (see [Agents](./agents.md) and [Tools](./tools.md)).
 - A provider configured for any agents the workflow uses

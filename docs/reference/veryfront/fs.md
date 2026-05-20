@@ -4,8 +4,6 @@ description: "Public filesystem, path, and cwd utilities."
 order: 21
 ---
 
-# veryfront/fs
-
 Public filesystem, path, and cwd utilities.
 
 ## Import

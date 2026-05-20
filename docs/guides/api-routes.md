@@ -1,7 +1,7 @@
 ---
 title: "API routes"
 description: "HTTP handlers, request parsing, and streaming responses."
-order: 10
+order: 13
 ---
 
 An API route is a file under `app/api/` (or `pages/api/`) that exports named HTTP method handlers. Handlers receive the standard Web `Request` and return a `Response`.
@@ -10,7 +10,7 @@ The router style changes the file location and the handler's argument shape. The
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Quickstart](./quickstart.md)).
+- A project created with `veryfront init` (see [Create a project](./create-a-project.md)).
 - The dev server running (`veryfront dev`) or a build target you can hit with
   HTTP.
 

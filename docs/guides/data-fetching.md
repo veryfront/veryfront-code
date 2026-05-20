@@ -1,7 +1,7 @@
 ---
 title: "Data fetching"
 description: "Server data, static generation, and client-side fetching."
-order: 9
+order: 12
 ---
 
 Veryfront pages can load data three ways: `getServerData` on every request, `getStaticData` at build time, or `fetch` from a client component. Each one has its place.

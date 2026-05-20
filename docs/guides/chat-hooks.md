@@ -1,7 +1,7 @@
 ---
 title: "Chat hooks"
 description: "Use headless chat, agent, completion, voice, and thread hooks."
-order: 20
+order: 23
 ---
 
 Three headless hooks expose the chat runtime without the preset UI: `useChat` for AG-UI streaming chat, `useAgent` for direct agent invocation, and `useCompletion` for one-shot text generation. Use them when you want full control of the layout.

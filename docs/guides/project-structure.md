@@ -1,7 +1,7 @@
 ---
 title: "Project structure"
 description: "File conventions, directory layout, and how auto-discovery works."
-order: 6
+order: 7
 ---
 
 A Veryfront project keeps routing files in `app/` (or `pages/`) and AI primitives (agents, tools, prompts, workflows, resources, skills) at the project root. The framework auto-discovers each of those root directories on startup; you do not register anything by hand.
@@ -10,7 +10,7 @@ Examples below show the default app-router layout. Set `router: "pages"` in `ver
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Quickstart](./quickstart.md)).
+- A project created with `veryfront init` (see [Create a project](./create-a-project.md)).
 - Familiarity with how a file path maps to a route in modern React frameworks.
 
 ## Directory layout

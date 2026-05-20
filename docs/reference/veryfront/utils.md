@@ -4,8 +4,6 @@ description: "Internal utilities — runtime detection, structured logging, cons
 order: 18
 ---
 
-# veryfront/utils
-
 Internal utilities — runtime detection, structured logging, constants (breakpoints, timeouts, HTTP codes), hashing, memoization, and feature flags.
 
 ## Import

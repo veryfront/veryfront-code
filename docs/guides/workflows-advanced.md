@@ -1,7 +1,7 @@
 ---
 title: "Workflows: loops, blob storage, React hooks"
 description: "Repeat steps based on conditions, store large workflow artifacts, and track workflow progress from a React client."
-order: 23
+order: 26
 ---
 
 Three patterns that reach past a single-pass DAG: looping until a condition is met, storing artifacts that are too large to thread through step inputs, and surfacing workflow progress in a React UI. Pick the section that matches what the base workflow can't do yet.

@@ -4,8 +4,6 @@ description: "DAG-based agentic workflows with human-in-the-loop support."
 order: 11
 ---
 
-# veryfront/workflow
-
 DAG-based agentic workflows with human-in-the-loop support.
 
 ## Import

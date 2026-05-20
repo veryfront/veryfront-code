@@ -4,8 +4,6 @@ description: "Declare and register prompts exposable over MCP."
 order: 12
 ---
 
-# veryfront/prompt
-
 Declare and register prompts exposable over MCP.
 
 ## Import

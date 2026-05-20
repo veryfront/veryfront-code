@@ -1,7 +1,7 @@
 ---
 title: "Agents"
 description: "Create an AI agent with a system prompt, tools, and memory."
-order: 14
+order: 17
 ---
 
 An agent is a file in `agents/` that exports a system prompt, optional tools, optional memory, and optional skills. The runtime auto-discovers it on startup and exposes it via `getAgent(id)` or an AG-UI route.
@@ -12,7 +12,7 @@ Route examples use the default app router. To use `pages/api/**` instead, set `r
 
 ## Prerequisites
 
-- A Veryfront project running locally (see [Quickstart](./quickstart.md)).
+- A Veryfront project running locally (see [Create a project](./create-a-project.md)).
 - A provider configured for inference (see [Providers](./providers.md)).
 - The `agents/` directory exists. If you customised `ai.agents.discovery.paths`
   in [Configuration](./configuration.md), use that directory instead.
