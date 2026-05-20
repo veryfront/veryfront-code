@@ -53,13 +53,15 @@ flowchart TD
 
 Job execution is represented through canonical runs:
 
-- Running a task definition creates `run.kind = "job"` and a bound job whose
-  target is `task:<task-id>`.
-- Running a workflow definition creates `run.kind = "workflow"` and a bound job
-  whose target is `workflow:<workflow-id>`.
-- Triggering a cron job creates the run kind implied by its target. A
-  `task:<task-id>` target creates a job run. A `workflow:<workflow-id>` target
-  creates a workflow run.
+| Concept  | Public meaning                           | Execution mapping                                                                         |
+| -------- | ---------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Task     | Developer-defined background work target | Starting a task creates `run.kind = "job"` with target `task:<task-id>`.                  |
+| Workflow | Developer-defined step graph or DAG      | Starting a workflow creates `run.kind = "workflow"` with target `workflow:<workflow-id>`. |
+| Cron job | Schedule definition                      | Each trigger creates the run kind implied by its target.                                  |
+| Job      | Durable background execution record      | Owns queueing, worker dispatch, logs, retry, cancellation, and runtime metadata.          |
+
+A `task:<task-id>` cron job creates a job run. A `workflow:<workflow-id>` cron
+job creates a workflow run.
 
 The job row owns queueing, worker dispatch, logs, retry, cancellation, and
 runtime metadata. The canonical run row owns the public execution identity and

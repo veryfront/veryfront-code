@@ -1,5 +1,5 @@
 /**
- * Worker command - Start workflow job manager
+ * Worker command - Start workflow run worker
  *
  * Polls Redis for pending/stalled workflow runs and executes them
  * as isolated processes. Supports multi-tenant execution: each job
@@ -15,7 +15,7 @@ export interface WorkerOptions extends WorkerArgs {}
 export async function workerCommand(options: WorkerOptions): Promise<void> {
   showLogo();
 
-  const { WorkflowJobManager } = await import(
+  const { WorkflowRunManager } = await import(
     "../../../src/workflow/worker/job-manager.ts"
   );
   const { ProcessJobExecutor } = await import(
@@ -64,8 +64,8 @@ export async function workerCommand(options: WorkerOptions): Promise<void> {
     debug: options.debug,
   });
 
-  // Create and start job manager
-  const manager = new WorkflowJobManager({
+  // Create and start workflow run manager
+  const manager = new WorkflowRunManager({
     backend,
     executor,
     pollInterval: options.pollInterval,
@@ -79,7 +79,7 @@ export async function workerCommand(options: WorkerOptions): Promise<void> {
   cliLogger.info(
     `Workflow worker started (manager: ${manager.getManagerId()})`,
   );
-  cliLogger.info("Polling for workflow jobs...\n");
+  cliLogger.info("Polling for workflow runs...\n");
 
   // Graceful shutdown
   let shuttingDown = false;

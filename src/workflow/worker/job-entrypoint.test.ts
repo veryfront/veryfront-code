@@ -8,7 +8,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import { dependsOn, step, workflow } from "../dsl/index.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowRun } from "../types.ts";
-import { EXIT_CODES, runWorkflowJob } from "./job-entrypoint.ts";
+import { EXIT_CODES, runWorkflowRun } from "./job-entrypoint.ts";
 
 const ENV_KEYS = [
   "WORKFLOW_RUN_ID",
@@ -50,7 +50,7 @@ function createMockTool(name: string, handler: (input: unknown) => unknown): Too
   };
 }
 
-describe("runWorkflowJob", () => {
+describe("runWorkflowRun", () => {
   afterEach(() => {
     restoreEnv();
   });
@@ -93,7 +93,7 @@ describe("runWorkflowJob", () => {
       },
     };
 
-    const exitCode = await runWorkflowJob({
+    const exitCode = await runWorkflowRun({
       backend,
       executor: executor as never,
     });
@@ -142,7 +142,7 @@ describe("runWorkflowJob", () => {
       },
     };
 
-    const exitCode = await runWorkflowJob({
+    const exitCode = await runWorkflowRun({
       backend,
       executor: executor as never,
     });
@@ -176,7 +176,7 @@ describe("runWorkflowJob", () => {
 
     Deno.env.set("WORKFLOW_RUN_ID", run.id);
 
-    const exitCode = await runWorkflowJob({
+    const exitCode = await runWorkflowRun({
       backend,
       executor: {
         resume: async () => {
@@ -193,7 +193,7 @@ describe("runWorkflowJob", () => {
     assertEquals(updatedRun.error?.message, "EXECUTION_ERROR: boom");
   });
 
-  it("executes workflow runs already marked running by the job manager", async () => {
+  it("executes workflow runs already marked running by the run manager", async () => {
     rememberEnv();
 
     const backend = new MemoryBackend();
@@ -226,7 +226,7 @@ describe("runWorkflowJob", () => {
 
     Deno.env.set("WORKFLOW_RUN_ID", run.id);
 
-    const exitCode = await runWorkflowJob({
+    const exitCode = await runWorkflowRun({
       backend,
       executor,
     });
@@ -239,7 +239,7 @@ describe("runWorkflowJob", () => {
     assertEquals(updatedRun.output, { finish: { ok: true } });
   });
 
-  it("resumes job-managed workflow runs from the latest checkpoint", async () => {
+  it("resumes run-manager workflow runs from the latest checkpoint", async () => {
     rememberEnv();
 
     const backend = new MemoryBackend();
@@ -299,7 +299,7 @@ describe("runWorkflowJob", () => {
 
     Deno.env.set("WORKFLOW_RUN_ID", run.id);
 
-    const exitCode = await runWorkflowJob({
+    const exitCode = await runWorkflowRun({
       backend,
       executor,
     });

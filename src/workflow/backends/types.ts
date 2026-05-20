@@ -3,7 +3,7 @@ import type {
   Checkpoint,
   PendingApproval,
   RunFilter,
-  WorkflowJob,
+  WorkflowQueueItem,
   WorkflowRun,
 } from "../types.ts";
 
@@ -54,8 +54,8 @@ export interface WorkflowBackend {
     status?: "pending" | "expired";
   }): Promise<Array<{ runId: string; approval: PendingApproval }>>;
 
-  enqueue?(job: WorkflowJob): Promise<void>;
-  dequeue?(): Promise<WorkflowJob | null>;
+  enqueue?(job: WorkflowQueueItem): Promise<void>;
+  dequeue?(): Promise<WorkflowQueueItem | null>;
   acknowledge?(runId: string): Promise<void>;
   nack?(runId: string): Promise<void>;
 

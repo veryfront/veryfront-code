@@ -1,5 +1,5 @@
 /**
- * Worker command - Start workflow job manager
+ * Worker command - Start workflow run worker
  */
 
 export { workerCommand } from "./command.ts";

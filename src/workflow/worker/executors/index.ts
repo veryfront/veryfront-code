@@ -1,7 +1,8 @@
 /**
- * Job Executors
+ * Job executors
  *
- * Abstraction layer for executing workflow jobs in different environments.
+ * Abstraction layer for executing job-backed workflow runs in different
+ * environments.
  */
 
 // Types

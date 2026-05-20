@@ -3,6 +3,9 @@
  *
  * Provides a stable public client for one-off jobs, cron jobs, job batches,
  * and job target discovery on the Veryfront Jobs API.
+ *
+ * Use `task:<task-id>` targets for task-backed job runs. Use
+ * `workflow:<workflow-id>` targets for workflow runs backed by jobs.
  */
 
 import { getVeryfrontCloudBootstrap } from "#veryfront/platform/cloud/resolver.ts";

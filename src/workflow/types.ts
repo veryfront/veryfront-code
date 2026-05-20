@@ -23,8 +23,8 @@ export type {
   RunFilter,
   WaitType,
   WorkflowError,
-  WorkflowJob,
   WorkflowNodeType,
+  WorkflowQueueItem,
   WorkflowStatus,
 } from "./schemas/index.ts";
 

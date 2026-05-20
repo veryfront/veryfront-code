@@ -12,7 +12,7 @@ import type {
   Checkpoint,
   PendingApproval,
   RunFilter,
-  WorkflowJob,
+  WorkflowQueueItem,
   WorkflowRun,
   WorkflowStatus,
 } from "../../types.ts";
@@ -500,7 +500,7 @@ export class RedisBackend implements WorkflowBackend {
     return result;
   }
 
-  async enqueue(job: WorkflowJob): Promise<void> {
+  async enqueue(job: WorkflowQueueItem): Promise<void> {
     const client = await this.ensureClient();
 
     if (this.config.debug) logger.debug(`[RedisBackend] Enqueueing job: ${job.runId}`);
@@ -514,7 +514,7 @@ export class RedisBackend implements WorkflowBackend {
     });
   }
 
-  async dequeue(): Promise<WorkflowJob | null> {
+  async dequeue(): Promise<WorkflowQueueItem | null> {
     const client = await this.ensureClient();
 
     const streams = await client.xreadgroup([{ key: this.config.streamKey, xid: ">" }], {

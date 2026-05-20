@@ -184,7 +184,7 @@ For multi-tenant SaaS with untrusted user code, we use K8s Job isolation:
 │                              │                                  │
 │                              ▼                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │                 Job Manager Pod                          │   │
+│  │              Workflow Run Manager Pod                    │   │
 │  │  • Polls Redis for pending workflows                     │   │
 │  │  • Creates K8s Job per workflow                          │   │
 │  │  • Never executes user code                              │   │
@@ -239,8 +239,8 @@ WORKER_POLL_INTERVAL=5000            # Poll every 5 seconds
 WORKER_STALLED_THRESHOLD=60000       # Consider stalled after 60 seconds
 WORKER_CONCURRENCY=3                 # Max concurrent workflow resumes
 
-# Job Manager mode (multi-tenant)
-MODE=job-manager                     # Run as job manager only
+# Workflow run manager mode (multi-tenant)
+MODE=workflow-run-manager            # Run as workflow run manager only
 JOB_NAMESPACE=workflows              # K8s namespace for jobs
 JOB_IMAGE=veryfront-renderer:latest  # Image for job pods
 JOB_TIMEOUT=1800000                  # 30 minute timeout
@@ -273,14 +273,14 @@ worker.start();
 
 ### Job Executors (Pluggable Runtimes)
 
-The `WorkflowJobManager` uses a pluggable `JobExecutor` interface, allowing workflows to run on different runtimes:
+The `WorkflowRunManager` uses a pluggable `JobExecutor` interface, allowing workflows to run on different runtimes:
 
 ```typescript
 import {
   K8sJobExecutor,
   ProcessJobExecutor,
   RedisBackend,
-  WorkflowJobManager,
+  WorkflowRunManager,
 } from "veryfront/workflow";
 
 const backend = new RedisBackend({ url: process.env.REDIS_URL });
@@ -302,7 +302,7 @@ const processExecutor = new ProcessJobExecutor({
 });
 
 // Same manager interface for both
-const manager = new WorkflowJobManager({
+const manager = new WorkflowRunManager({
   backend,
   executor: process.env.NODE_ENV === "production" ? k8sExecutor : processExecutor,
   maxConcurrentJobs: 10,

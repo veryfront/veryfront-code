@@ -1,7 +1,7 @@
 /**
- * Process Job Executor
+ * Process job executor
  *
- * Executes workflow jobs as child processes.
+ * Executes job-backed workflow runs as child processes.
  * Useful for local development and testing without containerization.
  *
  * Each workflow runs in a separate Deno subprocess with its own environment.
@@ -23,7 +23,7 @@ export interface ProcessJobExecutorConfig {
   /** Arguments for the command */
   args?: string[];
 
-  /** Path to the job entrypoint script */
+  /** Path to the workflow run entrypoint script */
   entrypointPath: string;
 
   /** Working directory for spawned processes */
@@ -53,21 +53,21 @@ interface TrackedJob {
 }
 
 /**
- * Process Job Executor
+ * Process job executor
  *
- * Spawns child processes for each workflow job.
+ * Spawns child processes for each job-backed workflow run.
  * Provides isolation at the process level (separate memory space).
  *
  * @example
  * ```typescript
  * const executor = new ProcessJobExecutor({
- *   entrypointPath: "./src/workflow-job.ts",
+ *   entrypointPath: "./src/workflow-run-entrypoint.ts",
  *   env: {
  *     REDIS_URL: "redis://localhost:6379",
  *   },
  * });
  *
- * const manager = new WorkflowJobManager({
+ * const manager = new WorkflowRunManager({
  *   backend,
  *   executor,
  * });

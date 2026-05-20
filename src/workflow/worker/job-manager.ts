@@ -1,7 +1,7 @@
 /**
- * Workflow Job Manager
+ * Workflow run manager
  *
- * Orchestrates workflow execution via isolated jobs.
+ * Orchestrates workflow run execution via isolated jobs.
  * Uses pluggable JobExecutor interface for runtime flexibility.
  *
  * Supported runtimes:
@@ -22,7 +22,7 @@ import { generateId } from "../types.ts";
 import type { JobConfig, JobExecutor, JobStatus } from "./executors/types.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
-const logger = baseLogger.component("workflow-job-manager");
+const logger = baseLogger.component("workflow-run-manager");
 
 /** Default interval between poll cycles */
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
@@ -37,9 +37,9 @@ const DEFAULT_STALLED_THRESHOLD_MS = 60_000;
 export type { JobExecutor, JobInfo, JobStatus } from "./executors/types.ts";
 
 /**
- * Configuration for the Workflow Job Manager
+ * Configuration for the workflow run manager backed by job executors.
  */
-export interface WorkflowJobManagerConfig {
+export interface WorkflowRunManagerConfig {
   /** Backend for workflow persistence */
   backend: WorkflowBackend;
 
@@ -98,12 +98,12 @@ interface TrackedJob {
 }
 
 /** Resolved config type with defaults applied */
-type ResolvedConfig = Required<Omit<WorkflowJobManagerConfig, "env">> & {
+type ResolvedConfig = Required<Omit<WorkflowRunManagerConfig, "env">> & {
   env?: Record<string, string>;
 };
 
 /**
- * Workflow Job Manager
+ * Workflow run manager
  *
  * Orchestrates workflow execution via pluggable job executors.
  * Each workflow runs in complete isolation.
@@ -115,7 +115,7 @@ type ResolvedConfig = Required<Omit<WorkflowJobManagerConfig, "env">> & {
  *   namespace: "workflows",
  * }, k8sClient);
  *
- * const manager = new WorkflowJobManager({
+ * const manager = new WorkflowRunManager({
  *   backend: redisBackend,
  *   executor,
  * });
@@ -129,7 +129,7 @@ type ResolvedConfig = Required<Omit<WorkflowJobManagerConfig, "env">> & {
  *   entrypointPath: "./job-entrypoint.ts",
  * });
  *
- * const manager = new WorkflowJobManager({
+ * const manager = new WorkflowRunManager({
  *   backend: redisBackend,
  *   executor,
  * });
@@ -137,7 +137,7 @@ type ResolvedConfig = Required<Omit<WorkflowJobManagerConfig, "env">> & {
  * manager.start();
  * ```
  */
-export class WorkflowJobManager {
+export class WorkflowRunManager {
   private config: ResolvedConfig;
   private status: ManagerStatus = "idle";
   private pollTimeout?: ReturnType<typeof setTimeout>;
@@ -145,7 +145,7 @@ export class WorkflowJobManager {
   private stats: ManagerStats;
   private managerId: string;
 
-  constructor(config: WorkflowJobManagerConfig) {
+  constructor(config: WorkflowRunManagerConfig) {
     this.managerId = generateId("mgr");
 
     this.config = {
@@ -169,11 +169,11 @@ export class WorkflowJobManager {
   }
 
   /**
-   * Start the job manager
+   * Start the workflow run manager.
    */
   async start(): Promise<void> {
     if (this.status === "running") {
-      throw ORCHESTRATION_ERROR.create({ detail: "Job manager is already running" });
+      throw ORCHESTRATION_ERROR.create({ detail: "Workflow run manager is already running" });
     }
 
     // Initialize executor if needed
@@ -194,7 +194,7 @@ export class WorkflowJobManager {
   }
 
   /**
-   * Stop the job manager gracefully
+   * Stop the workflow run manager gracefully.
    */
   async stop(): Promise<void> {
     if (this.status !== "running") {
@@ -296,7 +296,7 @@ export class WorkflowJobManager {
 
         if (stalledRuns.length > 0 && this.config.debug) {
           logger.info(
-            `[WorkflowJobManager] Found ${stalledRuns.length} stalled runs to recover`,
+            `[WorkflowRunManager] Found ${stalledRuns.length} stalled runs to recover`,
           );
         }
       }
@@ -357,7 +357,7 @@ export class WorkflowJobManager {
               await this.config.backend.releaseLock?.(run.id);
             } catch (error) {
               logger.warn(
-                `[WorkflowJobManager] Failed to release pending lock for ${run.id}:`,
+                `[WorkflowRunManager] Failed to release pending lock for ${run.id}:`,
                 error,
               );
             }
@@ -401,7 +401,7 @@ export class WorkflowJobManager {
           } else {
             this.stats.jobsFailed++;
             logger.error(
-              `[WorkflowJobManager] Job failed: ${jobInfo.jobId}`,
+              `[WorkflowRunManager] Job failed: ${jobInfo.jobId}`,
               jobInfo.error,
             );
           }
@@ -477,10 +477,10 @@ export class WorkflowJobManager {
 }
 
 /**
- * Create a workflow job manager
+ * Create a workflow run manager backed by job executors.
  */
-export function createWorkflowJobManager(
-  config: WorkflowJobManagerConfig,
-): WorkflowJobManager {
-  return new WorkflowJobManager(config);
+export function createWorkflowRunManager(
+  config: WorkflowRunManagerConfig,
+): WorkflowRunManager {
+  return new WorkflowRunManager(config);
 }

@@ -1,7 +1,8 @@
 /**
- * Job Executor Interface
+ * Job executor interface
  *
- * Abstraction layer for executing workflow jobs in isolated environments.
+ * Abstraction layer for executing job-backed workflow runs in isolated
+ * environments.
  * Implementations can target different runtimes:
  * - K8s Jobs
  * - Docker containers
@@ -71,7 +72,7 @@ export interface JobInfo {
 /**
  * Job Executor Interface
  *
- * Abstracts the runtime environment for executing workflow jobs.
+ * Abstracts the runtime environment for executing job-backed workflow runs.
  * Each implementation handles the specifics of its target platform.
  *
  * @example K8s
@@ -100,7 +101,7 @@ export interface JobInfo {
  */
 export interface JobExecutor {
   /**
-   * Create and start a job for a workflow run
+   * Create and start a job for a workflow run.
    * @returns Job ID
    */
   createJob(config: JobConfig): Promise<string>;

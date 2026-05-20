@@ -10,6 +10,13 @@ Workflow files are definitions. Starting a workflow creates a workflow run. On
 the Veryfront platform, that workflow run is backed by a job so it can be
 queued, retried, canceled, logged, and observed in the Jobs panel.
 
+| Concept      | Meaning                                                                                  |
+| ------------ | ---------------------------------------------------------------------------------------- |
+| Workflow     | The definition stored in `workflows/`.                                                   |
+| Workflow run | The canonical public execution record for a started workflow.                            |
+| Job          | The durable backing execution record that queues and dispatches the workflow run.        |
+| Cron job     | A schedule that creates workflow runs over time when its target starts with `workflow:`. |
+
 ## Prerequisites
 
 - A Veryfront project with the `workflows/` directory available (see

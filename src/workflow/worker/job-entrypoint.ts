@@ -1,5 +1,5 @@
 /**
- * Workflow Job Entrypoint
+ * Workflow run entrypoint
  *
  * Runs inside an ephemeral K8s Job container.
  * Executes a single workflow run in complete isolation.
@@ -33,12 +33,12 @@ import {
   runWithTenantContext,
 } from "./shared.ts";
 
-const logger = baseLogger.component("workflow-job");
+const logger = baseLogger.component("workflow-run-entrypoint");
 
 /**
- * Configuration for the job entrypoint
+ * Configuration for the workflow run entrypoint.
  */
-export interface JobEntrypointConfig {
+export interface WorkflowRunEntrypointConfig {
   /** Backend for workflow persistence */
   backend: WorkflowBackend;
 
@@ -50,7 +50,7 @@ export interface JobEntrypointConfig {
 }
 
 /**
- * Exit codes for the job
+ * Exit codes for the workflow run entrypoint.
  */
 export const EXIT_CODES = {
   SUCCESS: 0,
@@ -60,17 +60,17 @@ export const EXIT_CODES = {
 } as const;
 
 /**
- * Run the workflow job
+ * Run the workflow run entrypoint
  *
  * This function is the main entrypoint for workflow execution in a K8s Job.
  * It should be called from your container's main script.
  *
  * @example
  * ```typescript
- * // job-main.ts - Container entrypoint
+ * // workflow-runner.ts - Container entrypoint
  * import { RedisBackend } from "veryfront/workflow";
  * import { WorkflowExecutor } from "veryfront/workflow";
- * import { runWorkflowJob } from "veryfront/workflow/worker";
+ * import { runWorkflowRun } from "veryfront/workflow/worker";
  * import { workflows } from "./workflows.ts";
  *
  * const backend = new RedisBackend({ url: Deno.env.get("REDIS_URL")! });
@@ -81,12 +81,12 @@ export const EXIT_CODES = {
  *   executor.register(wf);
  * }
  *
- * // Run the job
- * const exitCode = await runWorkflowJob({ backend, executor });
+ * // Run the workflow run
+ * const exitCode = await runWorkflowRun({ backend, executor });
  * Deno.exit(exitCode);
  * ```
  */
-export async function runWorkflowJob(config: JobEntrypointConfig): Promise<number> {
+export async function runWorkflowRun(config: WorkflowRunEntrypointConfig): Promise<number> {
   const { backend, executor, debug = false } = config;
 
   // Get workflow run ID from environment
@@ -153,18 +153,18 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
 }
 
 /**
- * Create a simple job entrypoint script
+ * Create a simple workflow run entrypoint script.
  *
  * This is a convenience function that creates the entire entrypoint
  * with Redis backend and executor setup.
  *
  * @example
  * ```typescript
- * // job-main.ts
- * import { createJobEntrypoint } from "veryfront/workflow/worker";
+ * // workflow-runner.ts
+ * import { createWorkflowRunEntrypoint } from "veryfront/workflow/worker";
  * import { workflows } from "./workflows.ts";
  *
- * const run = createJobEntrypoint({
+ * const run = createWorkflowRunEntrypoint({
  *   redisUrl: Deno.env.get("REDIS_URL")!,
  *   workflows,
  * });
@@ -173,7 +173,7 @@ export async function runWorkflowJob(config: JobEntrypointConfig): Promise<numbe
  * Deno.exit(exitCode);
  * ```
  */
-export interface CreateJobEntrypointOptions {
+export interface CreateWorkflowRunEntrypointOptions {
   /** Redis URL for backend */
   redisUrl: string;
 
@@ -184,9 +184,9 @@ export interface CreateJobEntrypointOptions {
   debug?: boolean;
 }
 
-/** Create job entrypoint. */
-export async function createJobEntrypoint(
-  options: CreateJobEntrypointOptions,
+/** Create a workflow run entrypoint. */
+export async function createWorkflowRunEntrypoint(
+  options: CreateWorkflowRunEntrypointOptions,
 ): Promise<() => Promise<number>> {
   // Dynamic imports to avoid loading Redis if not needed
   const { RedisBackend } = await import("../backends/redis.ts");
@@ -208,7 +208,7 @@ export async function createJobEntrypoint(
   }
 
   return () =>
-    runWorkflowJob({
+    runWorkflowRun({
       backend,
       executor,
       debug: options.debug,

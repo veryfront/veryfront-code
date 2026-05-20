@@ -1,5 +1,5 @@
 /**
- * Dynamic Workflow Job Entrypoint
+ * Dynamic workflow run entrypoint
  *
  * Runs inside an ephemeral K8s Job or process container.
  * Dynamically discovers and loads workflow definitions from the user's project
@@ -41,10 +41,10 @@ import {
   runWithTenantContext,
 } from "./shared.ts";
 
-const logger = baseLogger.component("dynamic-job");
+const logger = baseLogger.component("dynamic-workflow-run-entrypoint");
 
 /**
- * Exit codes for the job
+ * Exit codes for the dynamic workflow run entrypoint.
  */
 export const DYNAMIC_EXIT_CODES = {
   SUCCESS: 0,
@@ -55,9 +55,9 @@ export const DYNAMIC_EXIT_CODES = {
 } as const;
 
 /**
- * Configuration for the dynamic job entrypoint
+ * Configuration for the dynamic workflow run entrypoint.
  */
-export interface DynamicJobEntrypointConfig {
+export interface DynamicWorkflowRunEntrypointConfig {
   /** Backend for workflow persistence */
   backend: WorkflowBackend;
 
@@ -66,7 +66,7 @@ export interface DynamicJobEntrypointConfig {
 }
 
 /**
- * Run a workflow job with dynamic discovery
+ * Run a workflow run with dynamic discovery.
  *
  * This function:
  * 1. Gets the run from Redis
@@ -76,8 +76,8 @@ export interface DynamicJobEntrypointConfig {
  * 5. Finds the matching workflow
  * 6. Executes the workflow
  */
-export async function runDynamicWorkflowJob(
-  config: DynamicJobEntrypointConfig,
+export async function runDynamicWorkflowRun(
+  config: DynamicWorkflowRunEntrypointConfig,
 ): Promise<number> {
   const { backend, debug = false } = config;
 
@@ -158,7 +158,7 @@ export async function runDynamicWorkflowJob(
 
         if (debug) {
           logger.info(
-            `[DynamicJob] Discovered ${discoveryResult.workflows.length} workflows:`,
+            `[DynamicWorkflowRun] Discovered ${discoveryResult.workflows.length} workflows:`,
             discoveryResult.workflows.map((w) => w.id),
           );
         }
@@ -168,7 +168,7 @@ export async function runDynamicWorkflowJob(
         if (!workflow) {
           logger.error(`Workflow not found: ${run.workflowId}`);
           logger.error(
-            `[DynamicJob] Available workflows: ${
+            `[DynamicWorkflowRun] Available workflows: ${
               discoveryResult.workflows.map((w) => w.id).join(", ")
             }`,
           );
@@ -209,17 +209,17 @@ export async function runDynamicWorkflowJob(
 }
 
 /**
- * Create a dynamic job entrypoint
+ * Create a dynamic workflow run entrypoint.
  *
  * This is a convenience function that sets up Redis backend
- * and returns a function to run the job.
+ * and returns a function to run the workflow run.
  *
  * @example
  * ```typescript
- * // job-main.ts
- * import { createDynamicJobEntrypoint } from "veryfront/workflow/worker";
+ * // workflow-runner.ts
+ * import { createDynamicWorkflowRunEntrypoint } from "veryfront/workflow/worker";
  *
- * const run = await createDynamicJobEntrypoint({
+ * const run = await createDynamicWorkflowRunEntrypoint({
  *   redisUrl: Deno.env.get("REDIS_URL")!,
  * });
  *
@@ -227,7 +227,7 @@ export async function runDynamicWorkflowJob(
  * Deno.exit(exitCode);
  * ```
  */
-export interface CreateDynamicJobEntrypointOptions {
+export interface CreateDynamicWorkflowRunEntrypointOptions {
   /** Redis URL for backend */
   redisUrl: string;
 
@@ -235,9 +235,9 @@ export interface CreateDynamicJobEntrypointOptions {
   debug?: boolean;
 }
 
-/** Create dynamic job entrypoint. */
-export async function createDynamicJobEntrypoint(
-  options: CreateDynamicJobEntrypointOptions,
+/** Create a dynamic workflow run entrypoint. */
+export async function createDynamicWorkflowRunEntrypoint(
+  options: CreateDynamicWorkflowRunEntrypointOptions,
 ): Promise<() => Promise<number>> {
   // Dynamic import to avoid loading Redis if not needed
   const { RedisBackend } = await import("../backends/redis.ts");
@@ -248,7 +248,7 @@ export async function createDynamicJobEntrypoint(
   });
 
   return () =>
-    runDynamicWorkflowJob({
+    runDynamicWorkflowRun({
       backend,
       debug: options.debug,
     });
