@@ -1,7 +1,7 @@
 ---
 title: "Project structure"
 description: "File conventions, directory layout, and how auto-discovery works."
-order: 2
+order: 6
 ---
 
 A Veryfront project keeps routing files in `app/` (or `pages/`) and AI primitives (agents, tools, prompts, workflows, resources, skills) at the project root. The framework auto-discovers each of those root directories on startup; you do not register anything by hand.

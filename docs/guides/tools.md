@@ -1,7 +1,7 @@
 ---
 title: "Tools"
 description: "Define tools with schema-backed inputs that agents can call."
-order: 12
+order: 16
 ---
 
 A tool is a typed function an agent can call. Each tool declares an `inputSchema` (zod or any Veryfront schema), a `description` the model reads, and an `execute` function the framework runs when the model calls it.

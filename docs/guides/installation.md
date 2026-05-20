@@ -1,7 +1,7 @@
 ---
 title: "Installation"
 description: "Install the Veryfront CLI and framework on macOS, Linux, or Windows."
-order: 36
+order: 1
 ---
 
 Install the `veryfront` CLI and framework so you can scaffold, run, and build Veryfront projects.

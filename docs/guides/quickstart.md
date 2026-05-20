@@ -1,7 +1,7 @@
 ---
 title: "Quickstart"
 description: "Create and run a Veryfront project in under 2 minutes."
-order: 1
+order: 2
 ---
 
 Scaffold a Veryfront app, run it locally, and deploy it. The default deploy target is Veryfront Cloud. The same build can be self-hosted on other infrastructure. The npm package, CLI, and import name are all `veryfront`.

@@ -1,7 +1,7 @@
 ---
 title: "Agents"
 description: "Create an AI agent with a system prompt, tools, and memory."
-order: 10
+order: 14
 ---
 
 An agent is a file in `agents/` that exports a system prompt, optional tools, optional memory, and optional skills. The runtime auto-discovers it on startup and exposes it via `getAgent(id)` or an AG-UI route.

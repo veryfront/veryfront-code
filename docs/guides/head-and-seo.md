@@ -1,7 +1,7 @@
 ---
 title: "Head and SEO"
 description: "Declarative metadata, Open Graph, and structured data."
-order: 8
+order: 12
 ---
 
 Set page metadata with the `Head` component: title, description, Open Graph and Twitter cards, favicons, fonts, and JSON-LD. Multiple `Head` components in the tree merge; page-level tags override layout-level tags for duplicate keys.
