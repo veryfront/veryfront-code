@@ -1,7 +1,7 @@
 /**
- * Kubernetes Job Executor
+ * Kubernetes Job executor
  *
- * Executes workflow jobs as Kubernetes Jobs.
+ * Executes job-backed workflow runs as Kubernetes Jobs.
  * Each workflow runs in an ephemeral pod with complete isolation.
  */
 

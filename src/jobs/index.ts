@@ -5,6 +5,10 @@
  * job target discovery, and the canonical split between user-visible `events`
  * and raw debugging `logs`.
  *
+ * Task definitions run as job runs with `task:<task-id>` targets. Workflow
+ * definitions run as workflow runs with `workflow:<workflow-id>` targets and
+ * are backed by jobs for queueing and dispatch.
+ *
  * @module
  *
  * @example

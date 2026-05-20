@@ -75,7 +75,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront mcp` | Start MCP server for coding agents |
 | `veryfront skills` | List and inspect available agent skills |
 | `veryfront task` | Run a task from the tasks/ directory |
-| `veryfront worker` | Start workflow job worker |
+| `veryfront worker` | Start workflow run worker |
 | `veryfront workflow` | Run a workflow from the workflows directory |
 
 ### Auth

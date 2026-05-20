@@ -1,8 +1,8 @@
-import type { WorkflowJob, WorkflowRun } from "../../types.ts";
+import type { WorkflowQueueItem, WorkflowRun } from "../../types.ts";
 
 interface QueueRequeueBackend {
   getRun(runId: string): Promise<WorkflowRun | null>;
-  enqueue(job: WorkflowJob): Promise<void>;
+  enqueue(job: WorkflowQueueItem): Promise<void>;
 }
 
 export async function requeueRun(backend: QueueRequeueBackend, runId: string): Promise<void> {

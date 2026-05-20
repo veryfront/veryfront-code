@@ -47,8 +47,8 @@ flowchart TD
    step executors.
 4. Checkpoint and backend code stores run progress, approvals, and recovery
    state.
-5. Worker entrypoints run workflow jobs in process, subprocess, or Kubernetes
-   execution profiles.
+5. Worker entrypoints run job-backed workflow runs in process, subprocess, or
+   Kubernetes execution profiles.
 
 ## Platform execution model
 
@@ -64,6 +64,10 @@ bound job:
 
 This keeps workflow state distinct from background job mechanics while still
 using the jobs infrastructure for durable execution.
+
+Public APIs should describe workflow execution as a workflow run. Lower-level
+worker types may still use `WorkflowRunManager` and job executor names because
+they manage the platform job that backs a workflow run.
 
 ## Boundaries
 

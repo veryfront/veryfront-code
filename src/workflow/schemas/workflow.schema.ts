@@ -184,9 +184,9 @@ export const getApprovalDecisionSchema = defineSchema((v) =>
 );
 
 /**
- * Workflow job schema
+ * Internal workflow queue item schema
  */
-export const getWorkflowJobSchema = defineSchema((v) =>
+export const getWorkflowQueueItemSchema = defineSchema((v) =>
   v.object({
     runId: v.string(),
     workflowId: v.string(),
@@ -236,7 +236,7 @@ export const ApprovalStatusSchema = lazySchema(getApprovalStatusSchema);
 export const PendingApprovalSchema = lazySchema(getPendingApprovalSchema);
 export const WorkflowErrorSchema = lazySchema(getWorkflowErrorSchema);
 export const ApprovalDecisionSchema = lazySchema(getApprovalDecisionSchema);
-export const WorkflowJobSchema = lazySchema(getWorkflowJobSchema);
+export const WorkflowQueueItemSchema = lazySchema(getWorkflowQueueItemSchema);
 export const RunFilterSchema = lazySchema(getRunFilterSchema);
 export const ParallelStrategySchema = lazySchema(getParallelStrategySchema);
 export const WaitTypeSchema = lazySchema(getWaitTypeSchema);
@@ -257,7 +257,7 @@ export type ApprovalStatus = InferSchema<ReturnType<typeof getApprovalStatusSche
 export type PendingApproval = InferSchema<ReturnType<typeof getPendingApprovalSchema>>;
 export type WorkflowError = InferSchema<ReturnType<typeof getWorkflowErrorSchema>>;
 export type ApprovalDecision = InferSchema<ReturnType<typeof getApprovalDecisionSchema>>;
-export type WorkflowJob = InferSchema<ReturnType<typeof getWorkflowJobSchema>>;
+export type WorkflowQueueItem = InferSchema<ReturnType<typeof getWorkflowQueueItemSchema>>;
 export type RunFilter = InferSchema<ReturnType<typeof getRunFilterSchema>>;
 export type ParallelStrategy = InferSchema<ReturnType<typeof getParallelStrategySchema>>;
 export type WaitType = InferSchema<ReturnType<typeof getWaitTypeSchema>>;

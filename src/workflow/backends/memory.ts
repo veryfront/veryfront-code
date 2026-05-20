@@ -11,7 +11,7 @@ import type {
   Checkpoint,
   PendingApproval,
   RunFilter,
-  WorkflowJob,
+  WorkflowQueueItem,
   WorkflowRun,
 } from "../types.ts";
 import type { BackendConfig, WorkflowBackend } from "./types.ts";
@@ -36,7 +36,7 @@ export class MemoryBackend implements WorkflowBackend {
   private runs = new Map<string, WorkflowRun>();
   private checkpoints = new Map<string, Checkpoint[]>();
   private approvals = new Map<string, PendingApproval[]>();
-  private queue: WorkflowJob[] = [];
+  private queue: WorkflowQueueItem[] = [];
   private locks = new Map<string, { lockId: string; expiresAt: number }>();
   private stalledClaims = new Map<string, { workerId: string; expiresAt: number }>();
   private config: MemoryBackendConfig;
@@ -267,7 +267,7 @@ export class MemoryBackend implements WorkflowBackend {
   // Queue Operations
   // =========================================================================
 
-  enqueue(job: WorkflowJob): Promise<void> {
+  enqueue(job: WorkflowQueueItem): Promise<void> {
     const maxSize = this.config.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE;
     if (this.queue.length >= maxSize) {
       return Promise.reject(
@@ -292,7 +292,7 @@ export class MemoryBackend implements WorkflowBackend {
     return Promise.resolve();
   }
 
-  dequeue(): Promise<WorkflowJob | null> {
+  dequeue(): Promise<WorkflowQueueItem | null> {
     const job = this.queue.shift();
     return Promise.resolve(job ? structuredClone(job) : null);
   }

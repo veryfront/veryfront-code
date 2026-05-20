@@ -3,7 +3,7 @@ import type { CommandHelp } from "../../help/types.ts";
 export const workerHelp: CommandHelp = {
   name: "worker",
   category: "ai",
-  description: "Start workflow job worker",
+  description: "Start workflow run worker",
   usage: "veryfront worker [options]",
   options: [
     {
@@ -33,7 +33,7 @@ export const workerHelp: CommandHelp = {
     },
     {
       flag: "--entrypoint <path>",
-      description: "Path to job entrypoint script",
+      description: "Path to workflow run entrypoint script",
       default: "./workflow-job.ts",
     },
     {

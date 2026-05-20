@@ -65,7 +65,7 @@ docs/reference/
 | [`veryfront/workflow`](./veryfront/workflow.md) | DAG-based agentic workflows with human-in-the-loop support. |
 | [`veryfront/prompt`](./veryfront/prompt.md) | Declare and register prompts exposable over MCP. |
 | [`veryfront/resource`](./veryfront/resource.md) | Declare and register resources exposable over MCP. |
-| [`veryfront/jobs`](./veryfront/jobs.md) | Jobs module for durable project-scoped background execution. Provides a public SDK surface for one-off jobs, cron jobs, batch summaries, job target discovery, and the canonical split between user-visible `events` and raw debugging `logs`. |
+| [`veryfront/jobs`](./veryfront/jobs.md) | Jobs module for durable project-scoped background execution. Provides a public SDK surface for job runs, cron jobs, batches, target discovery, user-visible `events`, and raw debugging `logs`. |
 | [`veryfront/mcp`](./veryfront/mcp.md) | MCP server exposing tools, prompts, and resources. |
 | [`veryfront/middleware`](./veryfront/middleware.md) | CORS, rate limiting, logging, and timeout middleware. |
 | [`veryfront/observability`](./veryfront/observability.md) | OpenTelemetry tracing, metrics collection, auto-instrumentation for fetch/HTTP/React, OTLP export, and structured error and log buffering. |
