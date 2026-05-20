@@ -1,6 +1,11 @@
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
-import type { ChatUiMessage, ChatUiMessagePart, ProviderModelMessage } from "./types.ts";
+import type {
+  ChatToolResultPart,
+  ChatUiMessage,
+  ChatUiMessagePart,
+  ProviderModelMessage,
+} from "./types.ts";
 
 /** Zod schema for get message part. */
 export const getMessagePartSchema = defineSchema((v) =>
@@ -962,6 +967,31 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
   return messages;
 }
 
+function convertToolMessage(message: ChatUiMessage): ProviderModelMessage[] {
+  const rawToolNameMap = buildRawToolNameMap(message.parts);
+  const toolResults: ChatToolResultPart[] = [];
+
+  for (const part of message.parts) {
+    const rawResult = getRawToolResultPart(part);
+    if (!rawResult) {
+      continue;
+    }
+
+    toolResults.push({
+      type: "tool-result",
+      toolCallId: rawResult.toolCallId,
+      toolName: rawResult.toolName ?? rawToolNameMap.get(rawResult.toolCallId) ?? "unknown",
+      output: rawResult.output,
+    });
+  }
+
+  if (toolResults.length === 0) {
+    return [];
+  }
+
+  return [{ role: "tool", content: toolResults }];
+}
+
 /** Convert UI messages to provider model messages. */
 export function convertUiMessagesToProviderModelMessages(
   messages: ChatUiMessage[],
@@ -974,6 +1004,8 @@ export function convertUiMessagesToProviderModelMessages(
         return convertUserMessage(message);
       case "assistant":
         return convertAssistantMessage(message);
+      case "tool":
+        return convertToolMessage(message);
       default:
         return [];
     }
