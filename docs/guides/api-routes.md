@@ -4,9 +4,9 @@ description: "HTTP handlers, request parsing, and streaming responses."
 order: 6
 ---
 
-HTTP handlers, request parsing, and streaming responses.
+An API route is a file under `app/api/` (or `pages/api/`) that exports named HTTP method handlers. Handlers receive the standard Web `Request` and return a `Response`.
 
-Veryfront supports API routes in the app router and the pages router. The router changes the file location and handler arguments. The request and response APIs stay based on the standard Web `Request` and `Response` objects.
+The router style changes the file location and the handler's argument shape. The request and response APIs are the same in both.
 
 ## Prerequisites
 

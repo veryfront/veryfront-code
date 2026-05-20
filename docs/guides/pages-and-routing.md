@@ -4,9 +4,9 @@ description: "File-based routing, layouts, dynamic routes, and MDX pages."
 order: 4
 ---
 
-File-based routing, layouts, dynamic routes, and MDX pages.
+Veryfront uses file-system based routing. Folders and files under `app/` (or `pages/`) define routes; layouts compose down the tree; brackets in path segments mark dynamic params.
 
-Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
+Examples below use the default app router. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 
 ## Prerequisites
 

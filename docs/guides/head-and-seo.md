@@ -4,9 +4,9 @@ description: "Declarative metadata, Open Graph, and structured data."
 order: 8
 ---
 
-Declarative metadata, Open Graph, and structured data.
+Set page metadata with the `Head` component: title, description, Open Graph and Twitter cards, favicons, fonts, and JSON-LD. Multiple `Head` components in the tree merge; page-level tags override layout-level tags for duplicate keys.
 
-Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
+Examples below use the default app router. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 
 ## Prerequisites
 
@@ -165,8 +165,8 @@ Open the page in the browser and inspect the document `<head>`. Confirm:
 
 ## Next
 
-Continue with [Providers](./providers.md) to wire up an LLM provider, or jump
-to the [API reference](../reference/README.md) for module details.
+- [Providers](./providers.md): wire up an LLM provider for AI pages
+- [API reference](../reference/README.md): full module reference
 
 ## Related
 
