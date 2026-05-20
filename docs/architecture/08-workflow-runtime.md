@@ -1,7 +1,7 @@
 # Workflow runtime
 
 This page describes workflow definition and execution. It does not cover agent
-streaming, background task definitions, or job queue infrastructure.
+streaming, background task definitions, or job queue internals.
 
 ## Responsibility
 
@@ -50,9 +50,26 @@ flowchart TD
 5. Worker entrypoints run workflow jobs in process, subprocess, or Kubernetes
    execution profiles.
 
+## Platform execution model
+
+When the platform starts a workflow, it creates a canonical workflow run and a
+bound job:
+
+- The public run has `kind = "workflow"`.
+- The bound job target is `workflow:<workflow-id>`.
+- The job service owns queueing, dispatch, retry, cancellation, logs, and worker
+  lifecycle.
+- The workflow runtime owns step graph execution, checkpoint state, approvals,
+  and workflow result state.
+
+This keeps workflow state distinct from background job mechanics while still
+using the jobs infrastructure for durable execution.
+
 ## Boundaries
 
 - A workflow is a step graph. It is not a job, task, cron job, or agent run.
+- A workflow run may be backed by a job. The workflow run remains the canonical
+  public execution record for workflow APIs.
 - Workflow API clients expose workflow run operations. They do not own step
   execution semantics.
 - Agent steps may call the agent runtime, but workflow state remains owned by the

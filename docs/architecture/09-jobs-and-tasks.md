@@ -2,7 +2,7 @@
 
 This page describes job client operations, cron job scheduling surfaces, task
 definition discovery, and local task execution. It does not cover workflow DAG
-execution or the external service that persists and runs cloud jobs.
+execution internals.
 
 ## Responsibility
 
@@ -31,7 +31,7 @@ flowchart TD
   taskContext --> result[Task result or sanitized error]
 
   client[Jobs client] --> api[Jobs API]
-  api --> create[Create one-off job]
+  api --> create[Create one-off job run]
   api --> cron[Create or update cron job]
   api --> events[List events and logs]
   api --> targets[List supported targets]
@@ -49,14 +49,31 @@ flowchart TD
    shapes.
 5. Cloud job execution is delegated to the configured backing service.
 
+## Canonical run model
+
+Job execution is represented through canonical runs:
+
+- Running a task definition creates `run.kind = "job"` and a bound job whose
+  target is `task:<task-id>`.
+- Running a workflow definition creates `run.kind = "workflow"` and a bound job
+  whose target is `workflow:<workflow-id>`.
+- Triggering a cron job creates the run kind implied by its target. A
+  `task:<task-id>` target creates a job run. A `workflow:<workflow-id>` target
+  creates a workflow run.
+
+The job row owns queueing, worker dispatch, logs, retry, cancellation, and
+runtime metadata. The canonical run row owns the public execution identity and
+kind-specific API shape.
+
 ## Boundaries
 
 - A task is a developer-defined function. It is not a job run.
-- A job is durable background execution of a target. It is not a workflow DAG.
-- Cron jobs create job runs over time. They are not job runs themselves.
+- A job is durable background execution of a target. It is not a task
+  definition or workflow definition.
+- Cron jobs create runs over time. They are not runs themselves.
 - Workflow worker execution belongs in [workflow runtime](./08-workflow-runtime.md).
-- The managed job service is outside this package; this package owns the client,
-  schemas, discovery, and local task runner.
+- The managed job service owns queueing and dispatch. This package owns the
+  client, schemas, discovery, and local task runner.
 
 ## Change checks
 
