@@ -4,9 +4,9 @@ description: "File conventions, directory layout, and how auto-discovery works."
 order: 2
 ---
 
-File conventions, directory layout, and how auto-discovery works.
+A Veryfront project keeps routing files in `app/` (or `pages/`) and AI primitives (agents, tools, prompts, workflows, resources, skills) at the project root. The framework auto-discovers each of those root directories on startup; you do not register anything by hand.
 
-Examples below show the default app-router layout. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.
+Examples below show the default app-router layout. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
 
 ## Prerequisites
 
