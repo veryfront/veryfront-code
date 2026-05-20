@@ -90,6 +90,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "sandbox.md",
   "skills.md",
   "tasks.md",
+  "workflows-advanced.md",
 ] as const;
 
 const GUIDE_CODE_EXAMPLE_COVERAGE = new Set<string>([
@@ -608,6 +609,28 @@ describe("Guide: skills.md", () => {
       "allowed_tools: load-skill load-skill-reference execute-skill-script",
     );
     assertStringIncludes(guide, "veryfront skills validate skills/my-skill");
+  });
+});
+
+describe("Guide: workflows-advanced.md", () => {
+  it("documents loop helpers, blob storage, and React hook surface", async () => {
+    const guide = await readGuide("workflows-advanced.md");
+
+    for (
+      const snippet of [
+        'import { delay, doWhile, loop, map, times } from "veryfront/workflow"',
+        'loop("refine"',
+        'doWhile("poll"',
+        'times("generate"',
+        'map("process"',
+        "blobStorage",
+        'import { useWorkflow, useWorkflowStart } from "veryfront/workflow"',
+        "useWorkflowStart({",
+        "useWorkflow({ runId })",
+      ]
+    ) {
+      assertStringIncludes(guide, snippet);
+    }
   });
 });
 

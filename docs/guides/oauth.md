@@ -1,7 +1,7 @@
 ---
 title: "OAuth"
 description: "OAuth 2.0 helpers with a built-in provider catalog."
-order: 29
+order: 30
 ---
 
 Sign users in with OAuth 2.0 using `veryfront/oauth`. The module ships a catalog of pre-configured providers (GitHub, Google, Slack, Notion, and 30+ more) and the four helpers you need to wire a flow: `createOAuthInitHandler`, `createOAuthCallbackHandler`, `createOAuthStatusHandler`, and `createOAuthDisconnectHandler`. Each helper requires a `getUserId` function so tokens are stored per-user.

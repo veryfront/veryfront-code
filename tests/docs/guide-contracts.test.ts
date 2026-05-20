@@ -251,6 +251,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../reference/veryfront/workflow.md"],
     snippets: ["workflow", "parallel", "waitForApproval"],
   },
+  "workflows-advanced.md": {
+    references: ["../reference/veryfront/workflow.md"],
+    snippets: ["loop", "doWhile", "blobStorage", "useWorkflow", "useWorkflowStart"],
+  },
 };
 
 describe("published guide contracts", () => {

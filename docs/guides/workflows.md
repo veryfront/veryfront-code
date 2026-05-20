@@ -286,36 +286,6 @@ waitForEvent("payment-confirmed", {
 });
 ```
 
-## Loops
-
-Repeat steps based on conditions:
-
-```ts
-import { doWhile, loop, map, times } from "veryfront/workflow";
-
-// Repeat while condition is true
-loop("refine", (ctx) => ctx.results.review.score < 0.9, [
-  step("rewrite", { agent: "writer" }),
-  step("review", { agent: "reviewer" }),
-]);
-
-// Execute once, then repeat while true
-doWhile("poll", (ctx) => !ctx.results.check.done, [
-  step("check", { tool: "statusChecker" }),
-  delay("wait", "5s"),
-]);
-
-// Fixed iterations
-times("generate", 3, [
-  step("variant", { agent: "writer" }),
-]);
-
-// Map over array items
-map("process", (ctx) => ctx.input.urls, [
-  step("scrape", { tool: "webScraper" }),
-]);
-```
-
 ## Workflow configuration
 
 ```ts
@@ -342,46 +312,6 @@ export default workflow({
 });
 ```
 
-## Blob storage
-
-For large workflow artifacts, configure `blobStorage` on the executor with a
-host-provided storage adapter. The public workflow export exposes the executor
-integration point. Storage implementations come from the host runtime.
-
-## React hooks
-
-Track workflow progress from the client when your app exposes workflow API routes that match the hook's `apiBase`:
-
-```tsx
-"use client";
-import { useWorkflow, useWorkflowStart } from "veryfront/workflow";
-
-export default function PipelineDashboard() {
-  const { start, lastRunId } = useWorkflowStart({
-    workflowId: "pipeline",
-    apiBase: "/api/workflows",
-  });
-
-  return (
-    <div>
-      <button onClick={() => start({ topic: "AI agents" })}>Run Pipeline</button>
-      {lastRunId ? <WorkflowStatus runId={lastRunId} /> : null}
-    </div>
-  );
-}
-
-function WorkflowStatus({ runId }: { runId: string }) {
-  const { status, nodeStates } = useWorkflow({ runId });
-
-  return (
-    <div>
-      <p>Status: {status}</p>
-      {Object.entries(nodeStates).map(([id, state]) => <div key={id}>{id}: {state.status}</div>)}
-    </div>
-  );
-}
-```
-
 ## Verify it worked
 
 Start the workflow from the start route, then poll the run state until it
@@ -403,14 +333,11 @@ while true; do
 done
 ```
 
-A working run reaches `status: "completed"` and exposes a `nodeStates` map
-with one `completed` entry per step. From the React side, `useWorkflow`
-keeps `status` and `nodeStates` in sync with the same endpoint. If `status`
-ends in `failed`, inspect the matching node entry in `nodeStates` for the
-underlying error.
+A working run reaches `status: "completed"` and exposes a `nodeStates` map with one `completed` entry per step. If `status` ends in `failed`, inspect the matching node entry in `nodeStates` for the underlying error.
 
 ## Next
 
+- [Workflows: loops, blob storage, React hooks](./workflows-advanced.md): repeat-until-done loops, large-artifact storage, and React progress hooks
 - [Multi-agent](./multi-agent.md): compose agents in workflows and tools
 - [Providers](./providers.md): configure the LLM providers that power your agents
 

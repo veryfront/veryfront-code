@@ -54,13 +54,14 @@ matches your goal.
 
 ## Orchestrate work across agents and time
 
-| Guide                           | What you will do                                                        |
-| ------------------------------- | ----------------------------------------------------------------------- |
-| [Workflows](./workflows.md)     | Define a DAG-based workflow with branches, retries, and parallel steps. |
-| [Multi-agent](./multi-agent.md) | Compose agents with delegation and agent-as-tool patterns.              |
-| [Skills](./skills.md)           | Add project-level skills from `SKILL.md` files with tool restrictions.  |
-| [Jobs](./jobs.md)               | Run one-off jobs, schedule cron jobs, and inspect batch summaries.      |
-| [Tasks](./tasks.md)             | Write background task functions that run locally or as cloud jobs.      |
+| Guide                                          | What you will do                                                        |
+| ---------------------------------------------- | ----------------------------------------------------------------------- |
+| [Workflows](./workflows.md)                    | Define a DAG-based workflow with branches, retries, and parallel steps. |
+| [Workflows: advanced](./workflows-advanced.md) | Loops, blob storage for large artifacts, and React hooks for progress.  |
+| [Multi-agent](./multi-agent.md)                | Compose agents with delegation and agent-as-tool patterns.              |
+| [Skills](./skills.md)                          | Add project-level skills from `SKILL.md` files with tool restrictions.  |
+| [Jobs](./jobs.md)                              | Run one-off jobs, schedule cron jobs, and inspect batch summaries.      |
+| [Tasks](./tasks.md)                            | Write background task functions that run locally or as cloud jobs.      |
 
 ## Connect external systems
 

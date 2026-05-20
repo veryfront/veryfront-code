@@ -97,6 +97,6 @@ If the dev server logs a missing-provider error, check that `OPENAI_API_KEY` (or
 
 ## Next
 
-- [Agents](./agents.md): full agent surface — tools, dynamic system prompts, multi-step runs, memory, AG-UI handlers, hosted runs.
+- [Agents](./agents.md): full agent surface (tools, dynamic system prompts, multi-step runs, memory, AG-UI handlers, hosted runs).
 - [Tools](./tools.md): let the agent call typed functions.
 - [Chat UI](./chat-ui.md): drop a streaming chat interface into a React page that talks to this agent.

@@ -1,17 +1,17 @@
 ---
 title: "Extensions"
 description: "Understand how extensions add focused capabilities to Veryfront."
-order: 33
+order: 34
 ---
 
 Extensions are factories that add focused capabilities to a Veryfront project: a cache store, an auth provider, a database adapter, a model provider, an MDX content pipeline. Each extension implements one or more contracts that the rest of the framework consumes.
 
 This page is the overview. From here:
 
-- [Extension authoring](./extension-authoring.md) — write a factory, declare capabilities, provide a contract.
-- [Extension lifecycle](./extension-lifecycle.md) — discovery, ordering, presets, setup, teardown.
-- [Extension testing](./extension-testing.md) — verify the factory and the contracts it provides.
-- [Extension publishing](./extension-publishing.md) — package an extension for reuse.
+- [Extension authoring](./extension-authoring.md): write a factory, declare capabilities, provide a contract.
+- [Extension lifecycle](./extension-lifecycle.md): discovery, ordering, presets, setup, teardown.
+- [Extension testing](./extension-testing.md): verify the factory and the contracts it provides.
+- [Extension publishing](./extension-publishing.md): package an extension for reuse.
 
 ## Prerequisites
 
