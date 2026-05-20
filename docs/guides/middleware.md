@@ -4,11 +4,9 @@ description: "CORS, rate limiting, logging, and custom middleware pipelines."
 order: 7
 ---
 
-# Middleware
+Middleware runs before your route handler. Use it for CORS headers, rate limits, logging, timeouts, and auth checks. A `MiddlewarePipeline` chains middleware together and short-circuits to a `Response` when one rejects the request.
 
-CORS, rate limiting, logging, and custom middleware pipelines.
-
-The middleware pipeline works in both router styles. The route module wrapper changes:
+The pipeline works in both router styles. The route module wrapper changes:
 
 - App router API routes live at `app/api/**/route.ts` and export named HTTP method handlers such as `GET` or `POST`. The handler receives the `Request` directly.
 - Pages router API routes live at `pages/api/**` and export named HTTP method handlers or a `default` fallback handler. The handler receives an `APIContext` as `ctx`; use `ctx.request` when a middleware expects a `Request`.

@@ -4,8 +4,6 @@ description: "Package and publish reusable Veryfront extensions."
 order: 33
 ---
 
-# Extension publishing
-
 Publish an extension when it should be reused across projects or installed as a first-party or third-party package.
 
 ## Prerequisites

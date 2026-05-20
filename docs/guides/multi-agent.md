@@ -4,12 +4,9 @@ description: "Agent composition, delegation, and agent-as-tool patterns."
 order: 19
 ---
 
-# Multi-agent
+Two ways to compose agents: wrap one agent as a tool the parent can call (`agentAsTool` / `getAgentsAsTools`), or run several agents as steps in a workflow. Use the first when the parent should decide the order at runtime. Use the second when the order is known in advance.
 
-Agent composition, delegation, and agent-as-tool patterns.
-
-Each agent can omit `model` and inherit the runtime default, or set an
-explicit provider/model override when you need one.
+Each agent can omit `model` and inherit the runtime default, or set an explicit `provider/model` override when you need one.
 
 ## Prerequisites
 

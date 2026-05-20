@@ -4,11 +4,11 @@ description: "Use the preset Chat component with the useChat hook."
 order: 14
 ---
 
-# Chat UI
+`Chat` is a complete chat interface in one component: composer, message list, streaming, loading state, and scroll behavior. Drop it in a client page, pair it with `useChat` and an AG-UI route, and you have a working chat.
 
-Use `Chat` when you want a complete chat interface with one component. Use this guide for the preset path. Use [Chat composition](./chat-composition.md) when you need layout control, [Chat hooks](./chat-hooks.md) when you need headless state, and [Chat theming](./chat-theming.md) when you need visual customization.
+For more control, see [Chat composition](./chat-composition.md) (custom layout), [Chat hooks](./chat-hooks.md) (headless state), and [Chat theming](./chat-theming.md) (visuals).
 
-Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
+Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
 
 ## Prerequisites
 
@@ -18,9 +18,7 @@ Route examples below use the default app router. Veryfront Code also supports mo
 
 ## Quick setup
 
-In an app-owned route, create the agent and route below. In a Veryfront-hosted
-Studio context, the host can provide the AG-UI route and request-scoped runtime
-context, so you usually only configure the client that points at that route.
+In an app-owned route, you wire all three files below: agent, page, route. In a Veryfront Studio context, the host already provides the AG-UI route and request-scoped runtime, so you only need the client.
 
 Create an agent:
 

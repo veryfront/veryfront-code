@@ -4,12 +4,9 @@ description: "Production builds, static export, and deployment targets."
 order: 38
 ---
 
-# Building and deploying
+Build a Veryfront project for production with `veryfront build`, run the production server locally with `veryfront start`, then ship the build with `veryfront deploy` (Veryfront Cloud) or to any host that can run your chosen runtime.
 
-Production builds, static export, and deployment targets.
-
-Veryfront Cloud is the primary managed deployment path. The same runtime can also be self-hosted or deployed on other infrastructure.
-The npm package, CLI, and import name remain `veryfront`.
+The npm package, CLI, and import name are all `veryfront` across dev and production.
 
 ## Prerequisites
 

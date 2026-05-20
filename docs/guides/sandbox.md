@@ -4,13 +4,9 @@ description: "Run isolated commands and file operations in ephemeral sandbox ses
 order: 26
 ---
 
-# Sandbox
+A sandbox is a short-lived, isolated workspace for executing commands and file operations away from your app process. Use it for code generation, repo inspection, file transformation, or script execution that you do not want to run in your trusted runtime.
 
-Run isolated commands and file operations in ephemeral sandbox sessions.
-
-Use the sandbox when your app needs short-lived, isolated execution for tasks like code generation, repo inspection, file transformation, or script execution.
-
-The sandbox client talks to authenticated sandbox session APIs. In practice, that means you need either Veryfront Cloud credentials or your own compatible backing API/service layer for `/sandbox-sessions`.
+The sandbox client talks to an authenticated sandbox session API. You need either Veryfront Cloud credentials or your own compatible backing service for `/sandbox-sessions`.
 
 ## Prerequisites
 

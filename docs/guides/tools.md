@@ -4,11 +4,9 @@ description: "Define tools with schema-backed inputs that agents can call."
 order: 12
 ---
 
-# Tools
+A tool is a typed function an agent can call. Each tool declares an `inputSchema` (zod or any Veryfront schema), a `description` the model reads, and an `execute` function the framework runs when the model calls it.
 
-Define tools with schema-backed inputs that agents can call.
-
-Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
+Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
 
 ## Prerequisites
 

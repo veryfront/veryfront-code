@@ -487,7 +487,7 @@ describe("Guide: project-structure.md", () => {
 });
 
 describe("Guide: create-an-agent.md", () => {
-  it("uses the public agent factory and getAgent.generate path", async () => {
+  it("uses the public AG-UI handler and agent.generate paths", async () => {
     const guide = await readGuide("create-an-agent.md");
 
     for (
@@ -495,12 +495,14 @@ describe("Guide: create-an-agent.md", () => {
         'import { agent } from "veryfront/agent"',
         "export default agent({",
         'id: "assistant"',
+        'import { createAgUiHandler } from "veryfront/agent"',
+        'export const POST = createAgUiHandler("assistant")',
         'import { getAgent } from "veryfront/agent"',
         "export async function POST(request: Request)",
         "const { question } = await request.json()",
         'const assistant = getAgent("assistant")',
         "await assistant.generate({ input: question })",
-        "Response.json({",
+        "Response.json({ answer: result.text",
       ]
     ) {
       assertStringIncludes(guide, snippet);

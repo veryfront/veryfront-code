@@ -4,8 +4,6 @@ description: "Goal-oriented tutorials for building Veryfront apps, agents, workf
 order: 0
 ---
 
-# Guides
-
 Each guide helps you complete one goal with the Veryfront library or CLI.
 Pick the guide that matches what you want to do next.
 

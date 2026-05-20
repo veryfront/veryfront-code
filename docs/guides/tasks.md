@@ -4,8 +4,6 @@ description: "Define background task functions that can run locally or as cloud 
 order: 22
 ---
 
-# Tasks
-
 Tasks are user-defined functions in `tasks/` that can run locally via `veryfront task <name>` or in the cloud as Jobs and Cron Jobs.
 
 ## Prerequisites

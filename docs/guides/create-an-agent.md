@@ -4,9 +4,7 @@ description: "Define an AI agent and invoke it from server code in under five mi
 order: 37
 ---
 
-# Create an agent
-
-Define an AI agent in a fresh Veryfront project, send it a message, and read back the response. This guide is the smallest end-to-end agent you can build with Veryfront; deeper topics — tools, memory, skills, hosting, streaming — live in [Agents](./agents.md) and the AI guides that follow it.
+Define an agent in a Veryfront project, send it a message, and stream the response back. For tools, memory, skills, and hosted runs, see [Agents](./agents.md).
 
 ## Prerequisites
 
@@ -45,7 +43,18 @@ Both forms register the same `assistant` id and are interchangeable from the cal
 
 ## Invoke the agent
 
-From any server-side context (an API route, `getServerData`, a workflow step, a CLI command), resolve the agent by id and call `generate`:
+Mount the agent through `createAgUiHandler` to get a streaming chat endpoint:
+
+```ts
+// app/api/ag-ui/route.ts
+import { createAgUiHandler } from "veryfront/agent";
+
+export const POST = createAgUiHandler("assistant");
+```
+
+The handler validates the request, runs the agent, and returns an AG-UI Server-Sent Events response. Pair it with `useChat({ api: "/api/ag-ui" })` in a React client (see [Chat UI](./chat-ui.md)) and tokens appear in the UI as the model produces them.
+
+For a buffered JSON response (cron jobs, batch calls, unit tests), resolve the agent yourself and call `generate`:
 
 ```ts
 // app/api/ask/route.ts
@@ -56,18 +65,11 @@ export async function POST(request: Request) {
   const assistant = getAgent("assistant");
 
   const result = await assistant.generate({ input: question });
-
-  return Response.json({
-    answer: result.text,
-    toolCalls: result.toolCalls,
-    usage: result.usage,
-  });
+  return Response.json({ answer: result.text, usage: result.usage });
 }
 ```
 
-App-router handlers receive the raw `Request` directly. If you prefer the pages router, the same route lives at `pages/api/ask.ts` and receives an `APIContext` (`ctx.request.json()`, `ctx.json(...)`); see [API routes](./api-routes.md).
-
-`generate` returns the full response. Use `stream` when you want to send chunks back over Server-Sent Events; the [Memory and streaming](./memory-and-streaming.md) guide covers that path.
+App-router handlers receive the raw `Request`. The same route on the pages router lives at `pages/api/ag-ui.ts` (or `pages/api/ask.ts`) and receives an `APIContext`. See [API routes](./api-routes.md). For lower-level streaming surfaces that are not AG-UI chat, see [Memory and streaming](./memory-and-streaming.md).
 
 ## Run it
 
@@ -77,17 +79,21 @@ Start the dev server:
 veryfront dev
 ```
 
-Send a request from another terminal:
+Send a chat message from another terminal. The `-N` flag tells curl to flush each chunk as it arrives:
 
 ```bash
-curl -X POST http://localhost:3000/api/ask \
-  -H "content-type: application/json" \
-  -d '{"question":"What is Veryfront in one sentence?"}'
+curl -N -X POST http://localhost:3000/api/ag-ui \
+  -H "Content-Type: application/json" \
+  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is Veryfront in one sentence?"}]}]}'
 ```
 
 ## Verify it worked
 
-You should see a JSON response whose `answer` is a short paragraph from the model. The `usage` object reports input and output tokens. If the dev server logs an error mentioning a missing provider, recheck that `OPENAI_API_KEY` (or your provider's variable) is exported in the shell that runs `veryfront dev`.
+The response is an AG-UI Server-Sent Events stream. `data:` lines arrive progressively: a `message-start` event opens the run, text-delta events stream the model's reply piece by piece, and a `message-finish` event closes the message.
+
+If the whole body lands at once after a delay, that is curl or a TLS proxy buffering rather than the route. Run the same request without `-N` to confirm.
+
+If the dev server logs a missing-provider error, check that `OPENAI_API_KEY` (or your provider's variable) is exported in the shell running `veryfront dev`.
 
 ## Next
 

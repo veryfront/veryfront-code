@@ -4,9 +4,7 @@ description: "Provider registry with runtime conventions and explicit overrides.
 order: 9
 ---
 
-# Providers
-
-Provider registry. Maps "provider/model" strings to framework-compatible model runtimes.
+An agent's `model` is a `"provider/model"` string. The provider registry resolves each string to a runtime: Veryfront Cloud, a direct vendor (OpenAI, Anthropic, Google), an OpenAI-compatible service like OpenRouter, or a local model. Omit `model` in most agents and let runtime conventions pick the right backend.
 
 ## Prerequisites
 

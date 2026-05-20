@@ -4,9 +4,7 @@ description: "Define project-level agent capabilities as SKILL.md files with pro
 order: 20
 ---
 
-# Skills
-
-Skills are project-level agent capabilities defined as `SKILL.md` files following the [agentskills.io](https://agentskills.io) specification. They give agents structured instructions, restrict which tools are available, and provide reference files and executable scripts.
+A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, an `allowed_tools` policy, and optional reference files and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
 
 ## Prerequisites
 

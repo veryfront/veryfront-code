@@ -4,8 +4,6 @@ description: "Write focused Veryfront extension factories, contracts, and capabi
 order: 30
 ---
 
-# Extension authoring
-
 An extension should address one capability boundary. Keep the factory small, declare requirements explicitly, and expose contracts through `provides` or `setup()`.
 
 ## Prerequisites
