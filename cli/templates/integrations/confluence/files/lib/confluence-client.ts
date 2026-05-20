@@ -26,7 +26,7 @@ export interface ConfluenceSpace {
 
 export interface ConfluencePage {
   id: string;
-  type: "page" | "blogpost";
+  type?: "page" | "blogpost";
   status: string;
   title: string;
   spaceId?: string;
@@ -126,6 +126,15 @@ export async function listSpaces(options?: {
   return response.results ?? [];
 }
 
+async function getSpaceIdByKey(spaceKey: string): Promise<string> {
+  const spaces = await listSpaces({ limit: 250 });
+  const space = spaces.find((s) => s.key === spaceKey);
+  if (!space) {
+    throw new Error(`Confluence space not found: ${spaceKey}`);
+  }
+  return space.id;
+}
+
 export async function searchContent(
   query: string,
   options?: {
@@ -149,44 +158,43 @@ export async function searchContent(
   return response.results ?? [];
 }
 
-export function getPage(pageId: string, expand?: string[]): Promise<ConfluencePage> {
-  const params = new URLSearchParams();
-  if (expand?.length) params.set("expand", expand.join(","));
-
-  return confluenceFetch<ConfluencePage>(buildEndpoint(`/wiki/rest/api/content/${pageId}`, params));
+// Uses Confluence v2 API — v1 /wiki/rest/api/content is deprecated and returns 410 on newer instances
+export function getPage(pageId: string, _expand?: string[]): Promise<ConfluencePage> {
+  return confluenceFetch<ConfluencePage>(`/wiki/api/v2/pages/${pageId}?body-format=storage`);
 }
 
 export function getPageContent(pageId: string): Promise<ConfluencePage> {
-  return getPage(pageId, ["body.storage", "body.view", "version", "space"]);
+  return getPage(pageId);
 }
 
-export function createPage(options: {
+export async function createPage(options: {
   spaceKey: string;
   title: string;
   content: string;
   parentId?: string;
   type?: "page" | "blogpost";
 }): Promise<ConfluencePage> {
-  const body = {
-    type: options.type ?? "page",
+  const spaceId = await getSpaceIdByKey(options.spaceKey);
+
+  const body: Record<string, unknown> = {
+    spaceId,
     title: options.title,
-    space: { key: options.spaceKey },
+    status: "current",
     body: {
-      storage: {
-        value: options.content,
-        representation: "storage" as const,
-      },
+      representation: "storage",
+      value: options.content,
     },
-    ...(options.parentId ? { ancestors: [{ id: options.parentId }] } : {}),
   };
 
-  return confluenceFetch<ConfluencePage>("/wiki/rest/api/content", {
+  if (options.parentId) body.parentId = options.parentId;
+
+  return confluenceFetch<ConfluencePage>("/wiki/api/v2/pages", {
     method: "POST",
     body: JSON.stringify(body),
   });
 }
 
-export async function updatePage(
+export function updatePage(
   pageId: string,
   options: {
     title?: string;
@@ -195,28 +203,25 @@ export async function updatePage(
     versionMessage?: string;
   },
 ): Promise<ConfluencePage> {
-  await getPage(pageId, ["version"]);
-
   const body: Record<string, unknown> = {
+    id: pageId,
+    status: "current",
     version: {
       number: options.version,
       message: options.versionMessage,
     },
-    type: "page",
   };
 
   if (options.title) body.title = options.title;
 
   if (options.content) {
     body.body = {
-      storage: {
-        value: options.content,
-        representation: "storage",
-      },
+      representation: "storage",
+      value: options.content,
     };
   }
 
-  return confluenceFetch<ConfluencePage>(`/wiki/rest/api/content/${pageId}`, {
+  return confluenceFetch<ConfluencePage>(`/wiki/api/v2/pages/${pageId}`, {
     method: "PUT",
     body: JSON.stringify(body),
   });
