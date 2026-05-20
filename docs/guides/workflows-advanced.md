@@ -45,7 +45,7 @@ map("process", (ctx) => ctx.input.urls, [
 
 ## Blob storage
 
-For large workflow artifacts (uploaded files, generated reports, intermediate datasets), configure `blobStorage` on the executor with a host-provided storage adapter. The public workflow export exposes the executor integration point. Storage implementations come from the host runtime — typical hosts wire S3, GCS, or Vercel Blob behind this adapter.
+For large workflow artifacts (uploaded files, generated reports, intermediate datasets), configure `blobStorage` on the executor with a host-provided storage adapter. The public workflow export exposes the executor integration point. Storage implementations come from the host runtime: typical hosts wire S3, GCS, or Vercel Blob behind this adapter.
 
 Without `blobStorage`, large values still flow through step inputs and outputs in memory, which becomes the bottleneck once individual artifacts exceed a few hundred kilobytes.
 
@@ -95,7 +95,7 @@ For React hooks, render the dashboard component above, click **Run Pipeline**, a
 
 ## Next
 
-- [Workflows](./workflows.md): core workflow API — define, run, branch, parallel, human approval
+- [Workflows](./workflows.md): core workflow API (define, run, branch, parallel, human approval)
 - [Multi-agent](./multi-agent.md): compose agents in workflows and tools
 
 ## Related

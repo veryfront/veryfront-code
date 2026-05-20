@@ -8,10 +8,10 @@ Extensions are factories that add focused capabilities to a Veryfront project: a
 
 This page is the overview. From here:
 
-- [Extension authoring](./extension-authoring.md) — write a factory, declare capabilities, provide a contract.
-- [Extension lifecycle](./extension-lifecycle.md) — discovery, ordering, presets, setup, teardown.
-- [Extension testing](./extension-testing.md) — verify the factory and the contracts it provides.
-- [Extension publishing](./extension-publishing.md) — package an extension for reuse.
+- [Extension authoring](./extension-authoring.md): write a factory, declare capabilities, provide a contract.
+- [Extension lifecycle](./extension-lifecycle.md): discovery, ordering, presets, setup, teardown.
+- [Extension testing](./extension-testing.md): verify the factory and the contracts it provides.
+- [Extension publishing](./extension-publishing.md): package an extension for reuse.
 
 ## Prerequisites
 
