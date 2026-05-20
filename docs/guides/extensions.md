@@ -1,7 +1,7 @@
 ---
 title: "Extensions"
 description: "Understand how extensions add focused capabilities to Veryfront."
-order: 33
+order: 34
 ---
 
 Extensions are factories that add focused capabilities to a Veryfront project: a cache store, an auth provider, a database adapter, a model provider, an MDX content pipeline. Each extension implements one or more contracts that the rest of the framework consumes.

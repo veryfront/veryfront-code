@@ -1,7 +1,7 @@
 ---
 title: "Extension publishing"
 description: "Package and publish reusable Veryfront extensions."
-order: 37
+order: 38
 ---
 
 Publish an extension when it should be reused across projects or installed as a first-party or third-party package.

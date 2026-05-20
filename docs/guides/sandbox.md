@@ -1,7 +1,7 @@
 ---
 title: "Sandbox"
 description: "Run isolated commands and file operations in ephemeral sandbox sessions."
-order: 31
+order: 32
 ---
 
 A sandbox is a short-lived, isolated workspace for executing commands and file operations away from your app process. Use it for code generation, repo inspection, file transformation, or script execution that you do not want to run in your trusted runtime.
