@@ -12,6 +12,8 @@
 
 import { parseArgs } from "jsr:@std/cli/parse-args";
 import { ensureDir } from "jsr:@std/fs/ensure-dir";
+import { COMMANDS } from "../../cli/help/command-definitions.ts";
+import type { CommandCategory, CommandHelp } from "../../cli/help/types.ts";
 
 const ROOT = Deno.cwd();
 
@@ -2343,6 +2345,64 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// 5b. CLI command catalog
+// ---------------------------------------------------------------------------
+
+const CATEGORY_LABELS: Record<CommandCategory, string> = {
+  development: "Development",
+  deploy: "Deploy & Sync",
+  project: "Project",
+  files: "Files & Data",
+  ai: "AI & Automation",
+  auth: "Auth",
+};
+
+const CATEGORY_ORDER: CommandCategory[] = [
+  "development",
+  "deploy",
+  "project",
+  "files",
+  "ai",
+  "auth",
+];
+
+function generateCLICommandCatalog(): string[] {
+  const lines: string[] = [];
+  lines.push("## Commands");
+  lines.push("");
+  lines.push(
+    "The CLI groups commands by category. Each command supports `--help` for its full usage, options, and examples (`veryfront <command> --help`). For machine-readable output use `veryfront schema --json`.",
+  );
+  lines.push("");
+
+  const grouped = new Map<CommandCategory, CommandHelp[]>();
+  for (const cmd of Object.values(COMMANDS)) {
+    const list = grouped.get(cmd.category) ?? [];
+    list.push(cmd);
+    grouped.set(cmd.category, list);
+  }
+  for (const list of grouped.values()) {
+    list.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  for (const category of CATEGORY_ORDER) {
+    const cmds = grouped.get(category);
+    if (!cmds || cmds.length === 0) continue;
+    lines.push(`### ${CATEGORY_LABELS[category]}`);
+    lines.push("");
+    lines.push("| Command | Description |");
+    lines.push("|---------|-------------|");
+    for (const cmd of cmds) {
+      const desc = cmd.description.replace(/\|/g, "\\|");
+      lines.push(`| \`veryfront ${cmd.name}\` | ${desc} |`);
+    }
+    lines.push("");
+  }
+
+  return lines;
+}
+
+// ---------------------------------------------------------------------------
 // 6. Generate MDX content
 // ---------------------------------------------------------------------------
 
@@ -2442,6 +2502,11 @@ function generateMD(
       lines.push(example.code.trim());
       lines.push("");
     }
+  }
+
+  // CLI command catalog (only for veryfront/cli — generated from cli/help/command-definitions.ts)
+  if (entry.importPath === "veryfront/cli") {
+    lines.push(...generateCLICommandCatalog());
   }
 
   // API section (function params, return types, instance methods)
