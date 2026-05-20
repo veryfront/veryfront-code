@@ -4,11 +4,11 @@ description: "Run project-scoped background work now or on a schedule through th
 order: 21
 ---
 
-Use Veryfront jobs for durable, project-scoped background work.
+Veryfront jobs run durable, project-scoped background work on the platform. Create them through the SDK, REST API, or first-party Studio flows.
 
 - A **job** runs once.
 - A **cron job** runs on a schedule and creates jobs over time.
-- A **target** is the named capability being executed.
+- A **target** names the capability being executed (for example, `task:knowledge-ingest`).
 - **events** are the canonical user-visible output stream.
 - **logs** are raw debugging output.
 - A **batch** groups related jobs together.
