@@ -1,14 +1,14 @@
 ---
 title: "Configuration"
 description: "`veryfront.config.ts` options, environment variables, and runtime settings."
-order: 7
+order: 8
 ---
 
 Configure a Veryfront project in two places: `veryfront.config.ts` for project structure, build settings, and feature defaults; environment variables for secrets and deployment-specific values. The framework reads both automatically.
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Quickstart](./quickstart.md)).
+- A project created with `veryfront init` (see [Create a project](./create-a-project.md)).
 - Write access to `veryfront.config.ts` and the project's `.env` file.
 
 ## Config file

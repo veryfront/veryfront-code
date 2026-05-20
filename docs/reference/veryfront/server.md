@@ -4,8 +4,6 @@ description: "Server Module Public API This module exports the public interface 
 order: 28
 ---
 
-# veryfront/server
-
 Server Module Public API This module exports the public interface for the Veryfront server. For routing utilities, import from "#veryfront/routing" directly. For observability utilities, import from "#veryfront/observability" directly.
 
 ## Import

@@ -4,8 +4,6 @@ description: "Define tools with schema-backed inputs for agents and MCP."
 order: 10
 ---
 
-# veryfront/tool
-
 Define tools with schema-backed inputs for agents and MCP.
 
 ## Import

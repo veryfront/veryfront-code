@@ -4,8 +4,6 @@ description: "Configuration, server bootstrap, routing, data fetching, and input
 order: 1
 ---
 
-# veryfront
-
 Configuration, server bootstrap, routing, data fetching, and input validation.
 
 ## Import
@@ -123,7 +121,7 @@ User guides:
 
 - [index](../../guides/index.md): Browse the guide map
 - [installation](../../guides/installation.md): Install the CLI and framework
-- [quickstart](../../guides/quickstart.md): Create and run a project
+- [create-a-project](../../guides/create-a-project.md): Scaffold and run a project
 - [create-an-agent](../../guides/create-an-agent.md): Define and invoke a first agent
 - [choose-a-primitive](../../guides/choose-a-primitive.md): Choose the right primitive
 - [production-path](../../guides/production-path.md): Move a route toward production checks

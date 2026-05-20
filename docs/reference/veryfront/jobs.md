@@ -4,8 +4,6 @@ description: "Jobs module for durable project-scoped background execution. Provi
 order: 14
 ---
 
-# veryfront/jobs
-
 Jobs module for durable project-scoped background execution. Provides a public SDK surface for one-off jobs, cron jobs, batch summaries, job target discovery, and the canonical split between user-visible `events` and raw debugging `logs`.
 
 ## Import

@@ -4,8 +4,6 @@ description: "React router exports for client navigation and route context."
 order: 3
 ---
 
-# veryfront/router
-
 React router exports for client navigation and route context.
 
 ## Import

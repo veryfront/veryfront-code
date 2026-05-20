@@ -8,7 +8,7 @@ Define an agent in a Veryfront project, send it a message, and stream the respon
 
 ## Prerequisites
 
-- [Veryfront installed](./installation.md) and a project created with [Quickstart](./quickstart.md). The `ai-agent` template gives you the file layout below by default.
+- [Veryfront installed](./installation.md) and a project created with [Create a project](./create-a-project.md). The `ai-agent` template gives you the file layout below by default.
 - An `agents/` directory in the project root. If you started from the `minimal` template, create one: `mkdir agents`.
 - A provider configured for inference. The simplest path is to set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in `.env`; the framework picks the matching provider automatically. See [Providers](./providers.md) for other options.
 

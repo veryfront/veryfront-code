@@ -81,7 +81,7 @@ behavior to the owning domain and keep the bridge as composition code.
 ## Related guides
 
 - [Project structure](../guides/project-structure.md)
-- [Quickstart](../guides/quickstart.md)
+- [Create a project](../guides/create-a-project.md)
 
 ## Related reference
 

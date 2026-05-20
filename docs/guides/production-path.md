@@ -1,7 +1,7 @@
 ---
 title: "Production path"
 description: "Build one Veryfront route from local project to production verification."
-order: 5
+order: 10
 ---
 
 Take one Veryfront route from local dev to a deployed production check. Each step adds one piece: a project, a primitive, a user-visible surface, then the production verification loop.
@@ -17,7 +17,7 @@ Take one Veryfront route from local dev to a deployed production check. Each ste
 
 | Step | Goal                                            | Guide                                                                                        |
 | ---- | ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 1    | Create and run a local app.                     | [Quickstart](./quickstart.md)                                                                |
+| 1    | Create and run a local app.                     | [Create a project](./create-a-project.md)                                                                |
 | 2    | Pick the smallest primitive for the work.       | [Choose a primitive](./choose-a-primitive.md)                                                |
 | 3    | Add the user-visible route or API boundary.     | [Pages and routing](./pages-and-routing.md), [API routes](./api-routes.md)                   |
 | 4    | Add the primitive only when the route needs it. | [Agents](./agents.md), [Tools](./tools.md), [Workflows](./workflows.md), [Tasks](./tasks.md) |

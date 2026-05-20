@@ -8,13 +8,7 @@ Install the `veryfront` CLI and framework so you can scaffold, run, and build Ve
 
 Most users want the Quickstart flow that follows. The install methods below all produce the same `veryfront` CLI; pick the one that matches your toolchain.
 
-## Prerequisites
-
-- A terminal with shell access (`bash`, `zsh`, or PowerShell).
-- One of the supported runtimes installed (see [System requirements](#system-requirements)).
-- Network access:
-  - **Binary installer (`curl`, PowerShell, Homebrew):** reachable hosts include `veryfront.com` (installer script), `api.github.com` (release metadata), and `github.com` (binary download from the `veryfront/veryfront` releases page).
-  - **`npm` / `npx`:** access to your configured npm registry (default `registry.npmjs.org`).
+For the terminal, runtime, and network access prerequisites, see the Veryfront Code docs landing page.
 
 ## System requirements
 
@@ -22,19 +16,19 @@ Veryfront ships as a standalone binary and as an npm package. Pick the rows that
 
 ### Operating system
 
-| OS                                                              | Binary installer                | npm / npx |
-| --------------------------------------------------------------- | ------------------------------- | --------- |
-| macOS 12 or later (Intel and Apple Silicon)                     | Yes (`curl` or Homebrew)        | Yes       |
-| Linux x86_64 and arm64 (glibc)                                  | Yes (`curl` or Homebrew)        | Yes       |
-| Windows 10 or later, x86_64 and arm64                           | Yes (PowerShell `install.ps1`)  | Yes       |
+| OS                                          | Binary installer               | npm / npx |
+| ------------------------------------------- | ------------------------------ | --------- |
+| macOS 12 or later (Intel and Apple Silicon) | Yes (`curl` or Homebrew)       | Yes       |
+| Linux x86_64 and arm64 (glibc)              | Yes (`curl` or Homebrew)       | Yes       |
+| Windows 10 or later, x86_64 and arm64       | Yes (PowerShell `install.ps1`) | Yes       |
 
 ### Runtime
 
-| Runtime  | Minimum version | Notes                                                    |
-| -------- | --------------- | -------------------------------------------------------- |
-| Node.js  | 18.18           | Required for `npm`, `npx`, and the framework runtime.    |
-| Deno     | 1.45            | Optional; supports running the framework directly.       |
-| Bun      | 1.1             | Optional; supports running the framework directly.       |
+| Runtime | Minimum version | Notes                                                 |
+| ------- | --------------- | ----------------------------------------------------- |
+| Node.js | 18.18           | Required for `npm`, `npx`, and the framework runtime. |
+| Deno    | 1.45            | Optional; supports running the framework directly.    |
+| Bun     | 1.1             | Optional; supports running the framework directly.    |
 
 ### Hardware
 
@@ -150,6 +144,6 @@ On Windows, run the same command in PowerShell or in a new terminal session so t
 
 ## Next
 
-- [Quickstart](./quickstart.md): create and run your first Veryfront project in under two minutes.
+- [Create a project](./create-a-project.md): create and run your first Veryfront project in under two minutes.
 - [Project structure](./project-structure.md): learn the conventions the CLI scaffolds.
 - [Configuration](./configuration.md): wire up environment variables and runtime options.

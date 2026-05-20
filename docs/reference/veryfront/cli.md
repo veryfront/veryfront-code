@@ -4,8 +4,6 @@ description: "Veryfront CLI entry point."
 order: 27
 ---
 
-# veryfront/cli
-
 Veryfront CLI entry point.
 
 ## Examples

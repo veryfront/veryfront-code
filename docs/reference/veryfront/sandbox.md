@@ -4,8 +4,6 @@ description: "Sandbox module for ephemeral compute environments. Provides the `S
 order: 23
 ---
 
-# veryfront/sandbox
-
 Sandbox module for ephemeral compute environments. Provides the `Sandbox` class for creating and interacting with isolated execution environments.
 
 ## Import

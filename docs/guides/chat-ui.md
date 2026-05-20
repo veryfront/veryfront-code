@@ -1,7 +1,7 @@
 ---
 title: "Chat UI"
 description: "Use the preset Chat component with the useChat hook."
-order: 18
+order: 21
 ---
 
 `Chat` is a complete chat interface in one component: composer, message list, streaming, loading state, and scroll behavior. Drop it in a client page, pair it with `useChat` and an AG-UI route, and you have a working chat.
@@ -13,7 +13,7 @@ Route examples use the default app router. To use `pages/api/**` instead, set `r
 ## Prerequisites
 
 - A Veryfront project with the `agents/` directory available (see
-  [Quickstart](./quickstart.md)).
+  [Create a project](./create-a-project.md)).
 - A configured provider (see [Providers](./providers.md)).
 
 ## Quick setup

@@ -352,7 +352,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
   "veryfront": [
     { path: "index", reason: "Browse the guide map" },
     { path: "installation", reason: "Install the CLI and framework" },
-    { path: "quickstart", reason: "Create and run a project" },
+    { path: "create-a-project", reason: "Scaffold and run a project" },
     { path: "create-an-agent", reason: "Define and invoke a first agent" },
     { path: "choose-a-primitive", reason: "Choose the right primitive" },
     { path: "production-path", reason: "Move a route toward production checks" },
@@ -2436,9 +2436,9 @@ function generateMD(
   lines.push("---");
   lines.push("");
 
-  // H1 title + description paragraph (visible on GitHub)
-  lines.push(`# ${entry.importPath}`);
-  lines.push("");
+  // Description paragraph. The page title comes from the frontmatter
+  // `title:` and is rendered by Mintlify; emitting a markdown H1 here
+  // would render as a duplicate heading on the published page.
   if (description) {
     lines.push(description);
     lines.push("");

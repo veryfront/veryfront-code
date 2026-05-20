@@ -4,8 +4,6 @@ description: "OAuth 2.0 with 37 pre-configured providers."
 order: 19
 ---
 
-# veryfront/oauth
-
 OAuth 2.0 with 37 pre-configured providers.
 
 ## Import

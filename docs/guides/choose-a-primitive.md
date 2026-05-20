@@ -1,7 +1,7 @@
 ---
 title: "Choose a primitive"
 description: "Pick the right Veryfront primitive before you write code."
-order: 4
+order: 9
 ---
 
 Pick the smallest Veryfront primitive that matches the job. Smaller primitives keep project structure clear and prevent agents, workflows, jobs, and integrations from collapsing into overlapping abstractions.
@@ -58,7 +58,7 @@ Run the guide's example or validation command before adding more primitives.
 
 ## Next
 
-- [Quickstart](./quickstart.md): create a project
+- [Create a project](./create-a-project.md): create a project
 - [Agents](./agents.md): define an agent
 - [Workflows](./workflows.md): orchestrate multi-step work
 - [Jobs](./jobs.md): run durable background work

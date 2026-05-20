@@ -4,8 +4,6 @@ description: "Cross-runtime test utilities — BDD framework (describe/it), asse
 order: 26
 ---
 
-# veryfront/testing
-
 Cross-runtime test utilities — BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun.
 
 ## Import

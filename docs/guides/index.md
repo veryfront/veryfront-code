@@ -7,23 +7,39 @@ order: 0
 Each guide helps you complete one goal with the Veryfront library or CLI.
 Pick the guide that matches what you want to do next.
 
-If you are new, start at [Get started](#get-started) and walk through the
-guides in order. If you already have a project, jump to the section that
-matches your goal.
+If you are new, work through [Getting Started](#getting-started) (~5 minutes
+end to end) and then dive into [Guides](#guides) for everything beyond the
+basic flow.
 
-## Get started
+## Getting Started
+
+A six-step tour from a fresh machine to a deployed Veryfront app. Each step
+is a focused mini tutorial.
+
+| Step                                        | What you will do                                                     |
+| ------------------------------------------- | -------------------------------------------------------------------- |
+| [Installation](./installation.md)           | Install the Veryfront CLI and framework on macOS, Linux, or Windows. |
+| [Create a project](./create-a-project.md)   | Scaffold a project from a template and run it on the dev server.     |
+| [Create an agent](./create-an-agent.md)     | Define an agent and expose it as a streaming chat endpoint.          |
+| [Create an API](./create-an-api.md)         | Add an HTTP endpoint with a typed Request and Response.              |
+| [Create a frontend](./create-a-frontend.md) | Add a page and a navigation link.                                    |
+| [Deploy a project](./deploy-a-project.md)   | Build and ship to Veryfront Cloud or another host.                   |
+
+## Guides
+
+Topic guides that go beyond the 5-minute tour. Each is a mini tutorial for
+one concrete piece of the framework.
+
+### Foundations
 
 | Guide                                         | What you will do                                                              |
 | --------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Installation](./installation.md)             | Install the Veryfront CLI and framework on macOS, Linux, or Windows.          |
-| [Quickstart](./quickstart.md)                 | Install Veryfront, create a project, and run the dev server.                  |
-| [Create an agent](./create-an-agent.md)       | Define an agent and invoke it from server code in under five minutes.         |
-| [Choose a primitive](./choose-a-primitive.md) | Pick the smallest Veryfront primitive that matches the work.                  |
-| [Production path](./production-path.md)       | Build one route from local project to production verification.                |
 | [Project structure](./project-structure.md)   | Learn the file conventions and how auto-discovery wires your project up.      |
 | [Configuration](./configuration.md)           | Configure `veryfront.config.ts`, environment variables, and runtime settings. |
+| [Choose a primitive](./choose-a-primitive.md) | Pick the smallest Veryfront primitive that matches the work.                  |
+| [Production path](./production-path.md)       | Build one route from local project to production verification.                |
 
-## Build pages and APIs
+### Pages and APIs
 
 | Guide                                       | What you will do                                                            |
 | ------------------------------------------- | --------------------------------------------------------------------------- |
@@ -33,7 +49,7 @@ matches your goal.
 | [Middleware](./middleware.md)               | Add CORS, rate limiting, logging, and custom middleware pipelines.          |
 | [Head and SEO](./head-and-seo.md)           | Set page metadata, Open Graph tags, and structured data.                    |
 
-## Add an AI agent
+### AI primitives
 
 | Guide                                               | What you will do                                                                |
 | --------------------------------------------------- | ------------------------------------------------------------------------------- |
@@ -43,7 +59,7 @@ matches your goal.
 | [Tools](./tools.md)                                 | Define typed tools that agents can call.                                        |
 | [Memory and streaming](./memory-and-streaming.md)   | Add conversation memory and stream model output to the client.                  |
 
-## Build a chat UI
+### Chat UI
 
 | Guide                                     | What you will do                                                            |
 | ----------------------------------------- | --------------------------------------------------------------------------- |
@@ -52,7 +68,7 @@ matches your goal.
 | [Chat hooks](./chat-hooks.md)             | Drive chat from headless hooks: chat, agent, completion, voice, and thread. |
 | [Chat theming](./chat-theming.md)         | Theme chat features, attachments, sources, models, and visuals.             |
 
-## Orchestrate work across agents and time
+### Orchestration
 
 | Guide                                          | What you will do                                                        |
 | ---------------------------------------------- | ----------------------------------------------------------------------- |
@@ -63,7 +79,7 @@ matches your goal.
 | [Jobs](./jobs.md)                              | Run one-off jobs, schedule cron jobs, and inspect batch summaries.      |
 | [Tasks](./tasks.md)                            | Write background task functions that run locally or as cloud jobs.      |
 
-## Connect external systems
+### External systems
 
 | Guide                                                   | What you will do                                                                      |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -74,7 +90,7 @@ matches your goal.
 | [Sandbox](./sandbox.md)                                 | Run isolated commands and file operations in an ephemeral sandbox session.            |
 | [CLI knowledge ingestion](./cli-knowledge-ingestion.md) | Turn uploads and local documents into project knowledge files from the CLI.           |
 
-## Extend Veryfront
+### Extensions
 
 | Guide                                             | What you will do                                                           |
 | ------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -84,9 +100,8 @@ matches your goal.
 | [Extension testing](./extension-testing.md)       | Test an extension factory and the contracts it implements.                 |
 | [Extension publishing](./extension-publishing.md) | Package and publish a reusable extension.                                  |
 
-## Ship to production
+### Ship to production
 
 | Guide                                    | What you will do                                                |
 | ---------------------------------------- | --------------------------------------------------------------- |
-| [Production path](./production-path.md)  | Follow the shortest route from dev server to production checks. |
-| [Building and deploying](./deploying.md) | Build for production, configure static export, and pick a host. |
+| [Building and deploying](./deploying.md) | Production-build internals, static export, Docker, and targets. |
