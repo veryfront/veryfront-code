@@ -4,7 +4,7 @@ description: "Customize chat theme, feature toggles, sources, attachments, and c
 order: 17
 ---
 
-Use this guide for visual customization and optional chat UI features.
+Customize the `Chat` component's theme, attachments, model selector, sources, and feedback actions through props. Each option is independent: turn on what you need and leave the rest at the defaults.
 
 Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one option at a time, run `veryfront dev`, and verify the chat still sends messages through `/api/ag-ui`.
 
