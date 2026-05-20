@@ -4,13 +4,9 @@ description: "Run Veryfront agents as separately deployed services."
 order: 11
 ---
 
-Run a Veryfront agent as a separately deployed service when the agent needs an
-independent process boundary, direct control-plane registration, remote MCP
-tools, or service-level telemetry.
+An agent service runs your agent as its own process, independent of the app server. Use it when you need a separate process boundary, direct control-plane registration, remote MCP tools, or service-level telemetry. Use a normal in-app route for everything else.
 
-Use an application route for normal in-app chat. Use an agent service when the
-agent must run outside the app server or when Veryfront Cloud needs to invoke a
-push runtime directly.
+Veryfront Cloud can invoke a push runtime directly against an agent service, which is the main reason to deploy one even when the app and the agent share a host.
 
 ## Prerequisites
 

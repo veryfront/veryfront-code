@@ -4,13 +4,11 @@ description: "Create an AI agent with a system prompt, tools, and memory."
 order: 10
 ---
 
-Create an AI agent with a system prompt, tools, and memory.
+An agent is a file in `agents/` that exports a system prompt, optional tools, optional memory, and optional skills. The runtime auto-discovers it on startup and exposes it via `getAgent(id)` or an AG-UI route.
 
-Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
+For the normal path, omit `model` and let runtime conventions choose: local inference by default, Veryfront Cloud when `VERYFRONT_API_TOKEN` plus project context are set.
 
-For the normal path, omit `model`. Veryfront Code uses runtime conventions:
-local inference by default, and Veryfront Cloud defaults when
-`VERYFRONT_API_TOKEN` plus project context are available.
+Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
 
 ## Prerequisites
 

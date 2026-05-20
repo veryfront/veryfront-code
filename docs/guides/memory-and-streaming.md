@@ -4,14 +4,11 @@ description: "Conversation memory strategies and streaming responses."
 order: 13
 ---
 
-Conversation memory strategies and streaming responses.
+Agents are stateless by default: each request gets the messages the client sends, and nothing else. Configure `memory` on the agent to persist history across requests, and use `createAgUiHandler` to stream the response back.
 
-Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.
+Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
 
-Memory configuration is independent of model selection, so these examples omit
-`model` and follow the runtime default.
-
-To test these examples, define the agent, expose it through the `/api/ag-ui` route shown below, run `veryfront dev`, and send messages from the [Chat UI](./chat-ui.md) guide or with `curl`.
+Memory configuration is independent of model selection, so these examples omit `model` and follow the runtime default. To test, expose the agent through `/api/ag-ui`, run `veryfront dev`, and send messages from the [Chat UI](./chat-ui.md) guide or with `curl`.
 
 ## Prerequisites
 
