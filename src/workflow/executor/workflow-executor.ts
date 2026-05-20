@@ -230,10 +230,10 @@ export class WorkflowExecutor {
     const run = await this.config.backend.getRun(runId);
     if (!run) throw RESOURCE_NOT_FOUND.create({ detail: `Run not found: ${runId}` });
 
-    if (run.status !== "waiting" && run.status !== "pending") {
+    if (run.status !== "waiting" && run.status !== "pending" && run.status !== "running") {
       throw ORCHESTRATION_ERROR.create({
         detail: `Cannot resume workflow run "${runId}": current status is "${run.status}". ` +
-          `Only runs in "waiting" or "pending" status can be resumed.`,
+          `Only runs in "waiting", "pending", or "running" status can be resumed.`,
       });
     }
 

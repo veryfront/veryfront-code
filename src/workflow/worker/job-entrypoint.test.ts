@@ -1,8 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import type { Tool } from "#veryfront/tool";
 import { MemoryBackend } from "../backends/memory.ts";
+import { dependsOn, step, workflow } from "../dsl/index.ts";
+import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowRun } from "../types.ts";
 import { EXIT_CODES, runWorkflowJob } from "./job-entrypoint.ts";
 
@@ -34,6 +38,16 @@ function restoreEnv(): void {
     }
   }
   savedEnv.clear();
+}
+
+function createMockTool(name: string, handler: (input: unknown) => unknown): Tool {
+  return {
+    id: name,
+    type: "function",
+    description: `Mock tool: ${name}`,
+    inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+    execute: (input) => Promise.resolve(handler(input)),
+  };
 }
 
 describe("runWorkflowJob", () => {
@@ -177,5 +191,126 @@ describe("runWorkflowJob", () => {
     assertExists(updatedRun);
     assertEquals(updatedRun.status, "failed");
     assertEquals(updatedRun.error?.message, "EXECUTION_ERROR: boom");
+  });
+
+  it("executes workflow runs already marked running by the job manager", async () => {
+    rememberEnv();
+
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    const workflowDefinition = workflow({
+      id: "running-workflow",
+      steps: [
+        step("finish", {
+          tool: createMockTool("finish-tool", () => ({ ok: true })),
+        }),
+      ],
+    });
+    executor.register(workflowDefinition.definition);
+
+    const run: WorkflowRun = {
+      id: "run-running",
+      workflowId: "running-workflow",
+      status: "running",
+      input: {},
+      nodeStates: {},
+      currentNodes: [],
+      context: { input: {} },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      startedAt: new Date(),
+      workerId: "job:job-1",
+    };
+    await backend.createRun(run);
+
+    Deno.env.set("WORKFLOW_RUN_ID", run.id);
+
+    const exitCode = await runWorkflowJob({
+      backend,
+      executor,
+    });
+
+    const updatedRun = await backend.getRun(run.id);
+
+    assertEquals(exitCode, EXIT_CODES.SUCCESS);
+    assertExists(updatedRun);
+    assertEquals(updatedRun.status, "completed");
+    assertEquals(updatedRun.output, { finish: { ok: true } });
+  });
+
+  it("resumes job-managed workflow runs from the latest checkpoint", async () => {
+    rememberEnv();
+
+    const backend = new MemoryBackend();
+    const executor = new WorkflowExecutor({ backend, enableLocking: false });
+    let firstExecuted = false;
+    let secondExecuted = false;
+    const workflowDefinition = workflow({
+      id: "checkpointed-workflow",
+      steps: [
+        step("first", {
+          tool: createMockTool("first-tool", () => {
+            firstExecuted = true;
+            return { first: true };
+          }),
+        }),
+        dependsOn(
+          step("second", {
+            tool: createMockTool("second-tool", () => {
+              secondExecuted = true;
+              return { second: true };
+            }),
+          }),
+          "first",
+        ),
+      ],
+    });
+    executor.register(workflowDefinition.definition);
+
+    const firstNodeState = {
+      nodeId: "first",
+      status: "completed" as const,
+      output: { first: true },
+      attempt: 1,
+    };
+    const run: WorkflowRun = {
+      id: "run-checkpointed",
+      workflowId: "checkpointed-workflow",
+      status: "running",
+      input: {},
+      nodeStates: { first: firstNodeState },
+      currentNodes: [],
+      context: { input: {}, first: { first: true } },
+      checkpoints: [],
+      pendingApprovals: [],
+      createdAt: new Date(),
+      startedAt: new Date(),
+      workerId: "job:job-2",
+    };
+    await backend.createRun(run);
+    await backend.saveCheckpoint(run.id, {
+      id: "cp-first",
+      nodeId: "first",
+      timestamp: new Date(),
+      context: { input: {}, first: { first: true } },
+      nodeStates: { first: firstNodeState },
+    });
+
+    Deno.env.set("WORKFLOW_RUN_ID", run.id);
+
+    const exitCode = await runWorkflowJob({
+      backend,
+      executor,
+    });
+
+    const updatedRun = await backend.getRun(run.id);
+
+    assertEquals(exitCode, EXIT_CODES.SUCCESS);
+    assertEquals(firstExecuted, false);
+    assertEquals(secondExecuted, true);
+    assertExists(updatedRun);
+    assertEquals(updatedRun.status, "completed");
+    assertEquals(updatedRun.output, { first: { first: true }, second: { second: true } });
   });
 });
