@@ -4,10 +4,7 @@ description: "Create and run a Veryfront project in under 2 minutes."
 order: 1
 ---
 
-Create and run a Veryfront project in under 2 minutes.
-
-The flow below starts locally and ends with an optional Veryfront Cloud deploy. The same project can also run self-hosted or on other infrastructure.
-The npm package, CLI, and import name remain `veryfront`.
+Scaffold a Veryfront app, run it locally, and deploy it. The default deploy target is Veryfront Cloud. The same build can be self-hosted on other infrastructure. The npm package, CLI, and import name are all `veryfront`.
 
 ## Prerequisites
 
@@ -100,15 +97,13 @@ veryfront start
 veryfront deploy
 ```
 
-Deploys to Veryfront Cloud, the recommended managed deployment path. Your site is live at `https://<slug>.production.veryfront.com`.
+Your site is live at `https://<slug>.production.veryfront.com`.
 
-If you prefer a different deployment target, run `veryfront build` and deploy the generated output using your own infrastructure.
+To deploy somewhere else, run `veryfront build` and ship the build output to your own host.
 
 ## Verify it worked
 
-After `veryfront dev`, the terminal prints `Ready on http://localhost:3000`.
-Open that URL: the template's home page should render and a `Cmd+S` save in
-any source file should hot-reload within a second.
+`veryfront dev` prints `Ready on http://localhost:3000`. Open the URL: the template's home page should render, and saving any source file should hot-reload the browser within a second.
 
 ## Next
 

@@ -4,11 +4,7 @@ description: "Build one Veryfront route from local project to production verific
 order: 35
 ---
 
-Build one Veryfront route from local project to production verification.
-
-Use this guide when you want the shortest complete path through the docs:
-create a project, choose the right primitive, add one user-visible surface, then
-prove the same app works in production.
+Take one Veryfront route from local dev to a deployed production check. Each step adds one piece: a project, a primitive, a user-visible surface, then the production verification loop.
 
 ## Prerequisites
 
@@ -68,8 +64,7 @@ Pick one boundary and make it observable in both dev and production.
 | Agent chat               | Page plus `app/api/ag-ui/route.ts`           | Send one message and confirm streamed output. |
 | Workflow or task trigger | API route or CLI command                     | Trigger one run and inspect the result.       |
 
-Keep the first production path narrow. Once this path is proven, add more pages,
-agents, integrations, or jobs behind the same verification loop.
+Keep the first production path narrow. Once it works end to end, add more pages, agents, integrations, or jobs behind the same verification loop.
 
 ## Build and run production locally
 
@@ -104,11 +99,9 @@ Use the same checks at each stage:
 | Local production    | `veryfront build` exits successfully and `veryfront start` serves the same route. |
 | Deployed production | `veryfront deploy` completes, then `veryfront open` opens the deployed route.     |
 
-For API routes, compare the dev and production responses with `curl`. For pages,
-open the same path in both environments. Use `veryfront open --json` when you
-need the deployed URL for scripts or a terminal-only check. For agents,
-workflows, tasks, jobs, or integrations, trigger one minimal run and confirm the
-expected output or status.
+For API routes, compare the dev and production responses with `curl`. For pages, open the same path in both environments. For agents, workflows, tasks, jobs, or integrations, trigger one minimal run and confirm the expected output or status.
+
+Use `veryfront open --json` when you need the deployed URL in a script or a terminal-only check.
 
 ## Next
 

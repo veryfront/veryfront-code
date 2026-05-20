@@ -4,9 +4,7 @@ description: "Pick the right Veryfront primitive before you write code."
 order: 34
 ---
 
-Pick the smallest Veryfront primitive that matches the job. This keeps project
-structure clear and avoids turning agents, workflows, jobs, and integrations
-into overlapping abstractions.
+Pick the smallest Veryfront primitive that matches the job. Smaller primitives keep project structure clear and prevent agents, workflows, jobs, and integrations from collapsing into overlapping abstractions.
 
 ## Quick choice
 
@@ -50,17 +48,13 @@ into overlapping abstractions.
 
 ## Verify it worked
 
-Before building, write down the primitive you chose and one sentence explaining
-why. Then check the matching guide:
+Before building, write down the primitive you chose and one sentence explaining why. Then check the matching guide:
 
 - If the guide's first example solves your shape, continue there.
-- If you need two or more primitives, start with the primitive that owns the
-  triggering event.
-- If you are choosing between `Task` and `Job`, remember that a task defines
-  the work and a job runs it durably.
+- If you need two or more primitives, start with the one that owns the triggering event.
+- When choosing between `Task` and `Job`, remember that a task defines the work and a job runs it durably.
 
-Run the relevant guide example or validation command before adding more
-primitives.
+Run the guide's example or validation command before adding more primitives.
 
 ## Next
 
