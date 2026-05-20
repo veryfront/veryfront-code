@@ -6,6 +6,10 @@ order: 25
 
 A workflow is a file in `workflows/` that declares ordered steps. Each step runs an agent or a tool, and the workflow runtime threads outputs between them. Steps support parallel execution, branches, loops, retries, timeouts, and human-in-the-loop approvals.
 
+Workflow files are definitions. Starting a workflow creates a workflow run. On
+the Veryfront platform, that workflow run is backed by a job so it can be
+queued, retried, canceled, logged, and observed in the Jobs panel.
+
 ## Prerequisites
 
 - A Veryfront project with the `workflows/` directory available (see
@@ -154,6 +158,29 @@ export default tool({
 ```
 
 Use `handle.result()` only when the caller should wait for completion. Return the `runId` when the workflow can continue in the background.
+
+## Schedule a workflow
+
+Use a cron job with a workflow target when a workflow must run on a schedule:
+
+```ts
+import { createJobsClient } from "veryfront/jobs";
+
+const jobs = createJobsClient({
+  authToken: process.env.VERYFRONT_API_TOKEN,
+  projectReference: "dreamy-haven",
+});
+
+await jobs.cron.create({
+  name: "Daily content pipeline",
+  target: "workflow:content-pipeline",
+  schedule: "0 8 * * *",
+  timezone: "Europe/Stockholm",
+  config: { topic: "Daily update" },
+});
+```
+
+Each scheduled trigger creates a workflow run backed by a job.
 
 ## Steps
 

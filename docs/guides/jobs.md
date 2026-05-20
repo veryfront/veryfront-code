@@ -6,12 +6,16 @@ order: 29
 
 Veryfront jobs run durable, project-scoped background work on the platform. Create them through the SDK, REST API, or first-party Studio flows.
 
-- A **job** runs once.
-- A **cron job** runs on a schedule and creates jobs over time.
-- A **target** names the capability being executed (for example, `task:knowledge-ingest`).
+- A **job** runs one target.
+- A **cron job** runs on a schedule and creates runs over time.
+- A **target** names the capability being executed, for example `task:knowledge-ingest` or `workflow:content-pipeline`.
 - **events** are the canonical user-visible output stream.
 - **logs** are raw debugging output.
 - A **batch** groups related jobs together.
+
+Jobs are the platform execution surface. Task and workflow files are
+definitions. Starting a task creates a job run. Starting a workflow creates a
+workflow run backed by a job.
 
 ## Prerequisites
 
@@ -77,6 +81,26 @@ console.log(job.id);
 console.log(job.status);
 ```
 
+Use a task target to run a task definition:
+
+```ts
+await jobs.create({
+  name: "Sync data",
+  target: "task:sync-data",
+  config: { batchSize: 100 },
+});
+```
+
+Use a workflow target when the target is a workflow definition:
+
+```ts
+await jobs.create({
+  name: "Run content pipeline",
+  target: "workflow:content-pipeline",
+  config: { topic: "AI agents" },
+});
+```
+
 ## Observe a job
 
 Prefer `events()` for progress and user-visible activity:
@@ -140,6 +164,9 @@ const cronJob = await jobs.cron.create({
 console.log(cronJob.id);
 console.log(cronJob.schedule);
 ```
+
+Cron jobs use the same target model. A `task:<task-id>` cron job creates job
+runs. A `workflow:<workflow-id>` cron job creates workflow runs.
 
 You can later inspect or update it:
 
