@@ -4,7 +4,7 @@ description: "Understand extension discovery, ordering, presets, setup, and tear
 order: 31
 ---
 
-The extension lifecycle controls how Veryfront discovers, orders, starts, and stops extension factories.
+Veryfront loads extensions in a fixed order: discover the configured factories, flatten any presets, topologically sort so providers come before consumers, call each `setup()`, run the app, then call each `teardown()` in reverse on shutdown or reload. Knowing this order lets you write extensions that share contracts safely.
 
 ## Prerequisites
 
