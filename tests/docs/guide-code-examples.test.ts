@@ -487,7 +487,7 @@ describe("Guide: project-structure.md", () => {
 });
 
 describe("Guide: create-an-agent.md", () => {
-  it("uses the public agent factory and getAgent.generate path", async () => {
+  it("uses the public agent factory and getAgent.stream path", async () => {
     const guide = await readGuide("create-an-agent.md");
 
     for (
@@ -499,8 +499,8 @@ describe("Guide: create-an-agent.md", () => {
         "export async function POST(request: Request)",
         "const { question } = await request.json()",
         'const assistant = getAgent("assistant")',
-        "await assistant.generate({ input: question })",
-        "Response.json({",
+        "await assistant.stream({ input: question })",
+        "result.toDataStreamResponse()",
       ]
     ) {
       assertStringIncludes(guide, snippet);
