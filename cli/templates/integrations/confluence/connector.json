@@ -107,11 +107,11 @@
     {
       "id": "get_page",
       "name": "Get Page",
-      "description": "Get the content of a specific Confluence page",
+      "description": "Get the content of a specific Confluence page (uses v2 API)",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content/{pageId}",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/api/v2/pages/{pageId}",
         "params": {
           "cloudId": {
             "type": "string",
@@ -125,11 +125,11 @@
             "description": "Confluence page ID",
             "required": true
           },
-          "expand": {
+          "body-format": {
             "type": "string",
             "in": "query",
-            "description": "Comma-separated expansions",
-            "default": "body.storage,version"
+            "description": "Body representation format",
+            "default": "storage"
           }
         }
       }
@@ -137,11 +137,11 @@
     {
       "id": "create_page",
       "name": "Create Page",
-      "description": "Create a new page in a Confluence space",
+      "description": "Create a new page in a Confluence space (uses v2 API; requires spaceId from list_spaces)",
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/api/v2/pages",
         "params": {
           "cloudId": {
             "type": "string",
@@ -151,28 +151,28 @@
           }
         },
         "body": {
-          "type": {
+          "spaceId": {
             "type": "string",
-            "description": "Confluence content type",
-            "default": "page"
+            "description": "Numeric space ID (use list_spaces to get the id field)",
+            "required": true
           },
           "title": {
             "type": "string",
             "description": "Page title",
             "required": true
           },
-          "space": {
-            "type": "object",
-            "description": "Space object, e.g. {key: 'ENG'}",
-            "required": true
+          "status": {
+            "type": "string",
+            "description": "Page status",
+            "default": "current"
           },
-          "ancestors": {
-            "type": "array",
-            "description": "Parent page references"
+          "parentId": {
+            "type": "string",
+            "description": "Parent page ID (optional)"
           },
           "body": {
             "type": "object",
-            "description": "Confluence body payload, typically storage representation",
+            "description": "Page body, e.g. {representation: 'storage', value: '<p>content</p>'}",
             "required": true
           }
         }
@@ -181,11 +181,11 @@
     {
       "id": "update_page",
       "name": "Update Page",
-      "description": "Update the content of an existing Confluence page",
+      "description": "Update the content of an existing Confluence page (uses v2 API; version.number must be current+1)",
       "requiresWrite": true,
       "endpoint": {
         "method": "PUT",
-        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content/{pageId}",
+        "url": "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/api/v2/pages/{pageId}",
         "params": {
           "cloudId": {
             "type": "string",
@@ -201,25 +201,28 @@
           }
         },
         "body": {
-          "type": {
+          "id": {
             "type": "string",
-            "description": "Confluence content type",
-            "default": "page"
+            "description": "Page ID (must match pageId path param)",
+            "required": true
+          },
+          "status": {
+            "type": "string",
+            "description": "Page status",
+            "default": "current"
           },
           "title": {
             "type": "string",
-            "description": "Page title",
-            "required": true
+            "description": "New page title (omit to keep existing)"
           },
           "version": {
             "type": "object",
-            "description": "Version object with incremented number",
+            "description": "Version object; number must be current version + 1",
             "required": true
           },
           "body": {
             "type": "object",
-            "description": "Updated Confluence body payload",
-            "required": true
+            "description": "Updated body, e.g. {representation: 'storage', value: '<p>...</p>'}"
           }
         }
       }

@@ -264,11 +264,11 @@ describe("integration endpoint specs", () => {
     const confluenceGetPage = getTool("confluence", "get_page");
     assertEquals(
       confluenceGetPage.endpoint?.url,
-      "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/rest/api/content/{pageId}",
+      "https://api.atlassian.com/ex/confluence/{cloudId}/wiki/api/v2/pages/{pageId}",
     );
     assertEquals(
-      confluenceGetPage.endpoint?.params?.expand?.default,
-      "body.storage,version",
+      confluenceGetPage.endpoint?.params?.["body-format"]?.default,
+      "storage",
     );
 
     const salesforceListAccounts = getTool("salesforce", "list_accounts");
