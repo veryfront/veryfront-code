@@ -4,8 +4,6 @@ description: "Create and run a Veryfront project in under 2 minutes."
 order: 1
 ---
 
-# Quickstart
-
 Create and run a Veryfront project in under 2 minutes.
 
 The flow below starts locally and ends with an optional Veryfront Cloud deploy. The same project can also run self-hosted or on other infrastructure.

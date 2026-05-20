@@ -4,8 +4,6 @@ description: "Test Veryfront extension factories and contract implementations."
 order: 32
 ---
 
-# Extension testing
-
 Extension tests should prove that the factory returns a valid extension and that provided contracts work through the extension loader.
 
 ## Prerequisites

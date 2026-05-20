@@ -4,8 +4,6 @@ description: "Run project-scoped background work now or on a schedule through th
 order: 21
 ---
 
-# Jobs and cron jobs
-
 Use Veryfront jobs for durable, project-scoped background work.
 
 - A **job** runs once.

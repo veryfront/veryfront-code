@@ -4,8 +4,6 @@ description: "DAG-based multi-step workflows with branching and parallelism."
 order: 18
 ---
 
-# Workflows
-
 DAG-based multi-step workflows with branching and parallelism.
 
 ## Prerequisites

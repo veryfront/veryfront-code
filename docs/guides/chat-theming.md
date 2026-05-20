@@ -4,8 +4,6 @@ description: "Customize chat theme, feature toggles, sources, attachments, and c
 order: 17
 ---
 
-# Chat theming
-
 Use this guide for visual customization and optional chat UI features.
 
 Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one option at a time, run `veryfront dev`, and verify the chat still sends messages through `/api/ag-ui`.

@@ -4,8 +4,6 @@ description: "Conversation memory strategies and streaming responses."
 order: 13
 ---
 
-# Memory and streaming
-
 Conversation memory strategies and streaming responses.
 
 Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.

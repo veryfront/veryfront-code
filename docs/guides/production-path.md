@@ -4,8 +4,6 @@ description: "Build one Veryfront route from local project to production verific
 order: 35
 ---
 
-# Production path
-
 Build one Veryfront route from local project to production verification.
 
 Use this guide when you want the shortest complete path through the docs:

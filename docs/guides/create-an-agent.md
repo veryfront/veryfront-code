@@ -4,8 +4,6 @@ description: "Define an AI agent and invoke it from server code in under five mi
 order: 37
 ---
 
-# Create an agent
-
 Define an AI agent in a fresh Veryfront project, send it a message, and read back the response. This guide is the smallest end-to-end agent you can build with Veryfront; deeper topics — tools, memory, skills, hosting, streaming — live in [Agents](./agents.md) and the AI guides that follow it.
 
 ## Prerequisites

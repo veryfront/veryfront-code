@@ -4,8 +4,6 @@ description: "File conventions, directory layout, and how auto-discovery works."
 order: 2
 ---
 
-# Project structure
-
 File conventions, directory layout, and how auto-discovery works.
 
 Examples below show the default app-router layout. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.

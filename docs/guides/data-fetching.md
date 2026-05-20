@@ -4,8 +4,6 @@ description: "Server data, static generation, and client-side fetching."
 order: 5
 ---
 
-# Data fetching
-
 Server data, static generation, and client-side fetching.
 
 Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.

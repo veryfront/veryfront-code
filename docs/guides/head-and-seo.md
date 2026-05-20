@@ -4,8 +4,6 @@ description: "Declarative metadata, Open Graph, and structured data."
 order: 8
 ---
 
-# Head and SEO
-
 Declarative metadata, Open Graph, and structured data.
 
 Examples below use the default app router. Veryfront Code also supports the pages router through `veryfront.config.ts` with `router: "pages"`.

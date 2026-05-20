@@ -4,8 +4,6 @@ description: "Run isolated commands and file operations in ephemeral sandbox ses
 order: 26
 ---
 
-# Sandbox
-
 Run isolated commands and file operations in ephemeral sandbox sessions.
 
 Use the sandbox when your app needs short-lived, isolated execution for tasks like code generation, repo inspection, file transformation, or script execution.

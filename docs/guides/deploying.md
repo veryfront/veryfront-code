@@ -4,8 +4,6 @@ description: "Production builds, static export, and deployment targets."
 order: 38
 ---
 
-# Building and deploying
-
 Production builds, static export, and deployment targets.
 
 Veryfront Cloud is the primary managed deployment path. The same runtime can also be self-hosted or deployed on other infrastructure.

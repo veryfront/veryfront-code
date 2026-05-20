@@ -4,8 +4,6 @@ description: "Define tools with schema-backed inputs that agents can call."
 order: 12
 ---
 
-# Tools
-
 Define tools with schema-backed inputs that agents can call.
 
 Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.

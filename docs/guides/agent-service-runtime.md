@@ -4,8 +4,6 @@ description: "Run Veryfront agents as separately deployed services."
 order: 11
 ---
 
-# Agent service runtime
-
 Run a Veryfront agent as a separately deployed service when the agent needs an
 independent process boundary, direct control-plane registration, remote MCP
 tools, or service-level telemetry.

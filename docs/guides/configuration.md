@@ -4,8 +4,6 @@ description: "`veryfront.config.ts` options, environment variables, and runtime 
 order: 3
 ---
 
-# Configuration
-
 `veryfront.config.ts` options, environment variables, and runtime settings.
 
 ## Prerequisites

@@ -4,8 +4,6 @@ description: "Create an AI agent with a system prompt, tools, and memory."
 order: 10
 ---
 
-# Agents
-
 Create an AI agent with a system prompt, tools, and memory.
 
 Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.

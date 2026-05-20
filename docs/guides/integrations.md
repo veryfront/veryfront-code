@@ -4,8 +4,6 @@ description: "Config-driven integration tools with OAuth, token management, and 
 order: 25
 ---
 
-# Integrations
-
 Veryfront integrations let AI agents use third-party services on behalf of
 users. Developers enable integrations in `veryfront.config.ts`, and the runtime
 uses the built-in connector catalog plus remote integration helpers to fetch

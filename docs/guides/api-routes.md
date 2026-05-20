@@ -4,8 +4,6 @@ description: "HTTP handlers, request parsing, and streaming responses."
 order: 6
 ---
 
-# API routes
-
 HTTP handlers, request parsing, and streaming responses.
 
 Veryfront supports API routes in the app router and the pages router. The router changes the file location and handler arguments. The request and response APIs stay based on the standard Web `Request` and `Response` objects.

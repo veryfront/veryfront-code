@@ -4,8 +4,6 @@ description: "Use headless chat, agent, completion, voice, and thread hooks."
 order: 16
 ---
 
-# Chat hooks
-
 Use chat hooks when you need state and runtime integration without the preset UI.
 
 The examples below assume your app has an AG-UI chat endpoint at `/api/ag-ui`. Use the route from [Chat UI](./chat-ui.md) or [Agents](./agents.md), then run `veryfront dev` and open the page that renders the hook.

@@ -4,8 +4,6 @@ description: "Pick the right Veryfront primitive before you write code."
 order: 34
 ---
 
-# Choose a primitive
-
 Pick the smallest Veryfront primitive that matches the job. This keeps project
 structure clear and avoids turning agents, workflows, jobs, and integrations
 into overlapping abstractions.

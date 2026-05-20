@@ -4,8 +4,6 @@ description: "Build custom chat layouts with Chat and Message composition compon
 order: 15
 ---
 
-# Chat composition
-
 Use composition when the preset `Chat` component is too constrained but you still want Veryfront to own the chat wiring.
 
 The examples use the same `useChat({ api: "/api/ag-ui" })` setup as the [Chat UI](./chat-ui.md) guide. Create the AG-UI route first, then render these components in a client page and verify them with `veryfront dev`.

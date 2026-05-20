@@ -4,8 +4,6 @@ description: "CORS, rate limiting, logging, and custom middleware pipelines."
 order: 7
 ---
 
-# Middleware
-
 CORS, rate limiting, logging, and custom middleware pipelines.
 
 The middleware pipeline works in both router styles. The route module wrapper changes:

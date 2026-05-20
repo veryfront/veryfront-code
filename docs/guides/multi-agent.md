@@ -4,8 +4,6 @@ description: "Agent composition, delegation, and agent-as-tool patterns."
 order: 19
 ---
 
-# Multi-agent
-
 Agent composition, delegation, and agent-as-tool patterns.
 
 Each agent can omit `model` and inherit the runtime default, or set an

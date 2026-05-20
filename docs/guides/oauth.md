@@ -4,8 +4,6 @@ description: "OAuth 2.0 helpers with a built-in provider catalog."
 order: 24
 ---
 
-# OAuth
-
 OAuth 2.0 helpers with a built-in provider catalog.
 
 Route examples below use the default app router. Veryfront Code also supports mounting equivalent handlers under `pages/api/**` when `router: "pages"` is enabled.

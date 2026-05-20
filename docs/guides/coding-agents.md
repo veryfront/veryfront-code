@@ -4,8 +4,6 @@ description: "Connect Claude Code, Cursor, Codex, and other MCP-aware coding age
 order: 28
 ---
 
-# Coding agents
-
 Connect a coding agent like Claude Code, Cursor, or Codex to your Veryfront project so it can scaffold pages, read live errors and logs, run tests, and preview routes without leaving its chat surface.
 
 The CLI ships a built-in MCP server for this. It is separate from the application-facing MCP server you might mount in your app (see [MCP server](./mcp-server.md)), which exposes _your_ tools to MCP clients. The CLI MCP exposes _Veryfront dev tools_ to your coding agent.

@@ -4,8 +4,6 @@ description: "Understand how extensions add focused capabilities to Veryfront."
 order: 29
 ---
 
-# Extensions
-
 Extensions add focused capabilities to Veryfront through contract implementations. Use this overview to choose the right extension path. Use [Extension authoring](./extension-authoring.md) to write one, [Extension lifecycle](./extension-lifecycle.md) to understand discovery and loading, [Extension testing](./extension-testing.md) to verify behavior, and [Extension publishing](./extension-publishing.md) to package one for reuse.
 
 ## Prerequisites

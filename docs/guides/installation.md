@@ -4,8 +4,6 @@ description: "Install the Veryfront CLI and framework on macOS, Linux, or Window
 order: 36
 ---
 
-# Installation
-
 Install the `veryfront` CLI and framework so you can scaffold, run, and build Veryfront projects.
 
 Most users want the Quickstart flow that follows. The install methods below all produce the same `veryfront` CLI; pick the one that matches your toolchain.

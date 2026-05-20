@@ -4,8 +4,6 @@ description: "Use the preset Chat component with the useChat hook."
 order: 14
 ---
 
-# Chat UI
-
 Use `Chat` when you want a complete chat interface with one component. Use this guide for the preset path. Use [Chat composition](./chat-composition.md) when you need layout control, [Chat hooks](./chat-hooks.md) when you need headless state, and [Chat theming](./chat-theming.md) when you need visual customization.
 
 Route examples below use the default app router. Veryfront Code also supports mounting the same handlers under `pages/api/**` when `router: "pages"` is enabled.

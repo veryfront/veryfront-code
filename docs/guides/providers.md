@@ -4,8 +4,6 @@ description: "Provider registry with runtime conventions and explicit overrides.
 order: 9
 ---
 
-# Providers
-
 Provider registry. Maps "provider/model" strings to framework-compatible model runtimes.
 
 ## Prerequisites

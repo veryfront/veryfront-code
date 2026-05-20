@@ -4,8 +4,6 @@ description: "Understand extension discovery, ordering, presets, setup, and tear
 order: 31
 ---
 
-# Extension lifecycle
-
 The extension lifecycle controls how Veryfront discovers, orders, starts, and stops extension factories.
 
 ## Prerequisites
