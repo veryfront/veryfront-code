@@ -192,6 +192,8 @@ export class WorkflowExecutor {
         projectId: requestCtx.projectId,
         productionMode: requestCtx.productionMode ?? false,
         releaseId: requestCtx.releaseId ?? null,
+        branch: requestCtx.branch ?? null,
+        environmentName: requestCtx.environmentName ?? null,
       }
       : undefined;
     const injectedProjectEnv = mergeInjectedWorkflowEnv(undefined, getProcessEnv());

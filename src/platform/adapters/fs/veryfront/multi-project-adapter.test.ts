@@ -200,6 +200,16 @@ describe("runWithRequestContext", () => {
     );
   });
 
+  it("should set branch from options", async () => {
+    await runWithRequestContext(
+      { projectSlug: "proj", token: "tok", branch: "feature-branch" },
+      async () => {
+        const ctx = getCurrentRequestContext();
+        assertEquals(ctx!.branch, "feature-branch");
+      },
+    );
+  });
+
   it("should default releaseId to null", async () => {
     await runWithRequestContext(
       { projectSlug: "proj", token: "tok" },
