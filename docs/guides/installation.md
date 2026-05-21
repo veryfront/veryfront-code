@@ -6,9 +6,7 @@ order: 1
 
 Install the `veryfront` CLI and framework so you can scaffold, run, and build Veryfront projects.
 
-Most users want the Quickstart flow that follows. The install methods below all produce the same `veryfront` CLI; pick the one that matches your toolchain.
-
-For the terminal, runtime, and network access prerequisites, see the Veryfront Code docs landing page.
+The install methods below all produce the same `veryfront` CLI; pick the one that matches your toolchain. Once installed, continue with [Create a project](./create-a-project.md).
 
 ## System requirements
 
@@ -47,7 +45,7 @@ Older browsers may work but are not part of the supported matrix.
 
 ## Install
 
-Pick the method that matches your toolchain. All five produce the same `veryfront` CLI; the tabs below give you the one-liner, and the sections that follow add detail and version-pinning options.
+The tabs below give you the one-liner for each method; the sections that follow add detail and version-pinning options.
 
 <CodeGroup>
 
