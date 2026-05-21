@@ -22,7 +22,7 @@ export interface ProjectSourceExecutionContext {
   proxyContext?: ProxyProjectSourceContext;
 }
 
-function getProxyProjectSourceContext(): ProxyProjectSourceContext | null {
+export function getProxyProjectSourceContext(): ProxyProjectSourceContext | null {
   const projectSlug = getEnv("VERYFRONT_PROJECT_SLUG")?.trim();
   const token = getEnv("VERYFRONT_API_TOKEN")?.trim();
 
@@ -31,7 +31,8 @@ function getProxyProjectSourceContext(): ProxyProjectSourceContext | null {
   }
 
   const projectId = getEnv("VERYFRONT_PROJECT_ID")?.trim();
-  const branchRef = getEnv("VERYFRONT_BRANCH_REF")?.trim();
+  const branchRef = getEnv("VERYFRONT_BRANCH_REF")?.trim() ||
+    getEnv("TENANT_BRANCH_ID")?.trim();
 
   return {
     projectSlug,
