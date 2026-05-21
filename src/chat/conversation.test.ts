@@ -281,4 +281,93 @@ describe("convertUiMessagesToProviderModelMessages", () => {
       true,
     );
   });
+
+  it("passes through pre-split role:tool messages from normalized replay history", () => {
+    const messages: ChatUiMessage[] = [
+      {
+        id: "message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            id: "tool-1",
+            name: "github__get_pr_diff",
+            input: { repo: "api", owner: "veryfront", pull_number: 1 },
+            state: "completed",
+          },
+          {
+            type: "tool_call",
+            id: "tool-2",
+            name: "github__list_prs",
+            input: { repo: "api", owner: "veryfront" },
+            state: "completed",
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:tool-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            tool_name: "github__get_pr_diff",
+            output: { error: "authentication_required" },
+          },
+          {
+            type: "tool_result",
+            tool_call_id: "tool-2",
+            tool_name: "github__list_prs",
+            output: { error: "authentication_required" },
+          },
+        ],
+      },
+      {
+        id: "message-1:after-tool:1",
+        role: "assistant",
+        parts: [{ type: "text", text: "I don't have GitHub access." }],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "github__get_pr_diff",
+            input: { repo: "api", owner: "veryfront", pull_number: 1 },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "tool-2",
+            toolName: "github__list_prs",
+            input: { repo: "api", owner: "veryfront" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "github__get_pr_diff",
+            output: { type: "json", value: { error: "authentication_required" } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-2",
+            toolName: "github__list_prs",
+            output: { type: "json", value: { error: "authentication_required" } },
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I don't have GitHub access." }],
+      },
+    ]);
+  });
 });

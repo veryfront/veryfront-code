@@ -65,7 +65,7 @@ const INLINE_BINARY_MEDIA_TYPE = "application/octet-stream";
 const INLINE_PDF_MEDIA_TYPE = "application/pdf";
 
 /** Public API contract for chat UI message role. */
-export type ChatUiMessageRole = "system" | "user" | "assistant";
+export type ChatUiMessageRole = "system" | "user" | "assistant" | "tool";
 
 /** Public API contract for chat text UI part. */
 export type ChatTextUiPart = {
