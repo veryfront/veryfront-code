@@ -996,20 +996,39 @@ function convertToolMessage(message: ChatUiMessage): ProviderModelMessage[] {
 export function convertUiMessagesToProviderModelMessages(
   messages: ChatUiMessage[],
 ): ProviderModelMessage[] {
-  return messages.flatMap((message) => {
-    switch (message.role) {
-      case "system":
-        return convertSystemMessage(message);
-      case "user":
-        return convertUserMessage(message);
-      case "assistant":
-        return convertAssistantMessage(message);
-      case "tool":
-        return convertToolMessage(message);
-      default:
-        return [];
+  const providerMessages: ProviderModelMessage[] = [];
+
+  for (const message of messages) {
+    const converted = (() => {
+      switch (message.role) {
+        case "system":
+          return convertSystemMessage(message);
+        case "user":
+          return convertUserMessage(message);
+        case "assistant":
+          return convertAssistantMessage(message);
+        case "tool":
+          return convertToolMessage(message);
+        default:
+          return [];
+      }
+    })();
+
+    for (const providerMessage of converted) {
+      const previous = providerMessages.at(-1);
+      if (previous?.role === "tool" && providerMessage.role === "tool") {
+        providerMessages[providerMessages.length - 1] = {
+          role: "tool",
+          content: [...previous.content, ...providerMessage.content],
+        };
+        continue;
+      }
+
+      providerMessages.push(providerMessage);
     }
-  });
+  }
+
+  return providerMessages;
 }
 
 /**
