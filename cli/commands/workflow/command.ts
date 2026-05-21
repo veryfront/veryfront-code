@@ -7,8 +7,28 @@ import { getEnv } from "veryfront/platform";
 import type { WorkflowArgs } from "./handler.ts";
 
 const WORKFLOW_STATUS_POLL_INTERVAL_MS = 1_000;
+const MAX_DISCOVERY_ERRORS_TO_PRINT = 5;
 
 export interface WorkflowOptions extends WorkflowArgs {}
+
+export interface WorkflowDiscoveryError {
+  filePath: string;
+  error: string;
+}
+
+export function formatWorkflowDiscoveryErrors(
+  errors: WorkflowDiscoveryError[],
+): string[] {
+  const visibleErrors = errors.slice(0, MAX_DISCOVERY_ERRORS_TO_PRINT);
+  const lines = visibleErrors.map((err) => `  - ${err.filePath}: ${err.error}`);
+  const hiddenCount = errors.length - visibleErrors.length;
+  if (hiddenCount > 0) {
+    lines.push(
+      `  - ${hiddenCount} more workflow file${hiddenCount === 1 ? "" : "s"} failed to load`,
+    );
+  }
+  return lines;
+}
 
 async function createWorkflowClient(debug: boolean) {
   const { createWorkflowClient } = await import(
@@ -124,6 +144,12 @@ export async function workflowCommand(options: WorkflowOptions): Promise<void> {
     const workflow = discovery.workflows.find((candidate) => candidate.id === workflowId);
     if (!workflow) {
       cliLogger.error(`Workflow "${workflowId}" not found.`);
+      if (discovery.errors.length > 0 && !options.debug) {
+        cliLogger.warn("Some workflow files could not be loaded:");
+        for (const line of formatWorkflowDiscoveryErrors(discovery.errors)) {
+          cliLogger.warn(line);
+        }
+      }
       if (discovery.workflows.length > 0) {
         cliLogger.info("Available workflows:");
         for (const candidate of discovery.workflows) {
