@@ -112,4 +112,5 @@ The CLI groups commands by category. Each command supports `--help` for its full
 
 User guides:
 
+- [coding-agents](../../guides/coding-agents.md): Connect coding agents to CLI and MCP tools
 - [cli-knowledge-ingestion](../../guides/cli-knowledge-ingestion.md): CLI knowledge ingestion

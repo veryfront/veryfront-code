@@ -111,7 +111,16 @@ function countDeclarationRows(pages: ReferencePage[]): {
 
   for (const page of pages) {
     const lines = page.content.split("\n");
+    let inCliCommandCatalog = false;
     for (const [index, line] of lines.entries()) {
+      if (page.slug === "cli" && line === "## Commands") {
+        inCliCommandCatalog = true;
+      } else if (page.slug === "cli" && line === "## Exports") {
+        inCliCommandCatalog = false;
+      }
+
+      if (inCliCommandCatalog) continue;
+
       const declaration = line.match(/^\|\s*`([^`]+)`\s*\|/)?.[1];
       if (!declaration) continue;
       total += 1;

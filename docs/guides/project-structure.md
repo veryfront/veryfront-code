@@ -1,12 +1,15 @@
 ---
 title: "Project structure"
-description: "File conventions, directory layout, and how auto-discovery works."
+description: "Where to put routes, AI primitives, shared code, and configuration."
 order: 7
 ---
 
-A Veryfront project keeps routing files in `app/` (or `pages/`) and AI primitives (agents, tools, prompts, workflows, resources, skills) at the project root. The framework auto-discovers each of those root directories on startup; you do not register anything by hand.
+A Veryfront project keeps routes in `app/` or `pages/`. Keep AI primitives at
+the project root: `agents/`, `tools/`, `prompts/`, `workflows/`, `resources/`,
+and `skills/`. Veryfront discovers those directories on startup.
 
-Examples below show the default app-router layout. Set `router: "pages"` in `veryfront.config.ts` to switch to the pages router.
+The examples use the default app router. Set `router: "pages"` in
+`veryfront.config.ts` to use the pages router.
 
 ## Prerequisites
 
@@ -66,7 +69,8 @@ my-app/
 
 ### `app/`
 
-The `app/` directory contains pages and API routes for the default app router. The file path maps directly to the URL:
+The `app/` directory contains pages, layouts, and API routes. File paths map to
+URLs.
 
 | File                       | URL           |
 | -------------------------- | ------------- |
@@ -75,7 +79,8 @@ The `app/` directory contains pages and API routes for the default app router. T
 | `app/blog/[slug]/page.tsx` | `/blog/:slug` |
 | `app/api/users/route.ts`   | `/api/users`  |
 
-Pages use `page.tsx` (or `page.mdx`). API routes use `route.ts`. Layouts use `layout.tsx`.
+Pages use `page.tsx` or `page.mdx`. API routes use `route.ts`. Layouts use
+`layout.tsx`.
 
 If `veryfront.config.ts` sets `router: "pages"`, use `pages/` and `pages/api/` instead.
 
@@ -91,7 +96,8 @@ pages/
     chat.ts
 ```
 
-See [Pages and routing](./pages-and-routing.md) for the full routing system.
+See [Pages and routing](./pages-and-routing.md) for route patterns, layouts,
+dynamic params, and MDX.
 
 ## Auto-discovered directories
 
@@ -108,17 +114,25 @@ For skills, directories containing `SKILL.md` are registered.
 | `resources/` | MCP-exposable resources           | `veryfront/resource`                 |
 | `skills/`    | Skill packs for agent skill tools | Enabled via `agent({ skills: ... })` |
 
-The filename becomes the ID for TypeScript primitives. For example, `agents/assistant.ts` registers as `"assistant"` and can be retrieved with `getAgent("assistant")`. Agent discovery also supports `agents/assistant.md` for markdown-defined agents that use frontmatter for metadata and the markdown body as the system instructions.
+The filename becomes the ID for TypeScript primitives. For example,
+`agents/assistant.ts` registers as `"assistant"` and resolves with
+`getAgent("assistant")`.
+
+Agent discovery also supports `agents/assistant.md`. Use frontmatter for
+metadata and the markdown body for system instructions.
 
 For skills, the directory name is the skill ID. For example, `skills/incident-response/SKILL.md` registers as `"incident-response"`.
 
-Verify discovery by starting the dev server after adding an agent, tool, or workflow file:
+Verify discovery by starting the dev server after adding an agent, tool, or
+workflow:
 
 ```bash
 veryfront dev
 ```
 
-Then open the dev dashboard or call a route that uses the primitive. For example, `getAgent("assistant")` should resolve after `agents/assistant.ts` exists and the server has reloaded.
+Then open the dev dashboard or call a route that uses the primitive.
+`getAgent("assistant")` should resolve after `agents/assistant.ts` exists and
+the server reloads.
 
 ### Customizing discovery paths
 
@@ -141,7 +155,7 @@ export default defineConfig({
 
 ## Convention directories
 
-These directories aren't auto-discovered but follow standard conventions:
+These directories are not auto-discovered. They are common project conventions.
 
 | Directory     | Purpose                             |
 | ------------- | ----------------------------------- |
@@ -171,7 +185,7 @@ runtime registration stay predictable.
 ## Verify it worked
 
 Add a file in any auto-discovered directory and restart `veryfront dev`. For
-example, drop `agents/hello.ts`:
+example, add `agents/hello.ts`:
 
 ```ts
 import { agent } from "veryfront/agent";
@@ -179,9 +193,8 @@ import { agent } from "veryfront/agent";
 export default agent({ id: "hello", system: "Say hi." });
 ```
 
-The dev server log should print a line confirming the agent was registered.
-Call `getAgent("hello")` from a route or test. It should resolve to the agent
-you defined.
+The dev server log should confirm agent registration. `getAgent("hello")`
+should resolve from a route or test.
 
 ## Next
 

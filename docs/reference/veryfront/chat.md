@@ -422,63 +422,63 @@ import { convertUiMessagesToProviderModelMessages, extractTextFromMessage, extra
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `UUID_PATTERN` | Shared UUID pattern value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L179) |
+| `UUID_PATTERN` | Shared UUID pattern value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L184) |
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `convertUiMessagesToProviderModelMessages` | Convert UI messages to provider model messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L966) |
-| `extractTextFromMessage` | Message shape for extract text from. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L514) |
-| `extractUploadId` | Extract upload ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L188) |
-| `getStringField` | Return string field. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L219) |
-| `getUiToolName` | Return UI tool name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L273) |
-| `hasIncompleteToolParts` | Check whether incomplete tool parts is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L427) |
-| `isDataUiPart` | Check whether a chat part is a custom data part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L257) |
-| `isReasoningPart` | Check whether a value is a reasoning part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L509) |
-| `isRecord` | Record shape for is. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L214) |
-| `isTextPart` | Check whether a value is a text part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L504) |
-| `isToolCallPart` | Check whether a value is a tool-call part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L484) |
-| `isToolResultPart` | Check whether a value is a tool-result part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L494) |
-| `isToolUiPart` | Check whether a chat part is a tool UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L264) |
-| `isUuid` | Check whether a value is a UUID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L183) |
-| `mapToolState` | State for map tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L194) |
-| `markIncompleteToolPartsAsErrored` | Mark incomplete tool parts as errored. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L437) |
-| `markIncompleteToolPartsAsStopped` | Mark incomplete tool parts as stopped. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L432) |
-| `pushToolParts` | Push tool parts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L283) |
-| `stringifyUnknown` | Stringify unknown helper. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L246) |
-| `toConversationPartsFromUiMessage` | Message shape for to conversation parts from UI. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L354) |
+| `convertUiMessagesToProviderModelMessages` | Convert UI messages to provider model messages. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L996) |
+| `extractTextFromMessage` | Message shape for extract text from. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L519) |
+| `extractUploadId` | Extract upload ID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L193) |
+| `getStringField` | Return string field. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L224) |
+| `getUiToolName` | Return UI tool name. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L278) |
+| `hasIncompleteToolParts` | Check whether incomplete tool parts is present. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L432) |
+| `isDataUiPart` | Check whether a chat part is a custom data part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L262) |
+| `isReasoningPart` | Check whether a value is a reasoning part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L514) |
+| `isRecord` | Record shape for is. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L219) |
+| `isTextPart` | Check whether a value is a text part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L509) |
+| `isToolCallPart` | Check whether a value is a tool-call part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L489) |
+| `isToolResultPart` | Check whether a value is a tool-result part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L499) |
+| `isToolUiPart` | Check whether a chat part is a tool UI part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L269) |
+| `isUuid` | Check whether a value is a UUID. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L188) |
+| `mapToolState` | State for map tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L199) |
+| `markIncompleteToolPartsAsErrored` | Mark incomplete tool parts as errored. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L442) |
+| `markIncompleteToolPartsAsStopped` | Mark incomplete tool parts as stopped. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L437) |
+| `pushToolParts` | Push tool parts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L288) |
+| `stringifyUnknown` | Stringify unknown helper. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L251) |
+| `toConversationPartsFromUiMessage` | Message shape for to conversation parts from UI. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L359) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `ApiConversation` | Public API contract for API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L112) |
-| `ApiMessage` | Message shape for API. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L142) |
-| `ConversationType` | Public API contract for conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L74) |
-| `MessagePart` | Public API contract for message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L63) |
-| `MessageStatus` | Public API contract for message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L85) |
-| `ReasoningPartLike` | Reasoning-like provider message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L169) |
-| `TextPartLike` | Text-like provider message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L163) |
-| `ToolCallLike` | Public API contract for tool call like. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L145) |
-| `ToolResultLike` | Public API contract for tool result like. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L154) |
-| `ToolUiPart` | Chat UI tool part with a call ID and state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L175) |
+| `ApiConversation` | Public API contract for API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L117) |
+| `ApiMessage` | Message shape for API. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L147) |
+| `ConversationType` | Public API contract for conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L79) |
+| `MessagePart` | Public API contract for message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L68) |
+| `MessageStatus` | Public API contract for message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L90) |
+| `ReasoningPartLike` | Reasoning-like provider message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L174) |
+| `TextPartLike` | Text-like provider message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L168) |
+| `ToolCallLike` | Public API contract for tool call like. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L150) |
+| `ToolResultLike` | Public API contract for tool result like. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L159) |
+| `ToolUiPart` | Chat UI tool part with a call ID and state. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L180) |
 
 #### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `apiConversationSchema` | Schema for API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L109) |
-| `apiMessageSchema` | Schema for API message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L139) |
-| `conversationTypeSchema` | Schema for conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L72) |
-| `convertUiMessagesToModelMessages` | Shared convert UI messages to model messages value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L987) |
-| `getApiConversationSchema` | Zod schema for get API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L88) |
-| `getApiMessageSchema` | Zod schema for get API message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L115) |
-| `getConversationTypeSchema` | Zod schema for get conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L66) |
-| `getMessagePartSchema` | Zod schema for get message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L6) |
-| `getMessageStatusSchema` | Zod schema for get message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L77) |
-| `messagePartSchema` | Schema for message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L60) |
-| `messageStatusSchema` | Schema for message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L83) |
+| `apiConversationSchema` | Schema for API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L114) |
+| `apiMessageSchema` | Schema for API message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L144) |
+| `conversationTypeSchema` | Schema for conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L77) |
+| `convertUiMessagesToModelMessages` | Shared convert UI messages to model messages value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L1019) |
+| `getApiConversationSchema` | Zod schema for get API conversation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L93) |
+| `getApiMessageSchema` | Zod schema for get API message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L120) |
+| `getConversationTypeSchema` | Zod schema for get conversation type. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L71) |
+| `getMessagePartSchema` | Zod schema for get message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L11) |
+| `getMessageStatusSchema` | Zod schema for get message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L82) |
+| `messagePartSchema` | Schema for message part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L65) |
+| `messageStatusSchema` | Schema for message status. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/conversation.ts#L88) |
 
 ### `veryfront/chat/final-step-fallback`
 

@@ -354,6 +354,9 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
     { path: "installation", reason: "Install the CLI and framework" },
     { path: "create-a-project", reason: "Scaffold and run a project" },
     { path: "create-an-agent", reason: "Define and invoke a first agent" },
+    { path: "create-an-api", reason: "Add a first API route" },
+    { path: "create-a-frontend", reason: "Add a first page" },
+    { path: "deploy-a-project", reason: "Deploy a first project" },
     { path: "choose-a-primitive", reason: "Choose the right primitive" },
     { path: "production-path", reason: "Move a route toward production checks" },
     { path: "configuration", reason: "Configure your Veryfront project" },
@@ -396,6 +399,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
   ],
   "veryfront/workflow": [
     { path: "workflows", reason: "Author durable workflows" },
+    { path: "workflows-advanced", reason: "Use loops, artifacts, and progress hooks" },
     { path: "multi-agent", reason: "Orchestrate multi-agent workflows" },
   ],
   "veryfront/prompt": [
@@ -410,6 +414,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
   ],
   "veryfront/mcp": [
     { path: "mcp-server", reason: "Build and host MCP servers" },
+    { path: "coding-agents", reason: "Connect MCP-aware coding agents" },
   ],
   "veryfront/middleware": [
     { path: "middleware", reason: "Compose HTTP middleware" },
@@ -438,6 +443,7 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
     { path: "extension-testing", reason: "Test extensions with BDD utilities" },
   ],
   "veryfront/cli": [
+    { path: "coding-agents", reason: "Connect coding agents to CLI and MCP tools" },
     { path: "cli-knowledge-ingestion", reason: "CLI knowledge ingestion" },
   ],
   "veryfront/server": [

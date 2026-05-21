@@ -3,9 +3,10 @@ import { createValidationError, VeryfrontError } from "./errors.ts";
 import { readBodyWithLimit, validateContentType, validateRequestLimits } from "./limits.ts";
 import { sanitizeData } from "./sanitizers.ts";
 import { DEFAULT_LIMITS, type ParseFormOptions, type ParseJsonOptions } from "./types.ts";
-// `File` is a global only on Node 20+; import from `node:buffer` for Node 18
-// compatibility (engines.node >= 18.0.0).
-import { File } from "node:buffer";
+import * as nodeBuffer from "node:buffer";
+
+const FileCtor = globalThis.File ??
+  (nodeBuffer as typeof nodeBuffer & { File: typeof File }).File;
 
 /** Parse and validate a JSON request body. */
 export async function parseJsonBody<T>(
@@ -58,7 +59,7 @@ export async function parseFormData<T>(
   const maxFileSize = options?.limits?.maxFileSize ?? DEFAULT_LIMITS.maxFileSize;
 
   for (const [key, value] of formData.entries()) {
-    if (value instanceof File && value.size > maxFileSize) {
+    if (value instanceof FileCtor && value.size > maxFileSize) {
       throw createValidationError(`File ${key} too large`, {
         maxSize: maxFileSize,
         actualSize: value.size,
