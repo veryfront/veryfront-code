@@ -63,15 +63,20 @@ export function runWithRequestContext<T>(
     projectId?: string;
     productionMode?: boolean;
     releaseId?: string | null;
+    branch?: string | null;
+    environmentName?: string | null;
   },
   fn: () => Promise<T>,
 ): Promise<T> {
+  const productionMode = options.productionMode ?? false;
   const context: RequestContext = {
     projectSlug: options.projectSlug,
     projectId: options.projectId,
     token: options.token,
-    productionMode: options.productionMode ?? false,
+    productionMode,
     releaseId: options.releaseId ?? null,
+    branch: productionMode ? null : (options.branch ?? null),
+    environmentName: options.environmentName ?? null,
     fileCache: new Map<string, string>(),
   };
   return asyncLocalStorage.run(context, fn);

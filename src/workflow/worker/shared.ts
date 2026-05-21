@@ -19,6 +19,9 @@ interface EntrypointExitCodes {
 export function getTenantFromEnv(): CapturedTenantContext | undefined {
   const projectSlug = getEnv("TENANT_PROJECT_SLUG");
   const token = getEnv("TENANT_TOKEN");
+  const branch = getEnv("VERYFRONT_BRANCH_REF") || getEnv("TENANT_BRANCH_ID");
+  const environmentName = getEnv("VERYFRONT_ENVIRONMENT_NAME") ||
+    getEnv("TENANT_ENVIRONMENT_NAME");
 
   if (!projectSlug || !token) {
     return undefined;
@@ -30,6 +33,8 @@ export function getTenantFromEnv(): CapturedTenantContext | undefined {
     projectId: getEnv("TENANT_PROJECT_ID"),
     productionMode: getEnv("TENANT_PRODUCTION_MODE") === "1",
     releaseId: getEnv("TENANT_RELEASE_ID"),
+    ...(branch ? { branch } : {}),
+    ...(environmentName ? { environmentName } : {}),
   };
 }
 
@@ -121,6 +126,8 @@ export function runWithTenantContext<T>(
       projectId: tenant.projectId,
       productionMode: tenant.productionMode,
       releaseId: tenant.releaseId,
+      branch: tenant.branch,
+      environmentName: tenant.environmentName,
     },
     fn,
   );

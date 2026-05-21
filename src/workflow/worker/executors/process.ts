@@ -108,6 +108,14 @@ export class ProcessJobExecutor implements JobExecutor {
       processEnv.TENANT_PROJECT_ID = run._tenant.projectId ?? "";
       processEnv.TENANT_PRODUCTION_MODE = run._tenant.productionMode ? "1" : "0";
       processEnv.TENANT_RELEASE_ID = run._tenant.releaseId ?? "";
+      if (run._tenant.branch) {
+        processEnv.TENANT_BRANCH_ID = run._tenant.branch;
+        processEnv.VERYFRONT_BRANCH_REF = run._tenant.branch;
+      }
+      if (run._tenant.environmentName) {
+        processEnv.TENANT_ENVIRONMENT_NAME = run._tenant.environmentName;
+        processEnv.VERYFRONT_ENVIRONMENT_NAME = run._tenant.environmentName;
+      }
     }
 
     // Spawn the process

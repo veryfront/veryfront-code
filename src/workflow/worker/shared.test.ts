@@ -1,7 +1,10 @@
 import "#veryfront/schemas/_test-setup.ts";
+import {
+  getCurrentRequestContext,
+} from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
-import { getFinalRunExitCode, getTenantFromEnv } from "./shared.ts";
+import { getFinalRunExitCode, getTenantFromEnv, runWithTenantContext } from "./shared.ts";
 
 const ENV_KEYS = [
   "TENANT_PROJECT_SLUG",
@@ -9,6 +12,10 @@ const ENV_KEYS = [
   "TENANT_PROJECT_ID",
   "TENANT_PRODUCTION_MODE",
   "TENANT_RELEASE_ID",
+  "TENANT_BRANCH_ID",
+  "VERYFRONT_BRANCH_REF",
+  "TENANT_ENVIRONMENT_NAME",
+  "VERYFRONT_ENVIRONMENT_NAME",
 ] as const;
 
 const savedEnv = new Map<string, string | undefined>();
@@ -58,6 +65,7 @@ describe("workflow worker shared helpers", () => {
     Deno.env.set("TENANT_PROJECT_ID", "project-123");
     Deno.env.set("TENANT_PRODUCTION_MODE", "1");
     Deno.env.set("TENANT_RELEASE_ID", "release-1");
+    Deno.env.set("TENANT_BRANCH_ID", "branch-123");
 
     assertEquals(getTenantFromEnv(), {
       projectSlug: "acme",
@@ -65,7 +73,36 @@ describe("workflow worker shared helpers", () => {
       projectId: "project-123",
       productionMode: true,
       releaseId: "release-1",
+      branch: "branch-123",
     });
+  });
+
+  it("prefers the explicit Veryfront branch ref over the tenant branch id", () => {
+    rememberEnv();
+
+    Deno.env.set("TENANT_PROJECT_SLUG", "acme");
+    Deno.env.set("TENANT_TOKEN", "secret");
+    Deno.env.set("TENANT_BRANCH_ID", "branch-123");
+    Deno.env.set("VERYFRONT_BRANCH_REF", "feature/ref");
+
+    assertEquals(getTenantFromEnv()?.branch, "feature/ref");
+  });
+
+  it("restores branch context while executing workflow work", async () => {
+    await runWithTenantContext(
+      {
+        projectSlug: "acme",
+        token: "secret",
+        projectId: "project-123",
+        productionMode: false,
+        releaseId: null,
+        branch: "branch-123",
+      },
+      async () => {
+        const context = getCurrentRequestContext();
+        assertEquals(context?.branch, "branch-123");
+      },
+    );
   });
 
   it("maps waiting and unexpected statuses to success exit codes", () => {

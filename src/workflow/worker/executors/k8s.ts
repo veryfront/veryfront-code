@@ -271,14 +271,31 @@ export class K8sJobExecutor implements JobExecutor {
       return [];
     }
 
-    const { projectSlug, token, projectId, productionMode, releaseId } = run._tenant;
-    return [
+    const { projectSlug, token, projectId, productionMode, releaseId, branch, environmentName } =
+      run._tenant;
+    const env = [
       { name: "TENANT_PROJECT_SLUG", value: projectSlug },
       { name: "TENANT_TOKEN", value: token },
       { name: "TENANT_PROJECT_ID", value: projectId ?? "" },
       { name: "TENANT_PRODUCTION_MODE", value: productionMode ? "1" : "0" },
       { name: "TENANT_RELEASE_ID", value: releaseId ?? "" },
     ];
+
+    if (branch) {
+      env.push(
+        { name: "TENANT_BRANCH_ID", value: branch },
+        { name: "VERYFRONT_BRANCH_REF", value: branch },
+      );
+    }
+
+    if (environmentName) {
+      env.push(
+        { name: "TENANT_ENVIRONMENT_NAME", value: environmentName },
+        { name: "VERYFRONT_ENVIRONMENT_NAME", value: environmentName },
+      );
+    }
+
+    return env;
   }
 
   /**

@@ -242,6 +242,10 @@ export interface CapturedTenantContext {
   productionMode: boolean;
   /** Release ID for production deployments */
   releaseId?: string | null;
+  /** Branch name or ID for preview mode */
+  branch?: string | null;
+  /** Environment name associated with this tenant context */
+  environmentName?: string | null;
 }
 
 /**
