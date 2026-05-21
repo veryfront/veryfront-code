@@ -367,6 +367,79 @@ describe("text-generation-runtime-message-converter", () => {
       });
     });
 
+    it("groups consecutive tool result messages after one assistant turn", () => {
+      const messages: Message[] = [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-call",
+              toolCallId: "tc1",
+              toolName: "calendar",
+              args: { day: "today" },
+            },
+            {
+              type: "tool-call",
+              toolCallId: "tc2",
+              toolName: "gmail",
+              args: { query: "newer_than:1d" },
+            },
+          ],
+        },
+        {
+          id: "tool_1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "tc1",
+            toolName: "calendar",
+            result: { events: 1 },
+          }],
+        },
+        {
+          id: "tool_2",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "tc2",
+            toolName: "gmail",
+            result: { messages: 20 },
+          }],
+        },
+        {
+          id: "assistant_2",
+          role: "assistant",
+          parts: [{ type: "text", text: "I found both results." }],
+        },
+      ];
+
+      const result = convertToTextGenerationRuntimeMessages(messages);
+
+      assertEquals(result.length, 3);
+      assertEquals(result[1], {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tc1",
+            toolName: "calendar",
+            output: { type: "json", value: { events: 1 } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tc2",
+            toolName: "gmail",
+            output: { type: "json", value: { messages: 20 } },
+          },
+        ],
+      });
+      assertEquals(result[2], {
+        role: "assistant",
+        content: [{ type: "text", text: "I found both results." }],
+      });
+    });
+
     it("preserves repeated tool result positions for repeated tool call ids", () => {
       const messages: Message[] = [
         {
