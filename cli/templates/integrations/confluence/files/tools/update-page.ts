@@ -31,12 +31,15 @@ export default tool({
       .describe("Optional message describing the changes made"),
   }))(),
   async execute({ pageId, title, content, versionMessage }) {
-    const currentPage = await getPage(pageId, ["version"]);
+    // v2 PUT /pages/{id} is a full replace — both title and body must be sent on every
+    // update. Resolve missing fields from the current page so partial updates work.
+    const currentPage = await getPage(pageId);
     const storageContent = toStorageContent(content);
+    const currentBody = currentPage.body?.storage?.value ?? "";
 
     const updatedPage = await updatePage(pageId, {
-      title,
-      content: storageContent,
+      title: title ?? currentPage.title,
+      content: storageContent ?? currentBody,
       version: currentPage.version.number + 1,
       versionMessage,
     });

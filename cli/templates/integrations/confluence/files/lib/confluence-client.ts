@@ -4,7 +4,7 @@ const CONFLUENCE_API_BASE = "https://api.atlassian.com/ex/confluence";
 
 interface ConfluenceResponse<T> {
   results: T[];
-  size: number;
+  size?: number;
   start?: number;
   limit?: number;
   _links?: {
@@ -24,9 +24,11 @@ export interface ConfluenceSpace {
   };
 }
 
+export type ConfluencePageType = "page" | "blogpost";
+
 export interface ConfluencePage {
   id: string;
-  type?: "page" | "blogpost";
+  type?: ConfluencePageType;
   status: string;
   title: string;
   spaceId?: string;
@@ -78,6 +80,13 @@ export interface ConfluenceSearchResult {
   };
 }
 
+export class ConfluenceApiError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "ConfluenceApiError";
+  }
+}
+
 async function confluenceFetch<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const [token, cloudId] = await Promise.all([getAccessToken(), getCloudId()]);
 
@@ -99,7 +108,10 @@ async function confluenceFetch<T>(endpoint: string, options: RequestInit = {}): 
 
   if (!response.ok) {
     const error = (await response.json().catch(() => ({}))) as { message?: string };
-    throw new Error(`Confluence API error: ${response.status} ${error.message ?? response.statusText}`);
+    throw new ConfluenceApiError(
+      response.status,
+      `Confluence API error: ${response.status} ${error.message ?? response.statusText}`,
+    );
   }
 
   return response.json() as Promise<T>;
@@ -110,6 +122,7 @@ function buildEndpoint(path: string, params?: URLSearchParams): string {
   return `${path}${query ? `?${query}` : ""}`;
 }
 
+// Uses Confluence v2 — v1 /wiki/rest/api/space is deprecated alongside /content.
 export async function listSpaces(options?: {
   limit?: number;
   type?: "global" | "personal";
@@ -120,15 +133,24 @@ export async function listSpaces(options?: {
   if (options?.type) params.set("type", options.type);
 
   const response = await confluenceFetch<ConfluenceResponse<ConfluenceSpace>>(
-    buildEndpoint("/wiki/rest/api/space", params),
+    buildEndpoint("/wiki/api/v2/spaces", params),
   );
 
   return response.results ?? [];
 }
 
+// Direct key lookup via v2 — avoids the v1 enumeration trap that capped at 250 spaces
+// and silently failed on enterprise tenancies with hundreds of spaces.
 async function getSpaceIdByKey(spaceKey: string): Promise<string> {
-  const spaces = await listSpaces({ limit: 250 });
-  const space = spaces.find((s) => s.key === spaceKey);
+  const params = new URLSearchParams();
+  params.set("keys", spaceKey);
+  params.set("limit", "1");
+
+  const response = await confluenceFetch<ConfluenceResponse<ConfluenceSpace>>(
+    buildEndpoint("/wiki/api/v2/spaces", params),
+  );
+
+  const space = response.results?.[0];
   if (!space) {
     throw new Error(`Confluence space not found: ${spaceKey}`);
   }
@@ -158,9 +180,22 @@ export async function searchContent(
   return response.results ?? [];
 }
 
-// Uses Confluence v2 API — v1 /wiki/rest/api/content is deprecated and returns 410 on newer instances
-export function getPage(pageId: string, _expand?: string[]): Promise<ConfluencePage> {
-  return confluenceFetch<ConfluencePage>(`/wiki/api/v2/pages/${pageId}?body-format=storage`);
+// v2 splits pages and blogposts into separate resources. Try /pages first;
+// fall back to /blogposts on 404 so search-content → get-page works for both
+// (searchContent returns mixed results and tools/get-page.ts has no type discriminator).
+export async function getPage(pageId: string): Promise<ConfluencePage> {
+  try {
+    return await confluenceFetch<ConfluencePage>(
+      `/wiki/api/v2/pages/${pageId}?body-format=storage`,
+    );
+  } catch (error) {
+    if (error instanceof ConfluenceApiError && error.status === 404) {
+      return await confluenceFetch<ConfluencePage>(
+        `/wiki/api/v2/blogposts/${pageId}?body-format=storage`,
+      );
+    }
+    throw error;
+  }
 }
 
 export function getPageContent(pageId: string): Promise<ConfluencePage> {
@@ -172,9 +207,10 @@ export async function createPage(options: {
   title: string;
   content: string;
   parentId?: string;
-  type?: "page" | "blogpost";
+  type?: ConfluencePageType;
 }): Promise<ConfluencePage> {
   const spaceId = await getSpaceIdByKey(options.spaceKey);
+  const type: ConfluencePageType = options.type ?? "page";
 
   const body: Record<string, unknown> = {
     spaceId,
@@ -186,6 +222,17 @@ export async function createPage(options: {
     },
   };
 
+  if (type === "blogpost") {
+    // v2 blogposts cannot have a parent — surface the user error instead of dropping it silently.
+    if (options.parentId) {
+      throw new Error("Confluence blogposts cannot have a parentId");
+    }
+    return confluenceFetch<ConfluencePage>("/wiki/api/v2/blogposts", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  }
+
   if (options.parentId) body.parentId = options.parentId;
 
   return confluenceFetch<ConfluencePage>("/wiki/api/v2/pages", {
@@ -194,32 +241,30 @@ export async function createPage(options: {
   });
 }
 
+// v2 PUT /pages/{id} is a full replace, not PATCH — title and body are both required.
+// Callers must resolve fallbacks (e.g. from a prior getPage) before invoking this.
 export function updatePage(
   pageId: string,
   options: {
-    title?: string;
-    content?: string;
+    title: string;
+    content: string;
     version: number;
     versionMessage?: string;
   },
 ): Promise<ConfluencePage> {
-  const body: Record<string, unknown> = {
+  const body = {
     id: pageId,
     status: "current",
+    title: options.title,
+    body: {
+      representation: "storage",
+      value: options.content,
+    },
     version: {
       number: options.version,
       message: options.versionMessage,
     },
   };
-
-  if (options.title) body.title = options.title;
-
-  if (options.content) {
-    body.body = {
-      representation: "storage",
-      value: options.content,
-    };
-  }
 
   return confluenceFetch<ConfluencePage>(`/wiki/api/v2/pages/${pageId}`, {
     method: "PUT",
