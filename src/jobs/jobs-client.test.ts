@@ -196,6 +196,32 @@ describe("VeryfrontJobsClient", () => {
     });
   });
 
+  it("creates one-off jobs with canonical runtime target inputs", async () => {
+    mockFetch([jsonResponse(makeJob())]);
+
+    const client = new VeryfrontJobsClient({
+      apiUrl: "https://api.test.com",
+      authToken: "test-token",
+      projectReference: "dreamy-haven",
+    });
+
+    await client.create({
+      name: "Run preview task",
+      target: "task:preview-task",
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetBranchId: "55555555-5555-4555-8555-555555555555",
+      config: {},
+    });
+
+    assertEquals(jsonBody(0), {
+      name: "Run preview task",
+      target: "task:preview-task",
+      runtime_target_kind: "preview_branch",
+      runtime_target_branch_id: "55555555-5555-4555-8555-555555555555",
+      config: {},
+    });
+  });
+
   it("creates knowledge ingest jobs by upload ids", async () => {
     mockFetch([jsonResponse(makeJob())]);
 

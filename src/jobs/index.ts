@@ -32,6 +32,8 @@ export {
   type CreateCronJobInput,
   type CreateJobInput,
   createJobsClient,
+  type JobRuntimeTargetKind,
+  type JobRuntimeTargetOptions,
   type KnowledgeIngestByUploadIdsInput,
   type KnowledgeIngestByUploadPathsInput,
   type KnowledgeIngestByUploadPrefixInput,
