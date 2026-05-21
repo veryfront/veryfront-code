@@ -368,8 +368,18 @@ describe("text-generation-runtime-message-converter", () => {
       });
     });
 
-    it("keeps only the latest tool result for a repeated tool call id", () => {
+    it("preserves repeated tool result positions for repeated tool call ids", () => {
       const messages: Message[] = [
+        {
+          id: "assistant_1",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "tc1",
+            toolName: "search",
+            args: { query: "old" },
+          }],
+        },
         {
           id: "tool_1",
           role: "tool",
@@ -378,6 +388,16 @@ describe("text-generation-runtime-message-converter", () => {
             toolCallId: "tc1",
             toolName: "search",
             result: { files: ["old.ts"] },
+          }],
+        },
+        {
+          id: "assistant_2",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "tc1",
+            toolName: "search",
+            args: { query: "new" },
           }],
         },
         {
@@ -394,8 +414,35 @@ describe("text-generation-runtime-message-converter", () => {
 
       const result = convertToTextGenerationRuntimeMessages(messages);
 
-      assertEquals(result.length, 1);
+      assertEquals(result.length, 4);
       assertEquals(result[0], {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "tc1",
+          toolName: "search",
+          input: { query: "old" },
+        }],
+      });
+      assertEquals(result[1], {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "tc1",
+          toolName: "search",
+          output: { type: "json", value: { files: ["old.ts"] } },
+        }],
+      });
+      assertEquals(result[2], {
+        role: "assistant",
+        content: [{
+          type: "tool-call",
+          toolCallId: "tc1",
+          toolName: "search",
+          input: { query: "new" },
+        }],
+      });
+      assertEquals(result[3], {
         role: "tool",
         content: [{
           type: "tool-result",

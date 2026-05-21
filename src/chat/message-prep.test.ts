@@ -286,3 +286,80 @@ Deno.test("prepareProviderModelMessagesFromUiMessages normalizes UI history into
     },
   ]);
 });
+
+Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool output over superseded stopped errors", () => {
+  const prepared = prepareProviderModelMessagesFromUiMessages([
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Search my notes." }],
+    },
+    {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        {
+          type: "dynamic-tool",
+          toolName: "notion__search_notion",
+          toolCallId: "toolu_01Search",
+          input: { query: "research notes" },
+          state: "output-error",
+          providerExecuted: true,
+          renderMode: "tool_call",
+          errorText: "Stopped by user",
+        },
+        {
+          type: "dynamic-tool",
+          toolName: "notion__search_notion",
+          toolCallId: "toolu_01Search",
+          input: { query: "research notes" },
+          state: "output-available",
+          providerExecuted: true,
+          renderMode: "tool_result",
+          output: { data: [] },
+        },
+      ],
+    },
+    {
+      id: "user-2",
+      role: "user",
+      parts: [{ type: "text", text: "Create a template I can use." }],
+    },
+  ]);
+
+  assertEquals(prepared, [
+    {
+      role: "user",
+      content: [{ type: "text", text: "Search my notes." }],
+    },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "toolu_01Search",
+          toolName: "notion__search_notion",
+          input: { query: "research notes" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "toolu_01Search",
+          toolName: "notion__search_notion",
+          output: {
+            type: "json",
+            value: { data: [] },
+          },
+        },
+      ],
+    },
+    {
+      role: "user",
+      content: [{ type: "text", text: "Create a template I can use." }],
+    },
+  ]);
+});
