@@ -371,6 +371,87 @@ describe("convertUiMessagesToProviderModelMessages", () => {
     ]);
   });
 
+  it("groups interleaved persisted tool call/result parts from one assistant turn", () => {
+    const messages: ChatUiMessage[] = [
+      {
+        id: "assistant-interleaved",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "I will fetch both sources." },
+          {
+            type: "tool_call",
+            id: "tool-1",
+            name: "calendar__list_events",
+            input: { calendarId: "primary" },
+            state: "completed",
+          },
+          {
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            tool_name: "calendar__list_events",
+            output: { data: [{ summary: "Standup" }] },
+          },
+          {
+            type: "tool_call",
+            id: "tool-2",
+            name: "gmail__search_emails",
+            input: { q: "newer_than:1d" },
+            state: "completed",
+          },
+          {
+            type: "tool_result",
+            tool_call_id: "tool-2",
+            tool_name: "gmail__search_emails",
+            output: { data: [{ id: "email-1" }] },
+          },
+          { type: "text", text: "Now I will inspect the emails." },
+        ],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will fetch both sources." },
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "calendar__list_events",
+            input: { calendarId: "primary" },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "tool-2",
+            toolName: "gmail__search_emails",
+            input: { q: "newer_than:1d" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "calendar__list_events",
+            output: { type: "json", value: { data: [{ summary: "Standup" }] } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-2",
+            toolName: "gmail__search_emails",
+            output: { type: "json", value: { data: [{ id: "email-1" }] } },
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Now I will inspect the emails." }],
+      },
+    ]);
+  });
+
   it("groups consecutive role:tool replay messages after parallel tool calls", () => {
     const messages: ChatUiMessage[] = [
       {

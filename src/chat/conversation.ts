@@ -861,12 +861,13 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
       | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
       | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> },
   ) => {
-    if (toolResults.length > 0) {
-      flushToolMessage();
-      flushAssistantMessage(deferredAssistantContent);
-    }
-
     if (part.type === "tool-call") {
+      if (deferredAssistantContent.length > 0) {
+        flushAssistantMessage(assistantContent);
+        flushToolMessage();
+        flushAssistantMessage(deferredAssistantContent);
+      }
+
       assistantContent.push(part);
       pendingToolCallIds.add(part.toolCallId);
       return;
@@ -875,6 +876,12 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
     if (pendingToolCallIds.size > 0) {
       deferredAssistantContent.push(part);
       return;
+    }
+
+    if (toolResults.length > 0) {
+      flushAssistantMessage(assistantContent);
+      flushToolMessage();
+      flushAssistantMessage(deferredAssistantContent);
     }
 
     assistantContent.push(part);
@@ -894,7 +901,6 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
         value: string;
       };
   }) => {
-    flushAssistantMessage(assistantContent);
     toolResults.push(part);
     pendingToolCallIds.delete(part.toolCallId);
   };
