@@ -309,6 +309,30 @@ function isPendingToolPart(part: unknown): boolean {
   return part.type === "dynamic-tool" || part.type === "tool_call" || part.type.startsWith("tool-");
 }
 
+function getToolPartCallId(part: unknown): string | null {
+  if (!isRecord(part)) {
+    return null;
+  }
+
+  const toolCallId = part.toolCallId;
+  return typeof toolCallId === "string" && toolCallId.length > 0 ? toolCallId : null;
+}
+
+function isToolLikePart(part: unknown): boolean {
+  return isRecord(part) && typeof part.type === "string" &&
+    (part.type === "dynamic-tool" || part.type === "tool_call" || part.type.startsWith("tool-"));
+}
+
+function hasToolState(part: unknown, state: string): boolean {
+  return isRecord(part) && part.state === state && isToolLikePart(part);
+}
+
+function isToolErrorState(part: unknown): boolean {
+  return isRecord(part) &&
+    (part.state === "output-error" || part.state === "output-denied" || part.state === "error") &&
+    isToolLikePart(part);
+}
+
 /** Strip pending tool parts. */
 export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[] {
   return messages.flatMap((message) => {
@@ -317,6 +341,47 @@ export function stripPendingToolParts(messages: ChatUiMessage[]): ChatUiMessage[
     }
 
     const parts = message.parts.filter((part) => !isPendingToolPart(part));
+    if (parts.length === message.parts.length) {
+      return [message];
+    }
+
+    if (parts.length === 0) {
+      return [];
+    }
+
+    return [{ ...message, parts }];
+  });
+}
+
+function stripSupersededToolErrorParts(messages: ChatUiMessage[]): ChatUiMessage[] {
+  return messages.flatMap((message) => {
+    if (message.role !== "assistant" || message.parts.length === 0) {
+      return [message];
+    }
+
+    const completedToolCallIds = new Set<string>();
+    for (const part of message.parts) {
+      if (hasToolState(part, "output-available")) {
+        const toolCallId = getToolPartCallId(part);
+        if (toolCallId) {
+          completedToolCallIds.add(toolCallId);
+        }
+      }
+    }
+
+    if (completedToolCallIds.size === 0) {
+      return [message];
+    }
+
+    const parts = message.parts.filter((part) => {
+      if (!isToolErrorState(part)) {
+        return true;
+      }
+
+      const toolCallId = getToolPartCallId(part);
+      return !toolCallId || !completedToolCallIds.has(toolCallId);
+    });
+
     if (parts.length === message.parts.length) {
       return [message];
     }
@@ -426,7 +491,10 @@ export function prepareProviderModelMessagesFromUiMessages(
   );
   const normalizedMessages = normalizeMessageFilePartMediaTypes(validMessages);
   const strippedPendingToolMessages = stripPendingToolParts(normalizedMessages);
-  const rewrittenMessages = rewriteUnsupportedFilePartsAsAnnotations(strippedPendingToolMessages);
+  const strippedSupersededToolMessages = stripSupersededToolErrorParts(strippedPendingToolMessages);
+  const rewrittenMessages = rewriteUnsupportedFilePartsAsAnnotations(
+    strippedSupersededToolMessages,
+  );
   const providerModelMessages = convertUiMessagesToProviderModelMessages(rewrittenMessages);
   const patchedMessages = ensureToolCallInputs(dedupeToolHistory(providerModelMessages));
   const sanitized = sanitizeProviderModelMessages(patchedMessages);

@@ -227,7 +227,6 @@ export function convertToTextGenerationRuntimeMessages(
   messages: Message[],
 ): TextGenerationRuntimeMessage[] {
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
-  const toolResultMessageIndexes = new Map<string, number>();
 
   for (const message of messages) {
     if (!hasProviderSendableAssistantContent(message)) {
@@ -249,19 +248,7 @@ export function convertToTextGenerationRuntimeMessages(
     }
 
     for (const toolResultPart of toolResultParts) {
-      const toolResultMessage = convertToolResultPart(toolResultPart);
-      const existingIndex = toolResultMessageIndexes.get(toolResultPart.toolCallId);
-
-      if (existingIndex === undefined) {
-        toolResultMessageIndexes.set(
-          toolResultPart.toolCallId,
-          textGenerationRuntimeMessages.length,
-        );
-        textGenerationRuntimeMessages.push(toolResultMessage);
-        continue;
-      }
-
-      textGenerationRuntimeMessages[existingIndex] = toolResultMessage;
+      textGenerationRuntimeMessages.push(convertToolResultPart(toolResultPart));
     }
   }
 

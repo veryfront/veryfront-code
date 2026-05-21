@@ -420,7 +420,7 @@ export const messageMetadataSchema = lazySchema(getMessageMetadataSchema);
 
 /** Zod schema for get chat UI message role. */
 export const getChatUiMessageRoleSchema = defineSchema((v) =>
-  v.enum(["system", "user", "assistant"])
+  v.enum(["system", "user", "assistant", "tool"])
 );
 
 /** Schema for chat ui message role.
