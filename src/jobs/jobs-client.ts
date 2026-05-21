@@ -73,11 +73,20 @@ export interface ListJobEventsOptions extends ProjectScopedOptions {
   direction?: "forward" | "backward";
 }
 
+/** Runtime target for a job or cron job definition. */
+export type JobRuntimeTargetKind = "main_branch" | "environment" | "preview_branch";
+
+/** Runtime target fields accepted by job creation APIs. */
+export interface JobRuntimeTargetOptions {
+  runtimeTargetKind?: JobRuntimeTargetKind;
+  runtimeTargetEnvironmentId?: string;
+  runtimeTargetBranchId?: string;
+}
+
 /** Input payload for create job. */
-export interface CreateJobInput extends ProjectScopedOptions {
+export interface CreateJobInput extends ProjectScopedOptions, JobRuntimeTargetOptions {
   name: string;
   target: string;
-  environmentId?: string;
   batchId?: string;
   config?: Record<string, unknown>;
   timeoutSeconds?: number;
@@ -85,9 +94,8 @@ export interface CreateJobInput extends ProjectScopedOptions {
 }
 
 /** Options accepted by knowledge ingest job. */
-export interface KnowledgeIngestJobOptions extends ProjectScopedOptions {
+export interface KnowledgeIngestJobOptions extends ProjectScopedOptions, JobRuntimeTargetOptions {
   name?: string;
-  environmentId?: string;
   batchId?: string;
   timeoutSeconds?: number;
   backoffLimit?: number;
@@ -116,10 +124,9 @@ export interface ListBatchJobsOptions extends ProjectScopedOptions {
 }
 
 /** Input payload for create cron job. */
-export interface CreateCronJobInput extends ProjectScopedOptions {
+export interface CreateCronJobInput extends ProjectScopedOptions, JobRuntimeTargetOptions {
   name: string;
   target: string;
-  environmentId?: string;
   schedule: string;
   timezone?: string;
   config?: Record<string, unknown>;
@@ -258,8 +265,16 @@ export class VeryfrontJobsClient {
   }
 
   create(input: CreateJobInput): Promise<Job> {
-    const { projectReference, environmentId, batchId, timeoutSeconds, backoffLimit, ...rest } =
-      input;
+    const {
+      projectReference,
+      runtimeTargetKind,
+      runtimeTargetEnvironmentId,
+      runtimeTargetBranchId,
+      batchId,
+      timeoutSeconds,
+      backoffLimit,
+      ...rest
+    } = input;
 
     return this.requestProjectJson(
       projectReference,
@@ -269,7 +284,9 @@ export class VeryfrontJobsClient {
         method: "POST",
         body: {
           ...rest,
-          environment_id: environmentId,
+          runtime_target_kind: runtimeTargetKind,
+          runtime_target_environment_id: runtimeTargetEnvironmentId,
+          runtime_target_branch_id: runtimeTargetBranchId,
           batch_id: batchId,
           timeout_seconds: timeoutSeconds,
           backoff_limit: backoffLimit,
@@ -376,7 +393,9 @@ export class VeryfrontJobsClient {
   private createCronJob(input: CreateCronJobInput): Promise<CronJob> {
     const {
       projectReference,
-      environmentId,
+      runtimeTargetKind,
+      runtimeTargetEnvironmentId,
+      runtimeTargetBranchId,
       timeoutSeconds,
       backoffLimit,
       concurrencyPolicy,
@@ -391,7 +410,9 @@ export class VeryfrontJobsClient {
         method: "POST",
         body: {
           ...rest,
-          environment_id: environmentId,
+          runtime_target_kind: runtimeTargetKind,
+          runtime_target_environment_id: runtimeTargetEnvironmentId,
+          runtime_target_branch_id: runtimeTargetBranchId,
           timeout_seconds: timeoutSeconds,
           backoff_limit: backoffLimit,
           concurrency_policy: concurrencyPolicy,
