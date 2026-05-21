@@ -243,7 +243,9 @@ export async function createPage(options: {
 
 // v2 PUT /pages/{id} is a full replace, not PATCH — title and body are both required.
 // Callers must resolve fallbacks (e.g. from a prior getPage) before invoking this.
-export function updatePage(
+// Mirrors getPage's pages-then-blogposts fallback so update-page works on either resource
+// (createPage with type='blogpost' returns a blogpost id that this must accept).
+export async function updatePage(
   pageId: string,
   options: {
     title: string;
@@ -266,10 +268,19 @@ export function updatePage(
     },
   };
 
-  return confluenceFetch<ConfluencePage>(`/wiki/api/v2/pages/${pageId}`, {
+  const init: RequestInit = {
     method: "PUT",
     body: JSON.stringify(body),
-  });
+  };
+
+  try {
+    return await confluenceFetch<ConfluencePage>(`/wiki/api/v2/pages/${pageId}`, init);
+  } catch (error) {
+    if (error instanceof ConfluenceApiError && error.status === 404) {
+      return await confluenceFetch<ConfluencePage>(`/wiki/api/v2/blogposts/${pageId}`, init);
+    }
+    throw error;
+  }
 }
 
 export function extractPlainText(storageHtml: string): string {
