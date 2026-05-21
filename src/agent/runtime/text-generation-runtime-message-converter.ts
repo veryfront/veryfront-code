@@ -219,7 +219,15 @@ export function convertToTextGenerationRuntimeMessages(
       continue;
     }
 
-    textGenerationRuntimeMessages.push(convertToTextGenerationRuntimeMessage(message));
+    const convertedMessage = convertToTextGenerationRuntimeMessage(message);
+    const previousMessage = textGenerationRuntimeMessages.at(-1);
+
+    if (previousMessage?.role === "tool" && convertedMessage.role === "tool") {
+      previousMessage.content.push(...convertedMessage.content);
+      continue;
+    }
+
+    textGenerationRuntimeMessages.push(convertedMessage);
   }
 
   return textGenerationRuntimeMessages;
