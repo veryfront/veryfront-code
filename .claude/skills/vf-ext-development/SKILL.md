@@ -22,9 +22,11 @@ A Veryfront extension is a `deno.json`-described package that default-exports an
 ## Scaffold
 
 ```bash
-veryfront extension init my-cache       # writes extensions/my-cache/{deno.json,src/index.ts,src/index.test.ts}
-veryfront extension validate extensions/my-cache
+veryfront extension init ext-my-cache       # writes extensions/ext-my-cache/{deno.json,src/index.ts,src/index.test.ts}
+veryfront extension validate extensions/ext-my-cache
 ```
+
+**Always use the `ext-` prefix.** `scripts/lint/audit-extension-{capabilities,contracts}.ts` only scan directories whose name starts with `ext-`; an extension at `extensions/my-cache/` is silently skipped by both lint tasks. `veryfront extension init` does not add the prefix for you — pass it explicitly.
 
 ## Package Structure
 
@@ -279,20 +281,21 @@ A clean extension passes all six.
 
 ## Common Mistakes
 
-| Mistake                                                               | Fix                                                                                      |
-| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Capabilities only in factory (or only in manifest)                    | Mirror them in both; CI compares sorted/normalized values                                |
-| `{ type: "network" }` / `{ type: "env" }` from the doc                | Use `net:outbound`/`hosts` and `env:read`/`keys` (code names)                            |
-| `{ type: "contract", ... }` in capabilities                           | Move to `veryfront.contracts.provides/requires`                                          |
-| Missing `veryfront.extension: true` in manifest                       | Add it — discovery skips packages without the flag                                       |
-| Missing `imports` map in extension's deno.json                        | Add `veryfront/extensions` → `../../src/extensions/index.ts`                             |
-| New extension not in root workspace array                             | Add `"./extensions/ext-<name>"` to root `deno.json`                                      |
-| Throwing on missing config in `setup()`                               | Log and return — let the contract stay unregistered so consumers fall back               |
-| Logging raw URLs / secrets                                            | `redactUrl()` before any `ctx.logger.info` that includes a URL                           |
-| `console.log` in extension code                                       | `ctx.logger.{info,warn,error}` with `[ext-<name>]` prefix                                |
-| Holding resources without `teardown()`                                | Implement `teardown()` — dev reload tears down + sets up again, leaks accumulate         |
-| Combining static `provides` and `ctx.provide()` for the same contract | Pick one per contract                                                                    |
-| Default export = the extension object instead of the factory          | Default export must be the factory function                                              |
-| Missing `recommendations.ts` entry for a new contract                 | Add the contract → `@veryfront/ext-*` mapping so missing-extension errors are actionable |
-| Importing `../../src/...` from extension source                       | Use the `veryfront/extensions[/<area>]` alias from the local imports map                 |
-| Test leaves `REDIS_URL` (etc.) set                                    | Save the prior value, set/delete inside `try`, restore in `finally`                      |
+| Mistake                                                                | Fix                                                                                      |
+| ---------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| Capabilities only in factory (or only in manifest)                     | Mirror them in both; CI compares sorted/normalized values                                |
+| `{ type: "network" }` / `{ type: "env" }` from the doc                 | Use `net:outbound`/`hosts` and `env:read`/`keys` (code names)                            |
+| `{ type: "contract", ... }` in capabilities                            | Move to `veryfront.contracts.provides/requires`                                          |
+| Missing `veryfront.extension: true` in manifest                        | Add it — discovery skips packages without the flag                                       |
+| Missing `imports` map in extension's deno.json                         | Add `veryfront/extensions` → `../../src/extensions/index.ts`                             |
+| New extension not in root workspace array                              | Add `"./extensions/ext-<name>"` to root `deno.json`                                      |
+| Extension directory missing `ext-` prefix (e.g. `extensions/my-cache`) | Rename to `extensions/ext-my-cache` — lint scripts only scan `ext-*` directories         |
+| Throwing on missing config in `setup()`                                | Log and return — let the contract stay unregistered so consumers fall back               |
+| Logging raw URLs / secrets                                             | `redactUrl()` before any `ctx.logger.info` that includes a URL                           |
+| `console.log` in extension code                                        | `ctx.logger.{info,warn,error}` with `[ext-<name>]` prefix                                |
+| Holding resources without `teardown()`                                 | Implement `teardown()` — dev reload tears down + sets up again, leaks accumulate         |
+| Combining static `provides` and `ctx.provide()` for the same contract  | Pick one per contract                                                                    |
+| Default export = the extension object instead of the factory           | Default export must be the factory function                                              |
+| Missing `recommendations.ts` entry for a new contract                  | Add the contract → `@veryfront/ext-*` mapping so missing-extension errors are actionable |
+| Importing `../../src/...` from extension source                        | Use the `veryfront/extensions[/<area>]` alias from the local imports map                 |
+| Test leaves `REDIS_URL` (etc.) set                                     | Save the prior value, set/delete inside `try`, restore in `finally`                      |
