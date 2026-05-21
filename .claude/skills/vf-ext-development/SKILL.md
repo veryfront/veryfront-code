@@ -121,7 +121,7 @@ export default extCacheRedis;
 - Default export is the factory (a function), not the extension object.
 - `name`, `version`, `capabilities` are required. Empty `capabilities: []` is valid.
 - `contracts.provides` is what `setup()` will register via `ctx.provide()` — list it even though `ctx.provide()` works at runtime, because the lint task checks manifest ↔ factory parity.
-- `contracts.requires` lists contracts you will `ctx.require()` — providers load before consumers via topological sort.
+- `contracts.requires` lists contracts you will `ctx.require()` — `src/extensions/loader.ts` builds the topological sort from this field. Without it, the consumer can load before its provider and `ctx.require()` throws `MISSING_EXTENSION_ERROR`.
 
 ## Capability types — use these names
 
@@ -159,6 +159,20 @@ async setup(ctx) {
 ```
 
 Don't combine — pick one mechanism per contract.
+
+## Source priority (conflict resolution)
+
+When two extensions provide the same contract, the framework picks the one with the lowest source priority number. Defined in `src/extensions/validation.ts`:
+
+| Source       | Priority | Where it comes from                           |
+| ------------ | -------- | --------------------------------------------- |
+| `config`     | 0        | Listed in `veryfront.config.ts` `extensions:` |
+| `package`    | 1        | Discovered through installed packages         |
+| `project`    | 2        | Project-level discovery                       |
+| `local-file` | 3        | Files under `extensions/` discovered by glob  |
+| `builtin`    | 4        | `createBuiltinExtensions()`                   |
+
+To override a builtin (e.g. swap `ext-schema-zod` for a custom validator), add a factory call to your project's `veryfront.config.ts` — it ships at `config` priority and wins. If multiple providers tie at the same priority, `detectConflicts()` reports the conflict and refuses to start.
 
 ## Sensitive extension policies
 
@@ -275,9 +289,10 @@ deno task lint:dependency-boundaries      # sensitive deps stay inside named ext
 deno task test:scripts                    # runs audit-extension-*.test.ts
 deno test --no-check --allow-all extensions/ext-<name>/src/
 veryfront extension validate extensions/ext-<name>
+deno task sbom:all --output-dir dist/dependency-sboms   # per-extension SBOM + aggregate
 ```
 
-A clean extension passes all six.
+A clean extension passes all seven. Run `sbom:all` only when adding or changing third-party dependencies — the output lands in `dist/dependency-sboms/` with one manifest per extension plus the aggregate, core, CLI, and React boundary views.
 
 ## Common Mistakes
 
@@ -299,3 +314,11 @@ A clean extension passes all six.
 | Missing `recommendations.ts` entry for a new contract                  | Add the contract → `@veryfront/ext-*` mapping so missing-extension errors are actionable |
 | Importing `../../src/...` from extension source                        | Use the `veryfront/extensions[/<area>]` alias from the local imports map                 |
 | Test leaves `REDIS_URL` (etc.) set                                     | Save the prior value, set/delete inside `try`, restore in `finally`                      |
+
+## Related
+
+- [`docs/guides/extensions.md`](../../../docs/guides/extensions.md) — enabling an extension
+- [`docs/guides/extension-authoring.md`](../../../docs/guides/extension-authoring.md) — factory basics
+- [`docs/guides/extension-lifecycle.md`](../../../docs/guides/extension-lifecycle.md) — discovery, ordering, teardown
+- [`docs/guides/extension-testing.md`](../../../docs/guides/extension-testing.md) — factory + contract tests
+- [`docs/guides/extension-publishing.md`](../../../docs/guides/extension-publishing.md) — package and release
