@@ -104,6 +104,7 @@ Reference modules:
 User guides:
 
 - [mcp-server](../../guides/mcp-server.md): Build and host MCP servers
+- [coding-agents](../../guides/coding-agents.md): Connect MCP-aware coding agents
 
 Architecture:
 

@@ -1,22 +1,19 @@
 ---
 title: "Guides"
-description: "Goal-oriented tutorials for building Veryfront apps, agents, workflows, and integrations with the Veryfront library and CLI."
+description: "Task-based guides for building Veryfront apps, agents, workflows, and integrations."
 order: 0
 ---
 
-Each guide helps you complete one goal with the Veryfront library or CLI.
-Pick the guide that matches what you want to do next.
+Use this index to pick the next task.
 
-If you are new, work through [Getting Started](#getting-started) (~5 minutes
-end to end) and then dive into [Guides](#guides) for everything beyond the
-basic flow.
+New to Veryfront? Start with the [Getting Started](#getting-started) sequence.
+Then use [Guides](#guides) for deeper work.
 
 ## Getting Started
 
-A six-step tour from a fresh machine to a deployed Veryfront app. Each step
-is a focused mini tutorial.
+Six steps take you from install to deploy.
 
-| Step                                        | What you will do                                                     |
+| Step                                        | Task                                                                 |
 | ------------------------------------------- | -------------------------------------------------------------------- |
 | [Installation](./installation.md)           | Install the Veryfront CLI and framework on macOS, Linux, or Windows. |
 | [Create a project](./create-a-project.md)   | Scaffold a project from a template and run it on the dev server.     |
@@ -27,21 +24,20 @@ is a focused mini tutorial.
 
 ## Guides
 
-Topic guides that go beyond the 5-minute tour. Each is a mini tutorial for
-one concrete piece of the framework.
+Use these guides when the quick start is not enough.
 
 ### Foundations
 
-| Guide                                         | What you will do                                                              |
+| Guide                                         | Task                                                                          |
 | --------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Project structure](./project-structure.md)   | Learn the file conventions and how auto-discovery wires your project up.      |
+| [Project structure](./project-structure.md)   | Place routes, agents, tools, workflows, skills, and shared code.              |
 | [Configuration](./configuration.md)           | Configure `veryfront.config.ts`, environment variables, and runtime settings. |
 | [Choose a primitive](./choose-a-primitive.md) | Pick the smallest Veryfront primitive that matches the work.                  |
 | [Production path](./production-path.md)       | Build one route from local project to production verification.                |
 
 ### Pages and APIs
 
-| Guide                                       | What you will do                                                            |
+| Guide                                       | Task                                                                        |
 | ------------------------------------------- | --------------------------------------------------------------------------- |
 | [Pages and routing](./pages-and-routing.md) | Add file-based pages, layouts, dynamic routes, and MDX content.             |
 | [Data fetching](./data-fetching.md)         | Load data on the server, prerender static pages, and fetch from the client. |
@@ -51,7 +47,7 @@ one concrete piece of the framework.
 
 ### AI primitives
 
-| Guide                                               | What you will do                                                                |
+| Guide                                               | Task                                                                            |
 | --------------------------------------------------- | ------------------------------------------------------------------------------- |
 | [Providers](./providers.md)                         | Pick a model provider for local inference, Veryfront Cloud, or a direct vendor. |
 | [Agents](./agents.md)                               | Define an agent with a system prompt, tools, and memory.                        |
@@ -61,7 +57,7 @@ one concrete piece of the framework.
 
 ### Chat UI
 
-| Guide                                     | What you will do                                                            |
+| Guide                                     | Task                                                                        |
 | ----------------------------------------- | --------------------------------------------------------------------------- |
 | [Chat UI](./chat-ui.md)                   | Drop in the preset chat component with one hook and one API route.          |
 | [Chat composition](./chat-composition.md) | Build a custom chat layout with the composition components.                 |
@@ -70,7 +66,7 @@ one concrete piece of the framework.
 
 ### Orchestration
 
-| Guide                                          | What you will do                                                        |
+| Guide                                          | Task                                                                    |
 | ---------------------------------------------- | ----------------------------------------------------------------------- |
 | [Workflows](./workflows.md)                    | Define a DAG-based workflow with branches, retries, and parallel steps. |
 | [Workflows: advanced](./workflows-advanced.md) | Loops, blob storage for large artifacts, and React hooks for progress.  |
@@ -81,7 +77,7 @@ one concrete piece of the framework.
 
 ### External systems
 
-| Guide                                                   | What you will do                                                                      |
+| Guide                                                   | Task                                                                                  |
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | [MCP server](./mcp-server.md)                           | Expose tools, prompts, and resources over Model Context Protocol.                     |
 | [Coding agents](./coding-agents.md)                     | Connect Claude Code, Cursor, Codex, and other MCP-aware agents to the dev server.     |
@@ -92,7 +88,7 @@ one concrete piece of the framework.
 
 ### Extensions
 
-| Guide                                             | What you will do                                                           |
+| Guide                                             | Task                                                                       |
 | ------------------------------------------------- | -------------------------------------------------------------------------- |
 | [Extensions](./extensions.md)                     | Understand how extensions add focused capabilities to a Veryfront project. |
 | [Extension authoring](./extension-authoring.md)   | Write a focused extension factory, contract, and capability.               |
@@ -102,6 +98,6 @@ one concrete piece of the framework.
 
 ### Ship to production
 
-| Guide                                    | What you will do                                                |
+| Guide                                    | Task                                                            |
 | ---------------------------------------- | --------------------------------------------------------------- |
 | [Building and deploying](./deploying.md) | Production-build internals, static export, Docker, and targets. |

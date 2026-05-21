@@ -2,8 +2,7 @@
 
 This folder holds the source content for the published Veryfront user guides.
 
-Guides are goal-oriented mini tutorials. Each one helps a reader accomplish a
-single concrete task with the Veryfront library or CLI, end to end.
+Guides help a reader finish one task with the Veryfront library or CLI.
 
 ## What belongs here
 
@@ -26,18 +25,16 @@ A page does not belong here when it is:
 
 ## Page shape
 
-Each guide follows this structure:
+Use this structure:
 
 1. **Goal**: what the reader will achieve.
 2. **Prerequisites**: assumptions, required setup, or earlier guides.
 3. **Walkthrough**: a short working example or CLI flow.
 4. **Expected result**: what the reader should see.
 5. **Verify it worked**: the command, request, or check that confirms it.
-6. **Next** or **Related**: pointers to the next guide and the matching
-   generated reference page.
+6. **Next** or **Related**: next guide and matching reference page.
 
-Guides link to architecture pages only when runtime context helps the reader
-make a decision.
+Link to architecture only when runtime context helps the reader choose.
 
 ## Copy rules
 
@@ -55,19 +52,18 @@ Run before committing:
 deno task docs:validate
 ```
 
-This checks guide frontmatter, internal links, code-block balance, required
-closing sections, and that every guide is listed in [`index.md`](./index.md).
-When guide changes depend on public API copy, update source JSDoc and run
-`deno task docs` before validation.
+This checks frontmatter, links, code blocks, closing sections, and guide index
+coverage. When guide changes depend on public API copy, update source JSDoc and
+run `deno task docs` before validation.
 
-Every published guide must also have a contract test in
-`tests/docs/guide-contracts.test.ts`. Add or update that test when you add a
-guide, change its core workflow, or change its reference links.
+Every published guide must have a contract test in
+`tests/docs/guide-contracts.test.ts`. Add or update it when you add a guide,
+change the core workflow, or change reference links.
 
-Every guide with fenced code examples must have code-example coverage in
+Every guide with fenced code examples must have coverage in
 `tests/docs/guide-examples.test.ts` or
 `tests/docs/guide-code-examples.test.ts`. The coverage guard fails validation
-when a guide has runnable examples but no matching test entry.
+when runnable examples have no matching test entry.
 
 ## Related
 

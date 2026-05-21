@@ -1,10 +1,11 @@
 ---
 title: "Choose a primitive"
-description: "Pick the right Veryfront primitive before you write code."
+description: "Choose the smallest Veryfront primitive for the work."
 order: 9
 ---
 
-Pick the smallest Veryfront primitive that matches the job. Smaller primitives keep project structure clear and prevent agents, workflows, jobs, and integrations from collapsing into overlapping abstractions.
+Pick the smallest primitive that matches the job. This keeps project structure
+clear and prevents overlapping agents, workflows, jobs, and integrations.
 
 ## Quick choice
 
@@ -48,13 +49,14 @@ Pick the smallest Veryfront primitive that matches the job. Smaller primitives k
 
 ## Verify it worked
 
-Before building, write down the primitive you chose and one sentence explaining why. Then check the matching guide:
+Before building, write down the primitive and why it owns the work. Then check
+the matching guide:
 
 - If the guide's first example solves your shape, continue there.
 - If you need two or more primitives, start with the one that owns the triggering event.
 - When choosing between `Task` and `Job`, remember that a task defines the work and a job runs it durably.
 
-Run the guide's example or validation command before adding more primitives.
+Run the guide's example or validation command before adding another primitive.
 
 ## Next
 

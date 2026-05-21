@@ -123,6 +123,9 @@ User guides:
 - [installation](../../guides/installation.md): Install the CLI and framework
 - [create-a-project](../../guides/create-a-project.md): Scaffold and run a project
 - [create-an-agent](../../guides/create-an-agent.md): Define and invoke a first agent
+- [create-an-api](../../guides/create-an-api.md): Add a first API route
+- [create-a-frontend](../../guides/create-a-frontend.md): Add a first page
+- [deploy-a-project](../../guides/deploy-a-project.md): Deploy a first project
 - [choose-a-primitive](../../guides/choose-a-primitive.md): Choose the right primitive
 - [production-path](../../guides/production-path.md): Move a route toward production checks
 - [configuration](../../guides/configuration.md): Configure your Veryfront project
