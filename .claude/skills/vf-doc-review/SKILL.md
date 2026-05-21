@@ -49,7 +49,7 @@ Every API symbol, file path, env var, and CLI command in a guide must match real
 
 **Checks:**
 
-- [ ] Every `import ... from "veryfront/..."` resolves to a real export in `src/<module>/index.ts`
+- [ ] Every `import ... from "veryfront/..."` resolves through the `deno.json` import map to a file that exports the named symbol. **Do not assume `veryfront/<module>` lives at `src/<module>/index.ts`** — many public surfaces (e.g. `veryfront/router`, `veryfront/head`, `veryfront/context`) map to `src/react/runtime/core.ts` via explicit `imports` entries
 - [ ] Every function call signature matches the real signature (arg names, return type)
 - [ ] Every env var (`VERYFRONT_*`, `VF_*`) appears in the codebase
 - [ ] Every file path shown (e.g. `agents/foo.ts`, `app/api/hello/route.ts`) is one the framework actually discovers
@@ -60,8 +60,13 @@ Every API symbol, file path, env var, and CLI command in a guide must match real
 **How to verify (grep-able claims):**
 
 ```bash
-# Symbol exists as public export
-grep -rn "export.*<symbolName>" src/<module>/index.ts
+# Resolve a public import "veryfront/<sub>" to its real source file
+# Step 1: check deno.json import map for an explicit mapping
+python3 -c 'import json; m=json.load(open("deno.json"))["imports"]; print(m.get("veryfront/<sub>", "(no map entry — falls back to package resolution)"))'
+
+# Step 2: confirm the named symbol is exported from the resolved file
+# (replace <resolved-path> with the value from step 1)
+grep -nE "^export[[:space:]]+(\\{|const|function|class|type|interface).*\\b<symbolName>\\b" <resolved-path>
 
 # CLI command exists
 ls cli/commands/ | grep <cmd>
@@ -238,16 +243,17 @@ When invoked (e.g. via `/vf-doc-review`):
 
 ## Common Mistakes
 
-| Mistake                                                                         | Fix                                                                                   |
-| ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| Reviewing reference docs body                                                   | They are generated. Only check links into them.                                       |
-| Skipping the automated tests                                                    | Run `deno task test -- tests/docs/` first; their failures outrank your findings.      |
-| Flagging vague "tone" issues without a rewrite                                  | Always propose the replacement text.                                                  |
-| Bulk-rewriting AI prose without diff                                            | Show the user each change; voice is opinionated.                                      |
-| Citing `docs/architecture/` issues                                              | Out of scope for this skill.                                                          |
-| Treating `order:` numbers as cosmetic                                           | They drive the rendered nav order; mismatches with `index.md` break the reading flow. |
-| Adding new guides to a section without updating `index.md`                      | Index is the source of truth for nav; orphaned guides are unreachable.                |
-| Reviewing the entire 7,000-line corpus when the user asked about recent changes | Start with `git diff main..HEAD -- docs/guides/` and scope down.                      |
+| Mistake                                                                         | Fix                                                                                                                               |
+| ------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Reviewing reference docs body                                                   | They are generated. Only check links into them.                                                                                   |
+| Skipping the automated tests                                                    | Run `deno task test -- tests/docs/` first; their failures outrank your findings.                                                  |
+| Flagging vague "tone" issues without a rewrite                                  | Always propose the replacement text.                                                                                              |
+| Bulk-rewriting AI prose without diff                                            | Show the user each change; voice is opinionated.                                                                                  |
+| Citing `docs/architecture/` issues                                              | Out of scope for this skill.                                                                                                      |
+| Treating `order:` numbers as cosmetic                                           | They drive the rendered nav order; mismatches with `index.md` break the reading flow.                                             |
+| Adding new guides to a section without updating `index.md`                      | Index is the source of truth for nav; orphaned guides are unreachable.                                                            |
+| Reviewing the entire 7,000-line corpus when the user asked about recent changes | Start with `git diff main..HEAD -- docs/guides/` and scope down.                                                                  |
+| Assuming `veryfront/<sub>` always lives at `src/<sub>/index.ts`                 | Check the `deno.json` import map first — many public surfaces (router, head, context) re-export from `src/react/runtime/core.ts`. |
 
 ## Red Flags — Stop the Review
 
