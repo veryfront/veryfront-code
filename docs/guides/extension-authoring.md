@@ -35,6 +35,8 @@ Validate the extension shape:
 veryfront extension validate extensions/my-cache
 ```
 
+For a **first-party** extension that lives in the Veryfront monorepo, use an `ext-` prefix on the directory name (e.g. `veryfront extension init ext-my-cache`). The capability and contract audits in `scripts/lint/audit-extension-{capabilities,contracts}.ts` only scan directories whose name starts with `ext-`; an extension named without the prefix is silently excluded from those CI gates. The prefix is optional for local extensions inside a downstream project.
+
 ## Write a factory
 
 ```ts
@@ -82,18 +84,33 @@ Use `setup(ctx)` when the implementation needs async initialization or dynamic c
 
 ## Declare capabilities
 
-Capabilities document what the extension needs:
+Capabilities document what the extension needs at runtime. The `type` string and its scope field both come from `src/extensions/capabilities.ts` — these are also the names the Deno permission map and the CI capability audit recognize.
 
 ```ts
 const extension: ExtensionFactory = () => ({
   name: "redis-cache",
   version: "1.0.0",
   capabilities: [
-    { type: "network", hosts: ["redis.example.com"] },
-    { type: "env", names: ["REDIS_URL"] },
+    { type: "net:outbound", hosts: ["redis.example.com"] },
+    { type: "env:read", keys: ["REDIS_URL"] },
   ],
 });
 ```
+
+Recognized capability types:
+
+| Type              | Scope field          | Deno permission               |
+| ----------------- | -------------------- | ----------------------------- |
+| `fs:read`         | `paths: string[]`    | `--allow-read[=paths]`        |
+| `fs:write`        | `paths: string[]`    | `--allow-write[=paths]`       |
+| `net:outbound`    | `hosts: string[]`    | `--allow-net[=hosts]`         |
+| `net:listen`      | `host`, `ports[]`    | `--allow-net=host:port,...`   |
+| `env:read`        | `keys: string[]`     | `--allow-env[=keys]`          |
+| `process:spawn`   | `commands: string[]` | `--allow-run[=commands]`      |
+| `native:ffi`      | —                    | `--allow-ffi`                 |
+| `sandbox:execute` | `tools: string[]`    | (audit-only, no Deno mapping) |
+
+For first-party extensions, also mirror the same `capabilities` array in `deno.json` under `veryfront.capabilities`; `deno task lint:extension-capabilities` fails the build if the two drift.
 
 ## Verify it worked
 
