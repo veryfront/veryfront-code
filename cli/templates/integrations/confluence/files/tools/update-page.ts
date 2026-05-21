@@ -3,12 +3,16 @@ import { defineSchema } from "veryfront/schemas";
 import { formatAsStorage, getPage, updatePage } from "../../lib/confluence-client.ts";
 
 function toStorageContent(content?: string): string | undefined {
-  if (!content) return undefined;
+  if (!content || !content.trim()) return undefined;
 
   const trimmed = content.trim();
   if (trimmed.startsWith("<")) return content;
 
   return formatAsStorage(content);
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+  return value && value.trim() ? value : undefined;
 }
 
 export default tool({
@@ -31,12 +35,17 @@ export default tool({
       .describe("Optional message describing the changes made"),
   }))(),
   async execute({ pageId, title, content, versionMessage }) {
-    const currentPage = await getPage(pageId, ["version"]);
+    // v2 PUT /pages/{id} is a full replace — both title and body must be sent on every
+    // update. Resolve missing fields from the current page so partial updates work.
+    // The schema describes empty values as "keep current", so treat empty/whitespace
+    // strings as unset (??-fallback would otherwise let "" overwrite a real title).
+    const currentPage = await getPage(pageId);
     const storageContent = toStorageContent(content);
+    const currentBody = currentPage.body?.storage?.value ?? "";
 
     const updatedPage = await updatePage(pageId, {
-      title,
-      content: storageContent,
+      title: nonEmpty(title) ?? currentPage.title,
+      content: storageContent ?? currentBody,
       version: currentPage.version.number + 1,
       versionMessage,
     });
