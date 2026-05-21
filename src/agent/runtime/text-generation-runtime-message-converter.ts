@@ -192,20 +192,6 @@ export function convertToTextGenerationRuntimeMessage(msg: Message): TextGenerat
   }
 }
 
-function convertToolResultPart(
-  part: ToolResultPart,
-): TextGenerationRuntimeToolMessage {
-  return {
-    role: "tool",
-    content: [{
-      type: "tool-result",
-      toolCallId: part.toolCallId,
-      toolName: part.toolName ?? "unknown",
-      output: { type: "json", value: part.result },
-    }],
-  };
-}
-
 function hasProviderSendableAssistantContent(message: Message): boolean {
   if (message.role !== "assistant") return true;
 
@@ -233,23 +219,7 @@ export function convertToTextGenerationRuntimeMessages(
       continue;
     }
 
-    if (message.role !== "tool") {
-      textGenerationRuntimeMessages.push(convertToTextGenerationRuntimeMessage(message));
-      continue;
-    }
-
-    const toolResultParts = message.parts.filter((part): part is ToolResultPart =>
-      part.type === "tool-result"
-    );
-
-    if (toolResultParts.length === 0) {
-      textGenerationRuntimeMessages.push(convertToTextGenerationRuntimeMessage(message));
-      continue;
-    }
-
-    for (const toolResultPart of toolResultParts) {
-      textGenerationRuntimeMessages.push(convertToolResultPart(toolResultPart));
-    }
+    textGenerationRuntimeMessages.push(convertToTextGenerationRuntimeMessage(message));
   }
 
   return textGenerationRuntimeMessages;

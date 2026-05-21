@@ -325,7 +325,7 @@ describe("text-generation-runtime-message-converter", () => {
       ]);
     });
 
-    it("splits multiple tool results into one provider message per tool call", () => {
+    it("keeps multiple tool results from one replay message together for parallel tool calls", () => {
       const messages: Message[] = [{
         id: "tool_batch",
         role: "tool",
@@ -347,24 +347,23 @@ describe("text-generation-runtime-message-converter", () => {
 
       const result = convertToTextGenerationRuntimeMessages(messages);
 
-      assertEquals(result.length, 2);
+      assertEquals(result.length, 1);
       assertEquals(result[0], {
         role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: "tc1",
-          toolName: "a",
-          output: { type: "json", value: "r1" },
-        }],
-      });
-      assertEquals(result[1], {
-        role: "tool",
-        content: [{
-          type: "tool-result",
-          toolCallId: "tc2",
-          toolName: "b",
-          output: { type: "json", value: "r2" },
-        }],
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tc1",
+            toolName: "a",
+            output: { type: "json", value: "r1" },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tc2",
+            toolName: "b",
+            output: { type: "json", value: "r2" },
+          },
+        ],
       });
     });
 
