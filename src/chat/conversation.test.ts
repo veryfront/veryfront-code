@@ -370,4 +370,99 @@ describe("convertUiMessagesToProviderModelMessages", () => {
       },
     ]);
   });
+
+  it("groups consecutive role:tool replay messages after parallel tool calls", () => {
+    const messages: ChatUiMessage[] = [
+      {
+        id: "message-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            id: "tool-1",
+            name: "calendar__list_events",
+            input: { calendarId: "primary" },
+            state: "completed",
+          },
+          {
+            type: "tool_call",
+            id: "tool-2",
+            name: "gmail__search_emails",
+            input: { q: "newer_than:1d" },
+            state: "completed",
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:tool-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "tool-1",
+            tool_name: "calendar__list_events",
+            output: { data: [{ summary: "Daily Product Engineering" }] },
+          },
+        ],
+      },
+      {
+        id: "message-1:tool:tool-2",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "tool-2",
+            tool_name: "gmail__search_emails",
+            output: { data: [{ id: "message-id" }] },
+          },
+        ],
+      },
+      {
+        id: "message-1:after-tool:1",
+        role: "assistant",
+        parts: [{ type: "text", text: "I found today's updates." }],
+      },
+    ];
+
+    assertEquals(convertUiMessagesToProviderModelMessages(messages), [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "tool-1",
+            toolName: "calendar__list_events",
+            input: { calendarId: "primary" },
+          },
+          {
+            type: "tool-call",
+            toolCallId: "tool-2",
+            toolName: "gmail__search_emails",
+            input: { q: "newer_than:1d" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "tool-1",
+            toolName: "calendar__list_events",
+            output: { type: "json", value: { data: [{ summary: "Daily Product Engineering" }] } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "tool-2",
+            toolName: "gmail__search_emails",
+            output: { type: "json", value: { data: [{ id: "message-id" }] } },
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "I found today's updates." }],
+      },
+    ]);
+  });
 });
