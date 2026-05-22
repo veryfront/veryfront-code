@@ -34,28 +34,28 @@ export interface ExecStreamEvent {
   exitCode?: number;
 }
 
-/** Status of an async command job. */
-export type CommandJobStatus = "running" | "completed" | "failed" | "canceled";
+/** Status of an async background command. */
+export type BackgroundCommandStatus = "running" | "completed" | "failed" | "canceled";
 
-/** Heartbeat health status for a command job. */
-export type CommandJobHeartbeatStatus = "disabled" | "healthy" | "degraded";
+/** Heartbeat health status for a background command. */
+export type BackgroundCommandHeartbeatStatus = "disabled" | "healthy" | "degraded";
 
-/** An async command job running in a sandbox. */
-export interface CommandJob {
+/** An async background command running in a sandbox. */
+export interface BackgroundCommand {
   id: string;
-  status: CommandJobStatus;
+  status: BackgroundCommandStatus;
   exitCode: number | null;
   signal: string | null;
   startedAt: string;
   finishedAt: string | null;
-  heartbeatStatus: CommandJobHeartbeatStatus;
+  heartbeatStatus: BackgroundCommandHeartbeatStatus;
   lastHeartbeatAt: string | null;
   lastHeartbeatError: string | null;
   heartbeatFailureCount: number;
 }
 
-/** A command job with its captured output. */
-export interface CommandJobOutput extends CommandJob {
+/** A background command with its captured output. */
+export interface BackgroundCommandOutput extends BackgroundCommand {
   stdout: string;
   stderr: string;
   stdoutTruncated: boolean;

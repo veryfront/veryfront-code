@@ -530,12 +530,12 @@ describe("Sandbox", () => {
     });
   });
 
-  describe("startCommandJob() with ExecOptions", () => {
+  describe("startBackgroundCommand() with ExecOptions", () => {
     it("should pass options in the request body", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "job-opts",
+          id: "command-opts",
           status: "running",
           exit_code: null,
           signal: null,
@@ -549,14 +549,14 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const job = await sandbox.startCommandJob("npm test", {
+      const command = await sandbox.startBackgroundCommand("npm test", {
         cwd: "/workspace",
         timeout_seconds: 120,
         env: { CI: "true" },
         projectReference: "project-789",
       });
 
-      assertEquals(job.id, "job-opts");
+      assertEquals(command.id, "command-opts");
       assertEquals(jsonBody(fetchCalls, 1), {
         command: "npm test",
         cwd: "/workspace",
@@ -958,7 +958,7 @@ describe("Sandbox", () => {
       }
     });
 
-    it("forwards projectReference from lazy project context for exec and async jobs", async () => {
+    it("forwards projectReference from lazy project context for exec and async commands", async () => {
       mockFetch([
         jsonResponse({
           id: "sandbox-1",
@@ -971,7 +971,7 @@ describe("Sandbox", () => {
           { type: "exit", exitCode: 0 },
         ]),
         jsonResponse({
-          id: "job-1",
+          id: "command-1",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -993,7 +993,7 @@ describe("Sandbox", () => {
 
       try {
         await sandbox.executeCommand("echo ok");
-        await sandbox.startCommandJob("npm test");
+        await sandbox.startBackgroundCommand("npm test");
 
         assertEquals(jsonBody(fetchCalls, 2), {
           command: "echo ok",
@@ -1008,7 +1008,7 @@ describe("Sandbox", () => {
       }
     });
 
-    it("uses the lazy runtime endpoint resolver for exec and async jobs", async () => {
+    it("uses the lazy runtime endpoint resolver for exec and async commands", async () => {
       mockFetch([
         jsonResponse({
           id: "sandbox-1",
@@ -1021,7 +1021,7 @@ describe("Sandbox", () => {
           { type: "exit", exitCode: 0 },
         ]),
         jsonResponse({
-          id: "job-1",
+          id: "command-1",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -1044,7 +1044,7 @@ describe("Sandbox", () => {
 
       try {
         await sandbox.executeCommand("echo ok");
-        await sandbox.startCommandJob("npm test");
+        await sandbox.startBackgroundCommand("npm test");
 
         assertEquals(
           fetchCalls[2]!.url,
@@ -1052,14 +1052,14 @@ describe("Sandbox", () => {
         );
         assertEquals(
           fetchCalls[3]!.url,
-          "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec/jobs",
+          "http://sandbox.veryfront-sandbox-sandbox-1.svc.cluster.local/exec/commands",
         );
       } finally {
         await sandbox.close();
       }
     });
 
-    it("times out stalled lazy command-job control requests", async () => {
+    it("times out stalled lazy background-command control requests", async () => {
       let capturedSignal: AbortSignal | undefined;
 
       mockFetch([
@@ -1089,7 +1089,7 @@ describe("Sandbox", () => {
 
       try {
         await assertRejects(
-          () => sandbox.startCommandJob("npm test"),
+          () => sandbox.startBackgroundCommand("npm test"),
           Error,
         );
         assertEquals(capturedSignal?.aborted, true);
@@ -1204,7 +1204,7 @@ describe("Sandbox", () => {
       }
     });
 
-    it("pauses heartbeats while async jobs are active and resumes them after the job completes", async () => {
+    it("pauses heartbeats while async commands are active and resumes them after the command completes", async () => {
       const originalSetInterval = globalThis.setInterval;
       const originalClearInterval = globalThis.clearInterval;
       const intervalCallbacks = new Map<number, () => void>();
@@ -1234,7 +1234,7 @@ describe("Sandbox", () => {
         }),
         jsonResponse({ ok: true }),
         jsonResponse({
-          id: "job-1",
+          id: "command-1",
           status: "running",
           exit_code: null,
           signal: null,
@@ -1246,7 +1246,7 @@ describe("Sandbox", () => {
           heartbeat_failure_count: 0,
         }),
         jsonResponse({
-          id: "job-1",
+          id: "command-1",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -1270,17 +1270,17 @@ describe("Sandbox", () => {
       });
 
       try {
-        const job = await sandbox.startCommandJob("npm test");
-        assertEquals(job.status, "running");
+        const command = await sandbox.startBackgroundCommand("npm test");
+        assertEquals(command.status, "running");
         assertEquals(intervalCallbacks.size, 0);
 
-        const output = await sandbox.getCommandJobOutput("job-1");
+        const output = await sandbox.getBackgroundCommandOutput("command-1");
         assertEquals(output.status, "completed");
         assertEquals(output.stdout, "done\n");
         assertEquals(intervalCallbacks.size, 1);
         assertEquals(
           fetchCalls.some((call) =>
-            call.url === "https://sandbox-1.example.com/exec/jobs/job-1/output"
+            call.url === "https://sandbox-1.example.com/exec/commands/command-1/output"
           ),
           true,
         );
@@ -1291,7 +1291,7 @@ describe("Sandbox", () => {
       }
     });
 
-    it("preserves the current session when a heartbeat fails while async jobs are active", async () => {
+    it("preserves the current session when a heartbeat fails while async commands are active", async () => {
       mockFetch([
         jsonResponse({
           id: "sandbox-1",
@@ -1300,7 +1300,7 @@ describe("Sandbox", () => {
         }),
         jsonResponse({ ok: true }),
         jsonResponse({
-          id: "job-1",
+          id: "command-1",
           status: "running",
           exit_code: null,
           signal: null,
@@ -1313,7 +1313,7 @@ describe("Sandbox", () => {
         }),
         textResponse("upstream timeout", 503),
         jsonResponse({
-          id: "job-1",
+          id: "command-1",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -1337,7 +1337,7 @@ describe("Sandbox", () => {
       });
 
       try {
-        await sandbox.startCommandJob("npm test");
+        await sandbox.startBackgroundCommand("npm test");
 
         await assertRejects(
           () => sandbox.heartbeat(true),
@@ -1346,11 +1346,11 @@ describe("Sandbox", () => {
         );
 
         assertEquals(sandbox.isActive, true);
-        const output = await sandbox.getCommandJobOutput("job-1");
+        const output = await sandbox.getBackgroundCommandOutput("command-1");
         assertEquals(output.status, "completed");
         assertEquals(
           fetchCalls.some((call) =>
-            call.url === "https://sandbox-1.example.com/exec/jobs/job-1/output"
+            call.url === "https://sandbox-1.example.com/exec/commands/command-1/output"
           ),
           true,
         );
@@ -1435,12 +1435,12 @@ describe("Sandbox", () => {
     });
   });
 
-  describe("startCommandJob()", () => {
-    it("should start a command job", async () => {
+  describe("startBackgroundCommand()", () => {
+    it("should start a background command", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "job-1",
+          id: "command-1",
           status: "running",
           exit_code: null,
           signal: null,
@@ -1454,17 +1454,17 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const job = await sandbox.startCommandJob("npm test");
+      const command = await sandbox.startBackgroundCommand("npm test");
 
-      assertEquals(job.id, "job-1");
-      assertEquals(job.status, "running");
-      assertEquals(job.exitCode, null);
-      assertEquals(job.startedAt, "2026-01-01T00:00:00Z");
-      assertEquals(job.heartbeatStatus, "disabled");
-      assertEquals(job.heartbeatFailureCount, 0);
+      assertEquals(command.id, "command-1");
+      assertEquals(command.status, "running");
+      assertEquals(command.exitCode, null);
+      assertEquals(command.startedAt, "2026-01-01T00:00:00Z");
+      assertEquals(command.heartbeatStatus, "disabled");
+      assertEquals(command.heartbeatFailureCount, 0);
 
       assertEquals(fetchCalls[1]!.init?.method, "POST");
-      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/commands");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
       assertEquals(headerValue(fetchCalls, 1, "Content-Type"), "application/json");
       assertEquals(jsonBody(fetchCalls, 1), { command: "npm test" });
@@ -1478,19 +1478,19 @@ describe("Sandbox", () => {
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await assertRejects(
-        () => sandbox.startCommandJob("bad-cmd"),
+        () => sandbox.startBackgroundCommand("bad-cmd"),
         Error,
-        "Start command job failed",
+        "Start background command failed",
       );
     });
   });
 
-  describe("getCommandJob()", () => {
-    it("should get a command job by id", async () => {
+  describe("getBackgroundCommand()", () => {
+    it("should get a background command by id", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "job-2",
+          id: "command-2",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -1504,16 +1504,16 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const job = await sandbox.getCommandJob("job-2");
+      const command = await sandbox.getBackgroundCommand("command-2");
 
-      assertEquals(job.id, "job-2");
-      assertEquals(job.status, "completed");
-      assertEquals(job.exitCode, 0);
-      assertEquals(job.finishedAt, "2026-01-01T00:01:00Z");
-      assertEquals(job.heartbeatStatus, "healthy");
-      assertEquals(job.lastHeartbeatAt, "2026-01-01T00:00:30Z");
+      assertEquals(command.id, "command-2");
+      assertEquals(command.status, "completed");
+      assertEquals(command.exitCode, 0);
+      assertEquals(command.finishedAt, "2026-01-01T00:01:00Z");
+      assertEquals(command.heartbeatStatus, "healthy");
+      assertEquals(command.lastHeartbeatAt, "2026-01-01T00:00:30Z");
 
-      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs/job-2");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/commands/command-2");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
@@ -1525,19 +1525,19 @@ describe("Sandbox", () => {
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await assertRejects(
-        () => sandbox.getCommandJob("nonexistent"),
+        () => sandbox.getBackgroundCommand("nonexistent"),
         Error,
-        "Get command job failed",
+        "Get background command failed",
       );
     });
   });
 
-  describe("getCommandJobOutput()", () => {
-    it("should get command job output", async () => {
+  describe("getBackgroundCommandOutput()", () => {
+    it("should get background command output", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "job-3",
+          id: "command-3",
           status: "completed",
           exit_code: 0,
           signal: null,
@@ -1555,16 +1555,16 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const output = await sandbox.getCommandJobOutput("job-3");
+      const output = await sandbox.getBackgroundCommandOutput("command-3");
 
-      assertEquals(output.id, "job-3");
+      assertEquals(output.id, "command-3");
       assertEquals(output.stdout, "hello world\n");
       assertEquals(output.stderr, "");
       assertEquals(output.stdoutTruncated, false);
       assertEquals(output.stderrTruncated, false);
       assertEquals(output.exitCode, 0);
 
-      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs/job-3/output");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/commands/command-3/output");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
@@ -1576,21 +1576,21 @@ describe("Sandbox", () => {
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await assertRejects(
-        () => sandbox.getCommandJobOutput("nonexistent"),
+        () => sandbox.getBackgroundCommandOutput("nonexistent"),
         Error,
-        "Get command job output failed",
+        "Get background command output failed",
       );
     });
   });
 
-  describe("listCommandJobs()", () => {
-    it("should list command jobs", async () => {
+  describe("listBackgroundCommands()", () => {
+    it("should list background commands", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          jobs: [
+          commands: [
             {
-              id: "job-1",
+              id: "command-1",
               status: "running",
               exit_code: null,
               signal: null,
@@ -1602,7 +1602,7 @@ describe("Sandbox", () => {
               heartbeat_failure_count: 0,
             },
             {
-              id: "job-2",
+              id: "command-2",
               status: "completed",
               exit_code: 0,
               signal: null,
@@ -1618,16 +1618,16 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const jobs = await sandbox.listCommandJobs();
+      const commands = await sandbox.listBackgroundCommands();
 
-      assertEquals(jobs.length, 2);
-      assertEquals(jobs[0]!.id, "job-1");
-      assertEquals(jobs[0]!.status, "running");
-      assertEquals(jobs[1]!.id, "job-2");
-      assertEquals(jobs[1]!.status, "completed");
-      assertEquals(jobs[1]!.exitCode, 0);
+      assertEquals(commands.length, 2);
+      assertEquals(commands[0]!.id, "command-1");
+      assertEquals(commands[0]!.status, "running");
+      assertEquals(commands[1]!.id, "command-2");
+      assertEquals(commands[1]!.status, "completed");
+      assertEquals(commands[1]!.exitCode, 0);
 
-      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/commands");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
 
@@ -1636,7 +1636,7 @@ describe("Sandbox", () => {
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse([
           {
-            id: "job-1",
+            id: "command-1",
             status: "running",
             exit_code: null,
             signal: null,
@@ -1651,10 +1651,10 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const jobs = await sandbox.listCommandJobs();
+      const commands = await sandbox.listBackgroundCommands();
 
-      assertEquals(jobs.length, 1);
-      assertEquals(jobs[0]!.id, "job-1");
+      assertEquals(commands.length, 1);
+      assertEquals(commands[0]!.id, "command-1");
     });
 
     it("should throw on list failure", async () => {
@@ -1665,19 +1665,19 @@ describe("Sandbox", () => {
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await assertRejects(
-        () => sandbox.listCommandJobs(),
+        () => sandbox.listBackgroundCommands(),
         Error,
-        "List command jobs failed",
+        "List background commands failed",
       );
     });
   });
 
-  describe("cancelCommandJob()", () => {
-    it("should cancel a command job", async () => {
+  describe("cancelBackgroundCommand()", () => {
+    it("should cancel a background command", async () => {
       mockFetch([
         jsonResponse({ id: "s1", endpoint: "https://sb.test", status: "running" }),
         jsonResponse({
-          id: "job-4",
+          id: "command-4",
           status: "canceled",
           exit_code: null,
           signal: "SIGTERM",
@@ -1691,13 +1691,13 @@ describe("Sandbox", () => {
       ]);
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
-      const job = await sandbox.cancelCommandJob("job-4");
+      const command = await sandbox.cancelBackgroundCommand("command-4");
 
-      assertEquals(job.id, "job-4");
-      assertEquals(job.status, "canceled");
-      assertEquals(job.signal, "SIGTERM");
+      assertEquals(command.id, "command-4");
+      assertEquals(command.status, "canceled");
+      assertEquals(command.signal, "SIGTERM");
 
-      assertStringIncludes(fetchCalls[1]!.url, "/exec/jobs/job-4/cancel");
+      assertStringIncludes(fetchCalls[1]!.url, "/exec/commands/command-4/cancel");
       assertEquals(fetchCalls[1]!.init?.method, "POST");
       assertEquals(headerValue(fetchCalls, 1, "Authorization"), "Bearer token");
     });
@@ -1710,9 +1710,9 @@ describe("Sandbox", () => {
 
       const sandbox = await Sandbox.create({ authToken: "token", apiUrl: "https://api.test.com" });
       await assertRejects(
-        () => sandbox.cancelCommandJob("nonexistent"),
+        () => sandbox.cancelBackgroundCommand("nonexistent"),
         Error,
-        "Cancel command job failed",
+        "Cancel background command failed",
       );
     });
   });

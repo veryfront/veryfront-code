@@ -1,6 +1,6 @@
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { tool } from "#veryfront/tool";
-import type { CommandJob, CommandJobOutput, ExecOptions } from "./sandbox.ts";
+import type { BackgroundCommand, BackgroundCommandOutput, ExecOptions } from "./sandbox.ts";
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import {
   type BashToolSandboxLike,
@@ -13,17 +13,17 @@ const SANDBOX_WORKING_DIRECTORY = "/workspace";
 const SANDBOX_WORKING_DIRECTORY_PREFIX_PATTERN =
   /^\s*(?:mkdir -p \/tmp\/bash-tool\s*&&\s*)?cd\s+"\/workspace"\s*&&\s*/i;
 
-/** Public API contract for agent service sandbox job client. */
-export interface AgentServiceSandboxJobClient {
-  startCommandJob(command: string): Promise<CommandJob>;
-  getCommandJob(jobId: string): Promise<CommandJob>;
-  getCommandJobOutput(jobId: string): Promise<CommandJobOutput>;
-  cancelCommandJob(jobId: string): Promise<CommandJob>;
+/** Public API contract for agent service sandbox background command client. */
+export interface AgentServiceSandboxBackgroundCommandClient {
+  startBackgroundCommand(command: string): Promise<BackgroundCommand>;
+  getBackgroundCommand(commandId: string): Promise<BackgroundCommand>;
+  getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput>;
+  cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand>;
 }
 
 /** Public API contract for agent service sandbox client. */
 export interface AgentServiceSandboxClient
-  extends BashToolSandboxLike, AgentServiceSandboxJobClient {
+  extends BashToolSandboxLike, AgentServiceSandboxBackgroundCommandClient {
   ensure(): Promise<void>;
   close(): Promise<void>;
   readonly isActive: boolean;
@@ -97,7 +97,7 @@ export function createAgentServiceSandboxClient(
   const sandbox = new LazySandbox({ ...input, getProjectId });
 
   const getExecOptions = () => createProjectScopedExecOptions(getProjectId());
-  const getCommandJobExecOptions = () => ({
+  const getBackgroundCommandExecOptions = () => ({
     ...getExecOptions(),
     cwd: SANDBOX_WORKING_DIRECTORY,
   });
@@ -109,14 +109,14 @@ export function createAgentServiceSandboxClient(
     },
     readFile: (path) => sandbox.readFile(path),
     writeFiles: (files) => sandbox.writeFiles(files.map((file) => normalizeSandboxWriteFile(file))),
-    startCommandJob: (command) =>
-      sandbox.startCommandJob(
+    startBackgroundCommand: (command) =>
+      sandbox.startBackgroundCommand(
         unwrapSandboxWorkingDirectoryCommand(command),
-        getCommandJobExecOptions(),
+        getBackgroundCommandExecOptions(),
       ),
-    getCommandJob: (jobId) => sandbox.getCommandJob(jobId),
-    getCommandJobOutput: (jobId) => sandbox.getCommandJobOutput(jobId),
-    cancelCommandJob: (jobId) => sandbox.cancelCommandJob(jobId),
+    getBackgroundCommand: (commandId) => sandbox.getBackgroundCommand(commandId),
+    getBackgroundCommandOutput: (commandId) => sandbox.getBackgroundCommandOutput(commandId),
+    cancelBackgroundCommand: (commandId) => sandbox.cancelBackgroundCommand(commandId),
     close: () => sandbox.close(),
     get isActive() {
       return sandbox.isActive;
@@ -130,15 +130,15 @@ export function createAgentServiceSandboxClient(
   };
 }
 
-const getStartCommandJobInputSchema = defineSchema((v) =>
+const getStartBackgroundCommandInputSchema = defineSchema((v) =>
   v.object({
     command: v.string().describe("Single shell command to run asynchronously in the sandbox"),
   })
 );
 
-const getCommandJobIdInputSchema = defineSchema((v) =>
+const getBackgroundCommandIdInputSchema = defineSchema((v) =>
   v.object({
-    jobId: v.string().describe("Sandbox command job ID"),
+    commandId: v.string().describe("Sandbox background command ID"),
   })
 );
 
@@ -151,28 +151,28 @@ export async function createAgentServiceSandboxTools(
 
   const tools: SandboxShellToolSet = {
     ...shellTools,
-    start_command_job: tool({
+    start_background_command: tool({
       description:
-        "Start a long-running sandbox command as an async job. Use this instead of bash for durable shell operations.",
-      inputSchema: getStartCommandJobInputSchema(),
-      execute: async ({ command }) => await sandbox.startCommandJob(command),
+        "Start a long-running sandbox command as an async background command. Use this instead of bash for durable shell operations.",
+      inputSchema: getStartBackgroundCommandInputSchema(),
+      execute: async ({ command }) => await sandbox.startBackgroundCommand(command),
     }),
-    get_command_job: tool({
+    get_background_command: tool({
       description:
-        "Get the current status for an async sandbox command job. Use this for polling while a long-running job is still running.",
-      inputSchema: getCommandJobIdInputSchema(),
-      execute: async ({ jobId }) => await sandbox.getCommandJob(jobId),
+        "Get the current status for an async sandbox background command. Use this for polling while a long-running command is still running.",
+      inputSchema: getBackgroundCommandIdInputSchema(),
+      execute: async ({ commandId }) => await sandbox.getBackgroundCommand(commandId),
     }),
-    get_command_job_output: tool({
+    get_background_command_output: tool({
       description:
-        "Get the captured stdout/stderr and terminal metadata for an async sandbox command job. Prefer calling this after the job reaches a terminal state.",
-      inputSchema: getCommandJobIdInputSchema(),
-      execute: async ({ jobId }) => await sandbox.getCommandJobOutput(jobId),
+        "Get the captured stdout/stderr and terminal metadata for an async sandbox background command. Prefer calling this after the command reaches a terminal state.",
+      inputSchema: getBackgroundCommandIdInputSchema(),
+      execute: async ({ commandId }) => await sandbox.getBackgroundCommandOutput(commandId),
     }),
-    cancel_command_job: tool({
-      description: "Cancel a running async sandbox command job.",
-      inputSchema: getCommandJobIdInputSchema(),
-      execute: async ({ jobId }) => await sandbox.cancelCommandJob(jobId),
+    cancel_background_command: tool({
+      description: "Cancel a running async sandbox background command.",
+      inputSchema: getBackgroundCommandIdInputSchema(),
+      execute: async ({ commandId }) => await sandbox.cancelBackgroundCommand(commandId),
     }),
   };
 
@@ -183,8 +183,8 @@ export async function createAgentServiceSandboxTools(
   };
 }
 
-/** Public API contract for hosted sandbox job client. */
-export type HostedSandboxJobClient = AgentServiceSandboxJobClient;
+/** Public API contract for hosted sandbox background command client. */
+export type HostedSandboxBackgroundCommandClient = AgentServiceSandboxBackgroundCommandClient;
 /** Public API contract for hosted sandbox client. */
 export type HostedSandboxClient = AgentServiceSandboxClient;
 /** Options accepted by hosted sandbox client. */

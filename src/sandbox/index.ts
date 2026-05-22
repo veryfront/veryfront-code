@@ -18,10 +18,10 @@
  */
 
 export {
-  type CommandJob,
-  type CommandJobHeartbeatStatus,
-  type CommandJobOutput,
-  type CommandJobStatus,
+  type BackgroundCommand,
+  type BackgroundCommandHeartbeatStatus,
+  type BackgroundCommandOutput,
+  type BackgroundCommandStatus,
   type ExecOptions,
   type ExecResult,
   type ExecStreamEvent,
@@ -47,9 +47,9 @@ export {
   type SandboxShellToolSet,
 } from "./shell-tools.ts";
 export {
+  type AgentServiceSandboxBackgroundCommandClient,
   type AgentServiceSandboxClient,
   type AgentServiceSandboxClientOptions,
-  type AgentServiceSandboxJobClient,
   type AgentServiceSandboxToolsOptions,
   type AgentServiceSandboxToolsResult,
   createAgentServiceSandboxClient,
@@ -57,9 +57,9 @@ export {
   createHostedSandboxClient,
   createHostedSandboxTools,
   createProjectScopedExecOptions,
+  type HostedSandboxBackgroundCommandClient,
   type HostedSandboxClient,
   type HostedSandboxClientOptions,
-  type HostedSandboxJobClient,
   type HostedSandboxToolsOptions,
   type HostedSandboxToolsResult,
   unwrapSandboxWorkingDirectoryCommand,

@@ -15,10 +15,10 @@ import {
 import { LazySandbox, type LazySandboxOptions } from "./lazy-sandbox.ts";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import type {
-  CommandJob,
-  CommandJobHeartbeatStatus,
-  CommandJobOutput,
-  CommandJobStatus,
+  BackgroundCommand,
+  BackgroundCommandHeartbeatStatus,
+  BackgroundCommandOutput,
+  BackgroundCommandStatus,
   ExecOptions,
   ExecResult,
   ExecStreamEvent,
@@ -29,10 +29,10 @@ import type {
 } from "./types.ts";
 export { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 export type {
-  CommandJob,
-  CommandJobHeartbeatStatus,
-  CommandJobOutput,
-  CommandJobStatus,
+  BackgroundCommand,
+  BackgroundCommandHeartbeatStatus,
+  BackgroundCommandOutput,
+  BackgroundCommandStatus,
   ExecOptions,
   ExecResult,
   ExecStreamEvent,
@@ -273,9 +273,9 @@ export class Sandbox {
     }
   }
 
-  /** Start an async command job in the sandbox. */
-  async startCommandJob(command: string, options?: ExecOptions): Promise<CommandJob> {
-    const res = await fetch(`${this.endpoint}/exec/jobs`, {
+  /** Start an async background command in the sandbox. */
+  async startBackgroundCommand(command: string, options?: ExecOptions): Promise<BackgroundCommand> {
+    const res = await fetch(`${this.endpoint}/exec/commands`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${this.authToken}`,
@@ -286,43 +286,43 @@ export class Sandbox {
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Start command job failed: ${res.status} ${await res.text()}`,
+        detail: `Start background command failed: ${res.status} ${await res.text()}`,
       });
     }
 
-    return Sandbox.mapCommandJob(await res.json());
+    return Sandbox.mapBackgroundCommand(await res.json());
   }
 
-  /** Get the status of an async command job. */
-  async getCommandJob(jobId: string): Promise<CommandJob> {
-    const res = await fetch(`${this.endpoint}/exec/jobs/${jobId}`, {
+  /** Get the status of an async background command. */
+  async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
+    const res = await fetch(`${this.endpoint}/exec/commands/${commandId}`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Get command job failed: ${res.status} ${await res.text()}`,
+        detail: `Get background command failed: ${res.status} ${await res.text()}`,
       });
     }
 
-    return Sandbox.mapCommandJob(await res.json());
+    return Sandbox.mapBackgroundCommand(await res.json());
   }
 
-  /** Get the output of an async command job. */
-  async getCommandJobOutput(jobId: string): Promise<CommandJobOutput> {
-    const res = await fetch(`${this.endpoint}/exec/jobs/${jobId}/output`, {
+  /** Get the output of an async background command. */
+  async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
+    const res = await fetch(`${this.endpoint}/exec/commands/${commandId}/output`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Get command job output failed: ${res.status} ${await res.text()}`,
+        detail: `Get background command output failed: ${res.status} ${await res.text()}`,
       });
     }
 
     const json = await res.json();
     return {
-      ...Sandbox.mapCommandJob(json),
+      ...Sandbox.mapBackgroundCommand(json),
       stdout: json.stdout,
       stderr: json.stderr,
       stdoutTruncated: json.stdout_truncated,
@@ -330,48 +330,50 @@ export class Sandbox {
     };
   }
 
-  /** List all command jobs in the sandbox. */
-  async listCommandJobs(): Promise<CommandJob[]> {
-    const res = await fetch(`${this.endpoint}/exec/jobs`, {
+  /** List all background commands in the sandbox. */
+  async listBackgroundCommands(): Promise<BackgroundCommand[]> {
+    const res = await fetch(`${this.endpoint}/exec/commands`, {
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `List command jobs failed: ${res.status} ${await res.text()}`,
+        detail: `List background commands failed: ${res.status} ${await res.text()}`,
       });
     }
 
     const json = await res.json();
-    const jobs = Array.isArray(json) ? json : (json.jobs ?? []);
-    return jobs.map((j: Record<string, unknown>) => Sandbox.mapCommandJob(j));
+    const commands = Array.isArray(json) ? json : (json.commands ?? []);
+    return commands.map((command: Record<string, unknown>) =>
+      Sandbox.mapBackgroundCommand(command)
+    );
   }
 
-  /** Cancel an async command job. */
-  async cancelCommandJob(jobId: string): Promise<CommandJob> {
-    const res = await fetch(`${this.endpoint}/exec/jobs/${jobId}/cancel`, {
+  /** Cancel an async background command. */
+  async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
+    const res = await fetch(`${this.endpoint}/exec/commands/${commandId}/cancel`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.authToken}` },
     });
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Cancel command job failed: ${res.status} ${await res.text()}`,
+        detail: `Cancel background command failed: ${res.status} ${await res.text()}`,
       });
     }
 
-    return Sandbox.mapCommandJob(await res.json());
+    return Sandbox.mapBackgroundCommand(await res.json());
   }
 
-  private static mapCommandJob(json: Record<string, unknown>): CommandJob {
+  private static mapBackgroundCommand(json: Record<string, unknown>): BackgroundCommand {
     return {
       id: json.id as string,
-      status: json.status as CommandJobStatus,
+      status: json.status as BackgroundCommandStatus,
       exitCode: json.exit_code as number | null,
       signal: json.signal as string | null,
       startedAt: json.started_at as string,
       finishedAt: json.finished_at as string | null,
-      heartbeatStatus: json.heartbeat_status as CommandJobHeartbeatStatus,
+      heartbeatStatus: json.heartbeat_status as BackgroundCommandHeartbeatStatus,
       lastHeartbeatAt: json.last_heartbeat_at as string | null,
       lastHeartbeatError: json.last_heartbeat_error as string | null,
       heartbeatFailureCount: json.heartbeat_failure_count as number,
