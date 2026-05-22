@@ -72,8 +72,8 @@ Use these guides when the quick start is not enough.
 | [Workflows: advanced](./workflows-advanced.md) | Loops, blob storage for large artifacts, and React hooks for progress.  |
 | [Multi-agent](./multi-agent.md)                | Compose agents with delegation and agent-as-tool patterns.              |
 | [Skills](./skills.md)                          | Add project-level skills from `SKILL.md` files with tool restrictions.  |
-| [Jobs](./jobs.md)                              | Run one-off jobs, schedule cron jobs, and inspect batch summaries.      |
 | [Tasks](./tasks.md)                            | Write background task functions that run locally or as cloud jobs.      |
+| [Jobs](./jobs.md)                              | Run one-off jobs, schedule cron jobs, and inspect batch summaries.      |
 
 ### External systems
 

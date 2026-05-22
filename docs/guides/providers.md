@@ -4,7 +4,16 @@ description: "Provider registry with runtime conventions and explicit overrides.
 order: 16
 ---
 
-An agent's `model` is a `"provider/model"` string. The provider registry resolves each string to a runtime: Veryfront Cloud, a direct vendor (OpenAI, Anthropic, Google), an OpenAI-compatible service like OpenRouter, or a local model. Omit `model` in most agents and let runtime conventions pick the right backend.
+An agent's `model` is a `"provider/model"` string.
+
+The provider registry resolves each string to one runtime:
+
+- Veryfront Cloud
+- a direct vendor such as OpenAI, Anthropic, or Google
+- an OpenAI-compatible service such as OpenRouter
+- a local model
+
+Omit `model` in most agents and let runtime conventions pick the backend.
 
 ## Prerequisites
 

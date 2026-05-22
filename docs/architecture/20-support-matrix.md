@@ -82,7 +82,7 @@ Veryfront tracks third-party dependency ownership by boundary.
 | CLI       | [`cli/deno.json`](../../cli/deno.json)                          | `cli.json`                                  | Command-line runtime boundary.                                                                           |
 | React     | Root React import aliases and esm.sh deps                       | `react.json`                                | Tracks React and React DOM separately from core until React has a dedicated package split.               |
 | Extension | `extensions/ext-*/deno.json`                                    | One file per extension package              | Each extension owns its npm and supported esm.sh dependencies.                                           |
-| Aggregate | [`deno.lock`](../../deno.lock) plus boundary-specific manifests | `all.json`, `dependencies-by-manifest.json` | Use this view for full supply-chain inventory.                                                           |
+| Aggregate | Boundary-specific manifests and resolved dependency graph       | `all.json`, `dependencies-by-manifest.json` | Use this view for full supply-chain inventory.                                                           |
 
 ## Documentation rule
 

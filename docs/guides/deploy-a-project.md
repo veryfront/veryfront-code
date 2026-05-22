@@ -4,7 +4,7 @@ description: "Build a Veryfront project for production and ship it to Veryfront 
 order: 6
 ---
 
-Build a Veryfront project for production and ship it to Veryfront Cloud or another host. This is the final step in the Getting Started flow.
+Build a Veryfront project for production and ship it. This is the final step in the Getting Started flow.
 
 ## Prerequisites
 
@@ -50,20 +50,7 @@ The preview is reachable at `https://<slug>--feature-x.preview.veryfront.com`.
 
 ## Deploy somewhere else
 
-For a non-Cloud target, run `veryfront build` and ship the `dist/` output. A typical Dockerfile:
-
-```dockerfile
-FROM denoland/deno:2.6.0
-
-WORKDIR /app
-COPY . .
-RUN deno task build
-
-EXPOSE 3000
-CMD ["deno", "task", "start"]
-```
-
-The same build output runs on any host that supports your chosen runtime.
+For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See [Building and deploying](./deploying.md) for Docker, static export, and target-specific configuration.
 
 ## Verify it worked
 

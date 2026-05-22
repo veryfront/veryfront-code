@@ -4,7 +4,15 @@ description: "Use headless chat, agent, completion, voice, and thread hooks."
 order: 23
 ---
 
-Three headless hooks expose the chat runtime without the preset UI: `useChat` for AG-UI streaming chat, `useAgent` for direct agent invocation, and `useCompletion` for one-shot text generation. Use them when you want full control of the layout.
+Headless hooks expose the chat runtime without the preset UI.
+
+Use:
+
+- `useChat` for AG-UI streaming chat
+- `useAgent` for direct agent invocation
+- `useCompletion` for one-shot text generation
+
+Use these hooks when you want full control of the layout.
 
 Examples below assume an AG-UI endpoint at `/api/ag-ui`. Use the route from [Chat UI](./chat-ui.md) or [Agents](./agents.md), run `veryfront dev`, then open the page that renders the hook.
 

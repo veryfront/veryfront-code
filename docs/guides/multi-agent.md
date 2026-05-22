@@ -4,7 +4,12 @@ description: "Agent composition, delegation, and agent-as-tool patterns."
 order: 27
 ---
 
-Two ways to compose agents: wrap one agent as a tool the parent can call (`agentAsTool` / `getAgentsAsTools`), or run several agents as steps in a workflow. Use the first when the parent should decide the order at runtime. Use the second when the order is known in advance.
+Veryfront supports two agent composition patterns:
+
+- Wrap agents as tools with `agentAsTool` or `getAgentsAsTools`.
+- Run agents as ordered workflow steps.
+
+Use agent-as-tool when the parent should choose the order at runtime. Use a workflow when the order is known in advance.
 
 Each agent can omit `model` and inherit the runtime default, or set an explicit `provider/model` override when you need one.
 

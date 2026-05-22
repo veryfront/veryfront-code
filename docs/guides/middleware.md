@@ -167,7 +167,7 @@ curl -i http://localhost:3000/api/protected
 
 # Expect 200 with a valid token
 curl -i http://localhost:3000/api/protected \
-  -H "Authorization: Bearer dev-token"
+  -H "Authorization: Bearer <TOKEN>"
 ```
 
 For CORS, include an `Origin` header and confirm

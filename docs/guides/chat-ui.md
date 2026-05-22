@@ -4,35 +4,21 @@ description: "Use the preset Chat component with the useChat hook."
 order: 21
 ---
 
-`Chat` is a complete chat interface in one component: composer, message list, streaming, loading state, and scroll behavior. Drop it in a client page, pair it with `useChat` and an AG-UI route, and you have a working chat.
+`Chat` is a complete chat interface in one component. It includes a composer, message list, streaming state, loading state, and scroll behavior.
+
+Pair it with `useChat` and an AG-UI route.
 
 For more control, see [Chat composition](./chat-composition.md) (custom layout), [Chat hooks](./chat-hooks.md) (headless state), and [Chat theming](./chat-theming.md) (visuals).
 
-Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
-
 ## Prerequisites
 
-- A Veryfront project with the `agents/` directory available (see
-  [Create a project](./create-a-project.md)).
-- A configured provider (see [Providers](./providers.md)).
+- A Veryfront project with an AG-UI route, such as `/api/ag-ui` (see
+  [Create an agent](./create-an-agent.md)).
+- A configured provider for the route's agent (see [Providers](./providers.md)).
 
 ## Quick setup
 
-In an app-owned route, you wire all three files below: agent, page, route. In a Veryfront Studio context, the host already provides the AG-UI route and request-scoped runtime, so you only need the client.
-
-Create an agent:
-
-```ts
-// agents/assistant.ts
-import { agent } from "veryfront/agent";
-
-export default agent({
-  id: "assistant",
-  system: "You are a helpful assistant. Answer concisely.",
-});
-```
-
-Create a client page:
+Create a client page that points to your AG-UI route:
 
 ```tsx
 // app/page.tsx
@@ -45,24 +31,9 @@ export default function ChatPage() {
 }
 ```
 
-Create the API route:
+`useChat({ api: "/api/ag-ui" })` decodes AG-UI SSE into Veryfront chat messages. `Chat` renders the input, message list, loading state, and scroll behavior.
 
-```ts
-// app/api/ag-ui/route.ts
-import { createAgUiHandler } from "veryfront/agent";
-
-export const POST = createAgUiHandler("assistant");
-```
-
-`createAgUiHandler` validates the request and streams AG-UI SSE. `useChat({ api: "/api/ag-ui" })` decodes that stream into Veryfront chat messages. The `Chat` component renders the input, message list, loading state, and scroll behavior.
-
-Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and send a message. To test the route without the UI:
-
-```bash
-curl -N http://localhost:3000/api/ag-ui \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Say hello."}]}]}'
-```
+Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and send a message. To test the route without the UI, use the curl check in [Create an agent](./create-an-agent.md).
 
 ## Add request preprocessing
 

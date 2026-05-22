@@ -9,6 +9,20 @@
  * exercise schemas without going through full bootstrap import
  * `./_test-setup.ts` to register the adapter directly.
  *
+ * @example
+ * ```ts
+ * import { CommonSchemas, defineSchema } from "veryfront/schemas";
+ *
+ * const email = CommonSchemas.email.parse("user@example.com");
+ *
+ * const getUserSchema = defineSchema((v) =>
+ *   v.object({
+ *     id: v.string().uuid(),
+ *     name: v.string().min(1),
+ *   })
+ * );
+ * ```
+ *
  * @module schemas
  */
 

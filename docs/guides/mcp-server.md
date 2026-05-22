@@ -37,17 +37,18 @@ export const OPTIONS = handler;
 
 Mount the handler on your application-owned MCP route. All auto-discovered tools, prompts, and resources are then exposed through the app-facing MCP transport.
 
-Start the dev server with a local token:
+Export a local token and start the dev server:
 
 ```bash
-MCP_TOKEN=dev-token veryfront dev
+export MCP_TOKEN=<TOKEN>
+veryfront dev
 ```
 
 Smoke test the route by sending an MCP `initialize` request:
 
 ```bash
 curl -i http://localhost:3000/api/mcp \
-  -H "Authorization: Bearer dev-token" \
+  -H "Authorization: Bearer $MCP_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}'
 ```
