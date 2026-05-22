@@ -26,7 +26,8 @@ export default tool({
   description: "Get the current weather for a city",
   inputSchema: z.object({
     city: z.string().describe("City name"),
-    units: z.enum(["celsius", "fahrenheit"]).default("celsius").describe("Temperature unit"),
+    units: z.enum(["celsius", "fahrenheit"]).default("celsius")
+      .describe("Temperature unit"),
   }),
   execute: async ({ city, units }) => {
     const temperature = units === "fahrenheit" ? 72 : 22;
@@ -105,7 +106,7 @@ export default tool({
   description: "Search the product catalog by name, category, or price range",
   inputSchema: z.object({
     query: z.string().min(1).describe("Search term"),
-    category: z.string().optional().describe("Filter by category"),
+    category: z.string().optional().describe("Product category filter"),
     maxPrice: z.number().optional().describe("Maximum price in USD"),
   }),
   execute: async ({ query, category, maxPrice }) => {/* ... */},
@@ -121,7 +122,9 @@ import { z } from "zod";
 
 export default tool({
   description: "Look up a user by email",
-  inputSchema: z.object({ email: z.string().email().describe("User email address") }),
+  inputSchema: z.object({
+    email: z.string().email().describe("User email address"),
+  }),
   execute: async ({ email }) => {
     const user = await db.users.findByEmail(email);
     if (!user) throw new Error(`No user found with email ${email}`);
@@ -140,7 +143,8 @@ import { z } from "zod";
 export default tool({
   description: "List repos for the current user",
   inputSchema: z.object({
-    sort: z.enum(["created", "updated"]).default("updated"),
+    sort: z.enum(["created", "updated"]).default("updated")
+      .describe("Repository sort order"),
   }),
   execute: async ({ sort }, context) => {
     const userId = context?.endUserId ?? "anonymous";
@@ -183,7 +187,9 @@ export default agent({
   tools: {
     calculate: tool({
       description: "Evaluate a math expression",
-      inputSchema: z.object({ expression: z.string().describe("Math expression to evaluate") }),
+      inputSchema: z.object({
+        expression: z.string().describe("Math expression to evaluate"),
+      }),
       execute: async ({ expression }) => ({
         result: evaluateMathExpression(expression),
       }),

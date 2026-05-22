@@ -133,7 +133,9 @@ workflows.register(contentPipeline);
 
 export default tool({
   description: "Start the article workflow for a topic",
-  inputSchema: z.object({ topic: z.string().describe("Article topic") }),
+  inputSchema: z.object({
+    topic: z.string().describe("Article topic"),
+  }),
   execute: async ({ topic }) => {
     const handle = await workflows.start("content-pipeline", { topic });
     return { runId: handle.runId };
@@ -290,8 +292,12 @@ export default workflow({
   id: "pipeline",
   description: "Content generation pipeline",
   version: "1.0.0",
-  inputSchema: z.object({ topic: z.string() }),
-  outputSchema: z.object({ article: z.string() }),
+  inputSchema: z.object({
+    topic: z.string().describe("Content topic"),
+  }),
+  outputSchema: z.object({
+    article: z.string().describe("Generated article body"),
+  }),
   timeout: "30m",
   retry: { maxAttempts: 3, backoff: "exponential" },
   steps: ({ input }) => [

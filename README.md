@@ -12,33 +12,33 @@ It gives you agents, tools, workflows, and a complete React rendering stack in a
 
 Purpose-built for TypeScript and React, Veryfront gives you everything you need to build agentic full-stack applications out-of-the-box.
 
-- [**Agents**](https://veryfront.com/docs/code/guides/agents) — Build autonomous agents with model routing, system prompts, hosted execution, and tool calling. Agents reason about goals and iterate until they reach a final answer. Supports AG-UI streaming, multi-agent composition, and hosted child-run orchestration.
+- [**Agents**](https://veryfront.com/docs/code/guides/agents) - Build autonomous agents with model routing, system prompts, hosted execution, and tool calling. Agents reason about goals and iterate until they reach a final answer. Supports AG-UI streaming, multi-agent composition, and hosted child-run orchestration.
 
-- [**Tools**](https://veryfront.com/docs/code/guides/tools) — Define Zod-validated functions that agents can call. Tools are auto-discovered from the file system with no registration needed.
+- [**Tools**](https://veryfront.com/docs/code/guides/tools) - Define Zod-validated functions that agents can call. Tools are auto-discovered from the file system with no registration needed.
 
-- [**Workflows**](https://veryfront.com/docs/code/guides/workflows) — Orchestrate multi-step AI pipelines with branching, parallelism, human-in-the-loop approval gates, and durable crash recovery via Redis checkpoints.
+- [**Workflows**](https://veryfront.com/docs/code/guides/workflows) - Orchestrate multi-step AI pipelines with branching, parallelism, human-in-the-loop approval gates, and durable crash recovery via Redis checkpoints.
 
-- [**Skills**](https://veryfront.com/docs/code/guides/skills) — Project-level agent capabilities defined as `SKILL.md` files following the agentskills.io specification. Skills provide prompt augmentation, tool allowlists, and script execution.
+- [**Skills**](https://veryfront.com/docs/code/guides/skills) - Project-level agent capabilities defined as `SKILL.md` files following the agentskills.io specification. Skills provide prompt augmentation, tool allowlists, and script execution.
 
-- [**Jobs & Cron Jobs**](https://veryfront.com/docs/code/guides/jobs) — Run durable project-scoped background work now or on a schedule through the Veryfront platform.
+- [**Jobs & Cron Jobs**](https://veryfront.com/docs/code/guides/jobs) - Run durable project-scoped background work now or on a schedule through the Veryfront platform.
 
-- [**Tasks**](https://veryfront.com/docs/code/guides/tasks) — File-based background task definitions discovered automatically and executable via the jobs system.
+- [**Tasks**](https://veryfront.com/docs/code/guides/tasks) - File-based background task definitions discovered automatically and executable via the jobs system.
 
-- [**Multi-Agent**](https://veryfront.com/docs/code/guides/multi-agent) — Compose agents that delegate to each other as tools for complex, coordinated tasks. AG-UI control-plane for hosted agent orchestration.
+- [**Multi-Agent**](https://veryfront.com/docs/code/guides/multi-agent) - Compose agents that delegate to each other as tools for complex, coordinated tasks. AG-UI control-plane for hosted agent orchestration.
 
-- [**Memory & Streaming**](https://veryfront.com/docs/code/guides/memory-and-streaming) — Give agents conversation history and streaming responses. Built-in chat UI components for React with AG-UI protocol support.
+- [**Memory & Streaming**](https://veryfront.com/docs/code/guides/memory-and-streaming) - Give agents conversation history and streaming responses. Built-in chat UI components for React with AG-UI protocol support.
 
-- [**MCP Server**](https://veryfront.com/docs/code/guides/mcp-server) — Expose tools, prompts, and resources via the Model Context Protocol. Includes SSE transport, session management, and elicitation support.
+- [**MCP Server**](https://veryfront.com/docs/code/guides/mcp-server) - Expose tools, prompts, and resources via the Model Context Protocol. Includes SSE transport, session management, and elicitation support.
 
-- [**Sandbox**](https://veryfront.com/docs/code/guides/sandbox) — Ephemeral compute environments for isolated code execution with shell tools and agent service integration.
+- [**Sandbox**](https://veryfront.com/docs/code/guides/sandbox) - Ephemeral compute environments for isolated code execution with shell tools and agent service integration.
 
-- [**Integrations**](https://veryfront.com/docs/code/guides/integrations) — Pre-built connectors with OAuth flows, remote tools, and metadata for third-party services.
+- [**Integrations**](https://veryfront.com/docs/code/guides/integrations) - Pre-built connectors with OAuth flows, remote tools, and metadata for third-party services.
 
-- [**Pages & Routing**](https://veryfront.com/docs/code/guides/pages-and-routing) — File-based routing with React Server Components, layouts, and server-side rendering.
+- [**Pages & Routing**](https://veryfront.com/docs/code/guides/pages-and-routing) - File-based routing with React Server Components, layouts, and server-side rendering.
 
-- [**Data Fetching & API Routes**](https://veryfront.com/docs/code/guides/data-fetching) — Server-side data loading, API route handlers, and [middleware](https://veryfront.com/docs/code/guides/middleware) with built-in [OAuth](https://veryfront.com/docs/code/guides/oauth) support.
+- [**Data Fetching & API Routes**](https://veryfront.com/docs/code/guides/data-fetching) - Server-side data loading, API route handlers, and [middleware](https://veryfront.com/docs/code/guides/middleware) with built-in [OAuth](https://veryfront.com/docs/code/guides/oauth) support.
 
-- [**Extensions**](./docs/guides/extensions.md) — Contract-based plugin system with 12 first-party packages for LLM providers, bundling, CSS, tracing, caching, and more.
+- [**Extensions**](./docs/guides/extensions.md) - Contract-based plugin system with 12 first-party packages for LLM providers, bundling, CSS, tracing, caching, and more.
 
 ## Get Started
 
@@ -68,7 +68,7 @@ brew install veryfront/tap/veryfront
 
 </details>
 
-Follow the [Quickstart guide](https://veryfront.com/docs/code/guides/quickstart) for step-by-step setup, or explore our [templates](https://veryfront.com/docs/code/guides/quickstart#templates) to start building your first application with Veryfront. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
+Follow the [Quickstart guide](https://veryfront.com/docs/code/guides/quickstart) for step-by-step setup, or use [Create a project](https://veryfront.com/docs/code/guides/create-a-project) to compare templates before you scaffold. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
 
 ## Project Structure
 

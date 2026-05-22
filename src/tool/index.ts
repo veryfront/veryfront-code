@@ -11,7 +11,9 @@
  * const convertLength = tool({
  *   id: "convert_length",
  *   description: "Convert meters to feet",
- *   inputSchema: z.object({ meters: z.number().nonnegative() }),
+ *   inputSchema: z.object({
+ *     meters: z.number().nonnegative().describe("Length in meters"),
+ *   }),
  *   execute: ({ meters }) => {
  *     return { feet: meters * 3.28084 };
  *   },
@@ -27,7 +29,9 @@
  * const convertLength = tool({
  *   id: "convert_length",
  *   description: "Convert meters to feet",
- *   inputSchema: z.object({ meters: z.number().nonnegative() }),
+ *   inputSchema: z.object({
+ *     meters: z.number().nonnegative().describe("Length in meters"),
+ *   }),
  *   execute: ({ meters }) => {
  *     return { feet: meters * 3.28084 };
  *   },
@@ -36,6 +40,7 @@
  * const assistant = agent({
  *   system: "You answer unit-conversion questions.",
  *   tools: { convert_length: convertLength },
+ *   maxSteps: 5,
  * });
  * ```
  *

@@ -24,7 +24,8 @@ describe("Guide: tools.mdx", () => {
       inputSchema: defineSchema((v) =>
         v.object({
           city: v.string().describe("City name"),
-          units: v.enum(["celsius", "fahrenheit"]).default("celsius"),
+          units: v.enum(["celsius", "fahrenheit"]).default("celsius")
+            .describe("Temperature unit"),
         })
       )(),
       execute: async ({ city, units }) => {
@@ -43,7 +44,9 @@ describe("Guide: tools.mdx", () => {
   it("should validate input against schema", async () => {
     const lookup = tool({
       description: "Look up a user by email",
-      inputSchema: defineSchema((v) => v.object({ email: v.string().email() }))(),
+      inputSchema: defineSchema((v) =>
+        v.object({ email: v.string().email().describe("User email address") })
+      )(),
       execute: async ({ email }) => ({ email }),
     });
 
@@ -64,7 +67,9 @@ describe("Guide: tools.mdx", () => {
   it("should support inline tool definition", () => {
     const calculate = tool({
       description: "Evaluate a math expression",
-      inputSchema: defineSchema((v) => v.object({ expression: v.string() }))(),
+      inputSchema: defineSchema((v) =>
+        v.object({ expression: v.string().describe("Math expression to evaluate") })
+      )(),
       execute: async ({ expression }) => ({ result: expression }),
     });
 
@@ -254,7 +259,9 @@ describe("Guide: workflows.mdx", () => {
   it("should support input schema validation", () => {
     const pipeline = workflow({
       id: "typed-pipeline",
-      inputSchema: defineSchema((v) => v.object({ topic: v.string() }))(),
+      inputSchema: defineSchema((v) =>
+        v.object({ topic: v.string().describe("Content topic") })
+      )(),
       steps: ({ input }) => [
         step("research", {
           agent: "researcher",
@@ -709,7 +716,9 @@ describe("Guide: mcp-server.mdx", () => {
 
     const customTool = tool({
       description: "A custom tool",
-      inputSchema: defineSchema((v) => v.object({ input: v.string() }))(),
+      inputSchema: defineSchema((v) =>
+        v.object({ input: v.string().describe("Text to transform") })
+      )(),
       execute: async ({ input }) => ({ result: input.toUpperCase() }),
     });
 
