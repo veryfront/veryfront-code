@@ -214,4 +214,99 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       "responseFormat",
     ]);
   });
+
+  it("compacts completed historical tool rounds before replaying later user turns", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Build a briefing." }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I'll fetch both sources." },
+          {
+            type: "tool-call",
+            toolCallId: "toolu_calendar",
+            toolName: "calendar__list_events",
+            input: {},
+          },
+          {
+            type: "tool-call",
+            toolCallId: "toolu_gmail",
+            toolName: "gmail__search_emails",
+            input: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "toolu_calendar",
+            toolName: "calendar__list_events",
+            output: { type: "json", value: { events: 1 } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "toolu_gmail",
+            toolName: "gmail__search_emails",
+            output: { type: "json", value: { messages: 20 } },
+          },
+        ],
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I have the briefing." },
+          {
+            type: "tool-call",
+            toolCallId: "toolu_email_1",
+            toolName: "gmail__get_email",
+            input: {},
+          },
+          {
+            type: "tool-call",
+            toolCallId: "toolu_email_2",
+            toolName: "gmail__get_email",
+            input: {},
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "toolu_email_1",
+            toolName: "gmail__get_email",
+            output: { type: "json", value: { id: "email-1" } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "toolu_email_2",
+            toolName: "gmail__get_email",
+            output: { type: "json", value: { id: "email-2" } },
+          },
+        ],
+      },
+      { role: "assistant", content: [{ type: "text", text: "Agenda, inbox, and follow-ups." }] },
+      { role: "user", content: [{ type: "text", text: "retry" }] },
+    ];
+    const warnings = createWarningCollector();
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      warnings,
+    );
+
+    assertEquals(body.messages, [
+      { role: "user", content: [{ type: "text", text: "Build a briefing." }] },
+      { role: "assistant", content: [{ type: "text", text: "I'll fetch both sources." }] },
+      { role: "assistant", content: [{ type: "text", text: "I have the briefing." }] },
+      { role: "assistant", content: [{ type: "text", text: "Agenda, inbox, and follow-ups." }] },
+      { role: "user", content: [{ type: "text", text: "retry" }] },
+    ]);
+  });
 });
