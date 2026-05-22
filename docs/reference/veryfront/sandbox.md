@@ -86,35 +86,35 @@ Write files to the sandbox workspace.
 
 **Returns:** <code>Promise&lt;void&gt;</code>
 
-### `sandbox.startCommandJob(command, options)`
+### `sandbox.startBackgroundCommand(command, options)`
 
-Start an async command job in the sandbox.
+Start an async background command in the sandbox.
 
-**Returns:** <code>Promise&lt;CommandJob&gt;</code>
+**Returns:** <code>Promise&lt;BackgroundCommand&gt;</code>
 
-### `sandbox.getCommandJob(jobId)`
+### `sandbox.getBackgroundCommand(commandId)`
 
-Get the status of an async command job.
+Get the status of an async background command.
 
-**Returns:** <code>Promise&lt;CommandJob&gt;</code>
+**Returns:** <code>Promise&lt;BackgroundCommand&gt;</code>
 
-### `sandbox.getCommandJobOutput(jobId)`
+### `sandbox.getBackgroundCommandOutput(commandId)`
 
-Get the output of an async command job.
+Get the output of an async background command.
 
-**Returns:** <code>Promise&lt;CommandJobOutput&gt;</code>
+**Returns:** <code>Promise&lt;BackgroundCommandOutput&gt;</code>
 
-### `sandbox.listCommandJobs()`
+### `sandbox.listBackgroundCommands()`
 
-List all command jobs in the sandbox.
+List all background commands in the sandbox.
 
-**Returns:** <code>Promise&lt;CommandJob[]&gt;</code>
+**Returns:** <code>Promise&lt;BackgroundCommand[]&gt;</code>
 
-### `sandbox.cancelCommandJob(jobId)`
+### `sandbox.cancelBackgroundCommand(commandId)`
 
-Cancel an async command job.
+Cancel an async background command.
 
-**Returns:** <code>Promise&lt;CommandJob&gt;</code>
+**Returns:** <code>Promise&lt;BackgroundCommand&gt;</code>
 
 ### `sandbox.heartbeat()`
 
@@ -200,21 +200,21 @@ Streaming event emitted during command execution.
 |------|-------------|--------|
 | `AgentServiceSandboxClient` | Public API contract for agent service sandbox client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L25) |
 | `AgentServiceSandboxClientOptions` | Options accepted by agent service sandbox client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L35) |
-| `AgentServiceSandboxJobClient` | Public API contract for agent service sandbox job client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L17) |
+| `AgentServiceSandboxBackgroundCommandClient` | Public API contract for agent service sandbox background command client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L17) |
 | `AgentServiceSandboxToolsOptions` | Options accepted by agent service sandbox tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L38) |
 | `AgentServiceSandboxToolsResult` | Result returned from agent service sandbox tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L44) |
 | `BashToolSandboxLike` | Public API contract for sandbox shell client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L30) |
-| `CommandJob` | An async command job running in a sandbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L44) |
-| `CommandJobHeartbeatStatus` | Heartbeat health status for a command job. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L41) |
-| `CommandJobOutput` | A command job with its captured output. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L58) |
-| `CommandJobStatus` | Status of an async command job. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L38) |
+| `BackgroundCommand` | An async background command running in a sandbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L44) |
+| `BackgroundCommandHeartbeatStatus` | Heartbeat health status for a background command. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L41) |
+| `BackgroundCommandOutput` | A background command with its captured output. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L58) |
+| `BackgroundCommandStatus` | Status of an async background command. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L38) |
 | `CreateSandboxBashTool` | Public API contract for sandbox shell tools provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/sandbox/shell-tools.ts#L47) |
 | `ExecOptions` | Options for command execution: working directory, timeout, environment variables, and optional project reference. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L2) |
 | `ExecResult` | Result of a command execution: stdout, stderr, and exit code. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L24) |
 | `ExecStreamEvent` | Streaming event emitted during command execution. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/types.ts#L31) |
 | `HostedSandboxClient` | Public API contract for hosted sandbox client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L189) |
 | `HostedSandboxClientOptions` | Options accepted by hosted sandbox client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L191) |
-| `HostedSandboxJobClient` | Public API contract for hosted sandbox job client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L187) |
+| `HostedSandboxBackgroundCommandClient` | Public API contract for hosted sandbox background command client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L187) |
 | `HostedSandboxToolsOptions` | Options accepted by hosted sandbox tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L193) |
 | `HostedSandboxToolsResult` | Result returned from hosted sandbox tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L195) |
 | `LazySandboxOptions` | Options accepted by lazy sandbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/lazy-sandbox.ts#L15) |

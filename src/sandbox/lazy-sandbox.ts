@@ -2,9 +2,9 @@ import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import {
-  type CommandJob,
-  type CommandJobOutput,
-  type CommandJobStatus,
+  type BackgroundCommand,
+  type BackgroundCommandOutput,
+  type BackgroundCommandStatus,
   type ExecOptions,
   type ExecResult,
   type ExecStreamEvent,
@@ -101,7 +101,7 @@ export class LazySandbox {
   private heartbeatPromise: PendingOperation | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private lastHeartbeatAt = 0;
-  private readonly activeCommandJobEndpoints = new Map<string, string>();
+  private readonly activeBackgroundCommandEndpoints = new Map<string, string>();
 
   constructor(options: LazySandboxOptions = {}) {
     this.apiUrl = resolveSandboxApiUrl(options);
@@ -236,11 +236,11 @@ export class LazySandbox {
     }
   }
 
-  async startCommandJob(command: string, options?: ExecOptions): Promise<CommandJob> {
+  async startBackgroundCommand(command: string, options?: ExecOptions): Promise<BackgroundCommand> {
     await this.touchSession();
     const endpoint = this.resolveRuntimeEndpoint();
 
-    const res = await this.fetchControl(`${endpoint}/exec/jobs`, {
+    const res = await this.fetchControl(`${endpoint}/exec/commands`, {
       method: "POST",
       headers: this.jsonHeaders(),
       body: JSON.stringify({ command, ...this.resolveExecOptions(options) }),
@@ -248,93 +248,93 @@ export class LazySandbox {
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Start command job failed: ${res.status} ${await res.text()}`,
+        detail: `Start background command failed: ${res.status} ${await res.text()}`,
       });
     }
 
-    const job = mapCommandJob(await res.json());
-    this.updateTrackedCommandJob(job, endpoint);
-    return job;
+    const backgroundCommand = mapBackgroundCommand(await res.json());
+    this.updateTrackedBackgroundCommand(backgroundCommand, endpoint);
+    return backgroundCommand;
   }
 
-  async getCommandJob(jobId: string): Promise<CommandJob> {
-    const endpoint = await this.resolveCommandJobEndpoint(jobId);
+  async getBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
+    const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/jobs/${jobId}`, {
+    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}`, {
       headers: this.authHeaders(),
     });
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Get command job failed: ${res.status} ${await res.text()}`,
+        detail: `Get background command failed: ${res.status} ${await res.text()}`,
       });
     }
 
-    const job = mapCommandJob(await res.json());
-    this.updateTrackedCommandJob(job, endpoint);
-    return job;
+    const backgroundCommand = mapBackgroundCommand(await res.json());
+    this.updateTrackedBackgroundCommand(backgroundCommand, endpoint);
+    return backgroundCommand;
   }
 
-  async getCommandJobOutput(jobId: string): Promise<CommandJobOutput> {
-    const endpoint = await this.resolveCommandJobEndpoint(jobId);
+  async getBackgroundCommandOutput(commandId: string): Promise<BackgroundCommandOutput> {
+    const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/jobs/${jobId}/output`, {
+    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}/output`, {
       headers: this.authHeaders(),
     });
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Get command job output failed: ${res.status} ${await res.text()}`,
+        detail: `Get background command output failed: ${res.status} ${await res.text()}`,
       });
     }
 
     const json = await res.json();
     const output = {
-      ...mapCommandJob(json),
+      ...mapBackgroundCommand(json),
       stdout: json.stdout,
       stderr: json.stderr,
       stdoutTruncated: json.stdout_truncated,
       stderrTruncated: json.stderr_truncated,
     };
-    this.updateTrackedCommandJob(output, endpoint);
+    this.updateTrackedBackgroundCommand(output, endpoint);
     return output;
   }
 
-  async listCommandJobs(): Promise<CommandJob[]> {
+  async listBackgroundCommands(): Promise<BackgroundCommand[]> {
     await this.ensure();
 
-    const res = await this.fetchControl(`${this.requireEndpoint()}/exec/jobs`, {
+    const res = await this.fetchControl(`${this.requireEndpoint()}/exec/commands`, {
       headers: this.authHeaders(),
     });
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `List command jobs failed: ${res.status} ${await res.text()}`,
+        detail: `List background commands failed: ${res.status} ${await res.text()}`,
       });
     }
 
     const json = await res.json();
-    const jobs = Array.isArray(json) ? json : (json.jobs ?? []);
-    return jobs.map((job: Record<string, unknown>) => mapCommandJob(job));
+    const commands = Array.isArray(json) ? json : (json.commands ?? []);
+    return commands.map((command: Record<string, unknown>) => mapBackgroundCommand(command));
   }
 
-  async cancelCommandJob(jobId: string): Promise<CommandJob> {
-    const endpoint = await this.resolveCommandJobEndpoint(jobId);
+  async cancelBackgroundCommand(commandId: string): Promise<BackgroundCommand> {
+    const endpoint = await this.resolveBackgroundCommandEndpoint(commandId);
 
-    const res = await this.fetchControl(`${endpoint}/exec/jobs/${jobId}/cancel`, {
+    const res = await this.fetchControl(`${endpoint}/exec/commands/${commandId}/cancel`, {
       method: "POST",
       headers: this.authHeaders(),
     });
 
     if (!res.ok) {
       throw REQUEST_ERROR.create({
-        detail: `Cancel command job failed: ${res.status} ${await res.text()}`,
+        detail: `Cancel background command failed: ${res.status} ${await res.text()}`,
       });
     }
 
-    const job = mapCommandJob(await res.json());
-    this.updateTrackedCommandJob(job, endpoint);
-    return job;
+    const backgroundCommand = mapBackgroundCommand(await res.json());
+    this.updateTrackedBackgroundCommand(backgroundCommand, endpoint);
+    return backgroundCommand;
   }
 
   async heartbeat(force = false): Promise<void> {
@@ -365,7 +365,7 @@ export class LazySandbox {
 
         if (!res.ok) {
           if (this.sessionId === currentSessionId) {
-            if (this.activeCommandJobEndpoints.size === 0) {
+            if (this.activeBackgroundCommandEndpoints.size === 0) {
               await this.deleteSession(currentSessionId);
               this.resetSessionState(currentSessionId);
             }
@@ -523,7 +523,9 @@ export class LazySandbox {
   }
 
   private startHeartbeatLoop(): void {
-    if (!this.sessionId || this.heartbeatTimer || this.activeCommandJobEndpoints.size > 0) return;
+    if (!this.sessionId || this.heartbeatTimer || this.activeBackgroundCommandEndpoints.size > 0) {
+      return;
+    }
 
     this.heartbeatTimer = setInterval(() => {
       void this.heartbeat().catch(() => {
@@ -559,7 +561,7 @@ export class LazySandbox {
   private resetSessionState(sessionId?: string): void {
     if (!sessionId || this.sessionId === sessionId) {
       this.stopHeartbeatLoop();
-      this.activeCommandJobEndpoints.clear();
+      this.activeBackgroundCommandEndpoints.clear();
       this.endpoint = null;
       this.sessionId = null;
       this.sessionProjectId = null;
@@ -573,8 +575,8 @@ export class LazySandbox {
     return projectReference ? { ...options, projectReference } : options;
   }
 
-  private async resolveCommandJobEndpoint(jobId: string): Promise<string> {
-    const trackedEndpoint = this.activeCommandJobEndpoints.get(jobId);
+  private async resolveBackgroundCommandEndpoint(commandId: string): Promise<string> {
+    const trackedEndpoint = this.activeBackgroundCommandEndpoints.get(commandId);
     if (trackedEndpoint) {
       return trackedEndpoint;
     }
@@ -583,18 +585,21 @@ export class LazySandbox {
     return this.resolveRuntimeEndpoint();
   }
 
-  private updateTrackedCommandJob(job: Pick<CommandJob, "id" | "status">, endpoint: string): void {
-    if (job.status === "running") {
-      this.activeCommandJobEndpoints.set(job.id, endpoint);
+  private updateTrackedBackgroundCommand(
+    backgroundCommand: Pick<BackgroundCommand, "id" | "status">,
+    endpoint: string,
+  ): void {
+    if (backgroundCommand.status === "running") {
+      this.activeBackgroundCommandEndpoints.set(backgroundCommand.id, endpoint);
       this.stopHeartbeatLoop();
       return;
     }
 
-    if (!this.activeCommandJobEndpoints.delete(job.id)) {
+    if (!this.activeBackgroundCommandEndpoints.delete(backgroundCommand.id)) {
       return;
     }
 
-    if (this.activeCommandJobEndpoints.size === 0 && this.endpoint) {
+    if (this.activeBackgroundCommandEndpoints.size === 0 && this.endpoint) {
       this.startHeartbeatLoop();
     }
   }
@@ -721,10 +726,10 @@ async function fetchWithTimeout(
   }
 }
 
-function mapCommandJob(json: Record<string, unknown>): CommandJob {
+function mapBackgroundCommand(json: Record<string, unknown>): BackgroundCommand {
   return {
     id: json.id as string,
-    status: json.status as CommandJobStatus,
+    status: json.status as BackgroundCommandStatus,
     exitCode: json.exit_code as number | null,
     signal: json.signal as string | null,
     startedAt: json.started_at as string,

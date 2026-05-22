@@ -58,9 +58,9 @@ function createOkResponse(): Response {
   return jsonResponse({ ok: true });
 }
 
-function createJobPayload(overrides: Record<string, unknown> = {}) {
+function createCommandPayload(overrides: Record<string, unknown> = {}) {
   return {
-    id: "job-1",
+    id: "command-1",
     status: "running",
     exit_code: null,
     signal: null,
@@ -74,11 +74,11 @@ function createJobPayload(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function executeStartCommandJob(
+async function executeStartBackgroundCommand(
   tools: SandboxShellToolSet,
   command: string,
 ): Promise<unknown> {
-  const execute = tools.start_command_job?.execute;
+  const execute = tools.start_background_command?.execute;
   assertExists(execute);
   return await execute({ command });
 }
@@ -94,7 +94,7 @@ describe("sandbox/agent-service-tools", () => {
     clearSandboxEnv();
   });
 
-  it("creates shell tools and async command job tools", async () => {
+  it("creates shell tools and async background command tools", async () => {
     mockFetch([]);
 
     const { tools } = await createAgentServiceSandboxTools({
@@ -107,20 +107,20 @@ describe("sandbox/agent-service-tools", () => {
     assertExists(tools.bash);
     assertExists(tools.sandbox_read_file);
     assertExists(tools.sandbox_write_file);
-    assertExists(tools.start_command_job);
-    assertExists(tools.get_command_job);
-    assertExists(tools.get_command_job_output);
-    assertExists(tools.cancel_command_job);
+    assertExists(tools.start_background_command);
+    assertExists(tools.get_background_command);
+    assertExists(tools.get_background_command_output);
+    assertExists(tools.cancel_background_command);
     assertEquals(tools.readFile, undefined);
     assertEquals(tools.writeFile, undefined);
   });
 
-  it("passes the latest project reference through exec and command-job requests", async () => {
+  it("passes the latest project reference through exec and background-command requests", async () => {
     mockFetch([
       createSandboxSessionResponse(),
       createOkResponse(),
       ndjsonResponse([{ type: "stdout", data: "ok" }, { type: "exit", exitCode: 0 }]),
-      jsonResponse(createJobPayload()),
+      jsonResponse(createCommandPayload()),
     ]);
 
     let projectId = "project-1";
@@ -137,8 +137,8 @@ describe("sandbox/agent-service-tools", () => {
       stderr: "",
       exitCode: 0,
     });
-    assertEquals(await sandbox.startCommandJob("npm test"), {
-      id: "job-1",
+    assertEquals(await sandbox.startBackgroundCommand("npm test"), {
+      id: "command-1",
       status: "running",
       exitCode: null,
       signal: null,
@@ -162,11 +162,11 @@ describe("sandbox/agent-service-tools", () => {
     });
   });
 
-  it("strips bash-tool workspace prefixes from async command job tool commands", async () => {
+  it("strips bash-tool workspace prefixes from async background command tool commands", async () => {
     mockFetch([
       createSandboxSessionResponse(),
       createOkResponse(),
-      jsonResponse(createJobPayload()),
+      jsonResponse(createCommandPayload()),
     ]);
 
     const { tools } = await createAgentServiceSandboxTools({
@@ -176,7 +176,7 @@ describe("sandbox/agent-service-tools", () => {
       createBashTool,
     });
 
-    await executeStartCommandJob(
+    await executeStartBackgroundCommand(
       tools,
       'mkdir -p /tmp/bash-tool && cd "/workspace" && python3 process_pdf.py',
     );

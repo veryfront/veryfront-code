@@ -1,7 +1,7 @@
 # Sandbox runtime
 
 This page describes sandbox session clients, lazy provisioning, command
-execution, file operations, command jobs, heartbeats, and agent-service sandbox
+execution, file operations, background commands, heartbeats, and agent-service sandbox
 tools. It does not cover workflow execution or the backing sandbox service
 implementation.
 
@@ -35,11 +35,11 @@ flowchart TD
   attach --> ready
   ready --> exec[Execute buffered or streaming command]
   ready --> files[Read or write files]
-  ready --> jobs[Start, poll, or cancel command job]
+  ready --> commands[Start, poll, or cancel background command]
   ready --> heartbeat[Heartbeat active session]
   exec --> close[Close session]
   files --> close
-  jobs --> close
+  commands --> close
 ```
 
 1. Config helpers resolve sandbox API URL and auth token from explicit options
@@ -49,13 +49,13 @@ flowchart TD
 3. `Sandbox.createLazy()` defers provisioning until command or file operations
    need a session.
 4. Command helpers support buffered output, streamed NDJSON events, and async
-   command jobs.
+   background commands.
 5. Agent-service helpers adapt sandbox operations into shell and file tools.
 
 ## Boundaries
 
 - Sandbox runtime owns client behavior, lazy provisioning, command streaming,
-  command job polling, and agent-service tool adapters.
+  background command polling, and agent-service tool adapters.
 - The backing sandbox service owns container lifecycle, isolation, scheduling,
   and command execution internals.
 - Workflow runtime may call sandbox-backed tools, but workflow state belongs in
@@ -68,7 +68,7 @@ flowchart TD
 - Add sandbox client tests when changing session creation, attach, reconnect,
   file operations, command execution, or NDJSON parsing.
 - Add lazy sandbox tests when changing provisioning, endpoint resolution,
-  retries, heartbeat behavior, or command job tracking.
+  retries, heartbeat behavior, or background command tracking.
 - Add shell-tool tests when changing agent-facing tool names, schemas, or
   argument normalization.
 - Keep auth tokens server-side and redact backing service details from public

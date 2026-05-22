@@ -1,9 +1,10 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "@std/assert";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
-  CommandJob,
-  CommandJobOutput,
+  BackgroundCommand,
+  BackgroundCommandOutput,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
 import type {
@@ -64,9 +65,9 @@ function createRemoteSourceFixtures() {
   return { createdConfigs, executeCalls, createRemoteToolSource };
 }
 
-function commandJob(status: CommandJob["status"]): CommandJob {
+function commandPayload(status: BackgroundCommand["status"]): BackgroundCommand {
   return {
-    id: "job-1",
+    id: "command-1",
     status,
     exitCode: null,
     signal: null,
@@ -79,9 +80,9 @@ function commandJob(status: CommandJob["status"]): CommandJob {
   };
 }
 
-function commandJobOutput(): CommandJobOutput {
+function commandPayloadOutput(): BackgroundCommandOutput {
   return {
-    ...commandJob("completed"),
+    ...commandPayload("completed"),
     exitCode: 0,
     finishedAt: "2026-01-01T00:00:01.000Z",
     stdout: "",
@@ -101,10 +102,10 @@ function createSandboxToolsResult(input: {
       ensure: () => Promise.resolve(),
       close: () => Promise.resolve(),
       executeCommand: () => Promise.resolve({ stdout: "", stderr: "", exitCode: 0 }),
-      startCommandJob: () => Promise.resolve(commandJob("running")),
-      getCommandJob: () => Promise.resolve(commandJob("completed")),
-      getCommandJobOutput: () => Promise.resolve(commandJobOutput()),
-      cancelCommandJob: () => Promise.resolve(commandJob("canceled")),
+      startBackgroundCommand: () => Promise.resolve(commandPayload("running")),
+      getBackgroundCommand: () => Promise.resolve(commandPayload("completed")),
+      getBackgroundCommandOutput: () => Promise.resolve(commandPayloadOutput()),
+      cancelBackgroundCommand: () => Promise.resolve(commandPayload("canceled")),
       isActive: true,
       id: "sandbox-1",
       url: "https://sandbox.example",
