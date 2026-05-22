@@ -149,6 +149,10 @@ await build({
 		// Native binary deps that should not block install if they fail
 		optionalDependencies: {
 			"@huggingface/transformers": `^${OPAQUE_DEPENDENCY_VERSIONS["@huggingface/transformers"]}`,
+			// ext-sandbox-shell-tools is auto-enabled by the hosted agent service,
+			// so its runtime implementation must be installable with the npm package.
+			"bash-tool": npmDependencyRange(denoConfigSet, "bash-tool"),
+			"just-bash": npmDependencyRange(denoConfigSet, "just-bash"),
 		},
 		keywords: [
 			"react",
