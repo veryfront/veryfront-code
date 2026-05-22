@@ -135,6 +135,39 @@ describe(
       assertEquals(result.workflows[0]?.exportName, "default");
     });
 
+    it("discovers workflow files that import public tool and schema APIs", async () => {
+      const adapter = createRuntimeAdapter({
+        "/project/workflows/smoke.ts": [
+          'import { defineSchema } from "veryfront/schemas";',
+          'import { tool } from "veryfront/tool";',
+          'import { step, workflow } from "veryfront/workflow";',
+          "",
+          "const startTool = tool({",
+          '  id: "smoke-start",',
+          '  description: "Complete the smoke workflow start step.",',
+          "  inputSchema: defineSchema((v) => v.object({}).passthrough())(),",
+          "  execute: async (input) => ({ ok: true, input }),",
+          "});",
+          "",
+          "export default workflow({",
+          '  id: "smoke",',
+          '  description: "Smoke workflow",',
+          "  steps: [step('start', { tool: startTool })],",
+          "});",
+        ].join("\n"),
+      });
+
+      const result = await discoverWorkflows({
+        projectDir: "/project",
+        adapter,
+        config: { fs: { type: "veryfront-api" } } as never,
+      });
+
+      assertEquals(result.errors, []);
+      assertEquals(result.workflows.map((workflow) => workflow.id), ["smoke"]);
+      assertEquals(result.workflows[0]?.definition.steps.length, 1);
+    });
+
     it("finds workflows by id through the discovery module loader", async () => {
       const adapter = createRuntimeAdapter({
         "/project/workflows/ping.ts": [

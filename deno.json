@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.573",
+  "version": "0.1.574",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -58,6 +58,7 @@
     "./workflow/claude-code": "./src/workflow/claude-code/index.ts",
     "./workflow/claude-code/react": "./src/workflow/claude-code/react/index.ts",
     "./workflow/discovery": "./src/workflow/discovery/index.ts",
+    "./schemas": "./src/schemas/index.ts",
     "./prompt": "./src/prompt/index.ts",
     "./resource": "./src/resource/index.ts",
     "./jobs": "./src/jobs/index.ts",

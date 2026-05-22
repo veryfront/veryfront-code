@@ -9,13 +9,96 @@ import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 
+export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
+  "veryfront/agent",
+  "veryfront/tool",
+  "veryfront/platform",
+  "veryfront/prompt",
+  "veryfront/resource",
+  "veryfront/embedding",
+  "veryfront/workflow",
+  "veryfront/schemas",
+] as const;
+
+interface DenoRewriteOptions {
+  compiled?: boolean;
+  resolveSpecifier?: (specifier: string) => string;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function toDestructuredBindings(imports: string): string {
+  return imports
+    .split(",")
+    .map((part) => part.trim().replace(/\s+as\s+/g, ": "))
+    .filter(Boolean)
+    .join(", ");
+}
+
+function rewriteDenoPublicVeryfrontImports(
+  code: string,
+  resolveSpecifier: (specifier: string) => string,
+): string {
+  const resolve = (specifier: string): string | null => {
+    try {
+      return resolveSpecifier(specifier);
+    } catch (_) {
+      return null;
+    }
+  };
+
+  return code
+    .replace(/from\s+["'](veryfront(?:\/[^"']+)?)["']/g, (match, specifier: string) => {
+      const resolved = resolve(specifier);
+      return resolved ? `from "${resolved}"` : match;
+    })
+    .replace(/import\s*\(\s*["'](veryfront(?:\/[^"']+)?)["']\s*\)/g, (match, specifier: string) => {
+      const resolved = resolve(specifier);
+      return resolved ? `import("${resolved}")` : match;
+    });
+}
+
+function rewriteDenoCompiledVeryfrontImports(code: string): string {
+  let transformed = code;
+
+  for (const mod of DISCOVERY_GLOBAL_VERYFRONT_MODULES) {
+    const escapedMod = escapeRegExp(mod);
+
+    const importPattern = new RegExp(
+      `import\\s*\\{([^}]+)\\}\\s*from\\s*["']${escapedMod}["'];?`,
+      "g",
+    );
+    transformed = transformed.replace(importPattern, (_match, imports: string) => {
+      return `const { ${
+        toDestructuredBindings(imports)
+      } } = globalThis.__VERYFRONT_MODULES__["${mod}"];`;
+    });
+
+    const namespacePattern = new RegExp(
+      `import\\s*\\*\\s*as\\s+(\\w+)\\s*from\\s*["']${escapedMod}["'];?`,
+      "g",
+    );
+    transformed = transformed.replace(namespacePattern, (_match, name: string) => {
+      return `const ${name} = globalThis.__VERYFRONT_MODULES__["${mod}"];`;
+    });
+  }
+
+  return transformed;
+}
+
 /**
  * Rewrite imports for Deno runtime
  * - Converts npm package imports to npm: specifier format
  * - Resolves relative imports to absolute file:// URLs
  * - For compiled binaries, rewrites veryfront imports to use globals
  */
-export function rewriteForDeno(code: string, fileDir: string): string {
+export function rewriteForDeno(
+  code: string,
+  fileDir: string,
+  options: DenoRewriteOptions = {},
+): string {
   const npmReplacements: Array<[RegExp, string]> = [
     [/from\s+["']zod["']/g, 'from "npm:zod"'],
     [/import\s*\(\s*["']zod["']\s*\)/g, 'import("npm:zod")'],
@@ -33,36 +116,14 @@ export function rewriteForDeno(code: string, fileDir: string): string {
   );
 
   // For compiled binaries, rewrite veryfront imports to use globals
-  if (isDenoCompiled) {
-    const veryfrontModules = [
-      "veryfront/agent",
-      "veryfront/tool",
-      "veryfront/platform",
-      "veryfront/prompt",
-      "veryfront/resource",
-    ];
-
-    for (const mod of veryfrontModules) {
-      const escapedMod = mod.replace(/\//g, "\\/");
-
-      // Match: import { ... } from "veryfront/..."
-      const importPattern = new RegExp(
-        `import\\s*\\{([^}]+)\\}\\s*from\\s*["']${escapedMod}["']`,
-        "g",
-      );
-      transformed = transformed.replace(importPattern, (_match, imports: string) => {
-        return `const {${imports}} = globalThis.__VERYFRONT_MODULES__["${mod}"]`;
-      });
-
-      // Match: import * as X from "veryfront/..."
-      const namespacePattern = new RegExp(
-        `import\\s*\\*\\s*as\\s+(\\w+)\\s*from\\s*["']${escapedMod}["']`,
-        "g",
-      );
-      transformed = transformed.replace(namespacePattern, (_match, name: string) => {
-        return `const ${name} = globalThis.__VERYFRONT_MODULES__["${mod}"]`;
-      });
-    }
+  const compiled = options.compiled ?? isDenoCompiled;
+  if (compiled) {
+    transformed = rewriteDenoCompiledVeryfrontImports(transformed);
+  } else {
+    transformed = rewriteDenoPublicVeryfrontImports(
+      transformed,
+      options.resolveSpecifier ?? ((specifier) => import.meta.resolve(specifier)),
+    );
   }
 
   return transformed;
