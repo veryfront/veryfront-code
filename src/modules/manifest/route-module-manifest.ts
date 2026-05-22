@@ -159,32 +159,28 @@ export function recordSSRModules(
 ): void {
   const key = buildKey(projectSlug, route);
   const existing = manifestStore.get(key);
-  const existingModules = existing?.modules ?? [];
-  const existingPaths = new Set(existingModules.map((m) => m.path));
-
-  let addedCount = 0;
+  const seenPaths = new Set<string>();
+  const newModules: ModuleEntry[] = [];
 
   for (const path of modules) {
     const normalizedPath = path.replace(/^_vf_modules\//, "");
-    if (existingPaths.has(normalizedPath)) continue;
+    if (seenPaths.has(normalizedPath)) continue;
 
-    existingModules.push({
+    newModules.push({
       path: normalizedPath,
       critical: false,
-      loadOrder: existingModules.length,
+      loadOrder: newModules.length,
     });
-    existingPaths.add(normalizedPath);
-    addedCount++;
+    seenPaths.add(normalizedPath);
   }
 
-  const manifest = buildManifest(route, existingModules, existing?.renderCount);
+  const manifest = buildManifest(route, newModules, existing?.renderCount);
   manifestStore.set(key, manifest);
 
   logger.debug("Recorded SSR modules", {
     key,
     inputModules: modules.length,
-    newModulesAdded: addedCount,
-    totalModules: manifest.moduleCount,
+    moduleCount: manifest.moduleCount,
     renderCount: manifest.renderCount,
   });
 }

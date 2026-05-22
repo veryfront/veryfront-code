@@ -79,6 +79,7 @@ export function ColorModeProvider({
     } else {
       root.setAttribute("data-theme", resolvedMode);
     }
+    root.style.colorScheme = resolvedMode;
   }, [resolvedMode, attribute]);
 
   // Listen for system preference changes when mode is "system"
@@ -128,12 +129,11 @@ export function ColorModeScript({
   storageKey?: string;
   attribute?: "class" | "data-theme";
 }): React.ReactElement {
+  const applyAttribute = attribute === "class"
+    ? 'd.classList.add(r);d.classList.remove(r==="dark"?"light":"dark")'
+    : 'd.setAttribute("data-theme",r)';
   const script =
-    `(function(){try{var m=localStorage.getItem("${storageKey}")||"${defaultMode}";var r=m==="system"?globalThis.matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light":m;var d=document.documentElement;${
-      attribute === "class"
-        ? 'd.classList.add(r);d.classList.remove(r==="dark"?"light":"dark")'
-        : 'd.setAttribute("data-theme",r)'
-    }}catch(e){}})()`;
+    `(function(){try{var m=localStorage.getItem("${storageKey}")||"${defaultMode}";var r=m==="system"?globalThis.matchMedia("(prefers-color-scheme:dark)").matches?"dark":"light":m;var d=document.documentElement;${applyAttribute};d.style.colorScheme=r}catch(e){}})()`;
   return <script dangerouslySetInnerHTML={{ __html: script }} />;
 }
 ColorModeScript.displayName = "ColorModeScript";
