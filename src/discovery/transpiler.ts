@@ -12,13 +12,22 @@ import * as pathHelper from "#veryfront/compat/path";
 import { getEsbuildLoader } from "#veryfront/utils/path-utils.ts";
 import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { FileDiscoveryContext } from "./types.ts";
-import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
+import {
+  DISCOVERY_GLOBAL_VERYFRONT_MODULES,
+  rewriteDiscoveryImports,
+  rewriteForDeno,
+} from "./import-rewriter.ts";
 import { COMPILATION_ERROR, FILE_NOT_FOUND } from "#veryfront/errors/error-registry.ts";
 import { wrapWithCurrentContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
-// Static import ensures deno compile includes embedding in the binary.
-// Other modules (agent, tool, etc.) are statically imported elsewhere;
-// embedding is only referenced here.
+// Static imports ensure deno compile includes public discovery modules in the binary.
+import * as agentMod from "#veryfront/agent";
+import * as toolMod from "#veryfront/tool";
+import * as platformMod from "#veryfront/platform";
+import * as promptMod from "#veryfront/prompt";
+import * as resourceMod from "#veryfront/resource";
 import * as embeddingMod from "#veryfront/embedding/index.ts";
+import * as workflowMod from "#veryfront/workflow";
+import * as schemasMod from "#veryfront/schemas";
 
 const transpileCache = new Map<string, unknown>();
 
@@ -31,23 +40,18 @@ let veryfrontGlobalsInitialized = false;
 async function ensureVeryfrontGlobals(): Promise<void> {
   if (veryfrontGlobalsInitialized || !isDenoCompiled) return;
 
-  const loadModule = (specifier: string): Promise<unknown> => import(specifier);
-  const [agentMod, toolMod, platformMod, promptMod, resourceMod] = await Promise.all([
-    loadModule("#veryfront/agent"),
-    loadModule("#veryfront/tool"),
-    loadModule("#veryfront/platform"),
-    loadModule("#veryfront/prompt"),
-    loadModule("#veryfront/resource"),
-  ]);
-
-  (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = {
+  const modules = {
     "veryfront/agent": agentMod,
     "veryfront/tool": toolMod,
     "veryfront/platform": platformMod,
     "veryfront/prompt": promptMod,
     "veryfront/resource": resourceMod,
     "veryfront/embedding": embeddingMod,
-  };
+    "veryfront/workflow": workflowMod,
+    "veryfront/schemas": schemasMod,
+  } satisfies Record<(typeof DISCOVERY_GLOBAL_VERYFRONT_MODULES)[number], unknown>;
+
+  (globalThis as Record<string, unknown>).__VERYFRONT_MODULES__ = modules;
 
   veryfrontGlobalsInitialized = true;
 }
