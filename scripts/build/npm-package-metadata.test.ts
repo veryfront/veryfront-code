@@ -99,9 +99,9 @@ describe("normalizeNpmPackageMetadata", () => {
 });
 
 describe("npm supply-chain policy", () => {
-	it("does not statically load the shell execution dependency at module import time", async () => {
+	it("statically loads auto-enabled sandbox shell dependencies for binary builds", async () => {
 		const source = await Deno.readTextFile("extensions/ext-sandbox-shell-tools/src/index.ts");
 
-		assertEquals(source.includes('from "bash-tool"'), false);
+		assertEquals(source.includes('from "bash-tool"'), true);
 	});
 });
