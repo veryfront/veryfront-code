@@ -423,7 +423,11 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
       returnPath = "/";
     }
 
-    return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnPath)}`;
+    const isHostedProductionDeployment = url.hostname.endsWith(".production.veryfront.org") ||
+      url.hostname.endsWith(".production.veryfront.com");
+    const returnTarget = isHostedProductionDeployment ? url.toString() : returnPath;
+
+    return `https://veryfront.com/sign-in?from=${encodeURIComponent(returnTarget)}`;
   }
 
   function makeProjectNotFoundContext(
