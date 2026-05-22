@@ -1,7 +1,7 @@
 ---
 title: "veryfront/resource"
 description: "Declare and register resources exposable over MCP."
-order: 13
+order: 14
 ---
 
 Declare and register resources exposable over MCP.

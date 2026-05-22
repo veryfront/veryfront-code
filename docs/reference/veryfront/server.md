@@ -1,7 +1,7 @@
 ---
 title: "veryfront/server"
 description: "Server Module Public API This module exports the public interface for the Veryfront server. For routing utilities, import from \"#veryfront/routing\" directly. For observability utilities, import from \"#veryfront/observability\" directly."
-order: 28
+order: 29
 ---
 
 Server Module Public API This module exports the public interface for the Veryfront server. For routing utilities, import from "#veryfront/routing" directly. For observability utilities, import from "#veryfront/observability" directly.
@@ -67,7 +67,6 @@ await server.fetch(new Request("https://example.com/health"));
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `BaseServerOptions` | Shared options for both development and production server modes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L83) |
 | `BuildOptions` | Build System Type Definitions Consolidated from cli/commands/build/types.ts and server/build-types.ts | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/build-types.ts#L6) |
 | `BuildStats` | Public API contract for build stats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/build-types.ts#L28) |
 | `CreateVeryfrontServerOptions` | Options accepted by create veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L28) |

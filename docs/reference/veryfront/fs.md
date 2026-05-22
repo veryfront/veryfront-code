@@ -1,7 +1,7 @@
 ---
 title: "veryfront/fs"
 description: "Public filesystem, path, and cwd utilities."
-order: 21
+order: 22
 ---
 
 Public filesystem, path, and cwd utilities.

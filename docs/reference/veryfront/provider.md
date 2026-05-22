@@ -1,7 +1,7 @@
 ---
 title: "veryfront/provider"
 description: "Provider registry. Maps \"provider/model\" strings to framework-compatible model runtimes. Auto-initializes built-in providers from environment variables on first use."
-order: 20
+order: 21
 ---
 
 Provider registry. Maps "provider/model" strings to framework-compatible model runtimes. Auto-initializes built-in providers from environment variables on first use.

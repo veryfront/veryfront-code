@@ -1,7 +1,7 @@
 ---
 title: "veryfront/embedding"
 description: "Embedding — RAG primitives for chunking, embedding, and similarity search. Provides a facade over the framework's current embedding runtime and LangChain text splitting behind veryfront's own API."
-order: 24
+order: 25
 ---
 
 Embedding — RAG primitives for chunking, embedding, and similarity search. Provides a facade over the framework's current embedding runtime and LangChain text splitting behind veryfront's own API.
@@ -36,7 +36,7 @@ export const { POST, GET, DELETE } = createUploadHandler(store);
 |------|-------------|--------|
 | `chunk` | Splits text into overlapping chunks for embedding. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/chunk.ts#L24) |
 | `clearEmbeddingProviders` | Clear all registered embedding providers (for testing). | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/resolve.ts#L154) |
-| `createUploadHandler` | Creates HTTP route handlers for upload, listing, and deletion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L164) |
+| `createUploadHandler` | Creates HTTP route handlers for upload, listing, and deletion. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-handler.ts#L165) |
 | `embedding` | Creates an embedding facade. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/embedding.ts#L27) |
 | `loadUpload` | Extracts plain text from various upload formats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/upload-loader.ts#L17) |
 | `ragStore` | Creates a persistent RAG store with lazy embedding and similarity search. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/rag-store.ts#L72) |

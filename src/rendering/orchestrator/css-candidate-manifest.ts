@@ -5,6 +5,7 @@ import {
 } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import { getRouteModulePaths } from "#veryfront/modules/manifest/route-module-manifest.ts";
 import { rendererLogger } from "#veryfront/utils";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
 
 interface SourceFileLike {
   path: string;
@@ -40,9 +41,36 @@ interface ProjectCandidateOptions {
 const logger = rendererLogger.component("css-candidate-manifest");
 const SOURCE_EXTENSIONS = [".tsx", ".jsx", ".mdx", ".ts", ".js"];
 const DEV_MANIFEST_TTL_MS = 2_000;
+const ROUTE_CANDIDATE_CACHE_MAX_ENTRIES = 200;
 
 const manifestCache = new Map<string, CandidateManifest>();
 const routeCandidateCache = new Map<string, Set<string>>();
+
+registerCache("css-candidate-manifests", () => ({
+  name: "css-candidate-manifests",
+  entries: manifestCache.size,
+}));
+
+registerCache("css-route-candidates", () => ({
+  name: "css-route-candidates",
+  entries: routeCandidateCache.size,
+  maxEntries: ROUTE_CANDIDATE_CACHE_MAX_ENTRIES,
+}));
+
+export function getCandidateManifestCacheStats(): {
+  manifests: { entries: number };
+  routeCandidates: { entries: number; maxEntries: number };
+} {
+  return {
+    manifests: {
+      entries: manifestCache.size,
+    },
+    routeCandidates: {
+      entries: routeCandidateCache.size,
+      maxEntries: ROUTE_CANDIDATE_CACHE_MAX_ENTRIES,
+    },
+  };
+}
 
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/\/{2,}/g, "/");
@@ -178,12 +206,25 @@ export function getRouteCandidates(options: RouteCandidateOptions): Set<string> 
     }
   }
 
+  let usedFullProjectFallback = false;
+
   // Fallback to full-project candidates for correctness if route manifest is incomplete.
   if (routeCandidates.size === 0) {
+    usedFullProjectFallback = true;
     for (const cls of manifest.allCandidates) routeCandidates.add(cls);
   }
 
-  routeCandidateCache.set(routeCacheKey, routeCandidates);
+  if (!usedFullProjectFallback) {
+    if (
+      routeCandidateCache.size >= ROUTE_CANDIDATE_CACHE_MAX_ENTRIES &&
+      !routeCandidateCache.has(routeCacheKey)
+    ) {
+      const oldestKey = routeCandidateCache.keys().next().value as string | undefined;
+      if (oldestKey) routeCandidateCache.delete(oldestKey);
+    }
+
+    routeCandidateCache.set(routeCacheKey, routeCandidates);
+  }
 
   logger.debug("Resolved route candidates", {
     projectScope: options.projectScope,
