@@ -1103,6 +1103,51 @@ describe("Proxy Handler", () => {
       }
     });
 
+    it("preserves the full protected deployment URL for hosted production sign-in redirects", async () => {
+      const { server, port } = createMockServer((req: Request) => {
+        const { pathname } = new URL(req.url);
+
+        if (pathname === "/auth/token") return createTokenResponse();
+
+        if (pathname.startsWith("/projects/")) {
+          return Response.json({
+            id: "proj-123",
+            slug: "landing-page-6ec5f6e3",
+            name: "Landing Page",
+            environments: [{
+              id: "env-1",
+              name: "production",
+              active_release_id: "rel-123",
+              protected: true,
+            }],
+          });
+        }
+
+        return createNotFoundResponse();
+      });
+
+      try {
+        const handler = createHandler(port);
+        const deploymentUrl = "https://landing-page-6ec5f6e3.production.veryfront.org/";
+        const req = new Request(deploymentUrl, {
+          headers: { host: "landing-page-6ec5f6e3.production.veryfront.org" },
+        });
+
+        const ctx = await handler.processRequest(req);
+
+        assertEquals(ctx.error?.status, 302);
+        assertEquals(ctx.error?.message, "Authentication required");
+        assertEquals(
+          ctx.error?.redirectUrl,
+          `https://veryfront.com/sign-in?from=${encodeURIComponent(deploymentUrl)}`,
+        );
+
+        await handler.close();
+      } finally {
+        await server.shutdown();
+      }
+    });
+
     it("returns 404 for missing preview project without auth token", async () => {
       const { server, port } = createMockServer((req: Request) => {
         const { pathname } = new URL(req.url);
