@@ -26,13 +26,15 @@ describe("html/nonce-injection", () => {
     assertEquals(html.includes('<script nonce="nonce-123">window.__vf=1</script>'), true);
   });
 
-  it("does not duplicate an existing nonce attribute", () => {
+  it("replaces an existing nonce attribute with the response nonce", () => {
     const html = addNonceToHtmlTags(
       `<script nonce="existing">window.__vf=1</script>`,
       "nonce-123",
     );
 
     assertEquals((html.match(/nonce="/g) ?? []).length, 1);
+    assertEquals(html.includes('<script nonce="nonce-123">window.__vf=1</script>'), true);
+    assertEquals(html.includes('nonce="existing"'), false);
     assertEquals(html.includes('nonce="nonce-123" nonce="existing"'), false);
   });
 

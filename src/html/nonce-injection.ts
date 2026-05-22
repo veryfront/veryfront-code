@@ -112,8 +112,6 @@ function findAttribute(tag: string, attributeName: string): ParsedAttribute | un
 function injectNonceIntoOpeningTag(tag: string, escapedNonce: string): string {
   const existingNonce = findAttribute(tag, "nonce");
   if (existingNonce) {
-    if (existingNonce.value?.trim()) return tag;
-
     return `${tag.slice(0, existingNonce.start)}nonce="${escapedNonce}"${
       tag.slice(existingNonce.end)
     }`;

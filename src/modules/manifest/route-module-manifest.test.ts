@@ -43,20 +43,27 @@ describe("Route Module Manifest", () => {
     ]);
   });
 
-  it("recordSSRModules merges with existing manifest", () => {
-    recordSSRModules("test-project", "index", ["_vf_modules/components/Footer.js"]);
+  it("recordSSRModules replaces stale modules for the route with the latest render graph", () => {
+    recordSSRModules("test-project", "index", [
+      "_vf_modules/components/Header.js",
+      "_vf_modules/components/Footer.js",
+    ]);
 
     const manifest = getRouteManifest("test-project", "index");
     assertExists(manifest);
-    assertEquals(manifest.moduleCount, 3);
+    assertEquals(manifest.moduleCount, 2);
+    assertEquals(
+      manifest.modules.map((module) => module.path),
+      ["components/Header.js", "components/Footer.js"],
+    );
   });
 
   it("generateModulePreloadHintsFromManifest returns HTML hints", () => {
     const hints = generateModulePreloadHintsFromManifest("test-project", "index", 10);
-    assertEquals(hints.length, 3);
+    assertEquals(hints.length, 2);
     assertEquals(
       hints[0],
-      '<link rel="modulepreload" href="/_vf_modules/pages/index.js">',
+      '<link rel="modulepreload" href="/_vf_modules/components/Header.js">',
     );
   });
 

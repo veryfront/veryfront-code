@@ -32,8 +32,8 @@ describe("server/handlers/request/static.handler", () => {
           [
             "<!doctype html>",
             "<html><head>",
-            '<script type="importmap">{"imports":{"react":"https://esm.sh/react"}}</script>',
-            "<style>.chat{color:red}</style>",
+            '<script type="importmap" nonce="build-nonce">{"imports":{"react":"https://esm.sh/react"}}</script>',
+            '<style nonce="build-nonce">.chat{color:red}</style>',
             "</head><body>",
             '<script id="veryfront-hydration-data" type="application/json">{"page":"index"}</script>',
             `<script type="module">window.tpl="<script>alert(1)";</script>`,
@@ -61,6 +61,7 @@ describe("server/handlers/request/static.handler", () => {
 
     assertEquals(body.includes(`<script type="importmap" nonce="${nonce}">`), true);
     assertEquals(body.includes(`<style nonce="${nonce}">.chat{color:red}</style>`), true);
+    assertEquals(body.includes('nonce="build-nonce"'), false);
     assertEquals(
       body.includes(
         `<script id="veryfront-hydration-data" type="application/json" nonce="${nonce}">{"page":"index"}</script>`,

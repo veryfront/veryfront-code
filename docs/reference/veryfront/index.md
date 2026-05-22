@@ -119,6 +119,7 @@ Reference modules:
 
 User guides:
 
+- [quickstart](../../guides/quickstart.md): Build and run a first agent app
 - [index](../../guides/index.md): Browse the guide map
 - [installation](../../guides/installation.md): Install the CLI and framework
 - [create-a-project](../../guides/create-a-project.md): Scaffold and run a project

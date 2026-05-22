@@ -331,7 +331,7 @@ describe("HTMLGenerator helpers", () => {
       assertEquals(html.includes('nonce="nonce-123">window.__HEAD_OK__=true</script>'), true);
     });
 
-    it("does not duplicate an existing nonce attribute", async () => {
+    it("replaces existing nonce attributes with the response nonce without duplication", async () => {
       const mockAdapter = createMockAdapter(async () => "");
 
       const generator = createHTMLGenerator({
@@ -356,7 +356,15 @@ describe("HTMLGenerator helpers", () => {
         options: { nonce: "nonce-123" },
       });
 
-      assertEquals((html.match(/nonce="existing-nonce"/g) ?? []).length, 2);
+      assertEquals(
+        html.includes('<style nonce="nonce-123">.chat{color:red}</style>'),
+        true,
+      );
+      assertEquals(
+        html.includes('<script nonce="nonce-123">window.__vf=1</script>'),
+        true,
+      );
+      assertEquals(html.includes('nonce="existing-nonce"'), false);
       assertEquals(html.includes('nonce="nonce-123" nonce="existing-nonce"'), false);
     });
 
