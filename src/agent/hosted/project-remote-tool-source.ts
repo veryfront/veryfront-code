@@ -234,19 +234,8 @@ function prepareVeryfrontApiToolInput(input: {
       return prepared;
     }
 
-    if (typeof prepared.end_user_id === "string" && prepared.end_user_id.length > 0) {
-      return prepared;
-    }
-
-    const endUserId = input.getEndUserId?.() ?? toolInputContext.context?.endUserId;
-    if (typeof endUserId !== "string" || endUserId.length === 0) {
-      return prepared;
-    }
-
-    return {
-      ...prepared,
-      end_user_id: endUserId,
-    };
+    const { end_user_id: _endUserId, ...trustedInput } = prepared;
+    return trustedInput;
   };
 }
 

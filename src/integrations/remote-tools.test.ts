@@ -156,7 +156,6 @@ describe("integrations/remote-tools", () => {
     assertEquals(requestBody, {
       name: "github:list-repos",
       arguments: { visibility: "private" },
-      end_user_id: "end-user-123",
     });
     assertEquals(result, {
       error: "authentication_required",
@@ -164,7 +163,7 @@ describe("integrations/remote-tools", () => {
     });
   });
 
-  it("forwards run and agent context when executing remote integration tools", async () => {
+  it("forwards run and agent context without caller-supplied end-user identity", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
       VERYFRONT_API_TOKEN: "env-token",
@@ -190,7 +189,6 @@ describe("integrations/remote-tools", () => {
     assertEquals(requestBody, {
       name: "gmail__list_emails",
       arguments: { maxResults: 10 },
-      end_user_id: "end-user-123",
       run_id: "run-123",
       agent_id: "agent-123",
     });

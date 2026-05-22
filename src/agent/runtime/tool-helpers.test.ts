@@ -256,7 +256,6 @@ describe("tool-helpers", () => {
         assertEquals(requestBody, {
           name: "gmail__list_emails",
           arguments: { maxResults: 10 },
-          end_user_id: "user-123",
           run_id: "run-123",
           agent_id: "agent-123",
         });

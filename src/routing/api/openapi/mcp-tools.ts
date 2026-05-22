@@ -156,7 +156,7 @@ async function executeAPICall(
   path: string,
   input: Record<string, unknown>,
   operation: OpenAPIOperation,
-  context?: ToolExecutionContext,
+  _context?: ToolExecutionContext,
 ): Promise<unknown> {
   let url = `${config.baseUrl}${path}`;
 
@@ -185,12 +185,6 @@ async function executeAPICall(
     ...config.headers,
     ...((input.headers as Record<string, string> | undefined) ?? {}),
   };
-
-  // Propagate end-user identity for per-user token resolution
-  const endUserId = context?.endUserId;
-  if (typeof endUserId === "string" && endUserId.length > 0) {
-    headers["X-End-User-Id"] = endUserId;
-  }
 
   const requestInit: RequestInit = {
     method: method.toUpperCase(),
