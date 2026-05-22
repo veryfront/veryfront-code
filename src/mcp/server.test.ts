@@ -77,7 +77,7 @@ describe("mcp/server", () => {
     globalThis.fetch = originalFetch;
   });
 
-  it("extracts end-user and project IDs from HTTP headers into tool context", async () => {
+  it("does not trust caller-supplied end-user IDs from HTTP headers", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -115,7 +115,7 @@ describe("mcp/server", () => {
     const response = await handler(request);
     assertEquals(response.status, 200);
     assertExists(capturedContext);
-    assertEquals(capturedContext?.endUserId, "user_123");
+    assertEquals(capturedContext?.endUserId, undefined);
     assertEquals(capturedContext?.projectId, "proj-abc_123");
   });
 
@@ -160,7 +160,7 @@ describe("mcp/server", () => {
     assertEquals(capturedContext, undefined);
   });
 
-  it("includes integration context headers in CORS preflight response", async () => {
+  it("only includes trusted integration context headers in CORS preflight response", async () => {
     const server = createMCPServer({
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
@@ -175,7 +175,7 @@ describe("mcp/server", () => {
     assertEquals(response.status, 204);
     const allowHeaders = response.headers.get("Access-Control-Allow-Headers");
     assertExists(allowHeaders);
-    assertStringIncludes(allowHeaders, "X-End-User-Id");
+    assertEquals(allowHeaders.includes("X-End-User-Id"), false);
     assertStringIncludes(allowHeaders, "X-Project-Id");
   });
 

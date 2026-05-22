@@ -16,7 +16,6 @@ import { TaskStore } from "./task-store.ts";
 
 const logger = baseLogger.component("mcp-server");
 const MAX_CONTEXT_HEADER_LENGTH = 255;
-const END_USER_ID_PATTERN = /^[a-zA-Z0-9._@-]+$/;
 const PROJECT_ID_PATTERN = /^[a-zA-Z0-9._-]+$/;
 
 type JSONRPCParams = Record<string, unknown> | unknown[];
@@ -704,11 +703,6 @@ export class MCPServer {
   private extractRequestContext(request: Request): ToolExecutionContext | undefined {
     const context: ToolExecutionContext = {};
 
-    const endUserId = readAllowedHeader(request, "x-end-user-id", END_USER_ID_PATTERN);
-    if (endUserId) {
-      context.endUserId = endUserId;
-    }
-
     const projectId = readAllowedHeader(request, "x-project-id", PROJECT_ID_PATTERN);
     if (projectId) {
       context.projectId = projectId;
@@ -753,8 +747,7 @@ export class MCPServer {
     return {
       "Access-Control-Allow-Origin": matchedOrigin,
       "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-      "Access-Control-Allow-Headers":
-        "Content-Type, Authorization, MCP-Session-Id, X-End-User-Id, X-Project-Id",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization, MCP-Session-Id, X-Project-Id",
       "Vary": "Origin",
     };
   }
