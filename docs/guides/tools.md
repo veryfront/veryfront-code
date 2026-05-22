@@ -4,9 +4,7 @@ description: "Define tools with schema-backed inputs that agents can call."
 order: 19
 ---
 
-A tool is a typed function an agent can call. Each tool declares an `inputSchema` (zod or any Veryfront schema), a `description` the model reads, and an `execute` function the framework runs when the model calls it.
-
-Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
+A tool is a typed function an agent can call. It declares input, describes when to use it, and runs server-side code.
 
 ## Prerequisites
 
@@ -28,7 +26,7 @@ export default tool({
   description: "Get the current weather for a city",
   inputSchema: z.object({
     city: z.string().describe("City name"),
-    units: z.enum(["celsius", "fahrenheit"]).default("celsius"),
+    units: z.enum(["celsius", "fahrenheit"]).default("celsius").describe("Temperature unit"),
   }),
   execute: async ({ city, units }) => {
     const temperature = units === "fahrenheit" ? 72 : 22;
@@ -37,7 +35,7 @@ export default tool({
 });
 ```
 
-The filename becomes the tool's ID. This tool registers as `"get-weather"` (hyphens from the filename are preserved).
+The filename becomes the tool's ID. `tools/get-weather.ts` registers as `getWeather`.
 
 ## Try a tool directly
 
@@ -123,7 +121,7 @@ import { z } from "zod";
 
 export default tool({
   description: "Look up a user by email",
-  inputSchema: z.object({ email: z.string().email() }),
+  inputSchema: z.object({ email: z.string().email().describe("User email address") }),
   execute: async ({ email }) => {
     const user = await db.users.findByEmail(email);
     if (!user) throw new Error(`No user found with email ${email}`);
@@ -185,7 +183,7 @@ export default agent({
   tools: {
     calculate: tool({
       description: "Evaluate a math expression",
-      inputSchema: z.object({ expression: z.string() }),
+      inputSchema: z.object({ expression: z.string().describe("Math expression to evaluate") }),
       execute: async ({ expression }) => ({
         result: evaluateMathExpression(expression),
       }),
@@ -216,7 +214,7 @@ export async function POST(request: Request) {
 ```bash
 curl -X POST http://localhost:3000/api/debug/tools \
   -H "Content-Type: application/json" \
-  -d '{"name":"get-weather","input":{"city":"Berlin"}}'
+  -d '{"name":"getWeather","input":{"city":"Berlin"}}'
 ```
 
 A working tool returns the JSON your `execute` function produced. Remove the
@@ -230,3 +228,4 @@ debug route before deploying.
 ## Related
 
 - [`veryfront/tool`](../reference/veryfront/tool.md): tool API reference
+- [`veryfront/schemas`](../reference/veryfront/schemas.md): reusable schema helpers

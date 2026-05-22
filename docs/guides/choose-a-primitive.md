@@ -14,8 +14,8 @@ clear and prevents overlapping agents, workflows, jobs, and integrations.
 | Answer users with model reasoning, tools, memory, or skills | Agent                  | [Agents](./agents.md)             |
 | Give an agent one typed capability                          | Tool                   | [Tools](./tools.md)               |
 | Coordinate multiple steps, branches, approvals, or retries  | Workflow               | [Workflows](./workflows.md)       |
-| Run durable background work now or on a schedule            | Job or cron job        | [Jobs](./jobs.md)                 |
 | Define project-owned background work                        | Task                   | [Tasks](./tasks.md)               |
+| Run durable background work now or on a schedule            | Job or cron job        | [Jobs](./jobs.md)                 |
 | Connect agents to third-party services                      | Integration with OAuth | [Integrations](./integrations.md) |
 | Expose project capabilities to assistants over a protocol   | MCP server             | [MCP server](./mcp-server.md)     |
 | Run isolated commands or file operations                    | Sandbox                | [Sandbox](./sandbox.md)           |
@@ -63,6 +63,7 @@ Run the guide's example or validation command before adding another primitive.
 - [Create a project](./create-a-project.md): create a project
 - [Agents](./agents.md): define an agent
 - [Workflows](./workflows.md): orchestrate multi-step work
+- [Tasks](./tasks.md): define background task functions
 - [Jobs](./jobs.md): run durable background work
 
 ## Related

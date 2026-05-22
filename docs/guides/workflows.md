@@ -4,7 +4,9 @@ description: "DAG-based multi-step workflows with branching and parallelism."
 order: 25
 ---
 
-A workflow is a file in `workflows/` that declares ordered steps. Each step runs an agent or a tool, and the workflow runtime threads outputs between them. Steps support parallel execution, branches, loops, retries, timeouts, and human-in-the-loop approvals.
+A workflow is a file in `workflows/` that declares ordered steps. Each step runs an agent or a tool. The workflow runtime passes outputs between steps.
+
+Use workflows for multi-step work that needs ordering, branching, parallelism, retries, timeouts, or approvals.
 
 Workflow files are definitions. Starting a workflow creates a workflow run. On
 the Veryfront platform, that workflow run is backed by a job so it can be
@@ -48,12 +50,14 @@ Steps run in order. Each step's output is available to the next step via the wor
 
 ## Start a workflow
 
-Define workflows in `workflows/`, then start them from the surface that owns the user or system event. Common start points are:
+Define workflows in `workflows/`, then start them from the surface that owns the user or system event.
 
-- an API route, when a user action or webhook starts the run
-- an agent tool, when an agent should decide whether to start the run
-- a task, when a scheduled job or background process starts the run
-- a client component, when the app exposes a workflow-start API route
+| Start point | Use when |
+| ----------- | -------- |
+| API route | A user action or webhook starts the run. |
+| Agent tool | An agent decides whether to start the run. |
+| Task | Background work starts the run. |
+| Client UI | The UI calls an API route that starts the run. |
 
 Use `createWorkflowClient()` to register and start a workflow from server code:
 
@@ -96,40 +100,13 @@ curl http://localhost:3000/api/start-content-workflow \
   -d '{"topic":"AI agents"}'
 ```
 
-The response contains the workflow run ID:
+The route returns the workflow run ID:
 
 ```json
 { "runId": "run_..." }
 ```
 
-Call the API route from a client component:
-
-```tsx
-"use client";
-import { useState } from "react";
-
-export default function StartContentWorkflow() {
-  const [runId, setRunId] = useState<string | null>(null);
-
-  async function startWorkflow() {
-    const response = await fetch("/api/start-content-workflow", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ topic: "AI agents" }),
-    });
-    const data = await response.json();
-    setRunId(data.runId);
-  }
-
-  return (
-    <button type="button" onClick={startWorkflow}>
-      {runId ? `Run ${runId}` : "Start workflow"}
-    </button>
-  );
-}
-```
-
-Inside an agent tool, start the workflow from the tool's `execute` function:
+Inside an agent tool, start the workflow from `execute`:
 
 ```ts
 // tools/start-content-workflow.ts
@@ -156,7 +133,7 @@ workflows.register(contentPipeline);
 
 export default tool({
   description: "Start the article workflow for a topic",
-  inputSchema: z.object({ topic: z.string() }),
+  inputSchema: z.object({ topic: z.string().describe("Article topic") }),
   execute: async ({ topic }) => {
     const handle = await workflows.start("content-pipeline", { topic });
     return { runId: handle.runId };
@@ -168,24 +145,7 @@ Use `handle.result()` only when the caller should wait for completion. Return th
 
 ## Schedule a workflow
 
-Use a cron job with a workflow target when a workflow must run on a schedule:
-
-```ts
-import { createJobsClient } from "veryfront/jobs";
-
-const jobs = createJobsClient({
-  authToken: process.env.VERYFRONT_API_TOKEN,
-  projectReference: "dreamy-haven",
-});
-
-await jobs.cron.create({
-  name: "Daily content pipeline",
-  target: "workflow:content-pipeline",
-  schedule: "0 8 * * *",
-  timezone: "Europe/Stockholm",
-  config: { topic: "Daily update" },
-});
-```
+Use a cron job with a `workflow:<workflow-id>` target when a workflow must run on a schedule. See [Jobs and cron jobs](./jobs.md) for the scheduling API and event monitoring.
 
 Each scheduled trigger creates a workflow run backed by a job.
 

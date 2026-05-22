@@ -6,8 +6,6 @@ order: 20
 
 Agents are stateless by default: each request gets the messages the client sends, and nothing else. Configure `memory` on the agent to persist history across requests, and use `createAgUiHandler` to stream the response back.
 
-Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
-
 Memory configuration is independent of model selection, so these examples omit `model` and follow the runtime default. To test, expose the agent through `/api/ag-ui`, run `veryfront dev`, and send messages from the [Chat UI](./chat-ui.md) guide or with `curl`.
 
 ## Prerequisites

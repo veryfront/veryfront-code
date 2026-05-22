@@ -4,9 +4,13 @@ description: "OAuth 2.0 helpers with a built-in provider catalog."
 order: 33
 ---
 
-Sign users in with OAuth 2.0 using `veryfront/oauth`. The module ships a catalog of pre-configured providers (GitHub, Google, Slack, Notion, and 30+ more) and the four helpers you need to wire a flow: `createOAuthInitHandler`, `createOAuthCallbackHandler`, `createOAuthStatusHandler`, and `createOAuthDisconnectHandler`. Each helper requires a `getUserId` function so tokens are stored per-user.
+Sign users in with OAuth 2.0 using `veryfront/oauth`.
 
-Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
+The module provides:
+
+- pre-configured providers such as GitHub, Google, Slack, and Notion
+- route helpers for init, callback, status, and disconnect
+- per-user token storage through a required `getUserId` function
 
 ## Prerequisites
 

@@ -28,6 +28,7 @@ docs/reference/
     agent.md
     tool.md
     workflow.md
+    schemas.md
     prompt.md
     resource.md
     jobs.md
@@ -63,6 +64,7 @@ docs/reference/
 | [`veryfront/agent`](./veryfront/agent.md) | AI agents with memory, tools, and multi-agent composition. |
 | [`veryfront/tool`](./veryfront/tool.md) | Define tools with schema-backed inputs for agents and MCP. |
 | [`veryfront/workflow`](./veryfront/workflow.md) | DAG-based agentic workflows with human-in-the-loop support. |
+| [`veryfront/schemas`](./veryfront/schemas.md) | Reusable validation schemas, lazy schema factories, and JSON Schema helpers. |
 | [`veryfront/prompt`](./veryfront/prompt.md) | Declare and register prompts exposable over MCP. |
 | [`veryfront/resource`](./veryfront/resource.md) | Declare and register resources exposable over MCP. |
 | [`veryfront/jobs`](./veryfront/jobs.md) | Jobs module for durable project-scoped background execution. Provides a public SDK surface for one-off jobs, cron jobs, batch summaries, job target discovery, and the canonical split between user-visible `events` and raw debugging `logs`. Task definitions run as job runs with `task:<task-id>` targets. Workflow definitions run as workflow runs with `workflow:<workflow-id>` targets and are backed by jobs for queueing and dispatch. |

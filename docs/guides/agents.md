@@ -4,11 +4,9 @@ description: "Create an AI agent with a system prompt, tools, and memory."
 order: 17
 ---
 
-An agent is a file in `agents/` that exports a system prompt, optional tools, optional memory, and optional skills. The runtime auto-discovers it on startup and exposes it via `getAgent(id)` or an AG-UI route.
+An agent is a file in `agents/` that exports a system prompt, optional tools, optional memory, and optional skills. The runtime auto-discovers it on startup and exposes it via `getAgent(id)` or a route created with `createAgUiHandler()`.
 
 For the normal path, omit `model` and let runtime conventions choose: local inference by default, Veryfront Cloud when `VERYFRONT_API_TOKEN` plus project context are set.
-
-Route examples use the default app router. To use `pages/api/**` instead, set `router: "pages"` in `veryfront.config.ts`.
 
 ## Prerequisites
 
@@ -123,24 +121,11 @@ direct subprocesses.
 
 ## Connect to a route
 
-Use `createAgUiHandler()` to expose a registered agent through an AG-UI stream:
+Expose a registered agent through `createAgUiHandler()` when a browser or external client needs AG-UI streaming.
 
-```ts
-// app/api/ag-ui/route.ts
-import { createAgUiHandler } from "veryfront/agent";
+Use [Create an agent](./create-an-agent.md) for the copyable quick-start route. Use [Chat UI](./chat-ui.md) to pair that route with `useChat({ api: "/api/ag-ui" })`.
 
-export const POST = createAgUiHandler("assistant");
-```
-
-Try it with the dev server running:
-
-```bash
-curl -N http://localhost:3000/api/ag-ui \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Say hello in one sentence."}]}]}'
-```
-
-The response streams AG-UI SSE. Pair it with `useChat({ api: "/api/ag-ui" })` in browser UI code. If the route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `createAgUiHandler()`.
+If a route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 
@@ -212,17 +197,17 @@ export default agent({
 
 ## Verify it worked
 
-Save the agent file, restart `veryfront dev`, and hit the AG-UI route:
+Save the agent file, restart `veryfront dev`, and invoke it from server code:
 
-```bash
-curl -N http://localhost:3000/api/ag-ui \
-  -H "Content-Type: application/json" \
-  -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Hello"}]}]}'
+```ts
+import { getAgent } from "veryfront/agent";
+
+const agent = getAgent("assistant");
+const result = await agent.generate({ input: "Hello" });
+console.log(result.text);
 ```
 
-The server should stream AG-UI events that end with a `RunFinished` event.
-If the response is `404`, the AG-UI route file is missing; if it is `500`,
-check the dev-server log for the agent registration or provider error.
+If generation fails, check the dev-server log for agent registration or provider errors. If AG-UI routing fails, use the route verification in [Create an agent](./create-an-agent.md). A healthy AG-UI stream ends with a `RunFinished` event.
 
 ## Next
 

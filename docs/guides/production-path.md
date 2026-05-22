@@ -4,7 +4,9 @@ description: "Build one Veryfront route from local project to production verific
 order: 10
 ---
 
-Take one Veryfront route from local dev to a deployed production check. Each step adds one piece: a project, a primitive, a user-visible surface, then the production verification loop.
+Take one Veryfront route from local dev to a deployed production check.
+
+Use this guide as a checklist. Use [Deploy a project](./deploy-a-project.md) for the quick-start commands and [Building and deploying](./deploying.md) for build configuration.
 
 ## Prerequisites
 
@@ -25,7 +27,7 @@ Take one Veryfront route from local dev to a deployed production check. Each ste
 
 ## Create the project
 
-Start from a template that matches the product shape you want to test.
+Start from the template that matches the product shape you want to test:
 
 ```bash
 veryfront init production-path --template minimal
@@ -33,8 +35,7 @@ cd production-path
 veryfront dev
 ```
 
-Open `http://localhost:3000` and keep the dev server running while you add the
-first route.
+Keep one route open while you add the first production path.
 
 ## Choose the primitive
 
@@ -66,38 +67,19 @@ Pick one boundary and make it observable in both dev and production.
 
 Keep the first production path narrow. Once it works end to end, add more pages, agents, integrations, or jobs behind the same verification loop.
 
-## Build and run production locally
+## Build and deploy
 
-Stop the dev server, then run the production build locally:
+Use the same route for every stage.
 
-```bash
-veryfront build
-veryfront start
-```
+| Stage | Command | Check |
+| ----- | ------- | ----- |
+| Dev | `veryfront dev` | The route responds locally. |
+| Local production | `veryfront build`, then `veryfront start` | The same route responds from the production server. |
+| Deployed production | `veryfront deploy`, then `veryfront open` | The deployed route responds. |
 
-Open `http://localhost:3000` again and test the same route or API endpoint you
-tested in dev.
-
-## Deploy
-
-Deploy after the local production server matches the dev behavior:
-
-```bash
-veryfront deploy
-```
-
-For a non-Cloud target, use the build output from `veryfront build` and follow
-the target host's runtime requirements.
+For non-Cloud targets, use the output from `veryfront build` and the target host's runtime requirements.
 
 ## Verify it worked
-
-Use the same checks at each stage:
-
-| Stage               | Check                                                                             |
-| ------------------- | --------------------------------------------------------------------------------- |
-| Dev                 | `veryfront dev` prints a local URL and the route responds.                        |
-| Local production    | `veryfront build` exits successfully and `veryfront start` serves the same route. |
-| Deployed production | `veryfront deploy` completes, then `veryfront open` opens the deployed route.     |
 
 For API routes, compare the dev and production responses with `curl`. For pages, open the same path in both environments. For agents, workflows, tasks, jobs, or integrations, trigger one minimal run and confirm the expected output or status.
 
