@@ -1,7 +1,7 @@
 ---
 title: "Chat composition"
 description: "Build custom chat layouts with Chat and Message composition components."
-order: 22
+order: 23
 ---
 
 When the preset `Chat` component is too constrained, build a custom layout from `Chat.Root`, `Chat.MessageList`, `Chat.Composer`, and the `Message` compound components. Veryfront still owns the streaming, loading state, and message wiring.

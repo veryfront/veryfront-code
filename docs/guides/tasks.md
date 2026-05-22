@@ -1,7 +1,7 @@
 ---
 title: "Tasks"
 description: "Define background task functions that can run locally or as cloud jobs."
-order: 29
+order: 30
 ---
 
 Tasks are user-defined functions in `tasks/`. Run them locally with `veryfront task <name>` or in the cloud as job runs.

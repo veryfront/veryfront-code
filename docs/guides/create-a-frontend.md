@@ -1,7 +1,7 @@
 ---
 title: "Create a frontend"
 description: "Add a page and a navigation link to a Veryfront project."
-order: 5
+order: 6
 ---
 
 Add a page to your Veryfront project and link to it from the home page. This is the fifth step in the Getting Started flow, between [Create an API](./create-an-api.md) and [Deploy a project](./deploy-a-project.md).

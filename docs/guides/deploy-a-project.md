@@ -1,7 +1,7 @@
 ---
 title: "Deploy a project"
 description: "Build a Veryfront project for production and ship it to Veryfront Cloud or another host."
-order: 6
+order: 7
 ---
 
 Build a Veryfront project for production and ship it. This is the final step in the Getting Started flow.

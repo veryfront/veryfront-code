@@ -1,7 +1,7 @@
 ---
 title: "API routes"
 description: "HTTP handlers, request parsing, and streaming responses."
-order: 13
+order: 14
 ---
 
 An API route is a file under `app/api/` (or `pages/api/`) that exports named HTTP method handlers. Handlers receive the standard Web `Request` and return a `Response`.

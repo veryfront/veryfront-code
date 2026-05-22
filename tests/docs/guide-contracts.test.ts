@@ -161,11 +161,29 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "index.md": {
     references: [],
     snippets: [
+      "Veryfront Code",
+      "Prerequisite knowledge",
+      "How to use these guides",
+      "Installation",
+      "TypeScript",
+      "React",
+    ],
+  },
+  "veryfront-code.md": {
+    references: [],
+    snippets: [
+      "Why Veryfront Code",
+      "Agents",
+      "Tools",
+      "Workflows",
+      "Pages & Routing",
       "Getting Started",
-      "Create a project",
-      "Create an agent",
-      "Choose a primitive",
-      "Pages and APIs",
+      "Foundations",
+      "AI primitives",
+      "Chat UI",
+      "Orchestration",
+      "External systems",
+      "Extensions",
       "Ship to production",
     ],
   },
@@ -327,7 +345,7 @@ describe("published guide contracts", () => {
         assertStringIncludes(guide, snippet);
       }
 
-      if (filename !== "index.md") {
+      if (filename !== "index.md" && filename !== "veryfront-code.md") {
         assertStringIncludes(guide, "## Verify it worked");
       }
     });

@@ -1,7 +1,7 @@
 ---
 title: "Pages and routing"
 description: "File-based routing, layouts, dynamic routes, and MDX pages."
-order: 11
+order: 12
 ---
 
 Veryfront uses file-system based routing. Folders and files under `app/` (or `pages/`) define routes; layouts compose down the tree; brackets in path segments mark dynamic params.

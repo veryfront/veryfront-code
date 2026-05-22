@@ -1,7 +1,7 @@
 ---
 title: "Create an API"
 description: "Add an HTTP endpoint to a Veryfront project with a typed Request and Response."
-order: 4
+order: 5
 ---
 
 Add an HTTP endpoint to a Veryfront project. This is the fourth step in the Getting Started flow, between [Create an agent](./create-an-agent.md) and [Create a frontend](./create-a-frontend.md).

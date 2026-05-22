@@ -1,7 +1,7 @@
 ---
 title: "Create a project"
 description: "Scaffold a new Veryfront project from a template and run it locally."
-order: 2
+order: 3
 ---
 
 Scaffold a new Veryfront project from a template, then run it locally on the dev server. This is the second step in the Getting Started flow, between [Installation](./installation.md) and [Create an agent](./create-an-agent.md).

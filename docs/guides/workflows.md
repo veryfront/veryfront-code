@@ -1,7 +1,7 @@
 ---
 title: "Workflows"
 description: "DAG-based multi-step workflows with branching and parallelism."
-order: 25
+order: 26
 ---
 
 A workflow is a file in `workflows/` that declares ordered steps. Each step runs an agent or a tool. The workflow runtime passes outputs between steps.

@@ -1,7 +1,7 @@
 ---
 title: "Chat theming"
 description: "Customize chat theme, feature toggles, sources, attachments, and contexts."
-order: 24
+order: 25
 ---
 
 Customize the `Chat` component's theme, attachments, model selector, sources, and feedback actions through props. Each option is independent: turn on what you need and leave the rest at the defaults.

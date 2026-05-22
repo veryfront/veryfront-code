@@ -1,7 +1,7 @@
 ---
 title: "Project structure"
 description: "Where to put routes, AI primitives, shared code, and configuration."
-order: 7
+order: 8
 ---
 
 A Veryfront project keeps routes in `app/` or `pages/`. Keep AI primitives at

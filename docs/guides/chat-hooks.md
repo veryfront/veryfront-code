@@ -1,7 +1,7 @@
 ---
 title: "Chat hooks"
 description: "Use headless chat, agent, completion, voice, and thread hooks."
-order: 23
+order: 24
 ---
 
 Headless hooks expose the chat runtime without the preset UI.
