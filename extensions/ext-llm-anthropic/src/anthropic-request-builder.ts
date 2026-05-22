@@ -209,21 +209,40 @@ function toAnthropicMessages(
 } {
   const systemParts: string[] = [];
   const messages: AnthropicCompatibleMessage[] = [];
+  const lastAssistantTextIndex = prompt.findLastIndex((message) =>
+    message.role === "assistant" &&
+    message.content.some((part) => part.type === "text" && part.text.length > 0)
+  );
+  let skippingHistoricalToolResults = false;
 
-  for (const message of prompt) {
+  for (const [index, message] of prompt.entries()) {
     switch (message.role) {
       case "system":
+        skippingHistoricalToolResults = false;
         if (message.content.length > 0) {
           systemParts.push(message.content);
         }
         break;
       case "user":
+        skippingHistoricalToolResults = false;
         pushAnthropicUserContent(messages, toAnthropicUserContent(message.content));
         break;
-      case "assistant":
+      case "assistant": {
+        skippingHistoricalToolResults = false;
+        const shouldCompactCompletedToolRound = index < lastAssistantTextIndex &&
+          message.content.some((part) => part.type === "tool-call");
+        const assistantContent = shouldCompactCompletedToolRound
+          ? message.content.filter((part) => part.type === "text" && part.text.length > 0)
+          : message.content;
+
+        if (assistantContent.length === 0) {
+          skippingHistoricalToolResults = shouldCompactCompletedToolRound;
+          break;
+        }
+
         messages.push({
           role: "assistant",
-          content: message.content.map((part) => {
+          content: assistantContent.map((part) => {
             if (part.type === "text") {
               return { type: "text", text: part.text };
             }
@@ -248,8 +267,13 @@ function toAnthropicMessages(
             };
           }),
         });
+        skippingHistoricalToolResults = shouldCompactCompletedToolRound;
         break;
+      }
       case "tool":
+        if (skippingHistoricalToolResults) {
+          break;
+        }
         pushAnthropicUserContent(
           messages,
           message.content.map((part) => ({
