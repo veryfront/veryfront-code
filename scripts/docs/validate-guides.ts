@@ -160,29 +160,50 @@ for (const [order, files] of guideOrders) {
   }
 }
 
-// 2. Validate index.md lists all guide files
-const indexPath = `${GUIDES_DIR}/index.md`;
-try {
-  const indexContent = Deno.readTextFileSync(indexPath);
-  for (const filename of guideFiles) {
-    if (filename === "index.md") continue;
-    const slug = filename.replace(".md", "");
-    if (!indexContent.includes(`./${slug}.md`)) {
-      addWarning(`guides/index.md`, `Guide "${slug}" not listed in index`);
+// 2. Validate that every guide is listed in either index.md or
+//    veryfront-code.md. Both files act as catalog roots: the Intro page
+//    links onward to Veryfront Code, and Veryfront Code carries the
+//    topic-grouped tables.
+const catalogFiles = ["index.md", "veryfront-code.md"];
+const listedSlugs = new Set<string>();
+
+for (const catalogFile of catalogFiles) {
+  const filepath = `${GUIDES_DIR}/${catalogFile}`;
+  let content: string;
+  try {
+    content = Deno.readTextFileSync(filepath);
+  } catch {
+    // index.md must exist; veryfront-code.md is optional until the split
+    // lands. Only the missing index.md is treated as a hard error.
+    if (catalogFile === "index.md") {
+      addIssue(`guides/${catalogFile}`, `Could not read ${catalogFile}`);
     }
+    continue;
   }
 
-  // Check index links point to real files
-  const indexLinkRe = /\(\.\/([a-z0-9-]+)\.md\)/g;
+  const linkRe = /\(\.\/([a-z0-9-]+)\.md\)/g;
   let m: RegExpExecArray | null;
-  while ((m = indexLinkRe.exec(indexContent))) {
+  while ((m = linkRe.exec(content))) {
     const slug = m[1];
+    listedSlugs.add(slug);
     if (!GUIDE_SLUG_TO_FILE[slug]) {
-      addIssue("guides/index.md", `Index links to ./${slug}.md but no file exists`);
+      addIssue(
+        `guides/${catalogFile}`,
+        `Catalog links to ./${slug}.md but no file exists`,
+      );
     }
   }
-} catch {
-  addIssue("guides/index.md", "Could not read index.md");
+}
+
+for (const filename of guideFiles) {
+  if (catalogFiles.includes(filename)) continue;
+  const slug = filename.replace(".md", "");
+  if (!listedSlugs.has(slug)) {
+    addWarning(
+      "guides/index.md",
+      `Guide "${slug}" not listed in index.md or veryfront-code.md`,
+    );
+  }
 }
 
 // 3. Check imports in code examples reference public package modules.
