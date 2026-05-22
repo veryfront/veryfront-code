@@ -268,7 +268,7 @@ Deno.test("createHostedProjectRemoteToolSources defaults to the Veryfront API MC
   assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
 });
 
-Deno.test("createHostedProjectRemoteToolSources injects end_user_id for Veryfront API integration tools", async () => {
+Deno.test("createHostedProjectRemoteToolSources does not inject end_user_id for Veryfront API integration tools", async () => {
   const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -287,12 +287,15 @@ Deno.test("createHostedProjectRemoteToolSources injects end_user_id for Veryfron
       }),
   });
 
-  await sources[0]?.executeTool("github__list_issues", { repo: "veryfront" });
+  await sources[0]?.executeTool("github__list_issues", {
+    repo: "veryfront",
+    end_user_id: "malicious-user",
+  });
 
   assertEquals(executed, [
     {
       toolName: "github__list_issues",
-      args: { repo: "veryfront", end_user_id: "user-123" },
+      args: { repo: "veryfront" },
       context: undefined,
     },
   ]);
@@ -596,7 +599,6 @@ Deno.test("createHostedProjectRemoteToolSources composes API input preparation w
       args: {
         owner: "veryfront",
         prepared: true,
-        end_user_id: "end-user-123",
       },
       context: { projectId: "project-1" },
     },

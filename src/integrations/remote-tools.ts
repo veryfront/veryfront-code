@@ -126,7 +126,6 @@ async function callRemoteTool(
     body: JSON.stringify({
       name: toolName,
       arguments: args,
-      end_user_id: context?.endUserId,
       run_id: context?.runId,
       agent_id: context?.agentId,
     }),

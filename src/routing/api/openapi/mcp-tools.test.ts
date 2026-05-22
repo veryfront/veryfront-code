@@ -230,5 +230,41 @@ describe("routing/api/openapi/mcp-tools", () => {
       assertEquals(ids.includes("api:getPosts"), true);
       assertEquals(ids.includes("api:createPost"), true);
     });
+
+    it("does not propagate caller-supplied end-user identity headers", async () => {
+      const originalFetch = globalThis.fetch;
+      let requestHeaders: Headers | undefined;
+
+      try {
+        globalThis.fetch = (input: string | URL | Request, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestHeaders = request.headers;
+          return Promise.resolve(
+            Response.json({ ok: true }, { status: 200 }),
+          );
+        };
+
+        const tools = generateTools(
+          makeSpec({
+            "/api/users": {
+              get: {
+                operationId: "getUsers",
+                responses: { "200": { description: "OK" } },
+              },
+            },
+          }),
+          { baseUrl: "http://localhost:3000" },
+        );
+
+        const first = tools[0];
+        assertExists(first);
+        await first.execute({}, { endUserId: "user-123" });
+
+        assertExists(requestHeaders);
+        assertEquals(requestHeaders.get("X-End-User-Id"), null);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 });
