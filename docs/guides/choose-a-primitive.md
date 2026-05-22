@@ -1,7 +1,7 @@
 ---
 title: "Choose a primitive"
 description: "Choose the smallest Veryfront primitive for the work."
-order: 9
+order: 10
 ---
 
 Pick the smallest primitive that matches the job. This keeps project structure

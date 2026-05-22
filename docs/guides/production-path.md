@@ -1,7 +1,7 @@
 ---
 title: "Production path"
 description: "Build one Veryfront route from local project to production verification."
-order: 10
+order: 11
 ---
 
 Take one Veryfront route from local dev to a deployed production check.

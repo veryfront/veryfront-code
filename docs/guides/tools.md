@@ -1,7 +1,7 @@
 ---
 title: "Tools"
 description: "Define tools with schema-backed inputs that agents can call."
-order: 19
+order: 20
 ---
 
 A tool is a typed function an agent can call. It declares input, describes when to use it, and runs server-side code.

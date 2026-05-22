@@ -1,7 +1,7 @@
 ---
 title: "Create an agent"
 description: "Define an AI agent and invoke it from server code in under five minutes."
-order: 3
+order: 4
 ---
 
 Define an agent in a Veryfront project, send it a message, and stream the response back. For tools, memory, skills, and hosted runs, see [Agents](./agents.md).

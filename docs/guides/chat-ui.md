@@ -1,7 +1,7 @@
 ---
 title: "Chat UI"
 description: "Use the preset Chat component with the useChat hook."
-order: 21
+order: 22
 ---
 
 `Chat` is a complete chat interface in one component. It includes a composer, message list, streaming state, loading state, and scroll behavior.

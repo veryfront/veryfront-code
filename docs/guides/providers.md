@@ -1,7 +1,7 @@
 ---
 title: "Providers"
 description: "Provider registry with runtime conventions and explicit overrides."
-order: 16
+order: 17
 ---
 
 An agent's `model` is a `"provider/model"` string.

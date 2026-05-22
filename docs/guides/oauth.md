@@ -1,7 +1,7 @@
 ---
 title: "OAuth"
 description: "OAuth 2.0 helpers with a built-in provider catalog."
-order: 33
+order: 34
 ---
 
 Sign users in with OAuth 2.0 using `veryfront/oauth`.
