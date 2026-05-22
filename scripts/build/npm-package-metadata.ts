@@ -27,6 +27,9 @@ const OPTIONAL_FEATURE_PEERS = [
 	"@opentelemetry/sdk-node",
 	"@opentelemetry/sdk-trace-base",
 	"@opentelemetry/semantic-conventions",
+] as const;
+
+const AUTO_ENABLED_EXTENSION_OPTIONAL_DEPENDENCIES = [
 	"bash-tool",
 	"just-bash",
 ] as const;
@@ -64,6 +67,10 @@ export function normalizeNpmPackageMetadata(pkg: PackageJson): PackageJson {
 		movePackageToOptionalPeer(pkg, name);
 	}
 
+	for (const name of AUTO_ENABLED_EXTENSION_OPTIONAL_DEPENDENCIES) {
+		movePackageToOptionalDependency(pkg, name);
+	}
+
 	for (const name of STALE_DIRECT_DEPENDENCIES) {
 		delete pkg.dependencies?.[name];
 		delete pkg.optionalDependencies?.[name];
@@ -96,6 +103,18 @@ function movePackageToOptionalPeer(pkg: PackageJson, name: string): void {
 
 	pkg.peerDependenciesMeta ??= {};
 	pkg.peerDependenciesMeta[name] = { optional: true };
+}
+
+function movePackageToOptionalDependency(pkg: PackageJson, name: string): void {
+	const range = pkg.dependencies?.[name] ?? pkg.optionalDependencies?.[name];
+	if (!range) return;
+
+	delete pkg.dependencies?.[name];
+	delete pkg.peerDependencies?.[name];
+	delete pkg.peerDependenciesMeta?.[name];
+
+	pkg.optionalDependencies ??= {};
+	pkg.optionalDependencies[name] = range;
 }
 
 function deleteIfEmpty(
