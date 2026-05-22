@@ -205,6 +205,29 @@ export async function rewriteDiscoveryImports(
       transformed = await rewritePackageImports(transformed, pkg);
     }
 
+    const resolveRuntimeSpecifierToFileUrl = (specifier: string): string | null => {
+      try {
+        const resolved = import.meta.resolve(specifier);
+        return resolved && resolved !== specifier ? resolved : null;
+      } catch (_) {
+        return null;
+      }
+    };
+
+    const rewriteResolvedSpecifierImports = (
+      input: string,
+      specifier: string,
+      resolvedUrl: string,
+    ): string => {
+      const escapedSpecifier = escapeRegExp(specifier);
+      return input
+        .replace(new RegExp(`from\\s*["']${escapedSpecifier}["']`, "g"), `from "${resolvedUrl}"`)
+        .replace(
+          new RegExp(`import\\s*\\(\\s*["']${escapedSpecifier}["']\\s*\\)`, "g"),
+          `import("${resolvedUrl}")`,
+        );
+    };
+
     // Handle veryfront package imports
     let vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
     let exportsMap: Record<string, string | { import?: string }> = {};
@@ -239,6 +262,25 @@ export async function rewriteDiscoveryImports(
       if (typeof entry === "string") return entry;
       return entry.import ?? null;
     };
+
+    const veryfrontSpecifiers = new Set<string>();
+    for (const match of transformed.matchAll(/from\s+["'](veryfront(?:\/[^"']+)?)["']/g)) {
+      const specifier = match[1];
+      if (specifier) veryfrontSpecifiers.add(specifier);
+    }
+    for (
+      const match of transformed.matchAll(/import\s*\(\s*["'](veryfront(?:\/[^"']+)?)["']\s*\)/g)
+    ) {
+      const specifier = match[1];
+      if (specifier) veryfrontSpecifiers.add(specifier);
+    }
+
+    for (const specifier of veryfrontSpecifiers) {
+      const resolvedUrl = resolveRuntimeSpecifierToFileUrl(specifier);
+      if (resolvedUrl) {
+        transformed = rewriteResolvedSpecifierImports(transformed, specifier, resolvedUrl);
+      }
+    }
 
     // Rewrite veryfront subpath imports
     transformed = transformed.replace(
