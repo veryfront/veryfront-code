@@ -9,7 +9,12 @@ React router exports for client navigation and route context.
 ## Import
 
 ```ts
-import { useRouter, Link, Router } from "veryfront/router";
+import {
+  useRouter,
+  Link,
+  RouterProvider,
+  Router,
+} from "veryfront/router";
 ```
 
 ## Examples
@@ -26,6 +31,7 @@ import { Link, RouterProvider, useRouter } from "veryfront/router";
 |------|-------------|--------|
 | `Link` | Renders an anchor element annotated for Veryfront prefetch handling. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L172) |
 | `Router` | Provides the router context value used by `useRouter()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L155) |
+| `RouterProvider` | Provides the router context value used by `useRouter()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L155) |
 
 ### Functions
 

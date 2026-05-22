@@ -1,7 +1,7 @@
 ---
 title: "veryfront/prompt"
 description: "Declare and register prompts exposable over MCP."
-order: 12
+order: 13
 ---
 
 Declare and register prompts exposable over MCP.

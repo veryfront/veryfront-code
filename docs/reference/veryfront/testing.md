@@ -1,7 +1,7 @@
 ---
 title: "veryfront/testing"
 description: "Cross-runtime test utilities — BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun."
-order: 26
+order: 27
 ---
 
 Cross-runtime test utilities — BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun.
@@ -144,12 +144,6 @@ import { assert, assertEquals, assertExists } from "veryfront/testing/assert";
 | `assertThrows` | Assert that a synchronous function throws. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L293) |
 | `fail` | Fail the current assertion immediately. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L333) |
 
-#### Types
-
-| Name | Description | Source |
-|------|-------------|--------|
-| `ErrorClass` | Public API contract for error class. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/assert.ts#L7) |
-
 ### `veryfront/testing/bdd`
 
 Portable BDD testing utilities (describe, it, beforeEach, afterEach). In Deno: Direct re-export from @std/testing/bdd (no wrapper) In Node.js: Uses node:test In Bun: Uses bun:test
@@ -175,8 +169,6 @@ import { afterAll, afterEach, beforeAll } from "veryfront/testing/bdd";
 | Name | Description | Source |
 |------|-------------|--------|
 | `BddTestContext` | Context passed to hooks and tests (BDD-specific) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L30) |
-| `HookFn` | Hook function | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L38) |
-| `TestFn` | Test function that can be sync or async | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L16) |
 | `TestOptions` | Test options for Deno sanitizers (ignored in Node/Bun) | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L19) |
 
 #### Constants

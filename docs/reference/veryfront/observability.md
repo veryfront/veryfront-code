@@ -1,7 +1,7 @@
 ---
 title: "veryfront/observability"
 description: "OpenTelemetry tracing, metrics collection, auto-instrumentation for fetch/HTTP/React, OTLP export, and structured error and log buffering."
-order: 17
+order: 18
 ---
 
 OpenTelemetry tracing, metrics collection, auto-instrumentation for fetch/HTTP/React, OTLP export, and structured error and log buffering.

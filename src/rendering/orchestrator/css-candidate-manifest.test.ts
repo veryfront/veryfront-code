@@ -3,6 +3,7 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import {
+  getCandidateManifestCacheStats,
   getProjectCandidates,
   getRouteCandidates,
   invalidateProjectCandidateManifests,
@@ -125,6 +126,57 @@ describe("rendering/orchestrator/css-candidate-manifest", () => {
         developmentMode: true,
       });
       assertEquals(result.size, 0);
+    });
+
+    it("bounds cached route candidate sets for high-cardinality production routes", () => {
+      invalidateProjectCandidateManifests();
+      const files = Array.from({ length: 260 }, (_, index) => ({
+        path: `/project/pages/blog/articles/post-${index}.tsx`,
+        content: `<div className="route-${index} text-red-500">Post</div>`,
+      }));
+
+      for (let index = 0; index < 260; index++) {
+        const result = getRouteCandidates({
+          projectScope: "test-route-bound",
+          projectVersion: "v1",
+          projectDir: "/project",
+          routeKey: `blog/articles/post-${index}`,
+          routeFilePaths: [`/project/pages/blog/articles/post-${index}.tsx`],
+          files,
+          developmentMode: false,
+        });
+
+        assertEquals(result.has(`route-${index}`), true);
+      }
+
+      const stats = getCandidateManifestCacheStats();
+      assertEquals(stats.routeCandidates.entries, stats.routeCandidates.maxEntries);
+    });
+
+    it("does not retain duplicate full-project fallback candidates per route", () => {
+      invalidateProjectCandidateManifests();
+
+      for (let index = 0; index < 20; index++) {
+        const result = getRouteCandidates({
+          projectScope: "test-fallback-bound",
+          projectVersion: "v1",
+          projectDir: "/project",
+          routeKey: `unmapped-route-${index}`,
+          routeFilePaths: [`/project/routes/unmapped-${index}.tsx`],
+          files: [
+            {
+              path: "/project/pages/index.tsx",
+              content: '<div className="text-red-500 bg-blue-500">Home</div>',
+            },
+          ],
+          developmentMode: false,
+        });
+
+        assertEquals(result.has("text-red-500"), true);
+      }
+
+      const stats = getCandidateManifestCacheStats();
+      assertEquals(stats.routeCandidates.entries, 0);
     });
   });
 

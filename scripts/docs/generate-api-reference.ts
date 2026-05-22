@@ -351,6 +351,8 @@ const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
 const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = {
   "veryfront": [
     { path: "index", reason: "Browse the guide map" },
+    { path: "quickstart", reason: "Build and run a first agent app" },
+    { path: "veryfront-code", reason: "What Veryfront Code is and how guides fit together" },
     { path: "installation", reason: "Install the CLI and framework" },
     { path: "create-a-project", reason: "Scaffold and run a project" },
     { path: "create-an-agent", reason: "Define and invoke a first agent" },
@@ -1167,12 +1169,16 @@ async function getDenoDoc(filePath: string): Promise<DocNode[]> {
 }
 
 function normalizeDenoDoc(parsed: unknown): DocNode[] {
-  if (Array.isArray(parsed)) return parsed as DocNode[];
+  if (Array.isArray(parsed)) {
+    return resolveDenoDocReferences((parsed as DocNode[]).filter(isPublicDocNode));
+  }
 
   const root = asRecord(parsed);
   if (!root) return [];
 
-  if (Array.isArray(root.nodes)) return root.nodes as DocNode[];
+  if (Array.isArray(root.nodes)) {
+    return resolveDenoDocReferences((root.nodes as DocNode[]).filter(isPublicDocNode));
+  }
 
   const nodes = asRecord(root.nodes);
   if (!nodes) return [];
@@ -1185,6 +1191,10 @@ function normalizeDenoDoc(parsed: unknown): DocNode[] {
   return resolveDenoDocReferences(
     symbols.flatMap((symbol) => normalizeDenoDocSymbol(symbol)),
   );
+}
+
+function isPublicDocNode(node: DocNode): boolean {
+  return asRecord(node)?.declarationKind !== "private";
 }
 
 function normalizeDenoDocSymbol(symbol: unknown): DocNode[] {
@@ -1211,7 +1221,7 @@ function normalizeDenoDocDeclaration(
     jsDoc: declaration.jsDoc as DocNode["jsDoc"],
     location: normalizeLocation(declaration.location),
   };
-  const def = asRecord(declaration.def) ?? {};
+  const def = getDeclarationDef(declaration, kind);
 
   if (kind === "function") {
     node.functionDef = normalizeFunctionDef(def);
@@ -1226,10 +1236,38 @@ function normalizeDenoDocDeclaration(
   } else if (kind === "enum") {
     node.enumDef = def;
   } else if (kind === "reference") {
-    node.referenceTarget = normalizeLocation(def.target);
+    const referenceDef = asRecord(declaration.reference_def);
+    node.referenceTarget = normalizeLocation(def.target ?? referenceDef?.target);
   }
 
   return node;
+}
+
+function getDeclarationDef(
+  declaration: Record<string, unknown>,
+  kind: string,
+): Record<string, unknown> {
+  const nestedDef = asRecord(declaration.def);
+  if (nestedDef) return nestedDef;
+
+  switch (kind) {
+    case "function":
+      return asRecord(declaration.functionDef) ?? {};
+    case "interface":
+      return asRecord(declaration.interfaceDef) ?? {};
+    case "class":
+      return asRecord(declaration.classDef) ?? {};
+    case "typeAlias":
+      return asRecord(declaration.typeAliasDef) ?? {};
+    case "variable":
+      return asRecord(declaration.variableDef) ?? {};
+    case "enum":
+      return asRecord(declaration.enumDef) ?? {};
+    case "reference":
+      return asRecord(declaration.referenceDef) ?? {};
+    default:
+      return {};
+  }
 }
 
 function resolveDenoDocReferences(nodes: DocNode[]): DocNode[] {
@@ -1246,7 +1284,8 @@ function resolveDenoDocReferences(nodes: DocNode[]): DocNode[] {
   return nodes.map((node) => {
     if (node.kind !== "reference") return node;
 
-    const key = locationKey(node.referenceTarget);
+    const referenceTarget = getReferenceTarget(node);
+    const key = locationKey(referenceTarget);
     const target = key ? concreteByLocation.get(key) : undefined;
     if (!target) return node;
 
@@ -1254,9 +1293,16 @@ function resolveDenoDocReferences(nodes: DocNode[]): DocNode[] {
       ...target,
       name: node.name,
       jsDoc: node.jsDoc ?? target.jsDoc,
-      referenceTarget: node.referenceTarget,
+      referenceTarget,
     };
   });
+}
+
+function getReferenceTarget(node: DocNode): DenoDocLocation | undefined {
+  if (node.referenceTarget) return node.referenceTarget;
+  const record = asRecord(node);
+  const referenceDef = asRecord(record?.reference_def);
+  return normalizeLocation(referenceDef?.target);
 }
 
 function normalizeLocation(value: unknown): DenoDocLocation | undefined {

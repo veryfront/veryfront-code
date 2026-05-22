@@ -1,7 +1,7 @@
 ---
 title: "veryfront/oauth"
 description: "OAuth 2.0 with 37 pre-configured providers."
-order: 19
+order: 20
 ---
 
 OAuth 2.0 with 37 pre-configured providers.

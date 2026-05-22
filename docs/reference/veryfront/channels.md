@@ -1,7 +1,7 @@
 ---
 title: "veryfront/channels"
 description: "Channel transports for the Veryfront control plane and AG-UI invoke route. These are deep-import-only modules."
-order: 29
+order: 30
 ---
 
 Channel transports for the Veryfront control plane and AG-UI invoke route. These are deep-import-only modules.
@@ -62,9 +62,7 @@ import { listRuntimeAgents, verifyControlPlaneJws, verifyDispatchJws } from "ver
 | Name | Description | Source |
 |------|-------------|--------|
 | `getControlPlaneAgentsListRequestSchema` | Zod schema for get control plane agents list request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L34) |
-| `getControlPlaneClaimsSchema` | Zod schema for get control plane claims. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L130) |
 | `getControlPlaneSurfaceSchema` | Zod schema for get control plane surface. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L27) |
-| `getDispatchClaimsSchema` | Zod schema for get dispatch claims. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L115) |
 | `getRuntimeAgentListResponseSchema` | Zod schema for get runtime agent list response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L106) |
 | `getRuntimeAgentSchema` | Zod schema for get runtime agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L91) |
 | `getRuntimeAgentSkillSchema` | Zod schema for get runtime agent skill. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/control-plane.ts#L47) |
@@ -109,7 +107,6 @@ import { buildChannelResponseParts, executeChannelInvoke, listChannelAssistants 
 | `ChannelInvokeDeps` | Public API contract for channel invoke deps. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L195) |
 | `ChannelInvokeRequest` | Request payload for channel invoke. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L180) |
 | `ChannelInvokeResponse` | Response payload for channel invoke. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L182) |
-| `ChannelResponsePart` | Public API contract for channel response part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L193) |
 
 #### Constants
 
