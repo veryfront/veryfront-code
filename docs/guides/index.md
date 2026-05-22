@@ -6,15 +6,18 @@ order: 0
 
 Use this index to pick the next task.
 
-New to Veryfront? Start with the [Getting Started](#getting-started) sequence.
-Then use [Guides](#guides) for deeper work.
+New to Veryfront? Start with [Quickstart](./quickstart.md) to build a working
+agent app, then use the [Getting Started](#getting-started) sequence for each
+core task.
 
 ## Getting Started
 
-Six steps take you from install to deploy.
+Quickstart gives you the full path in one guide. The six guides below split
+that path into focused tasks.
 
 | Step                                        | Task                                                                 |
 | ------------------------------------------- | -------------------------------------------------------------------- |
+| [Quickstart](./quickstart.md)               | Build an agent app with a tool, chat UI, and deploy path.            |
 | [Installation](./installation.md)           | Install the Veryfront CLI and framework on macOS, Linux, or Windows. |
 | [Create a project](./create-a-project.md)   | Scaffold a project from a template and run it on the dev server.     |
 | [Create an agent](./create-an-agent.md)     | Define an agent and expose it as a streaming chat endpoint.          |

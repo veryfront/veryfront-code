@@ -148,7 +148,9 @@ registerTool(
   "custom-tool",
   tool({
     description: "A custom tool",
-    inputSchema: z.object({ input: z.string() }),
+    inputSchema: z.object({
+      input: z.string().describe("Text to transform"),
+    }),
     execute: async ({ input }) => ({ result: input.toUpperCase() }),
   }),
 );

@@ -41,13 +41,16 @@ import { z } from "zod";
 const searchTool = tool({
   id: "search",
   description: "Search the knowledge base",
-  inputSchema: z.object({ query: z.string() }),
+  inputSchema: z.object({
+    query: z.string().describe("Knowledge base search query"),
+  }),
   execute: async ({ query }) => ({ results: [] }),
 });
 
 const assistant = agent({
   system: "You are a helpful assistant.",
   tools: { search: searchTool },
+  maxSteps: 5,
   memory: { type: "conversation", maxMessages: 50 },
 });
 ```
@@ -118,6 +121,7 @@ registerAgent(writer);
 const orchestrator = agent({
   system: "Coordinate research and writing.",
   tools: getAgentsAsTools(["researcher", "writer"]),
+  maxSteps: 8,
 });
 ```
 

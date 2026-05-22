@@ -90,6 +90,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "pages-and-routing.md",
   "production-path.md",
   "project-structure.md",
+  "quickstart.md",
   "sandbox.md",
   "skills.md",
   "tasks.md",
