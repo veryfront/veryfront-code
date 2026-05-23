@@ -1,10 +1,10 @@
 ---
 title: "veryfront/testing"
-description: "Cross-runtime test utilities — BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun."
+description: "Cross-runtime test utilities - BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun."
 order: 27
 ---
 
-Cross-runtime test utilities — BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun.
+Cross-runtime test utilities - BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun.
 
 ## Import
 

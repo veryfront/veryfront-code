@@ -1,13 +1,11 @@
 /**
- * Reusable validation schemas — common types (email, slug, URL, UUID,
+ * Reusable validation schemas: common types (email, slug, URL, UUID,
  * pagination) and primitives (file paths, hex colors, semver, timestamps),
  * plus the `defineSchema` lazy-factory helper.
  *
  * `defineSchema` resolves the `SchemaValidator` contract on first use. The
  * default zod-backed implementation lives in `@veryfront/ext-schema-zod` and is
- * registered at app bootstrap by `createBuiltinExtensions()`. Tests that
- * exercise schemas without going through full bootstrap import
- * `./_test-setup.ts` to register the adapter directly.
+ * registered at app bootstrap by `createBuiltinExtensions()`.
  *
  * @example
  * ```ts

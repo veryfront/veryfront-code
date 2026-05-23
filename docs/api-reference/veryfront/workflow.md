@@ -214,7 +214,7 @@ These import paths group focused functionality under this module. Each is a sepa
 
 ### `veryfront/workflow/claude-code`
 
-Claude Agent SDK Integration Provides Claude Code agentic capabilities within Veryfront workflows. Uses your local Claude Code installation — no separate API key needed.
+Claude Agent SDK Integration Provides Claude Code agentic capabilities within Veryfront workflows. Uses your local Claude Code installation - no separate API key needed.
 
 ```ts
 import { createAgent, createClaudeCodeTool, createEventPublisher } from "veryfront/workflow/claude-code";

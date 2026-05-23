@@ -101,7 +101,7 @@ These import paths group focused functionality under this module. Each is a sepa
 
 ### `veryfront/extensions/auth`
 
-Auth category barrel — AuthProvider contract and token shapes.
+Auth category barrel - AuthProvider contract and token shapes.
 
 ```ts
 import "veryfront/extensions/auth";
@@ -119,7 +119,7 @@ import "veryfront/extensions/auth";
 
 ### `veryfront/extensions/bundler`
 
-Bundler category barrel — Bundler contract, module lexer, and resolver helper.
+Bundler category barrel - Bundler contract, module lexer, and resolver helper.
 
 ```ts
 import { build, context, getBundler } from "veryfront/extensions/bundler";
@@ -171,7 +171,7 @@ import { build, context, getBundler } from "veryfront/extensions/bundler";
 
 ### `veryfront/extensions/cache`
 
-Cache category barrel — generic cache and proxy-grade token cache.
+Cache category barrel - generic cache and proxy-grade token cache.
 
 ```ts
 import "veryfront/extensions/cache";
@@ -188,7 +188,7 @@ import "veryfront/extensions/cache";
 
 ### `veryfront/extensions/compat`
 
-Compat category barrel — optional native runtime services.
+Compat category barrel - optional native runtime services.
 
 ```ts
 import "veryfront/extensions/compat";
@@ -225,7 +225,7 @@ import "veryfront/extensions/content";
 
 ### `veryfront/extensions/contracts`
 
-Contract registry — runtime resolution of extension-provided implementations.
+Contract registry - runtime resolution of extension-provided implementations.
 
 ```ts
 import { register, reset, resolve } from "veryfront/extensions/contracts";
@@ -243,7 +243,7 @@ import { register, reset, resolve } from "veryfront/extensions/contracts";
 
 ### `veryfront/extensions/css`
 
-CSS category barrel — CSS processor and compiler contracts.
+CSS category barrel - CSS processor and compiler contracts.
 
 ```ts
 import "veryfront/extensions/css";
@@ -261,7 +261,7 @@ import "veryfront/extensions/css";
 
 ### `veryfront/extensions/database`
 
-Database category barrel — DatabaseClient contract.
+Database category barrel - DatabaseClient contract.
 
 ```ts
 import "veryfront/extensions/database";
@@ -276,7 +276,7 @@ import "veryfront/extensions/database";
 
 ### `veryfront/extensions/llm`
 
-LLM category barrel — provider, embedding, and registry contracts. Interfaces re-exported with `export type { ... }` because Deno `--no-check` transpiles each file in isolation and would otherwise emit a runtime value re-export that fails ESM resolution. Reserve plain `export { ... }` for runtime values.
+LLM category barrel - provider, embedding, and registry contracts. Interfaces re-exported with `export type { ... }` because Deno `--no-check` transpiles each file in isolation and would otherwise emit a runtime value re-export that fails ESM resolution. Reserve plain `export { ... }` for runtime values.
 
 ```ts
 import { createLLMProviderRegistry, LLMProviderRegistryName } from "veryfront/extensions/llm";
@@ -334,7 +334,7 @@ import { NodeTelemetryProviderName } from "veryfront/extensions/observability";
 
 ### `veryfront/extensions/parser`
 
-Parser category barrel — CodeParser (AST traversal) contract.
+Parser category barrel - CodeParser (AST traversal) contract.
 
 ```ts
 import "veryfront/extensions/parser";
@@ -380,7 +380,7 @@ import { SandboxShellToolsProviderName } from "veryfront/extensions/sandbox";
 
 ### `veryfront/extensions/schema`
 
-Schema category barrel — SchemaValidator contract and inference helpers.
+Schema category barrel - SchemaValidator contract and inference helpers.
 
 ```ts
 import "veryfront/extensions/schema";

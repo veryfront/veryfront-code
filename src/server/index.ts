@@ -1,9 +1,8 @@
 /**
- * Server Module Public API
+ * Server runtime APIs.
  *
- * This module exports the public interface for the Veryfront server.
- * For routing utilities, import from "#veryfront/routing" directly.
- * For observability utilities, import from "#veryfront/observability" directly.
+ * Use this module to create and run a Veryfront server in tests,
+ * custom runtimes, and production adapters.
  *
  * @module server
  *
@@ -381,5 +380,4 @@ export async function startServer(
 }
 
 // Note: Wildcard re-exports removed to prevent circular dependency risks.
-// Import from "#veryfront/routing" for Route, RouteMatch, PageRouteMatcher, etc.
-// Import from "#veryfront/observability" for tracing and metrics utilities.
+// Use public routing, middleware, and observability modules for those surfaces.
