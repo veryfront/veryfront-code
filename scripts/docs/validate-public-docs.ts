@@ -39,13 +39,16 @@ const MOVED_GETTING_STARTED_PAGES = [
 ];
 
 const staleGettingStartedPath = new RegExp(
-  String.raw`(?:https://veryfront\.com)?/docs/code/guides/(?:${MOVED_GETTING_STARTED_PAGES.join("|")})\b`,
+  String.raw`(?:https://veryfront\.com)?/docs/code/guides/(?:${
+    MOVED_GETTING_STARTED_PAGES.join("|")
+  })\b`,
 );
 
 const RULES: Rule[] = [
   {
     pattern: /\u2013|\u2014/,
-    message: "Use ASCII punctuation in public docs. Replace en dash or em dash with '-' or punctuation.",
+    message:
+      "Use ASCII punctuation in public docs. Replace en dash or em dash with '-' or punctuation.",
   },
   {
     pattern: /#veryfront\//,
@@ -61,7 +64,13 @@ const RULES: Rule[] = [
   },
   {
     pattern: /\bdeep-import-only\b/,
-    message: "Do not expose implementation-only import taxonomy in public docs.",
+    message:
+      "Do not expose implementation-only import taxonomy in public docs.",
+  },
+  {
+    pattern: /\bmini tutorial\b/i,
+    message:
+      "Do not describe how-to guides as mini tutorials. Keep Diataxis tutorial and guide modes distinct.",
   },
   {
     pattern: staleGettingStartedPath,
