@@ -217,8 +217,7 @@ the jobs panel.
 
 ## Next
 
-- [Tasks](./tasks.md): define background task functions
-- [MCP server](./mcp-server.md): expose job operations through MCP tools
+Continue with [Tasks](./tasks.md).
 
 ## Related
 

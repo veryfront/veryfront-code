@@ -249,8 +249,7 @@ HTTP method handler is not exported.
 
 ## Next
 
-- [Agents](./agents.md): the agent behind the `/api/ag-ui` endpoint
-- [Middleware](./middleware.md): add CORS, rate limiting, and auth checks
+Continue with [Middleware](./middleware.md).
 
 ## Related
 

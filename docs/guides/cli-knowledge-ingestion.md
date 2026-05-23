@@ -238,10 +238,7 @@ output for the reason.
 
 ## Next
 
-- [Sandbox](./sandbox.md): run CLI workflows inside isolated workspaces
-- [Agents](./agents.md): build agent workflows that can call tools and shell
-  commands
-- [Workflows](./workflows.md): orchestrate repeatable multi-step automation
+Continue with [Sandbox](./sandbox.md).
 
 ## Related
 

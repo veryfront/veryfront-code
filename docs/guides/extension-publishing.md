@@ -47,8 +47,7 @@ After publishing:
 
 ## Next
 
-- [Building and deploying](./deploying.md): production builds and deployment
-- [Configuration](./configuration.md): project configuration options
+Continue with [Building and deploying](./deploying.md).
 
 ## Related
 

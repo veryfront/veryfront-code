@@ -151,9 +151,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "./installation.md",
       "../guides/providers.md",
       "./create-project.md",
-      "./create-agent.md",
-      "./create-api.md",
-      "./deploy-project.md",
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/tool.md",
       "../api-reference/veryfront/chat.md",
@@ -400,12 +397,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/create-agent.md": {
     references: [
       "../guides/agents.md",
-      "../guides/tools.md",
-      "../guides/chat-ui.md",
+      "../guides/memory-and-streaming.md",
+      "./create-api.md",
       "./installation.md",
       "./create-project.md",
       "../guides/providers.md",
-      "../guides/memory-and-streaming.md",
     ],
     snippets: [
       "agents/assistant.ts",

@@ -60,11 +60,7 @@ Run the guide's example or validation command before adding another primitive.
 
 ## Next
 
-- [Create project](../getting-started/create-project.md): create a project
-- [Agents](./agents.md): define an agent
-- [Workflows](./workflows.md): orchestrate multi-step work
-- [Tasks](./tasks.md): define background task functions
-- [Jobs](./jobs.md): run durable background work
+Continue with [Create project](../getting-started/create-project.md).
 
 ## Related
 

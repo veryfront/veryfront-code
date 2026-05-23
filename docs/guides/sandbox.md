@@ -149,8 +149,7 @@ id and close it manually.
 
 ## Next
 
-- [MCP server](./mcp-server.md): expose tools, prompts, and resources over MCP
-- [Agents](./agents.md): orchestrate sandbox-backed workflows with agents
+Continue with [MCP server](./mcp-server.md).
 
 ## Related
 

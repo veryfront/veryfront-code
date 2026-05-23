@@ -121,9 +121,7 @@ individual `nodeStates` entries update.
 
 ## Next
 
-- [Workflows](./workflows.md): core workflow API (define, run, branch, parallel,
-  human approval)
-- [Multi-agent](./multi-agent.md): compose agents in workflows and tools
+Continue with [Multi-agent](./multi-agent.md).
 
 ## Related
 

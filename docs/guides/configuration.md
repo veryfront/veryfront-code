@@ -285,8 +285,7 @@ it once you have confirmed the value resolves.
 
 ## Next
 
-- [Building and deploying](./deploying.md): production builds and deployment
-- [Head and SEO](./head-and-seo.md): metadata and Open Graph tags
+Continue with [Building and deploying](./deploying.md).
 
 ## Related
 

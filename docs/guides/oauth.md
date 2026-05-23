@@ -325,9 +325,7 @@ A working setup:
 
 ## Next
 
-- [MCP server](./mcp-server.md): expose your tools over the Model Context
-  Protocol
-- [Configuration](./configuration.md): environment variables and secrets
+Continue with [MCP server](./mcp-server.md).
 
 ## Related
 

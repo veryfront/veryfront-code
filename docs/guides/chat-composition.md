@@ -91,8 +91,7 @@ Render your composed layout in a client page, run `veryfront dev`, and:
 
 ## Next
 
-- [Chat hooks](./chat-hooks.md): manage chat state without preset components
-- [Chat theming](./chat-theming.md): customize chat features and visuals
+Continue with [Chat hooks](./chat-hooks.md).
 
 ## Related
 

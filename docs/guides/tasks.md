@@ -140,8 +140,7 @@ a `succeeded` status. See the verification block in
 
 ## Next
 
-- [Jobs and cron jobs](./jobs.md): schedule tasks as cloud jobs
-- [Agents](./agents.md): agents can invoke tasks as tools
+Continue with [Jobs and cron jobs](./jobs.md).
 
 ## Related
 

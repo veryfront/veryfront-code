@@ -4,8 +4,6 @@ description: "Define an AI agent and stream its response in under five minutes."
 order: 4
 ---
 
-Define one agent and expose it through a streaming chat endpoint.
-
 ## Prerequisites
 
 - [Veryfront installed](./installation.md) and a project created with
@@ -80,7 +78,4 @@ set in the shell running `veryfront dev`.
 
 ## Next
 
-- [Agents](../guides/agents.md): tools, prompts, memory, and hosted runs.
-- [Tools](../guides/tools.md): let the agent call typed functions.
-- [Chat UI](../guides/chat-ui.md): drop a streaming chat interface into a React
-  page that talks to this agent.
+Continue with [Create API](./create-api.md).

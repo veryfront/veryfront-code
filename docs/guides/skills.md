@@ -153,8 +153,7 @@ veryfront skills validate skills/my-skill
 
 ## Next
 
-- [Agents](./agents.md): agents use skills for structured instructions
-- [Tools](./tools.md): define custom tools that skills can reference
+Continue with [Agents](./agents.md).
 
 ## Related
 

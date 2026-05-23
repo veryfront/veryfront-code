@@ -238,10 +238,7 @@ with a `RunFinished` event.
 
 ## Next
 
-- [Agent service runtime](./agent-service-runtime.md): run agents as separate
-  services
-- [Tools](./tools.md): define the tools your agent calls
-- [Memory and streaming](./memory-and-streaming.md): add conversation memory
+Continue with [Tools](./tools.md).
 
 ## Related
 

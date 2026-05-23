@@ -179,8 +179,7 @@ tool. Calling without the bearer token should return `401 Unauthorized`.
 
 ## Next
 
-- [Configuration](./configuration.md): framework configuration options
-- [Tools](./tools.md): define the tools MCP exposes
+Continue with [Tools](./tools.md).
 
 ## Related
 

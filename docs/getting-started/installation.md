@@ -4,8 +4,6 @@ description: "Install the Veryfront CLI and framework on macOS, Linux, or Window
 order: 2
 ---
 
-Install the `veryfront` CLI and framework.
-
 ## System requirements
 
 Veryfront ships as a standalone binary and as an npm package.
@@ -142,9 +140,4 @@ restart your shell so the new `PATH` entry takes effect.
 
 ## Next
 
-- [Create project](./create-project.md): create and run your first Veryfront
-  project in under two minutes.
-- [Project structure](../guides/project-structure.md): learn the conventions the
-  CLI scaffolds.
-- [Configuration](../guides/configuration.md): wire up environment variables and
-  runtime options.
+Continue with [Create project](./create-project.md).

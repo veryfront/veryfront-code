@@ -193,9 +193,7 @@ should resolve from a route or test.
 
 ## Next
 
-- [Pages and routing](./pages-and-routing.md): file-based routing, layouts, and dynamic routes
-- [Agents](./agents.md): create your first AI agent
-- [Project conventions](../concepts/project-conventions.md): why routes and primitives live in separate directories
+Continue with [Pages and routing](./pages-and-routing.md).
 
 ## Related
 

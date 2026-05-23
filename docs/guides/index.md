@@ -23,6 +23,4 @@ Use this section when you already know the outcome you want.
 
 ## Next
 
-Start with [Configuration](./configuration.md) when you are preparing a project,
-or [Choose a primitive](./choose-a-primitive.md) when you need to decide which
-Veryfront surface owns the work.
+Continue with [Configuration](./configuration.md).

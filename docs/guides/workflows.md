@@ -337,9 +337,7 @@ A working run reaches `status: "completed"` and exposes a `nodeStates` map with 
 
 ## Next
 
-- [Workflows: loops, blob storage, React hooks](./workflows-advanced.md): repeat-until-done loops, large-artifact storage, and React progress hooks
-- [Multi-agent](./multi-agent.md): compose agents in workflows and tools
-- [Providers](./providers.md): configure the LLM providers that power your agents
+Continue with [Workflows: loops, blob storage, React hooks](./workflows-advanced.md).
 
 ## Related
 

@@ -186,8 +186,7 @@ whether the call used cloud, server-local, or browser inference.
 
 ## Next
 
-- [Middleware](./middleware.md): add CORS, rate limiting, and logging
-- [Agents](./agents.md): agents use providers for AI models
+Continue with [Agents](./agents.md).
 
 ## Related
 

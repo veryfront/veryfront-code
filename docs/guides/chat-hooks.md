@@ -110,8 +110,7 @@ your API and the dev-server log for handler errors.
 
 ## Next
 
-- [Chat theming](./chat-theming.md): customize chat features and visuals
-- [Workflows](./workflows.md): orchestrate multi-step AI execution
+Continue with [Chat theming](./chat-theming.md).
 
 ## Related
 

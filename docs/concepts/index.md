@@ -23,6 +23,4 @@ framework pieces relate.
 
 ## Next
 
-Start with [Veryfront Code](./veryfront-code.md) for the product model, or
-[Runtime primitives](./runtime-primitives.md) when you are deciding which
-Veryfront concept owns a piece of work.
+Continue with [Veryfront Code](./veryfront-code.md).

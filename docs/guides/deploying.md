@@ -128,8 +128,7 @@ After `veryfront deploy`:
 
 ## Next
 
-- [Head and SEO](./head-and-seo.md): optimize for search engines
-- [Configuration](./configuration.md): all configuration options
+Continue with [Head and SEO](./head-and-seo.md).
 
 ## Related
 
