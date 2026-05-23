@@ -64,6 +64,13 @@ describe("integrations/remote-tools", () => {
     assertEquals(source.includes('typeof contextOrEndUserId === "string"'), false);
   });
 
+  it("does not keep legacy OAuth caller identity URL sanitizers in live remote tools", async () => {
+    const source = await Deno.readTextFile("src/integrations/remote-tools.ts");
+    const legacyCallerIdentityParam = ["end", "User", "Id"].join("");
+
+    assertEquals(source.includes(legacyCallerIdentityParam), false);
+  });
+
   it("skips remote tool discovery when API configuration is missing", async () => {
     setRemoteToolEnv({});
 
@@ -213,7 +220,7 @@ describe("integrations/remote-tools", () => {
         structuredContent: {
           error: "authentication_required",
           integration: "linear",
-          connectUrl: "/oauth/connect/linear?projectId=project-1&endUserId=user-1",
+          connectUrl: "/oauth/connect/linear?projectId=project-1",
           message: "Authentication required for Linear.",
         },
       }), async () => await executeRemoteIntegrationTool("linear__search_issues", { query: "*" }));
@@ -226,7 +233,7 @@ describe("integrations/remote-tools", () => {
     });
   });
 
-  it("preserves protocol-relative auth URL authority when stripping legacy end-user identity", async () => {
+  it("preserves protocol-relative auth URL authority from structured tool results", async () => {
     setRemoteToolEnv({
       VERYFRONT_API_BASE_URL: "https://api.test",
       VERYFRONT_API_TOKEN: "env-token",
@@ -237,8 +244,7 @@ describe("integrations/remote-tools", () => {
         content: [],
         structuredContent: {
           error: "authentication_required",
-          connectUrl:
-            "//auth.example.com/oauth/connect/github?projectId=project-1&endUserId=user-1",
+          connectUrl: "//auth.example.com/oauth/connect/github?projectId=project-1",
         },
       }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
 

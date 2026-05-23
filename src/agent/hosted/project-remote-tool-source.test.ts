@@ -70,6 +70,29 @@ async function resolveTestHeaders(
   return typeof headers === "function" ? await headers() : headers;
 }
 
+Deno.test("hosted remote tool sources do not carry legacy end-user identity plumbing", async () => {
+  const forbidden = [
+    ["get", "End", "User", "Id"].join(""),
+    ["end", "user", "id"].join("_"),
+  ];
+  const productionFiles = [
+    "src/agent/hosted/project-remote-tool-source.ts",
+    "src/agent/hosted/chat-runtime-tool-assembly.ts",
+  ];
+  const offenders: string[] = [];
+
+  for (const file of productionFiles) {
+    const source = await Deno.readTextFile(file);
+    for (const token of forbidden) {
+      if (source.includes(token)) {
+        offenders.push(`${file}:${token}`);
+      }
+    }
+  }
+
+  assertEquals(offenders, []);
+});
+
 Deno.test("createHostedProjectRemoteToolSource scopes tool listings and hydrates project inputs", async () => {
   const executeCalls: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> =
     [];
@@ -266,39 +289,6 @@ Deno.test("createHostedProjectRemoteToolSources defaults to the Veryfront API MC
 
   assertEquals(sources.map((source) => source.id), ["veryfront-mcp"]);
   assertEquals(configs.map((config) => config.endpoint), ["https://api.example/mcp"]);
-});
-
-Deno.test("createHostedProjectRemoteToolSources does not inject end_user_id for Veryfront API integration tools", async () => {
-  const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
-  const sources = createHostedProjectRemoteToolSources({
-    authToken: "token-1",
-    apiMcpUrl: "https://api.example/mcp",
-    mcpServers: [{ kind: "veryfront-api" }],
-    getProjectId: () => "project-1",
-    getEndUserId: () => "user-123",
-    createRemoteToolSource: (config) =>
-      createRemoteSource({
-        id: config.id,
-        tools: [simpleTool("github__list_issues")],
-        execute: (toolName, args, context) => {
-          executed.push({ toolName, args, context });
-          return { ok: true };
-        },
-      }),
-  });
-
-  await sources[0]?.executeTool("github__list_issues", {
-    repo: "veryfront",
-    end_user_id: "malicious-user",
-  });
-
-  assertEquals(executed, [
-    {
-      toolName: "github__list_issues",
-      args: { repo: "veryfront" },
-      context: undefined,
-    },
-  ]);
 });
 
 Deno.test("createHostedProjectRemoteToolSources filters Veryfront API MCP tools with the tool access profile", async () => {
@@ -562,7 +552,7 @@ Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy t
   assertEquals(switchedProjects, ["project-2"]);
 });
 
-Deno.test("createHostedProjectRemoteToolSources composes API input preparation with integration end-user input", async () => {
+Deno.test("createHostedProjectRemoteToolSources composes API input preparation for integration tools", async () => {
   const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
   const sources = createHostedProjectRemoteToolSources({
     authToken: "token-1",
@@ -570,7 +560,6 @@ Deno.test("createHostedProjectRemoteToolSources composes API input preparation w
     mcpServers: [{ kind: "veryfront-api" }],
     defaultProjectId: () => "project-1",
     getProjectId: () => "project-1",
-    getEndUserId: () => "end-user-123",
     prepareToolInput: ({ toolInput }) => ({
       ...toolInput,
       prepared: true,
