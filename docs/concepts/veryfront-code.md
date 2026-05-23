@@ -1,6 +1,6 @@
 ---
 title: "Veryfront Code"
-description: "What Veryfront Code is, which primitives it provides, and how its public docs fit together."
+description: "What Veryfront Code is and which framework primitives it provides."
 order: 1
 ---
 
@@ -8,6 +8,11 @@ Veryfront Code is a Deno-first, full-stack framework for building AI-powered
 applications and agents in TypeScript and React. It treats agents, workflows,
 tools, pages, APIs, and rendering as framework primitives with shared project
 conventions.
+
+The framework exists because AI applications need normal app surfaces and AI
+runtime surfaces to cooperate. A chat page, an AG-UI route, an agent, a tool, and
+a deployment target are separate concerns, but they belong to the same product
+and should be discoverable in the same project.
 
 ## Primitive set
 
@@ -19,11 +24,8 @@ conventions.
 | Integrations and MCP | Connector-backed tools, OAuth, prompts, resources, and assistant-facing protocol surfaces.                         |
 | Extensions           | Runtime contracts for providers, schema validation, bundling, content, auth, cache, observability, and sandboxing. |
 
-## Documentation map
-
-| Section                                        | Use it when                                                                   |
-| ---------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Getting Started](../getting-started/index.md) | You are installing Veryfront Code or building your first project.             |
-| [Guides](../guides/index.md)                   | You need to complete a specific task in an existing project.                  |
-| [Concepts](./index.md)                      | You need context, terminology, and mental models before choosing an approach. |
-| [API reference](../api-reference/index.md)     | You need exact imports, exported names, types, and examples.                  |
+The shared project model matters more than any single primitive. Routes decide
+how users and HTTP clients enter the system. Agents, tools, workflows, and jobs
+define capabilities that can be reused from those routes or from runtime
+services. Extensions provide infrastructure behind contracts so application code
+does not need to know which provider, cache, parser, or auth adapter is active.

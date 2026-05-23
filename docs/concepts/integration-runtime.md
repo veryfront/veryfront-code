@@ -6,7 +6,7 @@ order: 6
 
 Integrations connect Veryfront agents and tools to external services. They keep
 connector metadata, authorization state, and remote execution separate from
-local agent behavior.
+local agent behavior so a model decision is not confused with account authority.
 
 ## Runtime flow
 

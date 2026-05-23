@@ -560,7 +560,8 @@ describe("Guide: installation.md", () => {
       "curl -fsSL https://veryfront.com/install.sh | sh",
       "irm https://veryfront.com/install.ps1 | iex",
       "brew install veryfront/tap/veryfront",
-      "npm create veryfront",
+      "npm install veryfront",
+      "deno add npm:veryfront",
       "npx veryfront",
     ];
 

@@ -23,6 +23,34 @@ Choose `minimal` for a blank app or `ai-agent` for an agent and chat route. Pass
 veryfront init test-app --template ai-agent
 ```
 
+### Use a package manager
+
+Use these commands when you do not have the Veryfront CLI installed globally.
+
+<CodeGroup>
+
+```bash npm
+npm create veryfront
+```
+
+```bash pnpm
+pnpm create veryfront
+```
+
+```bash yarn
+yarn create veryfront
+```
+
+```bash bun
+bun create veryfront
+```
+
+```bash deno
+deno init --npm veryfront
+```
+
+</CodeGroup>
+
 ## Run the dev server
 
 ```bash
