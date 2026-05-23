@@ -57,6 +57,13 @@ afterEach(() => {
 });
 
 describe("integrations/remote-tools", () => {
+  it("does not keep a legacy string end-user overload for remote tool execution", async () => {
+    const source = await Deno.readTextFile("src/integrations/remote-tools.ts");
+
+    assertEquals(source.includes("contextOrEndUserId"), false);
+    assertEquals(source.includes('typeof contextOrEndUserId === "string"'), false);
+  });
+
   it("skips remote tool discovery when API configuration is missing", async () => {
     setRemoteToolEnv({});
 
@@ -149,7 +156,6 @@ describe("integrations/remote-tools", () => {
         await executeRemoteIntegrationTool(
           "github:list-repos",
           { visibility: "private" },
-          "end-user-123",
         ),
     );
 
@@ -182,7 +188,7 @@ describe("integrations/remote-tools", () => {
         await executeRemoteIntegrationTool(
           "gmail__list_emails",
           { maxResults: 10 },
-          { endUserId: "end-user-123", runId: "run-123", agentId: "agent-123" },
+          { runId: "run-123", agentId: "agent-123" },
         ),
     );
 
