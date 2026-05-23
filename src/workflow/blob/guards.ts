@@ -10,9 +10,9 @@ import type { BlobRef } from "./types.ts";
 export function isBlobRef(value: unknown): value is BlobRef {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
-  return v.__kind === "blob"
-    && typeof v.id === "string"
-    && typeof v.size === "number"
-    && typeof v.mimeType === "string"
-    && v.createdAt instanceof Date;
+  return v.__kind === "blob" &&
+    typeof v.id === "string" &&
+    typeof v.size === "number" &&
+    typeof v.mimeType === "string" &&
+    v.createdAt instanceof Date;
 }
