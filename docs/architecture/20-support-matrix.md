@@ -97,4 +97,4 @@ the full managed behavior by itself.
 
 ## Related reference
 
-- [Reference index](../api-reference/overview.md)
+- [Reference index](../api-reference/index.md)

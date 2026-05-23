@@ -166,7 +166,7 @@ Open the page in the browser and inspect the document `<head>`. Confirm:
 ## Next
 
 - [Providers](./providers.md): wire up an LLM provider for AI pages
-- [API reference](../api-reference/overview.md): full module reference
+- [API reference](../api-reference/index.md): full module reference
 
 ## Related
 

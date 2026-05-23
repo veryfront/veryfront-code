@@ -443,7 +443,7 @@ const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
 const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> =
   {
     "veryfront": [
-      { path: "overview", reason: "Browse the guide map" },
+      { path: "index", reason: "Browse the guide map" },
       { path: "quickstart", reason: "Build and run a first agent app" },
       {
         path: "veryfront-code",
@@ -3040,12 +3040,12 @@ async function main() {
     console.log(`  Wrote ${outPath}`);
   }
 
-  // Write the public overview at the docs/api-reference root.
-  const overviewMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
-  const overviewPath = `${OUTPUT_DIR}/overview.md`;
-  await Deno.writeTextFile(overviewPath, overviewMD);
+  // Write the public section landing page at the docs/api-reference root.
+  const indexMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
+  const indexPath = `${OUTPUT_DIR}/index.md`;
+  await Deno.writeTextFile(indexPath, indexMD);
   try {
-    await Deno.remove(`${OUTPUT_DIR}/index.md`);
+    await Deno.remove(`${OUTPUT_DIR}/overview.md`);
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
@@ -3054,7 +3054,7 @@ async function main() {
   } catch (err) {
     if (!(err instanceof Deno.errors.NotFound)) throw err;
   }
-  console.log(`\nWrote ${overviewPath}`);
+  console.log(`\nWrote ${indexPath}`);
   console.log(`Generated ${groups.length} MD files in ${VERYFRONT_DIR}`);
   console.log(
     `Source JSDoc coverage: ${sourceDocStats.documented}/${sourceDocStats.total} public declarations documented (${sourceDocStats.missing} missing).`,

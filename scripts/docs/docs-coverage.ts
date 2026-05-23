@@ -163,7 +163,8 @@ function difference(expected: string[], actual: Set<string>): string[] {
 }
 
 function requiresReferenceBacklink(file: string): boolean {
-  return !file.endsWith("/overview.md") && !file.startsWith("concepts/");
+  return !["getting-started/index.md", "guides/index.md"].includes(file) &&
+    !file.startsWith("concepts/");
 }
 
 export async function collectDocsCoverage(

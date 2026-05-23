@@ -9,7 +9,7 @@ the same order as the public docs navigation.
 
 ## Pages
 
-- `overview.md`: Public section overview.
+- `index.md`: Public section landing page.
 - `quickstart.md`: End-to-end first app.
 - `installation.md`: CLI and framework installation.
 - `create-project.md`: Project scaffolding.
