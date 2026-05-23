@@ -13,6 +13,10 @@ The extension system exists to keep infrastructure replaceable. Application code
 should depend on a cache, provider, parser, or auth contract, not on the package
 that happens to implement it.
 
+Extensions are framework primitives because they change how the runtime is
+assembled. They are not app features. They provide infrastructure that apps,
+agents, tools, workflows, and other primitives can use.
+
 ## Core concepts
 
 | Concept    | Meaning                                                                |
@@ -33,3 +37,9 @@ gives extensions a predictable place to open and release runtime resources.
 Contracts are the important boundary. Consumers depend on contracts, not on a
 specific package implementation. That keeps app code stable when a project swaps
 a local adapter for a hosted or third-party implementation.
+
+## Wrong fit
+
+Do not create an extension for code that belongs to one app. Use an extension
+when a runtime capability should be packaged, configured, and reused behind a
+contract.

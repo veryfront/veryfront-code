@@ -10,18 +10,22 @@ framework boundaries are not clear.
 
 ## Contents
 
-| Concept                                             | Explains                                                        |
-| --------------------------------------------------- | --------------------------------------------------------------- |
-| [Framework overview](./framework-overview.md)       | The framework model and its main surfaces.                      |
-| [Framework primitives](./framework-primitives.md)   | Agents, tools, workflows, jobs, integrations, MCP, and sandbox. |
-| [Agent](./agent.md)                                 | Model reasoning and streamed output.                            |
-| [Tool](./tool.md)                                   | One callable capability.                                        |
-| [Workflow](./workflow.md)                           | Multi-step coordination.                                        |
-| [Task](./task.md)                                   | Background work definition.                                     |
-| [Job](./job.md)                                     | Durable background execution.                                   |
-| [Cron job](./cron-job.md)                           | Scheduled job creation.                                         |
-| [Integration](./integration.md)                     | External service capabilities.                                  |
-| [MCP server](./mcp-server.md)                       | Assistant-facing protocol surface.                              |
-| [Sandbox](./sandbox.md)                             | Isolated command and file execution.                            |
-| [Framework conventions](./framework-conventions.md) | Routing, auto-discovery, shared code, content, and config.      |
-| [Framework extensions](./framework-extensions.md)   | Factories, contracts, capabilities, setup, and teardown.        |
+| Concept                                             | Explains                                                   |
+| --------------------------------------------------- | ---------------------------------------------------------- |
+| [Veryfront Code](./framework-overview.md)           | The framework model and its main surfaces.                 |
+| [Framework primitives](./framework-primitives.md)   | Apps, AI primitives, jobs, MCP, sandbox, and extensions.   |
+| [App](./app.md)                                     | User-facing routes, APIs, data, and rendering.             |
+| [Agent](./agent.md)                                 | Model reasoning and streamed output.                       |
+| [Tool](./tool.md)                                   | One callable capability.                                   |
+| [Workflow](./workflow.md)                           | Multi-step coordination.                                   |
+| [Task](./task.md)                                   | Background work definition.                                |
+| [Job](./job.md)                                     | Durable background execution.                              |
+| [Cron job](./cron-job.md)                           | Scheduled job creation.                                    |
+| [Prompt](./prompt.md)                               | Reusable instruction template.                             |
+| [Resource](./resource.md)                           | Readable project data for MCP.                             |
+| [Skill](./skill.md)                                 | Reusable agent instructions and tool policy.               |
+| [Integration](./integration.md)                     | External service capabilities.                             |
+| [MCP server](./mcp-server.md)                       | Assistant-facing protocol surface.                         |
+| [Sandbox](./sandbox.md)                             | Isolated command and file execution.                       |
+| [Framework conventions](./framework-conventions.md) | Routing, auto-discovery, shared code, content, and config. |
+| [Framework extensions](./framework-extensions.md)   | Factories, contracts, capabilities, setup, and teardown.   |

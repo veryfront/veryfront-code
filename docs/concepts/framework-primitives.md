@@ -1,32 +1,48 @@
 ---
 title: "Framework primitives"
-description: "How Veryfront Code agents, tools, workflows, tasks, jobs, integrations, MCP, sandbox, and extensions fit together."
+description: "How Veryfront Code apps, agents, tools, workflows, tasks, jobs, prompts, resources, skills, integrations, MCP, sandbox, and extensions fit together."
 order: 2
 ---
 
-Veryfront Code uses primitives to separate responsibility. Each primitive owns a
-specific kind of work, lifecycle, and runtime boundary.
+Veryfront Code uses primitives to separate responsibility. A primitive is an
+ownership boundary: it names what kind of work is happening, what lifecycle owns
+that work, and where the runtime boundary sits.
+
+The goal is not to use every primitive. The goal is to pick the smallest one
+that explains the work clearly.
 
 ## Primitives
 
-| Primitive                                         | Owns                                            |
-| ------------------------------------------------- | ----------------------------------------------- |
-| [Agent](./agent.md)                               | Model reasoning, messages, tools, and output.   |
-| [Tool](./tool.md)                                 | One callable capability.                        |
-| [Workflow](./workflow.md)                         | Multi-step coordination.                        |
-| [Task](./task.md)                                 | A background work target.                       |
-| [Job](./job.md)                                   | Durable execution of work.                      |
-| [Cron job](./cron-job.md)                         | Scheduled job creation.                         |
-| [Integration](./integration.md)                   | External service capabilities.                  |
-| [MCP server](./mcp-server.md)                     | Assistant-facing tools, prompts, and resources. |
-| [Sandbox](./sandbox.md)                           | Isolated command and file execution.            |
-| [Framework extensions](./framework-extensions.md) | Replaceable runtime infrastructure.             |
+| Primitive                               | Owns                                            |
+| --------------------------------------- | ----------------------------------------------- |
+| [App](./app.md)                         | User-facing routes, APIs, data, and rendering.  |
+| [Agent](./agent.md)                     | Model reasoning, messages, tools, and output.   |
+| [Tool](./tool.md)                       | One callable capability.                        |
+| [Workflow](./workflow.md)               | Multi-step coordination.                        |
+| [Task](./task.md)                       | A background work target.                       |
+| [Job](./job.md)                         | Durable execution of work.                      |
+| [Cron job](./cron-job.md)               | Scheduled job creation.                         |
+| [Prompt](./prompt.md)                   | Reusable instruction templates.                 |
+| [Resource](./resource.md)               | Readable project data for MCP.                  |
+| [Skill](./skill.md)                     | Reusable agent instructions and tool policy.    |
+| [Integration](./integration.md)         | External service capabilities.                  |
+| [MCP server](./mcp-server.md)           | Assistant-facing tools, prompts, and resources. |
+| [Sandbox](./sandbox.md)                 | Isolated command and file execution.            |
+| [Extensions](./framework-extensions.md) | Replaceable runtime infrastructure.             |
 
-## Ownership boundaries
+## How primitives combine
 
 Features can combine primitives, but one primitive should own the triggering
 event and primary lifecycle.
 
-For example, an API route can receive a webhook. A workflow can coordinate the
+For example, an app route can receive a webhook. A workflow can coordinate the
 response. A task can run slow background work. An agent can reason about a
-user-facing decision.
+user-facing decision. A skill can give the agent task-specific instructions.
+
+This keeps the project understandable. The app owns entry points. Agents own
+model decisions. Tools own deterministic actions. Workflows own process. Jobs own
+durable execution. Extensions own replaceable runtime infrastructure.
+
+For task-focused selection, see [Choose a primitive](../guides/choose-a-primitive.md).
+For exact agent runtime APIs, see
+[veryfront/agent](../api-reference/veryfront/agent.md).

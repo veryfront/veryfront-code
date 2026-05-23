@@ -15,6 +15,13 @@ file is a callable operation. Keeping those roles separate lets Veryfront
 discover project entities without hiding them inside route trees or central
 registries.
 
+## Core idea
+
+The directory name communicates the role. `app/` and `pages/` contain entry
+points. `agents/`, `tools/`, `workflows/`, `tasks/`, `prompts/`, `resources/`,
+and `skills/` contain reusable capabilities. `veryfront.config.ts` wires
+framework behavior and extensions.
+
 ## Directory roles
 
 | Area                                                                   | Role                                                |
@@ -27,7 +34,7 @@ registries.
 | `public/`                                                              | Static assets served from the root path.            |
 | `veryfront.config.ts`                                                  | Framework configuration and extension registration. |
 
-## Discovery model
+## Why this matters
 
 Routes are user and HTTP entry points. Auto-discovered entities are capabilities
 that routes, jobs, workflows, MCP servers, and agent services can use. This is
