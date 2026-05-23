@@ -29,6 +29,8 @@ export interface InMemoryRedisClient {
   on(event: string, handler: (err: unknown) => void): this;
   /** Test helper — exposes raw map for assertions. */
   _dump(): Map<string, { value: string; expiresAt: number | null }>;
+  /** Test helper — emits redis client errors registered through `on("error")`. */
+  _emitError(error: unknown): void;
 }
 
 function matchGlob(pattern: string, key: string): boolean {
@@ -54,6 +56,7 @@ function matchGlob(pattern: string, key: string): boolean {
  */
 export function createInMemoryRedisStub(): InMemoryRedisClient {
   const store = new Map<string, { value: string; expiresAt: number | null }>();
+  const errorHandlers: Array<(err: unknown) => void> = [];
 
   function pruneExpired(key: string): void {
     const entry = store.get(key);
@@ -106,11 +109,19 @@ export function createInMemoryRedisStub(): InMemoryRedisClient {
       }
       return { cursor: "0", keys };
     },
-    on(_event, _handler) {
+    on(event, handler) {
+      if (event === "error") {
+        errorHandlers.push(handler);
+      }
       return client;
     },
     _dump() {
       return store;
+    },
+    _emitError(error) {
+      for (const handler of errorHandlers) {
+        handler(error);
+      }
     },
   };
 
