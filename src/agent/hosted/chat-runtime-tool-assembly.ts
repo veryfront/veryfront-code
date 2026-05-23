@@ -134,7 +134,6 @@ export async function prepareHostedChatRuntimeToolAssembly<
     createRemoteToolSource: input.createRemoteToolSource ?? createRemoteMCPToolSource,
     defaultProjectId: () => activeProjectId(input.taskContext),
     getProjectId: input.getProjectId ?? (() => activeProjectId(input.taskContext)),
-    getEndUserId: () => input.taskContext.userId ?? null,
     getActiveBranchId: input.getActiveBranchId ?? (() => activeBranchId(input.taskContext)),
     conversationId: input.conversationId,
     allowedToolNames,

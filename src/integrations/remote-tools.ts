@@ -76,44 +76,6 @@ function parseJsonText(text: string): unknown | undefined {
   }
 }
 
-function stripLegacyEndUserIdFromConnectUrl(connectUrl: string): string {
-  try {
-    const isAbsolute = /^[a-zA-Z][a-zA-Z\d+.-]*:/.test(connectUrl);
-    const isProtocolRelative = connectUrl.startsWith("//");
-    const isRootRelative = connectUrl.startsWith("/") && !isProtocolRelative;
-    const url = new URL(connectUrl, "https://veryfront.invalid");
-
-    if (!url.searchParams.has("endUserId")) return connectUrl;
-
-    url.searchParams.delete("endUserId");
-
-    if (isAbsolute) return url.toString();
-    if (isProtocolRelative) return `//${url.host}${url.pathname}${url.search}${url.hash}`;
-
-    const relativeUrl = `${url.pathname}${url.search}${url.hash}`;
-    return isRootRelative ? relativeUrl : relativeUrl.slice(1);
-  } catch {
-    return connectUrl;
-  }
-}
-
-function stripLegacyEndUserIdFromToolResult(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(stripLegacyEndUserIdFromToolResult);
-  }
-
-  if (!value || typeof value !== "object") return value;
-
-  return Object.fromEntries(
-    Object.entries(value).map(([key, entry]) => [
-      key,
-      key === "connectUrl" && typeof entry === "string"
-        ? stripLegacyEndUserIdFromConnectUrl(entry)
-        : stripLegacyEndUserIdFromToolResult(entry),
-    ]),
-  );
-}
-
 async function fetchToolList(
   baseUrl: string,
   token: string,
@@ -170,20 +132,20 @@ async function callRemoteTool(
     const text = joinCallToolText(result.content as CallToolTextContent[]);
 
     if (result.structuredContent) {
-      return stripLegacyEndUserIdFromToolResult(result.structuredContent);
+      return result.structuredContent;
     }
 
     if (result.isError) {
       // Try to preserve structured error data (e.g., authentication_required with connectUrl)
       const parsed = parseJsonText(text);
-      if (parsed && typeof parsed === "object") return stripLegacyEndUserIdFromToolResult(parsed);
+      if (parsed && typeof parsed === "object") return parsed;
       return { error: "tool_error", message: text };
     }
 
     return parseJsonText(text) ?? text;
   }
 
-  return stripLegacyEndUserIdFromToolResult(result);
+  return result;
 }
 
 // ---------------------------------------------------------------------------

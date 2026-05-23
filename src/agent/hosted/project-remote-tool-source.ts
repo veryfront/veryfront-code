@@ -206,38 +206,10 @@ export type CreateHostedProjectRemoteToolSourcesInput =
     mcpServers?: readonly AgentServiceMcpServerConfig[];
     clientProfile?: RuntimeClientProfile | null;
     getProjectId: () => string | null | undefined;
-    getEndUserId?: () => string | null | undefined;
     conversationId?: string;
     createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
     onStudioProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler;
   };
-
-function isVeryfrontApiIntegrationTool(toolName: string): boolean {
-  return /^[a-zA-Z0-9_.-]+__[a-zA-Z0-9_.-]+$/.test(toolName);
-}
-
-function prepareVeryfrontApiToolInput(input: {
-  server: AgentServiceMcpServerConfig;
-  getEndUserId?: () => string | null | undefined;
-  prepareToolInput?: HostedProjectRemoteToolSourcePrepareToolInput;
-}): HostedProjectRemoteToolSourcePrepareToolInput | undefined {
-  if (input.server.kind !== "veryfront-api" && !input.prepareToolInput) {
-    return undefined;
-  }
-
-  return (toolInputContext) => {
-    const prepared = input.prepareToolInput?.(toolInputContext) ?? toolInputContext.toolInput;
-    if (
-      input.server.kind !== "veryfront-api" ||
-      !isVeryfrontApiIntegrationTool(toolInputContext.toolName)
-    ) {
-      return prepared;
-    }
-
-    const { end_user_id: _endUserId, ...trustedInput } = prepared;
-    return trustedInput;
-  };
-}
 
 function createHostedProjectRemoteToolSourceFromConfig(
   input: CreateHostedProjectRemoteToolSourcesInput,
@@ -245,12 +217,6 @@ function createHostedProjectRemoteToolSourceFromConfig(
   source: RemoteToolSource,
   onProjectSwitch?: HostedProjectRemoteToolSourceProjectSwitchHandler,
 ): RemoteToolSource {
-  const prepareToolInput = prepareVeryfrontApiToolInput({
-    server,
-    getEndUserId: input.getEndUserId,
-    prepareToolInput: input.prepareToolInput,
-  });
-
   return createHostedProjectRemoteToolSource({
     source,
     ...(input.defaultProjectId !== undefined ? { defaultProjectId: input.defaultProjectId } : {}),
@@ -272,7 +238,7 @@ function createHostedProjectRemoteToolSourceFromConfig(
           }),
       }
       : {}),
-    ...(prepareToolInput !== undefined ? { prepareToolInput } : {}),
+    ...(input.prepareToolInput !== undefined ? { prepareToolInput: input.prepareToolInput } : {}),
     ...(input.retryToolName !== undefined ? { retryToolName: input.retryToolName } : {}),
     ...(input.shouldRetryWithTool !== undefined
       ? { shouldRetryWithTool: input.shouldRetryWithTool }
