@@ -33,12 +33,3 @@ authorization, not local business logic.
 Keeping these boundaries explicit makes projects easier to review. A feature can
 combine primitives, but one primitive should still own the triggering event and
 the primary lifecycle.
-
-## Related
-
-- [Choose a primitive](../guides/choose-a-primitive.md): choose the smallest
-  primitive for a task.
-- [Agents](../guides/agents.md): define an agent.
-- [Workflows](../guides/workflows.md): coordinate durable steps.
-- [Jobs and cron jobs](../guides/jobs.md): run background work.
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference.

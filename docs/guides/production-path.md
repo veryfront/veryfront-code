@@ -84,14 +84,3 @@ For non-Cloud targets, use the output from `veryfront build` and the target host
 For API routes, compare the dev and production responses with `curl`. For pages, open the same path in both environments. For agents, workflows, tasks, jobs, or integrations, trigger one minimal run and confirm the expected output or status.
 
 Use `veryfront open --json` when you need the deployed URL in a script or a terminal-only check.
-
-## Next
-
-Continue with [Building and deploying](./deploying.md).
-
-## Related
-
-- [`veryfront` root reference](../api-reference/veryfront/index.md): config and runtime exports
-- [Project structure](./project-structure.md): file conventions and auto-discovery
-- [Pages and routing](./pages-and-routing.md): route files, layouts, and navigation
-- [API routes](./api-routes.md): HTTP handlers and streaming responses

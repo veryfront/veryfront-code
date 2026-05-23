@@ -155,9 +155,7 @@ The `useChat` hook handles the streaming protocol automatically:
 import { useChat } from "veryfront/chat";
 
 export default function ChatPage() {
-  const { messages, input, onChange, onSubmit, isLoading } = useChat({
-    api: "/api/ag-ui",
-  });
+  const { messages, input, onChange, onSubmit, isLoading } = useChat();
 
   return (
     <div>
@@ -204,14 +202,3 @@ curl -s http://localhost:3000/api/ag-ui \
 
 The second response should mention "Sam". For streaming, watch the SSE output:
 tokens arrive incrementally rather than in one chunk.
-
-## Next
-
-Continue with [Chat UI](./chat-ui.md).
-
-## Related
-
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat hooks API
-  reference
-- [Agent memory](../concepts/agent-memory.md): memory boundaries and trade-offs

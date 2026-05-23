@@ -176,14 +176,3 @@ curl -X POST http://localhost:3000/api/mcp \
 
 A working server returns a JSON-RPC response that lists every registered
 tool. Calling without the bearer token should return `401 Unauthorized`.
-
-## Next
-
-Continue with [Tools](./tools.md).
-
-## Related
-
-- [`veryfront/mcp`](../api-reference/veryfront/mcp.md): MCP server API reference
-- [`veryfront/tool`](../api-reference/veryfront/tool.md): tool API reference
-- [`veryfront/prompt`](../api-reference/veryfront/prompt.md): prompt API reference
-- [`veryfront/resource`](../api-reference/veryfront/resource.md): resource API reference

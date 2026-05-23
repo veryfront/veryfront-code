@@ -61,12 +61,3 @@ veryfront open
 ```
 
 The deployed page and API routes should respond.
-
-## Next
-
-Continue with [Building and deploying](../guides/deploying.md).
-
-## Related
-
-- [`veryfront` (root)](../api-reference/veryfront/index.md): build options
-- [`veryfront/server`](../api-reference/veryfront/server.md): production server

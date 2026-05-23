@@ -150,12 +150,3 @@ veryfront skills validate skills/my-skill
    skill should engage when the message asks to "review this diff"). The
    AG-UI response should reference the skill's instructions or call only
    the tools listed in `allowed_tools`.
-
-## Next
-
-Continue with [Agents](./agents.md).
-
-## Related
-
-- [agentskills.io specification](https://agentskills.io)
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference

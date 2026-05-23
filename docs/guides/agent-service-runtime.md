@@ -182,13 +182,3 @@ A working service streams AG-UI events back. If Veryfront Cloud registration
 is enabled, the service should also appear in the cloud dashboard's agent
 service list after the first heartbeat
 (`VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS`).
-
-## Next
-
-Continue with [Agents](./agents.md).
-
-## Related
-
-- [Agent service runtime reference](../api-reference/veryfront/agent.md): complete service runtime API reference
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/channels`](../api-reference/veryfront/channels.md): control-plane and invoke channel contracts

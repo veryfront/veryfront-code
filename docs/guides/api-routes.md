@@ -246,12 +246,3 @@ curl -i -X POST http://localhost:3000/api/echo \
 A working handler returns the expected status code and a JSON or streamed
 body. A `404` means the file path does not match the URL; a `405` means the
 HTTP method handler is not exported.
-
-## Next
-
-Continue with [Middleware](./middleware.md).
-
-## Related
-
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/middleware`](../api-reference/veryfront/middleware.md): middleware API reference

@@ -30,11 +30,3 @@ auto-discovery predictable.
 
 Route files still decide how users and HTTP clients enter the system. Primitive
 files define capabilities that routes and runtime services can use.
-
-## Related
-
-- [Project structure](../guides/project-structure.md): place files in a project.
-- [Configuration](../guides/configuration.md): customize discovery and runtime
-  settings.
-- [`veryfront`](../api-reference/veryfront/index.md): core framework API
-  reference.

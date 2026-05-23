@@ -29,12 +29,13 @@ Create a client page that points to your AG-UI route:
 import { Chat, useChat } from "veryfront/chat";
 
 export default function ChatPage() {
-  const chat = useChat({ api: "/api/ag-ui" });
+  const chat = useChat();
   return <Chat {...chat} placeholder="Ask me anything..." />;
 }
 ```
 
-`useChat({ api: "/api/ag-ui" })` decodes AG-UI SSE into Veryfront chat messages.
+`useChat()` connects to `/api/ag-ui` by default and decodes AG-UI SSE into
+Veryfront chat messages.
 `Chat` renders the input, message list, loading state, and scroll behavior.
 
 Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and
@@ -64,7 +65,7 @@ export const POST = createAgUiHandler("rag", {
 });
 ```
 
-Pair this route with the same `useChat({ api: "/api/ag-ui" })` client setup.
+Pair this route with the same `useChat()` client setup.
 Veryfront wraps untrusted system-role messages returned from `beforeStream`
 before they reach the agent, so retrieved documents are treated as reference
 data rather than instructions.
@@ -95,14 +96,3 @@ submit:
 
 If the assistant response is empty, check the dev-server log for provider or
 agent errors and confirm the AG-UI route is mounted at `/api/ag-ui`.
-
-## Next
-
-Continue with [Chat composition](./chat-composition.md).
-
-## Related
-
-- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat reference
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/markdown`](../api-reference/veryfront/markdown.md): markdown
-  rendering helpers

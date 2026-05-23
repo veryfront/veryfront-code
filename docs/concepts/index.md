@@ -20,7 +20,3 @@ framework pieces relate.
 | [Job execution model](./job-execution-model.md) | How tasks, jobs, cron jobs, workflow runs, events, and logs fit together.                     |
 | [Integration runtime](./integration-runtime.md) | How connector config, OAuth, token state, and remote tool execution interact.                 |
 | [Extension system](./extension-system.md)       | How factories, contracts, capabilities, setup, and teardown compose runtime behavior.         |
-
-## Next
-
-Continue with [Veryfront Code](./veryfront-code.md).

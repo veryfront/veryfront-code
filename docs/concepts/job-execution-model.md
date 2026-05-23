@@ -28,10 +28,3 @@ for queueing and dispatch.
 Events are the user-visible output stream for a run. Logs are raw debugging
 output. Keeping them separate lets product surfaces show stable progress while
 still preserving lower-level diagnostics for debugging.
-
-## Related
-
-- [Jobs and cron jobs](../guides/jobs.md): create and observe jobs.
-- [Tasks](../guides/tasks.md): define background task targets.
-- [Workflows](../guides/workflows.md): define workflow runs.
-- [`veryfront/jobs`](../api-reference/veryfront/jobs.md): jobs API reference.

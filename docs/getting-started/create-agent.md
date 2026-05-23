@@ -6,13 +6,10 @@ order: 4
 
 ## Prerequisites
 
-- [Veryfront installed](./installation.md) and a project created with
-  [Create project](./create-project.md).
-- An `agents/` directory in the project root. If you started from the `minimal`
-  template, create one: `mkdir agents`.
-- Veryfront Cloud access for inference. Run `veryfront login` or set
-  `VERYFRONT_API_TOKEN`. Direct provider keys such as `OPENAI_API_KEY` or
-  `ANTHROPIC_API_KEY` also work.
+- A Veryfront project from [Create project](./create-project.md).
+- An `agents/` directory. For the `minimal` template, run `mkdir agents`.
+- Veryfront Cloud auth. Run `veryfront login`, or set `VERYFRONT_API_TOKEN`.
+  `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` also work.
 
 ## Define the agent
 
@@ -68,7 +65,3 @@ buffering. Run the same request without `-N` to confirm.
 If the dev server logs a missing-provider error, run `veryfront login`, then
 restart `veryfront dev`. If you prefer direct provider keys or local models,
 see [Providers](../guides/providers.md).
-
-## Next
-
-Continue with [Create API](./create-api.md).

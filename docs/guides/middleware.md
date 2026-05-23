@@ -172,11 +172,3 @@ curl -i http://localhost:3000/api/protected \
 
 For CORS, include an `Origin` header and confirm
 `Access-Control-Allow-Origin` is set on the response.
-
-## Next
-
-Continue with [OAuth](./oauth.md).
-
-## Related
-
-- [`veryfront/middleware`](../api-reference/veryfront/middleware.md): middleware API reference

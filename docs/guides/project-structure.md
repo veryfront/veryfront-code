@@ -176,7 +176,6 @@ These directories are not auto-discovered. They are common project conventions.
 | `veryfront.config.ts` | Framework configuration        |
 | `package.json`        | Dependencies and metadata      |
 
-
 ## Verify it worked
 
 Add a file in any auto-discovered directory and restart `veryfront dev`. For
@@ -190,12 +189,3 @@ export default agent({ id: "hello", system: "Say hi." });
 
 The dev server log should confirm agent registration. `getAgent("hello")`
 should resolve from a route or test.
-
-## Next
-
-Continue with [Pages and routing](./pages-and-routing.md).
-
-## Related
-
-- [Configuration](./configuration.md): `veryfront.config.ts` options
-- [`veryfront` (root)](../api-reference/veryfront/index.md): core framework API reference

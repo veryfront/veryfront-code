@@ -120,12 +120,3 @@ For first-party extensions, also mirror the same `capabilities` array in `deno.j
    The dev log should list the extension under its declared name.
 3. Use the contract from another part of the app and confirm the
    extension's `provides` value is what gets resolved.
-
-## Next
-
-Continue with [Extension lifecycle](./extension-lifecycle.md).
-
-## Related
-
-- [Extensions](./extensions.md): extension overview
-- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference

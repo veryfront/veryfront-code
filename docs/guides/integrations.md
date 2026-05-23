@@ -102,16 +102,3 @@ After enabling an integration:
 3. For per-user OAuth integrations, confirm the user has authorized the provider
    first (see [OAuth](./oauth.md)). Calls fail with `401` if the user has no
    token.
-
-## Next
-
-Continue with [Sandbox](./sandbox.md).
-
-## Related
-
-- [Agents](./agents.md): agents use integration tools
-- [Tools](./tools.md): define custom tools
-- [OAuth](./oauth.md): configure OAuth-backed providers
-- [`veryfront/integrations`](../api-reference/veryfront/integrations.md):
-  integration metadata reference
-- [Configuration](./configuration.md): configure project settings

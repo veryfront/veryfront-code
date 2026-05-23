@@ -18,7 +18,6 @@ see [Extension system](../concepts/extension-system.md).
 - For a local extension: a folder under `extensions/` with a default-exported
   factory (see [Extension authoring](./extension-authoring.md)).
 
-
 ## Enable an extension
 
 Add extension factories to `veryfront.config.ts`:
@@ -80,12 +79,3 @@ Restart `veryfront dev` after editing `veryfront.config.ts`:
   code skip its local fallback).
 - If the factory throws during setup, the dev server prints the setup error
   with the extension name. Fix the error and reload.
-
-## Next
-
-Continue with [Extension authoring](./extension-authoring.md).
-
-## Related
-
-- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference
-- [Project structure](./project-structure.md): where local extensions live

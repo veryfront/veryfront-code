@@ -23,8 +23,6 @@ Deno.test("collectDocsCoverage reports generated reference and guide coverage", 
   assertEquals(report.apiDeclarations.missingSourceLinkSamples, []);
   assertEquals(report.referencePages.missing, []);
   assertEquals(report.referencePages.extra, []);
-  assertEquals(report.links.referenceModulesMissingGuideLinks, []);
-  assertEquals(report.links.guidesMissingReferenceLinks, []);
   assertEquals(report.guides.withContracts, report.guides.total);
   assertEquals(
     report.guides.withCodeExampleTests,

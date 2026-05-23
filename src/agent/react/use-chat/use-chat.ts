@@ -73,7 +73,10 @@ export function resolveUseChatStreamHandler(
 /**
  * useChat hook for managing chat state with veryfront stream events.
  */
-export function useChat(options: UseChatOptions): UseChatResult {
+const DEFAULT_CHAT_API = "/api/ag-ui";
+
+export function useChat(options: UseChatOptions = {}): UseChatResult {
+  const api = options.api ?? DEFAULT_CHAT_API;
   const [messages, setMessages] = useState<ChatMessage[]>(options.initialMessages ?? []);
   const messagesRef = useRef(messages);
   messagesRef.current = messages;
@@ -240,7 +243,7 @@ export function useChat(options: UseChatOptions): UseChatResult {
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
 
-        const response = await fetch(options.api, {
+        const response = await fetch(api, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",

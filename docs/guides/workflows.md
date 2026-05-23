@@ -334,11 +334,3 @@ done
 ```
 
 A working run reaches `status: "completed"` and exposes a `nodeStates` map with one `completed` entry per step. If `status` ends in `failed`, inspect the matching node entry in `nodeStates` for the underlying error.
-
-## Next
-
-Continue with [Workflows: loops, blob storage, React hooks](./workflows-advanced.md).
-
-## Related
-
-- [`veryfront/workflow`](../api-reference/veryfront/workflow.md): workflow API reference

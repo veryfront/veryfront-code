@@ -137,7 +137,3 @@ veryfront --version
 
 You should see the installed version printed. If the command is not found,
 restart your shell so the new `PATH` entry takes effect.
-
-## Next
-
-Continue with [Create project](./create-project.md).

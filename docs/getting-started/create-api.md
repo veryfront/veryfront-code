@@ -1,7 +1,7 @@
 ---
 title: "Create API"
 description: "Add an HTTP endpoint to a Veryfront project with a typed Request and Response."
-order: 5
+order: 6
 ---
 
 ## Prerequisites
@@ -56,12 +56,3 @@ curl -X POST http://localhost:3000/api/echo \
 ```
 
 The response should echo the JSON body.
-
-## Next
-
-Continue with [Create frontend](./create-frontend.md).
-
-## Related
-
-- [API routes](../guides/api-routes.md): route patterns and streaming
-- [Middleware](../guides/middleware.md): CORS, rate limiting, logging, and auth

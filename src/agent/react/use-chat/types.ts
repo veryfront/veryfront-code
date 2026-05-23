@@ -57,7 +57,8 @@ export interface OnToolCallArg {
 
 /** Options accepted by use chat. */
 export interface UseChatOptions {
-  api: string;
+  /** AG-UI endpoint. Defaults to "/api/ag-ui". */
+  api?: string;
   /** Streaming response protocol used by the endpoint. AG-UI is the default. */
   transport?: "ag-ui";
   initialMessages?: ChatMessage[];

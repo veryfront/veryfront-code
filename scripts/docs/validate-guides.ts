@@ -8,8 +8,7 @@
  * 2. Valid internal cross-references (relative .md links map to real files)
  * 3. Valid API reference links (relative ../api-reference/*.md links map to real files)
  * 4. Balanced code blocks (every ``` has a closing ```)
- * 5. Required sections (## Next or ## Related at the end)
- * 6. All guides listed in index.md exist as files
+ * 5. All guides listed in index.md exist as files
  *
  * Usage: deno run --allow-read scripts/docs/validate-guides.ts
  */
@@ -191,14 +190,6 @@ for (const file of guideFiles) {
     );
   }
 
-  // --- Required closing sections (skip section index pages) ---
-  if (filename !== "index.md") {
-    const hasNext = body.includes("## Next");
-    const hasRelated = body.includes("## Related");
-    if (!hasNext && !hasRelated) {
-      addWarning(shortName, "Missing both ## Next and ## Related sections");
-    }
-  }
 }
 
 for (const [key, files] of guideOrders) {

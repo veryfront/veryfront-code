@@ -20,7 +20,3 @@ Use this section when you already know the outcome you want.
 | External systems | [MCP server](./mcp-server.md), [Coding agents](./coding-agents.md), [OAuth](./oauth.md), [Integrations](./integrations.md), [Sandbox](./sandbox.md), [CLI knowledge ingestion](./cli-knowledge-ingestion.md)                    |
 | Extensions       | [Extensions](./extensions.md), [Extension authoring](./extension-authoring.md), [Extension lifecycle](./extension-lifecycle.md), [Extension testing](./extension-testing.md), [Extension publishing](./extension-publishing.md) |
 | Deployment       | [Building and deploying](./deploying.md)                                                                                                                                                                                        |
-
-## Next
-
-Continue with [Configuration](./configuration.md).

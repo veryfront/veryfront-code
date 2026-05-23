@@ -4,7 +4,7 @@ This folder holds the source content for the published Veryfront Code
 Getting Started flow.
 
 These pages help a reader install Veryfront, create a project, add the first
-agent, API route, frontend page, and deploy the project. Keep these pages in
+agent, chat page, API route, and deploy the project. Keep these pages in
 the same order as the public docs navigation.
 
 ## Pages
@@ -14,8 +14,8 @@ the same order as the public docs navigation.
 - `installation.md`: CLI and framework installation.
 - `create-project.md`: Project scaffolding.
 - `create-agent.md`: First agent.
+- `create-frontend.md`: First chat page.
 - `create-api.md`: First API route.
-- `create-frontend.md`: First page.
 - `deploy-project.md`: First deployment.
 
 ## Related

@@ -137,12 +137,3 @@ returns the value you returned from `run` as the final JSON line.
 For cloud execution, create a job that targets the task and check Studio for
 a `succeeded` status. See the verification block in
 [Jobs and cron jobs](./jobs.md) for the SDK-driven check.
-
-## Next
-
-Continue with [Jobs and cron jobs](./jobs.md).
-
-## Related
-
-- [Jobs and cron jobs](./jobs.md): the jobs system that executes scheduled tasks
-- [`veryfront/jobs`](../api-reference/veryfront/jobs.md): jobs API reference

@@ -88,13 +88,3 @@ After applying each option:
   next message includes the new `model` field.
 - **Sources and actions**: confirm action buttons render under each message and
   `onFeedback` fires when you select them.
-
-## Next
-
-Continue with [Workflows](./workflows.md).
-
-## Related
-
-- [Chat UI](./chat-ui.md): preset component
-- [Chat composition](./chat-composition.md): custom layouts
-- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat reference

@@ -118,12 +118,3 @@ reference a blob handle rather than the inline payload.
 For React hooks, render the dashboard component above, select **Run Pipeline**,
 and confirm the status string moves through `running` to `completed` while
 individual `nodeStates` entries update.
-
-## Next
-
-Continue with [Multi-agent](./multi-agent.md).
-
-## Related
-
-- [`veryfront/workflow`](../api-reference/veryfront/workflow.md): workflow API
-  reference

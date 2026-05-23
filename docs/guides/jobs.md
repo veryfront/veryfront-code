@@ -214,12 +214,3 @@ for (const entry of events.entries) {
 A working setup ends with `status: "succeeded"` and an event log whose
 entries describe the run. The same job should also appear in Studio under
 the jobs panel.
-
-## Next
-
-Continue with [Tasks](./tasks.md).
-
-## Related
-
-- [`veryfront/jobs`](../api-reference/veryfront/jobs.md): API reference for the jobs client
-- [CLI-first knowledge ingestion](./cli-knowledge-ingestion.md): first-party knowledge ingestion flow that creates jobs

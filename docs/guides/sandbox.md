@@ -146,12 +146,3 @@ sandbox:
 If `Sandbox.create()` throws a `401`, double-check the API token. If the
 session never closes, look in the cloud dashboard for the lingering session
 id and close it manually.
-
-## Next
-
-Continue with [MCP server](./mcp-server.md).
-
-## Related
-
-- [`veryfront/sandbox`](../api-reference/veryfront/sandbox.md): sandbox API reference
-- [`veryfront/fs`](../api-reference/veryfront/fs.md): filesystem helpers used with isolated workspaces

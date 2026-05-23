@@ -162,13 +162,3 @@ Open the page in the browser and inspect the document `<head>`. Confirm:
   [Facebook sharing debugger](https://developers.facebook.com/tools/debug/)
   and [Twitter card validator](https://cards-dev.twitter.com/validator) once
   the site is deployed.
-
-## Next
-
-Continue with [Providers](./providers.md).
-
-## Related
-
-- [`veryfront/head`](../api-reference/veryfront/head.md): Head component API reference
-- [`veryfront/fonts`](../api-reference/veryfront/fonts.md): fonts API reference
-- [`veryfront/context`](../api-reference/veryfront/context.md): access frontmatter data
