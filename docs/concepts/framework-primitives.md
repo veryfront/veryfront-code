@@ -1,5 +1,5 @@
 ---
-title: "Runtime primitives"
+title: "Framework primitives"
 description: "How Veryfront Code agents, tools, workflows, tasks, jobs, integrations, MCP, sandbox, and extensions fit together."
 order: 2
 ---

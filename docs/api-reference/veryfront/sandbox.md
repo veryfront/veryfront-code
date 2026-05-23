@@ -232,14 +232,3 @@ Streaming event emitted during command execution.
 |------|-------------|--------|
 | `createHostedSandboxClient` | Create hosted sandbox client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L198) |
 | `createHostedSandboxTools` | Create hosted sandbox tools. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/sandbox/agent-service-tools.ts#L200) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/agent`](./agent.md): Run isolated commands from agent tools/workflows
-- [`veryfront/mcp`](./mcp.md): Expose sandbox-backed operations over MCP
-
-User guides:
-
-- [sandbox](../../guides/sandbox.md): Run code in isolated sandbox environments

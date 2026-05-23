@@ -1936,21 +1936,3 @@ import { assertCompleted, assertContains, assertDurableRunCanaryCompleted } from
 | `durableRunCanaryRunnerInternals` | White-box helpers used by durable run canary tests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/testing/durable-run-canaries/runner.ts#L612) |
 | `getDurableRunCanaryMessageSchema` | Zod schema for get durable run canary message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/testing/durable-run-canaries/runner.ts#L38) |
 | `liveEvalRunnerInternals` | White-box helpers used by live eval runner tests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/testing/live-evals/runner.ts#L632) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/chat`](./chat.md): Client-side chat UI for agents
-- [`veryfront/tool`](./tool.md): Define tools for agents
-- [`veryfront/provider`](./provider.md): Configure AI model providers
-- [`veryfront/workflow`](./workflow.md): Orchestrate multi-agent workflows
-
-User guides:
-
-- [agents](../../guides/agents.md): Define and run agents
-- [multi-agent](../../guides/multi-agent.md): Compose multi-agent systems
-- [agent-memory](../../concepts/agent-memory.md): Understand memory and streaming boundaries
-- [memory-and-streaming](../../guides/memory-and-streaming.md): Memory, streaming, and lifecycle
-- [agent-service-runtime](../../guides/agent-service-runtime.md): Deploy agents as standalone services
-- [skills](../../guides/skills.md): Attach project skills to agents

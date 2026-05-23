@@ -7,8 +7,8 @@ order: 0
 
 ## Before you start
 
-Be familiar with TypeScript, React, a JavaScript runtime, and terminal commands.
-AI agent and MCP experience are not required.
+Be familiar with TypeScript and React. Have Node.js, Deno, or Bun installed,
+plus a code editor and terminal. AI know-how is not required.
 
 ## Contents
 

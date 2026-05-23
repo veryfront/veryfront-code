@@ -725,17 +725,3 @@ import { buildDataFileAnnotation, isImageFile, isTextPreviewFile } from "veryfro
 | `imageFileTypes` | Image media types that chat uploads can display natively. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L53) |
 | `messageMetadataSchema` | Schema for message metadata. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L419) |
 | `textFileExtensions` | File extensions that chat uploads can inline as text. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/chat/types.ts#L50) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/agent`](./agent.md): Server-side agent runtime that powers chat
-- [`veryfront/tool`](./tool.md): Define tools that agents can call
-
-User guides:
-
-- [chat-ui](../../guides/chat-ui.md): Compose chat UI in the browser
-- [chat-hooks](../../guides/chat-hooks.md): Manage chat state and streaming
-- [chat-composition](../../guides/chat-composition.md): Mix prebuilt and custom chat pieces
-- [chat-theming](../../guides/chat-theming.md): Theme chat components

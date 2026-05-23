@@ -178,10 +178,3 @@ Options accepted by timeout.
 | `RateLimitStore` | Public API contract for rate limit store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/types.ts#L32) |
 | `RedisRateLimitOptions` | Options accepted by redis rate limit. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/security/redis-rate-limit.ts#L18) |
 | `TimeoutOptions` | Options accepted by timeout. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/middleware/builtin/timeout.ts#L17) |
-
-## Related
-
-User guides:
-
-- [middleware](../../guides/middleware.md): Compose HTTP middleware
-- [api-routes](../../guides/api-routes.md): Apply middleware to API routes

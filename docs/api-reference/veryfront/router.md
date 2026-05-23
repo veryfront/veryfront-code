@@ -46,14 +46,3 @@ import { Link, RouterProvider, useRouter } from "veryfront/router";
 | `LinkProps` | Props accepted by `<Link>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L30) |
 | `RouterProviderProps` | Props accepted by `<RouterProvider>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L36) |
 | `RouterValue` | Router state exposed through `useRouter()`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L4) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/head`](./head.md): Manage document head
-- [`veryfront/context`](./context.md): Access route params and context
-
-User guides:
-
-- [pages-and-routing](../../guides/pages-and-routing.md): Pages and client-side routing

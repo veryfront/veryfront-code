@@ -54,7 +54,7 @@ my-app/
     Header.tsx
   lib/                  # Shared utilities
     auth.ts
-  content/              # Static content (MDX posts, data files)
+  content/              # App-owned content files
     posts/
       hello-world.mdx
   public/               # Static assets served as-is
@@ -161,7 +161,7 @@ These directories are not auto-discovered. They are common project conventions.
 | ------------- | ----------------------------------- |
 | `components/` | Shared React components             |
 | `lib/`        | Shared utilities and business logic |
-| `content/`    | Static content (MDX, JSON, YAML)    |
+| `content/`    | App-owned content files             |
 | `public/`     | Static assets served at root path   |
 | `styles/`     | Global CSS files                    |
 | `middleware/` | Custom middleware functions         |

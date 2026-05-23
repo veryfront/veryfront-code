@@ -43,13 +43,3 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 | Name | Description | Source |
 |------|-------------|--------|
 | `MDXProviderProps` | Props accepted by MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/markdown`](./markdown.md): For runtime markdown rendering
-
-User guides:
-
-- [pages-and-routing](../../guides/pages-and-routing.md): Author MDX pages

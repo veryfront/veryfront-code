@@ -25,14 +25,3 @@ import { Head } from "veryfront/head";
 | Name | Description | Source |
 |------|-------------|--------|
 | `Head` | Applies document head elements during SSR and client rendering. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L202) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/router`](./router.md): Client-side navigation
-- [`veryfront/context`](./context.md): Access page metadata
-
-User guides:
-
-- [head-and-seo](../../guides/head-and-seo.md): Document head, metadata, and SEO

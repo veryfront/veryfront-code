@@ -412,16 +412,3 @@ import { createDynamicWorkflowRunEntrypoint, createWorkflowRunEntrypoint, create
 | `WorkflowRunEntrypointConfig` | Configuration for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-entrypoint.ts#L41) |
 | `WorkflowRunManagerConfig` | Configuration for the workflow run manager backed by job executors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-manager.ts#L42) |
 | `WorkflowWorkerConfig` | Configuration for the workflow worker | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L26) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/agent`](./agent.md): Agent steps in workflows
-- [`veryfront/tool`](./tool.md): Tool steps in workflows
-
-User guides:
-
-- [workflows](../../guides/workflows.md): Author durable workflows
-- [workflows-advanced](../../guides/workflows-advanced.md): Use loops, artifacts, and progress hooks
-- [multi-agent](../../guides/multi-agent.md): Orchestrate multi-agent workflows

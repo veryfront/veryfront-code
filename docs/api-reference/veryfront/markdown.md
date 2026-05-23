@@ -34,14 +34,3 @@ import { Markdown } from "veryfront/markdown";
 |------|-------------|--------|
 | `CodeBlockProps` | Props accepted by code block. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L20) |
 | `MarkdownProps` | Props accepted by markdown. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/chat/markdown.tsx#L8) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/chat`](./chat.md): Used in chat message rendering
-- [`veryfront/mdx`](./mdx.md): For static MDX pages
-
-User guides:
-
-- [chat-ui](../../guides/chat-ui.md): Render markdown in chat

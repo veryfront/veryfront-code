@@ -85,10 +85,3 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront login` | Authenticate with Veryfront |
 | `veryfront logout` | Clear stored authentication credentials |
 | `veryfront whoami` | Show current authenticated user |
-
-## Related
-
-User guides:
-
-- [coding-agents](../../guides/coding-agents.md): Connect coding agents to CLI and MCP tools
-- [cli-knowledge-ingestion](../../guides/cli-knowledge-ingestion.md): CLI knowledge ingestion

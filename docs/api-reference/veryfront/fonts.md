@@ -39,14 +39,3 @@ import { GoogleFonts } from "veryfront/fonts";
 |------|-------------|--------|
 | `Font` | Public API contract for font. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L23) |
 | `GoogleFontsProps` | Props accepted by Google fonts. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/fonts/index.ts#L31) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/head`](./head.md): Manage document head metadata
-- [`veryfront/context`](./context.md): Access page context and frontmatter
-
-User guides:
-
-- [head-and-seo](../../guides/head-and-seo.md): Font loading and SEO
