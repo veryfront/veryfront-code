@@ -4,37 +4,29 @@ description: "How Veryfront Code agents, tools, workflows, tasks, jobs, integrat
 order: 2
 ---
 
-Veryfront Code exposes several primitives because different kinds of work have
-different owners. The important questions are who starts the work, how long it
-lives, whether it streams to a user, and how it is observed.
+Veryfront Code uses primitives to separate responsibility. Each primitive owns a
+specific kind of work, lifecycle, and runtime boundary.
 
-## Concept map
+## Primitives
 
-| Primitive   | What it owns                                                   | Typical companion                      |
-| ----------- | -------------------------------------------------------------- | -------------------------------------- |
-| Agent       | Model reasoning, messages, tools, memory, and streamed output. | Tools, memory, chat UI                 |
-| Tool        | One callable capability with typed input and output.           | Agent or MCP server                    |
-| Workflow    | Ordered, branching, or parallel steps with durable progress.   | Agents, tools, approval steps          |
-| Task        | A developer-defined background work target.                    | Job or cron job                        |
-| Job         | Durable execution of a target on the platform.                 | Task, workflow, cron job               |
-| Cron job    | Schedule definition that creates job runs.                     | Job                                    |
-| Integration | Connector metadata, OAuth, token handling, and remote tools.   | Agent tools                            |
-| MCP server  | Protocol surface for exposing tools, prompts, and resources.   | Tools, prompts, resources              |
-| Sandbox     | Isolated command and file execution.                           | Agent, workflow, or tool               |
-| Extension   | Reusable runtime capability packaged behind contracts.         | Provider, cache, auth, schema, bundler |
+| Primitive                                         | Owns                                            |
+| ------------------------------------------------- | ----------------------------------------------- |
+| [Agent](./agent.md)                               | Model reasoning, messages, tools, and output.   |
+| [Tool](./tool.md)                                 | One callable capability.                        |
+| [Workflow](./workflow.md)                         | Multi-step coordination.                        |
+| [Task](./task.md)                                 | A background work target.                       |
+| [Job](./job.md)                                   | Durable execution of work.                      |
+| [Cron job](./cron-job.md)                         | Scheduled job creation.                         |
+| [Integration](./integration.md)                   | External service capabilities.                  |
+| [MCP server](./mcp-server.md)                     | Assistant-facing tools, prompts, and resources. |
+| [Sandbox](./sandbox.md)                           | Isolated command and file execution.            |
+| [Framework extensions](./framework-extensions.md) | Replaceable runtime infrastructure.             |
 
 ## Ownership boundaries
 
-Agents own reasoning and conversation state. Tools own deterministic operations.
-Workflows own multi-step coordination. Tasks define background work, while jobs
-run that work durably. Integrations own external service metadata and
-authorization, not local business logic.
+Features can combine primitives, but one primitive should own the triggering
+event and primary lifecycle.
 
-Keeping these boundaries explicit makes projects easier to review. A feature can
-combine primitives, but one primitive should still own the triggering event and
-the primary lifecycle.
-
-For example, an API route can receive a webhook, a workflow can coordinate the
-multi-step response, a task can run slow background work, and an agent can reason
-about a user-facing decision. Each part remains understandable because the
-lifecycle owner stays clear.
+For example, an API route can receive a webhook. A workflow can coordinate the
+response. A task can run slow background work. An agent can reason about a
+user-facing decision.

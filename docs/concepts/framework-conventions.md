@@ -1,5 +1,5 @@
 ---
-title: "Project conventions"
+title: "Framework conventions"
 description: "Veryfront Code uses conventions over configuration."
 order: 3
 ---

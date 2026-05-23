@@ -9,7 +9,7 @@ a cache store, an auth provider, a database adapter, a model provider, or an
 MDX content pipeline.
 
 For the concepts behind factories, contracts, capabilities, setup, and teardown,
-see [Extension system](../concepts/extension-system.md).
+see [Framework extensions](../concepts/framework-extensions.md).
 
 ## Prerequisites
 

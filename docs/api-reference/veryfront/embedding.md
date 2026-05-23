@@ -1,7 +1,7 @@
 ---
 title: "veryfront/embedding"
 description: "Embedding - RAG primitives for chunking, embedding, and similarity search. Provides a facade over the framework's current embedding runtime and LangChain text splitting behind veryfront's own API."
-order: 25
+order: 7
 ---
 
 Embedding - RAG primitives for chunking, embedding, and similarity search. Provides a facade over the framework's current embedding runtime and LangChain text splitting behind veryfront's own API.

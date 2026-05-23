@@ -93,7 +93,7 @@ test-app/
 
 Pages live in `app/`. The agent template also adds root-level `agents/` and
 `tools/`. For the convention behind these directories, see
-[Project conventions](../concepts/project-conventions.md).
+[Framework conventions](../concepts/framework-conventions.md).
 
 ## Verify it worked
 

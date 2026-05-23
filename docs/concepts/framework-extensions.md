@@ -1,5 +1,5 @@
 ---
-title: "Extension system"
+title: "Framework extensions"
 description: "How Veryfront Code extension factories, contracts, capabilities, setup, and teardown compose runtime behavior."
 order: 7
 ---

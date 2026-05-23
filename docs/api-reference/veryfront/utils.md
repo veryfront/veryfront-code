@@ -1,7 +1,7 @@
 ---
 title: "veryfront/utils"
 description: "Runtime utilities: runtime detection, structured logging, constants (breakpoints, timeouts, HTTP codes), hashing, memoization, and feature flags."
-order: 19
+order: 29
 ---
 
 Runtime utilities: runtime detection, structured logging, constants (breakpoints, timeouts, HTTP codes), hashing, memoization, and feature flags.

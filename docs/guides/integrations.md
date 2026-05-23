@@ -6,9 +6,6 @@ order: 35
 
 Veryfront integrations let agents call third-party services on behalf of users.
 Enable an integration by adding it to `integrations` in `veryfront.config.ts`.
-For the runtime boundary between connector config, OAuth, token state, and
-remote tool calls, see
-[Integration runtime](../concepts/integration-runtime.md).
 
 ## Prerequisites
 
