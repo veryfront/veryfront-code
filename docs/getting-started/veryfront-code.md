@@ -76,8 +76,8 @@ out-of-the-box.
 
 ## Guides
 
-Topic-grouped catalog of every guide. Each guide is a mini tutorial
-for one concrete piece of the framework.
+Topic-grouped catalog of every guide. Each guide is a task-oriented
+walkthrough or decision guide for one concrete piece of the framework.
 
 ### Getting Started
 
