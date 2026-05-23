@@ -59,9 +59,6 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
 
 The curl response should emit `data:` lines as the answer streams.
 
-If the whole body lands at once after a delay, curl or a TLS proxy may be
-buffering. Run the same request without `-N` to confirm.
-
 If the dev server logs a missing-provider error, run `veryfront login`, then
 restart `veryfront dev`. If you prefer direct provider keys or local models,
 see [Providers](../guides/providers.md).

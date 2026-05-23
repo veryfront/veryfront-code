@@ -570,17 +570,17 @@ describe("Guide: installation.md", () => {
     }
   });
 
-  it("documents the runtime, OS, browser, and verify-it-worked sections", async () => {
+  it("documents requirements, install choices, and verification", async () => {
     const guide = await readGuide("installation.md");
 
     for (
       const heading of [
-        "## System requirements",
-        "### Operating system",
-        "### Runtime",
-        "### Hardware",
-        "## Supported browsers",
+        "## Requirements",
         "## Install",
+        "### macOS and Linux",
+        "### Windows",
+        "### Existing project",
+        "### npx (one-shot)",
         "## Verify it worked",
       ]
     ) {

@@ -4,42 +4,12 @@ description: "Install the Veryfront CLI and framework on macOS, Linux, or Window
 order: 2
 ---
 
-## System requirements
+## Requirements
 
-Veryfront ships as a standalone binary and as an npm package.
-
-### Operating system
-
-| OS                                          | Binary installer               | npm / npx |
-| ------------------------------------------- | ------------------------------ | --------- |
-| macOS 12 or later (Intel and Apple Silicon) | Yes (`curl` or Homebrew)       | Yes       |
-| Linux x86_64 and arm64 (glibc)              | Yes (`curl` or Homebrew)       | Yes       |
-| Windows 10 or later, x86_64 and arm64       | Yes (PowerShell `install.ps1`) | Yes       |
-
-### Runtime
-
-| Runtime | Minimum version | Notes                                      |
-| ------- | --------------- | ------------------------------------------ |
-| Node.js | 18.18           | Required for `npm`, `npx`, and app builds. |
-| Deno    | 1.45            | Optional direct runtime.                   |
-| Bun     | 1.1             | Optional direct runtime.                   |
-
-### Hardware
-
-- 1 GB of free disk space for the CLI, framework, and `node_modules`.
-- 2 GB of RAM for development; 4 GB or more is recommended when running an AI
-  agent locally.
-
-## Supported browsers
-
-Veryfront tests the built-in chat UI, router, and head components against the
-latest two stable releases of:
-
-- Chrome and Chromium-based browsers (Edge, Brave, Arc, Opera)
-- Firefox
-- Safari (macOS 14 and iOS 16 or later)
-
-Older browsers may work but are not part of the supported matrix.
+- macOS 12 or later, Linux x86_64 or arm64 (glibc), or Windows 10 or later.
+- Node.js 18.18 or later for `npm`, `npx`, and app builds.
+- Deno 1.45 or later, or Bun 1.1 or later, if you use those runtimes.
+- 1 GB of free disk space and 2 GB of RAM for local development.
 
 ## Install
 
@@ -66,42 +36,26 @@ npx veryfront
 
 </CodeGroup>
 
-### curl (standalone binary, macOS and Linux)
+### macOS and Linux
 
 ```bash
 curl -fsSL https://veryfront.com/install.sh | sh
 ```
 
-Installs the latest standalone binary to `~/.veryfront/bin/veryfront`.
-
-Pin a version or change the install directory:
-
-```bash
-curl -fsSL https://veryfront.com/install.sh | sh -s -- --version 0.1.0 --dir /usr/local/bin
-```
-
-### PowerShell (standalone binary, Windows)
-
-```powershell
-irm https://veryfront.com/install.ps1 | iex
-```
-
-Installs the latest standalone binary to
-`%USERPROFILE%\.veryfront\bin\veryfront.exe`.
-
-Pin a version or change the install directory:
-
-```powershell
-& ([scriptblock]::Create((irm https://veryfront.com/install.ps1))) -Version 0.1.0 -Dir C:\Tools\veryfront
-```
-
-### Homebrew
+This installs the latest standalone binary and adds it to your shell path.
+Homebrew installs the same binary:
 
 ```bash
 brew install veryfront/tap/veryfront
 ```
 
-Same binary as the curl installer, managed by Homebrew.
+### Windows
+
+```powershell
+irm https://veryfront.com/install.ps1 | iex
+```
+
+This installs the latest standalone binary and adds it to your user path.
 
 ### Existing project
 
