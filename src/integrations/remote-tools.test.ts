@@ -215,8 +215,30 @@ describe("integrations/remote-tools", () => {
     assertEquals(result, {
       error: "authentication_required",
       integration: "linear",
-      connectUrl: "/oauth/connect/linear?projectId=project-1&endUserId=user-1",
+      connectUrl: "/oauth/connect/linear?projectId=project-1",
       message: "Authentication required for Linear.",
+    });
+  });
+
+  it("preserves protocol-relative auth URL authority when stripping legacy end-user identity", async () => {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+
+    const result = await withMockFetch(async () =>
+      Response.json({
+        content: [],
+        structuredContent: {
+          error: "authentication_required",
+          connectUrl:
+            "//auth.example.com/oauth/connect/github?projectId=project-1&endUserId=user-1",
+        },
+      }), async () => await executeRemoteIntegrationTool("github__list_repos", {}));
+
+    assertEquals(result, {
+      error: "authentication_required",
+      connectUrl: "//auth.example.com/oauth/connect/github?projectId=project-1",
     });
   });
 
