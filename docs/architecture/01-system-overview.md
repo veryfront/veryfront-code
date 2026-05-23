@@ -1,4 +1,4 @@
-# System overview
+# System index
 
 Veryfront Code is a Deno-first framework and runtime package for full-stack AI
 apps. It combines application routing, rendering, native agent primitives,
@@ -85,4 +85,4 @@ behavior to the owning domain and keep the bridge as composition code.
 
 ## Related reference
 
-- [Reference index](../api-reference/overview.md)
+- [Reference index](../api-reference/index.md)

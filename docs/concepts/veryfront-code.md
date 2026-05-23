@@ -23,10 +23,10 @@ conventions.
 
 | Section                                        | Use it when                                                                   |
 | ---------------------------------------------- | ----------------------------------------------------------------------------- |
-| [Getting Started](../getting-started/overview.md) | You are installing Veryfront Code or building your first project.             |
-| [Guides](../guides/overview.md)                   | You need to complete a specific task in an existing project.                  |
-| [Concepts](./overview.md)                      | You need context, terminology, and mental models before choosing an approach. |
-| [API reference](../api-reference/overview.md)     | You need exact imports, exported names, types, and examples.                  |
+| [Getting Started](../getting-started/index.md) | You are installing Veryfront Code or building your first project.             |
+| [Guides](../guides/index.md)                   | You need to complete a specific task in an existing project.                  |
+| [Concepts](./index.md)                      | You need context, terminology, and mental models before choosing an approach. |
+| [API reference](../api-reference/index.md)     | You need exact imports, exported names, types, and examples.                  |
 
 ## Related
 

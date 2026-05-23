@@ -226,7 +226,10 @@ import { createAgUiHandler } from "veryfront/agent";
 export const POST = createAgUiHandler("assistant");
 ```
 
-Messages use Veryfront's parts-based chat message format: `{ id, role, parts: [{ type: "text", text }] }`. The route responds with AG-UI SSE and pairs with `useChat({ api: "/api/ag-ui" })` on the client. See the [Chat UI](./chat-ui.md) guide.
+Messages use Veryfront's parts-based chat message format with `id`, `role`,
+and `parts` fields. The route responds with AG-UI SSE and pairs with `useChat`
+configured for `/api/ag-ui` on the client. See the [Chat UI](./chat-ui.md)
+guide.
 
 ## Verify it worked
 

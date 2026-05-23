@@ -11,7 +11,7 @@ interface GuideContract {
 
 const PUBLIC_DOC_DIRS = ["getting-started", "guides", "concepts"] as const;
 const CONCEPT_FILES = new Set<string>([
-  "concepts/overview.md",
+  "concepts/index.md",
   "concepts/veryfront-code.md",
   "concepts/runtime-primitives.md",
   "concepts/project-conventions.md",
@@ -219,7 +219,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: ["Head", "GoogleFonts", "JSON-LD"],
   },
-  "getting-started/overview.md": {
+  "getting-started/index.md": {
     references: [],
     snippets: [
       "Veryfront Code",
@@ -242,7 +242,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Runtime primitives",
     ],
   },
-  "guides/overview.md": {
+  "guides/index.md": {
     references: [],
     snippets: [
       "Guides help you complete specific work",
@@ -254,7 +254,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Building and deploying",
     ],
   },
-  "concepts/overview.md": {
+  "concepts/index.md": {
     references: [],
     snippets: [
       "Concepts explain the mental models",
@@ -535,8 +535,8 @@ describe("published guide contracts", () => {
 
       if (
         !CONCEPT_FILES.has(filename) &&
-        filename !== "getting-started/overview.md" &&
-        filename !== "guides/overview.md"
+        filename !== "getting-started/index.md" &&
+        filename !== "guides/index.md"
       ) {
         assertStringIncludes(guide, "## Verify it worked");
       }
