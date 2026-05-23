@@ -30,5 +30,5 @@ export function requireUserIdFromRequest(request: Request): string {
 }
 
 export function requireUserIdFromContext(context?: ToolExecutionContext): string {
-  return requireUserId(context?.endUserId ?? context?.userId);
+  return requireUserId(context?.userId);
 }
