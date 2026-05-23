@@ -3,7 +3,7 @@
 This folder holds the source content for the published Veryfront user guides.
 
 Guides help a reader finish one task with the Veryfront library or CLI.
-Use `index.md` as the public section overview. Keep `README.md` for
+Use `overview.md` as the public section overview. Keep `README.md` for
 repo-maintainer notes only.
 
 ## What belongs here

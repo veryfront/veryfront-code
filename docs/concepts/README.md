@@ -4,7 +4,7 @@ This folder holds public explanation docs for Veryfront Code. Concepts help
 readers understand how parts of the framework relate, why boundaries exist, and
 how to reason about trade-offs.
 
-Use `index.md` as the public section overview. Keep `README.md` for
+Use `overview.md` as the public section overview. Keep `README.md` for
 repo-maintainer notes only.
 
 ## What belongs here

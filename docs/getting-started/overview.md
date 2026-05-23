@@ -1,6 +1,7 @@
 ---
-title: "Overview"
-description: "Start here. A short tour of the Veryfront Code guides and what you need to know before building."
+title: "Getting started"
+sidebarTitle: "Overview"
+description: "Guided onboarding for installing Veryfront Code, creating a project, and building the first working pieces of an app."
 order: 0
 ---
 

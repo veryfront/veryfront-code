@@ -1,5 +1,6 @@
 ---
-title: "Overview"
+title: "Concepts"
+sidebarTitle: "Overview"
 description: "Conceptual explanations for how Veryfront Code primitives, project conventions, runtime services, and extension points fit together."
 order: 0
 ---

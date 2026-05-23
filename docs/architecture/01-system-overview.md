@@ -85,4 +85,4 @@ behavior to the owning domain and keep the bridge as composition code.
 
 ## Related reference
 
-- [Reference index](../api-reference/index.md)
+- [Reference index](../api-reference/overview.md)

@@ -11,7 +11,7 @@
  *    `docs/api-reference/veryfront/<slug>.md`. The root export maps to
  *    `index.md`. Synthetic parents that only own deep imports (e.g.
  *    `channels`) also require a page.
- * 3. The public `docs/api-reference/index.md` overview exists.
+ * 3. The public `docs/api-reference/overview.md` overview exists.
  * 4. Generated reference tables do not contain known placeholder wording.
  *
  * Runs as part of `deno task verify`.
@@ -191,7 +191,7 @@ function main(): void {
   }
 
   // Public overview that explains the section contents.
-  const indexPath = `${ROOT}/docs/api-reference/index.md`;
+  const indexPath = `${ROOT}/docs/api-reference/overview.md`;
   let indexMissing = false;
   try {
     Deno.statSync(indexPath);
@@ -212,7 +212,7 @@ function main(): void {
     console.log(
       `All ${requiredSlugs.size} reference pages exist under docs/api-reference/veryfront/.`,
     );
-    console.log("docs/api-reference/index.md exists.");
+    console.log("docs/api-reference/overview.md exists.");
     console.log("Generated reference pages passed placeholder wording checks.");
     Deno.exit(0);
   }
@@ -271,7 +271,7 @@ function main(): void {
 
   if (indexMissing) {
     console.error(
-      `\nMissing docs/api-reference/index.md (run \`deno task docs\`).`,
+      `\nMissing docs/api-reference/overview.md (run \`deno task docs\`).`,
     );
   }
 
