@@ -17,20 +17,22 @@ jobs:
       github.event.pull_request.user.login != 'renovate[bot]' &&
       github.event.pull_request.user.login != 'aikido-autofix[bot]'
     steps:
-      - name: Checkout base branch
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-        with:
-          ref: ${{ github.event.pull_request.base.ref }}
-
       - name: Check CLA coverage for PR contributors
         id: check
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
+
+          base_contributors="$(mktemp)"
+          trap 'rm -f "${base_contributors}"' EXIT
+
+          gh api "repos/${REPOSITORY}/contents/CONTRIBUTORS.md?ref=${BASE_REF}" --jq '.content' \
+            | base64 --decode > "${base_contributors}"
 
           mapfile -t contributors < <(
             {
@@ -51,7 +53,7 @@ jobs:
             esac
 
             # Already signed in base branch contributors list.
-            if grep -Fqi "@${login})" CONTRIBUTORS.md; then
+            if grep -Fqi "@${login})" "${base_contributors}"; then
               continue
             fi
 
