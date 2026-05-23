@@ -89,6 +89,6 @@ Pages live in `app/`. Agents, tools, prompts, and workflows live at the project 
 
 ## Related
 
-- [Project structure](./project-structure.md): the file conventions used by `veryfront init`
-- [Configuration](./configuration.md): customize `veryfront.config.ts`
-- [Coding agents](./coding-agents.md): drive the project from Claude Code, Cursor, or Codex
+- [Project structure](../guides/project-structure.md): the file conventions used by `veryfront init`
+- [Configuration](../guides/configuration.md): customize `veryfront.config.ts`
+- [Coding agents](../guides/coding-agents.md): drive the project from Claude Code, Cursor, or Codex

@@ -75,4 +75,4 @@ sequenceDiagram
 
 ## Related reference
 
-- [`veryfront/oauth`](../reference/veryfront/oauth.md)
+- [`veryfront/oauth`](../api-reference/veryfront/oauth.md)

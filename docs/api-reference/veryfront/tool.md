@@ -197,7 +197,3 @@ Reference modules:
 User guides:
 
 - [tools](../../guides/tools.md): Define and call tools
-
-Architecture:
-
-- [05-agent-runtime](../../architecture/05-agent-runtime.md): Tools as AI primitives

@@ -180,4 +180,4 @@ For CORS, include an `Origin` header and confirm
 
 ## Related
 
-- [`veryfront/middleware`](../reference/veryfront/middleware.md): middleware API reference
+- [`veryfront/middleware`](../api-reference/veryfront/middleware.md): middleware API reference

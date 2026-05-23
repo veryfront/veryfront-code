@@ -9,7 +9,7 @@ Build a Veryfront project for production and ship it. This is the final step in 
 ## Prerequisites
 
 - A project that runs locally with `veryfront dev` (see [Create a project](./create-a-project.md)).
-- For Veryfront Cloud: a `VERYFRONT_API_TOKEN` and a project reference. Run `veryfront login` interactively or set the env vars (see [Configuration](./configuration.md)).
+- For Veryfront Cloud: a `VERYFRONT_API_TOKEN` and a project reference. Run `veryfront login` interactively or set the env vars (see [Configuration](../guides/configuration.md)).
 - For another host: any container or Node-compatible runtime that can serve the build output.
 
 ## Build
@@ -50,7 +50,7 @@ The preview is reachable at `https://<slug>--feature-x.preview.veryfront.com`.
 
 ## Deploy somewhere else
 
-For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See [Building and deploying](./deploying.md) for Docker, static export, and target-specific configuration.
+For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See [Building and deploying](../guides/deploying.md) for Docker, static export, and target-specific configuration.
 
 ## Verify it worked
 
@@ -64,11 +64,11 @@ After `veryfront deploy`:
 
 ## Next
 
-- [Configuration](./configuration.md): set runtime and build options
-- [Building and deploying](./deploying.md): production-build internals, static export, Docker
+- [Configuration](../guides/configuration.md): set runtime and build options
+- [Building and deploying](../guides/deploying.md): production-build internals, static export, Docker
 
 ## Related
 
-- [`veryfront` (root)](../reference/veryfront/index.md): `defineConfig`, build options
-- [`veryfront/server`](../reference/veryfront/server.md): production server APIs
-- [`veryfront/observability`](../reference/veryfront/observability.md): tracing, metrics, runtime logs
+- [`veryfront` (root)](../api-reference/veryfront/index.md): `defineConfig`, build options
+- [`veryfront/server`](../api-reference/veryfront/server.md): production server APIs
+- [`veryfront/observability`](../api-reference/veryfront/observability.md): tracing, metrics, runtime logs

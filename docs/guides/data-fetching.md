@@ -133,4 +133,4 @@ export default function Search() {
 
 ## Related
 
-- [`veryfront` (root)](../reference/veryfront/index.md): `getServerData`, `getStaticData`, `redirect`, `notFound`
+- [`veryfront` (root)](../api-reference/veryfront/index.md): `getServerData`, `getStaticData`, `redirect`, `notFound`

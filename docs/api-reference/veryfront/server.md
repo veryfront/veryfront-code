@@ -97,7 +97,3 @@ await server.fetch(new Request("https://example.com/health"));
 User guides:
 
 - [deploying](../../guides/deploying.md): Deploy the server
-
-Architecture:
-
-- [04-server-runtime](../../architecture/04-server-runtime.md): Server runtime architecture

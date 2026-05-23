@@ -10,7 +10,7 @@ Examples below use the default app router. Set `router: "pages"` in `veryfront.c
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create a project](./create-a-project.md)).
+- A project created with `veryfront init` (see [Create a project](../getting-started/create-a-project.md)).
 - The dev server is the easiest way to test routes:
   `veryfront dev`.
 
@@ -219,6 +219,6 @@ to confirm the React component renders without console errors.
 
 ## Related
 
-- [`veryfront/router`](../reference/veryfront/router.md): router API reference
-- [`veryfront/context`](../reference/veryfront/context.md): params, page data, and frontmatter hooks
-- [`veryfront/mdx`](../reference/veryfront/mdx.md): MDX component overrides
+- [`veryfront/router`](../api-reference/veryfront/router.md): router API reference
+- [`veryfront/context`](../api-reference/veryfront/context.md): params, page data, and frontmatter hooks
+- [`veryfront/mdx`](../api-reference/veryfront/mdx.md): MDX component overrides

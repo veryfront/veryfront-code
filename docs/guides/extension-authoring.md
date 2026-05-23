@@ -129,4 +129,4 @@ For first-party extensions, also mirror the same `capabilities` array in `deno.j
 ## Related
 
 - [Extensions](./extensions.md): extension overview
-- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference
+- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference

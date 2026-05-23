@@ -8,10 +8,10 @@
  *    `lint:barrel-jsdoc` (which checks `@module` only) by also requiring
  *    examples.
  * 2. Every public import surface has a reference page at
- *    `docs/reference/veryfront/<slug>.md`. The root export maps to
+ *    `docs/api-reference/veryfront/<slug>.md`. The root export maps to
  *    `index.md`. Synthetic parents that only own deep imports (e.g.
  *    `channels`) also require a page.
- * 3. The structural `docs/reference/README.md` exists.
+ * 3. The structural `docs/api-reference/README.md` exists.
  * 4. Generated reference tables do not contain known placeholder wording.
  *
  * Runs as part of `deno task verify`.
@@ -136,7 +136,7 @@ function main(): void {
   }
 
   for (const slug of requiredSlugs) {
-    const referencePath = `${ROOT}/docs/reference/veryfront/${slug}.md`;
+    const referencePath = `${ROOT}/docs/api-reference/veryfront/${slug}.md`;
     try {
       Deno.statSync(referencePath);
     } catch {
@@ -147,7 +147,7 @@ function main(): void {
     }
   }
 
-  const referenceDir = `${ROOT}/docs/reference/veryfront`;
+  const referenceDir = `${ROOT}/docs/api-reference/veryfront`;
   try {
     for (const entry of Deno.readDirSync(referenceDir)) {
       if (!entry.isFile || !entry.name.endsWith(".md")) continue;
@@ -191,7 +191,7 @@ function main(): void {
   }
 
   // Structural README that explains the layout.
-  const readmePath = `${ROOT}/docs/reference/README.md`;
+  const readmePath = `${ROOT}/docs/api-reference/README.md`;
   let readmeMissing = false;
   try {
     Deno.statSync(readmePath);
@@ -210,9 +210,9 @@ function main(): void {
       `All ${topLevel.length} top-level export paths have @module and @example in their JSDoc.`,
     );
     console.log(
-      `All ${requiredSlugs.size} reference pages exist under docs/reference/veryfront/.`,
+      `All ${requiredSlugs.size} reference pages exist under docs/api-reference/veryfront/.`,
     );
-    console.log("docs/reference/README.md exists.");
+    console.log("docs/api-reference/README.md exists.");
     console.log("Generated reference pages passed placeholder wording checks.");
     Deno.exit(0);
   }
@@ -230,7 +230,7 @@ function main(): void {
 
   if (missingReferencePages.length > 0) {
     console.error(
-      `\n${missingReferencePages.length} reference page(s) missing under docs/reference/veryfront/:\n`,
+      `\n${missingReferencePages.length} reference page(s) missing under docs/api-reference/veryfront/:\n`,
     );
     for (const err of missingReferencePages) {
       console.error(`  ${err.identifier} -> ${err.expectedPath}`);
@@ -240,7 +240,7 @@ function main(): void {
 
   if (extraReferencePages.length > 0) {
     console.error(
-      `\n${extraReferencePages.length} stale reference page(s) found under docs/reference/veryfront/:\n`,
+      `\n${extraReferencePages.length} stale reference page(s) found under docs/api-reference/veryfront/:\n`,
     );
     for (const err of extraReferencePages) {
       console.error(`  ${err.slug} -> ${err.path}`);
@@ -264,7 +264,7 @@ function main(): void {
   }
 
   if (readmeMissing) {
-    console.error(`\nMissing docs/reference/README.md (run \`deno task docs\`).`);
+    console.error(`\nMissing docs/api-reference/README.md (run \`deno task docs\`).`);
   }
 
   Deno.exit(1);

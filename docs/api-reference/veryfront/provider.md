@@ -190,7 +190,3 @@ Reference modules:
 User guides:
 
 - [providers](../../guides/providers.md): Register model providers
-
-Architecture:
-
-- [07-provider-runtime](../../architecture/07-provider-runtime.md): Provider and embedding runtime

@@ -94,4 +94,4 @@ kind-specific API shape.
 
 ## Related reference
 
-- [`veryfront/jobs`](../reference/veryfront/jobs.md)
+- [`veryfront/jobs`](../api-reference/veryfront/jobs.md)

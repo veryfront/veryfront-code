@@ -83,7 +83,3 @@ Reference modules:
 User guides:
 
 - [mcp-server](../../guides/mcp-server.md): Expose resources over MCP
-
-Architecture:
-
-- [05-agent-runtime](../../architecture/05-agent-runtime.md): Resources as AI primitives

@@ -81,4 +81,4 @@ flowchart TD
 
 ## Related reference
 
-- [`veryfront/sandbox`](../reference/veryfront/sandbox.md)
+- [`veryfront/sandbox`](../api-reference/veryfront/sandbox.md)

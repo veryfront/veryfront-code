@@ -4,7 +4,7 @@ This folder documents the internal architecture of `veryfront-code`. Each page
 explains runtime ownership, boundaries, protocols, and implementation shape for
 one runtime concern. Architecture pages do not duplicate the user guides in
 [docs/guides/](../guides/) or the public API reference in
-[docs/reference/](../reference/).
+[docs/api-reference/](../api-reference/).
 
 ## Section purpose
 
@@ -100,5 +100,5 @@ or public exports change.
 - [cli/README.md](../../cli/README.md)
 - [src/workflow/README.md](../../src/workflow/README.md)
 - [docs/guides/](../guides/)
-- [docs/reference/](../reference/)
+- [docs/api-reference/](../api-reference/)
 - [extensions/](../../extensions/)

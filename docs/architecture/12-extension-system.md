@@ -52,4 +52,4 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/extensions`](../reference/veryfront/extensions.md)
+- [`veryfront/extensions`](../api-reference/veryfront/extensions.md)

@@ -8,7 +8,7 @@ Configure a Veryfront project in two places: `veryfront.config.ts` for project s
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create a project](./create-a-project.md)).
+- A project created with `veryfront init` (see [Create a project](../getting-started/create-a-project.md)).
 - Write access to `veryfront.config.ts` and the project's `.env` file.
 
 ## Config file
@@ -290,4 +290,4 @@ it once you have confirmed the value resolves.
 
 ## Related
 
-- [`veryfront` (root)](../reference/veryfront/index.md): `defineConfig`, `getConfig`
+- [`veryfront` (root)](../api-reference/veryfront/index.md): `defineConfig`, `getConfig`

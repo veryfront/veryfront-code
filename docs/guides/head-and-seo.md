@@ -166,10 +166,10 @@ Open the page in the browser and inspect the document `<head>`. Confirm:
 ## Next
 
 - [Providers](./providers.md): wire up an LLM provider for AI pages
-- [API reference](../reference/README.md): full module reference
+- [API reference](../api-reference/README.md): full module reference
 
 ## Related
 
-- [`veryfront/head`](../reference/veryfront/head.md): Head component API reference
-- [`veryfront/fonts`](../reference/veryfront/fonts.md): fonts API reference
-- [`veryfront/context`](../reference/veryfront/context.md): access frontmatter data
+- [`veryfront/head`](../api-reference/veryfront/head.md): Head component API reference
+- [`veryfront/fonts`](../api-reference/veryfront/fonts.md): fonts API reference
+- [`veryfront/context`](../api-reference/veryfront/context.md): access frontmatter data

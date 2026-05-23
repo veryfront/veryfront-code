@@ -67,5 +67,5 @@ sequenceDiagram
 
 ## Related reference
 
-- [`veryfront/agent/runtime/ag-ui`](../reference/veryfront/agent.md)
-- [`veryfront/agent/service-runtime`](../reference/veryfront/agent.md)
+- [`veryfront/agent/runtime/ag-ui`](../api-reference/veryfront/agent.md)
+- [`veryfront/agent/service-runtime`](../api-reference/veryfront/agent.md)

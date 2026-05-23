@@ -191,5 +191,5 @@ whether the call used cloud, server-local, or browser inference.
 
 ## Related
 
-- [`veryfront/provider`](../reference/veryfront/provider.md): provider API reference
-- [`veryfront/embedding`](../reference/veryfront/embedding.md): embedding model configuration
+- [`veryfront/provider`](../api-reference/veryfront/provider.md): provider API reference
+- [`veryfront/embedding`](../api-reference/veryfront/embedding.md): embedding model configuration

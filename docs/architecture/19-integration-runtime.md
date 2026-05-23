@@ -69,4 +69,4 @@ flowchart TD
 
 ## Related reference
 
-- [`veryfront/integrations`](../reference/veryfront/integrations.md)
+- [`veryfront/integrations`](../api-reference/veryfront/integrations.md)

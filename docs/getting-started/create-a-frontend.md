@@ -66,6 +66,6 @@ export default function Home() {
 
 ## Related
 
-- [Pages and routing](./pages-and-routing.md): full surface (layouts, dynamic routes, MDX, navigation hooks)
-- [Head and SEO](./head-and-seo.md): set page metadata, Open Graph tags, and structured data
-- [Chat UI](./chat-ui.md): drop a streaming chat interface into a page
+- [Pages and routing](../guides/pages-and-routing.md): full surface (layouts, dynamic routes, MDX, navigation hooks)
+- [Head and SEO](../guides/head-and-seo.md): set page metadata, Open Graph tags, and structured data
+- [Chat UI](../guides/chat-ui.md): drop a streaming chat interface into a page

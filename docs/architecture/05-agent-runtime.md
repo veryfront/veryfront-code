@@ -196,11 +196,11 @@ import path in the current public export map.
 
 ## Related reference
 
-- [`veryfront/agent`](../reference/veryfront/agent.md)
-- [`veryfront/agent/tooling`](../reference/veryfront/agent.md)
-- [`veryfront/agent/hosted-lifecycle`](../reference/veryfront/agent.md)
-- [`veryfront/agent/conversation-control-plane`](../reference/veryfront/agent.md)
-- [`veryfront/agent/runtime/ag-ui`](../reference/veryfront/agent.md)
-- [`veryfront/tool`](../reference/veryfront/tool.md)
-- [`veryfront/prompt`](../reference/veryfront/prompt.md)
-- [`veryfront/resource`](../reference/veryfront/resource.md)
+- [`veryfront/agent`](../api-reference/veryfront/agent.md)
+- [`veryfront/agent/tooling`](../api-reference/veryfront/agent.md)
+- [`veryfront/agent/hosted-lifecycle`](../api-reference/veryfront/agent.md)
+- [`veryfront/agent/conversation-control-plane`](../api-reference/veryfront/agent.md)
+- [`veryfront/agent/runtime/ag-ui`](../api-reference/veryfront/agent.md)
+- [`veryfront/tool`](../api-reference/veryfront/tool.md)
+- [`veryfront/prompt`](../api-reference/veryfront/prompt.md)
+- [`veryfront/resource`](../api-reference/veryfront/resource.md)

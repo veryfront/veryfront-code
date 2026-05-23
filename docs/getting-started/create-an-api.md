@@ -71,6 +71,6 @@ Each route file you add produces an endpoint at the matching URL. Hit it with `c
 
 ## Related
 
-- [API routes](./api-routes.md): full surface (request parsing, streaming, dynamic params, pages-router shape)
-- [Middleware](./middleware.md): add CORS, rate limiting, logging, and auth checks
-- [Agents](./agents.md): wire an agent behind an API route with `createAgUiHandler`
+- [API routes](../guides/api-routes.md): full surface (request parsing, streaming, dynamic params, pages-router shape)
+- [Middleware](../guides/middleware.md): add CORS, rate limiting, logging, and auth checks
+- [Agents](../guides/agents.md): wire an agent behind an API route with `createAgUiHandler`

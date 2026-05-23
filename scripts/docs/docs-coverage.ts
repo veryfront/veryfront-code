@@ -49,6 +49,12 @@ interface ReferencePage {
   content: string;
 }
 
+interface GuidePage {
+  file: string;
+  path: string;
+  content: string;
+}
+
 function fromRoot(root: string, path: string): string {
   const normalizedRoot = root.replace(/\/$/, "");
   return normalizedRoot === "" ? path : `${normalizedRoot}/${path}`;
@@ -131,7 +137,7 @@ function countDeclarationRows(pages: ReferencePage[]): {
       withoutSourceLinks += 1;
       if (missingSourceLinkSamples.length < 20) {
         missingSourceLinkSamples.push({
-          page: `docs/reference/veryfront/${page.slug}.md`,
+          page: `docs/api-reference/veryfront/${page.slug}.md`,
           line: index + 1,
           declaration,
         });
@@ -176,7 +182,7 @@ export async function collectDocsCoverage(
   for (const slug of SYNTHETIC_PARENTS) requiredSlugs.add(slug);
   const requiredSlugList = [...requiredSlugs].sort();
 
-  const referenceDir = fromRoot(root, "docs/reference/veryfront");
+  const referenceDir = fromRoot(root, "docs/api-reference/veryfront");
   const referenceFileNames = await listMarkdownFiles(referenceDir);
   const referenceSlugs = referenceFileNames.map((name) =>
     name.replace(/\.md$/, "")
@@ -195,29 +201,38 @@ export async function collectDocsCoverage(
     referencePages.push({
       slug,
       content: await Deno.readTextFile(
-        fromRoot(root, `docs/reference/veryfront/${slug}.md`),
+        fromRoot(root, `docs/api-reference/veryfront/${slug}.md`),
       ),
     });
   }
 
   const declarations = countDeclarationRows(referencePages);
 
-  const guideDir = fromRoot(root, "docs/guides");
-  const guideFiles = (await listMarkdownFiles(guideDir)).filter((name) =>
-    name !== "README.md"
-  );
+  const guidePages: GuidePage[] = [];
+  for (const section of ["getting-started", "guides"]) {
+    const guideDir = fromRoot(root, `docs/${section}`);
+    const guideFiles = (await listMarkdownFiles(guideDir)).filter((name) =>
+      name !== "README.md"
+    );
+    for (const file of guideFiles) {
+      const path = `docs/${section}/${file}`;
+      guidePages.push({
+        file,
+        path,
+        content: await Deno.readTextFile(fromRoot(root, path)),
+      });
+    }
+  }
+  const guideFiles = guidePages.map((page) => page.file).sort();
   const guideFileSet = new Set(guideFiles);
   const guideFilesWithCodeExamples: string[] = [];
   const guideLinkedReferenceSlugs = new Set<string>();
 
-  for (const file of guideFiles) {
-    const content = await Deno.readTextFile(
-      fromRoot(root, `docs/guides/${file}`),
-    );
-    if (content.includes("```")) guideFilesWithCodeExamples.push(file);
+  for (const page of guidePages) {
+    if (page.content.includes("```")) guideFilesWithCodeExamples.push(page.file);
     for (
-      const match of content.matchAll(
-        /\.\.\/reference\/veryfront\/([a-z0-9-]+)\.md/g,
+      const match of page.content.matchAll(
+        /\.\.\/api-reference\/veryfront\/([a-z0-9-]+)\.md/g,
       )
     ) {
       guideLinkedReferenceSlugs.add(match[1] ?? "");
@@ -257,7 +272,7 @@ export async function collectDocsCoverage(
   for (const page of referencePages) {
     for (
       const match of page.content.matchAll(
-        /\.\.\/\.\.\/guides\/([^)\s#]+\.md)/g,
+        /\.\.\/\.\.\/(?:getting-started|guides)\/([^)\s#]+\.md)/g,
       )
     ) {
       guidesLinkedFromReferencePages.add(match[1] ?? "");

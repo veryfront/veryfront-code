@@ -117,7 +117,3 @@ Reference modules:
 User guides:
 
 - [oauth](../../guides/oauth.md): OAuth flows and provider setup
-
-Architecture:
-
-- [18-oauth-runtime](../../architecture/18-oauth-runtime.md): OAuth runtime architecture

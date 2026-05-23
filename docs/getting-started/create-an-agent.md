@@ -4,13 +4,13 @@ description: "Define an AI agent and invoke it from server code in under five mi
 order: 4
 ---
 
-Define an agent in a Veryfront project, send it a message, and stream the response back. For tools, memory, skills, and hosted runs, see [Agents](./agents.md).
+Define an agent in a Veryfront project, send it a message, and stream the response back. For tools, memory, skills, and hosted runs, see [Agents](../guides/agents.md).
 
 ## Prerequisites
 
 - [Veryfront installed](./installation.md) and a project created with [Create a project](./create-a-project.md). The `ai-agent` template gives you the file layout below by default.
 - An `agents/` directory in the project root. If you started from the `minimal` template, create one: `mkdir agents`.
-- A provider configured for inference. The simplest path is to set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in `.env`; the framework picks the matching provider automatically. See [Providers](./providers.md) for other options.
+- A provider configured for inference. The simplest path is to set `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` in `.env`; the framework picks the matching provider automatically. See [Providers](../guides/providers.md) for other options.
 
 ## Define the agent
 
@@ -52,7 +52,7 @@ import { createAgUiHandler } from "veryfront/agent";
 export const POST = createAgUiHandler("assistant");
 ```
 
-The handler validates the request, runs the agent, and returns an AG-UI Server-Sent Events response. Pair it with `useChat({ api: "/api/ag-ui" })` in a React client (see [Chat UI](./chat-ui.md)) and tokens appear in the UI as the model produces them.
+The handler validates the request, runs the agent, and returns an AG-UI Server-Sent Events response. Pair it with `useChat({ api: "/api/ag-ui" })` in a React client (see [Chat UI](../guides/chat-ui.md)) and tokens appear in the UI as the model produces them.
 
 For a buffered JSON response (cron jobs, batch calls, unit tests), resolve the agent yourself and call `generate`:
 
@@ -69,7 +69,7 @@ export async function POST(request: Request) {
 }
 ```
 
-App-router handlers receive the raw `Request`. The same route on the pages router lives at `pages/api/ag-ui.ts` (or `pages/api/ask.ts`) and receives an `APIContext`. See [API routes](./api-routes.md). For lower-level streaming surfaces that are not AG-UI chat, see [Memory and streaming](./memory-and-streaming.md).
+App-router handlers receive the raw `Request`. The same route on the pages router lives at `pages/api/ag-ui.ts` (or `pages/api/ask.ts`) and receives an `APIContext`. See [API routes](../guides/api-routes.md). For lower-level streaming surfaces that are not AG-UI chat, see [Memory and streaming](../guides/memory-and-streaming.md).
 
 ## Run it
 
@@ -97,6 +97,6 @@ If the dev server logs a missing-provider error, check that `OPENAI_API_KEY` (or
 
 ## Next
 
-- [Agents](./agents.md): full agent surface (tools, dynamic system prompts, multi-step runs, memory, AG-UI handlers, hosted runs).
-- [Tools](./tools.md): let the agent call typed functions.
-- [Chat UI](./chat-ui.md): drop a streaming chat interface into a React page that talks to this agent.
+- [Agents](../guides/agents.md): full agent surface (tools, dynamic system prompts, multi-step runs, memory, AG-UI handlers, hosted runs).
+- [Tools](../guides/tools.md): let the agent call typed functions.
+- [Chat UI](../guides/chat-ui.md): drop a streaming chat interface into a React page that talks to this agent.

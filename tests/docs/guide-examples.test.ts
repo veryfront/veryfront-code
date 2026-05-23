@@ -259,9 +259,7 @@ describe("Guide: workflows.mdx", () => {
   it("should support input schema validation", () => {
     const pipeline = workflow({
       id: "typed-pipeline",
-      inputSchema: defineSchema((v) =>
-        v.object({ topic: v.string().describe("Content topic") })
-      )(),
+      inputSchema: defineSchema((v) => v.object({ topic: v.string().describe("Content topic") }))(),
       steps: ({ input }) => [
         step("research", {
           agent: "researcher",

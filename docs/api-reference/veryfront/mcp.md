@@ -60,7 +60,7 @@ Create mcpserver.
 | `buildFormElicitation` | Builds form elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L21) |
 | `buildUrlElicitation` | Builds URL elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L35) |
 | `clearMCPRegistry` | Clear MCP registry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/registry.ts#L43) |
-| `createMCPServer` | Create mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L791) |
+| `createMCPServer` | Create mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L784) |
 | `formatSSEEvent` | Stateless SSE formatting utilities per the Server-Sent Events standard. Used by the Streamable HTTP transport for MCP. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L6) |
 | `formatSSEPrimingEvent` | Event emitted for format ssepriming. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L19) |
 | `formatSSERetry` | Formats sseretry. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/sse.ts#L14) |
@@ -74,7 +74,7 @@ Create mcpserver.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MCPServer` | Implement mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L98) |
+| `MCPServer` | Implement mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L97) |
 | `SessionManager` | Manages MCP sessions for the Streamable HTTP transport. Sessions are created during initialization and validated on subsequent requests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/session.ts#L5) |
 | `TaskStore` | Implement task store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/task-store.ts#L18) |
 
@@ -84,7 +84,7 @@ Create mcpserver.
 |------|-------------|--------|
 | `ElicitationRequest` | Request payload for elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L15) |
 | `FormElicitationOptions` | Options accepted by form elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L2) |
-| `IntegrationLoaderConfig` | Configuration used by integration loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L89) |
+| `IntegrationLoaderConfig` | Configuration used by integration loader. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/server.ts#L88) |
 | `MCPServerConfig` | Configuration used by mcpserver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/schemas/mcp.schema.ts#L59) |
 | `MCPStats` | Public API contract for MCP stats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/schemas/mcp.schema.ts#L61) |
 | `MCPTool` | Generic MCP tool definition | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/types.ts#L12) |
@@ -105,7 +105,3 @@ User guides:
 
 - [mcp-server](../../guides/mcp-server.md): Build and host MCP servers
 - [coding-agents](../../guides/coding-agents.md): Connect MCP-aware coding agents
-
-Architecture:
-
-- [10-mcp-runtime](../../architecture/10-mcp-runtime.md): MCP runtime architecture

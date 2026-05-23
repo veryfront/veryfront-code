@@ -109,16 +109,27 @@ const noopLogger = {
   error: () => {},
 };
 
+const GUIDE_DIRS = ["docs/getting-started", "docs/guides"] as const;
+
 async function readGuide(filename: string): Promise<string> {
-  return await Deno.readTextFile(`docs/guides/${filename}`);
+  for (const dir of GUIDE_DIRS) {
+    try {
+      return await Deno.readTextFile(`${dir}/${filename}`);
+    } catch (err) {
+      if (!(err instanceof Deno.errors.NotFound)) throw err;
+    }
+  }
+  throw new Error(`Guide not found: ${filename}`);
 }
 
 async function guideFilesWithCodeFences(): Promise<string[]> {
   const names: string[] = [];
-  for await (const entry of Deno.readDir("docs/guides")) {
-    if (!entry.isFile || !entry.name.endsWith(".md") || entry.name === "README.md") continue;
-    const content = await readGuide(entry.name);
-    if (content.includes("```")) names.push(entry.name);
+  for (const dir of GUIDE_DIRS) {
+    for await (const entry of Deno.readDir(dir)) {
+      if (!entry.isFile || !entry.name.endsWith(".md") || entry.name === "README.md") continue;
+      const content = await readGuide(entry.name);
+      if (content.includes("```")) names.push(entry.name);
+    }
   }
   return names.sort();
 }

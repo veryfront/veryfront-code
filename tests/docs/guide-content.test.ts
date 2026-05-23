@@ -22,7 +22,7 @@ describe("guide content contracts", () => {
     const guide = await Deno.readTextFile("docs/guides/tools.md");
 
     assertEquals(guide.includes("context?.endUserId"), false);
-    assertEquals(guide.includes("endUserId: \"user-123\""), false);
+    assertEquals(guide.includes('endUserId: "user-123"'), false);
     assertEquals(guide.includes("End-user identity for per-user token resolution"), false);
   });
 
