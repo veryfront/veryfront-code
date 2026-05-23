@@ -17,6 +17,13 @@ const DEFAULT_SCAN_COUNT = 100;
 const MAX_RECONNECT_RETRIES = 3;
 const RECONNECT_BACKOFF_BASE_MS = 100;
 const RECONNECT_BACKOFF_MAX_MS = 3_000;
+const EXPECTED_DISCONNECT_PATTERNS = [
+  "socket closed unexpectedly",
+  "connection closed",
+  "connection reset",
+  "econnreset",
+  "etimedout",
+];
 
 /** Constructor options for `RedisTokenCacheStore`. */
 export interface RedisTokenCacheStoreOptions {
@@ -42,6 +49,15 @@ const NOOP_LOGGER: RedisCacheLogger = {
   warn: () => {},
   error: () => {},
 };
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function isExpectedDisconnect(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return EXPECTED_DISCONNECT_PATTERNS.some((pattern) => message.includes(pattern));
+}
 
 /** Factory contract used by tests — swap in an in-memory stub. */
 export type RedisClientFactory = (
@@ -258,10 +274,13 @@ export class RedisTokenCacheStore implements TokenCacheStore {
 
     // deno-lint-ignore no-explicit-any
     (client as any).on?.("error", (err: unknown) => {
-      this.logger.error("[RedisCache] Client error", {
-        error: err instanceof Error ? err.message : String(err),
-      });
       this.connected = false;
+      const error = getErrorMessage(err);
+      if (isExpectedDisconnect(err)) {
+        this.logger.info("[RedisCache] Client disconnected", { error });
+        return;
+      }
+      this.logger.error("[RedisCache] Client error", { error });
     });
 
     this.client = client;

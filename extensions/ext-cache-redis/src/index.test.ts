@@ -32,17 +32,35 @@ function silentLogger(): ExtensionLogger {
   };
 }
 
-function capturingLogger(): { logger: ExtensionLogger; info: string[] } {
-  const info: string[] = [];
+interface CapturedLog {
+  message: string;
+  args: unknown[];
+}
+
+function capturingLogger(): {
+  logger: ExtensionLogger;
+  info: CapturedLog[];
+  warn: CapturedLog[];
+  error: CapturedLog[];
+} {
+  const info: CapturedLog[] = [];
+  const warn: CapturedLog[] = [];
+  const error: CapturedLog[] = [];
   return {
     info,
+    warn,
+    error,
     logger: {
       debug: () => {},
-      info: (msg: string) => {
-        info.push(msg);
+      info: (message: string, ...args: unknown[]) => {
+        info.push({ message, args });
       },
-      warn: () => {},
-      error: () => {},
+      warn: (message: string, ...args: unknown[]) => {
+        warn.push({ message, args });
+      },
+      error: (message: string, ...args: unknown[]) => {
+        error.push({ message, args });
+      },
     },
   };
 }
@@ -147,6 +165,43 @@ describe("ext-cache-redis extension", () => {
       assertEquals(client._dump().size, 0);
       await store.close();
     });
+
+    it("logs expected redis socket disconnects below error level", async () => {
+      const { factory: clientFactory, client } = createStubClientFactory();
+      const { logger, info, error } = capturingLogger();
+      const store = new RedisTokenCacheStore(
+        { url: "redis://localhost:6379" },
+        { clientFactory, logger },
+      );
+
+      await store.stats();
+
+      client._emitError(new Error("Socket closed unexpectedly"));
+
+      assertEquals(error.length, 0);
+      assertEquals(
+        info.some((entry) => entry.message === "[RedisCache] Client disconnected"),
+        true,
+      );
+      await store.close();
+    });
+
+    it("keeps unexpected redis client errors at error level", async () => {
+      const { factory: clientFactory, client } = createStubClientFactory();
+      const { logger, error } = capturingLogger();
+      const store = new RedisTokenCacheStore(
+        { url: "redis://localhost:6379" },
+        { clientFactory, logger },
+      );
+
+      await store.stats();
+
+      client._emitError(new Error("ERR invalid password"));
+
+      assertEquals(error.length, 1);
+      assertEquals(error[0]?.message, "[RedisCache] Client error");
+      await store.close();
+    });
   });
 
   describe("extension setup/teardown", () => {
@@ -204,11 +259,11 @@ describe("ext-cache-redis extension", () => {
 
       await ext.setup!(ctx);
 
-      const line = info.find((m) => m.includes("TokenCacheStore registered"));
+      const line = info.find((entry) => entry.message.includes("TokenCacheStore registered"));
       assertExists(line);
-      assertEquals(line!.includes("s3cret"), false);
-      assertEquals(line!.includes("alice"), false);
-      const loggedUrl = line!.match(/\(url=(.*)\)$/)?.[1];
+      assertEquals(line!.message.includes("s3cret"), false);
+      assertEquals(line!.message.includes("alice"), false);
+      const loggedUrl = line!.message.match(/\(url=(.*)\)$/)?.[1];
       assertExists(loggedUrl);
       assertEquals(new URL(loggedUrl).hostname, "redis.example.com");
 
@@ -227,9 +282,9 @@ describe("ext-cache-redis extension", () => {
 
       await ext.setup!(ctx);
 
-      const line = info.find((m) => m.includes("TokenCacheStore registered"));
+      const line = info.find((entry) => entry.message.includes("TokenCacheStore registered"));
       assertExists(line);
-      assertEquals(line!.includes("<redacted>"), true);
+      assertEquals(line!.message.includes("<redacted>"), true);
 
       await ext.teardown!();
     });
