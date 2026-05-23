@@ -191,8 +191,8 @@ for (const file of guideFiles) {
     );
   }
 
-  // --- Required closing sections (skip index.md) ---
-  if (filename !== "index.md") {
+  // --- Required closing sections (skip section overview pages) ---
+  if (filename !== "overview.md") {
     const hasNext = body.includes("## Next");
     const hasRelated = body.includes("## Related");
     if (!hasNext && !hasRelated) {
@@ -212,9 +212,9 @@ for (const [key, files] of guideOrders) {
 
 // 2. Validate that every page is listed in a section overview.
 const catalogFiles = [
-  "getting-started/index.md",
-  "guides/index.md",
-  "concepts/index.md",
+  "getting-started/overview.md",
+  "guides/overview.md",
+  "concepts/overview.md",
 ];
 const listedSlugs = new Set<string>();
 
@@ -248,7 +248,7 @@ for (const file of guideFiles) {
   const slug = file.slug;
   if (!listedSlugs.has(slug)) {
     addWarning(
-      "getting-started/index.md",
+      "getting-started/overview.md",
       `Guide "${slug}" not listed in a section overview`,
     );
   }

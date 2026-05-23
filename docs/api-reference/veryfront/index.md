@@ -119,7 +119,7 @@ Reference modules:
 
 User guides:
 
-- [index](../../getting-started/index.md): Browse the guide map
+- [overview](../../guides/overview.md): Browse the guide map
 - [quickstart](../../getting-started/quickstart.md): Build and run a first agent app
 - [veryfront-code](../../concepts/veryfront-code.md): What Veryfront Code is and how guides fit together
 - [installation](../../getting-started/installation.md): Install the CLI and framework

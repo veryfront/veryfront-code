@@ -1,5 +1,6 @@
 ---
-title: "Overview"
+title: "Guides"
+sidebarTitle: "Overview"
 description: "Task-focused guides for building, configuring, deploying, and operating Veryfront Code projects."
 order: 0
 ---

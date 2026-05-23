@@ -1,5 +1,6 @@
 ---
 title: "API reference"
+sidebarTitle: "Overview"
 description: "Exact imports, exported names, types, and module-level examples for Veryfront Code."
 order: 1
 ---

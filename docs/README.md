@@ -20,7 +20,7 @@ boundaries, or docs structure.
 - `guides/`: Published task guides and decision guides.
 - `concepts/`: Published explanation docs for public mental models.
 - `api-reference/`: Generated public API reference. The public overview is
-  `api-reference/index.md`; do not use `README.md` for public pages.
+  `api-reference/overview.md`; do not use `README.md` for public pages.
 - `architecture/`: Private Veryfront Code architecture notes. These docs are
   not part of the public docs sync.
 
