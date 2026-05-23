@@ -31,28 +31,11 @@ With the dev server running:
 curl http://localhost:3000/api/hello
 ```
 
-The response is:
+The response should be:
 
 ```json
 { "message": "Hello, world!" }
 ```
 
-## Read the request body
-
-For a `POST` endpoint that echoes its input:
-
-```ts
-// app/api/echo/route.ts
-export async function POST(request: Request) {
-  const body = await request.json();
-  return Response.json({ received: body });
-}
-```
-
-```bash
-curl -X POST http://localhost:3000/api/echo \
-  -H "Content-Type: application/json" \
-  -d '{"hello":"world"}'
-```
-
-The response should echo the JSON body.
+For request parsing, dynamic routes, and streaming responses, see
+[API routes](../guides/api-routes.md).
