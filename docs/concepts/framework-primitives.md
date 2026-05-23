@@ -1,6 +1,6 @@
 ---
 title: "Framework primitives"
-description: "How Veryfront Code apps, agents, tools, workflows, tasks, jobs, prompts, resources, skills, integrations, MCP, sandbox, and extensions fit together."
+description: "How Veryfront Code apps, agents, tools, skills, prompts, resources, tasks, workflows, jobs, integrations, MCP, sandbox, and extensions fit together."
 order: 2
 ---
 
@@ -18,13 +18,13 @@ that explains the work clearly.
 | [App](./app.md)                         | User-facing routes, APIs, data, and rendering.  |
 | [Agent](./agent.md)                     | Model reasoning, messages, tools, and output.   |
 | [Tool](./tool.md)                       | One callable capability.                        |
-| [Workflow](./workflow.md)               | Multi-step coordination.                        |
-| [Task](./task.md)                       | A background work target.                       |
-| [Job](./job.md)                         | Durable execution of work.                      |
-| [Cron job](./cron-job.md)               | Scheduled job creation.                         |
+| [Skill](./skill.md)                     | Reusable agent instructions and tool policy.    |
 | [Prompt](./prompt.md)                   | Reusable instruction templates.                 |
 | [Resource](./resource.md)               | Readable project data for MCP.                  |
-| [Skill](./skill.md)                     | Reusable agent instructions and tool policy.    |
+| [Task](./task.md)                       | A background work target.                       |
+| [Workflow](./workflow.md)               | Multi-step coordination.                        |
+| [Job](./job.md)                         | Durable execution of work.                      |
+| [Cron job](./cron-job.md)               | Scheduled job creation.                         |
 | [Integration](./integration.md)         | External service capabilities.                  |
 | [MCP server](./mcp-server.md)           | Assistant-facing tools, prompts, and resources. |
 | [Sandbox](./sandbox.md)                 | Isolated command and file execution.            |

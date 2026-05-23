@@ -245,6 +245,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "Guides help you complete specific work",
       "Contents",
+      "Primitive or area",
       "Configuration",
       "Pages and routing",
       "Workflows",
@@ -384,7 +385,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../guides/extension-lifecycle.md",
       "../api-reference/veryfront/extensions.md",
     ],
-    snippets: ["Core concepts", "Lifecycle", "Contract", "Capability"],
+    snippets: ["Characteristics", "Boundary", "Contract", "Common extension areas"],
   },
   "guides/integrations.md": {
     references: ["../api-reference/veryfront/integrations.md"],

@@ -14,12 +14,12 @@ clear and prevents overlapping agents, workflows, jobs, and integrations.
 | Receive browser, HTTP, or webhook traffic                   | App route or API route | [Pages and routing](./pages-and-routing.md) |
 | Answer users with model reasoning, tools, memory, or skills | Agent                  | [Agents](./agents.md)                       |
 | Give an agent one typed capability                          | Tool                   | [Tools](./tools.md)                         |
-| Coordinate multiple steps, branches, approvals, or retries  | Workflow               | [Workflows](./workflows.md)                 |
-| Define project-owned background work                        | Task                   | [Tasks](./tasks.md)                         |
-| Run durable background work now or on a schedule            | Job or cron job        | [Jobs](./jobs.md)                           |
+| Package reusable agent behavior                             | Skill                  | [Skills](./skills.md)                       |
 | Reuse assistant instructions                                | Prompt                 | [MCP server](./mcp-server.md)               |
 | Expose readable context to assistants                       | Resource               | [MCP server](./mcp-server.md)               |
-| Package reusable agent behavior                             | Skill                  | [Skills](./skills.md)                       |
+| Define project-owned background work                        | Task                   | [Tasks](./tasks.md)                         |
+| Coordinate multiple steps, branches, approvals, or retries  | Workflow               | [Workflows](./workflows.md)                 |
+| Run durable background work now or on a schedule            | Job or cron job        | [Jobs](./jobs.md)                           |
 | Connect agents to third-party services                      | Integration with OAuth | [Integrations](./integrations.md)           |
 | Expose project capabilities to assistants over a protocol   | MCP server             | [MCP server](./mcp-server.md)               |
 | Run isolated commands or file operations                    | Sandbox                | [Sandbox](./sandbox.md)                     |
@@ -32,12 +32,12 @@ clear and prevents overlapping agents, workflows, jobs, and integrations.
 | App route   | A browser, HTTP client, or webhook needs an entry point.                      | The work should outlive the request or be reused outside routing.             |
 | Agent       | The model must decide, explain, call tools, use memory, or stream a response. | The work is deterministic and can be a function, task, or workflow step.      |
 | Tool        | An agent needs a typed operation such as search, lookup, write, or transform. | The operation has multiple long-running states or human approval steps.       |
-| Workflow    | Work has ordered steps, parallel branches, retries, or human review.          | A single agent response or one background function is enough.                 |
-| Task        | You own a reusable background function in `tasks/`.                           | The user needs conversational reasoning or streaming output.                  |
-| Job         | You need durable execution, scheduling, batch status, or run history.         | The work can finish inside a request without durability.                      |
+| Skill       | An agent needs reusable instructions, references, scripts, and tool policy.   | The work is deterministic or needs durable process state.                     |
 | Prompt      | An assistant needs reusable instruction text.                                 | The project needs to execute code or read data.                               |
 | Resource    | An assistant needs readable project context.                                  | The operation changes state or starts work.                                   |
-| Skill       | An agent needs reusable instructions, references, scripts, and tool policy.   | The work is deterministic or needs durable process state.                     |
+| Task        | You own a reusable background function in `tasks/`.                           | The user needs conversational reasoning or streaming output.                  |
+| Workflow    | Work has ordered steps, parallel branches, retries, or human review.          | A single agent response or one background function is enough.                 |
+| Job         | You need durable execution, scheduling, batch status, or run history.         | The work can finish inside a request without durability.                      |
 | Integration | You need provider metadata, OAuth, tokens, or remote integration tools.       | A local custom API call is enough and no shared connector behavior is needed. |
 | MCP server  | External assistants or MCP clients need tools, prompts, or resources.         | The capability is only used inside one Veryfront app route.                   |
 | Sandbox     | Code or shell work needs isolation from the app process.                      | The code can run safely in your own trusted runtime.                          |
