@@ -525,7 +525,7 @@ describe("Guide: project-structure.md", () => {
 });
 
 describe("Guide: create-agent.md", () => {
-  it("uses the public AG-UI handler and keeps generate as a non-interactive note", async () => {
+  it("uses the public AG-UI handler for the first agent route", async () => {
     const guide = await readGuide("create-agent.md");
 
     for (
@@ -535,9 +535,8 @@ describe("Guide: create-agent.md", () => {
         'id: "assistant"',
         'import { createAgUiHandler } from "veryfront/agent"',
         'export const POST = createAgUiHandler("assistant")',
-        "Use `agent.generate()` only for non-interactive work",
         "curl -N -X POST",
-        "data:` lines arrive progressively",
+        "data:` lines as the answer streams",
       ]
     ) {
       assertStringIncludes(guide, snippet);

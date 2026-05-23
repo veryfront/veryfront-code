@@ -8,8 +8,6 @@ order: -1
 
 - Node.js 18.18 or later.
 - The Veryfront CLI installed. See [Installation](./installation.md).
-- A model provider key for local inference. Use a placeholder in examples and
-  put the real value in your local `.env` file.
 
 ## Create the app
 
@@ -35,21 +33,25 @@ support-agent/
 
 The template includes the agent, calculator tool, chat page, and AG-UI route.
 
-## Configure a provider
+## Authenticate
 
-Create `.env`:
+From the project directory, authenticate with Veryfront Cloud:
 
 ```bash
-OPENAI_API_KEY=<API_KEY>
+veryfront login
 ```
 
-For local models or explicit provider routing, see [Providers](../guides/providers.md).
+This lets the app use the Veryfront Cloud gateway. You can also set
+`VERYFRONT_API_TOKEN` directly. Direct provider keys such as `OPENAI_API_KEY`
+or `ANTHROPIC_API_KEY` also work; see [Providers](../guides/providers.md).
 
 ## Run it locally
 
 ```bash
 veryfront dev
 ```
+
+## Verify it worked
 
 Open `http://localhost:3000` and ask:
 
@@ -65,10 +67,7 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is 128 divided by 8?"}]}]}'
 ```
 
-## Verify it worked
-
-The browser should show a streamed assistant response that uses the calculator
-tool. The curl response should emit `data:` lines as the answer is produced.
+The answer should stream. The curl response should emit `data:` lines.
 
 If the route returns `Agent not found`, ensure `agents/assistant.ts` is in the
 project root. If the model skips the tool, ensure `tools: true` and `maxSteps`

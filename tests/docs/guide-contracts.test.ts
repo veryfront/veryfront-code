@@ -396,8 +396,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "getting-started/create-agent.md": {
     references: [
-      "../guides/agents.md",
-      "../guides/memory-and-streaming.md",
       "./create-api.md",
       "./installation.md",
       "./create-project.md",
@@ -407,11 +405,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "agents/assistant.ts",
       'import { agent } from "veryfront/agent"',
       'createAgUiHandler("assistant")',
-      "Use `agent.generate()` only",
       "curl -N -X POST",
       "/api/ag-ui",
-      "message-start",
-      "message-finish",
+      "data:` lines",
       "veryfront dev",
     ],
   },

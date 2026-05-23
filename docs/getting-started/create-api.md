@@ -23,7 +23,7 @@ export function GET() {
 `app/api/hello/route.ts` maps to `GET /api/hello`. Named exports define the
 allowed HTTP methods.
 
-## Try it
+## Verify it worked
 
 With the dev server running:
 
@@ -55,13 +55,7 @@ curl -X POST http://localhost:3000/api/echo \
   -d '{"hello":"world"}'
 ```
 
-## Verify it worked
-
-Confirm with `curl`:
-
-- `GET /api/hello` returns the JSON body above.
-- Unknown paths return 404.
-- Methods without an export return 405.
+The response should echo the JSON body.
 
 ## Next
 
