@@ -12,12 +12,16 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/framework-overview.md",
   "concepts/framework-primitives.md",
   "concepts/framework-conventions.md",
+  "concepts/app.md",
   "concepts/agent.md",
   "concepts/tool.md",
   "concepts/workflow.md",
   "concepts/task.md",
   "concepts/job.md",
   "concepts/cron-job.md",
+  "concepts/prompt.md",
+  "concepts/resource.md",
+  "concepts/skill.md",
   "concepts/integration.md",
   "concepts/mcp-server.md",
   "concepts/sandbox.md",
@@ -233,7 +237,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Agents",
       "tools",
       "Workflows",
-      "Primitive set",
+      "Main surfaces",
     ],
   },
   "guides/index.md": {
@@ -256,6 +260,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Framework primitives",
       "Framework conventions",
       "Framework extensions",
+      "Skill",
     ],
   },
   "concepts/framework-primitives.md": {
@@ -264,14 +269,18 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/agent.md",
     ],
     snippets: [
+      "App",
       "Agent",
       "Tool",
       "Workflow",
       "Task",
       "Job",
       "Cron job",
+      "Prompt",
+      "Resource",
+      "Skill",
       "MCP server",
-      "Ownership boundaries",
+      "How primitives combine",
     ],
   },
   "concepts/framework-conventions.md": {
@@ -281,17 +290,24 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "Directory roles",
-      "Discovery model",
+      "Why this matters",
       "agents/",
       "tools/",
     ],
+  },
+  "concepts/app.md": {
+    references: [
+      "../guides/pages-and-routing.md",
+      "../guides/api-routes.md",
+    ],
+    snippets: ["user-facing surface", "routes", "request and response boundary"],
   },
   "concepts/agent.md": {
     references: [
       "../guides/agents.md",
       "../api-reference/veryfront/agent.md",
     ],
-    snippets: ["model reasoning", "tools", "AG-UI"],
+    snippets: ["ReAct", "Reasoning", "Observation", "AG-UI"],
   },
   "concepts/tool.md": {
     references: [
@@ -327,6 +343,18 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/jobs.md",
     ],
     snippets: ["schedule", "job runs", "trigger"],
+  },
+  "concepts/prompt.md": {
+    references: ["../api-reference/veryfront/prompt.md"],
+    snippets: ["instruction text", "template variables", "MCP"],
+  },
+  "concepts/resource.md": {
+    references: ["../api-reference/veryfront/resource.md"],
+    snippets: ["readable project data", "URI pattern", "MCP"],
+  },
+  "concepts/skill.md": {
+    references: ["../guides/skills.md"],
+    snippets: ["agent instructions", "allowed-tools policy", "SKILL.md"],
   },
   "concepts/integration.md": {
     references: [
