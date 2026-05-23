@@ -9,17 +9,18 @@ the same order as the public docs navigation.
 
 ## Pages
 
-- `index.md`: Intro to the guide set.
-- `veryfront-code.md`: Framework overview and guide catalog.
+- `index.md`: Public section overview.
 - `quickstart.md`: End-to-end first app.
 - `installation.md`: CLI and framework installation.
-- `create-a-project.md`: Project scaffolding.
-- `create-an-agent.md`: First agent.
-- `create-an-api.md`: First API route.
-- `create-a-frontend.md`: First page.
-- `deploy-a-project.md`: First deployment.
+- `create-project.md`: Project scaffolding.
+- `create-agent.md`: First agent.
+- `create-api.md`: First API route.
+- `create-frontend.md`: First page.
+- `deploy-project.md`: First deployment.
 
 ## Related
 
-- [`docs/guides/`](../guides/) for task and concept guides.
+- [`docs/concepts/veryfront-code.md`](../concepts/veryfront-code.md) for the
+  framework overview and documentation map.
+- [`docs/guides/`](../guides/) for task guides and decision guides.
 - [`docs/api-reference/`](../api-reference/) for generated API reference.

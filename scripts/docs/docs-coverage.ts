@@ -162,6 +162,10 @@ function difference(expected: string[], actual: Set<string>): string[] {
   return expected.filter((item) => !actual.has(item));
 }
 
+function requiresReferenceBacklink(file: string): boolean {
+  return !file.endsWith("/index.md") && !file.startsWith("concepts/");
+}
+
 export async function collectDocsCoverage(
   root = Deno.cwd(),
 ): Promise<DocsCoverageReport> {
@@ -209,7 +213,7 @@ export async function collectDocsCoverage(
   const declarations = countDeclarationRows(referencePages);
 
   const guidePages: GuidePage[] = [];
-  for (const section of ["getting-started", "guides"]) {
+  for (const section of ["getting-started", "guides", "concepts"]) {
     const guideDir = fromRoot(root, `docs/${section}`);
     const guideFiles = (await listMarkdownFiles(guideDir)).filter((name) =>
       name !== "README.md"
@@ -223,13 +227,19 @@ export async function collectDocsCoverage(
       });
     }
   }
-  const guideFiles = guidePages.map((page) => page.file).sort();
+  const guideFiles = guidePages.map((page) => page.path.replace(/^docs\//, ""))
+    .sort();
+  const guideFilesRequiringReferenceBacklinks = guideFiles.filter(
+    requiresReferenceBacklink,
+  );
   const guideFileSet = new Set(guideFiles);
   const guideFilesWithCodeExamples: string[] = [];
   const guideLinkedReferenceSlugs = new Set<string>();
 
   for (const page of guidePages) {
-    if (page.content.includes("```")) guideFilesWithCodeExamples.push(page.file);
+    if (page.content.includes("```")) {
+      guideFilesWithCodeExamples.push(page.path.replace(/^docs\//, ""));
+    }
     for (
       const match of page.content.matchAll(
         /\.\.\/api-reference\/veryfront\/([a-z0-9-]+)\.md/g,
@@ -255,7 +265,7 @@ export async function collectDocsCoverage(
   let codeExampleFiles: string[] = [];
   if (await fileExists(codeExampleSourcePath)) {
     const codeExampleSource = await Deno.readTextFile(codeExampleSourcePath);
-    codeExampleFiles = [
+    const codeExampleNames = [
       ...extractStringArrayConst(
         codeExampleSource,
         "EXISTING_GUIDE_EXAMPLE_SUITE",
@@ -265,6 +275,10 @@ export async function collectDocsCoverage(
         "THIS_GUIDE_EXAMPLE_SUITE",
       ),
     ].sort();
+    codeExampleFiles = codeExampleNames.map((name) => {
+      const page = guidePages.find((candidate) => candidate.file === name);
+      return page?.path.replace(/^docs\//, "") ?? name;
+    }).sort();
   }
   const codeExampleFileSet = new Set(codeExampleFiles);
 
@@ -272,7 +286,7 @@ export async function collectDocsCoverage(
   for (const page of referencePages) {
     for (
       const match of page.content.matchAll(
-        /\.\.\/\.\.\/(?:getting-started|guides)\/([^)\s#]+\.md)/g,
+        /\.\.\/\.\.\/((?:getting-started|guides|concepts)\/[^)\s#]+\.md)/g,
       )
     ) {
       guidesLinkedFromReferencePages.add(match[1] ?? "");
@@ -322,10 +336,12 @@ export async function collectDocsCoverage(
         guideLinkedReferenceSlugs,
       ),
       guidesLinkedFromReferencePages:
-        guideFiles.filter((file) => guidesLinkedFromReferencePages.has(file))
+        guideFilesRequiringReferenceBacklinks.filter((file) =>
+          guidesLinkedFromReferencePages.has(file)
+        )
           .length,
       guidesMissingReferenceLinks: difference(
-        guideFiles,
+        guideFilesRequiringReferenceBacklinks,
         guidesLinkedFromReferencePages,
       ),
     },

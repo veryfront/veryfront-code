@@ -121,15 +121,17 @@ User guides:
 
 - [index](../../getting-started/index.md): Browse the guide map
 - [quickstart](../../getting-started/quickstart.md): Build and run a first agent app
-- [veryfront-code](../../getting-started/veryfront-code.md): What Veryfront Code is and how guides fit together
+- [veryfront-code](../../concepts/veryfront-code.md): What Veryfront Code is and how guides fit together
 - [installation](../../getting-started/installation.md): Install the CLI and framework
-- [create-a-project](../../getting-started/create-a-project.md): Scaffold and run a project
-- [create-an-agent](../../getting-started/create-an-agent.md): Define and invoke a first agent
-- [create-an-api](../../getting-started/create-an-api.md): Add a first API route
-- [create-a-frontend](../../getting-started/create-a-frontend.md): Add a first page
-- [deploy-a-project](../../getting-started/deploy-a-project.md): Deploy a first project
+- [create-project](../../getting-started/create-project.md): Scaffold and run a project
+- [create-agent](../../getting-started/create-agent.md): Define and invoke a first agent
+- [create-api](../../getting-started/create-api.md): Add a first API route
+- [create-frontend](../../getting-started/create-frontend.md): Add a first page
+- [deploy-project](../../getting-started/deploy-project.md): Deploy a first project
 - [choose-a-primitive](../../guides/choose-a-primitive.md): Choose the right primitive
+- [runtime-primitives](../../concepts/runtime-primitives.md): Understand primitive boundaries
 - [production-path](../../guides/production-path.md): Move a route toward production checks
 - [configuration](../../guides/configuration.md): Configure your Veryfront project
-- [project-structure](../../guides/project-structure.md): Project layout and conventions
+- [project-conventions](../../concepts/project-conventions.md): Understand project conventions
+- [project-structure](../../guides/project-structure.md): Place files in a project
 - [data-fetching](../../guides/data-fetching.md): Server data, static data, params

@@ -4,13 +4,18 @@ description: "Create an AI agent with a system prompt, tools, and memory."
 order: 18
 ---
 
-An agent is a file in `agents/` that exports a system prompt, optional tools, optional memory, and optional skills. The runtime auto-discovers it on startup and exposes it via `getAgent(id)` or a route created with `createAgUiHandler()`.
+An agent is a file in `agents/` that exports a system prompt, optional tools,
+optional memory, and optional skills. The runtime auto-discovers it on startup
+and exposes it via `getAgent(id)` or a route created with `createAgUiHandler()`.
 
-For the normal path, omit `model` and let runtime conventions choose: local inference by default, Veryfront Cloud when `VERYFRONT_API_TOKEN` plus project context are set.
+For the normal path, omit `model` and let runtime conventions choose: local
+inference by default, Veryfront Cloud when `VERYFRONT_API_TOKEN` plus project
+context are set.
 
 ## Prerequisites
 
-- A Veryfront project running locally (see [Create a project](../getting-started/create-a-project.md)).
+- A Veryfront project running locally (see
+  [Create project](../getting-started/create-project.md)).
 - A provider configured for inference (see [Providers](./providers.md)).
 - The `agents/` directory exists. If you customised `ai.agents.discovery.paths`
   in [Configuration](./configuration.md), use that directory instead.
@@ -31,7 +36,8 @@ export default agent({
 
 The `id` is how you reference the agent later with `getAgent("assistant")`.
 
-You can also define an agent with markdown when the agent only needs persona, model, and step configuration:
+You can also define an agent with markdown when the agent only needs persona,
+model, and step configuration:
 
 ```md
 ---
@@ -41,14 +47,18 @@ model: openai/gpt-5.4
 max-steps: 6
 ---
 
-You are a support assistant. Answer clearly and ask for missing details before acting.
+You are a support assistant. Answer clearly and ask for missing details before
+acting.
 ```
 
-The file path provides the agent id. For example, `agents/support.md` registers `support` and can be invoked through the same project runtime and control-plane surfaces as `agents/support.ts`.
+The file path provides the agent id. For example, `agents/support.md` registers
+`support` and can be invoked through the same project runtime and control-plane
+surfaces as `agents/support.ts`.
 
 ## Add tools
 
-Agents call tools to take actions or fetch data. Reference tools by name: the framework resolves them from the `tools/` directory:
+Agents call tools to take actions or fetch data. Reference tools by name: the
+framework resolves them from the `tools/` directory:
 
 ```ts
 // agents/assistant.ts
@@ -62,11 +72,13 @@ export default agent({
 });
 ```
 
-`maxSteps` limits how many tool-call iterations the agent can perform per request. See [Tools](./tools.md) for how to define `getWeather`.
+`maxSteps` limits how many tool-call iterations the agent can perform per
+request. See [Tools](./tools.md) for how to define `getWeather`.
 
 ## Enable skills
 
-Skills are reusable instruction packs discovered from your project's `skills/` directory.
+Skills are reusable instruction packs discovered from your project's `skills/`
+directory.
 
 ```ts
 // agents/assistant.ts
@@ -89,43 +101,55 @@ When `skills` is enabled, the runtime automatically registers these skill tools:
 - `load-skill-reference`
 - `execute-skill-script`
 
-See [Project structure](./project-structure.md) for `skills/` conventions and [Configuration](./configuration.md) for discovery paths.
+See [Project structure](./project-structure.md) for `skills/` conventions and
+[Configuration](./configuration.md) for discovery paths.
 
 ## Skill execution flow
 
-For skill-aware agents, the recommended flow is:
+For skill-aware agents, the flow is:
 
 1. Call `load-skill({ skillId })` to load the skill instructions and policy.
-2. Optionally call `load-skill-reference(...)` to read files from `references/` or `assets/`.
+2. Optionally call `load-skill-reference(...)` to read files from `references/`
+   or `assets/`.
 3. Optionally call `execute-skill-script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls under the active skill policy.
 
-The runtime enforces that non-skill tools cannot run before a successful `load-skill` when both are emitted in the same step.
+The runtime enforces that non-skill tools cannot run before a successful
+`load-skill` when both are emitted in the same step.
 
 ## Skill script execution
 
 Skill scripts run in one of two modes, selected automatically:
 
-- **Local (development)**: When no Veryfront Cloud sandbox credentials are available, scripts run as direct subprocesses on your machine via `runCommand()`. No remote sandbox is needed.
-- **Cloud (production)**: When `SANDBOX_AUTH_TOKEN`, `VERYFRONT_API_TOKEN`, or request-scoped Veryfront credentials are available, scripts are uploaded to and executed inside a remote sandbox session.
+- **Local (development)**: When no Veryfront Cloud sandbox credentials are
+  available, scripts run as direct subprocesses on your machine via
+  `runCommand()`. No remote sandbox is needed.
+- **Cloud (production)**: When `SANDBOX_AUTH_TOKEN`, `VERYFRONT_API_TOKEN`, or
+  request-scoped Veryfront credentials are available, scripts are uploaded to
+  and executed inside a remote sandbox session.
 
-Local development does not require sandbox infrastructure. Scripts run as
-direct subprocesses.
+Local development does not require sandbox infrastructure. Scripts run as direct
+subprocesses.
 
 ## Skill safety model
 
-- `allowed-tools` in `SKILL.md` is enforced at planning time and execution time (fail-closed).
+- `allowed-tools` in `SKILL.md` is enforced at planning time and execution time
+  (fail-closed).
 - Skill file reads are restricted to the skill root and allowed subdirectories.
 - Symlinked paths are rejected for skill file access.
 - Script execution timeout defaults to `60000` ms and is capped at `300000` ms.
 
 ## Connect to a route
 
-Expose a registered agent through `createAgUiHandler()` when a browser or external client needs AG-UI streaming.
+Expose a registered agent through `createAgUiHandler()` when a browser or
+external client needs AG-UI streaming.
 
-Use [Create an agent](../getting-started/create-an-agent.md) for the copyable quick-start route. Use [Chat UI](./chat-ui.md) to pair that route with `useChat({ api: "/api/ag-ui" })`.
+Use [Create agent](../getting-started/create-agent.md) for the copyable
+quick-start route. Use [Chat UI](./chat-ui.md) to pair that route with
+`useChat({ api: "/api/ag-ui" })`.
 
-If a route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `createAgUiHandler()`.
+If a route returns `Agent not found`, ensure the agent file is in `agents/` and
+its `id` matches the value passed to `createAgUiHandler()`.
 
 ## Non-streaming response
 
@@ -158,8 +182,8 @@ export default agent({
 });
 ```
 
-For step-boundary refresh during a long-lived run, use
-`resolveRuntimeState` instead of relying on `system()` to run again mid-turn.
+For step-boundary refresh during a long-lived run, use `resolveRuntimeState`
+instead of relying on `system()` to run again mid-turn.
 
 ```ts
 import { agent } from "veryfront/agent";
@@ -207,11 +231,15 @@ const result = await agent.generate({ input: "Hello" });
 console.log(result.text);
 ```
 
-If generation fails, check the dev-server log for agent registration or provider errors. If AG-UI routing fails, use the route verification in [Create an agent](../getting-started/create-an-agent.md). A healthy AG-UI stream ends with a `RunFinished` event.
+If generation fails, check the dev-server log for agent registration or provider
+errors. If AG-UI routing fails, use the route verification in
+[Create agent](../getting-started/create-agent.md). A healthy AG-UI stream ends
+with a `RunFinished` event.
 
 ## Next
 
-- [Agent service runtime](./agent-service-runtime.md): run agents as separate services
+- [Agent service runtime](./agent-service-runtime.md): run agents as separate
+  services
 - [Tools](./tools.md): define the tools your agent calls
 - [Memory and streaming](./memory-and-streaming.md): add conversation memory
 

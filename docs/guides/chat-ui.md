@@ -4,16 +4,19 @@ description: "Use the preset Chat component with the useChat hook."
 order: 22
 ---
 
-`Chat` is a complete chat interface in one component. It includes a composer, message list, streaming state, loading state, and scroll behavior.
+`Chat` is a complete chat interface in one component. It includes a composer,
+message list, streaming state, loading state, and scroll behavior.
 
 Pair it with `useChat` and an AG-UI route.
 
-For more control, see [Chat composition](./chat-composition.md) (custom layout), [Chat hooks](./chat-hooks.md) (headless state), and [Chat theming](./chat-theming.md) (visuals).
+For more control, see [Chat composition](./chat-composition.md) (custom layout),
+[Chat hooks](./chat-hooks.md) (headless state), and
+[Chat theming](./chat-theming.md) (visuals).
 
 ## Prerequisites
 
 - A Veryfront project with an AG-UI route, such as `/api/ag-ui` (see
-  [Create an agent](../getting-started/create-an-agent.md)).
+  [Create agent](../getting-started/create-agent.md)).
 - A configured provider for the route's agent (see [Providers](./providers.md)).
 
 ## Quick setup
@@ -31,13 +34,17 @@ export default function ChatPage() {
 }
 ```
 
-`useChat({ api: "/api/ag-ui" })` decodes AG-UI SSE into Veryfront chat messages. `Chat` renders the input, message list, loading state, and scroll behavior.
+`useChat({ api: "/api/ag-ui" })` decodes AG-UI SSE into Veryfront chat messages.
+`Chat` renders the input, message list, loading state, and scroll behavior.
 
-Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and send a message. To test the route without the UI, use the curl check in [Create an agent](../getting-started/create-an-agent.md).
+Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and
+send a message. To test the route without the UI, use the curl check in
+[Create agent](../getting-started/create-agent.md).
 
 ## Add request preprocessing
 
-Use `beforeStream` on `createAgUiHandler` when the route needs to add context, enforce authorization, or short-circuit a request before the agent runs:
+Use `beforeStream` on `createAgUiHandler` when the route needs to add context,
+enforce authorization, or short-circuit a request before the agent runs:
 
 ```ts
 import { createAgUiHandler } from "veryfront/agent";
@@ -57,7 +64,10 @@ export const POST = createAgUiHandler("rag", {
 });
 ```
 
-Pair this route with the same `useChat({ api: "/api/ag-ui" })` client setup. Veryfront wraps untrusted system-role messages returned from `beforeStream` before they reach the agent, so retrieved documents are treated as reference data rather than instructions.
+Pair this route with the same `useChat({ api: "/api/ag-ui" })` client setup.
+Veryfront wraps untrusted system-role messages returned from `beforeStream`
+before they reach the agent, so retrieved documents are treated as reference
+data rather than instructions.
 
 ## Common preset props
 
@@ -74,26 +84,29 @@ Pair this route with the same `useChat({ api: "/api/ag-ui" })` client setup. Ver
 
 ## Verify it worked
 
-Run `veryfront dev` and open the page that renders `Chat`. Type a message
-and submit:
+Run `veryfront dev` and open the page that renders `Chat`. Type a message and
+submit:
 
-- The composer should clear and a placeholder assistant message should
-  appear with a typing indicator.
+- The composer should clear and a placeholder assistant message should appear
+  with a typing indicator.
 - Tokens should stream in. The final message should be a non-empty assistant
   reply.
-- If you set `suggestions`, clicking a suggestion should populate the input.
+- If you set `suggestions`, selecting a suggestion should populate the input.
 
 If the assistant response is empty, check the dev-server log for provider or
 agent errors and confirm the AG-UI route is mounted at `/api/ag-ui`.
 
 ## Next
 
-- [Chat composition](./chat-composition.md): build a custom layout with `Chat.Root` and child components
+- [Chat composition](./chat-composition.md): build a custom layout with
+  `Chat.Root` and child components
 - [Chat hooks](./chat-hooks.md): use `useChat`, `useAgent`, and `useCompletion`
-- [Chat theming](./chat-theming.md): customize themes, contexts, and visual behavior
+- [Chat theming](./chat-theming.md): customize themes, contexts, and visual
+  behavior
 
 ## Related
 
 - [`veryfront/chat`](../api-reference/veryfront/chat.md): chat reference
 - [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/markdown`](../api-reference/veryfront/markdown.md): markdown rendering helpers
+- [`veryfront/markdown`](../api-reference/veryfront/markdown.md): markdown
+  rendering helpers

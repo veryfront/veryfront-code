@@ -88,4 +88,5 @@ Reference modules:
 
 User guides:
 
+- [integration-runtime](../../concepts/integration-runtime.md): Understand integration runtime boundaries
 - [integrations](../../guides/integrations.md): Connect SaaS integrations

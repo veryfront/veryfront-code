@@ -13,7 +13,7 @@ The examples use the default app router. Set `router: "pages"` in
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create a project](../getting-started/create-a-project.md)).
+- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)).
 - Familiarity with how a file path maps to a route in modern React frameworks.
 
 ## Directory layout
@@ -176,11 +176,6 @@ These directories are not auto-discovered. They are common project conventions.
 | `veryfront.config.ts` | Framework configuration        |
 | `package.json`        | Dependencies and metadata      |
 
-## Why flat?
-
-Veryfront Code treats agents, tools, prompts, and workflows as first-class
-project primitives. Keep them at the project root so discovery, review, and
-runtime registration stay predictable.
 
 ## Verify it worked
 
@@ -200,6 +195,7 @@ should resolve from a route or test.
 
 - [Pages and routing](./pages-and-routing.md): file-based routing, layouts, and dynamic routes
 - [Agents](./agents.md): create your first AI agent
+- [Project conventions](../concepts/project-conventions.md): why routes and primitives live in separate directories
 
 ## Related
 

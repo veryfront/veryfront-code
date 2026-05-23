@@ -1,10 +1,10 @@
 ---
 title: "veryfront/server"
-description: "Server runtime APIs. Use this module to create and run a Veryfront server in tests, custom runtimes, and production adapters."
+description: "Server runtime APIs. Creates and runs a Veryfront server in tests, custom runtimes, and production adapters."
 order: 29
 ---
 
-Server runtime APIs. Use this module to create and run a Veryfront server in tests, custom runtimes, and production adapters.
+Server runtime APIs. Creates and runs a Veryfront server in tests, custom runtimes, and production adapters.
 
 ## Import
 

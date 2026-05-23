@@ -8,7 +8,7 @@ Configure a Veryfront project in two places: `veryfront.config.ts` for project s
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create a project](../getting-started/create-a-project.md)).
+- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)).
 - Write access to `veryfront.config.ts` and the project's `.env` file.
 
 ## Config file

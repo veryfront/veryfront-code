@@ -14,7 +14,7 @@ and follow the same deploy path as a production project.
 - A model provider key for local inference. Use a placeholder in examples and
   put the real value in your local `.env` file.
 
-## Create a project
+## Create project
 
 ```bash
 veryfront init support-agent --template ai-agent
@@ -49,7 +49,8 @@ OPENAI_API_KEY=<API_KEY>
 ```
 
 Veryfront picks a matching provider automatically. For direct vendor routing,
-local models, or Veryfront Cloud routing, see [Providers](../guides/providers.md).
+local models, or Veryfront Cloud routing, see
+[Providers](../guides/providers.md).
 
 ## Add a tool
 
@@ -91,8 +92,8 @@ export default agent({
 });
 ```
 
-`maxSteps` is required when an agent uses tools. It gives the model enough
-turns to call the tool, receive the result, and produce the final answer.
+`maxSteps` is required when an agent uses tools. It gives the model enough turns
+to call the tool, receive the result, and produce the final answer.
 
 ## Expose the chat route
 
@@ -145,13 +146,13 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
 
 ## Verify it worked
 
-The browser should show a streamed assistant response that uses the weather
-tool result. The curl response should emit `data:` lines, including a start
-event, text deltas, and a finish event.
+The browser should show a streamed assistant response that uses the weather tool
+result. The curl response should emit `data:` lines, including a start event,
+text deltas, and a finish event.
 
 If the route returns `Agent not found`, ensure `agents/assistant.ts` is in the
-project root. If the model answers without using the tool, ensure the agent
-has both `tools: { getWeather: true }` and `maxSteps`.
+project root. If the model answers without using the tool, ensure the agent has
+both `tools: { getWeather: true }` and `maxSteps`.
 
 ## Deploy
 
@@ -173,10 +174,13 @@ created through the release flow.
 
 ## Next
 
-- [Agents](../guides/agents.md): add memory, skills, dynamic system prompts, and hosted runs.
-- [Tools](../guides/tools.md): write production tool contracts and error handling.
+- [Agents](../guides/agents.md): add memory, skills, dynamic system prompts, and
+  hosted runs.
+- [Tools](../guides/tools.md): write production tool contracts and error
+  handling.
 - [Chat UI](../guides/chat-ui.md): customize the preset chat component.
-- [Deploy a project](./deploy-a-project.md): ship and verify a production deployment.
+- [Deploy project](./deploy-project.md): ship and verify a production
+  deployment.
 
 ## Related
 

@@ -4,9 +4,13 @@ description: "Conversation memory strategies and streaming responses."
 order: 21
 ---
 
-Agents are stateless by default: each request gets the messages the client sends, and nothing else. Configure `memory` on the agent to persist history across requests, and use `createAgUiHandler` to stream the response back.
+Agents are stateless by default: each request gets the messages the client
+sends, and nothing else. Configure `memory` on the agent to persist history
+across requests, and use `createAgUiHandler` to stream the response back.
 
-Memory configuration is independent of model selection, so these examples omit `model` and follow the runtime default. To test, expose the agent through `/api/ag-ui`, run `veryfront dev`, and send messages from the [Chat UI](./chat-ui.md) guide or with `curl`.
+Memory configuration is independent of model selection, so these examples omit
+`model` and follow the runtime default. For the boundary between client state,
+server memory, and storage, see [Agent memory](../concepts/agent-memory.md).
 
 ## Prerequisites
 
@@ -16,7 +20,7 @@ Memory configuration is independent of model selection, so these examples omit `
 - A storage backend if you choose `conversation` memory; the default in-memory
   driver is fine while developing.
 
-## Memory types
+## Choose a memory mode
 
 Configure memory on your agent to persist messages across requests:
 
@@ -40,7 +44,8 @@ export default agent({
 
 ### Conversation memory
 
-Sliding window based on token count. Drops the oldest messages when the limit is reached:
+Sliding window based on token count. Drops the oldest messages when the limit is
+reached:
 
 ```ts
 export default agent({
@@ -65,7 +70,8 @@ export default agent({
 });
 ```
 
-When the conversation grows long, the agent compresses older messages into a summary while keeping recent messages intact.
+When the conversation grows long, the agent compresses older messages into a
+summary while keeping recent messages intact.
 
 ### Redis memory
 
@@ -127,7 +133,8 @@ export async function GET() {
 
 ### Server-side streaming
 
-Use `createAgUiHandler()` for chat UI routes. It validates the request, invokes the agent, and returns AG-UI SSE:
+Use `createAgUiHandler()` for chat UI routes. It validates the request, invokes
+the agent, and returns AG-UI SSE:
 
 ```ts
 // app/api/ag-ui/route.ts
@@ -136,7 +143,8 @@ import { createAgUiHandler } from "veryfront/agent";
 export const POST = createAgUiHandler("assistant");
 ```
 
-Use `agent.stream()` directly only when you are building a custom transport or non-chat streaming surface.
+Use `agent.stream()` directly only when you are building a custom transport or
+non-chat streaming surface.
 
 ### Client-side consumption
 
@@ -154,7 +162,9 @@ export default function ChatPage() {
   return (
     <div>
       {messages.map((m) => (
-        <div key={m.id}>{m.parts.map((p) => p.type === "text" ? p.text : null)}</div>
+        <div key={m.id}>
+          {m.parts.map((p) => p.type === "text" ? p.text : null)}
+        </div>
       ))}
       <form onSubmit={onSubmit}>
         <input value={input} onChange={onChange} disabled={isLoading} />
@@ -177,16 +187,6 @@ const result = await agent.generate({
 // result.usage: { promptTokens, completionTokens, totalTokens }
 ```
 
-## Client-managed vs server-managed memory
-
-There are two patterns for conversation history:
-
-**Client-managed** (default with `useChat`): The client sends the full message array on each request. The server is stateless. Good for simple chat UIs.
-
-**Server-managed** (with agent memory): The server persists messages. The client sends only the latest message. Good for long-running conversations and multi-device access.
-
-You can combine both: use client memory for the UI and server memory for context that persists across sessions.
-
 ## Verify it worked
 
 Send two messages on the same `threadId` (with `conversation` memory) and
@@ -202,8 +202,8 @@ curl -s http://localhost:3000/api/ag-ui \
   -d "{\"threadId\":\"$THREAD\",\"messages\":[{\"id\":\"2\",\"role\":\"user\",\"parts\":[{\"type\":\"text\",\"text\":\"What is my name?\"}]}]}"
 ```
 
-The second response should mention "Sam". For streaming, watch the SSE
-output: tokens arrive incrementally rather than in one chunk.
+The second response should mention "Sam". For streaming, watch the SSE output:
+tokens arrive incrementally rather than in one chunk.
 
 ## Next
 
@@ -213,4 +213,6 @@ output: tokens arrive incrementally rather than in one chunk.
 ## Related
 
 - [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat hooks API reference
+- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat hooks API
+  reference
+- [Agent memory](../concepts/agent-memory.md): memory boundaries and trade-offs

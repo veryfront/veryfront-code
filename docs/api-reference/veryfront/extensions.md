@@ -408,6 +408,7 @@ import "veryfront/extensions/schema";
 
 User guides:
 
+- [extension-system](../../concepts/extension-system.md): Understand extension contracts and lifecycle
 - [extensions](../../guides/extensions.md): Use built-in extensions
 - [extension-authoring](../../guides/extension-authoring.md): Author your own extensions
 - [extension-lifecycle](../../guides/extension-lifecycle.md): Extension lifecycle and hooks

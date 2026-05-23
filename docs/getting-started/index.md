@@ -1,49 +1,39 @@
 ---
-title: "Intro"
+title: "Overview"
 description: "Start here. A short tour of the Veryfront Code guides and what you need to know before building."
 order: 0
 ---
 
-Each page is a guided, hands-on path. Pick the one that matches the
-outcome you want next.
+Getting Started is the guided onboarding path for Veryfront Code. Use these
+pages when you are installing the framework, creating a first project, or
+building the first working pieces of an app.
 
-## What is Veryfront Code
+## Contents
 
-Veryfront Code is a full-stack framework for building AI-powered
-applications and agents with TypeScript and React. Agents, workflows,
-tools, pages, and APIs are native primitives, not glued-together
-libraries.
+| Page                                    | Use it when                                 |
+| --------------------------------------- | ------------------------------------------- |
+| [Quickstart](./quickstart.md)           | You want to build the first app end-to-end. |
+| [Installation](./installation.md)       | You need to install the CLI and framework.  |
+| [Create project](./create-project.md)   | You need to scaffold and run a project.     |
+| [Create agent](./create-agent.md)       | You need to define and invoke an agent.     |
+| [Create API](./create-api.md)           | You need to add the first HTTP endpoint.    |
+| [Create frontend](./create-frontend.md) | You need to add a page and navigation.      |
+| [Deploy project](./deploy-project.md)   | You need to build and ship the project.     |
 
-For the full feature tour and the catalog of every guide, see
-[Veryfront Code](./veryfront-code.md).
+## Before you start
 
-## Prerequisite knowledge
-
-These guides assume you are comfortable with:
+These pages assume you are comfortable with:
 
 - TypeScript - syntax and basic types.
 - React - components, props, and hooks.
 - A JavaScript runtime - Node.js, Deno, or Bun.
 - A terminal - running `npm`, `deno`, or shell commands.
 
-You do not need prior experience with AI agents, model providers, or
-the Model Context Protocol. The guides introduce each concept where
-it first comes up.
+You do not need prior experience with AI agents, model providers, or the Model
+Context Protocol. The guides introduce each concept where it first comes up.
 
-## How to use these guides
+## Next
 
-Each guide states what you will achieve, lists prerequisites, walks
-through a working example, and ends with a `## Next` or `## Related`
-section pointing to the natural follow-up.
-
-## Start here
-
-- [**Quickstart**](./quickstart.md) - build an agent app end-to-end
-  in a single guide.
-- [**Veryfront Code**](./veryfront-code.md) - what the framework is,
-  why to use it, and a map of every guide.
-- [**Installation**](./installation.md) - install the CLI and set up
-  your first project.
-- Looking for a specific topic? See the
-  [grouped guide catalog](./veryfront-code.md#guides) on the
-  Veryfront Code page.
+Start with [Quickstart](./quickstart.md) when you want the fastest end-to-end
+path. Start with [Installation](./installation.md) when you want the guided path
+one step at a time.
