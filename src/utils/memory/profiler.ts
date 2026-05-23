@@ -47,6 +47,24 @@ export interface MemorySnapshot {
   gcStats?: GCStats;
 }
 
+export interface MonitoringCacheStats {
+  name: string;
+  entries: number;
+  maxEntries?: number;
+  estimatedSizeBytes?: number;
+  backend?: string;
+}
+
+export interface MemoryMonitoringLogContext {
+  heapUsedMB: number;
+  heapTotalMB: number;
+  heapLimitMB: number;
+  heapUsedPercent: number;
+  rssMB?: number;
+  totalCacheEntries: number;
+  topCaches: MonitoringCacheStats[];
+}
+
 export interface GCStats {
   majorGCs: number;
   minorGCs: number;
@@ -129,6 +147,43 @@ export function getMemorySnapshot(): MemorySnapshot {
   };
 }
 
+function toMonitoringCacheStats(cache: CacheStats): MonitoringCacheStats {
+  return {
+    name: cache.name,
+    entries: cache.entries,
+    ...(cache.maxEntries !== undefined ? { maxEntries: cache.maxEntries } : {}),
+    ...(cache.estimatedSizeBytes !== undefined
+      ? { estimatedSizeBytes: cache.estimatedSizeBytes }
+      : {}),
+    ...(cache.backend !== undefined ? { backend: cache.backend } : {}),
+  };
+}
+
+export function getTopCacheStats(caches: CacheStats[], limit = 8): MonitoringCacheStats[] {
+  return [...caches]
+    .filter((cache) => cache.entries > 0)
+    .sort((a, b) => b.entries - a.entries || a.name.localeCompare(b.name))
+    .slice(0, limit)
+    .map(toMonitoringCacheStats);
+}
+
+export function getMemoryMonitoringLogContext(
+  snapshot: MemorySnapshot,
+  topCacheLimit = 8,
+): MemoryMonitoringLogContext {
+  const { heap } = snapshot;
+
+  return {
+    heapUsedMB: heap.usedHeapSizeMB,
+    heapTotalMB: heap.totalHeapSizeMB,
+    heapLimitMB: heap.heapSizeLimitMB,
+    heapUsedPercent: heap.heapUsedPercent,
+    rssMB: heap.rss,
+    totalCacheEntries: snapshot.totalCacheEntries,
+    topCaches: getTopCacheStats(snapshot.caches, topCacheLimit),
+  };
+}
+
 export async function forceGC(): Promise<boolean> {
   try {
     const buffer = new Uint8Array(100 * 1024 * 1024);
@@ -149,21 +204,16 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
   memoryCheckInterval = setInterval(() => {
     const snapshot = getMemorySnapshot();
     const { heap } = snapshot;
+    const monitoringContext = getMemoryMonitoringLogContext(snapshot);
 
-    logger.info("Memory status", {
-      heapUsedMB: heap.usedHeapSizeMB,
-      heapTotalMB: heap.totalHeapSizeMB,
-      heapLimitMB: heap.heapSizeLimitMB,
-      heapUsedPercent: heap.heapUsedPercent,
-      rssMB: heap.rss,
-      totalCacheEntries: snapshot.totalCacheEntries,
-    });
+    logger.info("Memory status", monitoringContext);
 
     const thresholdPercent = heapGrowthWarningThreshold * 100;
     if (heap.heapUsedPercent > thresholdPercent) {
       logger.warn("HIGH MEMORY USAGE", {
         heapUsedPercent: heap.heapUsedPercent,
         threshold: thresholdPercent,
+        topCaches: monitoringContext.topCaches,
         caches: snapshot.caches.map((c) => `${c.name}: ${c.entries}`).join(", "),
       });
     }
@@ -173,6 +223,7 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
       logger.warn("Rapid heap growth detected", {
         growthMB: heapGrowthMB,
         intervalMs,
+        topCaches: monitoringContext.topCaches,
       });
     }
 

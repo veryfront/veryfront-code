@@ -9,6 +9,7 @@
 
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { HTTP_MODULE_CACHE_MAX_ENTRIES } from "#veryfront/utils/constants/cache.ts";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
 import type { HttpCacheLike, SetLike } from "./http-cache-helpers.ts";
 import { inFlightHttpFetches, processingStackStorage } from "./in-flight-manager.ts";
 
@@ -26,6 +27,28 @@ const defaultLastDistributedRefresh = new LRUCache<string, number>({
 let injectedCachedPaths: HttpCacheLike<string, string> | null = null;
 let injectedProcessingStack: SetLike<string> | null = null;
 let injectedLastDistributedRefresh: HttpCacheLike<string, number> | null = null;
+
+function getCacheEntryCount(cache: unknown): number {
+  const size = (cache as { readonly size?: unknown }).size;
+  return typeof size === "number" ? size : -1;
+}
+
+registerCache("http-bundle-paths", () => ({
+  name: "http-bundle-paths",
+  entries: getCacheEntryCount(getCachedPaths()),
+  maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES,
+}));
+
+registerCache("http-bundle-ttl-refreshes", () => ({
+  name: "http-bundle-ttl-refreshes",
+  entries: getCacheEntryCount(getLastDistributedRefresh()),
+  maxEntries: HTTP_MODULE_CACHE_MAX_ENTRIES,
+}));
+
+registerCache("http-bundle-in-flight", () => ({
+  name: "http-bundle-in-flight",
+  entries: inFlightHttpFetches.size,
+}));
 
 export function getCachedPaths(): HttpCacheLike<string, string> {
   return injectedCachedPaths ?? defaultCachedPaths;
