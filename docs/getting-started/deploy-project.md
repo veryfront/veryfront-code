@@ -4,8 +4,7 @@ description: "Build a Veryfront project for production and ship it to Veryfront 
 order: 7
 ---
 
-Build a Veryfront project for production and ship it. This is the final step in
-the Getting Started flow.
+Build a Veryfront project and ship it.
 
 ## Prerequisites
 
@@ -25,8 +24,7 @@ Create a production build:
 veryfront build
 ```
 
-This compiles pages, bundles assets, pre-renders static routes, and writes the
-output to `dist/`.
+This writes the production output to `dist/`.
 
 ## Run the production build locally
 
@@ -37,7 +35,7 @@ veryfront start
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Confirm the same pages and
-endpoints that worked in dev also work here.
+endpoints work.
 
 ## Deploy to Veryfront Cloud
 
@@ -45,42 +43,33 @@ endpoints that worked in dev also work here.
 veryfront deploy
 ```
 
-Use `veryfront open` to open the deployed project in a browser.
-
 For a preview deployment per branch:
 
 ```bash
 veryfront deploy --branch feature-x
 ```
 
-Use `veryfront open --branch feature-x` to open the preview.
-
 ## Deploy somewhere else
 
 For a non-Cloud target, run `veryfront build` and ship the `dist/` output. See
-[Building and deploying](../guides/deploying.md) for Docker and static export.
+[Building and deploying](../guides/deploying.md).
 
 ## Verify it worked
 
-After `veryfront deploy`:
+After `veryfront deploy`, run:
 
-- The CLI confirms the deployed release and environment.
-- `veryfront open` opens the deployed project in a browser.
-- Use `veryfront open --json` when you need the deployed URL in a script.
-- The home page and any API routes respond on the deployed host.
-- The Veryfront Cloud dashboard lists the new deployment under the project.
+```bash
+veryfront open
+```
+
+The deployed page and API routes should respond.
 
 ## Next
 
-- [Configuration](../guides/configuration.md): set runtime and build options
-- [Building and deploying](../guides/deploying.md): production-build internals,
-  static export, Docker
+- [Configuration](../guides/configuration.md): runtime and build options
+- [Building and deploying](../guides/deploying.md): static export and Docker
 
 ## Related
 
-- [`veryfront` (root)](../api-reference/veryfront/index.md): `defineConfig`,
-  build options
+- [`veryfront` (root)](../api-reference/veryfront/index.md): build options
 - [`veryfront/server`](../api-reference/veryfront/server.md): production server
-  APIs
-- [`veryfront/observability`](../api-reference/veryfront/observability.md):
-  tracing, metrics, runtime logs

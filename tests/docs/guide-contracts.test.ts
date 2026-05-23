@@ -150,9 +150,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: [
       "./installation.md",
       "../guides/providers.md",
-      "../guides/agents.md",
-      "../guides/tools.md",
-      "../guides/chat-ui.md",
+      "./create-project.md",
+      "./create-agent.md",
+      "./create-api.md",
       "./deploy-project.md",
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/tool.md",
@@ -160,13 +160,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "veryfront init support-agent --template ai-agent",
-      "tools/get-weather.ts",
-      "tools: { getWeather: true }",
-      "maxSteps: 5",
-      'createAgUiHandler("assistant")',
-      'useChat({ api: "/api/ag-ui" })',
+      "calculator.ts",
+      "What is 128 divided by 8?",
+      "curl -N -X POST",
+      "tools: true",
+      "maxSteps",
       "veryfront build",
-      "veryfront deploy",
     ],
   },
   "guides/configuration.md": {
@@ -223,7 +222,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: [],
     snippets: [
       "Veryfront Code",
-      "Getting Started",
+      "Getting started",
       "Contents",
       "Before you start",
       "Installation",
@@ -401,7 +400,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/create-agent.md": {
     references: [
       "../guides/agents.md",
-      "../guides/api-routes.md",
       "../guides/tools.md",
       "../guides/chat-ui.md",
       "./installation.md",
@@ -413,8 +411,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "agents/assistant.ts",
       'import { agent } from "veryfront/agent"',
       'createAgUiHandler("assistant")',
-      'getAgent("assistant")',
-      "assistant.generate({ input: question })",
+      "Use `agent.generate()` only",
       "curl -N -X POST",
       "/api/ag-ui",
       "message-start",
