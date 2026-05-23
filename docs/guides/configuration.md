@@ -282,11 +282,3 @@ distinctive `title` and check that the document title in the browser matches.
 For environment variables, read them back from a temporary API route. For
 example, return `getEnv("VERYFRONT_API_TOKEN")` from a debug route and remove
 it once you have confirmed the value resolves.
-
-## Next
-
-Continue with [Building and deploying](./deploying.md).
-
-## Related
-
-- [`veryfront` (root)](../api-reference/veryfront/index.md): `defineConfig`, `getConfig`

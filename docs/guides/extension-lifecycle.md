@@ -78,13 +78,3 @@ With the temporary `setup()`/`teardown()` logs in place:
 - On Ctrl+C, every extension prints its final `teardown` log line.
 
 Remove the temporary logs before publishing the extension.
-
-## Next
-
-Continue with [Extension testing](./extension-testing.md).
-
-## Related
-
-- [Extensions](./extensions.md): extension overview
-- [Extension authoring](./extension-authoring.md): writing extension factories
-- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference

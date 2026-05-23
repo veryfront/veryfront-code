@@ -125,11 +125,3 @@ export default function Search() {
 - For client-side fetching, open the browser dev tools network tab. The
   request should fire after the page paints and the rendered output should
   match the response.
-
-## Next
-
-Continue with [API routes](./api-routes.md).
-
-## Related
-
-- [`veryfront` (root)](../api-reference/veryfront/index.md): `getServerData`, `getStaticData`, `redirect`, `notFound`

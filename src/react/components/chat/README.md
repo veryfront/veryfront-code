@@ -29,7 +29,7 @@ import { Chat } from "veryfront/react";
 import { useChat } from "veryfront/agent/react";
 
 export default function ChatPage() {
-  const chat = useChat({ api: "/api/ag-ui" });
+  const chat = useChat();
 
   return (
     <Chat
@@ -274,7 +274,7 @@ import { Chat } from "veryfront/react";
 import { useChat } from "veryfront/agent/react";
 
 export default function App() {
-  const chat = useChat({ api: "/api/ag-ui" });
+  const chat = useChat();
   return <Chat {...chat} />;
 }
 ```
@@ -344,7 +344,7 @@ function CustomMessage({ message }: { message: ChatMessage }) {
 }
 
 export default function AdvancedChat() {
-  const chat = useChat({ api: "/api/ag-ui" });
+  const chat = useChat();
 
   return (
     <Chat
@@ -445,9 +445,7 @@ function getTextContent(message: ChatMessage): string {
 </ChatContainer>;
 
 // Hooks only (v5 API)
-const { messages, input, sendMessage, handleSubmit } = useChat({
-  api: "/api/ag-ui",
-});
+const { messages, input, sendMessage, handleSubmit } = useChat();
 return <YourCompletelyCustomUI />;
 ```
 

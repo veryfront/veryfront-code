@@ -44,13 +44,3 @@ After publishing:
 3. The dev log should list the extension under the published name. Calling
    the contract from app code should resolve through the published package
    rather than any local copy.
-
-## Next
-
-Continue with [Building and deploying](./deploying.md).
-
-## Related
-
-- [Extensions](./extensions.md): extension overview
-- [Extension testing](./extension-testing.md): test before publishing
-- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference

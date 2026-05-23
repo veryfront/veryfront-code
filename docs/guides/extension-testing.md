@@ -79,12 +79,3 @@ A working test suite ends with `0 failures` and prints a successful count
 for both the factory test and the contract test. If `tryResolve` returns
 `undefined`, check that the extension's `provides` block uses the same
 contract name (`"CacheStore"`) the consumer requests.
-
-## Next
-
-Continue with [Extension publishing](./extension-publishing.md).
-
-## Related
-
-- [Extension authoring](./extension-authoring.md): writing extension factories
-- [`veryfront/testing`](../api-reference/veryfront/testing.md): testing API reference

@@ -156,12 +156,3 @@ A working delegation:
 
 For workflows, hit the workflow start route from
 [Workflows](./workflows.md) and follow `runId` events instead.
-
-## Next
-
-Continue with [Providers](./providers.md).
-
-## Related
-
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/workflow`](../api-reference/veryfront/workflow.md): workflow API reference

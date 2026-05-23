@@ -36,15 +36,8 @@ import {
 import type { CacheStore } from "../../src/extensions/cache/index.ts";
 import { GoogleFonts } from "../../src/react/fonts/index.ts";
 import { Head } from "../../src/react/components/Head.tsx";
-import {
-  PageContextProvider,
-  usePageContext,
-} from "../../src/react/context/index.tsx";
-import {
-  Link,
-  RouterProvider,
-  useRouter,
-} from "../../src/react/router/index.tsx";
+import { PageContextProvider, usePageContext } from "../../src/react/context/index.tsx";
+import { Link, RouterProvider, useRouter } from "../../src/react/router/index.tsx";
 import { Sandbox } from "../../src/sandbox/index.ts";
 import { isTaskDefinition } from "../../src/task/types.ts";
 import {
@@ -147,17 +140,13 @@ async function guideFilesWithCodeFences(): Promise<string[]> {
 describe("Guide code example coverage", () => {
   it("has code-example tests for every published guide with fenced examples", async () => {
     const guideFiles = await guideFilesWithCodeFences();
-    const uncovered = guideFiles.filter((name) =>
-      !GUIDE_CODE_EXAMPLE_COVERAGE.has(name)
-    );
+    const uncovered = guideFiles.filter((name) => !GUIDE_CODE_EXAMPLE_COVERAGE.has(name));
     assertEquals(uncovered, []);
   });
 
   it("does not keep stale guide code-example coverage entries", async () => {
     const guideFiles = new Set(await guideFilesWithCodeFences());
-    const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) =>
-      !guideFiles.has(name)
-    );
+    const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) => !guideFiles.has(name));
     assertEquals(stale, []);
   });
 });
@@ -629,15 +618,16 @@ describe("Guide: create-api.md", () => {
 });
 
 describe("Guide: create-frontend.md", () => {
-  it("documents adding a page and linking to it", async () => {
+  it("documents adding a chat page for the agent route", async () => {
     const guide = await readGuide("create-frontend.md");
 
     for (
       const snippet of [
-        "// app/about/page.tsx",
-        "export default function About",
-        'import { Link } from "veryfront/router"',
-        '<Link href="/about">',
+        "// app/page.tsx",
+        '"use client";',
+        'import { Chat, useChat } from "veryfront/chat"',
+        "useChat()",
+        '<Chat {...chat} placeholder="Ask me anything..." />',
       ]
     ) {
       assertStringIncludes(guide, snippet);

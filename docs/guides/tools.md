@@ -227,12 +227,3 @@ curl -X POST http://localhost:3000/api/debug/tools \
 
 A working tool returns the JSON your `execute` function produced. Remove the
 debug route before deploying.
-
-## Next
-
-Continue with [Memory and streaming](./memory-and-streaming.md).
-
-## Related
-
-- [`veryfront/tool`](../api-reference/veryfront/tool.md): tool API reference
-- [`veryfront/schemas`](../api-reference/veryfront/schemas.md): reusable schema helpers

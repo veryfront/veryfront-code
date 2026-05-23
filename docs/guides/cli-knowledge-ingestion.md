@@ -235,12 +235,3 @@ veryfront knowledge ingest uploads/sample.pdf --json | jq '.ingested'
 The `ingested` array names every file the command wrote. If the array is empty
 or the command exited non-zero, check `skipped`, `failed`, and the command
 output for the reason.
-
-## Next
-
-Continue with [Sandbox](./sandbox.md).
-
-## Related
-
-- [`veryfront/cli`](../api-reference/veryfront/cli.md): CLI entry point
-  reference

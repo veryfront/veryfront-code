@@ -30,7 +30,7 @@ Examples below assume an AG-UI endpoint at `/api/ag-ui`. Use the route from [Cha
 import { useChat } from "veryfront/chat";
 
 export default function ChatState() {
-  const chat = useChat({ api: "/api/ag-ui" });
+  const chat = useChat();
 
   return (
     <form onSubmit={chat.handleSubmit}>
@@ -107,13 +107,3 @@ Render the hook in a page and exercise the surface you care about:
 
 If `isLoading` never flips back, check the network tab for the request to
 your API and the dev-server log for handler errors.
-
-## Next
-
-Continue with [Chat theming](./chat-theming.md).
-
-## Related
-
-- [Chat UI](./chat-ui.md): preset component
-- [Chat composition](./chat-composition.md): custom layouts
-- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat reference

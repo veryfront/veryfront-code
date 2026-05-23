@@ -1,69 +1,38 @@
 ---
 title: "Create frontend"
-description: "Add a page and a navigation link to a Veryfront project."
-order: 6
+description: "Add a chat page that streams responses from a Veryfront agent."
+order: 5
 ---
 
 ## Prerequisites
 
 - A project created with [Create project](./create-project.md).
+- The agent route from [Create agent](./create-agent.md).
 - The dev server running (`veryfront dev`).
 
-## Add a page
+## Add the chat page
 
-Create `app/about/page.tsx`:
-
-```tsx
-// app/about/page.tsx
-export default function About() {
-  return (
-    <main>
-      <h1>About</h1>
-      <p>This project is built with Veryfront.</p>
-    </main>
-  );
-}
-```
-
-`app/about/page.tsx` maps to `/about`. The default export is the page component.
-Add `"use client"` only when the page needs browser interactivity.
-
-## Link to it
-
-Edit `app/page.tsx` to add a `Link` to the new page:
+Replace `app/page.tsx` with a client page:
 
 ```tsx
 // app/page.tsx
-import { Link } from "veryfront/router";
+"use client";
+
+import { Chat, useChat } from "veryfront/chat";
 
 export default function Home() {
-  return (
-    <main>
-      <h1>Welcome</h1>
-      <p>
-        <Link href="/about">About this project</Link>
-      </p>
-    </main>
-  );
+  const chat = useChat();
+
+  return <Chat {...chat} placeholder="Ask me anything..." />;
 }
 ```
 
-`Link` from `veryfront/router` navigates without a full page reload.
+`useChat()` uses `/api/ag-ui` by default. `Chat` renders the composer,
+messages, loading state, and streamed assistant response.
 
 ## Verify it worked
 
-1. Open [http://localhost:3000/about](http://localhost:3000/about). The page
-   renders.
-2. Open [http://localhost:3000/](http://localhost:3000/) and select the **About
-   this project** link.
-3. The URL updates to `/about` without a full page reload.
+Open [http://localhost:3000](http://localhost:3000), send a message, and ensure
+the assistant response streams into the chat.
 
-## Next
-
-Continue with [Deploy project](./deploy-project.md).
-
-## Related
-
-- [Pages and routing](../guides/pages-and-routing.md): layouts, dynamic routes,
-  MDX, and navigation hooks
-- [Head and SEO](../guides/head-and-seo.md): metadata and structured data
+For custom layouts, see [Chat UI](../guides/chat-ui.md).

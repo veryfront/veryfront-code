@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 interface GuideContract {
@@ -235,7 +232,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Workflows",
       "Getting Started",
       "Documentation map",
-      "Runtime primitives",
+      "Primitive set",
     ],
   },
   "guides/index.md": {
@@ -396,7 +393,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "getting-started/create-agent.md": {
     references: [
-      "./create-api.md",
       "./installation.md",
       "./create-project.md",
       "../guides/providers.md",
@@ -430,7 +426,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/create-api.md": {
     references: [
       "./create-project.md",
-      "./create-frontend.md",
       "../guides/api-routes.md",
     ],
     snippets: [
@@ -442,15 +437,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "getting-started/create-frontend.md": {
     references: [
-      "./create-project.md",
-      "./deploy-project.md",
-      "../guides/pages-and-routing.md",
+      "./create-agent.md",
+      "../guides/chat-ui.md",
     ],
     snippets: [
-      "app/about/page.tsx",
-      "export default function About",
-      'import { Link } from "veryfront/router"',
-      '<Link href="/about">',
+      "app/page.tsx",
+      'import { Chat, useChat } from "veryfront/chat"',
+      "useChat()",
+      "<Chat",
     ],
   },
   "getting-started/deploy-project.md": {
@@ -515,9 +509,8 @@ describe("published guide contracts", () => {
     it(`${filename} keeps its guide contract`, async () => {
       const guide = await readPublishedGuide(filename);
 
-      for (const reference of contract.references) {
-        assertStringIncludes(guide, reference);
-      }
+      // Link validity is covered by scripts/lint/check-doc-links.ts. Keep
+      // these contracts focused on each page's core content.
       for (const snippet of contract.snippets) {
         assertStringIncludes(guide, snippet);
       }

@@ -146,7 +146,7 @@ external client needs AG-UI streaming.
 
 Use [Create agent](../getting-started/create-agent.md) for the copyable
 quick-start route. Use [Chat UI](./chat-ui.md) to pair that route with
-`useChat({ api: "/api/ag-ui" })`.
+`useChat()`.
 
 If a route returns `Agent not found`, ensure the agent file is in `agents/` and
 its `id` matches the value passed to `createAgUiHandler()`.
@@ -235,11 +235,3 @@ If generation fails, check the dev-server log for agent registration or provider
 errors. If AG-UI routing fails, use the route verification in
 [Create agent](../getting-started/create-agent.md). A healthy AG-UI stream ends
 with a `RunFinished` event.
-
-## Next
-
-Continue with [Tools](./tools.md).
-
-## Related
-
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference

@@ -211,13 +211,3 @@ curl -I http://localhost:3000/blog/hello
 
 Each request should return `HTTP/1.1 200 OK`. Visit the same URLs in a browser
 to confirm the React component renders without console errors.
-
-## Next
-
-Continue with [Data fetching](./data-fetching.md).
-
-## Related
-
-- [`veryfront/router`](../api-reference/veryfront/router.md): router API reference
-- [`veryfront/context`](../api-reference/veryfront/context.md): params, page data, and frontmatter hooks
-- [`veryfront/mdx`](../api-reference/veryfront/mdx.md): MDX component overrides

@@ -80,13 +80,3 @@ Build the project before deploying:
 ```bash
 veryfront build
 ```
-
-## Next
-
-Continue with [Create project](./create-project.md).
-
-## Related
-
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/tool`](../api-reference/veryfront/tool.md): tool API reference
-- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat API reference

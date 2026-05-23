@@ -29,13 +29,3 @@ gives extensions a predictable place to open and release runtime resources.
 Contracts are the important boundary. Consumers depend on contracts, not on a
 specific package implementation. That keeps app code stable when a project swaps
 a local adapter for a hosted or third-party implementation.
-
-## Related
-
-- [Extensions](../guides/extensions.md): enable built-in or local extensions.
-- [Extension authoring](../guides/extension-authoring.md): write an extension
-  factory.
-- [Extension lifecycle](../guides/extension-lifecycle.md): observe setup and
-  teardown behavior.
-- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension
-  API reference.

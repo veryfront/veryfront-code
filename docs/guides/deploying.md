@@ -125,18 +125,3 @@ After `veryfront deploy`:
   or automation.
 - Confirm the home page and any API routes respond on the deployed host.
 - The Cloud dashboard lists the new deployment under the project.
-
-## Next
-
-Continue with [Head and SEO](./head-and-seo.md).
-
-## Related
-
-- [`veryfront` (root)](../api-reference/veryfront/index.md): `defineConfig`,
-  build options
-- [`veryfront/server`](../api-reference/veryfront/server.md): production server
-  APIs
-- [`veryfront/observability`](../api-reference/veryfront/observability.md):
-  tracing, metrics, and runtime logs
-- [`veryfront/utils`](../api-reference/veryfront/utils.md): runtime constants
-  and logging helpers

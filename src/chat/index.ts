@@ -8,7 +8,7 @@
  * import { Chat, useChat } from "veryfront/chat";
  *
  * export default function Page() {
- *   const chat = useChat({ api: "/api/ag-ui" });
+ *   const chat = useChat();
  *   return (
  *     <Chat
  *       messages={chat.messages}
@@ -25,7 +25,7 @@
  * import { Chat, useChat } from "veryfront/chat";
  *
  * export default function Page() {
- *   const chat = useChat({ api: "/api/ag-ui" });
+ *   const chat = useChat();
  *   return (
  *     <Chat.Root messages={chat.messages} input={chat.input}>
  *       <Chat.Empty title="Ask me anything" />

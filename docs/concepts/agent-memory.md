@@ -29,11 +29,3 @@ Buffer memory keeps recent messages. Conversation memory keeps a bounded window.
 Summary memory compresses older context. Redis-backed memory shares state across
 server instances. The right strategy depends on how long the conversation should
 live and whether multiple runtimes need the same state.
-
-## Related
-
-- [Memory and streaming](../guides/memory-and-streaming.md): configure memory
-  and streaming.
-- [Chat UI](../guides/chat-ui.md): render streamed agent output.
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference.
-- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat API reference.

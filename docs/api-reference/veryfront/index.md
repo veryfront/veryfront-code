@@ -125,8 +125,8 @@ User guides:
 - [installation](../../getting-started/installation.md): Install the CLI and framework
 - [create-project](../../getting-started/create-project.md): Scaffold and run a project
 - [create-agent](../../getting-started/create-agent.md): Define and invoke a first agent
+- [create-frontend](../../getting-started/create-frontend.md): Add a chat UI for the agent
 - [create-api](../../getting-started/create-api.md): Add a first API route
-- [create-frontend](../../getting-started/create-frontend.md): Add a first page
 - [deploy-project](../../getting-started/deploy-project.md): Deploy a first project
 - [choose-a-primitive](../../guides/choose-a-primitive.md): Choose the right primitive
 - [runtime-primitives](../../concepts/runtime-primitives.md): Understand primitive boundaries

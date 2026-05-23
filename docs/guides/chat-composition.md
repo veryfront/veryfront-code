@@ -6,7 +6,9 @@ order: 23
 
 When the preset `Chat` component is too constrained, build a custom layout from `Chat.Root`, `Chat.MessageList`, `Chat.Composer`, and the `Message` compound components. Veryfront still owns the streaming, loading state, and message wiring.
 
-The examples reuse the `useChat({ api: "/api/ag-ui" })` setup from [Chat UI](./chat-ui.md). Create the AG-UI route first, then render these components in a client page and verify with `veryfront dev`.
+The examples reuse the `useChat()` setup from [Chat UI](./chat-ui.md). Create
+the AG-UI route first, then render these components in a client page and verify
+with `veryfront dev`.
 
 ## Prerequisites
 
@@ -20,7 +22,7 @@ The examples reuse the `useChat({ api: "/api/ag-ui" })` setup from [Chat UI](./c
 import { Chat, useChat } from "veryfront/chat";
 
 export default function CustomLayout() {
-  const chat = useChat({ api: "/api/ag-ui" });
+  const chat = useChat();
 
   return (
     <Chat.Root {...chat}>
@@ -68,7 +70,7 @@ import { Message } from "veryfront/chat";
 import { ChatWithSidebar, useChat } from "veryfront/chat";
 
 function App() {
-  const chat = useChat({ api: "/api/ag-ui" });
+  const chat = useChat();
   return (
     <ChatWithSidebar
       chat={chat}
@@ -88,12 +90,3 @@ Render your composed layout in a client page, run `veryfront dev`, and:
   AG-UI flow as the preset `Chat` component).
 - For `Message` compound components, confirm avatar, content, and actions
   render in the order you arranged them.
-
-## Next
-
-Continue with [Chat hooks](./chat-hooks.md).
-
-## Related
-
-- [Chat UI](./chat-ui.md): preset chat component
-- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat reference

@@ -27,10 +27,3 @@ conventions.
 | [Guides](../guides/index.md)                   | You need to complete a specific task in an existing project.                  |
 | [Concepts](./index.md)                      | You need context, terminology, and mental models before choosing an approach. |
 | [API reference](../api-reference/index.md)     | You need exact imports, exported names, types, and examples.                  |
-
-## Related
-
-- [Runtime primitives](./runtime-primitives.md): how the core primitives differ.
-- [Project conventions](./project-conventions.md): how Veryfront projects are
-  organized.
-- [Quickstart](../getting-started/quickstart.md): build the first app.

@@ -322,11 +322,3 @@ A working setup:
 
 - Calling `gmail.fetch(userId, ...)` (or any provider service) returns the
   expected provider response without a `401`.
-
-## Next
-
-Continue with [MCP server](./mcp-server.md).
-
-## Related
-
-- [`veryfront/oauth`](../api-reference/veryfront/oauth.md): OAuth API reference

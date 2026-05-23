@@ -46,7 +46,8 @@ curl -N http://localhost:3000/api/ag-ui \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Reply with the active inference mode if available."}]}]}'
 ```
 
-In a client UI, `useChat({ api: "/api/ag-ui" })` also exposes `inferenceMode` so you can confirm whether the response used cloud, server-local, or browser inference.
+In a client UI, `useChat()` also exposes `inferenceMode` so you can confirm
+whether the response used cloud, server-local, or browser inference.
 
 By convention:
 
@@ -183,12 +184,3 @@ curl -N http://localhost:3000/api/ag-ui \
 A token stream that ends without an authentication error means the provider
 resolved. In a chat UI, the `inferenceMode` field on `useChat` reports
 whether the call used cloud, server-local, or browser inference.
-
-## Next
-
-Continue with [Agents](./agents.md).
-
-## Related
-
-- [`veryfront/provider`](../api-reference/veryfront/provider.md): provider API reference
-- [`veryfront/embedding`](../api-reference/veryfront/embedding.md): embedding model configuration

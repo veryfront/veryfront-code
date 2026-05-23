@@ -57,18 +57,3 @@ the matching guide:
 - When choosing between `Task` and `Job`, remember that a task defines the work and a job runs it durably.
 
 Run the guide's example or validation command before adding another primitive.
-
-## Next
-
-Continue with [Create project](../getting-started/create-project.md).
-
-## Related
-
-- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
-- [`veryfront/tool`](../api-reference/veryfront/tool.md): tool API reference
-- [`veryfront/workflow`](../api-reference/veryfront/workflow.md): workflow API reference
-- [`veryfront/jobs`](../api-reference/veryfront/jobs.md): jobs API reference
-- [`veryfront/integrations`](../api-reference/veryfront/integrations.md): integrations API reference
-- [`veryfront/mcp`](../api-reference/veryfront/mcp.md): MCP API reference
-- [`veryfront/sandbox`](../api-reference/veryfront/sandbox.md): sandbox API reference
-- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference

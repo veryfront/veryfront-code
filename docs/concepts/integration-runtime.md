@@ -27,11 +27,3 @@ callable capability; it does not own the provider authorization model.
 Project-level credentials fit service-owned automation. Per-user tokens fit
 actions that must happen on behalf of the current user. Veryfront keeps those
 modes explicit so a tool call cannot accidentally blur whose authority it uses.
-
-## Related
-
-- [Integrations](../guides/integrations.md): enable integration tools.
-- [OAuth](../guides/oauth.md): configure OAuth providers.
-- [Tools](../guides/tools.md): define local tools.
-- [`veryfront/integrations`](../api-reference/veryfront/integrations.md):
-  integration metadata reference.

@@ -71,12 +71,3 @@ Pages live in `app/`. The agent template also adds root-level `agents/` and
 
 `veryfront dev` prints `Ready on http://localhost:3000`. Open the URL and save a
 source file. The browser should hot-reload.
-
-## Next
-
-Continue with [Create agent](./create-agent.md).
-
-## Related
-
-- [Project structure](../guides/project-structure.md): file conventions
-- [Configuration](../guides/configuration.md): runtime and build options

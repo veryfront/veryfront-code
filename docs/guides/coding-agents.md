@@ -132,12 +132,3 @@ Your installed CLI is older than the version that added MCP. Update with `npm in
 cd veryfront-code
 deno run -A cli/main.ts mcp
 ```
-
-## Next
-
-Continue with [MCP server](./mcp-server.md).
-
-## Related
-
-- [`veryfront/mcp`](../api-reference/veryfront/mcp.md): MCP server API reference
-- [`veryfront/cli`](../api-reference/veryfront/cli.md): CLI entry point reference
