@@ -4,8 +4,6 @@ description: "Start here. A short tour of the Veryfront Code guides and what you
 order: 0
 ---
 
-Welcome to the Veryfront Code guides.
-
 Each guide is a focused, goal-oriented mini tutorial — pick the one
 that matches the outcome you want next.
 
