@@ -4,7 +4,6 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
 import { getEnv } from "#veryfront/platform/compat/process.ts";
-import { createRemoteMCPToolSource } from "#veryfront/tool";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler } from "./agent-stream.handler.ts";
 import {
@@ -657,36 +656,6 @@ describe("server/handlers/request/agent-stream.handler", () => {
     const agent = createAgentWithConfig("assistant-1", {
       system: () => `project_reference=${getEnv("VERYFRONT_PROJECT_SLUG")}`,
       tools: { search_knowledge: true },
-      allowedRemoteTools: ["search_knowledge"],
-      remoteTools: [
-        createRemoteMCPToolSource({
-          id: "test-mcp",
-          endpoint: () => `${getEnv("VERYFRONT_API_URL")}/mcp`,
-          headers: () => ({ Authorization: `Bearer ${getEnv("VERYFRONT_API_TOKEN")}` }),
-          fetch: async (url, init) => {
-            capturedMcpRequest = {
-              url: String(url),
-              authorization: new Headers(init?.headers).get("authorization"),
-            };
-            return new Response(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                id: "test-mcp:tools:list",
-                result: {
-                  tools: [
-                    {
-                      name: "search_knowledge",
-                      description: "Search knowledge",
-                      inputSchema: { type: "object", properties: {} },
-                    },
-                  ],
-                },
-              }),
-              { headers: { "content-type": "application/json" } },
-            );
-          },
-        }),
-      ],
     });
 
     const handler = new AgentStreamHandler({
@@ -778,6 +747,31 @@ describe("server/handlers/request/agent-stream.handler", () => {
         );
       }
 
+      if (String(url) === "https://api.veryfront.org/mcp") {
+        capturedMcpRequest = {
+          url: String(url),
+          authorization: new Headers(init?.headers).get("authorization"),
+        };
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              id: "veryfront-platform-mcp:tools:list",
+              result: {
+                tools: [
+                  {
+                    name: "search_knowledge",
+                    description: "Search knowledge",
+                    inputSchema: { type: "object", properties: {} },
+                  },
+                ],
+              },
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+
       return Promise.reject(new Error(`unexpected fetch: ${url}`));
     }) as typeof fetch;
 
@@ -817,6 +811,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(fetchUrls, [
       "https://api.veryfront.org/projects/support-agent-fork/environments",
       "https://api.veryfront.org/projects/support-agent-fork/env-vars?environment_id=env-production&limit=100",
+      "https://api.veryfront.org/mcp",
     ]);
   });
 
