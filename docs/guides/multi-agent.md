@@ -164,5 +164,5 @@ For workflows, hit the workflow start route from
 
 ## Related
 
-- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
-- [`veryfront/workflow`](../reference/veryfront/workflow.md): workflow API reference
+- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
+- [`veryfront/workflow`](../api-reference/veryfront/workflow.md): workflow API reference

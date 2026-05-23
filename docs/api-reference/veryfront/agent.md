@@ -467,7 +467,7 @@ Clear all stored messages from memory.
 | `createHostedFormInputTool` | Create hosted form input tool. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/form-input-tool.ts#L25) |
 | `createHostedMirroredUiStream` | Create hosted mirrored UI stream. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/streaming/mirrored-tool-chunk-state.ts#L249) |
 | `createHostedProjectRemoteToolSource` | Create hosted project remote tool source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/project-remote-tool-source.ts#L77) |
-| `createHostedProjectRemoteToolSources` | Create hosted project remote tool sources. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/project-remote-tool-source.ts#L300) |
+| `createHostedProjectRemoteToolSources` | Create hosted project remote tool sources. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/project-remote-tool-source.ts#L289) |
 | `createHostedProjectSteeringAdapter` | Create hosted project steering adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/project-steering-adapter.ts#L130) |
 | `createHostedRootRunLifecycleRuntimeAdapter` | Create hosted root run lifecycle runtime adapter. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/agent-run-lifecycle.ts#L140) |
 | `createHostedRuntimeStateResolver` | Create hosted runtime state resolver. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/hosted/runtime-state-resolver.ts#L74) |
@@ -1953,9 +1953,3 @@ User guides:
 - [memory-and-streaming](../../guides/memory-and-streaming.md): Memory, streaming, and lifecycle
 - [agent-service-runtime](../../guides/agent-service-runtime.md): Deploy agents as standalone services
 - [skills](../../guides/skills.md): Attach project skills to agents
-
-Architecture:
-
-- [05-agent-runtime](../../architecture/05-agent-runtime.md): Agent runtime, hosted runs, AI primitives, and skills
-- [06-ag-ui-transport](../../architecture/06-ag-ui-transport.md): AG-UI transport contract
-- [11-control-plane-channels](../../architecture/11-control-plane-channels.md): Control-plane channels

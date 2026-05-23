@@ -16,8 +16,10 @@ A page belongs in `docs/guides/` when it:
 
 A page does not belong here when it is:
 
+- A Getting Started tutorial. That lives in
+  [`docs/getting-started/`](../getting-started/).
 - A full API catalog. That is generated into
-  [`docs/reference/`](../reference/) from source JSDoc.
+  [`docs/api-reference/`](../api-reference/) from source JSDoc.
 - A runtime or boundary explanation. That lives in
   [`docs/architecture/`](../architecture/).
 - A duplicate of an existing guide with a different framing. Merge it into the
@@ -67,6 +69,7 @@ when runnable examples have no matching test entry.
 
 ## Related
 
-- [`docs/reference/`](../reference/) for the public API reference.
+- [`docs/getting-started/`](../getting-started/) for onboarding tutorials.
+- [`docs/api-reference/`](../api-reference/) for the public API reference.
 - [`docs/architecture/`](../architecture/) for runtime and boundary
   explanations.

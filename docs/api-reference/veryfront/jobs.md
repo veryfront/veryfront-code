@@ -134,7 +134,3 @@ User guides:
 
 - [jobs](../../guides/jobs.md): Schedule and run background jobs
 - [tasks](../../guides/tasks.md): Define task targets for jobs
-
-Architecture:
-
-- [09-jobs-and-tasks](../../architecture/09-jobs-and-tasks.md): Jobs and tasks runtime

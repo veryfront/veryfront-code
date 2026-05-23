@@ -13,7 +13,7 @@ For more control, see [Chat composition](./chat-composition.md) (custom layout),
 ## Prerequisites
 
 - A Veryfront project with an AG-UI route, such as `/api/ag-ui` (see
-  [Create an agent](./create-an-agent.md)).
+  [Create an agent](../getting-started/create-an-agent.md)).
 - A configured provider for the route's agent (see [Providers](./providers.md)).
 
 ## Quick setup
@@ -33,7 +33,7 @@ export default function ChatPage() {
 
 `useChat({ api: "/api/ag-ui" })` decodes AG-UI SSE into Veryfront chat messages. `Chat` renders the input, message list, loading state, and scroll behavior.
 
-Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and send a message. To test the route without the UI, use the curl check in [Create an agent](./create-an-agent.md).
+Run `veryfront dev`, open [http://localhost:3000](http://localhost:3000), and send a message. To test the route without the UI, use the curl check in [Create an agent](../getting-started/create-an-agent.md).
 
 ## Add request preprocessing
 
@@ -94,6 +94,6 @@ agent errors and confirm the AG-UI route is mounted at `/api/ag-ui`.
 
 ## Related
 
-- [`veryfront/chat`](../reference/veryfront/chat.md): chat reference
-- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
-- [`veryfront/markdown`](../reference/veryfront/markdown.md): markdown rendering helpers
+- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat reference
+- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
+- [`veryfront/markdown`](../api-reference/veryfront/markdown.md): markdown rendering helpers

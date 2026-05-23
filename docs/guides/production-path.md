@@ -6,7 +6,7 @@ order: 11
 
 Take one Veryfront route from local dev to a deployed production check.
 
-Use this guide as a checklist. Use [Deploy a project](./deploy-a-project.md) for the quick-start commands and [Building and deploying](./deploying.md) for build configuration.
+Use this guide as a checklist. Use [Deploy a project](../getting-started/deploy-a-project.md) for the quick-start commands and [Building and deploying](./deploying.md) for build configuration.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ Use this guide as a checklist. Use [Deploy a project](./deploy-a-project.md) for
 
 | Step | Goal                                            | Guide                                                                                        |
 | ---- | ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 1    | Create and run a local app.                     | [Create a project](./create-a-project.md)                                                                |
+| 1    | Create and run a local app.                     | [Create a project](../getting-started/create-a-project.md)                                                                |
 | 2    | Pick the smallest primitive for the work.       | [Choose a primitive](./choose-a-primitive.md)                                                |
 | 3    | Add the user-visible route or API boundary.     | [Pages and routing](./pages-and-routing.md), [API routes](./api-routes.md)                   |
 | 4    | Add the primitive only when the route needs it. | [Agents](./agents.md), [Tools](./tools.md), [Workflows](./workflows.md), [Tasks](./tasks.md) |
@@ -93,7 +93,7 @@ Use `veryfront open --json` when you need the deployed URL in a script or a term
 
 ## Related
 
-- [`veryfront` root reference](../reference/veryfront/index.md): config and runtime exports
+- [`veryfront` root reference](../api-reference/veryfront/index.md): config and runtime exports
 - [Project structure](./project-structure.md): file conventions and auto-discovery
 - [Pages and routing](./pages-and-routing.md): route files, layouts, and navigation
 - [API routes](./api-routes.md): HTTP handlers and streaming responses

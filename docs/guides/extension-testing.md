@@ -88,4 +88,4 @@ contract name (`"CacheStore"`) the consumer requests.
 ## Related
 
 - [Extension authoring](./extension-authoring.md): writing extension factories
-- [`veryfront/testing`](../reference/veryfront/testing.md): testing API reference
+- [`veryfront/testing`](../api-reference/veryfront/testing.md): testing API reference

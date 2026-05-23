@@ -56,5 +56,5 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/agent/conversation-control-plane`](../reference/veryfront/agent.md)
-- [`veryfront/agent/service-runtime`](../reference/veryfront/agent.md)
+- [`veryfront/agent/conversation-control-plane`](../api-reference/veryfront/agent.md)
+- [`veryfront/agent/service-runtime`](../api-reference/veryfront/agent.md)

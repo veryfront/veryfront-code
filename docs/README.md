@@ -14,9 +14,17 @@ boundaries, or docs structure.
 - Keep one file focused on one concern. Link to related pages instead of
   expanding a page into a bundle.
 
+## Source layout
+
+- `getting-started/`: Published onboarding flow.
+- `guides/`: Published task and concept guides.
+- `api-reference/`: Generated public API reference.
+- `architecture/`: Private Veryfront Code architecture notes. These docs are
+  not part of the public docs sync.
+
 ## API reference generation
 
-Public API reference pages in `docs/reference/veryfront/` are generated from
+Public API reference pages in `docs/api-reference/veryfront/` are generated from
 source JSDoc comments. Source comments own the public reference copy, and the
 generator only renders them.
 

@@ -67,9 +67,3 @@ export const { POST, GET, DELETE } = createUploadHandler(store);
 | `UseUploadsResult` | Result returned from use uploads. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/react/use-uploads.ts#L19) |
 | `VectorStore` | Public API contract for vector store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L54) |
 | `VectorStoreConfig` | Configuration used by vector store. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/embedding/types.ts#L33) |
-
-## Related
-
-Architecture:
-
-- [07-provider-runtime](../../architecture/07-provider-runtime.md): Embedding shares provider model resolution

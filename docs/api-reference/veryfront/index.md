@@ -119,22 +119,17 @@ Reference modules:
 
 User guides:
 
-- [index](../../guides/index.md): Browse the guide map
-- [quickstart](../../guides/quickstart.md): Build and run a first agent app
-- [veryfront-code](../../guides/veryfront-code.md): What Veryfront Code is and how guides fit together
-- [installation](../../guides/installation.md): Install the CLI and framework
-- [create-a-project](../../guides/create-a-project.md): Scaffold and run a project
-- [create-an-agent](../../guides/create-an-agent.md): Define and invoke a first agent
-- [create-an-api](../../guides/create-an-api.md): Add a first API route
-- [create-a-frontend](../../guides/create-a-frontend.md): Add a first page
-- [deploy-a-project](../../guides/deploy-a-project.md): Deploy a first project
+- [index](../../getting-started/index.md): Browse the guide map
+- [quickstart](../../getting-started/quickstart.md): Build and run a first agent app
+- [veryfront-code](../../getting-started/veryfront-code.md): What Veryfront Code is and how guides fit together
+- [installation](../../getting-started/installation.md): Install the CLI and framework
+- [create-a-project](../../getting-started/create-a-project.md): Scaffold and run a project
+- [create-an-agent](../../getting-started/create-an-agent.md): Define and invoke a first agent
+- [create-an-api](../../getting-started/create-an-api.md): Add a first API route
+- [create-a-frontend](../../getting-started/create-a-frontend.md): Add a first page
+- [deploy-a-project](../../getting-started/deploy-a-project.md): Deploy a first project
 - [choose-a-primitive](../../guides/choose-a-primitive.md): Choose the right primitive
 - [production-path](../../guides/production-path.md): Move a route toward production checks
 - [configuration](../../guides/configuration.md): Configure your Veryfront project
 - [project-structure](../../guides/project-structure.md): Project layout and conventions
 - [data-fetching](../../guides/data-fetching.md): Server data, static data, params
-
-Architecture:
-
-- [01-system-overview](../../architecture/01-system-overview.md): System overview and boundaries
-- [02-request-pipeline](../../architecture/02-request-pipeline.md): Request handling pipeline

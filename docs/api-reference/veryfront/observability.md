@@ -176,9 +176,3 @@ import { endServerSpan, extractContext, getTraceContext } from "veryfront/observ
 | Name | Description | Source |
 |------|-------------|--------|
 | `OTLPConfig` | Configuration used by otlpconfig. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/observability/tracing/otlp-setup.ts#L34) |
-
-## Related
-
-Architecture:
-
-- [13-observability](../../architecture/13-observability.md): Observability architecture

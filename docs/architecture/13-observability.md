@@ -44,4 +44,4 @@ Primary source areas:
 
 ## Related reference
 
-- [`veryfront/observability`](../reference/veryfront/observability.md)
+- [`veryfront/observability`](../api-reference/veryfront/observability.md)

@@ -143,5 +143,5 @@ On Windows, run the same command in PowerShell or in a new terminal session so t
 ## Next
 
 - [Create a project](./create-a-project.md): create and run your first Veryfront project in under two minutes.
-- [Project structure](./project-structure.md): learn the conventions the CLI scaffolds.
-- [Configuration](./configuration.md): wire up environment variables and runtime options.
+- [Project structure](../guides/project-structure.md): learn the conventions the CLI scaffolds.
+- [Configuration](../guides/configuration.md): wire up environment variables and runtime options.

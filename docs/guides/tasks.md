@@ -9,7 +9,7 @@ Tasks are user-defined functions in `tasks/`. Run them locally with `veryfront t
 ## Prerequisites
 
 - A Veryfront project with the `tasks/` directory available (see
-  [Create a project](./create-a-project.md)).
+  [Create a project](../getting-started/create-a-project.md)).
 - For cloud execution: a `VERYFRONT_API_TOKEN` and a project reference
   (see [Configuration](./configuration.md)).
 
@@ -146,4 +146,4 @@ a `succeeded` status. See the verification block in
 ## Related
 
 - [Jobs and cron jobs](./jobs.md): the jobs system that executes scheduled tasks
-- [`veryfront/jobs`](../reference/veryfront/jobs.md): jobs API reference
+- [`veryfront/jobs`](../api-reference/veryfront/jobs.md): jobs API reference

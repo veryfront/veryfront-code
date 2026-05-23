@@ -6,47 +6,72 @@ interface GuideContract {
   snippets: string[];
 }
 
+const GUIDE_DIRS = ["docs/getting-started", "docs/guides"] as const;
+
+async function listPublishedGuideFiles(): Promise<string[]> {
+  const guideFiles: string[] = [];
+  for (const dir of GUIDE_DIRS) {
+    for await (const entry of Deno.readDir(dir)) {
+      if (entry.isFile && entry.name.endsWith(".md") && entry.name !== "README.md") {
+        guideFiles.push(entry.name);
+      }
+    }
+  }
+  return guideFiles.sort();
+}
+
+async function readPublishedGuide(filename: string): Promise<string> {
+  for (const dir of GUIDE_DIRS) {
+    try {
+      return await Deno.readTextFile(`${dir}/${filename}`);
+    } catch (err) {
+      if (!(err instanceof Deno.errors.NotFound)) throw err;
+    }
+  }
+  throw new Error(`Guide not found: ${filename}`);
+}
+
 const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "agent-service-runtime.md": {
-    references: ["../reference/veryfront/agent.md", "../reference/veryfront/channels.md"],
+    references: ["../api-reference/veryfront/agent.md", "../api-reference/veryfront/channels.md"],
     snippets: ["startAgentService", "VERYFRONT_AGENT_SERVICE_URL", "/api/runs"],
   },
   "agents.md": {
-    references: ["../reference/veryfront/agent.md"],
+    references: ["../api-reference/veryfront/agent.md"],
     snippets: ["createAgUiHandler", "load-skill-reference", "RunFinished"],
   },
   "api-routes.md": {
-    references: ["../reference/veryfront/agent.md", "../reference/veryfront/middleware.md"],
+    references: ["../api-reference/veryfront/agent.md", "../api-reference/veryfront/middleware.md"],
     snippets: ["app/api/hello/route.ts", "pages/api/hello.ts", "ReadableStream"],
   },
   "chat-composition.md": {
-    references: ["../reference/veryfront/chat.md"],
+    references: ["../api-reference/veryfront/chat.md"],
     snippets: ["Chat.MessageList", "Message.Root", "ChatWithSidebar"],
   },
   "chat-hooks.md": {
-    references: ["../reference/veryfront/chat.md"],
+    references: ["../api-reference/veryfront/chat.md"],
     snippets: ["useChat", "useAgent", "useCompletion"],
   },
   "chat-theming.md": {
-    references: ["../reference/veryfront/chat.md"],
+    references: ["../api-reference/veryfront/chat.md"],
     snippets: ["theme", "attachments", "Context providers"],
   },
   "chat-ui.md": {
     references: [
-      "../reference/veryfront/chat.md",
-      "../reference/veryfront/agent.md",
-      "../reference/veryfront/markdown.md",
+      "../api-reference/veryfront/chat.md",
+      "../api-reference/veryfront/agent.md",
+      "../api-reference/veryfront/markdown.md",
     ],
     snippets: ["Chat", "useChat", "createAgUiHandler"],
   },
   "cli-knowledge-ingestion.md": {
-    references: ["../reference/veryfront/cli.md"],
+    references: ["../api-reference/veryfront/cli.md"],
     snippets: ["knowledge_ingest", "jq '.ingested'", "veryfront knowledge ingest"],
   },
   "coding-agents.md": {
     references: [
-      "../reference/veryfront/mcp.md",
-      "../reference/veryfront/cli.md",
+      "../api-reference/veryfront/mcp.md",
+      "../api-reference/veryfront/cli.md",
     ],
     snippets: [
       "veryfront mcp",
@@ -60,25 +85,25 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "choose-a-primitive.md": {
     references: [
-      "../reference/veryfront/agent.md",
-      "../reference/veryfront/tool.md",
-      "../reference/veryfront/workflow.md",
-      "../reference/veryfront/jobs.md",
-      "../reference/veryfront/integrations.md",
-      "../reference/veryfront/mcp.md",
-      "../reference/veryfront/sandbox.md",
-      "../reference/veryfront/extensions.md",
+      "../api-reference/veryfront/agent.md",
+      "../api-reference/veryfront/tool.md",
+      "../api-reference/veryfront/workflow.md",
+      "../api-reference/veryfront/jobs.md",
+      "../api-reference/veryfront/integrations.md",
+      "../api-reference/veryfront/mcp.md",
+      "../api-reference/veryfront/sandbox.md",
+      "../api-reference/veryfront/extensions.md",
     ],
     snippets: ["Agent", "Tool", "Workflow", "Task", "Job", "Integration", "MCP", "Sandbox"],
   },
   "production-path.md": {
     references: [
-      "./create-a-project.md",
+      "../getting-started/create-a-project.md",
       "./choose-a-primitive.md",
       "./pages-and-routing.md",
       "./api-routes.md",
       "./deploying.md",
-      "../reference/veryfront/index.md",
+      "../api-reference/veryfront/index.md",
     ],
     snippets: [
       "veryfront init",
@@ -93,14 +118,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "quickstart.md": {
     references: [
       "./installation.md",
-      "./providers.md",
-      "./agents.md",
-      "./tools.md",
-      "./chat-ui.md",
+      "../guides/providers.md",
+      "../guides/agents.md",
+      "../guides/tools.md",
+      "../guides/chat-ui.md",
       "./deploy-a-project.md",
-      "../reference/veryfront/agent.md",
-      "../reference/veryfront/tool.md",
-      "../reference/veryfront/chat.md",
+      "../api-reference/veryfront/agent.md",
+      "../api-reference/veryfront/tool.md",
+      "../api-reference/veryfront/chat.md",
     ],
     snippets: [
       "veryfront init support-agent --template ai-agent",
@@ -114,47 +139,47 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
   },
   "configuration.md": {
-    references: ["../reference/veryfront/index.md"],
+    references: ["../api-reference/veryfront/index.md"],
     snippets: ["defineConfig", "VERYFRONT_API_TOKEN", "getEnv"],
   },
   "data-fetching.md": {
-    references: ["../reference/veryfront/index.md"],
+    references: ["../api-reference/veryfront/index.md"],
     snippets: ["getServerData", "getStaticData", "redirect"],
   },
   "deploying.md": {
     references: [
-      "../reference/veryfront/index.md",
-      "../reference/veryfront/server.md",
-      "../reference/veryfront/observability.md",
-      "../reference/veryfront/utils.md",
+      "../api-reference/veryfront/index.md",
+      "../api-reference/veryfront/server.md",
+      "../api-reference/veryfront/observability.md",
+      "../api-reference/veryfront/utils.md",
     ],
     snippets: ["veryfront build", "veryfront start", "veryfront deploy", "veryfront open"],
   },
   "extension-authoring.md": {
-    references: ["../reference/veryfront/extensions.md"],
+    references: ["../api-reference/veryfront/extensions.md"],
     snippets: ["veryfront extension init", "ExtensionFactory", "capabilities"],
   },
   "extension-lifecycle.md": {
-    references: ["../reference/veryfront/extensions.md"],
+    references: ["../api-reference/veryfront/extensions.md"],
     snippets: ["setup", "teardown", "veryfront.config.ts"],
   },
   "extension-publishing.md": {
-    references: ["../reference/veryfront/extensions.md"],
+    references: ["../api-reference/veryfront/extensions.md"],
     snippets: ["veryfront.extension", "deno add", "semver"],
   },
   "extension-testing.md": {
-    references: ["../reference/veryfront/testing.md"],
+    references: ["../api-reference/veryfront/testing.md"],
     snippets: ["ExtensionLoader", "tryResolve", "deno test"],
   },
   "extensions.md": {
-    references: ["../reference/veryfront/extensions.md"],
+    references: ["../api-reference/veryfront/extensions.md"],
     snippets: ["defineConfig", "extRedis", "First-party extension areas"],
   },
   "head-and-seo.md": {
     references: [
-      "../reference/veryfront/head.md",
-      "../reference/veryfront/fonts.md",
-      "../reference/veryfront/context.md",
+      "../api-reference/veryfront/head.md",
+      "../api-reference/veryfront/fonts.md",
+      "../api-reference/veryfront/context.md",
     ],
     snippets: ["Head", "GoogleFonts", "JSON-LD"],
   },
@@ -188,48 +213,48 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
   },
   "integrations.md": {
-    references: ["../reference/veryfront/integrations.md"],
+    references: ["../api-reference/veryfront/integrations.md"],
     snippets: ["integrations", "perUser", "Available integrations"],
   },
   "jobs.md": {
-    references: ["../reference/veryfront/jobs.md"],
+    references: ["../api-reference/veryfront/jobs.md"],
     snippets: ["createJobsClient", "task:knowledge-ingest", "jobs.targets.list"],
   },
   "mcp-server.md": {
     references: [
-      "../reference/veryfront/mcp.md",
-      "../reference/veryfront/tool.md",
-      "../reference/veryfront/prompt.md",
-      "../reference/veryfront/resource.md",
+      "../api-reference/veryfront/mcp.md",
+      "../api-reference/veryfront/tool.md",
+      "../api-reference/veryfront/prompt.md",
+      "../api-reference/veryfront/resource.md",
     ],
     snippets: ["createMCPServer", "MCP-Session-Id", "tools/list"],
   },
   "memory-and-streaming.md": {
-    references: ["../reference/veryfront/agent.md", "../reference/veryfront/chat.md"],
+    references: ["../api-reference/veryfront/agent.md", "../api-reference/veryfront/chat.md"],
     snippets: ["memory", "createAgUiHandler", "useChat"],
   },
   "middleware.md": {
-    references: ["../reference/veryfront/middleware.md"],
+    references: ["../api-reference/veryfront/middleware.md"],
     snippets: ["MiddlewarePipeline", "Authorization", "401"],
   },
   "multi-agent.md": {
-    references: ["../reference/veryfront/agent.md", "../reference/veryfront/workflow.md"],
+    references: ["../api-reference/veryfront/agent.md", "../api-reference/veryfront/workflow.md"],
     snippets: ["agentAsTool", "getAgentsAsTools", "workflow"],
   },
   "oauth.md": {
-    references: ["../reference/veryfront/oauth.md"],
+    references: ["../api-reference/veryfront/oauth.md"],
     snippets: ["createOAuthInitHandler", "getTokens", "OAuthService"],
   },
   "pages-and-routing.md": {
     references: [
-      "../reference/veryfront/router.md",
-      "../reference/veryfront/context.md",
-      "../reference/veryfront/mdx.md",
+      "../api-reference/veryfront/router.md",
+      "../api-reference/veryfront/context.md",
+      "../api-reference/veryfront/mdx.md",
     ],
     snippets: ["app router", "useRouter", "Link"],
   },
   "project-structure.md": {
-    references: ["../reference/veryfront/index.md"],
+    references: ["../api-reference/veryfront/index.md"],
     snippets: ["app/", "agents/", "tools/"],
   },
   "installation.md": {
@@ -243,14 +268,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "create-an-agent.md": {
     references: [
-      "./agents.md",
-      "./api-routes.md",
-      "./tools.md",
-      "./chat-ui.md",
+      "../guides/agents.md",
+      "../guides/api-routes.md",
+      "../guides/tools.md",
+      "../guides/chat-ui.md",
       "./installation.md",
       "./create-a-project.md",
-      "./providers.md",
-      "./memory-and-streaming.md",
+      "../guides/providers.md",
+      "../guides/memory-and-streaming.md",
     ],
     snippets: [
       "agents/assistant.ts",
@@ -266,7 +291,10 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
   },
   "providers.md": {
-    references: ["../reference/veryfront/provider.md", "../reference/veryfront/embedding.md"],
+    references: [
+      "../api-reference/veryfront/provider.md",
+      "../api-reference/veryfront/embedding.md",
+    ],
     snippets: ["provider/model", "OPENAI_API_KEY", "registerModelProvider"],
   },
   "create-a-project.md": {
@@ -274,7 +302,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: ["veryfront init test-app", "veryfront dev", "ai-agent", "minimal"],
   },
   "create-an-api.md": {
-    references: ["./create-a-project.md", "./create-a-frontend.md", "./api-routes.md"],
+    references: ["./create-a-project.md", "./create-a-frontend.md", "../guides/api-routes.md"],
     snippets: [
       "app/api/hello/route.ts",
       "Response.json",
@@ -283,7 +311,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
   },
   "create-a-frontend.md": {
-    references: ["./create-a-project.md", "./deploy-a-project.md", "./pages-and-routing.md"],
+    references: [
+      "./create-a-project.md",
+      "./deploy-a-project.md",
+      "../guides/pages-and-routing.md",
+    ],
     snippets: [
       "app/about/page.tsx",
       "export default function About",
@@ -292,51 +324,48 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
   },
   "deploy-a-project.md": {
-    references: ["./create-a-project.md", "./configuration.md", "../reference/veryfront/index.md"],
+    references: [
+      "./create-a-project.md",
+      "../guides/configuration.md",
+      "../api-reference/veryfront/index.md",
+    ],
     snippets: ["veryfront build", "veryfront start", "veryfront deploy", "veryfront open"],
   },
   "sandbox.md": {
-    references: ["../reference/veryfront/sandbox.md", "../reference/veryfront/fs.md"],
+    references: ["../api-reference/veryfront/sandbox.md", "../api-reference/veryfront/fs.md"],
     snippets: ["Sandbox.create", "executeCommand", "sandbox.close"],
   },
   "skills.md": {
-    references: ["../reference/veryfront/agent.md"],
+    references: ["../api-reference/veryfront/agent.md"],
     snippets: ["SKILL.md", "allowed_tools", "veryfront skills validate"],
   },
   "tasks.md": {
-    references: ["../reference/veryfront/jobs.md"],
+    references: ["../api-reference/veryfront/jobs.md"],
     snippets: ["veryfront task sync-data", "schedulable", "VeryfrontJobsClient"],
   },
   "tools.md": {
-    references: ["../reference/veryfront/tool.md"],
+    references: ["../api-reference/veryfront/tool.md"],
     snippets: ["tool", "inputSchema", "toolRegistry"],
   },
   "workflows.md": {
-    references: ["../reference/veryfront/workflow.md"],
+    references: ["../api-reference/veryfront/workflow.md"],
     snippets: ["workflow", "parallel", "waitForApproval"],
   },
   "workflows-advanced.md": {
-    references: ["../reference/veryfront/workflow.md"],
+    references: ["../api-reference/veryfront/workflow.md"],
     snippets: ["loop", "doWhile", "blobStorage", "useWorkflow", "useWorkflowStart"],
   },
 };
 
 describe("published guide contracts", () => {
   it("has one contract for every published guide", async () => {
-    const guideFiles: string[] = [];
-    for await (const entry of Deno.readDir("docs/guides")) {
-      if (entry.isFile && entry.name.endsWith(".md") && entry.name !== "README.md") {
-        guideFiles.push(entry.name);
-      }
-    }
-    guideFiles.sort();
-
+    const guideFiles = await listPublishedGuideFiles();
     assertEquals(Object.keys(GUIDE_CONTRACTS).sort(), guideFiles);
   });
 
   for (const [filename, contract] of Object.entries(GUIDE_CONTRACTS)) {
     it(`${filename} keeps its guide contract`, async () => {
-      const guide = await Deno.readTextFile(`docs/guides/${filename}`);
+      const guide = await readPublishedGuide(filename);
 
       for (const reference of contract.references) {
         assertStringIncludes(guide, reference);

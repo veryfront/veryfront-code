@@ -243,7 +243,3 @@ Reference modules:
 User guides:
 
 - [sandbox](../../guides/sandbox.md): Run code in isolated sandbox environments
-
-Architecture:
-
-- [17-sandbox-runtime](../../architecture/17-sandbox-runtime.md): Sandbox runtime architecture

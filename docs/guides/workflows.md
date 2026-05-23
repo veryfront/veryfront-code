@@ -22,7 +22,7 @@ queued, retried, canceled, logged, and observed in the Jobs panel.
 ## Prerequisites
 
 - A Veryfront project with the `workflows/` directory available (see
-  [Create a project](./create-a-project.md)).
+  [Create a project](../getting-started/create-a-project.md)).
 - Any agents or tools referenced by a step are defined in `agents/` or
   `tools/` (see [Agents](./agents.md) and [Tools](./tools.md)).
 - A provider configured for any agents the workflow uses
@@ -343,4 +343,4 @@ A working run reaches `status: "completed"` and exposes a `nodeStates` map with 
 
 ## Related
 
-- [`veryfront/workflow`](../reference/veryfront/workflow.md): workflow API reference
+- [`veryfront/workflow`](../api-reference/veryfront/workflow.md): workflow API reference

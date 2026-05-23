@@ -92,4 +92,4 @@ After applying each option:
 
 - [Chat UI](./chat-ui.md): preset component
 - [Chat composition](./chat-composition.md): custom layouts
-- [`veryfront/chat`](../reference/veryfront/chat.md): chat reference
+- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat reference

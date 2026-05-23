@@ -2,10 +2,11 @@
 /**
  * Guide Validator
  *
- * Checks that all guide .md files in docs/guides/ have:
+ * Checks that all public guide .md files in docs/getting-started/ and
+ * docs/guides/ have:
  * 1. Valid frontmatter (title, description, order)
  * 2. Valid internal cross-references (relative .md links map to real files)
- * 3. Valid API reference links (relative ../reference/*.md links map to real files)
+ * 3. Valid API reference links (relative ../api-reference/*.md links map to real files)
  * 4. Balanced code blocks (every ``` has a closing ```)
  * 5. Required sections (## Next or ## Related at the end)
  * 6. All guides listed in index.md exist as files
@@ -16,8 +17,17 @@
 import { collectVeryfrontImports, createPublicImportValidator } from "./guide-validation.ts";
 
 const ROOT = Deno.cwd();
+const GETTING_STARTED_DIR = `${ROOT}/docs/getting-started`;
 const GUIDES_DIR = `${ROOT}/docs/guides`;
-const REF_DIR = `${ROOT}/docs/reference/veryfront`;
+const REF_DIR = `${ROOT}/docs/api-reference/veryfront`;
+
+interface PublicDocFile {
+  filename: string;
+  filepath: string;
+  section: "getting-started" | "guides";
+  shortName: string;
+  slug: string;
+}
 
 interface Issue {
   file: string;
@@ -26,7 +36,7 @@ interface Issue {
 
 const issues: Issue[] = [];
 const warnings: Issue[] = [];
-const guideOrders = new Map<number, string[]>();
+const guideOrders = new Map<string, string[]>();
 
 function addIssue(file: string, message: string) {
   issues.push({ file, message });
@@ -36,18 +46,32 @@ function addWarning(file: string, message: string) {
   warnings.push({ file, message });
 }
 
-// Map from slug to expected filename
-const GUIDE_SLUG_TO_FILE: Record<string, string> = {};
+// Map from slug to expected guide metadata.
+const GUIDE_SLUG_TO_FILE: Record<string, PublicDocFile> = {};
 const REF_SLUG_TO_FILE: Record<string, string> = {};
 
-// Collect all guide .md files. README.md is repo-maintainer documentation,
-// not a published guide, so it is skipped from guide validation.
-const guideFiles: string[] = [];
-for (const entry of Deno.readDirSync(GUIDES_DIR)) {
-  if (entry.isFile && entry.name.endsWith(".md") && entry.name !== "README.md") {
-    guideFiles.push(entry.name);
-    const slug = entry.name.replace(".md", "");
-    GUIDE_SLUG_TO_FILE[slug] = entry.name;
+// Collect all public guide .md files. README.md is repo-maintainer
+// documentation, not a published guide, so it is skipped from guide validation.
+const guideFiles: PublicDocFile[] = [];
+for (
+  const section of [
+    { name: "getting-started" as const, dir: GETTING_STARTED_DIR },
+    { name: "guides" as const, dir: GUIDES_DIR },
+  ]
+) {
+  for (const entry of Deno.readDirSync(section.dir)) {
+    if (entry.isFile && entry.name.endsWith(".md") && entry.name !== "README.md") {
+      const slug = entry.name.replace(".md", "");
+      const file = {
+        filename: entry.name,
+        filepath: `${section.dir}/${entry.name}`,
+        section: section.name,
+        shortName: `${section.name}/${entry.name}`,
+        slug,
+      };
+      guideFiles.push(file);
+      GUIDE_SLUG_TO_FILE[slug] = file;
+    }
   }
 }
 
@@ -60,14 +84,13 @@ try {
     }
   }
 } catch {
-  addWarning("reference", "Could not read docs/reference/ directory");
+  addWarning("api-reference", "Could not read docs/api-reference/ directory");
 }
 
 // 1. Validate each guide file
-for (const filename of guideFiles) {
-  const filepath = `${GUIDES_DIR}/${filename}`;
+for (const file of guideFiles) {
+  const { filename, filepath, section, shortName } = file;
   const content = Deno.readTextFileSync(filepath);
-  const shortName = `guides/${filename}`;
 
   // --- Frontmatter ---
   if (!content.startsWith("---\n")) {
@@ -99,9 +122,10 @@ for (const filename of guideFiles) {
     if (!Number.isInteger(order)) {
       addIssue(shortName, "Frontmatter field order must be an integer");
     } else {
-      const files = guideOrders.get(order) ?? [];
+      const key = `${section}:${order}`;
+      const files = guideOrders.get(key) ?? [];
       files.push(filename);
-      guideOrders.set(order, files);
+      guideOrders.set(key, files);
     }
   }
 
@@ -113,18 +137,24 @@ for (const filename of guideFiles) {
     addIssue(shortName, `Unbalanced code blocks (${codeBlockMatches.length} \`\`\` markers, should be even)`);
   }
 
-  // --- Internal guide links (relative) ---
-  const guideLinkRe = /\(\.\/([a-z0-9-]+)\.md\)/g;
+  // --- Internal docs links (relative) ---
+  const markdownLinkRe = /\]\((\.{1,2}\/[^)#]+\.md)(?:#[^)]+)?\)/g;
   let match: RegExpExecArray | null;
-  while ((match = guideLinkRe.exec(content))) {
-    const slug = match[1];
-    if (!GUIDE_SLUG_TO_FILE[slug]) {
-      addIssue(shortName, `Broken guide link: ./${slug}.md (no matching file)`);
+  while ((match = markdownLinkRe.exec(content))) {
+    const target = match[1];
+    const resolvedPath = new URL(target, `file://${filepath}`).pathname;
+    try {
+      const stat = Deno.statSync(resolvedPath);
+      if (!stat.isFile) {
+        addIssue(shortName, `Broken docs link: ${target} (not a file)`);
+      }
+    } catch {
+      addIssue(shortName, `Broken docs link: ${target} (no matching file)`);
     }
   }
 
   // --- API reference links (relative) ---
-  const refLinkRe = /\(\.\.\/reference\/veryfront\/([a-z0-9-]+)\.md\)/g;
+  const refLinkRe = /\(\.\.\/api-reference\/veryfront\/([a-z0-9-]+)\.md\)/g;
   for (
     let refMatch = refLinkRe.exec(content);
     refMatch !== null;
@@ -134,14 +164,14 @@ for (const filename of guideFiles) {
     if (!REF_SLUG_TO_FILE[slug]) {
       addWarning(
         shortName,
-        `Reference link: ../reference/veryfront/${slug}.md (no matching file)`,
+        `Reference link: ../api-reference/veryfront/${slug}.md (no matching file)`,
       );
     }
   }
 
   // --- Check for stale absolute links ---
-  if (/\/code\/(guides|api)\//.test(content)) {
-    addIssue(shortName, "Contains stale absolute links (/code/guides/ or /code/api/), should use relative paths");
+  if (/\/code\/(guides|api|api-reference|getting-started)\//.test(content)) {
+    addIssue(shortName, "Contains stale absolute /code/ docs links, should use relative paths");
   }
 
   // --- Required closing sections (skip index.md) ---
@@ -154,9 +184,9 @@ for (const filename of guideFiles) {
   }
 }
 
-for (const [order, files] of guideOrders) {
+for (const [key, files] of guideOrders) {
   if (files.length > 1) {
-    addIssue("guides", `Duplicate guide order ${order}: ${files.join(", ")}`);
+    addIssue(key.split(":")[0], `Duplicate guide order ${key.split(":")[1]}: ${files.join(", ")}`);
   }
 }
 
@@ -164,44 +194,40 @@ for (const [order, files] of guideOrders) {
 //    veryfront-code.md. Both files act as catalog roots: the Intro page
 //    links onward to Veryfront Code, and Veryfront Code carries the
 //    topic-grouped tables.
-const catalogFiles = ["index.md", "veryfront-code.md"];
+const catalogFiles = ["getting-started/index.md", "getting-started/veryfront-code.md"];
 const listedSlugs = new Set<string>();
 
 for (const catalogFile of catalogFiles) {
-  const filepath = `${GUIDES_DIR}/${catalogFile}`;
+  const filepath = `${ROOT}/docs/${catalogFile}`;
   let content: string;
   try {
     content = Deno.readTextFileSync(filepath);
   } catch {
-    // index.md must exist; veryfront-code.md is optional until the split
-    // lands. Only the missing index.md is treated as a hard error.
-    if (catalogFile === "index.md") {
-      addIssue(`guides/${catalogFile}`, `Could not read ${catalogFile}`);
-    }
+    addIssue(catalogFile, `Could not read ${catalogFile}`);
     continue;
   }
 
-  const linkRe = /\(\.\/([a-z0-9-]+)\.md\)/g;
+  const linkRe = /\((?:\.\/|\.\.\/guides\/|\.\.\/getting-started\/)([a-z0-9-]+)\.md\)/g;
   let m: RegExpExecArray | null;
   while ((m = linkRe.exec(content))) {
     const slug = m[1];
     listedSlugs.add(slug);
     if (!GUIDE_SLUG_TO_FILE[slug]) {
       addIssue(
-        `guides/${catalogFile}`,
-        `Catalog links to ./${slug}.md but no file exists`,
+        catalogFile,
+        `Catalog links to ${slug}.md but no file exists`,
       );
     }
   }
 }
 
-for (const filename of guideFiles) {
-  if (catalogFiles.includes(filename)) continue;
-  const slug = filename.replace(".md", "");
+for (const file of guideFiles) {
+  if (catalogFiles.includes(file.shortName)) continue;
+  const slug = file.slug;
   if (!listedSlugs.has(slug)) {
     addWarning(
-      "guides/index.md",
-      `Guide "${slug}" not listed in index.md or veryfront-code.md`,
+      "getting-started/index.md",
+      `Guide "${slug}" not listed in getting-started/index.md or getting-started/veryfront-code.md`,
     );
   }
 }
@@ -214,10 +240,9 @@ const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`)) as {
 };
 const isKnownPublicImport = createPublicImportValidator(denoConfig.exports ?? {});
 
-for (const filename of guideFiles) {
-  const filepath = `${GUIDES_DIR}/${filename}`;
+for (const file of guideFiles) {
+  const { filepath, shortName } = file;
   const content = Deno.readTextFileSync(filepath);
-  const shortName = `guides/${filename}`;
 
   for (const mod of collectVeryfrontImports(content)) {
     if (!isKnownPublicImport(mod)) {
@@ -227,7 +252,7 @@ for (const filename of guideFiles) {
 }
 
 // --- Report ---
-console.log(`Validated ${guideFiles.length} guide files.\n`);
+console.log(`Validated ${guideFiles.length} public guide files.\n`);
 
 if (warnings.length > 0) {
   console.log(`Warnings (${warnings.length}):`);

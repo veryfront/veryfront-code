@@ -97,4 +97,4 @@ Render your composed layout in a client page, run `veryfront dev`, and:
 ## Related
 
 - [Chat UI](./chat-ui.md): preset chat component
-- [`veryfront/chat`](../reference/veryfront/chat.md): chat reference
+- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat reference

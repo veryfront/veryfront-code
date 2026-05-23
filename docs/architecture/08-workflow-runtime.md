@@ -92,4 +92,4 @@ they manage the platform job that backs a workflow run.
 
 ## Related reference
 
-- [`veryfront/workflow`](../reference/veryfront/workflow.md)
+- [`veryfront/workflow`](../api-reference/veryfront/workflow.md)

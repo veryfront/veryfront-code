@@ -739,8 +739,3 @@ User guides:
 - [chat-hooks](../../guides/chat-hooks.md): Manage chat state and streaming
 - [chat-composition](../../guides/chat-composition.md): Mix prebuilt and custom chat pieces
 - [chat-theming](../../guides/chat-theming.md): Theme chat components
-
-Architecture:
-
-- [05-agent-runtime](../../architecture/05-agent-runtime.md): AI primitives and chat surfaces
-- [06-ag-ui-transport](../../architecture/06-ag-ui-transport.md): AG-UI streaming transport

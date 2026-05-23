@@ -88,4 +88,4 @@ Remove the temporary logs before publishing the extension.
 
 - [Extensions](./extensions.md): extension overview
 - [Extension authoring](./extension-authoring.md): writing extension factories
-- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference
+- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference

@@ -20,7 +20,7 @@ The module provides:
   implementation).
 - Provider credentials (client id, client secret, callback URL) set as
   environment variables. See the matching provider config object in
-  [`veryfront/oauth`](../reference/veryfront/oauth.md).
+  [`veryfront/oauth`](../api-reference/veryfront/oauth.md).
 
 ## Quick setup
 
@@ -194,4 +194,4 @@ A working setup:
 
 ## Related
 
-- [`veryfront/oauth`](../reference/veryfront/oauth.md): OAuth API reference
+- [`veryfront/oauth`](../api-reference/veryfront/oauth.md): OAuth API reference

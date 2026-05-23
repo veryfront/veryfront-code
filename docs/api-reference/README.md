@@ -14,7 +14,7 @@ deno task docs:validate  # check structure and links
 ## Layout
 
 ```text
-docs/reference/
+docs/api-reference/
   README.md          # this file
   veryfront/
     index.md         # the root `veryfront` import

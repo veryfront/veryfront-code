@@ -100,5 +100,5 @@ Restart `veryfront dev` after editing `veryfront.config.ts`:
 
 ## Related
 
-- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference
+- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference
 - [Project structure](./project-structure.md): where local extensions live

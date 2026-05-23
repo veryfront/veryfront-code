@@ -191,7 +191,7 @@ deno task typecheck
 
 ### Public API reference docs
 
-Public API reference pages in `docs/reference/veryfront/` are generated from
+Public API reference pages in `docs/api-reference/veryfront/` are generated from
 source JSDoc comments. Do not hand-edit generated reference pages for API
 copy changes.
 

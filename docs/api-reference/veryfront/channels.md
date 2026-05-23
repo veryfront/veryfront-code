@@ -119,10 +119,3 @@ import { buildChannelResponseParts, executeChannelInvoke, listChannelAssistants 
 | `getChannelInvokeRequestSchema` | Zod schema for get channel invoke request. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L65) |
 | `getChannelInvokeResponseSchema` | Zod schema for get channel invoke response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L161) |
 | `getChannelResponsePartSchema` | Zod schema for get channel response part. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/channels/invoke.ts#L148) |
-
-## Related
-
-Architecture:
-
-- [06-ag-ui-transport](../../architecture/06-ag-ui-transport.md): AG-UI transport
-- [11-control-plane-channels](../../architecture/11-control-plane-channels.md): Control-plane channels

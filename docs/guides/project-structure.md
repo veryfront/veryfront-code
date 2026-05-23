@@ -13,7 +13,7 @@ The examples use the default app router. Set `router: "pages"` in
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create a project](./create-a-project.md)).
+- A project created with `veryfront init` (see [Create a project](../getting-started/create-a-project.md)).
 - Familiarity with how a file path maps to a route in modern React frameworks.
 
 ## Directory layout
@@ -204,4 +204,4 @@ should resolve from a route or test.
 ## Related
 
 - [Configuration](./configuration.md): `veryfront.config.ts` options
-- [`veryfront` (root)](../reference/veryfront/index.md): core framework API reference
+- [`veryfront` (root)](../api-reference/veryfront/index.md): core framework API reference

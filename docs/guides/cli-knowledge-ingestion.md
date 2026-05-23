@@ -273,4 +273,4 @@ command output for the reason.
 
 ## Related
 
-- [`veryfront/cli`](../reference/veryfront/cli.md): CLI entry point reference
+- [`veryfront/cli`](../api-reference/veryfront/cli.md): CLI entry point reference

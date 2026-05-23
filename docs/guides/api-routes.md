@@ -10,7 +10,7 @@ The router style changes the file location and the handler's argument shape. The
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create a project](./create-a-project.md)).
+- A project created with `veryfront init` (see [Create a project](../getting-started/create-a-project.md)).
 - The dev server running (`veryfront dev`) or a build target you can hit with
   HTTP.
 
@@ -251,5 +251,5 @@ HTTP method handler is not exported.
 
 ## Related
 
-- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
-- [`veryfront/middleware`](../reference/veryfront/middleware.md): middleware API reference
+- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
+- [`veryfront/middleware`](../api-reference/veryfront/middleware.md): middleware API reference

@@ -425,8 +425,3 @@ User guides:
 - [workflows](../../guides/workflows.md): Author durable workflows
 - [workflows-advanced](../../guides/workflows-advanced.md): Use loops, artifacts, and progress hooks
 - [multi-agent](../../guides/multi-agent.md): Orchestrate multi-agent workflows
-
-Architecture:
-
-- [08-workflow-runtime](../../architecture/08-workflow-runtime.md): Workflow runtime architecture
-- [09-jobs-and-tasks](../../architecture/09-jobs-and-tasks.md): Workflows, jobs, and tasks

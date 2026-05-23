@@ -212,5 +212,5 @@ output: tokens arrive incrementally rather than in one chunk.
 
 ## Related
 
-- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
-- [`veryfront/chat`](../reference/veryfront/chat.md): chat hooks API reference
+- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
+- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat hooks API reference

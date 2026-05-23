@@ -10,7 +10,7 @@ For the normal path, omit `model` and let runtime conventions choose: local infe
 
 ## Prerequisites
 
-- A Veryfront project running locally (see [Create a project](./create-a-project.md)).
+- A Veryfront project running locally (see [Create a project](../getting-started/create-a-project.md)).
 - A provider configured for inference (see [Providers](./providers.md)).
 - The `agents/` directory exists. If you customised `ai.agents.discovery.paths`
   in [Configuration](./configuration.md), use that directory instead.
@@ -123,7 +123,7 @@ direct subprocesses.
 
 Expose a registered agent through `createAgUiHandler()` when a browser or external client needs AG-UI streaming.
 
-Use [Create an agent](./create-an-agent.md) for the copyable quick-start route. Use [Chat UI](./chat-ui.md) to pair that route with `useChat({ api: "/api/ag-ui" })`.
+Use [Create an agent](../getting-started/create-an-agent.md) for the copyable quick-start route. Use [Chat UI](./chat-ui.md) to pair that route with `useChat({ api: "/api/ag-ui" })`.
 
 If a route returns `Agent not found`, ensure the agent file is in `agents/` and its `id` matches the value passed to `createAgUiHandler()`.
 
@@ -207,7 +207,7 @@ const result = await agent.generate({ input: "Hello" });
 console.log(result.text);
 ```
 
-If generation fails, check the dev-server log for agent registration or provider errors. If AG-UI routing fails, use the route verification in [Create an agent](./create-an-agent.md). A healthy AG-UI stream ends with a `RunFinished` event.
+If generation fails, check the dev-server log for agent registration or provider errors. If AG-UI routing fails, use the route verification in [Create an agent](../getting-started/create-an-agent.md). A healthy AG-UI stream ends with a `RunFinished` event.
 
 ## Next
 
@@ -217,4 +217,4 @@ If generation fails, check the dev-server log for agent registration or provider
 
 ## Related
 
-- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
+- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference

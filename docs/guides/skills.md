@@ -159,4 +159,4 @@ veryfront skills validate skills/my-skill
 ## Related
 
 - [agentskills.io specification](https://agentskills.io)
-- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
+- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference

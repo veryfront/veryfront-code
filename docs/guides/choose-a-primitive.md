@@ -60,7 +60,7 @@ Run the guide's example or validation command before adding another primitive.
 
 ## Next
 
-- [Create a project](./create-a-project.md): create a project
+- [Create a project](../getting-started/create-a-project.md): create a project
 - [Agents](./agents.md): define an agent
 - [Workflows](./workflows.md): orchestrate multi-step work
 - [Tasks](./tasks.md): define background task functions
@@ -68,11 +68,11 @@ Run the guide's example or validation command before adding another primitive.
 
 ## Related
 
-- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
-- [`veryfront/tool`](../reference/veryfront/tool.md): tool API reference
-- [`veryfront/workflow`](../reference/veryfront/workflow.md): workflow API reference
-- [`veryfront/jobs`](../reference/veryfront/jobs.md): jobs API reference
-- [`veryfront/integrations`](../reference/veryfront/integrations.md): integrations API reference
-- [`veryfront/mcp`](../reference/veryfront/mcp.md): MCP API reference
-- [`veryfront/sandbox`](../reference/veryfront/sandbox.md): sandbox API reference
-- [`veryfront/extensions`](../reference/veryfront/extensions.md): extension API reference
+- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
+- [`veryfront/tool`](../api-reference/veryfront/tool.md): tool API reference
+- [`veryfront/workflow`](../api-reference/veryfront/workflow.md): workflow API reference
+- [`veryfront/jobs`](../api-reference/veryfront/jobs.md): jobs API reference
+- [`veryfront/integrations`](../api-reference/veryfront/integrations.md): integrations API reference
+- [`veryfront/mcp`](../api-reference/veryfront/mcp.md): MCP API reference
+- [`veryfront/sandbox`](../api-reference/veryfront/sandbox.md): sandbox API reference
+- [`veryfront/extensions`](../api-reference/veryfront/extensions.md): extension API reference

@@ -413,7 +413,3 @@ User guides:
 - [extension-lifecycle](../../guides/extension-lifecycle.md): Extension lifecycle and hooks
 - [extension-publishing](../../guides/extension-publishing.md): Publish extensions
 - [extension-testing](../../guides/extension-testing.md): Test extensions
-
-Architecture:
-
-- [12-extension-system](../../architecture/12-extension-system.md): Extension system architecture

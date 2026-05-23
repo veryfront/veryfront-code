@@ -49,7 +49,7 @@ OPENAI_API_KEY=<API_KEY>
 ```
 
 Veryfront picks a matching provider automatically. For direct vendor routing,
-local models, or Veryfront Cloud routing, see [Providers](./providers.md).
+local models, or Veryfront Cloud routing, see [Providers](../guides/providers.md).
 
 ## Add a tool
 
@@ -173,13 +173,13 @@ created through the release flow.
 
 ## Next
 
-- [Agents](./agents.md): add memory, skills, dynamic system prompts, and hosted runs.
-- [Tools](./tools.md): write production tool contracts and error handling.
-- [Chat UI](./chat-ui.md): customize the preset chat component.
+- [Agents](../guides/agents.md): add memory, skills, dynamic system prompts, and hosted runs.
+- [Tools](../guides/tools.md): write production tool contracts and error handling.
+- [Chat UI](../guides/chat-ui.md): customize the preset chat component.
 - [Deploy a project](./deploy-a-project.md): ship and verify a production deployment.
 
 ## Related
 
-- [`veryfront/agent`](../reference/veryfront/agent.md): agent API reference
-- [`veryfront/tool`](../reference/veryfront/tool.md): tool API reference
-- [`veryfront/chat`](../reference/veryfront/chat.md): chat API reference
+- [`veryfront/agent`](../api-reference/veryfront/agent.md): agent API reference
+- [`veryfront/tool`](../api-reference/veryfront/tool.md): tool API reference
+- [`veryfront/chat`](../api-reference/veryfront/chat.md): chat API reference

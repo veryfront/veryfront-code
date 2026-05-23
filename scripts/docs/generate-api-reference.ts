@@ -7,7 +7,7 @@
  * export path.
  *
  * Usage: deno task docs
- *        deno task docs -- --output ../../docs/docs/code/api
+ *        deno task docs -- --output ../../docs/docs/code/api-reference
  */
 
 import { parseArgs } from "jsr:@std/cli/parse-args";
@@ -24,7 +24,7 @@ const ROOT = Deno.cwd();
 const args = parseArgs(Deno.args, {
   string: ["output", "source-base-url"],
   default: {
-    output: "docs/reference",
+    output: "docs/api-reference",
     "source-base-url": "https://github.com/veryfront/veryfront-code/blob/main",
   },
 });
@@ -32,6 +32,17 @@ const args = parseArgs(Deno.args, {
 const OUTPUT_DIR = args.output.startsWith("/") ? args.output : `${ROOT}/${args.output}`;
 const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
 const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/\/+$/, "");
+const GETTING_STARTED_GUIDES = new Set([
+  "index",
+  "veryfront-code",
+  "quickstart",
+  "installation",
+  "create-a-project",
+  "create-an-agent",
+  "create-an-api",
+  "create-a-frontend",
+  "deploy-a-project",
+]);
 
 // ---------------------------------------------------------------------------
 // Types
@@ -450,72 +461,6 @@ const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = 
   ],
   "veryfront/server": [
     { path: "deploying", reason: "Deploy the server" },
-  ],
-};
-
-const RELATED_ARCHITECTURE: Record<
-  string,
-  Array<{ path: string; reason: string }>
-> = {
-  "veryfront": [
-    { path: "01-system-overview", reason: "System overview and boundaries" },
-    { path: "02-request-pipeline", reason: "Request handling pipeline" },
-  ],
-  "veryfront/chat": [
-    { path: "05-agent-runtime", reason: "AI primitives and chat surfaces" },
-    { path: "06-ag-ui-transport", reason: "AG-UI streaming transport" },
-  ],
-  "veryfront/agent": [
-    { path: "05-agent-runtime", reason: "Agent runtime, hosted runs, AI primitives, and skills" },
-    { path: "06-ag-ui-transport", reason: "AG-UI transport contract" },
-    { path: "11-control-plane-channels", reason: "Control-plane channels" },
-  ],
-  "veryfront/tool": [
-    { path: "05-agent-runtime", reason: "Tools as AI primitives" },
-  ],
-  "veryfront/workflow": [
-    { path: "08-workflow-runtime", reason: "Workflow runtime architecture" },
-    { path: "09-jobs-and-tasks", reason: "Workflows, jobs, and tasks" },
-  ],
-  "veryfront/prompt": [
-    { path: "05-agent-runtime", reason: "Prompts as AI primitives" },
-  ],
-  "veryfront/resource": [
-    { path: "05-agent-runtime", reason: "Resources as AI primitives" },
-  ],
-  "veryfront/jobs": [
-    { path: "09-jobs-and-tasks", reason: "Jobs and tasks runtime" },
-  ],
-  "veryfront/mcp": [
-    { path: "10-mcp-runtime", reason: "MCP runtime architecture" },
-  ],
-  "veryfront/observability": [
-    { path: "13-observability", reason: "Observability architecture" },
-  ],
-  "veryfront/oauth": [
-    { path: "18-oauth-runtime", reason: "OAuth runtime architecture" },
-  ],
-  "veryfront/integrations": [
-    { path: "19-integration-runtime", reason: "Integration runtime" },
-  ],
-  "veryfront/sandbox": [
-    { path: "17-sandbox-runtime", reason: "Sandbox runtime architecture" },
-  ],
-  "veryfront/extensions": [
-    { path: "12-extension-system", reason: "Extension system architecture" },
-  ],
-  "veryfront/provider": [
-    { path: "07-provider-runtime", reason: "Provider and embedding runtime" },
-  ],
-  "veryfront/embedding": [
-    { path: "07-provider-runtime", reason: "Embedding shares provider model resolution" },
-  ],
-  "veryfront/server": [
-    { path: "04-server-runtime", reason: "Server runtime architecture" },
-  ],
-  "veryfront/channels": [
-    { path: "06-ag-ui-transport", reason: "AG-UI transport" },
-    { path: "11-control-plane-channels", reason: "Control-plane channels" },
   ],
 };
 
@@ -2646,14 +2591,12 @@ function generateMD(
     }
   }
 
-  // Related: reference modules, user guides, architecture pages.
+  // Related: reference modules and public user guides.
   const related = RELATED_MODULES[entry.importPath];
   const relatedGuides = RELATED_GUIDES[entry.importPath];
-  const relatedArch = RELATED_ARCHITECTURE[entry.importPath];
   const hasAnyRelated =
     (related && related.length > 0) ||
-    (relatedGuides && relatedGuides.length > 0) ||
-    (relatedArch && relatedArch.length > 0);
+    (relatedGuides && relatedGuides.length > 0);
 
   if (hasAnyRelated) {
     lines.push("## Related");
@@ -2674,19 +2617,11 @@ function generateMD(
       lines.push("User guides:");
       lines.push("");
       for (const g of relatedGuides) {
-        lines.push(`- [${g.path}](../../guides/${g.path}.md): ${g.reason}`);
+        lines.push(`- [${g.path}](${relatedGuideHref(g.path)}): ${g.reason}`);
       }
       lines.push("");
     }
 
-    if (relatedArch && relatedArch.length > 0) {
-      lines.push("Architecture:");
-      lines.push("");
-      for (const a of relatedArch) {
-        lines.push(`- [${a.path}](../../architecture/${a.path}.md): ${a.reason}`);
-      }
-      lines.push("");
-    }
   }
 
   return lines.join("\n");
@@ -2706,8 +2641,13 @@ function sourceCell(summary: ExportSummary): string {
   return summary.sourceHref ? `[source](${summary.sourceHref})` : "";
 }
 
+function relatedGuideHref(slug: string): string {
+  const section = GETTING_STARTED_GUIDES.has(slug) ? "getting-started" : "guides";
+  return `../../${section}/${slug}.md`;
+}
+
 // ---------------------------------------------------------------------------
-// 7. Generate README for docs/reference/
+// 7. Generate README for docs/api-reference/
 // ---------------------------------------------------------------------------
 
 function generateReadmeMD(
@@ -2735,7 +2675,7 @@ function generateReadmeMD(
   lines.push("## Layout");
   lines.push("");
   lines.push("```text");
-  lines.push("docs/reference/");
+  lines.push("docs/api-reference/");
   lines.push("  README.md          # this file");
   lines.push("  veryfront/");
   lines.push("    index.md         # the root `veryfront` import");
@@ -2863,7 +2803,7 @@ async function main() {
     console.log(`  Wrote ${outPath}`);
   }
 
-  // Write the structure README at the docs/reference root.
+  // Write the structure README at the docs/api-reference root.
   const readmeMD = generateReadmeMD(indexData);
   const readmePath = `${OUTPUT_DIR}/README.md`;
   await Deno.writeTextFile(readmePath, readmeMD);

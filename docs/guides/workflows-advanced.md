@@ -100,4 +100,4 @@ For React hooks, render the dashboard component above, click **Run Pipeline**, a
 
 ## Related
 
-- [`veryfront/workflow`](../reference/veryfront/workflow.md): workflow API reference
+- [`veryfront/workflow`](../api-reference/veryfront/workflow.md): workflow API reference
