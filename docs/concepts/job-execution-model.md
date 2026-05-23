@@ -8,6 +8,10 @@ Jobs are the durable execution surface for background work. Tasks and workflows
 define what can run. Jobs, cron jobs, and workflow runs define how that work is
 executed, scheduled, observed, and retried.
 
+The distinction keeps definitions separate from executions. A task or workflow
+can be reviewed as reusable product logic. A run can be inspected as one attempt
+to execute that logic.
+
 ## Execution identities
 
 | Concept      | Identity it owns                           |

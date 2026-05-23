@@ -4,9 +4,9 @@ description: "How Veryfront Code agents, tools, workflows, tasks, jobs, integrat
 order: 2
 ---
 
-Veryfront Code exposes several primitives because different kinds of work need
-different ownership, durability, and user interaction. The boundary between them
-matters more than the number of primitives.
+Veryfront Code exposes several primitives because different kinds of work have
+different owners. The important questions are who starts the work, how long it
+lives, whether it streams to a user, and how it is observed.
 
 ## Concept map
 
@@ -33,3 +33,8 @@ authorization, not local business logic.
 Keeping these boundaries explicit makes projects easier to review. A feature can
 combine primitives, but one primitive should still own the triggering event and
 the primary lifecycle.
+
+For example, an API route can receive a webhook, a workflow can coordinate the
+multi-step response, a task can run slow background work, and an agent can reason
+about a user-facing decision. Each part remains understandable because the
+lifecycle owner stays clear.

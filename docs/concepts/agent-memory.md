@@ -6,8 +6,8 @@ order: 4
 
 Agents are stateless unless a request supplies messages or the agent is
 configured with memory. Veryfront keeps message transport, model execution, and
-persisted memory as separate concerns so applications can choose the right state
-boundary.
+persisted memory separate because each concern answers a different question:
+what the user sees, what the model receives, and what survives the request.
 
 ## State boundaries
 
@@ -18,10 +18,10 @@ boundary.
 | Streaming transport | Token and AG-UI events sent back to the client.             |
 | Storage driver      | Persistence for memory across server instances or restarts. |
 
-Client-managed state stays in the request payload. Server-managed memory is
-useful when conversation state must survive reloads, move between clients, or be
-shared across server instances. Streaming does not decide where state lives; it
-only describes how output reaches the client.
+Client-managed state stays in the request payload. Server-managed memory matters
+when conversation state must survive reloads, move between clients, or be shared
+across server instances. Streaming does not decide where state lives; it only
+describes how output reaches the client.
 
 ## Memory strategies
 

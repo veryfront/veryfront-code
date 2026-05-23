@@ -157,9 +157,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "calculator.ts",
       "What is 128 divided by 8?",
       "curl -N -X POST",
-      "tools: true",
-      "maxSteps",
-      "veryfront build",
     ],
   },
   "guides/configuration.md": {
@@ -230,8 +227,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Agents",
       "tools",
       "Workflows",
-      "Getting Started",
-      "Documentation map",
       "Primitive set",
     ],
   },
@@ -250,7 +245,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "concepts/index.md": {
     references: [],
     snippets: [
-      "Concepts explain the mental models",
+      "Concepts explain why Veryfront Code is shaped",
       "Framework primitives",
       "Project conventions",
       "Agent memory",
@@ -279,8 +274,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/index.md",
     ],
     snippets: [
-      "Directory structure",
-      "Auto-discovered entities",
+      "Directory roles",
+      "Discovery model",
       "agents/",
       "tools/",
     ],
@@ -385,7 +380,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/installation.md": {
     references: [],
     snippets: [
-      "npm create veryfront",
+      "npm install veryfront",
+      "deno add npm:veryfront",
       "brew install veryfront/tap/veryfront",
       "veryfront.com/install.sh",
       "veryfront.com/install.ps1",
@@ -418,6 +414,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["./installation.md", "./create-agent.md"],
     snippets: [
       "veryfront init test-app",
+      "npm create veryfront",
+      "deno init --npm veryfront",
       "veryfront dev",
       "ai-agent",
       "minimal",

@@ -43,7 +43,8 @@ Older browsers may work but are not part of the supported matrix.
 
 ## Install
 
-Pick the command that matches your toolchain.
+Use a binary installer for a global CLI. Use a package manager when you already
+have an app. Use `npx` when you want to run the CLI once.
 
 <CodeGroup>
 
@@ -57,10 +58,6 @@ irm https://veryfront.com/install.ps1 | iex
 
 ```bash Homebrew
 brew install veryfront/tap/veryfront
-```
-
-```bash npm
-npm create veryfront
 ```
 
 ```bash npx
@@ -106,20 +103,33 @@ brew install veryfront/tap/veryfront
 
 Same binary as the curl installer, managed by Homebrew.
 
-### npm (project scaffolder)
+### Existing project
 
-```bash
-npm create veryfront
+Add Veryfront to an existing app when you do not want to scaffold a new project.
+
+<CodeGroup>
+
+```bash npm
+npm install veryfront
 ```
 
-Creates a new project using `create-veryfront`. Other package managers:
-
-```bash
-pnpm create veryfront
-yarn create veryfront
-bun create veryfront
-deno init --npm veryfront
+```bash pnpm
+pnpm add veryfront
 ```
+
+```bash yarn
+yarn add veryfront
+```
+
+```bash bun
+bun add veryfront
+```
+
+```bash deno
+deno add npm:veryfront
+```
+
+</CodeGroup>
 
 ### npx (one-shot)
 

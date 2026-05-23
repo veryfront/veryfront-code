@@ -15,7 +15,7 @@ plus a code editor and terminal. AI know-how is not required.
 | Page                                    | Use it when                                 |
 | --------------------------------------- | ------------------------------------------- |
 | [Quickstart](./quickstart.md)           | You want to build the first app end-to-end. |
-| [Installation](./installation.md)       | You want to install the CLI and framework.  |
+| [Installation](./installation.md)       | You want to install the CLI or framework.   |
 | [Create project](./create-project.md)   | You want to scaffold and run a project.     |
 | [Create agent](./create-agent.md)       | You want to define and invoke an agent.     |
 | [Create frontend](./create-frontend.md) | You want to add a chat UI for the agent.    |

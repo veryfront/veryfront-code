@@ -9,6 +9,10 @@ providers, storage, parsing, auth, schema validation, observability, and other
 infrastructure without changing the application code that consumes those
 capabilities.
 
+The extension system exists to keep infrastructure replaceable. Application code
+should depend on a cache, provider, parser, or auth contract, not on the package
+that happens to implement it.
+
 ## Core concepts
 
 | Concept    | Meaning                                                                |

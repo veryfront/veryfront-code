@@ -1,6 +1,6 @@
 ---
 title: "Quickstart"
-description: "Scaffold, run, and test a streaming Veryfront agent app."
+description: "Scaffold, run, and test your first Veryfront agent app."
 order: -1
 ---
 
@@ -68,15 +68,3 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
 ```
 
 The answer should stream. The curl response should emit `data:` lines.
-
-If the route returns `Agent not found`, ensure `agents/assistant.ts` is in the
-project root. If the model skips the tool, ensure `tools: true` and `maxSteps`
-are still set in `agents/assistant.ts`.
-
-## Build
-
-Build the project before deploying:
-
-```bash
-veryfront build
-```
