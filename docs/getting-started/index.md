@@ -18,6 +18,6 @@ plus a code editor and terminal. AI know-how is not required.
 | [Installation](./installation.md)       | Install the CLI or framework.   |
 | [Create project](./create-project.md)   | Scaffold and run a project.     |
 | [Create agent](./create-agent.md)       | Define and invoke an agent.     |
+| [Create API](./create-api.md)           | Expose the agent route.         |
 | [Create frontend](./create-frontend.md) | Add a chat UI for the agent.    |
-| [Create API](./create-api.md)           | Add the first HTTP endpoint.    |
 | [Deploy project](./deploy-project.md)   | Build and ship the project.     |

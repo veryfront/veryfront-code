@@ -1,13 +1,13 @@
 ---
 title: "Create frontend"
 description: "Add a chat page that streams responses from a Veryfront agent."
-order: 5
+order: 6
 ---
 
 ## Prerequisites
 
 - A project created with [Create project](./create-project.md).
-- The agent route from [Create agent](./create-agent.md).
+- The agent route from [Create API](./create-api.md).
 - The dev server running (`veryfront dev`).
 
 ## Add the chat page
