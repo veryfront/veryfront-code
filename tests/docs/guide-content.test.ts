@@ -18,6 +18,14 @@ describe("guide content contracts", () => {
     assertEquals(guide.includes("tokenStore.get(userId, githubConfig.id)"), false);
   });
 
+  it("does not document caller-provided endUserId as tool context authority", async () => {
+    const guide = await Deno.readTextFile("docs/guides/tools.md");
+
+    assertEquals(guide.includes("context?.endUserId"), false);
+    assertEquals(guide.includes("endUserId: \"user-123\""), false);
+    assertEquals(guide.includes("End-user identity for per-user token resolution"), false);
+  });
+
   it("does not claim deploy prints the production URL", async () => {
     for (const filename of ["deploying.md", "production-path.md"]) {
       const guide = await Deno.readTextFile(`docs/guides/${filename}`);
