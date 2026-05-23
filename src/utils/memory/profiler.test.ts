@@ -7,6 +7,7 @@ import {
   forceGC,
   getCacheStats,
   getHeapStats,
+  getMemoryMonitoringLogContext,
   getMemorySnapshot,
   registerCache,
   setHeapWarningThreshold,
@@ -112,6 +113,20 @@ describe("memory/profiler", () => {
 
       const { totalCacheEntries } = getMemorySnapshot();
       assert(totalCacheEntries >= 25);
+    });
+  });
+
+  describe("getMemoryMonitoringLogContext", () => {
+    it("includes top cache stats in routine memory log context", () => {
+      registerCache("test-cache-1", () => ({ name: "test-cache-1", entries: 5 }));
+      registerCache("test-cache-2", () => ({ name: "test-cache-2", entries: 25 }));
+
+      const context = getMemoryMonitoringLogContext(getMemorySnapshot(), 1);
+
+      assertEquals(context.totalCacheEntries >= 30, true);
+      assertEquals(context.topCaches.length, 1);
+      assertEquals(context.topCaches[0]?.name, "test-cache-2");
+      assertEquals(context.topCaches[0]?.entries, 25);
     });
   });
 

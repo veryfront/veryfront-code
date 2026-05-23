@@ -8,6 +8,8 @@ import {
   getProcessingStack,
   hasInjectedProcessingStack,
 } from "./http-cache-state.ts";
+import { getCacheStats } from "#veryfront/utils/memory/index.ts";
+import { inFlightHttpFetches } from "./in-flight-manager.ts";
 
 describe("transforms/esm/http-cache-state", () => {
   afterEach(() => {
@@ -55,6 +57,28 @@ describe("transforms/esm/http-cache-state", () => {
       mockCache.set("hash1", 12345);
       __injectCachesForTests({ lastDistributedRefresh: mockCache });
       assertEquals(getLastDistributedRefresh().get("hash1"), 12345);
+    });
+  });
+
+  describe("memory profiler registration", () => {
+    it("reports HTTP bundle cache state", () => {
+      const cachedPaths = new Map<string, string>([
+        ["cache-dir:https://esm.sh/react", "/tmp/http-1.mjs"],
+        ["cache-dir:https://esm.sh/react-dom", "/tmp/http-2.mjs"],
+      ]);
+      const lastDistributedRefresh = new Map<string, number>([["1", Date.now()]]);
+      __injectCachesForTests({ cachedPaths, lastDistributedRefresh });
+      inFlightHttpFetches.set("cache-dir:https://esm.sh/react", Promise.resolve("/tmp/http-1.mjs"));
+
+      try {
+        const stats = getCacheStats();
+
+        assertEquals(stats.find((s) => s.name === "http-bundle-paths")?.entries, 2);
+        assertEquals(stats.find((s) => s.name === "http-bundle-ttl-refreshes")?.entries, 1);
+        assertEquals(stats.find((s) => s.name === "http-bundle-in-flight")?.entries, 1);
+      } finally {
+        inFlightHttpFetches.clear();
+      }
     });
   });
 

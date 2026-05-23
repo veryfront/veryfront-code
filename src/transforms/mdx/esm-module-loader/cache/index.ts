@@ -17,6 +17,7 @@ import { REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import { isNotFoundError } from "#veryfront/platform/compat/fs.ts";
 import { LOG_PREFIX_MDX_LOADER } from "../constants.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { buildMdxEsmPathCacheKey, MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE } from "../cache-format.ts";
 import { ensureMdxModuleDependencies } from "../module-fetcher/dependency-recovery.ts";
 export { getLocalFs } from "./local-fs.ts";
@@ -135,6 +136,24 @@ function hasUnresolvedVfModules(code: string): boolean {
 
 const modulePathCaches = new Map<string, Map<string, string>>();
 const modulePathCacheLoaded = new Set<string>();
+
+function getModulePathCacheEntryCount(): number {
+  let entries = 0;
+  for (const cache of modulePathCaches.values()) entries += cache.size;
+  return entries;
+}
+
+registerCache("mdx-esm-path-caches", () => ({
+  name: "mdx-esm-path-caches",
+  entries: getModulePathCacheEntryCount(),
+  cacheDirs: modulePathCaches.size,
+}));
+
+registerCache("mdx-esm-verified-deps", () => ({
+  name: "mdx-esm-verified-deps",
+  entries: verifiedModuleDeps.size,
+  maxEntries: MAX_VERIFIED_MODULE_DEPS,
+}));
 
 export async function getModulePathCache(cacheDir: string): Promise<Map<string, string>> {
   const existing = modulePathCaches.get(cacheDir);

@@ -16,6 +16,7 @@ import { exists, remove, writeTextFile } from "#veryfront/compat/fs.ts";
 import { cacheModule } from "../module-fetcher/module-cache.ts";
 import { rendererLogger as log } from "#veryfront/utils";
 import { buildMdxEsmModuleFileName, buildMdxEsmPathCacheKey } from "../cache-format.ts";
+import { getCacheStats } from "#veryfront/utils/memory/index.ts";
 
 describe("MDX module path cache", () => {
   it("isolates per cache dir", async () => {
@@ -44,6 +45,42 @@ describe("MDX module path cache", () => {
       await saveModulePathCache(cacheDirA);
 
       assertEquals(cacheB.get("_vf_modules/pages/about.js"), undefined);
+    } finally {
+      await Promise.all([
+        remove(cacheDirA, { recursive: true }),
+        remove(cacheDirB, { recursive: true }),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("reports path-cache state to the memory profiler", async () => {
+    clearModulePathCache();
+
+    const cacheDirA = await makeTempDir({ prefix: "vf-mdx-cache-stats-a-" });
+    const cacheDirB = await makeTempDir({ prefix: "vf-mdx-cache-stats-b-" });
+
+    try {
+      await writeTextFile(
+        join(cacheDirA, "_index.json"),
+        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/a.js")]: "/tmp/a.mjs" }),
+      );
+      await writeTextFile(
+        join(cacheDirB, "_index.json"),
+        JSON.stringify({ [buildMdxEsmPathCacheKey("_vf_modules/pages/b.js")]: "/tmp/b.mjs" }),
+      );
+
+      await getModulePathCache(cacheDirA);
+      await getModulePathCache(cacheDirB);
+
+      const stats = getCacheStats();
+      const pathCacheStats = stats.find((s) => s.name === "mdx-esm-path-caches") as
+        | ({ entries: number; cacheDirs?: number })
+        | undefined;
+
+      assertEquals(pathCacheStats?.entries, 2);
+      assertEquals(pathCacheStats?.cacheDirs, 2);
+      assertEquals(stats.find((s) => s.name === "mdx-esm-verified-deps")?.entries, 0);
     } finally {
       await Promise.all([
         remove(cacheDirA, { recursive: true }),
