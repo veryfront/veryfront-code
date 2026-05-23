@@ -109,4 +109,18 @@ describe("cli/templates", () => {
       `Integration templates must require a real user id. Offenders: ${offenders.join(", ")}`,
     );
   });
+
+  it("base integration tools do not read legacy endUserId from tool context", async () => {
+    const userIdTemplatePath = new URL(
+      "./integrations/_base/files/lib/user-id.ts",
+      import.meta.url,
+    );
+    const userIdTemplate = await Deno.readTextFile(userIdTemplatePath);
+
+    assertEquals(
+      userIdTemplate.includes("context?.endUserId"),
+      false,
+      "base integration tools must use app-authenticated userId rather than legacy endUserId",
+    );
+  });
 });
