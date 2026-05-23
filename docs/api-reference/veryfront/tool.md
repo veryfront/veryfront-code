@@ -186,14 +186,3 @@ Create a typed tool definition.
 |------|-------------|--------|
 | `sleepTool` | Default sleep tool (max 60 s) exposed as a property accessor so the underlying `tool({...})` materialization is deferred until first use. Preserves the existing `sleepTool.execute(...)` call shape. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/sleep.ts#L91) |
 | `toolRegistry` | Shared tool registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/tool/registry.ts#L16) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/agent`](./agent.md): Agents that use tools
-- [`veryfront/mcp`](./mcp.md): Expose tools via MCP
-
-User guides:
-
-- [tools](../../guides/tools.md): Define and call tools

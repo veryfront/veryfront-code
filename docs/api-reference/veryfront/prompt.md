@@ -57,14 +57,3 @@ Create a typed prompt definition.
 | Name | Description | Source |
 |------|-------------|--------|
 | `promptRegistry` | Shared prompt registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L30) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/mcp`](./mcp.md): Expose prompts via MCP
-- [`veryfront/agent`](./agent.md): Use prompts in agents
-
-User guides:
-
-- [mcp-server](../../guides/mcp-server.md): Expose prompts over MCP

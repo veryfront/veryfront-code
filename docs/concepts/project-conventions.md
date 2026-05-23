@@ -1,15 +1,15 @@
 ---
 title: "Project conventions"
-description: "Why Veryfront Code separates routes, AI primitives, shared code, static content, and configuration."
+description: "Veryfront Code uses conventions over configuration."
 order: 3
 ---
 
-Veryfront projects keep user-facing routes in router directories and keep AI
-primitives at the project root. This keeps application surfaces visible without
-hiding agents, tools, workflows, prompts, resources, and skills inside route
-trees.
+Veryfront Code uses file-based routing for app surfaces and auto-discovers
+project entities such as agents, skills, tools, workflows, prompts, and
+resources. Common project directories keep shared code, content, and assets
+predictable.
 
-## Directory roles
+## Directory structure
 
 | Area                                                                   | Role                                                |
 | ---------------------------------------------------------------------- | --------------------------------------------------- |
@@ -17,16 +17,12 @@ trees.
 | `agents/`, `tools/`, `workflows/`, `prompts/`, `resources/`, `skills/` | Auto-discovered AI and MCP primitives.              |
 | `components/`                                                          | Shared React components.                            |
 | `lib/`                                                                 | Shared project utilities and business logic.        |
-| `content/`                                                             | Static content such as MDX, JSON, or YAML.          |
+| `content/`                                                             | App-owned content files, such as Markdown or data.  |
 | `public/`                                                              | Static assets served from the root path.            |
 | `veryfront.config.ts`                                                  | Framework configuration and extension registration. |
 
-## Why primitives live at the root
+## Auto-discovered entities
 
-Agents, tools, workflows, prompts, resources, and skills are not routes. They
-can be invoked from pages, API routes, jobs, workflows, MCP servers, or agent
-services. Keeping them at the root reflects that broader scope and makes
-auto-discovery predictable.
-
-Route files still decide how users and HTTP clients enter the system. Primitive
-files define capabilities that routes and runtime services can use.
+Put pages and API routes in `app/` or `pages/`. Put agents, tools, workflows,
+prompts, resources, and skills in their root directories so Veryfront can
+auto-discover them.

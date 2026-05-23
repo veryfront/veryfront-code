@@ -10,7 +10,7 @@ const PUBLIC_DOC_DIRS = ["getting-started", "guides", "concepts"] as const;
 const CONCEPT_FILES = new Set<string>([
   "concepts/index.md",
   "concepts/veryfront-code.md",
-  "concepts/runtime-primitives.md",
+  "concepts/framework-primitives.md",
   "concepts/project-conventions.md",
   "concepts/agent-memory.md",
   "concepts/job-execution-model.md",
@@ -251,7 +251,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: [],
     snippets: [
       "Concepts explain the mental models",
-      "Runtime primitives",
+      "Framework primitives",
       "Project conventions",
       "Agent memory",
       "Job execution model",
@@ -259,7 +259,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Extension system",
     ],
   },
-  "concepts/runtime-primitives.md": {
+  "concepts/framework-primitives.md": {
     references: [
       "../guides/choose-a-primitive.md",
       "../api-reference/veryfront/agent.md",
@@ -279,8 +279,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/index.md",
     ],
     snippets: [
-      "Directory roles",
-      "Why primitives live at the root",
+      "Directory structure",
+      "Auto-discovered entities",
       "agents/",
       "tools/",
     ],

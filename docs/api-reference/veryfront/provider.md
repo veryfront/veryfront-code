@@ -180,13 +180,3 @@ import { buildProviderError, createAnthropicRequestInit, createGoogleRequestInit
 | `ProviderWarning` | Structured warning emitted when a provider runtime drops or rewrites a caller-provided option. Mirrors the AI ecosystem convention (Vercel AI SDK, LangChain) of returning `unsupported-setting` warnings on the runtime result so callers can discover silently-dropped fields without having to read the source. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L337) |
 | `RuntimePromptMessage` | Message shape for runtime prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader.ts#L36) |
 | `RuntimeUsage` | Public API contract for runtime usage. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/provider/runtime-loader/provider-usage.ts#L4) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/agent`](./agent.md): Agents use providers for AI models
-
-User guides:
-
-- [providers](../../guides/providers.md): Register model providers

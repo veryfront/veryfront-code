@@ -107,13 +107,3 @@ export const GET = createOAuthCallbackHandler(gmailConfig);
 | `webexConfig` | Configuration used by webex. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L322) |
 | `xeroConfig` | Configuration used by xero. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L290) |
 | `zoomConfig` | Configuration used by zoom. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L211) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/middleware`](./middleware.md): Combine with middleware pipeline
-
-User guides:
-
-- [oauth](../../guides/oauth.md): OAuth flows and provider setup

@@ -73,10 +73,3 @@ const configPath = resolve(cwd(), "veryfront.config.ts");
 | Name | Description | Source |
 |------|-------------|--------|
 | `FileSystem` | Public API contract for file system. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/platform/compat/fs.ts#L6) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront`](./index.md): Core framework configuration and utilities
-- [`veryfront/agent`](./agent.md): Agents that may use filesystem for persistence

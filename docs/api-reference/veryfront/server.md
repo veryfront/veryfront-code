@@ -91,9 +91,3 @@ await server.fetch(new Request("https://example.com/health"));
 | `VeryfrontServiceServerModuleResponse` | Response payload for veryfront service server module. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L7) |
 | `VeryfrontServiceServerRuntime` | Public API contract for veryfront service server runtime. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L36) |
 | `VeryfrontServiceServerRuntimeKind` | Public API contract for veryfront service server runtime kind. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L63) |
-
-## Related
-
-User guides:
-
-- [deploying](../../guides/deploying.md): Deploy the server

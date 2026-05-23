@@ -39,14 +39,3 @@ import { PageContextProvider, usePageContext } from "veryfront/context";
 | `MdxHeading` | Heading metadata extracted from MDX content. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L44) |
 | `PageContextProviderProps` | Props accepted by `<PageContextProvider>`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L72) |
 | `PageContextValue` | Page context exposed to route and MDX components. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/runtime/core.ts#L54) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/router`](./router.md): Client-side navigation
-- [`veryfront/head`](./head.md): Manage document head
-
-User guides:
-
-- [pages-and-routing](../../guides/pages-and-routing.md): Page context for routes and MDX

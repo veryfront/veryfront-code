@@ -77,16 +77,3 @@ const runtimeTools = await getRemoteIntegrationToolDefinitions();
 | `IntegrationToolMeta` | Public API contract for integration tool meta. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L214) |
 | `OAuthConfig` | Configuration used by oauth. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L212) |
 | `OAuthField` | Public API contract for oauth field. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/integrations/schema.ts#L210) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/oauth`](./oauth.md): OAuth 2.0 token management for integrations
-- [`veryfront/tool`](./tool.md): Define tools that integrations expose
-- [`veryfront/mcp`](./mcp.md): Expose integration tools via MCP
-
-User guides:
-
-- [integration-runtime](../../concepts/integration-runtime.md): Understand integration runtime boundaries
-- [integrations](../../guides/integrations.md): Connect SaaS integrations

@@ -73,13 +73,3 @@ Create a typed resource definition.
 | Name | Description | Source |
 |------|-------------|--------|
 | `resourceRegistry` | Shared resource registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/resource/registry.ts#L42) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/mcp`](./mcp.md): Expose resources via MCP
-
-User guides:
-
-- [mcp-server](../../guides/mcp-server.md): Expose resources over MCP

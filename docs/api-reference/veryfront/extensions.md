@@ -403,14 +403,3 @@ import "veryfront/extensions/schema";
 | `ValidationIssue` | A single validation issue with location context. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L123) |
 | `ValidationResult` | Discriminated union of validation outcomes. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L149) |
 | `ValidationSuccess` | Successful validation outcome. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/extensions/schema/schema-validator.ts#L133) |
-
-## Related
-
-User guides:
-
-- [extension-system](../../concepts/extension-system.md): Understand extension contracts and lifecycle
-- [extensions](../../guides/extensions.md): Use built-in extensions
-- [extension-authoring](../../guides/extension-authoring.md): Author your own extensions
-- [extension-lifecycle](../../guides/extension-lifecycle.md): Extension lifecycle and hooks
-- [extension-publishing](../../guides/extension-publishing.md): Publish extensions
-- [extension-testing](../../guides/extension-testing.md): Test extensions

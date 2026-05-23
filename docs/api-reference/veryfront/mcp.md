@@ -92,16 +92,3 @@ Create mcpserver.
 | `ToolAnnotations` | Behavioral hints for MCP clients (MCP 2025-11-25). Guides auto-approval, confirmation prompts, and caching. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/annotations.ts#L5) |
 | `ToolListEntry` | Wire format for a single tool in a tools/list response. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/types.ts#L24) |
 | `UrlElicitationOptions` | Options accepted by URL elicitation. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/mcp/elicitation.ts#L8) |
-
-## Related
-
-Reference modules:
-
-- [`veryfront/tool`](./tool.md): Define tools for MCP
-- [`veryfront/prompt`](./prompt.md): Define prompts for MCP
-- [`veryfront/resource`](./resource.md): Define resources for MCP
-
-User guides:
-
-- [mcp-server](../../guides/mcp-server.md): Build and host MCP servers
-- [coding-agents](../../guides/coding-agents.md): Connect MCP-aware coding agents

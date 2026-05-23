@@ -127,11 +127,3 @@ const events = await jobs.events(job.id);
 | `ReservedJobTargetFamily` | Public API contract for reserved job target family. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/jobs/schemas.ts#L412) |
 | `UpdateCronJobInput` | Input payload for update cron job. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/jobs/jobs-client.ts#L147) |
 | `VeryfrontJobsClientConfig` | Configuration used by veryfront jobs client. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/jobs/jobs-client.ts#L47) |
-
-## Related
-
-User guides:
-
-- [job-execution-model](../../concepts/job-execution-model.md): Understand job execution identities
-- [jobs](../../guides/jobs.md): Schedule and run background jobs
-- [tasks](../../guides/tasks.md): Define task targets for jobs

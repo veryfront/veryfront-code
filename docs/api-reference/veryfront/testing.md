@@ -176,9 +176,3 @@ import { afterAll, afterEach, beforeAll } from "veryfront/testing/bdd";
 | Name | Description | Source |
 |------|-------------|--------|
 | `test` | Shared test value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/testing/bdd.ts#L613) |
-
-## Related
-
-User guides:
-
-- [extension-testing](../../guides/extension-testing.md): Test extensions with BDD utilities
