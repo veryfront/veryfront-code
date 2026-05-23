@@ -13,17 +13,17 @@ framework boundaries are not clear.
 | Concept                                             | Explains                                                   |
 | --------------------------------------------------- | ---------------------------------------------------------- |
 | [Veryfront Code](./framework-overview.md)           | The framework model and its main surfaces.                 |
-| [Framework primitives](./framework-primitives.md)   | Apps, AI primitives, jobs, MCP, sandbox, and extensions.   |
+| [Framework primitives](./framework-primitives.md)   | Apps, AI primitives, runtime work, MCP, and extensions.    |
 | [App](./app.md)                                     | User-facing routes, APIs, data, and rendering.             |
 | [Agent](./agent.md)                                 | Model reasoning and streamed output.                       |
 | [Tool](./tool.md)                                   | One callable capability.                                   |
-| [Workflow](./workflow.md)                           | Multi-step coordination.                                   |
-| [Task](./task.md)                                   | Background work definition.                                |
-| [Job](./job.md)                                     | Durable background execution.                              |
-| [Cron job](./cron-job.md)                           | Scheduled job creation.                                    |
+| [Skill](./skill.md)                                 | Reusable agent instructions and tool policy.               |
 | [Prompt](./prompt.md)                               | Reusable instruction template.                             |
 | [Resource](./resource.md)                           | Readable project data for MCP.                             |
-| [Skill](./skill.md)                                 | Reusable agent instructions and tool policy.               |
+| [Task](./task.md)                                   | Background work definition.                                |
+| [Workflow](./workflow.md)                           | Multi-step coordination.                                   |
+| [Job](./job.md)                                     | Durable background execution.                              |
+| [Cron job](./cron-job.md)                           | Scheduled job creation.                                    |
 | [Integration](./integration.md)                     | External service capabilities.                             |
 | [MCP server](./mcp-server.md)                       | Assistant-facing protocol surface.                         |
 | [Sandbox](./sandbox.md)                             | Isolated command and file execution.                       |
