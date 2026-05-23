@@ -30,6 +30,11 @@ type RuntimeFilteredAgent = Agent & {
   };
 };
 
+function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
+  const raw = agent.config.allowedRemoteTools;
+  return Array.isArray(raw) && raw.every((toolName) => typeof toolName === "string") ? raw : [];
+}
+
 type RuntimeRunAgentInputWithEndUser = RuntimeRunAgentInput & {
   endUserId?: string;
 };
@@ -110,6 +115,8 @@ function buildMergedTools(
     return Object.keys(injectedTools).length ? injectedTools : undefined;
   }
 
+  const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
+
   if (agent.config.tools === true) {
     const merged: Record<string, Tool | boolean> = {};
     for (const [toolId] of toolRegistry.getAll()) {
@@ -118,13 +125,20 @@ function buildMergedTools(
       }
       merged[toolId] = true;
     }
+    for (const toolName of sourceAllowedRemoteToolNames) {
+      merged[toolName] = true;
+    }
     return { ...merged, ...injectedTools };
   }
 
   const merged: Record<string, Tool | boolean> = {};
   for (const [toolName, entry] of Object.entries(agent.config.tools)) {
     if (entry === true) {
-      if (toolRegistry.get(toolName) || availableForwardedToolNames?.includes(toolName)) {
+      if (
+        toolRegistry.get(toolName) ||
+        availableForwardedToolNames?.includes(toolName) ||
+        sourceAllowedRemoteToolNames.includes(toolName)
+      ) {
         merged[toolName] = true;
       }
       continue;
