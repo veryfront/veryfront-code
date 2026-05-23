@@ -68,7 +68,7 @@ brew install veryfront/tap/veryfront
 
 </details>
 
-Follow the [Quickstart guide](https://veryfront.com/docs/code/guides/quickstart) for step-by-step setup, or use [Create a project](https://veryfront.com/docs/code/guides/create-a-project) to compare templates before you scaffold. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
+Follow the [Quickstart guide](https://veryfront.com/docs/code/getting-started/quickstart) for step-by-step setup, or use [Create a project](https://veryfront.com/docs/code/getting-started/create-a-project) to compare templates before you scaffold. For the full documentation, visit [veryfront.com/docs/code](https://veryfront.com/docs/code).
 
 ## Project Structure
 

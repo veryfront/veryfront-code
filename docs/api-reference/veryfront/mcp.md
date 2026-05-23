@@ -34,7 +34,7 @@ tool({
   execute: async ({ query }) => ({ results: [] }),
 });
 
-// Start MCP server — registered tools are exposed automatically.
+// Start MCP server - registered tools are exposed automatically.
 // `auth` is required: use bearer for production, or the explicit
 // `{ type: "none", allowUnauthenticated: true }` opt-in for local dev only.
 const server = createMCPServer({

@@ -1,53 +1,18 @@
+---
+title: "API reference"
+description: "Exact imports, exported names, types, and module-level examples for Veryfront Code."
+order: 1
+---
+
 # Framework API reference
 
-These pages document every public import surface published by `veryfront`. They are the source for the public reference site.
+Use this reference when you need exact imports, exported names, types, and module-level examples for `veryfront`.
 
-## Source of truth
+## How to use this reference
 
-Reference pages are generated from the `exports` map in `deno.json`. Every top-level export becomes one page under `veryfront/`, and deep exports (e.g. `veryfront/agent/testing`) are documented as `Deep imports` sections on their parent page.
+Start with the module you import from. Each module page shows the recommended import form, examples, exported symbols, and related guides.
 
-```bash
-deno task docs           # regenerate this directory
-deno task docs:validate  # check structure and links
-```
-
-## Layout
-
-```text
-docs/api-reference/
-  README.md          # this file
-  veryfront/
-    index.md         # the root `veryfront` import
-    head.md
-    router.md
-    context.md
-    fonts.md
-    chat.md
-    markdown.md
-    mdx.md
-    agent.md
-    tool.md
-    workflow.md
-    schemas.md
-    prompt.md
-    resource.md
-    jobs.md
-    mcp.md
-    middleware.md
-    observability.md
-    utils.md
-    oauth.md
-    provider.md
-    fs.md
-    integrations.md
-    sandbox.md
-    embedding.md
-    extensions.md
-    testing.md
-    cli.md
-    server.md
-    channels.md
-```
+For task-based help, use the Getting Started and Guides sections first. Use API Reference when you already know which module or symbol you need.
 
 ## Module index
 
@@ -64,22 +29,22 @@ docs/api-reference/
 | [`veryfront/agent`](./veryfront/agent.md) | AI agents with memory, tools, and multi-agent composition. |
 | [`veryfront/tool`](./veryfront/tool.md) | Define tools with schema-backed inputs for agents and MCP. |
 | [`veryfront/workflow`](./veryfront/workflow.md) | DAG-based agentic workflows with human-in-the-loop support. |
-| [`veryfront/schemas`](./veryfront/schemas.md) | Reusable validation schemas — common types (email, slug, URL, UUID, pagination) and primitives (file paths, hex colors, semver, timestamps), plus the `defineSchema` lazy-factory helper. `defineSchema` resolves the `SchemaValidator` contract on first use. The default zod-backed implementation lives in `@veryfront/ext-schema-zod` and is registered at app bootstrap by `createBuiltinExtensions()`. Tests that exercise schemas without going through full bootstrap import `./_test-setup.ts` to register the adapter directly. |
+| [`veryfront/schemas`](./veryfront/schemas.md) | Reusable validation schemas: common types (email, slug, URL, UUID, pagination) and primitives (file paths, hex colors, semver, timestamps), plus the `defineSchema` lazy-factory helper. `defineSchema` resolves the `SchemaValidator` contract on first use. The default zod-backed implementation lives in `@veryfront/ext-schema-zod` and is registered at app bootstrap by `createBuiltinExtensions()`. |
 | [`veryfront/prompt`](./veryfront/prompt.md) | Declare and register prompts exposable over MCP. |
 | [`veryfront/resource`](./veryfront/resource.md) | Declare and register resources exposable over MCP. |
 | [`veryfront/jobs`](./veryfront/jobs.md) | Jobs module for durable project-scoped background execution. Provides a public SDK surface for one-off jobs, cron jobs, batch summaries, job target discovery, and the canonical split between user-visible `events` and raw debugging `logs`. Task definitions run as job runs with `task:<task-id>` targets. Workflow definitions run as workflow runs with `workflow:<workflow-id>` targets and are backed by jobs for queueing and dispatch. |
 | [`veryfront/mcp`](./veryfront/mcp.md) | MCP server exposing tools, prompts, and resources. |
 | [`veryfront/middleware`](./veryfront/middleware.md) | CORS, rate limiting, logging, and timeout middleware. |
 | [`veryfront/observability`](./veryfront/observability.md) | OpenTelemetry tracing, metrics collection, auto-instrumentation for fetch/HTTP/React, OTLP export, and structured error and log buffering. |
-| [`veryfront/utils`](./veryfront/utils.md) | Internal utilities — runtime detection, structured logging, constants (breakpoints, timeouts, HTTP codes), hashing, memoization, and feature flags. |
+| [`veryfront/utils`](./veryfront/utils.md) | Runtime utilities: runtime detection, structured logging, constants (breakpoints, timeouts, HTTP codes), hashing, memoization, and feature flags. |
 | [`veryfront/oauth`](./veryfront/oauth.md) | OAuth 2.0 with 37 pre-configured providers. |
 | [`veryfront/provider`](./veryfront/provider.md) | Provider registry. Maps "provider/model" strings to framework-compatible model runtimes. Auto-initializes built-in providers from environment variables on first use. |
 | [`veryfront/fs`](./veryfront/fs.md) | Public filesystem, path, and cwd utilities. |
 | [`veryfront/integrations`](./veryfront/integrations.md) | Integration metadata and SVG icons for all connectors. |
 | [`veryfront/sandbox`](./veryfront/sandbox.md) | Sandbox module for ephemeral compute environments. Provides the `Sandbox` class for creating and interacting with isolated execution environments. |
-| [`veryfront/embedding`](./veryfront/embedding.md) | Embedding — RAG primitives for chunking, embedding, and similarity search. Provides a facade over the framework's current embedding runtime and LangChain text splitting behind veryfront's own API. |
+| [`veryfront/embedding`](./veryfront/embedding.md) | Embedding - RAG primitives for chunking, embedding, and similarity search. Provides a facade over the framework's current embedding runtime and LangChain text splitting behind veryfront's own API. |
 | [`veryfront/extensions`](./veryfront/extensions.md) | Public extension API surface. Types used when authoring extensions (the scaffold template generated by `veryfront extension init` imports from this module), plus the runtime helpers consumers need to load, validate, and orchestrate extensions. |
-| [`veryfront/testing`](./veryfront/testing.md) | Cross-runtime test utilities — BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun. |
+| [`veryfront/testing`](./veryfront/testing.md) | Cross-runtime test utilities - BDD framework (describe/it), assertions, test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun. |
 | [`veryfront/cli`](./veryfront/cli.md) | Veryfront CLI entry point. |
-| [`veryfront/server`](./veryfront/server.md) | Server Module Public API This module exports the public interface for the Veryfront server. For routing utilities, import from "#veryfront/routing" directly. For observability utilities, import from "#veryfront/observability" directly. |
-| [`veryfront/channels`](./veryfront/channels.md) | Channel transports for the Veryfront control plane and AG-UI invoke route. These are deep-import-only modules. |
+| [`veryfront/server`](./veryfront/server.md) | Server runtime APIs. Use this module to create and run a Veryfront server in tests, custom runtimes, and production adapters. |
+| [`veryfront/channels`](./veryfront/channels.md) | Channel transports for the Veryfront control plane and AG-UI invoke route. |

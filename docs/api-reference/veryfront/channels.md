@@ -1,10 +1,10 @@
 ---
 title: "veryfront/channels"
-description: "Channel transports for the Veryfront control plane and AG-UI invoke route. These are deep-import-only modules."
+description: "Channel transports for the Veryfront control plane and AG-UI invoke route."
 order: 30
 ---
 
-Channel transports for the Veryfront control plane and AG-UI invoke route. These are deep-import-only modules.
+Channel transports for the Veryfront control plane and AG-UI invoke route.
 
 `veryfront/channels` has no direct exports. Use the deep imports below.
 

@@ -915,7 +915,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
 const SYNTHETIC_PARENTS: Record<string, { description: string }> = {
   channels: {
     description:
-      "Channel transports for the Veryfront control plane and AG-UI invoke route. These are deep-import-only modules.",
+      "Channel transports for the Veryfront control plane and AG-UI invoke route.",
   },
 };
 
@@ -1069,8 +1069,15 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
 
   finishExample();
 
-  const description = descLines.join(" ").replace(/\s+/g, " ").trim();
+  const description = normalizePublicDocText(descLines.join(" ").replace(/\s+/g, " ").trim());
   return { description, moduleName, examples };
+}
+
+function normalizePublicDocText(text: string): string {
+  return text
+    .replace(/[\u2013\u2014]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function finalizeExample(
@@ -2501,7 +2508,7 @@ function generateMD(
     }
   }
 
-  // CLI command catalog (only for veryfront/cli — generated from cli/help/command-definitions.ts)
+  // CLI command catalog (only for veryfront/cli - generated from cli/help/command-definitions.ts)
   if (entry.importPath === "veryfront/cli") {
     lines.push(...generateCLICommandCatalog());
   }
@@ -2655,35 +2662,25 @@ function generateReadmeMD(
 ): string {
   const lines: string[] = [];
 
+  lines.push("---");
+  lines.push('title: "API reference"');
+  lines.push('description: "Exact imports, exported names, types, and module-level examples for Veryfront Code."');
+  lines.push("order: 1");
+  lines.push("---");
+  lines.push("");
   lines.push("# Framework API reference");
   lines.push("");
   lines.push(
-    "These pages document every public import surface published by `veryfront`. They are the source for the public reference site.",
+    "Use this reference when you need exact imports, exported names, types, and module-level examples for `veryfront`.",
   );
   lines.push("");
-  lines.push("## Source of truth");
+  lines.push("## How to use this reference");
   lines.push("");
   lines.push(
-    "Reference pages are generated from the `exports` map in `deno.json`. Every top-level export becomes one page under `veryfront/`, and deep exports (e.g. `veryfront/agent/testing`) are documented as `Deep imports` sections on their parent page.",
+    "Start with the module you import from. Each module page shows the recommended import form, examples, exported symbols, and related guides.",
   );
   lines.push("");
-  lines.push("```bash");
-  lines.push("deno task docs           # regenerate this directory");
-  lines.push("deno task docs:validate  # check structure and links");
-  lines.push("```");
-  lines.push("");
-  lines.push("## Layout");
-  lines.push("");
-  lines.push("```text");
-  lines.push("docs/api-reference/");
-  lines.push("  README.md          # this file");
-  lines.push("  veryfront/");
-  lines.push("    index.md         # the root `veryfront` import");
-  for (const { entry } of entries) {
-    if (entry.slug === "index") continue;
-    lines.push(`    ${entry.slug}.md`);
-  }
-  lines.push("```");
+  lines.push("For task-based help, use the Getting Started and Guides sections first. Use API Reference when you already know which module or symbol you need.");
   lines.push("");
   lines.push("## Module index");
   lines.push("");
@@ -2693,7 +2690,7 @@ function generateReadmeMD(
     const desc = entry.isSynthetic
       ? (entry.syntheticDescription ?? "")
       : (jsdoc.description || "");
-    lines.push(`| [\`${entry.importPath}\`](./veryfront/${entry.slug}.md) | ${desc} |`);
+    lines.push(`| [\`${entry.importPath}\`](./veryfront/${entry.slug}.md) | ${normalizePublicDocText(desc)} |`);
   }
   lines.push("");
   return lines.join("\n");
@@ -2797,14 +2794,14 @@ async function main() {
     }
 
     const order = idx + 1;
-    const md = generateMD(entry, jsdoc, exports, nodes, order, deepRenders);
+    const md = normalizeGeneratedMarkdown(generateMD(entry, jsdoc, exports, nodes, order, deepRenders));
     const outPath = `${VERYFRONT_DIR}/${entry.slug}.md`;
     await Deno.writeTextFile(outPath, md);
     console.log(`  Wrote ${outPath}`);
   }
 
   // Write the structure README at the docs/api-reference root.
-  const readmeMD = generateReadmeMD(indexData);
+  const readmeMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
   const readmePath = `${OUTPUT_DIR}/README.md`;
   await Deno.writeTextFile(readmePath, readmeMD);
   console.log(`\nWrote ${readmePath}`);
@@ -2815,3 +2812,7 @@ async function main() {
 }
 
 main();
+
+function normalizeGeneratedMarkdown(markdown: string): string {
+  return markdown.replace(/[\u2013\u2014]/g, "-");
+}
