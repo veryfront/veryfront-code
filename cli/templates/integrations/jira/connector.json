@@ -125,34 +125,35 @@
       "description": "Search Jira issues using JQL (Jira Query Language)",
       "requiresWrite": false,
       "endpoint": {
-        "method": "POST",
-        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search",
+        "method": "GET",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search/jql",
         "params": {
           "cloudId": {
             "type": "string",
             "in": "path",
             "description": "Atlassian cloud ID from accessible-resources",
             "required": true
-          }
-        },
-        "body": {
+          },
           "jql": {
             "type": "string",
+            "in": "query",
             "description": "Jira Query Language search expression",
             "required": true
           },
           "maxResults": {
             "type": "number",
+            "in": "query",
             "description": "Maximum issues to return",
             "default": 50
           },
-          "startAt": {
-            "type": "number",
-            "description": "Pagination offset",
-            "default": 0
+          "nextPageToken": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination token returned by Jira search/jql for the next page"
           },
           "fields": {
             "type": "array",
+            "in": "query",
             "description": "Issue fields to include"
           }
         },
