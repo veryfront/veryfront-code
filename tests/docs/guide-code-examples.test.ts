@@ -514,7 +514,7 @@ describe("Guide: project-structure.md", () => {
 });
 
 describe("Guide: create-agent.md", () => {
-  it("uses the public AG-UI handler for the first agent route", async () => {
+  it("defines the first assistant agent", async () => {
     const guide = await readGuide("create-agent.md");
 
     for (
@@ -522,10 +522,6 @@ describe("Guide: create-agent.md", () => {
         'import { agent } from "veryfront/agent"',
         "export default agent({",
         'id: "assistant"',
-        'import { createAgUiHandler } from "veryfront/agent"',
-        'export const POST = createAgUiHandler("assistant")',
-        "curl -N -X POST",
-        "data:` lines as the answer streams",
       ]
     ) {
       assertStringIncludes(guide, snippet);
@@ -602,15 +598,16 @@ describe("Guide: create-project.md", () => {
 });
 
 describe("Guide: create-api.md", () => {
-  it("documents the minimal app router route handler shape", async () => {
+  it("documents the AG-UI route for the first agent", async () => {
     const guide = await readGuide("create-api.md");
 
     for (
       const snippet of [
-        "// app/api/hello/route.ts",
-        "export function GET()",
-        "Response.json({ message",
-        "curl http://localhost:3000/api/hello",
+        "// app/api/ag-ui/route.ts",
+        'import { createAgUiHandler } from "veryfront/agent"',
+        'export const POST = createAgUiHandler("assistant")',
+        "curl -N -X POST",
+        "data:` lines as the answer streams",
       ]
     ) {
       assertStringIncludes(guide, snippet);

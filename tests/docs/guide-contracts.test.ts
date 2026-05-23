@@ -391,16 +391,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: [
       "./installation.md",
       "./create-project.md",
-      "../guides/providers.md",
+      "./create-api.md",
     ],
     snippets: [
       "agents/assistant.ts",
       'import { agent } from "veryfront/agent"',
-      'createAgUiHandler("assistant")',
-      "curl -N -X POST",
-      "/api/ag-ui",
-      "data:` lines",
-      "veryfront dev",
+      "Define the agent",
     ],
   },
   "guides/providers.md": {
@@ -423,19 +419,22 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "getting-started/create-api.md": {
     references: [
-      "./create-project.md",
+      "./create-agent.md",
+      "../guides/providers.md",
       "../guides/api-routes.md",
     ],
     snippets: [
-      "app/api/hello/route.ts",
-      "Response.json",
-      "export function GET()",
-      "curl http://localhost:3000/api/hello",
+      "app/api/ag-ui/route.ts",
+      'createAgUiHandler("assistant")',
+      "curl -N -X POST",
+      "/api/ag-ui",
+      "data:` lines",
+      "veryfront dev",
     ],
   },
   "getting-started/create-frontend.md": {
     references: [
-      "./create-agent.md",
+      "./create-api.md",
       "../guides/chat-ui.md",
     ],
     snippets: [
