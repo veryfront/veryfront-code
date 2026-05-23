@@ -3,10 +3,13 @@ import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manag
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
+import { getEnv } from "#veryfront/platform/compat/process.ts";
+import { createRemoteMCPToolSource } from "#veryfront/tool";
 import { AgentRunResumeHandler } from "./agent-run-resume.handler.ts";
 import { AgentStreamHandler } from "./agent-stream.handler.ts";
 import {
   createAgent,
+  createAgentWithConfig,
   createControlPlaneSignature,
   createCtx,
   createInjectedToolRuntime,
@@ -643,6 +646,178 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(result.response);
     assertEquals(result.response.status, 200);
     assertEquals(capturedAllowedTools, []);
+  });
+
+  it("exposes request-scoped Veryfront env vars to dynamic agent systems and MCP headers", async () => {
+    let capturedEnv: Record<string, string | undefined> | null = null;
+    let capturedSystem: string | null = null;
+    let capturedMcpRequest: { url: string; authorization: string | null } | null = null;
+    let capturedRemoteToolNames: string[] = [];
+
+    const agent = createAgentWithConfig("assistant-1", {
+      system: () => `project_reference=${getEnv("VERYFRONT_PROJECT_SLUG")}`,
+      tools: { search_knowledge: true },
+      allowedRemoteTools: ["search_knowledge"],
+      remoteTools: [
+        createRemoteMCPToolSource({
+          id: "test-mcp",
+          endpoint: () => `${getEnv("VERYFRONT_API_URL")}/mcp`,
+          headers: () => ({ Authorization: `Bearer ${getEnv("VERYFRONT_API_TOKEN")}` }),
+          fetch: async (url, init) => {
+            capturedMcpRequest = {
+              url: String(url),
+              authorization: new Headers(init?.headers).get("authorization"),
+            };
+            return new Response(
+              JSON.stringify({
+                jsonrpc: "2.0",
+                id: "test-mcp:tools:list",
+                result: {
+                  tools: [
+                    {
+                      name: "search_knowledge",
+                      description: "Search knowledge",
+                      inputSchema: { type: "object", properties: {} },
+                    },
+                  ],
+                },
+              }),
+              { headers: { "content-type": "application/json" } },
+            );
+          },
+        }),
+      ],
+    });
+
+    const handler = new AgentStreamHandler({
+      ensureProjectDiscovery: async () => {},
+      getAgent: (id) => id === "assistant-1" ? agent : undefined,
+      getAllAgentIds: () => ["assistant-1"],
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: (runtimeAgent) => ({
+        stream: async (_messages, _context, callbacks) => {
+          capturedEnv = {
+            VERYFRONT_API_TOKEN: getEnv("VERYFRONT_API_TOKEN"),
+            VERYFRONT_API_URL: getEnv("VERYFRONT_API_URL"),
+            VERYFRONT_PROJECT_SLUG: getEnv("VERYFRONT_PROJECT_SLUG"),
+            CUSTOM_PROJECT_ENV: getEnv("CUSTOM_PROJECT_ENV"),
+          };
+          capturedSystem = typeof runtimeAgent.config.system === "function"
+            ? await runtimeAgent.config.system()
+            : runtimeAgent.config.system;
+          capturedRemoteToolNames = (await runtimeAgent.config.remoteTools?.[0]?.listTools({
+            projectId: "proj-1",
+          }))?.map((tool) => tool.name) ?? [];
+          callbacks?.onFinish?.({
+            text: "ok",
+            messages: [],
+            toolCalls: [],
+            status: "completed",
+            usage: {
+              promptTokens: 1,
+              completionTokens: 1,
+              totalTokens: 2,
+            },
+          });
+
+          return new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.close();
+            },
+          });
+        },
+      }),
+    });
+
+    const body = createAgentStreamRequestBody();
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      audience: "support-agent-fork",
+      requestId: "run_1",
+    });
+    const ctx = {
+      ...createCtx(publicKeyPem),
+      proxyToken: "run-scoped-token",
+      projectSlug: "support-agent-fork",
+    };
+    const originalFetch = globalThis.fetch;
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+    const fetchUrls: string[] = [];
+    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    globalThis.fetch = ((url, init) => {
+      fetchUrls.push(String(url));
+      assertEquals(new Headers(init?.headers).get("authorization"), "Bearer run-scoped-token");
+
+      if (String(url).endsWith("/projects/support-agent-fork/environments")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                { id: "env-staging", name: "staging", protected: true },
+                { id: "env-production", name: "production", protected: false },
+              ],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+
+      if (String(url).includes("/projects/support-agent-fork/env-vars?")) {
+        assertEquals(String(url).includes("environment_id=env-production"), true);
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                { key: "CUSTOM_PROJECT_ENV", value: "project-value" },
+                { key: "VERYFRONT_API_TOKEN", value: "unsafe-project-token" },
+                { key: "VERYFRONT_API_URL", value: "https://evil.example" },
+                { key: "VERYFRONT_PROJECT_SLUG", value: "wrong-project" },
+              ],
+            }),
+            { headers: { "content-type": "application/json" } },
+          ),
+        );
+      }
+
+      return Promise.reject(new Error(`unexpected fetch: ${url}`));
+    }) as typeof fetch;
+
+    let result;
+    try {
+      result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        ctx,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+    }
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(capturedEnv, {
+      VERYFRONT_API_TOKEN: "run-scoped-token",
+      VERYFRONT_API_URL: "https://api.veryfront.org",
+      VERYFRONT_PROJECT_SLUG: "support-agent-fork",
+      CUSTOM_PROJECT_ENV: "project-value",
+    });
+    assertEquals(capturedSystem, "project_reference=support-agent-fork");
+    assertEquals(capturedMcpRequest, {
+      url: "https://api.veryfront.org/mcp",
+      authorization: "Bearer run-scoped-token",
+    });
+    assertEquals(capturedRemoteToolNames, ["search_knowledge"]);
+    assertEquals(fetchUrls, [
+      "https://api.veryfront.org/projects/support-agent-fork/environments",
+      "https://api.veryfront.org/projects/support-agent-fork/env-vars?environment_id=env-production&limit=100",
+    ]);
   });
 
   it("rejects oversized internal agent stream payloads before parsing", async () => {
