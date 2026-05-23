@@ -1,4 +1,4 @@
-import { assertEquals } from "#std/assert";
+import { assertEquals, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 
@@ -103,5 +103,35 @@ describe("npm supply-chain policy", () => {
 		const source = await Deno.readTextFile("extensions/ext-sandbox-shell-tools/src/index.ts");
 
 		assertEquals(source.includes('from "bash-tool"'), true);
+	});
+});
+
+describe("npm generated integration artifacts", () => {
+	it("builds npm from regenerated integration metadata", async () => {
+		const denoConfig = JSON.parse(await Deno.readTextFile("deno.json"));
+		const buildNpmTask = denoConfig.tasks?.["build:npm"];
+
+		assertEquals(typeof buildNpmTask, "string");
+		assertEquals(
+			buildNpmTask.indexOf("scripts/build/generate-integrations-module.ts") <
+				buildNpmTask.indexOf("scripts/build/build-npm-dnt.ts"),
+			true,
+		);
+	});
+
+	it("keeps the active Jira JQL search endpoint in the npm source artifact", async () => {
+		const source = await Deno.readTextFile("src/integrations/_data.ts");
+
+		assertStringIncludes(
+			source,
+			'"url":"https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search/jql"',
+		);
+		assertStringIncludes(source, '"nextPageToken"');
+		assertEquals(
+			source.includes(
+				'"url":"https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search"',
+			),
+			false,
+		);
 	});
 });
