@@ -4,8 +4,6 @@ description: "Build a Veryfront project for production and ship it to Veryfront 
 order: 7
 ---
 
-Build a Veryfront project and ship it.
-
 ## Prerequisites
 
 - A project that runs locally with `veryfront dev` (see
@@ -66,8 +64,7 @@ The deployed page and API routes should respond.
 
 ## Next
 
-- [Configuration](../guides/configuration.md): runtime and build options
-- [Building and deploying](../guides/deploying.md): static export and Docker
+Continue with [Building and deploying](../guides/deploying.md).
 
 ## Related
 

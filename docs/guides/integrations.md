@@ -105,9 +105,7 @@ After enabling an integration:
 
 ## Next
 
-- [Sandbox](./sandbox.md): run isolated commands and file operations
-- [CLI-first knowledge ingestion](./cli-knowledge-ingestion.md): ingest
-  documents into project knowledge
+Continue with [Sandbox](./sandbox.md).
 
 ## Related
 

@@ -123,8 +123,7 @@ For first-party extensions, also mirror the same `capabilities` array in `deno.j
 
 ## Next
 
-- [Extension lifecycle](./extension-lifecycle.md): understand discovery and loading
-- [Extension testing](./extension-testing.md): test factories and contracts
+Continue with [Extension lifecycle](./extension-lifecycle.md).
 
 ## Related
 

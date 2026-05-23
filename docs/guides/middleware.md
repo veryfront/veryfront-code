@@ -175,8 +175,7 @@ For CORS, include an `Origin` header and confirm
 
 ## Next
 
-- [OAuth](./oauth.md): add social login to your app
-- [API routes](./api-routes.md): the routes that middleware protects
+Continue with [OAuth](./oauth.md).
 
 ## Related
 

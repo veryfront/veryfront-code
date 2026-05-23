@@ -91,8 +91,7 @@ After applying each option:
 
 ## Next
 
-- [Workflows](./workflows.md): orchestrate multi-step AI execution
-- [Multi-agent](./multi-agent.md): compose agents and delegation patterns
+Continue with [Workflows](./workflows.md).
 
 ## Related
 

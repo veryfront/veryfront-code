@@ -81,8 +81,7 @@ Remove the temporary logs before publishing the extension.
 
 ## Next
 
-- [Extension testing](./extension-testing.md): test factories and contracts
-- [Extension publishing](./extension-publishing.md): package reusable extensions
+Continue with [Extension testing](./extension-testing.md).
 
 ## Related
 

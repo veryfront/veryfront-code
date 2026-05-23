@@ -98,11 +98,7 @@ agent errors and confirm the AG-UI route is mounted at `/api/ag-ui`.
 
 ## Next
 
-- [Chat composition](./chat-composition.md): build a custom layout with
-  `Chat.Root` and child components
-- [Chat hooks](./chat-hooks.md): use `useChat`, `useAgent`, and `useCompletion`
-- [Chat theming](./chat-theming.md): customize themes, contexts, and visual
-  behavior
+Continue with [Chat composition](./chat-composition.md).
 
 ## Related
 

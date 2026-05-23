@@ -214,8 +214,7 @@ to confirm the React component renders without console errors.
 
 ## Next
 
-- [Data fetching](./data-fetching.md): load data on the server or at build time
-- [API routes](./api-routes.md): create backend endpoints
+Continue with [Data fetching](./data-fetching.md).
 
 ## Related
 

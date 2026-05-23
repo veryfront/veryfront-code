@@ -207,8 +207,7 @@ tokens arrive incrementally rather than in one chunk.
 
 ## Next
 
-- [Chat UI](./chat-ui.md): pre-built components for chat interfaces
-- [Workflows](./workflows.md): orchestrate multiple agents
+Continue with [Chat UI](./chat-ui.md).
 
 ## Related
 

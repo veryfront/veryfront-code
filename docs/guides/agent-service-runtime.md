@@ -185,9 +185,7 @@ service list after the first heartbeat
 
 ## Next
 
-- [Agents](./agents.md): define the agents the service discovers
-- [Tools](./tools.md): define tools the service can expose to agents
-- [MCP server](./mcp-server.md): expose tools, prompts, and resources over MCP
+Continue with [Agents](./agents.md).
 
 ## Related
 

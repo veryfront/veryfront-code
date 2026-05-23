@@ -4,8 +4,6 @@ description: "Add an HTTP endpoint to a Veryfront project with a typed Request a
 order: 5
 ---
 
-Add one HTTP endpoint to a Veryfront project.
-
 ## Prerequisites
 
 - A project created with [Create project](./create-project.md).
@@ -67,8 +65,7 @@ Confirm with `curl`:
 
 ## Next
 
-- [Create frontend](./create-frontend.md): add a page
-- [Deploy project](./deploy-project.md): ship the project to production
+Continue with [Create frontend](./create-frontend.md).
 
 ## Related
 

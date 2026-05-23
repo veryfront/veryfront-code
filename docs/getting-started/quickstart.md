@@ -4,9 +4,6 @@ description: "Scaffold, run, and test a streaming Veryfront agent app."
 order: -1
 ---
 
-Scaffold a working agent app, run it locally, and confirm that responses stream.
-Use this path for the fastest first result.
-
 ## Prerequisites
 
 - Node.js 18.18 or later.
@@ -87,12 +84,7 @@ veryfront build
 
 ## Next
 
-- [Create project](./create-project.md): scaffold a project and inspect the file
-  layout.
-- [Create agent](./create-agent.md): define an agent and expose a streaming
-  chat endpoint yourself.
-- [Create API](./create-api.md): add a first HTTP endpoint.
-- [Deploy project](./deploy-project.md): ship and verify a production deploy.
+Continue with [Create project](./create-project.md).
 
 ## Related
 

@@ -82,8 +82,7 @@ contract name (`"CacheStore"`) the consumer requests.
 
 ## Next
 
-- [Extension publishing](./extension-publishing.md): package reusable extensions
-- [Building and deploying](./deploying.md): production builds and deployment
+Continue with [Extension publishing](./extension-publishing.md).
 
 ## Related
 

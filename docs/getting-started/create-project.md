@@ -4,8 +4,6 @@ description: "Scaffold a new Veryfront project from a template and run it locall
 order: 3
 ---
 
-Scaffold one Veryfront project and start the dev server.
-
 ## Prerequisites
 
 - The Veryfront CLI installed (see [Installation](./installation.md)).
@@ -76,9 +74,7 @@ source file. The browser should hot-reload.
 
 ## Next
 
-- [Create agent](./create-agent.md): define a streaming agent
-- [Create API](./create-api.md): add an HTTP endpoint to the project
-- [Create frontend](./create-frontend.md): add a new page
+Continue with [Create agent](./create-agent.md).
 
 ## Related
 

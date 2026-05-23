@@ -1,12 +1,20 @@
 ---
 title: "Getting started"
 sidebarTitle: "Overview"
-description: "Guided onboarding for installing Veryfront Code, creating a project, and building the first working pieces of an app."
+description: "Build and deploy your first Veryfront app."
 order: 0
 ---
 
-Use these pages to install Veryfront Code, create a project, and build the first
-working pieces of an app.
+## Before you start
+
+You should know the basics of:
+
+- TypeScript - syntax and basic types.
+- React - components, props, and hooks.
+- A JavaScript runtime - Node.js, Deno, or Bun.
+- A terminal - running `npm`, `deno`, or shell commands.
+
+You do not need prior AI agent or MCP experience.
 
 ## Contents
 
@@ -20,18 +28,6 @@ working pieces of an app.
 | [Create frontend](./create-frontend.md) | You need to add a page and navigation.      |
 | [Deploy project](./deploy-project.md)   | You need to build and ship the project.     |
 
-## Before you start
-
-You should know the basics of:
-
-- TypeScript - syntax and basic types.
-- React - components, props, and hooks.
-- A JavaScript runtime - Node.js, Deno, or Bun.
-- A terminal - running `npm`, `deno`, or shell commands.
-
-You do not need prior AI agent or MCP experience.
-
 ## Next
 
-Use [Quickstart](./quickstart.md) for the fastest path. Use
-[Installation](./installation.md) for the step-by-step path.
+Start with [Quickstart](./quickstart.md).

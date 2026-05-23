@@ -135,9 +135,7 @@ deno run -A cli/main.ts mcp
 
 ## Next
 
-- [MCP server](./mcp-server.md): expose _your_ app's tools, prompts, and resources to MCP clients
-- [Skills](./skills.md): give agents project-level instructions as `SKILL.md` files
-- [Create project](../getting-started/create-project.md): scaffold a project the agent can drive
+Continue with [MCP server](./mcp-server.md).
 
 ## Related
 

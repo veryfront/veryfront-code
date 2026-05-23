@@ -230,8 +230,7 @@ debug route before deploying.
 
 ## Next
 
-- [Memory and streaming](./memory-and-streaming.md): persist conversations across requests
-- [MCP server](./mcp-server.md): expose tools over Model Context Protocol
+Continue with [Memory and streaming](./memory-and-streaming.md).
 
 ## Related
 

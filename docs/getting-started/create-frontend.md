@@ -4,8 +4,6 @@ description: "Add a page and a navigation link to a Veryfront project."
 order: 6
 ---
 
-Add one page and link to it from the home page.
-
 ## Prerequisites
 
 - A project created with [Create project](./create-project.md).
@@ -64,8 +62,7 @@ export default function Home() {
 
 ## Next
 
-- [Deploy project](./deploy-project.md): ship the project
-- [Create agent](./create-agent.md): add an AI agent
+Continue with [Deploy project](./deploy-project.md).
 
 ## Related
 

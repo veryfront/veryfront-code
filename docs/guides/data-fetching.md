@@ -128,8 +128,7 @@ export default function Search() {
 
 ## Next
 
-- [API routes](./api-routes.md): create the endpoints your pages fetch from
-- [Agents](./agents.md): load AI-generated data server-side
+Continue with [API routes](./api-routes.md).
 
 ## Related
 

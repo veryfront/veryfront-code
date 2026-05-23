@@ -159,8 +159,7 @@ For workflows, hit the workflow start route from
 
 ## Next
 
-- [Providers](./providers.md): configure OpenAI, Anthropic, and Google
-- [Middleware](./middleware.md): add auth and rate limiting to your agents
+Continue with [Providers](./providers.md).
 
 ## Related
 

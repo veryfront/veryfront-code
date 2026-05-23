@@ -87,9 +87,7 @@ Use `veryfront open --json` when you need the deployed URL in a script or a term
 
 ## Next
 
-- [Building and deploying](./deploying.md): configure production builds and deployment targets
-- [Configuration](./configuration.md): set runtime and build options
-- [Head and SEO](./head-and-seo.md): prepare public pages for search and previews
+Continue with [Building and deploying](./deploying.md).
 
 ## Related
 
