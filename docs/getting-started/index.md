@@ -5,9 +5,8 @@ description: "Guided onboarding for installing Veryfront Code, creating a projec
 order: 0
 ---
 
-Getting Started is the guided onboarding path for Veryfront Code. Use these
-pages when you are installing the framework, creating a first project, or
-building the first working pieces of an app.
+Use these pages to install Veryfront Code, create a project, and build the first
+working pieces of an app.
 
 ## Contents
 
@@ -23,18 +22,16 @@ building the first working pieces of an app.
 
 ## Before you start
 
-These pages assume you are comfortable with:
+You should know the basics of:
 
 - TypeScript - syntax and basic types.
 - React - components, props, and hooks.
 - A JavaScript runtime - Node.js, Deno, or Bun.
 - A terminal - running `npm`, `deno`, or shell commands.
 
-You do not need prior experience with AI agents, model providers, or the Model
-Context Protocol. The guides introduce each concept where it first comes up.
+You do not need prior AI agent or MCP experience.
 
 ## Next
 
-Start with [Quickstart](./quickstart.md) when you want the fastest end-to-end
-path. Start with [Installation](./installation.md) when you want the guided path
-one step at a time.
+Use [Quickstart](./quickstart.md) for the fastest path. Use
+[Installation](./installation.md) for the step-by-step path.

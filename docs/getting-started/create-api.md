@@ -4,9 +4,7 @@ description: "Add an HTTP endpoint to a Veryfront project with a typed Request a
 order: 5
 ---
 
-Add an HTTP endpoint to a Veryfront project. This is the fourth step in the
-Getting Started flow, between [Create agent](./create-agent.md) and
-[Create frontend](./create-frontend.md).
+Add one HTTP endpoint to a Veryfront project.
 
 ## Prerequisites
 
@@ -24,9 +22,8 @@ export function GET() {
 }
 ```
 
-The file path maps to the URL. `app/api/hello/route.ts` exposes
-`GET /api/hello`. Named exports define the allowed HTTP methods. Each handler
-receives a `Request` and returns a `Response`.
+`app/api/hello/route.ts` maps to `GET /api/hello`. Named exports define the
+allowed HTTP methods.
 
 ## Try it
 
@@ -62,23 +59,18 @@ curl -X POST http://localhost:3000/api/echo \
 
 ## Verify it worked
 
-Each route file you add produces an endpoint at the matching URL. Hit it with
-`curl` and confirm:
+Confirm with `curl`:
 
-- 200 OK with the expected JSON body for the methods you exported.
-- 404 if the file path does not match the URL.
-- 405 if you call a method that has no exported handler in the file.
+- `GET /api/hello` returns the JSON body above.
+- Unknown paths return 404.
+- Methods without an export return 405.
 
 ## Next
 
-- [Create frontend](./create-frontend.md): add a page that calls this endpoint
+- [Create frontend](./create-frontend.md): add a page
 - [Deploy project](./deploy-project.md): ship the project to production
 
 ## Related
 
-- [API routes](../guides/api-routes.md): full surface (request parsing,
-  streaming, dynamic params, pages-router shape)
-- [Middleware](../guides/middleware.md): add CORS, rate limiting, logging, and
-  auth checks
-- [Agents](../guides/agents.md): wire an agent behind an API route with
-  `createAgUiHandler`
+- [API routes](../guides/api-routes.md): route patterns and streaming
+- [Middleware](../guides/middleware.md): CORS, rate limiting, logging, and auth

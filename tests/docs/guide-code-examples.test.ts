@@ -525,7 +525,7 @@ describe("Guide: project-structure.md", () => {
 });
 
 describe("Guide: create-agent.md", () => {
-  it("uses the public AG-UI handler and agent.generate paths", async () => {
+  it("uses the public AG-UI handler and keeps generate as a non-interactive note", async () => {
     const guide = await readGuide("create-agent.md");
 
     for (
@@ -535,15 +535,22 @@ describe("Guide: create-agent.md", () => {
         'id: "assistant"',
         'import { createAgUiHandler } from "veryfront/agent"',
         'export const POST = createAgUiHandler("assistant")',
-        'import { getAgent } from "veryfront/agent"',
-        "export async function POST(request: Request)",
-        "const { question } = await request.json()",
-        'const assistant = getAgent("assistant")',
-        "await assistant.generate({ input: question })",
-        "Response.json({ answer: result.text",
+        "Use `agent.generate()` only for non-interactive work",
+        "curl -N -X POST",
+        "data:` lines arrive progressively",
       ]
     ) {
       assertStringIncludes(guide, snippet);
+    }
+
+    for (
+      const snippet of [
+        'import { getAgent } from "veryfront/agent"',
+        'const assistant = getAgent("assistant")',
+        "await assistant.generate({ input: question })",
+      ]
+    ) {
+      assertEquals(guide.includes(snippet), false);
     }
   });
 

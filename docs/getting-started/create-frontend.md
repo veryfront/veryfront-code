@@ -4,9 +4,7 @@ description: "Add a page and a navigation link to a Veryfront project."
 order: 6
 ---
 
-Add a page to your Veryfront project and link to it from the home page. This is
-the fifth step in the Getting Started flow, between
-[Create API](./create-api.md) and [Deploy project](./deploy-project.md).
+Add one page and link to it from the home page.
 
 ## Prerequisites
 
@@ -29,9 +27,8 @@ export default function About() {
 }
 ```
 
-The file path maps to the URL. `app/about/page.tsx` is served at `/about`. The
-default export is the React component for the page. Add `"use client"` at the
-top of a file when it needs browser interactivity.
+`app/about/page.tsx` maps to `/about`. The default export is the page component.
+Add `"use client"` only when the page needs browser interactivity.
 
 Open [http://localhost:3000/about](http://localhost:3000/about). The page
 renders.
@@ -56,8 +53,7 @@ export default function Home() {
 }
 ```
 
-`Link` from `veryfront/router` performs client-side navigation. The browser does
-not reload the page when the user selects the link.
+`Link` from `veryfront/router` navigates without a full page reload.
 
 ## Verify it worked
 
@@ -68,13 +64,11 @@ not reload the page when the user selects the link.
 
 ## Next
 
-- [Deploy project](./deploy-project.md): ship the project to production
-- [Create agent](./create-agent.md): wire an AI agent into the project
+- [Deploy project](./deploy-project.md): ship the project
+- [Create agent](./create-agent.md): add an AI agent
 
 ## Related
 
-- [Pages and routing](../guides/pages-and-routing.md): full surface (layouts,
-  dynamic routes, MDX, navigation hooks)
-- [Head and SEO](../guides/head-and-seo.md): set page metadata, Open Graph tags,
-  and structured data
-- [Chat UI](../guides/chat-ui.md): drop a streaming chat interface into a page
+- [Pages and routing](../guides/pages-and-routing.md): layouts, dynamic routes,
+  MDX, and navigation hooks
+- [Head and SEO](../guides/head-and-seo.md): metadata and structured data
