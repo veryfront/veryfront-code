@@ -29,20 +29,9 @@ interface CallToolTextContent {
 }
 
 type RemoteIntegrationToolExecutionContext = {
-  endUserId?: string;
   runId?: string;
   agentId?: string;
 };
-
-function normalizeRemoteExecutionContext(
-  contextOrEndUserId?: string | RemoteIntegrationToolExecutionContext,
-): RemoteIntegrationToolExecutionContext | undefined {
-  if (typeof contextOrEndUserId === "string") {
-    return { endUserId: contextOrEndUserId };
-  }
-
-  return contextOrEndUserId;
-}
 
 // ---------------------------------------------------------------------------
 // Per-request token resolution
@@ -251,7 +240,7 @@ export function isRemoteIntegrationTool(toolName: string): boolean {
 export async function executeRemoteIntegrationTool(
   toolName: string,
   args: Record<string, unknown>,
-  contextOrEndUserId?: string | RemoteIntegrationToolExecutionContext,
+  context?: RemoteIntegrationToolExecutionContext,
 ): Promise<unknown> {
   const baseUrl = getApiBaseUrlEnv();
   const token = resolveRequestToken();
@@ -264,7 +253,7 @@ export async function executeRemoteIntegrationTool(
     token,
     toolName,
     args,
-    normalizeRemoteExecutionContext(contextOrEndUserId),
+    context,
   );
 }
 
