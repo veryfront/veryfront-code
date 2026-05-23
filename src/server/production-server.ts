@@ -12,8 +12,7 @@ import {
   withSpan,
 } from "#veryfront/observability/tracing/otlp-setup.ts";
 import {
-  getMemorySnapshot,
-  startMemoryMonitoring,
+  startConfiguredMemoryMonitoring,
   stopMemoryMonitoring,
 } from "#veryfront/utils/memory/index.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
@@ -35,9 +34,6 @@ import type { FileSystemAdapter } from "#veryfront/platform/adapters/base.ts";
 
 const serverLog = logger.component("server");
 const globalLog = logger.component("global");
-
-/** Default interval for periodic memory usage snapshots */
-const DEFAULT_MEMORY_MONITORING_INTERVAL_MS = 30_000;
 
 /** Default time to wait for in-flight requests to drain during shutdown.
  *  K8s default terminationGracePeriodSeconds is 30s, so 25s leaves headroom. */
@@ -186,129 +182,137 @@ export function startProductionServer(
       } = options;
 
       const baseAdapter = options.adapter ?? (await runtime.get());
+      const memoryMonitoringConfig = startConfiguredMemoryMonitoring(baseAdapter.env);
+      const ownsMemoryMonitoring = memoryMonitoringConfig.enabled;
 
-      // Use pre-computed bootstrap result if provided, otherwise bootstrap here
-      const bootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
-      const adapter = bootstrap.adapter;
+      try {
+        // Use pre-computed bootstrap result if provided, otherwise bootstrap here
+        const bootstrap = bootstrapResult ?? await bootstrapProd(projectDir, baseAdapter);
+        const adapter = bootstrap.adapter;
 
-      if (bootstrap.usingFSAdapter) {
-        logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
-      }
+        if (bootstrap.usingFSAdapter) {
+          logger.debug("FSAdapter initialized", { type: bootstrap.fsAdapterType });
+        }
 
-      await prewarmLocalProductionCSSArtifacts(bootstrap.adapter, {
-        projectDir,
-        defaultProjectSlug,
-        defaultProjectId,
-        defaultEnvironment,
-        localProjects,
-      });
+        await prewarmLocalProductionCSSArtifacts(bootstrap.adapter, {
+          projectDir,
+          defaultProjectSlug,
+          defaultProjectId,
+          defaultEnvironment,
+          localProjects,
+        });
 
-      // Enable SSR fetch interception to handle relative URLs during SSR
-      setSSRServerPort(port);
-      enableSSRFetchInterception();
+        // Enable SSR fetch interception to handle relative URLs during SSR
+        setSSRServerPort(port);
+        enableSSRFetchInterception();
 
-      // Enable client-only fetching for /api/* routes in production.
-      // This returns empty mock responses during SSR (instead of failing with
-      // "Invalid URL" or "Connection refused"). React Query will refetch
-      // the actual data client-side after hydration.
-      enableSSRClientOnlyFetching();
+        // Enable client-only fetching for /api/* routes in production.
+        // This returns empty mock responses during SSR (instead of failing with
+        // "Invalid URL" or "Connection refused"). React Query will refetch
+        // the actual data client-side after hydration.
+        enableSSRClientOnlyFetching();
 
-      // Run primitive discovery before serving (registries must be populated before first request)
-      if (discoveryConfig) {
-        try {
-          const { discoverAll } = await import("#veryfront/discovery");
-          const { isExtendedFSAdapter } = await import(
-            "#veryfront/platform/adapters/fs/wrapper.ts"
-          );
-
-          if (
-            discoveryConfig.projectSlug && discoveryConfig.apiToken &&
-            discoveryConfig.fsAdapter && isExtendedFSAdapter(discoveryConfig.fsAdapter) &&
-            discoveryConfig.fsAdapter.isMultiProjectMode()
-          ) {
-            // Multi-project proxy: scope discovery to specific project
-            await discoveryConfig.fsAdapter.runWithContext(
-              discoveryConfig.projectSlug,
-              discoveryConfig.apiToken,
-              () =>
-                discoverAll({
-                  baseDir: discoveryConfig.baseDir,
-                  fsAdapter: discoveryConfig.fsAdapter,
-                  verbose: discoveryConfig.verbose ?? false,
-                }),
+        // Run primitive discovery before serving (registries must be populated before first request)
+        if (discoveryConfig) {
+          try {
+            const { discoverAll } = await import("#veryfront/discovery");
+            const { isExtendedFSAdapter } = await import(
+              "#veryfront/platform/adapters/fs/wrapper.ts"
             );
-          } else {
-            await discoverAll({
-              baseDir: discoveryConfig.baseDir,
-              fsAdapter: discoveryConfig.fsAdapter,
-              verbose: discoveryConfig.verbose ?? false,
+
+            if (
+              discoveryConfig.projectSlug && discoveryConfig.apiToken &&
+              discoveryConfig.fsAdapter && isExtendedFSAdapter(discoveryConfig.fsAdapter) &&
+              discoveryConfig.fsAdapter.isMultiProjectMode()
+            ) {
+              // Multi-project proxy: scope discovery to specific project
+              await discoveryConfig.fsAdapter.runWithContext(
+                discoveryConfig.projectSlug,
+                discoveryConfig.apiToken,
+                () =>
+                  discoverAll({
+                    baseDir: discoveryConfig.baseDir,
+                    fsAdapter: discoveryConfig.fsAdapter,
+                    verbose: discoveryConfig.verbose ?? false,
+                  }),
+              );
+            } else {
+              await discoverAll({
+                baseDir: discoveryConfig.baseDir,
+                fsAdapter: discoveryConfig.fsAdapter,
+                verbose: discoveryConfig.verbose ?? false,
+              });
+            }
+          } catch (error) {
+            serverLog.error("Primitive discovery failed", {
+              error: error instanceof Error ? error.message : String(error),
             });
           }
-        } catch (error) {
-          serverLog.error("Primitive discovery failed", {
-            error: error instanceof Error ? error.message : String(error),
-          });
         }
-      }
 
-      logger.info("Starting production server", { projectDir, port, bindAddress });
+        logger.info("Starting production server", { projectDir, port, bindAddress });
 
-      const baseHandler = createVeryfrontHandler(projectDir, adapter, {
-        projectDir,
-        debug,
-        config: bootstrap.config,
-        defaultProjectSlug,
-        defaultProjectId,
-        defaultEnvironment,
-        localProjects,
-      });
+        const baseHandler = createVeryfrontHandler(projectDir, adapter, {
+          projectDir,
+          debug,
+          config: bootstrap.config,
+          defaultProjectSlug,
+          defaultProjectId,
+          defaultEnvironment,
+          localProjects,
+        });
 
-      // Wrap handler with interceptor if provided (for combined mode)
-      // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
-      // creates a new Request object, which breaks Deno.upgradeWebSocket()
-      const handler = requestInterceptor
-        ? Object.assign(
-          async (req: Request) => {
-            const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
-            if (isWebSocketUpgrade) return baseHandler(req);
-            return baseHandler(await requestInterceptor(req));
+        // Wrap handler with interceptor if provided (for combined mode)
+        // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
+        // creates a new Request object, which breaks Deno.upgradeWebSocket()
+        const handler = requestInterceptor
+          ? Object.assign(
+            async (req: Request) => {
+              const isWebSocketUpgrade = req.headers.get("upgrade")?.toLowerCase() === "websocket";
+              if (isWebSocketUpgrade) return baseHandler(req);
+              return baseHandler(await requestInterceptor(req));
+            },
+            { ready: baseHandler.ready },
+          )
+          : baseHandler;
+
+        let resolveListenReady: (() => void) | undefined;
+        const listenReady = new Promise<void>((resolve) => {
+          resolveListenReady = resolve;
+        });
+
+        const ready = (async () => {
+          await Promise.all([listenReady, handler.ready ?? Promise.resolve()]);
+          // Mark server as initialized when ready resolves
+          setServerInitialized(true);
+        })();
+
+        const server = await adapter.serve(handler, {
+          port,
+          hostname: bindAddress, // Deno uses "hostname" for bind address
+          signal,
+          onListen: (params) => {
+            resolveListenReady?.();
+            logger.info("Production server listening", params);
           },
-          { ready: baseHandler.ready },
-        )
-        : baseHandler;
+        });
 
-      let resolveListenReady: (() => void) | undefined;
-      const listenReady = new Promise<void>((resolve) => {
-        resolveListenReady = resolve;
-      });
+        const stop = async (): Promise<void> => {
+          setServerInitialized(false);
+          if (ownsMemoryMonitoring) stopMemoryMonitoring();
 
-      const ready = (async () => {
-        await Promise.all([listenReady, handler.ready ?? Promise.resolve()]);
-        // Mark server as initialized when ready resolves
-        setServerInitialized(true);
-      })();
+          try {
+            await server.stop();
+          } catch (error) {
+            logger.debug("Server stop failed", { error });
+          }
+        };
 
-      const server = await adapter.serve(handler, {
-        port,
-        hostname: bindAddress, // Deno uses "hostname" for bind address
-        signal,
-        onListen: (params) => {
-          resolveListenReady?.();
-          logger.info("Production server listening", params);
-        },
-      });
-
-      async function stop(): Promise<void> {
-        setServerInitialized(false);
-
-        try {
-          await server.stop();
-        } catch (error) {
-          logger.debug("Server stop failed", { error });
-        }
+        return { ready, stop };
+      } catch (error) {
+        if (ownsMemoryMonitoring) stopMemoryMonitoring();
+        throw error;
       }
-
-      return { ready, stop };
     },
     { "server.port": options.port, "server.bindAddress": options.bindAddress ?? "0.0.0.0" },
   );
@@ -362,27 +366,6 @@ if (import.meta.main) {
     }
 
     const adapter = await runtime.get();
-
-    // Start memory monitoring if enabled
-    const enableMemoryMonitoring = adapter.env.get("ENABLE_MEMORY_MONITORING") === "true";
-    const monitoringIntervalMs = parseInt(
-      adapter.env.get("MEMORY_MONITORING_INTERVAL_MS") ??
-        String(DEFAULT_MEMORY_MONITORING_INTERVAL_MS),
-      10,
-    );
-
-    if (enableMemoryMonitoring) {
-      startMemoryMonitoring(monitoringIntervalMs);
-      logger.debug("Memory monitoring enabled", { intervalMs: monitoringIntervalMs });
-
-      // Log initial memory state
-      const initialSnapshot = getMemorySnapshot();
-      logger.debug("Initial memory state", {
-        heapUsedMB: initialSnapshot.heap.usedHeapSizeMB,
-        heapLimitMB: initialSnapshot.heap.heapSizeLimitMB,
-        cacheCount: initialSnapshot.caches.length,
-      });
-    }
 
     const shutdownController = new AbortController();
     const projectDir = cwd();
@@ -442,7 +425,6 @@ if (import.meta.main) {
         }
 
         // Phase 3: Stop accepting new connections and clean up
-        stopMemoryMonitoring();
         requestTracker.shutdown();
         await bootstrap.dispose?.();
         shutdownController.abort();

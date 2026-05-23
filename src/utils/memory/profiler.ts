@@ -14,7 +14,7 @@ const logger = rendererLogger.component("memory-profiler");
 const DEFAULT_HEAP_LIMIT_MB = 5_120;
 
 /** Default interval for periodic memory snapshots (30 seconds) */
-const DEFAULT_MEMORY_MONITORING_INTERVAL_MS = 30_000;
+export const DEFAULT_MEMORY_MONITORING_INTERVAL_MS = 30_000;
 
 /** Heap growth (MB) per interval that triggers a rapid-growth warning */
 const HEAP_RAPID_GROWTH_THRESHOLD_MB = 100;
@@ -65,6 +65,20 @@ export interface MemoryMonitoringLogContext {
   topCaches: MonitoringCacheStats[];
 }
 
+export interface MemoryMonitoringEnv {
+  get(key: string): string | null | undefined;
+}
+
+export interface MemoryMonitoringConfig {
+  enabled: boolean;
+  intervalMs: number;
+}
+
+export interface MemoryMonitoringState {
+  active: boolean;
+  intervalMs: number | undefined;
+}
+
 export interface GCStats {
   majorGCs: number;
   minorGCs: number;
@@ -72,6 +86,7 @@ export interface GCStats {
 }
 
 let memoryCheckInterval: ReturnType<typeof setInterval> | undefined;
+let memoryCheckIntervalMs: number | undefined;
 let lastHeapUsed = 0;
 let heapGrowthWarningThreshold = 0.8;
 
@@ -184,6 +199,27 @@ export function getMemoryMonitoringLogContext(
   };
 }
 
+export function getMemoryMonitoringConfig(env: MemoryMonitoringEnv): MemoryMonitoringConfig {
+  const enabled = env.get("ENABLE_MEMORY_MONITORING") === "true";
+  const rawInterval = env.get("MEMORY_MONITORING_INTERVAL_MS");
+  const parsedInterval = parseInt(
+    rawInterval ?? String(DEFAULT_MEMORY_MONITORING_INTERVAL_MS),
+    10,
+  );
+  const intervalMs = Number.isFinite(parsedInterval) && parsedInterval > 0
+    ? parsedInterval
+    : DEFAULT_MEMORY_MONITORING_INTERVAL_MS;
+
+  return { enabled, intervalMs };
+}
+
+export function getMemoryMonitoringState(): MemoryMonitoringState {
+  return {
+    active: memoryCheckInterval !== undefined,
+    intervalMs: memoryCheckIntervalMs,
+  };
+}
+
 export async function forceGC(): Promise<boolean> {
   try {
     const buffer = new Uint8Array(100 * 1024 * 1024);
@@ -200,6 +236,7 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
   if (memoryCheckInterval) clearInterval(memoryCheckInterval);
 
   logger.info(`Starting memory monitoring (interval: ${intervalMs}ms)`);
+  memoryCheckIntervalMs = intervalMs;
 
   memoryCheckInterval = setInterval(() => {
     const snapshot = getMemorySnapshot();
@@ -231,11 +268,29 @@ export function startMemoryMonitoring(intervalMs = DEFAULT_MEMORY_MONITORING_INT
   }, intervalMs);
 }
 
+export function startConfiguredMemoryMonitoring(env: MemoryMonitoringEnv): MemoryMonitoringConfig {
+  const config = getMemoryMonitoringConfig(env);
+  if (!config.enabled) return config;
+
+  startMemoryMonitoring(config.intervalMs);
+  logger.info("Memory monitoring enabled", { intervalMs: config.intervalMs });
+
+  const initialSnapshot = getMemorySnapshot();
+  logger.info("Initial memory state", {
+    heapUsedMB: initialSnapshot.heap.usedHeapSizeMB,
+    heapLimitMB: initialSnapshot.heap.heapSizeLimitMB,
+    cacheCount: initialSnapshot.caches.length,
+  });
+
+  return config;
+}
+
 export function stopMemoryMonitoring(): void {
   if (!memoryCheckInterval) return;
 
   clearInterval(memoryCheckInterval);
   memoryCheckInterval = undefined;
+  memoryCheckIntervalMs = undefined;
   logger.info("Memory monitoring stopped");
 }
 
