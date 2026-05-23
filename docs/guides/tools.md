@@ -141,24 +141,26 @@ The `execute` function receives an optional second argument with runtime context
 import { z } from "zod";
 
 export default tool({
-  description: "List repos for the current user",
+  description: "List repos for the current account",
   inputSchema: z.object({
     sort: z.enum(["created", "updated"]).default("updated")
       .describe("Repository sort order"),
   }),
   execute: async ({ sort }, context) => {
-    const userId = context?.endUserId ?? "anonymous";
-    return await fetchRepos(userId, { sort });
+    const accountId = typeof context?.accountId === "string" ? context.accountId : "anonymous";
+    return await fetchRepos(accountId, { sort });
   },
 });
 ```
 
-| Context field | Type          | Description                                     |
-| ------------- | ------------- | ----------------------------------------------- |
-| `agentId`     | `string`      | ID of the agent that called the tool            |
-| `projectId`   | `string`      | Current project identifier                      |
-| `endUserId`   | `string`      | End-user identity for per-user token resolution |
-| `blobStorage` | `BlobStorage` | Blob storage access (if configured in workflow) |
+| Context field | Type          | Description                                      |
+| ------------- | ------------- | ------------------------------------------------ |
+| `agentId`     | `string`      | ID of the agent that called the tool             |
+| `projectId`   | `string`      | Current project identifier                       |
+| `runId`       | `string`      | Current agent run identifier                     |
+| `toolCallId`  | `string`      | Current tool call identifier                     |
+| `blobStorage` | `BlobStorage` | Blob storage access (if configured in workflow)  |
+| custom fields | `unknown`     | Host-provided application metadata for the tool  |
 
 Pass context from the API route:
 
@@ -168,7 +170,7 @@ import { createAgUiHandler } from "veryfront/agent";
 
 export const POST = createAgUiHandler("assistant", {
   context: {
-    endUserId: "user-123",
+    accountId: "account-123",
   },
 });
 ```
