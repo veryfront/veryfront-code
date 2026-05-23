@@ -254,7 +254,9 @@ export class ApprovalManager {
     workflowId?: string;
     approver?: string;
   }): Promise<Array<{ runId: string; approval: PendingApproval }>> {
-    const list = this.config.backend.listPendingApprovals;
+    const list = this.config.backend.listPendingApprovals?.bind(
+      this.config.backend,
+    );
     if (!list) {
       logger.warn(
         "[ApprovalManager] listPendingApprovals not supported by backend",
@@ -271,7 +273,9 @@ export class ApprovalManager {
       return;
     }
 
-    const list = this.config.backend.listPendingApprovals;
+    const list = this.config.backend.listPendingApprovals?.bind(
+      this.config.backend,
+    );
     if (!list) {
       return;
     }
