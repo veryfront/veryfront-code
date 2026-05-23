@@ -37,6 +37,11 @@ import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } 
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
+import {
+  EnvironmentVariableCache,
+  fetchProjectEnvVars,
+  runWithProjectEnv,
+} from "../../project-env/index.ts";
 
 export interface AgentStreamHandlerDeps
   extends RuntimeAgentDiscoveryDeps, RuntimeAgentStreamExecutionDeps {
@@ -50,6 +55,59 @@ const defaultDeps: AgentStreamHandlerDeps = {
 };
 const logger = serverLogger.component("agent-stream-handler");
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
+
+// Per-environment env var cache shared across all agent stream requests (60s TTL)
+const _agentEnvVarCache = new EnvironmentVariableCache(
+  (environmentId, token, projectSlug) => {
+    const apiBaseUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org";
+    return fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token);
+  },
+);
+
+// Cache: projectSlug → production environmentId (stable across restarts)
+const _productionEnvIdCache = new Map<string, string>();
+
+async function _resolveProductionEnvironmentId(
+  projectSlug: string,
+  token: string,
+): Promise<string | null> {
+  const cached = _productionEnvIdCache.get(projectSlug);
+  if (cached) return cached;
+  const apiBaseUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org";
+  try {
+    const res = await fetch(
+      `${apiBaseUrl}/projects/${encodeURIComponent(projectSlug)}/environments`,
+      { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } },
+    );
+    if (!res.ok) {
+      await res.body?.cancel();
+      return null;
+    }
+    const body = await res.json() as { data?: Array<{ id: string; name?: string }> };
+    const env = body.data?.find((e) => e.name === "production") ?? body.data?.[0];
+    if (!env?.id) return null;
+    _productionEnvIdCache.set(projectSlug, env.id);
+    return env.id;
+  } catch {
+    return null;
+  }
+}
+
+function buildAgentStreamEnv(input: {
+  envVars: Record<string, string>;
+  proxyToken?: string | null;
+  projectSlug?: string | null;
+}): Record<string, string> {
+  const apiUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org";
+  return {
+    ...input.envVars,
+    // Framework-owned values must override project env to keep request-scoped
+    // credentials bound to trusted Veryfront endpoints and the current project.
+    ...(input.proxyToken ? { VERYFRONT_API_TOKEN: input.proxyToken } : {}),
+    VERYFRONT_API_URL: apiUrl,
+    ...(input.projectSlug ? { VERYFRONT_PROJECT_SLUG: input.projectSlug } : {}),
+  };
+}
 
 type SourceContextFsWrapper = {
   isMultiProjectMode?: () => boolean;
@@ -225,11 +283,43 @@ export class AgentStreamHandler extends BaseHandler {
             }
 
             const runtimeInput = toRuntimeRunAgentInput(payload);
-            const response = await createRuntimeAgentStreamResponse(
-              runtimeInput,
-              agent as Agent,
-              this.deps,
-            );
+
+            // Load project env vars so source-defined MCP tool headers resolve
+            // via _getProjectEnv(). Control-plane requests don't go through the proxy and
+            // therefore don't carry x-environment-id, so we discover the production env ID
+            // from the API (one fetch per project per server lifetime, then cached).
+            let envVarsForAgent: Record<string, string> = {};
+            if (ctx.projectSlug && ctx.proxyToken) {
+              const environmentId = ctx.environmentId ??
+                await _resolveProductionEnvironmentId(ctx.projectSlug, ctx.proxyToken);
+              if (environmentId) {
+                envVarsForAgent = await _agentEnvVarCache.get(
+                  environmentId,
+                  ctx.proxyToken,
+                  ctx.projectSlug,
+                );
+                logger.debug("Agent stream env vars loaded", {
+                  runId: payload.runId,
+                  projectSlug: ctx.projectSlug,
+                  environmentId,
+                  count: Object.keys(envVarsForAgent).length,
+                });
+              }
+            }
+
+            const runAgentStream = () =>
+              createRuntimeAgentStreamResponse(runtimeInput, agent as Agent, this.deps);
+            const shouldIsolateEnv = !!ctx.proxyToken;
+            const response = shouldIsolateEnv
+              ? await runWithProjectEnv(
+                buildAgentStreamEnv({
+                  envVars: envVarsForAgent,
+                  proxyToken: ctx.proxyToken,
+                  projectSlug: ctx.projectSlug,
+                }),
+                runAgentStream,
+              )
+              : await runAgentStream();
             logger.info("Internal agent stream response created", {
               runId: payload.runId,
               threadId: payload.threadId,
