@@ -47,7 +47,7 @@ describe("agent/hosted-runtime-state-resolver", () => {
     assertEquals(refreshCount, 1);
   });
 
-  it("preserves the authenticated user as endUserId in runtime tool context", async () => {
+  it("does not expose the authenticated user as legacy endUserId in runtime tool context", async () => {
     const resolver = createHostedRuntimeStateResolver({
       taskContext: {
         projectId: "project-1",
@@ -58,7 +58,7 @@ describe("agent/hosted-runtime-state-resolver", () => {
 
     assertEquals(await resolver({ system: "system", messages: [], step: 1 }), {
       system: "system",
-      context: { endUserId: "user-123" },
+      context: {},
     });
   });
 
