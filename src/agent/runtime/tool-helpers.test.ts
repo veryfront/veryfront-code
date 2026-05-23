@@ -246,7 +246,6 @@ describe("tool-helpers", () => {
                 toolCallId: "tool-4",
                 runId: "run-123",
                 agentId: "agent-123",
-                endUserId: "user-123",
               },
               ["gmail__list_emails"],
             ),

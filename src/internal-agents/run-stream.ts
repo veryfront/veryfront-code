@@ -35,10 +35,6 @@ function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
   return Array.isArray(raw) && raw.every((toolName) => typeof toolName === "string") ? raw : [];
 }
 
-type RuntimeRunAgentInputWithEndUser = RuntimeRunAgentInput & {
-  endUserId?: string;
-};
-
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
   createRuntime?: (
@@ -203,7 +199,7 @@ function getForwardedIntegrationToolDefinitions(
 }
 
 export async function createRuntimeAgentStreamResponse(
-  input: RuntimeRunAgentInputWithEndUser,
+  input: RuntimeRunAgentInput,
   agent: Agent,
   deps: RuntimeAgentStreamExecutionDeps,
 ): Promise<Response> {
@@ -257,7 +253,6 @@ export async function createRuntimeAgentStreamResponse(
         runId: input.runId,
         ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
         ...(input.state !== undefined ? { state: input.state } : {}),
-        ...(input.endUserId ? { endUserId: input.endUserId } : {}),
         context: input.context,
         forwardedProps: input.forwardedProps,
       },

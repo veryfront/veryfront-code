@@ -327,19 +327,48 @@ describe("internal-agents/schema", () => {
     });
   });
 
-  it("preserves endUserId on internal stream payloads for on-demand integration auth", () => {
-    const internalRequest = getInternalAgentStreamRequestSchema().parse({
-      agentId: "agent_1",
-      threadId: "10000000-1000-4000-8000-100000000001",
-      runId: "run_1",
-      endUserId: "10000000-1000-4000-8000-100000000004",
-      messages: [],
-      context: [],
-    });
+  it("rejects legacy endUserId on internal stream payloads", () => {
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({
+        agentId: "agent_1",
+        threadId: "10000000-1000-4000-8000-100000000001",
+        runId: "run_1",
+        endUserId: "10000000-1000-4000-8000-100000000004",
+        messages: [],
+        context: [],
+      })
+    );
+  });
 
-    assertEquals(
-      (toRuntimeRunAgentInput(internalRequest) as unknown as { endUserId?: string }).endUserId,
-      "10000000-1000-4000-8000-100000000004",
+  it("rejects legacy endUserId on invocation-shaped internal stream payloads", () => {
+    assertThrows(() =>
+      getInternalAgentStreamRequestSchema().parse({
+        run: {
+          agentServiceId: "veryfront-platform-agent",
+          agentId: "incident-responder",
+          conversationId: "10000000-1000-4000-8000-100000000001",
+          runId: "run_1",
+          messageId: "10000000-1000-4000-8000-100000000002",
+          inputAnchorMessageId: "10000000-1000-4000-8000-100000000002",
+          requestedByUserId: "10000000-1000-4000-8000-100000000003",
+          project: {
+            projectId: "10000000-1000-4000-8000-100000000004",
+            projectSlug: "incident-responder-cwy27d",
+            runtimeTargetKind: "preview_branch",
+            runtimeTargetEnvironmentId: null,
+            runtimeTargetBranchId: "10000000-1000-4000-8000-100000000005",
+          },
+          validatedClaims: {
+            subject: "10000000-1000-4000-8000-100000000003",
+            projectId: "10000000-1000-4000-8000-100000000004",
+            projectSlug: "incident-responder-cwy27d",
+            scopes: [],
+          },
+        },
+        endUserId: "10000000-1000-4000-8000-100000000004",
+        messages: [],
+        context: [],
+      })
     );
   });
 

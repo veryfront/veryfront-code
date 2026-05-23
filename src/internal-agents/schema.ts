@@ -63,7 +63,6 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     threadId: v.string().uuid(),
     runId: getRunIdSchema(),
     parentRunId: getRunIdSchema().optional(),
-    endUserId: v.string().uuid().optional(),
     state: v.unknown().optional(),
     messages: v.array(
       v.union([getRuntimeMessageSchema(), getInternalAgentCompatibilityMessageSchema()]),
@@ -78,7 +77,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       (value) => value === undefined || isWithinJsonSizeLimit(value, MAX_FORWARDED_PROPS_BYTES),
       { message: "forwardedProps must be less than 192 KB" },
     ),
-  })
+  }).strict()
 );
 
 export const getInternalAgentStreamRequestSchema = defineSchema((v) => {
@@ -87,6 +86,7 @@ export const getInternalAgentStreamRequestSchema = defineSchema((v) => {
   return v.union([
     controlPlaneStreamRequestSchema,
     getRuntimeAgentRunInvocationSchema()
+      .strict()
       .transform(buildRuntimeAgentControlPlaneStreamRequestFromInvocation)
       .pipe(controlPlaneStreamRequestSchema),
   ]);
@@ -310,7 +310,6 @@ export function toRuntimeRunAgentInput(
     threadId: input.threadId,
     runId: input.runId,
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
-    ...(input.endUserId ? { endUserId: input.endUserId } : {}),
     ...(input.state !== undefined ? { state: input.state } : {}),
     messages: input.messages.map(toRuntimeMessage),
     tools: input.tools,

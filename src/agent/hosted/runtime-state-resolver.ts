@@ -66,10 +66,6 @@ function steeringRevision(context: HostedRuntimeStateResolverContext): number {
   return context.steeringRevision ?? 0;
 }
 
-function hasValidUserId(userId: string | null | undefined): userId is string {
-  return typeof userId === "string" && userId.length > 0;
-}
-
 /** Create hosted runtime state resolver. */
 export function createHostedRuntimeStateResolver<
   TContext extends HostedRuntimeStateResolverContext,
@@ -90,9 +86,6 @@ export function createHostedRuntimeStateResolver<
 
     let nextSystem = system;
     const nextContextRecord = { ...(context ?? {}) };
-    if (hasValidUserId(options.taskContext.userId)) {
-      nextContextRecord.endUserId = options.taskContext.userId;
-    }
 
     if (steeringChanged && options.refreshSystem) {
       nextSystem = await options.refreshSystem({

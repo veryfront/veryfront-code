@@ -72,8 +72,6 @@ export interface ToolExecutionContext {
   toolCallId?: string;
   /** Project identity used by integration token resolution */
   projectId?: string;
-  /** Trusted runtime user identity supplied by hosted integration tooling */
-  endUserId?: string;
   /** Abort signal for cooperative cancellation during long-running tool execution */
   abortSignal?: AbortSignal;
   /** Progress token for sending progress notifications (MCP 2025-11-25) */

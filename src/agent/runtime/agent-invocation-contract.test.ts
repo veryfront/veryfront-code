@@ -229,7 +229,6 @@ describe("agent/runtime-agent-invocation-contract", () => {
       threadId: conversationId,
       runId: "run_child_1",
       parentRunId: "run_root_1",
-      endUserId: userId,
       messages: parsed.messages,
       tools: parsed.tools,
       context: parsed.context,
