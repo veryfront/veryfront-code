@@ -28,9 +28,6 @@ export default function About() {
 `app/about/page.tsx` maps to `/about`. The default export is the page component.
 Add `"use client"` only when the page needs browser interactivity.
 
-Open [http://localhost:3000/about](http://localhost:3000/about). The page
-renders.
-
 ## Link to it
 
 Edit `app/page.tsx` to add a `Link` to the new page:
@@ -55,10 +52,11 @@ export default function Home() {
 
 ## Verify it worked
 
-1. Open [http://localhost:3000/](http://localhost:3000/) and select the **About
+1. Open [http://localhost:3000/about](http://localhost:3000/about). The page
+   renders.
+2. Open [http://localhost:3000/](http://localhost:3000/) and select the **About
    this project** link.
-2. The URL updates to `/about` without a full page reload.
-3. Open the browser back button and confirm history works.
+3. The URL updates to `/about` without a full page reload.
 
 ## Next
 

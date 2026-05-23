@@ -10,9 +10,9 @@ order: 4
   [Create project](./create-project.md).
 - An `agents/` directory in the project root. If you started from the `minimal`
   template, create one: `mkdir agents`.
-- A provider configured for inference. Set `OPENAI_API_KEY` or
-  `ANTHROPIC_API_KEY` in `.env`. See [Providers](../guides/providers.md) for
-  other options.
+- Veryfront Cloud access for inference. Run `veryfront login` or set
+  `VERYFRONT_API_TOKEN`. Direct provider keys such as `OPENAI_API_KEY` or
+  `ANTHROPIC_API_KEY` also work.
 
 ## Define the agent
 
@@ -41,13 +41,6 @@ import { createAgUiHandler } from "veryfront/agent";
 export const POST = createAgUiHandler("assistant");
 ```
 
-The handler validates the request, runs the agent, and returns an AG-UI SSE
-response. Pair it with `useChat({ api: "/api/ag-ui" })` in a React client.
-
-Use `agent.generate()` only for non-interactive work such as cron jobs, batch
-calls, and focused tests. See [Agents](../guides/agents.md#non-streaming-response).
-For non-chat streaming, see [Memory and streaming](../guides/memory-and-streaming.md).
-
 ## Run it
 
 Start the dev server:
@@ -55,6 +48,8 @@ Start the dev server:
 ```bash
 veryfront dev
 ```
+
+## Verify it worked
 
 Send a chat message from another terminal. The `-N` flag tells curl to flush
 each chunk as it arrives:
@@ -65,16 +60,14 @@ curl -N -X POST http://localhost:3000/api/ag-ui \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"What is Veryfront in one sentence?"}]}]}'
 ```
 
-## Verify it worked
-
-The response is an AG-UI SSE stream. `data:` lines arrive progressively between
-`message-start` and `message-finish` events.
+The curl response should emit `data:` lines as the answer streams.
 
 If the whole body lands at once after a delay, curl or a TLS proxy may be
 buffering. Run the same request without `-N` to confirm.
 
-If the dev server logs a missing-provider error, check that the provider key is
-set in the shell running `veryfront dev`.
+If the dev server logs a missing-provider error, run `veryfront login`, then
+restart `veryfront dev`. If you prefer direct provider keys or local models,
+see [Providers](../guides/providers.md).
 
 ## Next
 
