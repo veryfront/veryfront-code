@@ -221,7 +221,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "getting-started/index.md": {
     references: [],
     snippets: [
-      "Veryfront Code",
+      "Veryfront app",
       "Getting started",
       "Contents",
       "Before you start",
