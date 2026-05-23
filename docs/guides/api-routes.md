@@ -10,7 +10,7 @@ The router style changes the file location and the handler's argument shape. The
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create a project](../getting-started/create-a-project.md)).
+- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)).
 - The dev server running (`veryfront dev`) or a build target you can hit with
   HTTP.
 

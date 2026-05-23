@@ -132,5 +132,6 @@ const events = await jobs.events(job.id);
 
 User guides:
 
+- [job-execution-model](../../concepts/job-execution-model.md): Understand job execution identities
 - [jobs](../../guides/jobs.md): Schedule and run background jobs
 - [tasks](../../guides/tasks.md): Define task targets for jobs

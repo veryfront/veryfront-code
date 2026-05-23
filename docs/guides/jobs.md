@@ -13,22 +13,8 @@ Veryfront jobs run durable, project-scoped background work on the platform. Crea
 - **logs** are raw debugging output.
 - A **batch** groups related jobs together.
 
-Jobs are the platform execution surface. Task and workflow files are
-definitions. Starting a task creates a job run. Starting a workflow creates a
-workflow run backed by a job.
-
-## Execution model
-
-| User intent         | Definition target                 | Canonical run                     | Backing execution |
-| ------------------- | --------------------------------- | --------------------------------- | ----------------- |
-| Run a task          | `task:<task-id>`                  | Job run (`kind: "job"`)           | Job               |
-| Run a workflow      | `workflow:<workflow-id>`          | Workflow run (`kind: "workflow"`) | Job               |
-| Schedule a task     | `task:<task-id>` cron job         | Job run per trigger               | Job               |
-| Schedule a workflow | `workflow:<workflow-id>` cron job | Workflow run per trigger          | Job               |
-
-The job service owns queueing, dispatch, retry, cancellation, logs, and raw
-debugging output. Canonical runs own the public execution identity and
-kind-specific API shape.
+For the conceptual split between tasks, jobs, cron jobs, workflow runs,
+events, and logs, see [Job execution model](../concepts/job-execution-model.md).
 
 ## Prerequisites
 

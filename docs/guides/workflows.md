@@ -22,7 +22,7 @@ queued, retried, canceled, logged, and observed in the Jobs panel.
 ## Prerequisites
 
 - A Veryfront project with the `workflows/` directory available (see
-  [Create a project](../getting-started/create-a-project.md)).
+  [Create project](../getting-started/create-project.md)).
 - Any agents or tools referenced by a step are defined in `agents/` or
   `tools/` (see [Agents](./agents.md) and [Tools](./tools.md)).
 - A provider configured for any agents the workflow uses

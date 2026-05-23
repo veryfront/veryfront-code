@@ -81,8 +81,8 @@ behavior to the owning domain and keep the bridge as composition code.
 ## Related guides
 
 - [Project structure](../guides/project-structure.md)
-- [Create a project](../getting-started/create-a-project.md)
+- [Create project](../getting-started/create-project.md)
 
 ## Related reference
 
-- [Reference index](../api-reference/README.md)
+- [Reference index](../api-reference/index.md)

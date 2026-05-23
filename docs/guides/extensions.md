@@ -4,14 +4,12 @@ description: "Understand how extensions add focused capabilities to Veryfront."
 order: 38
 ---
 
-Extensions are factories that add focused capabilities to a Veryfront project: a cache store, an auth provider, a database adapter, a model provider, an MDX content pipeline. Each extension implements one or more contracts that the rest of the framework consumes.
+Extensions are factories that add focused capabilities to a Veryfront project:
+a cache store, an auth provider, a database adapter, a model provider, or an
+MDX content pipeline.
 
-This page is the overview. From here:
-
-- [Extension authoring](./extension-authoring.md): write a factory, declare capabilities, provide a contract.
-- [Extension lifecycle](./extension-lifecycle.md): discovery, ordering, presets, setup, teardown.
-- [Extension testing](./extension-testing.md): verify the factory and the contracts it provides.
-- [Extension publishing](./extension-publishing.md): package an extension for reuse.
+For the concepts behind factories, contracts, capabilities, setup, and teardown,
+see [Extension system](../concepts/extension-system.md).
 
 ## Prerequisites
 
@@ -20,14 +18,6 @@ This page is the overview. From here:
 - For a local extension: a folder under `extensions/` with a default-exported
   factory (see [Extension authoring](./extension-authoring.md)).
 
-## Concepts
-
-| Term       | Meaning                                                                             |
-| ---------- | ----------------------------------------------------------------------------------- |
-| Contract   | A TypeScript interface for a capability, such as `CacheStore` or `AuthProvider`.    |
-| Extension  | A package or local module that implements one or more contracts.                    |
-| Factory    | A function that accepts optional config and returns an extension object.            |
-| Capability | A declared resource requirement such as filesystem, network, or environment access. |
 
 ## Enable an extension
 

@@ -36,8 +36,15 @@ import {
 import type { CacheStore } from "../../src/extensions/cache/index.ts";
 import { GoogleFonts } from "../../src/react/fonts/index.ts";
 import { Head } from "../../src/react/components/Head.tsx";
-import { PageContextProvider, usePageContext } from "../../src/react/context/index.tsx";
-import { Link, RouterProvider, useRouter } from "../../src/react/router/index.tsx";
+import {
+  PageContextProvider,
+  usePageContext,
+} from "../../src/react/context/index.tsx";
+import {
+  Link,
+  RouterProvider,
+  useRouter,
+} from "../../src/react/router/index.tsx";
 import { Sandbox } from "../../src/sandbox/index.ts";
 import { isTaskDefinition } from "../../src/task/types.ts";
 import {
@@ -73,7 +80,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
-  "create-an-agent.md",
+  "create-agent.md",
   "deploying.md",
   "extension-authoring.md",
   "extension-lifecycle.md",
@@ -82,10 +89,10 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "extensions.md",
   "head-and-seo.md",
   "installation.md",
-  "create-a-frontend.md",
-  "create-a-project.md",
-  "create-an-api.md",
-  "deploy-a-project.md",
+  "create-frontend.md",
+  "create-project.md",
+  "create-api.md",
+  "deploy-project.md",
   "integrations.md",
   "pages-and-routing.md",
   "production-path.md",
@@ -126,7 +133,10 @@ async function guideFilesWithCodeFences(): Promise<string[]> {
   const names: string[] = [];
   for (const dir of GUIDE_DIRS) {
     for await (const entry of Deno.readDir(dir)) {
-      if (!entry.isFile || !entry.name.endsWith(".md") || entry.name === "README.md") continue;
+      if (
+        !entry.isFile || !entry.name.endsWith(".md") ||
+        entry.name === "README.md"
+      ) continue;
       const content = await readGuide(entry.name);
       if (content.includes("```")) names.push(entry.name);
     }
@@ -137,13 +147,17 @@ async function guideFilesWithCodeFences(): Promise<string[]> {
 describe("Guide code example coverage", () => {
   it("has code-example tests for every published guide with fenced examples", async () => {
     const guideFiles = await guideFilesWithCodeFences();
-    const uncovered = guideFiles.filter((name) => !GUIDE_CODE_EXAMPLE_COVERAGE.has(name));
+    const uncovered = guideFiles.filter((name) =>
+      !GUIDE_CODE_EXAMPLE_COVERAGE.has(name)
+    );
     assertEquals(uncovered, []);
   });
 
   it("does not keep stale guide code-example coverage entries", async () => {
     const guideFiles = new Set(await guideFilesWithCodeFences());
-    const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) => !guideFiles.has(name));
+    const stale = [...GUIDE_CODE_EXAMPLE_COVERAGE].filter((name) =>
+      !guideFiles.has(name)
+    );
     assertEquals(stale, []);
   });
 });
@@ -177,10 +191,12 @@ describe("Guide: chat-composition.md", () => {
     assertExists((Message as Record<string, unknown>).Root);
 
     const element = React.createElement(
-      (Chat as Record<string, React.ComponentType<Record<string, unknown>>>).Root,
+      (Chat as Record<string, React.ComponentType<Record<string, unknown>>>)
+        .Root,
       { messages: [], input: "" },
       React.createElement(
-        (Chat as Record<string, React.ComponentType<Record<string, unknown>>>).Empty,
+        (Chat as Record<string, React.ComponentType<Record<string, unknown>>>)
+          .Empty,
         { title: "Ask me anything" },
       ),
     );
@@ -318,7 +334,9 @@ describe("Guide: extension-lifecycle.md", () => {
       capabilities: [],
       contracts: { requires: ["CacheStore"] },
       setup: (ctx: { get<T>(contract: string): T | undefined }) => {
-        events.push(ctx.get("CacheStore") === cache ? "consumer:setup" : "missing");
+        events.push(
+          ctx.get("CacheStore") === cache ? "consumer:setup" : "missing",
+        );
       },
       teardown: () => events.push("consumer:teardown"),
     };
@@ -332,7 +350,11 @@ describe("Guide: extension-lifecycle.md", () => {
     );
     await loader.teardownAll();
 
-    assertEquals(events, ["consumer:setup", "consumer:teardown", "provider:teardown"]);
+    assertEquals(events, [
+      "consumer:setup",
+      "consumer:teardown",
+      "provider:teardown",
+    ]);
   });
 });
 
@@ -502,9 +524,9 @@ describe("Guide: project-structure.md", () => {
   });
 });
 
-describe("Guide: create-an-agent.md", () => {
+describe("Guide: create-agent.md", () => {
   it("uses the public AG-UI handler and agent.generate paths", async () => {
-    const guide = await readGuide("create-an-agent.md");
+    const guide = await readGuide("create-agent.md");
 
     for (
       const snippet of [
@@ -571,30 +593,21 @@ describe("Guide: installation.md", () => {
   });
 });
 
-describe("Guide: create-a-project.md", () => {
-  it("lists template IDs that exist in the CLI template registry", async () => {
-    const guide = await readGuide("create-a-project.md");
-    const templateIds = [...guide.matchAll(/\| `([^`]+)`\s+\|/g)].map((match) => match[1]);
-
-    assertEquals(templateIds, [
-      "minimal",
-      "ai-agent",
-      "docs-agent",
-      "agentic-workflow",
-      "multi-agent-system",
-      "coding-agent",
-      "saas-starter",
-    ]);
+describe("Guide: create-project.md", () => {
+  it("documents the tutorial templates that exist in the CLI registry", async () => {
+    const guide = await readGuide("create-project.md");
+    const templateIds = ["minimal", "ai-agent"] as const;
 
     for (const templateId of templateIds) {
-      assertExists(await getTemplate(templateId as Parameters<typeof getTemplate>[0]));
+      assertStringIncludes(guide, `\`${templateId}\``);
+      assertExists(await getTemplate(templateId));
     }
   });
 });
 
-describe("Guide: create-an-api.md", () => {
+describe("Guide: create-api.md", () => {
   it("documents the minimal app router route handler shape", async () => {
-    const guide = await readGuide("create-an-api.md");
+    const guide = await readGuide("create-api.md");
 
     for (
       const snippet of [
@@ -609,9 +622,9 @@ describe("Guide: create-an-api.md", () => {
   });
 });
 
-describe("Guide: create-a-frontend.md", () => {
+describe("Guide: create-frontend.md", () => {
   it("documents adding a page and linking to it", async () => {
-    const guide = await readGuide("create-a-frontend.md");
+    const guide = await readGuide("create-frontend.md");
 
     for (
       const snippet of [
@@ -626,9 +639,9 @@ describe("Guide: create-a-frontend.md", () => {
   });
 });
 
-describe("Guide: deploy-a-project.md", () => {
+describe("Guide: deploy-project.md", () => {
   it("documents the build, start, deploy, and open sequence", async () => {
-    const guide = await readGuide("deploy-a-project.md");
+    const guide = await readGuide("deploy-project.md");
 
     for (
       const command of [
@@ -705,7 +718,9 @@ describe("Guide: tasks.md", () => {
       name: "Sync external data",
       description: "Pull latest records from the external API",
       schedulable: true,
-      async run(ctx: { env: Record<string, string>; config: Record<string, unknown> }) {
+      async run(
+        ctx: { env: Record<string, string>; config: Record<string, unknown> },
+      ) {
         return {
           synced: Object.keys(ctx.env).length + Object.keys(ctx.config).length,
         };
@@ -713,8 +728,11 @@ describe("Guide: tasks.md", () => {
     };
 
     assert(isTaskDefinition(syncData));
-    assertEquals(await syncData.run({ env: { A: "1" }, config: { batchSize: 100 } }), {
-      synced: 2,
-    });
+    assertEquals(
+      await syncData.run({ env: { A: "1" }, config: { batchSize: 100 } }),
+      {
+        synced: 2,
+      },
+    );
   });
 });

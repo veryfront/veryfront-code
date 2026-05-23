@@ -2,8 +2,8 @@
 /**
  * Guide Validator
  *
- * Checks that all public guide .md files in docs/getting-started/ and
- * docs/guides/ have:
+ * Checks that all public docs .md files in docs/getting-started/,
+ * docs/guides/, and docs/concepts/ have:
  * 1. Valid frontmatter (title, description, order)
  * 2. Valid internal cross-references (relative .md links map to real files)
  * 3. Valid API reference links (relative ../api-reference/*.md links map to real files)
@@ -14,17 +14,21 @@
  * Usage: deno run --allow-read scripts/docs/validate-guides.ts
  */
 
-import { collectVeryfrontImports, createPublicImportValidator } from "./guide-validation.ts";
+import {
+  collectVeryfrontImports,
+  createPublicImportValidator,
+} from "./guide-validation.ts";
 
 const ROOT = Deno.cwd();
 const GETTING_STARTED_DIR = `${ROOT}/docs/getting-started`;
 const GUIDES_DIR = `${ROOT}/docs/guides`;
+const CONCEPTS_DIR = `${ROOT}/docs/concepts`;
 const REF_DIR = `${ROOT}/docs/api-reference/veryfront`;
 
 interface PublicDocFile {
   filename: string;
   filepath: string;
-  section: "getting-started" | "guides";
+  section: "getting-started" | "guides" | "concepts";
   shortName: string;
   slug: string;
 }
@@ -57,10 +61,13 @@ for (
   const section of [
     { name: "getting-started" as const, dir: GETTING_STARTED_DIR },
     { name: "guides" as const, dir: GUIDES_DIR },
+    { name: "concepts" as const, dir: CONCEPTS_DIR },
   ]
 ) {
   for (const entry of Deno.readDirSync(section.dir)) {
-    if (entry.isFile && entry.name.endsWith(".md") && entry.name !== "README.md") {
+    if (
+      entry.isFile && entry.name.endsWith(".md") && entry.name !== "README.md"
+    ) {
       const slug = entry.name.replace(".md", "");
       const file = {
         filename: entry.name,
@@ -134,7 +141,10 @@ for (const file of guideFiles) {
   // --- Code blocks balanced ---
   const codeBlockMatches = body.match(/^```/gm);
   if (codeBlockMatches && codeBlockMatches.length % 2 !== 0) {
-    addIssue(shortName, `Unbalanced code blocks (${codeBlockMatches.length} \`\`\` markers, should be even)`);
+    addIssue(
+      shortName,
+      `Unbalanced code blocks (${codeBlockMatches.length} \`\`\` markers, should be even)`,
+    );
   }
 
   // --- Internal docs links (relative) ---
@@ -170,8 +180,15 @@ for (const file of guideFiles) {
   }
 
   // --- Check for stale absolute links ---
-  if (/\/code\/(guides|api|api-reference|getting-started)\//.test(content)) {
-    addIssue(shortName, "Contains stale absolute /code/ docs links, should use relative paths");
+  if (
+    /\/code\/(guides|concepts|api|api-reference|getting-started)\//.test(
+      content,
+    )
+  ) {
+    addIssue(
+      shortName,
+      "Contains stale absolute /code/ docs links, should use relative paths",
+    );
   }
 
   // --- Required closing sections (skip index.md) ---
@@ -186,15 +203,19 @@ for (const file of guideFiles) {
 
 for (const [key, files] of guideOrders) {
   if (files.length > 1) {
-    addIssue(key.split(":")[0], `Duplicate guide order ${key.split(":")[1]}: ${files.join(", ")}`);
+    addIssue(
+      key.split(":")[0],
+      `Duplicate guide order ${key.split(":")[1]}: ${files.join(", ")}`,
+    );
   }
 }
 
-// 2. Validate that every guide is listed in either index.md or
-//    veryfront-code.md. Both files act as catalog roots: the Intro page
-//    links onward to Veryfront Code, and Veryfront Code carries the
-//    topic-grouped tables.
-const catalogFiles = ["getting-started/index.md", "getting-started/veryfront-code.md"];
+// 2. Validate that every page is listed in a section overview.
+const catalogFiles = [
+  "getting-started/index.md",
+  "guides/index.md",
+  "concepts/index.md",
+];
 const listedSlugs = new Set<string>();
 
 for (const catalogFile of catalogFiles) {
@@ -207,7 +228,8 @@ for (const catalogFile of catalogFiles) {
     continue;
   }
 
-  const linkRe = /\((?:\.\/|\.\.\/guides\/|\.\.\/getting-started\/)([a-z0-9-]+)\.md\)/g;
+  const linkRe =
+    /\((?:\.\/|\.\.\/guides\/|\.\.\/getting-started\/|\.\.\/concepts\/)([a-z0-9-]+)\.md\)/g;
   let m: RegExpExecArray | null;
   while ((m = linkRe.exec(content))) {
     const slug = m[1];
@@ -227,7 +249,7 @@ for (const file of guideFiles) {
   if (!listedSlugs.has(slug)) {
     addWarning(
       "getting-started/index.md",
-      `Guide "${slug}" not listed in getting-started/index.md or getting-started/veryfront-code.md`,
+      `Guide "${slug}" not listed in a section overview`,
     );
   }
 }
@@ -238,7 +260,9 @@ for (const file of guideFiles) {
 const denoConfig = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`)) as {
   exports?: Record<string, unknown>;
 };
-const isKnownPublicImport = createPublicImportValidator(denoConfig.exports ?? {});
+const isKnownPublicImport = createPublicImportValidator(
+  denoConfig.exports ?? {},
+);
 
 for (const file of guideFiles) {
   const { filepath, shortName } = file;
@@ -246,7 +270,10 @@ for (const file of guideFiles) {
 
   for (const mod of collectVeryfrontImports(content)) {
     if (!isKnownPublicImport(mod)) {
-      addWarning(shortName, `Code example imports from "${mod}", not a known export path`);
+      addWarning(
+        shortName,
+        `Code example imports from "${mod}", not a known export path`,
+      );
     }
   }
 }

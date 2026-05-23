@@ -24,17 +24,18 @@ const PUBLIC_DOC_ROOTS = [
   "README.md",
   "docs/getting-started",
   "docs/guides",
+  "docs/concepts",
   "docs/api-reference",
 ];
 
 const MOVED_GETTING_STARTED_PAGES = [
   "quickstart",
   "installation",
-  "create-a-project",
-  "create-an-agent",
-  "create-an-api",
-  "create-a-frontend",
-  "deploy-a-project",
+  "create-project",
+  "create-agent",
+  "create-api",
+  "create-frontend",
+  "deploy-project",
   "veryfront-code",
 ];
 
@@ -71,6 +72,16 @@ const RULES: Rule[] = [
     pattern: /\bmini tutorial\b/i,
     message:
       "Do not describe how-to guides as mini tutorials. Keep Diataxis tutorial and guide modes distinct.",
+  },
+  {
+    pattern: /\bUse this module\b/,
+    message:
+      "Describe API reference modules neutrally. Do not use instructional 'Use this module' phrasing.",
+  },
+  {
+    pattern: /\btask and concept guides\b/i,
+    message:
+      "Keep guides task-oriented. Use 'task guides and decision guides' instead of concept guide wording.",
   },
   {
     pattern: staleGettingStartedPath,

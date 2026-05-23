@@ -11,7 +11,7 @@
  *    `docs/api-reference/veryfront/<slug>.md`. The root export maps to
  *    `index.md`. Synthetic parents that only own deep imports (e.g.
  *    `channels`) also require a page.
- * 3. The structural `docs/api-reference/README.md` exists.
+ * 3. The public `docs/api-reference/index.md` overview exists.
  * 4. Generated reference tables do not contain known placeholder wording.
  *
  * Runs as part of `deno task verify`.
@@ -190,13 +190,13 @@ function main(): void {
     // Missing required pages above already reports the broken reference tree.
   }
 
-  // Structural README that explains the layout.
-  const readmePath = `${ROOT}/docs/api-reference/README.md`;
-  let readmeMissing = false;
+  // Public overview that explains the section contents.
+  const indexPath = `${ROOT}/docs/api-reference/index.md`;
+  let indexMissing = false;
   try {
-    Deno.statSync(readmePath);
+    Deno.statSync(indexPath);
   } catch {
-    readmeMissing = true;
+    indexMissing = true;
   }
 
   if (
@@ -204,7 +204,7 @@ function main(): void {
     missingReferencePages.length === 0 &&
     extraReferencePages.length === 0 &&
     referenceQualityErrors.length === 0 &&
-    !readmeMissing
+    !indexMissing
   ) {
     console.log(
       `All ${topLevel.length} top-level export paths have @module and @example in their JSDoc.`,
@@ -212,13 +212,15 @@ function main(): void {
     console.log(
       `All ${requiredSlugs.size} reference pages exist under docs/api-reference/veryfront/.`,
     );
-    console.log("docs/api-reference/README.md exists.");
+    console.log("docs/api-reference/index.md exists.");
     console.log("Generated reference pages passed placeholder wording checks.");
     Deno.exit(0);
   }
 
   if (errors.length > 0) {
-    console.error(`${errors.length} export path(s) missing required JSDoc tags:\n`);
+    console.error(
+      `${errors.length} export path(s) missing required JSDoc tags:\n`,
+    );
     for (const err of errors) {
       console.error(`  ${err.exportPath} (${err.filePath})`);
       console.error(`    Missing: ${err.missing.join(", ")}`);
@@ -245,7 +247,9 @@ function main(): void {
     for (const err of extraReferencePages) {
       console.error(`  ${err.slug} -> ${err.path}`);
     }
-    console.error("\nRun `deno task docs` to remove stale generated reference pages.");
+    console.error(
+      "\nRun `deno task docs` to remove stale generated reference pages.",
+    );
   }
 
   if (referenceQualityErrors.length > 0) {
@@ -258,13 +262,17 @@ function main(): void {
       console.error(`    ${err.text}`);
     }
     if (referenceQualityErrors.length > 30) {
-      console.error(`  ... ${referenceQualityErrors.length - 30} more issue(s) omitted.`);
+      console.error(
+        `  ... ${referenceQualityErrors.length - 30} more issue(s) omitted.`,
+      );
     }
     console.error("\nFix the source JSDoc, then run `deno task docs`.");
   }
 
-  if (readmeMissing) {
-    console.error(`\nMissing docs/api-reference/README.md (run \`deno task docs\`).`);
+  if (indexMissing) {
+    console.error(
+      `\nMissing docs/api-reference/index.md (run \`deno task docs\`).`,
+    );
   }
 
   Deno.exit(1);

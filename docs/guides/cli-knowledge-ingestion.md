@@ -4,38 +4,21 @@ description: "Turn uploads and local documents into project knowledge files with
 order: 37
 ---
 
-`veryfront knowledge ingest` is the primary CLI workflow for getting documents into a project's knowledge base. It finds a source file, parses it, and writes generated markdown back into the project.
+`veryfront knowledge ingest` is the primary CLI workflow for getting documents
+into a project's knowledge base. It finds a source file, parses it, and writes
+generated markdown back into the project.
 
-Use one command for the standard path:
+Ingest one uploaded file:
 
 ```bash
 veryfront knowledge ingest uploads/contracts/q1.pdf --json
 ```
 
-That also works for an exact list of uploaded files:
+Ingest an exact list of uploaded files:
 
 ```bash
 veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploads/contracts/c.pdf --json
 ```
-
-The command handles the orchestration for you:
-
-- Resolves whether the input is a remote upload or a local file
-- Pulls remote uploads into the workspace when needed
-- Parses supported documents into markdown
-- Uses `docling` for supported PDF, Office, and HTML sources
-- Writes the resulting `knowledge/*.md` file back into the project
-
-## Why this matters
-
-This flow is especially useful for agent workflows and demos:
-
-- A user drops one or more files into `uploads/`
-- A knowledge agent starts a sandbox
-- The agent runs `veryfront knowledge ingest ...`
-- The parsed markdown lands in the project's knowledge base
-
-That keeps knowledge ingestion predictable, scriptable, and much easier to explain than ad-hoc parser scripts.
 
 ## Prerequisites
 
@@ -52,17 +35,15 @@ Or log in interactively:
 veryfront login
 ```
 
-`veryfront knowledge ingest` requires `python3`.
-
-Inside a Veryfront sandbox, `docling` and the fallback parser packages are already installed. The embedded parser uses `docling` first for PDF, Office, and HTML extraction.
-
-If you run the CLI outside a Veryfront sandbox, install `docling` and the fallback parser packages to match the sandbox parsing path:
+`veryfront knowledge ingest` requires `python3`. Inside a Veryfront sandbox, the
+parser packages are already installed. Outside a sandbox, install them locally:
 
 ```bash
 pip install docling pandas openpyxl xlrd pdfplumber python-docx python-pptx beautifulsoup4 lxml
 ```
 
-If `docling` is unavailable or fails to extract a specific file, non-text formats fall back to the built-in parser dependencies listed above.
+The parser uses `docling` first for PDF, Office, and HTML extraction, then falls
+back to the other parser packages for supported non-text formats.
 
 ## Single-file examples
 
@@ -97,8 +78,8 @@ To ingest a specific list of files without ingesting the entire folder:
 veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploads/contracts/c.pdf --json
 ```
 
-The command preserves input order in the JSON `ingested` array, so agent workflows can match each output back to the original source path.
-Inside the sandbox, `knowledge ingest` may run longer than typical shell commands, since slow but valid `docling` runs are allowed to complete.
+The command preserves input order in the JSON `ingested` array. Agent workflows
+can match each output back to the original source path.
 
 ## Batch ingestion
 
@@ -114,9 +95,12 @@ To recurse through a local directory:
 veryfront knowledge ingest --path ./contracts --all --recursive --json
 ```
 
-Each source document becomes its own markdown file in the project knowledge tree.
+Each source document becomes its own markdown file in the project knowledge
+tree.
 
-Use `--path ... --all` only when you want everything under that uploads prefix or local directory. For an exact file list, pass the file paths as positional arguments instead.
+Use `--path ... --all` only when you want everything under that uploads prefix
+or local directory. For an exact file list, pass the file paths as positional
+arguments instead.
 
 ## What the JSON output looks like
 
@@ -159,18 +143,21 @@ With `--json`, the command returns a machine-readable job result with
 }
 ```
 
-This is useful for agent pipelines that want to confirm exactly what was created. The exact `stats`
-shape varies by source type, but the top-level result fields are the same.
+The exact `stats` shape varies by source type, but the top-level result fields
+are stable.
 
 ## Path rules
 
 The source path determines how the command behaves:
 
 - `uploads/...` means a remote project upload
-- `./uploads/...` means a local file or directory relative to the current working directory
-- multiple explicit sources are passed as positional arguments: `veryfront knowledge ingest <source...> --json`
+- `./uploads/...` means a local file or directory relative to the current
+  working directory
+- multiple explicit sources are passed as positional arguments:
+  `veryfront knowledge ingest <source...> --json`
 
-That distinction matters because `uploads/...` triggers the remote upload download step, while local paths skip it.
+That distinction matters because `uploads/...` triggers the remote upload
+download step, while local paths skip it.
 
 ## Supported file types
 
@@ -190,24 +177,12 @@ That distinction matters because `uploads/...` triggers the remote upload downlo
 - `md`
 - `mdx`
 
-## Low-level commands still exist
-
-If you need finer control, the lower-level building blocks are still available:
-
-```bash
-veryfront uploads list
-veryfront uploads pull uploads/contracts/q1.pdf --output ./q1.pdf
-veryfront files get knowledge/demo-notes.md
-veryfront files put knowledge/demo-notes.md --from ./demo-notes.md
-```
-
-But for most agent-facing knowledge ingestion, `veryfront knowledge ingest` should be the default.
-
 ## Troubleshooting
 
 ### `Unknown command: knowledge`
 
-Your installed CLI is older than the branch or release that added the command. Update the CLI or run the current source tree directly with:
+Your installed CLI is older than the branch or release that added the command.
+Update the CLI or run the current source tree directly with:
 
 ```bash
 cd veryfront-code
@@ -216,7 +191,8 @@ deno run -A cli/main.ts knowledge ingest uploads/contracts/q1.pdf --json
 
 ### `Missing API token`
 
-Set `VERYFRONT_API_TOKEN`, run `veryfront login`, or make sure your local CLI config already has a saved token.
+Set `VERYFRONT_API_TOKEN`, run `veryfront login`, or make sure your local CLI
+config already has a saved token.
 
 ### `Could not determine project slug`
 
@@ -228,25 +204,20 @@ veryfront knowledge ingest uploads/contracts/q1.pdf --project my-project --json
 
 ### Python package errors
 
-Install the parser packages listed above, or run the command inside a Veryfront sandbox where the knowledge-ingestion stack is already available.
+Install the parser packages listed above, or run the command inside a Veryfront
+sandbox where the knowledge-ingestion stack is already available.
 
 ### `docling` is not installed
 
-Inside a Veryfront sandbox, `docling` is already installed. Outside a Veryfront sandbox, install `docling` if you want the same extraction path locally. If `docling` is not installed or extraction fails, the command falls back to the Python parser stack for supported formats.
-
-## Recommended agent flow
-
-For agent prompts and system instructions, this is the simplest reliable pattern:
-
-1. Prefer `veryfront knowledge ingest` for adding documents to knowledge
-2. Use `uploads/...` for files that came from the project's upload store
-3. Use local paths only when the file is already present in the workspace
-4. Fall back to `uploads` and `files` CRUD commands only when you need manual control
+Inside a Veryfront sandbox, `docling` is already installed. Outside a Veryfront
+sandbox, install `docling` if you want the same extraction path locally. If
+`docling` is not installed or extraction fails, the command falls back to the
+Python parser stack for supported formats.
 
 ## Verify it worked
 
-After ingesting a source, the command writes one or more markdown files
-under the project's `knowledge/` directory:
+After ingesting a source, the command writes one or more markdown files under
+the project's `knowledge/` directory:
 
 ```bash
 ls knowledge/
@@ -261,16 +232,18 @@ For automation, capture the JSON output of the command directly:
 veryfront knowledge ingest uploads/sample.pdf --json | jq '.ingested'
 ```
 
-The `ingested` array names every file the command wrote. If the array is
-empty or the command exited non-zero, check `skipped`, `failed`, and the
-command output for the reason.
+The `ingested` array names every file the command wrote. If the array is empty
+or the command exited non-zero, check `skipped`, `failed`, and the command
+output for the reason.
 
 ## Next
 
 - [Sandbox](./sandbox.md): run CLI workflows inside isolated workspaces
-- [Agents](./agents.md): build agent workflows that can call tools and shell commands
+- [Agents](./agents.md): build agent workflows that can call tools and shell
+  commands
 - [Workflows](./workflows.md): orchestrate repeatable multi-step automation
 
 ## Related
 
-- [`veryfront/cli`](../api-reference/veryfront/cli.md): CLI entry point reference
+- [`veryfront/cli`](../api-reference/veryfront/cli.md): CLI entry point
+  reference

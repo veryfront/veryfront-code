@@ -6,7 +6,7 @@ order: 11
 
 Take one Veryfront route from local dev to a deployed production check.
 
-Use this guide as a checklist. Use [Deploy a project](../getting-started/deploy-a-project.md) for the quick-start commands and [Building and deploying](./deploying.md) for build configuration.
+Use this guide as a checklist. Use [Deploy project](../getting-started/deploy-project.md) for the quick-start commands and [Building and deploying](./deploying.md) for build configuration.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ Use this guide as a checklist. Use [Deploy a project](../getting-started/deploy-
 
 | Step | Goal                                            | Guide                                                                                        |
 | ---- | ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| 1    | Create and run a local app.                     | [Create a project](../getting-started/create-a-project.md)                                                                |
+| 1    | Create and run a local app.                     | [Create project](../getting-started/create-project.md)                                                                |
 | 2    | Pick the smallest primitive for the work.       | [Choose a primitive](./choose-a-primitive.md)                                                |
 | 3    | Add the user-visible route or API boundary.     | [Pages and routing](./pages-and-routing.md), [API routes](./api-routes.md)                   |
 | 4    | Add the primitive only when the route needs it. | [Agents](./agents.md), [Tools](./tools.md), [Workflows](./workflows.md), [Tasks](./tasks.md) |

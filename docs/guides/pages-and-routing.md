@@ -10,7 +10,7 @@ Examples below use the default app router. Set `router: "pages"` in `veryfront.c
 
 ## Prerequisites
 
-- A project created with `veryfront init` (see [Create a project](../getting-started/create-a-project.md)).
+- A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)).
 - The dev server is the easiest way to test routes:
   `veryfront dev`.
 

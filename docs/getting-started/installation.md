@@ -4,13 +4,17 @@ description: "Install the Veryfront CLI and framework on macOS, Linux, or Window
 order: 2
 ---
 
-Install the `veryfront` CLI and framework so you can scaffold, run, and build Veryfront projects.
+Install the `veryfront` CLI and framework so you can scaffold, run, and build
+Veryfront projects.
 
-The install methods below all produce the same `veryfront` CLI; pick the one that matches your toolchain. Once installed, continue with [Create a project](./create-a-project.md).
+The install methods below all produce the same `veryfront` CLI; pick the one
+that matches your toolchain. Once installed, continue with
+[Create project](./create-project.md).
 
 ## System requirements
 
-Veryfront ships as a standalone binary and as an npm package. Pick the rows that match how you plan to install it.
+Veryfront ships as a standalone binary and as an npm package. Pick the rows that
+match how you plan to install it.
 
 ### Operating system
 
@@ -31,11 +35,14 @@ Veryfront ships as a standalone binary and as an npm package. Pick the rows that
 ### Hardware
 
 - 1 GB of free disk space for the CLI, framework, and `node_modules`.
-- 2 GB of RAM for development; 4 GB or more is recommended when running an AI agent locally.
+- 2 GB of RAM for development; 4 GB or more is recommended when running an AI
+  agent locally.
 
 ## Supported browsers
 
-Veryfront renders React Server Components and ships modern ES2022 client bundles. The built-in chat UI, router, and head components are tested against the latest two stable releases of:
+Veryfront renders React Server Components and ships modern ES2022 client
+bundles. The built-in chat UI, router, and head components are tested against
+the latest two stable releases of:
 
 - Chrome and Chromium-based browsers (Edge, Brave, Arc, Opera)
 - Firefox
@@ -45,7 +52,8 @@ Older browsers may work but are not part of the supported matrix.
 
 ## Install
 
-The tabs below give you the one-liner for each method; the sections that follow add detail and version-pinning options.
+The tabs below give you the one-liner for each method; the sections that follow
+add detail and version-pinning options.
 
 <CodeGroup>
 
@@ -77,7 +85,8 @@ npx veryfront
 curl -fsSL https://veryfront.com/install.sh | sh
 ```
 
-Installs the latest standalone binary to `~/.veryfront/bin/veryfront`. Recommended for macOS and Linux when you mainly use the CLI and TUI.
+Installs the latest standalone binary to `~/.veryfront/bin/veryfront`.
+Recommended for macOS and Linux when you mainly use the CLI and TUI.
 
 Pin a version or change the install directory:
 
@@ -91,7 +100,9 @@ curl -fsSL https://veryfront.com/install.sh | sh -s -- --version 0.1.0 --dir /us
 irm https://veryfront.com/install.ps1 | iex
 ```
 
-Installs the latest standalone binary to `%USERPROFILE%\.veryfront\bin\veryfront.exe`. Supports Windows 10 or later on `x86_64` and `arm64`.
+Installs the latest standalone binary to
+`%USERPROFILE%\.veryfront\bin\veryfront.exe`. Supports Windows 10 or later on
+`x86_64` and `arm64`.
 
 Pin a version or change the install directory:
 
@@ -105,7 +116,8 @@ Pin a version or change the install directory:
 brew install veryfront/tap/veryfront
 ```
 
-Same binary as the curl installer, managed by Homebrew. Works on macOS and Linux.
+Same binary as the curl installer, managed by Homebrew. Works on macOS and
+Linux.
 
 ### npm (project scaffolder)
 
@@ -113,7 +125,8 @@ Same binary as the curl installer, managed by Homebrew. Works on macOS and Linux
 npm create veryfront
 ```
 
-Creates a new project using `create-veryfront`. The same command works with the other Node-compatible package managers:
+Creates a new project using `create-veryfront`. The same command works with the
+other Node-compatible package managers:
 
 ```bash
 pnpm create veryfront
@@ -128,7 +141,8 @@ deno init --npm veryfront
 npx veryfront
 ```
 
-Runs the latest `veryfront` CLI without installing it globally. Useful for trying commands or one-off scripts in CI.
+Runs the latest `veryfront` CLI without installing it globally. Useful for
+trying commands or one-off scripts in CI.
 
 ## Verify it worked
 
@@ -136,12 +150,17 @@ Runs the latest `veryfront` CLI without installing it globally. Useful for tryin
 veryfront --version
 ```
 
-You should see the installed version printed. If the command is not found after a fresh install, restart your shell so the new `PATH` entry takes effect.
+You should see the installed version printed. If the command is not found after
+a fresh install, restart your shell so the new `PATH` entry takes effect.
 
-On Windows, run the same command in PowerShell or in a new terminal session so the updated `PATH` is picked up.
+On Windows, run the same command in PowerShell or in a new terminal session so
+the updated `PATH` is picked up.
 
 ## Next
 
-- [Create a project](./create-a-project.md): create and run your first Veryfront project in under two minutes.
-- [Project structure](../guides/project-structure.md): learn the conventions the CLI scaffolds.
-- [Configuration](../guides/configuration.md): wire up environment variables and runtime options.
+- [Create project](./create-project.md): create and run your first Veryfront
+  project in under two minutes.
+- [Project structure](../guides/project-structure.md): learn the conventions the
+  CLI scaffolds.
+- [Configuration](../guides/configuration.md): wire up environment variables and
+  runtime options.

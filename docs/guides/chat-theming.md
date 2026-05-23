@@ -4,9 +4,13 @@ description: "Customize chat theme, feature toggles, sources, attachments, and c
 order: 25
 ---
 
-Customize the `Chat` component's theme, attachments, model selector, sources, and feedback actions through props. Each option is independent: turn on what you need and leave the rest at the defaults.
+Customize the `Chat` component's theme, attachments, model selector, sources,
+and feedback actions through props. Each option is independent: turn on what you
+need and leave the rest at the defaults.
 
-Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one option at a time, run `veryfront dev`, and verify the chat still sends messages through `/api/ag-ui`.
+Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one
+option at a time, run `veryfront dev`, and verify the chat still sends messages
+through `/api/ag-ui`.
 
 ## Prerequisites
 
@@ -68,20 +72,22 @@ Start from the working `Chat` example in [Chat UI](./chat-ui.md). Apply one opti
 
 ## Context providers
 
-Use chat context providers when shared state needs to cross component boundaries in a custom UI. Prefer the preset props or composition components unless a nested component needs direct context access.
+Use chat context providers when shared state needs to cross component boundaries
+in a custom UI. Prefer the preset props or composition components unless a
+nested component needs direct context access.
 
 ## Verify it worked
 
 After applying each option:
 
-- **Theme**: open the page and confirm primary and background colors match
-  what you set.
+- **Theme**: open the page and confirm primary and background colors match what
+  you set.
 - **Attachments**: drop a file matching `attachAccept` and confirm `onAttach`
   fires with the file list.
-- **Models**: switch the model selector and confirm a request body sent on
-  the next message includes the new `model` field.
-- **Sources and actions**: confirm action buttons render under each message
-  and `onFeedback` fires when you click them.
+- **Models**: switch the model selector and confirm a request body sent on the
+  next message includes the new `model` field.
+- **Sources and actions**: confirm action buttons render under each message and
+  `onFeedback` fires when you select them.
 
 ## Next
 

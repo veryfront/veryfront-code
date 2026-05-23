@@ -3,6 +3,8 @@
 This folder holds the source content for the published Veryfront user guides.
 
 Guides help a reader finish one task with the Veryfront library or CLI.
+Use `index.md` as the public section overview. Keep `README.md` for
+repo-maintainer notes only.
 
 ## What belongs here
 
@@ -20,7 +22,9 @@ A page does not belong here when it is:
   [`docs/getting-started/`](../getting-started/).
 - A full API catalog. That is generated into
   [`docs/api-reference/`](../api-reference/) from source JSDoc.
-- A runtime or boundary explanation. That lives in
+- A public concept explanation. That lives in
+  [`docs/concepts/`](../concepts/).
+- A private runtime or boundary explanation. That lives in
   [`docs/architecture/`](../architecture/).
 - A duplicate of an existing guide with a different framing. Merge it into the
   existing guide instead.
@@ -70,6 +74,7 @@ when runnable examples have no matching test entry.
 ## Related
 
 - [`docs/getting-started/`](../getting-started/) for onboarding tutorials.
+- [`docs/concepts/`](../concepts/) for public concept explanations.
 - [`docs/api-reference/`](../api-reference/) for the public API reference.
 - [`docs/architecture/`](../architecture/) for runtime and boundary
-  explanations.
+  implementation notes.

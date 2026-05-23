@@ -29,19 +29,29 @@ const args = parseArgs(Deno.args, {
   },
 });
 
-const OUTPUT_DIR = args.output.startsWith("/") ? args.output : `${ROOT}/${args.output}`;
+const OUTPUT_DIR = args.output.startsWith("/")
+  ? args.output
+  : `${ROOT}/${args.output}`;
 const VERYFRONT_DIR = `${OUTPUT_DIR}/veryfront`;
 const SOURCE_BASE_URL = String(args["source-base-url"]).replace(/\/+$/, "");
 const GETTING_STARTED_GUIDES = new Set([
   "index",
-  "veryfront-code",
   "quickstart",
   "installation",
-  "create-a-project",
-  "create-an-agent",
-  "create-an-api",
-  "create-a-frontend",
-  "deploy-a-project",
+  "create-project",
+  "create-agent",
+  "create-api",
+  "create-frontend",
+  "deploy-project",
+]);
+const CONCEPT_DOCS = new Set([
+  "veryfront-code",
+  "runtime-primitives",
+  "project-conventions",
+  "agent-memory",
+  "job-execution-model",
+  "integration-runtime",
+  "extension-system",
 ]);
 
 // ---------------------------------------------------------------------------
@@ -107,7 +117,12 @@ interface TsType {
     methods?: unknown[];
   };
   parenthesized?: TsType;
-  literal?: { kind: string; boolean?: boolean; string?: string; number?: number };
+  literal?: {
+    kind: string;
+    boolean?: boolean;
+    string?: string;
+    number?: number;
+  };
   this?: boolean;
   tuple?: TsType[];
   indexedAccess?: { objType: TsType; indexType: TsType };
@@ -176,7 +191,16 @@ interface ClassMethod {
 interface ClassDef {
   constructors: Array<{ params: FunctionParam[]; jsDoc?: { doc?: string } }>;
   methods: ClassMethod[];
-  properties: Array<{ name: string; optional: boolean; tsType?: TsType; accessibility?: string | null; isStatic?: boolean; jsDoc?: { doc?: string } }>;
+  properties: Array<
+    {
+      name: string;
+      optional: boolean;
+      tsType?: TsType;
+      accessibility?: string | null;
+      isStatic?: boolean;
+      jsDoc?: { doc?: string };
+    }
+  >;
   extends?: unknown;
   implements?: unknown[];
   typeParams?: unknown[];
@@ -240,33 +264,83 @@ const EMPTY_BARREL_JSDOC: BarrelJSDoc = {
 
 const IMPORT_PRIORITY: Record<string, string[]> = {
   "veryfront": [
-    "defineConfig", "json", "notFound", "redirect", "getEnv", "createValidatedHandler",
+    "defineConfig",
+    "json",
+    "notFound",
+    "redirect",
+    "getEnv",
+    "createValidatedHandler",
   ],
   "veryfront/head": ["Head"],
   "veryfront/router": ["useRouter", "Link", "RouterProvider"],
   "veryfront/context": ["usePageContext", "PageContextProvider"],
   "veryfront/fonts": ["GoogleFonts"],
-  "veryfront/chat": ["Chat", "useChat", "useAgent", "AgentCard", "Message", "AIErrorBoundary"],
+  "veryfront/chat": [
+    "Chat",
+    "useChat",
+    "useAgent",
+    "AgentCard",
+    "Message",
+    "AIErrorBoundary",
+  ],
   "veryfront/markdown": ["Markdown"],
   "veryfront/mdx": ["MDXProvider", "useMDXComponents"],
   "veryfront/agent": [
-    "agent", "AgentRuntime", "registerAgent", "getAgentsAsTools", "createMemory",
+    "agent",
+    "AgentRuntime",
+    "registerAgent",
+    "getAgentsAsTools",
+    "createMemory",
   ],
-  "veryfront/tool": ["tool", "dynamicTool", "loadRemoteToolsFromSource", "toolRegistry"],
+  "veryfront/tool": [
+    "tool",
+    "dynamicTool",
+    "loadRemoteToolsFromSource",
+    "toolRegistry",
+  ],
   "veryfront/workflow": [
-    "workflow", "step", "parallel", "branch", "waitForApproval", "createWorkflowClient",
+    "workflow",
+    "step",
+    "parallel",
+    "branch",
+    "waitForApproval",
+    "createWorkflowClient",
   ],
   "veryfront/prompt": ["prompt", "promptRegistry"],
   "veryfront/resource": ["resource", "resourceRegistry"],
-  "veryfront/mcp": ["createMCPServer", "registerTool", "registerPrompt", "registerResource"],
-  "veryfront/middleware": ["cors", "rateLimit", "logger", "timeout", "MiddlewarePipeline"],
+  "veryfront/mcp": [
+    "createMCPServer",
+    "registerTool",
+    "registerPrompt",
+    "registerResource",
+  ],
+  "veryfront/middleware": [
+    "cors",
+    "rateLimit",
+    "logger",
+    "timeout",
+    "MiddlewarePipeline",
+  ],
   "veryfront/oauth": [
-    "createOAuthInitHandler", "createOAuthCallbackHandler", "githubConfig", "MemoryTokenStore",
+    "createOAuthInitHandler",
+    "createOAuthCallbackHandler",
+    "githubConfig",
+    "MemoryTokenStore",
   ],
   "veryfront/provider": [
-    "registerModelProvider", "resolveModel", "hasModelProvider", "getRegisteredModelProviders",
+    "registerModelProvider",
+    "resolveModel",
+    "hasModelProvider",
+    "getRegisteredModelProviders",
   ],
-  "veryfront/fs": ["readTextFile", "writeTextFile", "join", "resolve", "exists", "mkdir"],
+  "veryfront/fs": [
+    "readTextFile",
+    "writeTextFile",
+    "join",
+    "resolve",
+    "exists",
+    "mkdir",
+  ],
   // CLI is an executable entry point, not an importable module. Skip import snippet.
   "veryfront/cli": [],
 };
@@ -275,194 +349,244 @@ const IMPORT_PRIORITY: Record<string, string[]> = {
 // Cross-references between related modules
 // ---------------------------------------------------------------------------
 
-const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> = {
-  "veryfront/chat": [
-    { path: "agent", reason: "Server-side agent runtime that powers chat" },
-    { path: "tool", reason: "Define tools that agents can call" },
-  ],
-  "veryfront/agent": [
-    { path: "chat", reason: "Client-side chat UI for agents" },
-    { path: "tool", reason: "Define tools for agents" },
-    { path: "provider", reason: "Configure AI model providers" },
-    { path: "workflow", reason: "Orchestrate multi-agent workflows" },
-  ],
-  "veryfront/tool": [
-    { path: "agent", reason: "Agents that use tools" },
-    { path: "mcp", reason: "Expose tools via MCP" },
-  ],
-  "veryfront/prompt": [
-    { path: "mcp", reason: "Expose prompts via MCP" },
-    { path: "agent", reason: "Use prompts in agents" },
-  ],
-  "veryfront/resource": [
-    { path: "mcp", reason: "Expose resources via MCP" },
-  ],
-  "veryfront/mcp": [
-    { path: "tool", reason: "Define tools for MCP" },
-    { path: "prompt", reason: "Define prompts for MCP" },
-    { path: "resource", reason: "Define resources for MCP" },
-  ],
-  "veryfront/workflow": [
-    { path: "agent", reason: "Agent steps in workflows" },
-    { path: "tool", reason: "Tool steps in workflows" },
-  ],
-  "veryfront/provider": [
-    { path: "agent", reason: "Agents use providers for AI models" },
-  ],
-  "veryfront/oauth": [
-    { path: "middleware", reason: "Combine with middleware pipeline" },
-  ],
-  "veryfront/markdown": [
-    { path: "chat", reason: "Used in chat message rendering" },
-    { path: "mdx", reason: "For static MDX pages" },
-  ],
-  "veryfront/mdx": [
-    { path: "markdown", reason: "For runtime markdown rendering" },
-  ],
-  "veryfront/head": [
-    { path: "router", reason: "Client-side navigation" },
-    { path: "context", reason: "Access page metadata" },
-  ],
-  "veryfront/router": [
-    { path: "head", reason: "Manage document head" },
-    { path: "context", reason: "Access route params and context" },
-  ],
-  "veryfront/context": [
-    { path: "router", reason: "Client-side navigation" },
-    { path: "head", reason: "Manage document head" },
-  ],
-  "veryfront": [
-    { path: "head", reason: "Declarative `<head>` metadata" },
-    { path: "router", reason: "Client-side routing and navigation" },
-    { path: "context", reason: "Access route params and page data" },
-  ],
-  "veryfront/fonts": [
-    { path: "head", reason: "Manage document head metadata" },
-    { path: "context", reason: "Access page context and frontmatter" },
-  ],
-  "veryfront/fs": [
-    { path: "root", reason: "Core framework configuration and utilities" },
-    { path: "agent", reason: "Agents that may use filesystem for persistence" },
-  ],
-  "veryfront/integrations": [
-    { path: "oauth", reason: "OAuth 2.0 token management for integrations" },
-    { path: "tool", reason: "Define tools that integrations expose" },
-    { path: "mcp", reason: "Expose integration tools via MCP" },
-  ],
-  "veryfront/sandbox": [
-    { path: "agent", reason: "Run isolated commands from agent tools/workflows" },
-    { path: "mcp", reason: "Expose sandbox-backed operations over MCP" },
-  ],
-};
+const RELATED_MODULES: Record<string, Array<{ path: string; reason: string }>> =
+  {
+    "veryfront/chat": [
+      { path: "agent", reason: "Server-side agent runtime that powers chat" },
+      { path: "tool", reason: "Define tools that agents can call" },
+    ],
+    "veryfront/agent": [
+      { path: "chat", reason: "Client-side chat UI for agents" },
+      { path: "tool", reason: "Define tools for agents" },
+      { path: "provider", reason: "Configure AI model providers" },
+      { path: "workflow", reason: "Orchestrate multi-agent workflows" },
+    ],
+    "veryfront/tool": [
+      { path: "agent", reason: "Agents that use tools" },
+      { path: "mcp", reason: "Expose tools via MCP" },
+    ],
+    "veryfront/prompt": [
+      { path: "mcp", reason: "Expose prompts via MCP" },
+      { path: "agent", reason: "Use prompts in agents" },
+    ],
+    "veryfront/resource": [
+      { path: "mcp", reason: "Expose resources via MCP" },
+    ],
+    "veryfront/mcp": [
+      { path: "tool", reason: "Define tools for MCP" },
+      { path: "prompt", reason: "Define prompts for MCP" },
+      { path: "resource", reason: "Define resources for MCP" },
+    ],
+    "veryfront/workflow": [
+      { path: "agent", reason: "Agent steps in workflows" },
+      { path: "tool", reason: "Tool steps in workflows" },
+    ],
+    "veryfront/provider": [
+      { path: "agent", reason: "Agents use providers for AI models" },
+    ],
+    "veryfront/oauth": [
+      { path: "middleware", reason: "Combine with middleware pipeline" },
+    ],
+    "veryfront/markdown": [
+      { path: "chat", reason: "Used in chat message rendering" },
+      { path: "mdx", reason: "For static MDX pages" },
+    ],
+    "veryfront/mdx": [
+      { path: "markdown", reason: "For runtime markdown rendering" },
+    ],
+    "veryfront/head": [
+      { path: "router", reason: "Client-side navigation" },
+      { path: "context", reason: "Access page metadata" },
+    ],
+    "veryfront/router": [
+      { path: "head", reason: "Manage document head" },
+      { path: "context", reason: "Access route params and context" },
+    ],
+    "veryfront/context": [
+      { path: "router", reason: "Client-side navigation" },
+      { path: "head", reason: "Manage document head" },
+    ],
+    "veryfront": [
+      { path: "head", reason: "Declarative `<head>` metadata" },
+      { path: "router", reason: "Client-side routing and navigation" },
+      { path: "context", reason: "Access route params and page data" },
+    ],
+    "veryfront/fonts": [
+      { path: "head", reason: "Manage document head metadata" },
+      { path: "context", reason: "Access page context and frontmatter" },
+    ],
+    "veryfront/fs": [
+      { path: "root", reason: "Core framework configuration and utilities" },
+      {
+        path: "agent",
+        reason: "Agents that may use filesystem for persistence",
+      },
+    ],
+    "veryfront/integrations": [
+      { path: "oauth", reason: "OAuth 2.0 token management for integrations" },
+      { path: "tool", reason: "Define tools that integrations expose" },
+      { path: "mcp", reason: "Expose integration tools via MCP" },
+    ],
+    "veryfront/sandbox": [
+      {
+        path: "agent",
+        reason: "Run isolated commands from agent tools/workflows",
+      },
+      { path: "mcp", reason: "Expose sandbox-backed operations over MCP" },
+    ],
+  };
 
 // ---------------------------------------------------------------------------
 // Cross-references to user guides and architecture pages
 // ---------------------------------------------------------------------------
 
-const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> = {
-  "veryfront": [
-    { path: "index", reason: "Browse the guide map" },
-    { path: "quickstart", reason: "Build and run a first agent app" },
-    { path: "veryfront-code", reason: "What Veryfront Code is and how guides fit together" },
-    { path: "installation", reason: "Install the CLI and framework" },
-    { path: "create-a-project", reason: "Scaffold and run a project" },
-    { path: "create-an-agent", reason: "Define and invoke a first agent" },
-    { path: "create-an-api", reason: "Add a first API route" },
-    { path: "create-a-frontend", reason: "Add a first page" },
-    { path: "deploy-a-project", reason: "Deploy a first project" },
-    { path: "choose-a-primitive", reason: "Choose the right primitive" },
-    { path: "production-path", reason: "Move a route toward production checks" },
-    { path: "configuration", reason: "Configure your Veryfront project" },
-    { path: "project-structure", reason: "Project layout and conventions" },
-    { path: "data-fetching", reason: "Server data, static data, params" },
-  ],
-  "veryfront/head": [
-    { path: "head-and-seo", reason: "Document head, metadata, and SEO" },
-  ],
-  "veryfront/router": [
-    { path: "pages-and-routing", reason: "Pages and client-side routing" },
-  ],
-  "veryfront/context": [
-    { path: "pages-and-routing", reason: "Page context for routes and MDX" },
-  ],
-  "veryfront/fonts": [
-    { path: "head-and-seo", reason: "Font loading and SEO" },
-  ],
-  "veryfront/chat": [
-    { path: "chat-ui", reason: "Compose chat UI in the browser" },
-    { path: "chat-hooks", reason: "Manage chat state and streaming" },
-    { path: "chat-composition", reason: "Mix prebuilt and custom chat pieces" },
-    { path: "chat-theming", reason: "Theme chat components" },
-  ],
-  "veryfront/markdown": [
-    { path: "chat-ui", reason: "Render markdown in chat" },
-  ],
-  "veryfront/mdx": [
-    { path: "pages-and-routing", reason: "Author MDX pages" },
-  ],
-  "veryfront/agent": [
-    { path: "agents", reason: "Define and run agents" },
-    { path: "multi-agent", reason: "Compose multi-agent systems" },
-    { path: "memory-and-streaming", reason: "Memory, streaming, and lifecycle" },
-    { path: "agent-service-runtime", reason: "Deploy agents as standalone services" },
-    { path: "skills", reason: "Attach project skills to agents" },
-  ],
-  "veryfront/tool": [
-    { path: "tools", reason: "Define and call tools" },
-  ],
-  "veryfront/workflow": [
-    { path: "workflows", reason: "Author durable workflows" },
-    { path: "workflows-advanced", reason: "Use loops, artifacts, and progress hooks" },
-    { path: "multi-agent", reason: "Orchestrate multi-agent workflows" },
-  ],
-  "veryfront/prompt": [
-    { path: "mcp-server", reason: "Expose prompts over MCP" },
-  ],
-  "veryfront/resource": [
-    { path: "mcp-server", reason: "Expose resources over MCP" },
-  ],
-  "veryfront/jobs": [
-    { path: "jobs", reason: "Schedule and run background jobs" },
-    { path: "tasks", reason: "Define task targets for jobs" },
-  ],
-  "veryfront/mcp": [
-    { path: "mcp-server", reason: "Build and host MCP servers" },
-    { path: "coding-agents", reason: "Connect MCP-aware coding agents" },
-  ],
-  "veryfront/middleware": [
-    { path: "middleware", reason: "Compose HTTP middleware" },
-    { path: "api-routes", reason: "Apply middleware to API routes" },
-  ],
-  "veryfront/oauth": [
-    { path: "oauth", reason: "OAuth flows and provider setup" },
-  ],
-  "veryfront/provider": [
-    { path: "providers", reason: "Register model providers" },
-  ],
-  "veryfront/integrations": [
-    { path: "integrations", reason: "Connect SaaS integrations" },
-  ],
-  "veryfront/sandbox": [
-    { path: "sandbox", reason: "Run code in isolated sandbox environments" },
-  ],
-  "veryfront/extensions": [
-    { path: "extensions", reason: "Use built-in extensions" },
-    { path: "extension-authoring", reason: "Author your own extensions" },
-    { path: "extension-lifecycle", reason: "Extension lifecycle and hooks" },
-    { path: "extension-publishing", reason: "Publish extensions" },
-    { path: "extension-testing", reason: "Test extensions" },
-  ],
-  "veryfront/testing": [
-    { path: "extension-testing", reason: "Test extensions with BDD utilities" },
-  ],
-  "veryfront/cli": [
-    { path: "coding-agents", reason: "Connect coding agents to CLI and MCP tools" },
-    { path: "cli-knowledge-ingestion", reason: "CLI knowledge ingestion" },
-  ],
-  "veryfront/server": [
-    { path: "deploying", reason: "Deploy the server" },
-  ],
-};
+const RELATED_GUIDES: Record<string, Array<{ path: string; reason: string }>> =
+  {
+    "veryfront": [
+      { path: "index", reason: "Browse the guide map" },
+      { path: "quickstart", reason: "Build and run a first agent app" },
+      {
+        path: "veryfront-code",
+        reason: "What Veryfront Code is and how guides fit together",
+      },
+      { path: "installation", reason: "Install the CLI and framework" },
+      { path: "create-project", reason: "Scaffold and run a project" },
+      { path: "create-agent", reason: "Define and invoke a first agent" },
+      { path: "create-api", reason: "Add a first API route" },
+      { path: "create-frontend", reason: "Add a first page" },
+      { path: "deploy-project", reason: "Deploy a first project" },
+      { path: "choose-a-primitive", reason: "Choose the right primitive" },
+      { path: "runtime-primitives", reason: "Understand primitive boundaries" },
+      {
+        path: "production-path",
+        reason: "Move a route toward production checks",
+      },
+      { path: "configuration", reason: "Configure your Veryfront project" },
+      { path: "project-conventions", reason: "Understand project conventions" },
+      { path: "project-structure", reason: "Place files in a project" },
+      { path: "data-fetching", reason: "Server data, static data, params" },
+    ],
+    "veryfront/head": [
+      { path: "head-and-seo", reason: "Document head, metadata, and SEO" },
+    ],
+    "veryfront/router": [
+      { path: "pages-and-routing", reason: "Pages and client-side routing" },
+    ],
+    "veryfront/context": [
+      { path: "pages-and-routing", reason: "Page context for routes and MDX" },
+    ],
+    "veryfront/fonts": [
+      { path: "head-and-seo", reason: "Font loading and SEO" },
+    ],
+    "veryfront/chat": [
+      { path: "chat-ui", reason: "Compose chat UI in the browser" },
+      { path: "chat-hooks", reason: "Manage chat state and streaming" },
+      {
+        path: "chat-composition",
+        reason: "Mix prebuilt and custom chat pieces",
+      },
+      { path: "chat-theming", reason: "Theme chat components" },
+    ],
+    "veryfront/markdown": [
+      { path: "chat-ui", reason: "Render markdown in chat" },
+    ],
+    "veryfront/mdx": [
+      { path: "pages-and-routing", reason: "Author MDX pages" },
+    ],
+    "veryfront/agent": [
+      { path: "agents", reason: "Define and run agents" },
+      { path: "multi-agent", reason: "Compose multi-agent systems" },
+      {
+        path: "agent-memory",
+        reason: "Understand memory and streaming boundaries",
+      },
+      {
+        path: "memory-and-streaming",
+        reason: "Memory, streaming, and lifecycle",
+      },
+      {
+        path: "agent-service-runtime",
+        reason: "Deploy agents as standalone services",
+      },
+      { path: "skills", reason: "Attach project skills to agents" },
+    ],
+    "veryfront/tool": [
+      { path: "tools", reason: "Define and call tools" },
+    ],
+    "veryfront/workflow": [
+      { path: "workflows", reason: "Author durable workflows" },
+      {
+        path: "workflows-advanced",
+        reason: "Use loops, artifacts, and progress hooks",
+      },
+      { path: "multi-agent", reason: "Orchestrate multi-agent workflows" },
+    ],
+    "veryfront/prompt": [
+      { path: "mcp-server", reason: "Expose prompts over MCP" },
+    ],
+    "veryfront/resource": [
+      { path: "mcp-server", reason: "Expose resources over MCP" },
+    ],
+    "veryfront/jobs": [
+      {
+        path: "job-execution-model",
+        reason: "Understand job execution identities",
+      },
+      { path: "jobs", reason: "Schedule and run background jobs" },
+      { path: "tasks", reason: "Define task targets for jobs" },
+    ],
+    "veryfront/mcp": [
+      { path: "mcp-server", reason: "Build and host MCP servers" },
+      { path: "coding-agents", reason: "Connect MCP-aware coding agents" },
+    ],
+    "veryfront/middleware": [
+      { path: "middleware", reason: "Compose HTTP middleware" },
+      { path: "api-routes", reason: "Apply middleware to API routes" },
+    ],
+    "veryfront/oauth": [
+      { path: "oauth", reason: "OAuth flows and provider setup" },
+    ],
+    "veryfront/provider": [
+      { path: "providers", reason: "Register model providers" },
+    ],
+    "veryfront/integrations": [
+      {
+        path: "integration-runtime",
+        reason: "Understand integration runtime boundaries",
+      },
+      { path: "integrations", reason: "Connect SaaS integrations" },
+    ],
+    "veryfront/sandbox": [
+      { path: "sandbox", reason: "Run code in isolated sandbox environments" },
+    ],
+    "veryfront/extensions": [
+      {
+        path: "extension-system",
+        reason: "Understand extension contracts and lifecycle",
+      },
+      { path: "extensions", reason: "Use built-in extensions" },
+      { path: "extension-authoring", reason: "Author your own extensions" },
+      { path: "extension-lifecycle", reason: "Extension lifecycle and hooks" },
+      { path: "extension-publishing", reason: "Publish extensions" },
+      { path: "extension-testing", reason: "Test extensions" },
+    ],
+    "veryfront/testing": [
+      {
+        path: "extension-testing",
+        reason: "Test extensions with BDD utilities",
+      },
+    ],
+    "veryfront/cli": [
+      {
+        path: "coding-agents",
+        reason: "Connect coding agents to CLI and MCP tools",
+      },
+      { path: "cli-knowledge-ingestion", reason: "CLI knowledge ingestion" },
+    ],
+    "veryfront/server": [
+      { path: "deploying", reason: "Deploy the server" },
+    ],
+  };
 
 // ---------------------------------------------------------------------------
 // Curated fallback descriptions for exports missing JSDoc upstream
@@ -487,10 +611,12 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     parseJsonBody: "Parse and validate JSON body",
     parseFormData: "Parse multipart form data",
     parseQueryParams: "Parse and validate query params",
-    sanitizeData: "Sanitize data to prevent XSS and prototype pollution attacks",
+    sanitizeData:
+      "Sanitize data to prevent XSS and prototype pollution attacks",
     createValidationError: "Create an input validation error.",
     CommonSchemas: "Built-in Zod schemas (email, URL, etc.)",
-    INPUT_VALIDATION_FAILED: "HTTP request input validation failures (replaces ValidationError)",
+    INPUT_VALIDATION_FAILED:
+      "HTTP request input validation failures (replaces ValidationError)",
     APIContext: "API route handler context",
     APIHandler: "API route handler signature",
     APIResponse: "API handler response type",
@@ -503,9 +629,11 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     PageContext: "Page runtime context",
     StartServerOptions: "Server options (dev with HMR or production)",
     VeryfrontConfig: "Project configuration shape",
-    VeryfrontHandler: "Web API request handler with WebSocket upgrade and HMR helpers",
+    VeryfrontHandler:
+      "Web API request handler with WebSocket upgrade and HMR helpers",
     VeryfrontServer: "Running server instance with lifecycle controls",
-    toNodeHandler: "Convert a Web API request handler into a Node.js HTTP request listener",
+    toNodeHandler:
+      "Convert a Web API request handler into a Node.js HTTP request listener",
     ValidatedHandlerConfig: "`createValidatedHandler` config",
     ValidatedHandlerFunction: "Handler with validated inputs",
   },
@@ -550,7 +678,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     StreamingMessage: "Incrementally rendered message",
     AgentCard: "Agent status, tool calls, and messages",
     AIErrorBoundary: "Error boundary with retry",
-    useChat: "useChat hook for managing chat state with veryfront stream events",
+    useChat:
+      "useChat hook for managing chat state with veryfront stream events",
     useAgent: "Agent interactions with tool call tracking",
     useCompletion: "useCompletion hook for single text generation",
     useStreaming: "Low-level streaming hook",
@@ -598,7 +727,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
   },
 
   "veryfront/agent": {
-    agent: "Create an agent",
+    agent: "Create agent",
     registerAgent: "Register agent for discovery",
     getAgent: "Get agent by ID",
     getAllAgentIds: "List registered agent IDs",
@@ -630,8 +759,9 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     Message: "Chat message (user, assistant, system, tool)",
     MessagePart: "Multi-part message segment",
     ModelProvider: "Model provider interface",
-    ModelString: "Model configuration string format: \"provider/model-name\"",
-    RedisClient: "Redis client interface (compatible with ioredis and node-redis)",
+    ModelString: 'Model configuration string format: "provider/model-name"',
+    RedisClient:
+      "Redis client interface (compatible with ioredis and node-redis)",
     RedisMemoryConfig: "Redis memory configuration",
     StreamToolCall: "Streaming tool call",
     ToolCall: "Completed tool call",
@@ -745,7 +875,8 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     MCPServerConfig: "`createMCPServer()` config",
     MCPStats: "Registry statistics",
     MCPTool: "MCP-exposed tool",
-    IntegrationLoaderConfig: "Configuration for loading integration tools into MCP",
+    IntegrationLoaderConfig:
+      "Configuration for loading integration tools into MCP",
   },
 
   "veryfront/middleware": {
@@ -835,7 +966,7 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
 
   "veryfront/provider": {
     registerModelProvider: "Register a model provider factory",
-    resolveModel: "Resolve \"provider/model\" to LanguageModel",
+    resolveModel: 'Resolve "provider/model" to LanguageModel',
     hasModelProvider: "Check if provider is registered",
     getRegisteredModelProviders: "List registered provider names",
     clearModelProviders: "Clear all providers (for testing)",
@@ -861,28 +992,36 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
 
   "veryfront/integrations": {
     EnvVarSchema: "Validates environment variable configuration metadata",
-    IntegrationConfigSchema: "Validates complete integration connector configuration spec",
-    IntegrationNameSchema: "Validates integration name against allowed enum values",
-    IntegrationPromptSchema: "Validates predefined prompt configuration for integrations",
-    IntegrationToolSchema: "Validates tool definition from connector specification",
+    IntegrationConfigSchema:
+      "Validates complete integration connector configuration spec",
+    IntegrationNameSchema:
+      "Validates integration name against allowed enum values",
+    IntegrationPromptSchema:
+      "Validates predefined prompt configuration for integrations",
+    IntegrationToolSchema:
+      "Validates tool definition from connector specification",
     OAuthConfigSchema: "Validates OAuth/API key authentication configuration",
     OAuthFieldSchema: "Validates OAuth form field configuration and mapping",
     clearConnectorCache: "Clear the connector cache (for testing)",
-    createIntegrationTools: "Generate Tool instances from connector specifications",
+    createIntegrationTools:
+      "Generate Tool instances from connector specifications",
     executeEndpoint: "Execute REST or GraphQL endpoints with authentication",
     fetchConnector: "Fetch connector spec from API with LRU caching",
     getConnector: "Look up connector config by name from registry",
     getConnectorNames: "Return readonly array of all connector names",
     getIcon: "Return SVG icon string for integration by name",
     listConnectors: "Return readonly array of all connectors",
-    registerIntegrationMCP: "Register integration tools into the MCP tool registry",
+    registerIntegrationMCP:
+      "Register integration tools into the MCP tool registry",
     EnvVarConfig: "Environment variable requirement with metadata",
     IntegrationConfig: "Complete connector spec: name, auth, tools, prompts",
-    IntegrationConnector: "Runtime connector with tools and endpoint definitions",
+    IntegrationConnector:
+      "Runtime connector with tools and endpoint definitions",
     IntegrationMCPConfig: "Configuration for registering integrations into MCP",
     IntegrationName: "Union type of valid integration name literals",
     IntegrationPrompt: "Predefined prompt template for integration use",
-    IntegrationRuntimeConfig: "Per-user settings and tool allowlist for integration",
+    IntegrationRuntimeConfig:
+      "Per-user settings and tool allowlist for integration",
     IntegrationTool: "Integration tool with endpoint execution spec",
     IntegrationToolMeta: "Tool metadata: name, description, write requirements",
     OAuthConfig: "OAuth/API key authentication type and parameters",
@@ -890,16 +1029,19 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
   },
 
   "veryfront/cli": {
-    ensureEnvLoaded: "Load `.env` files and initialize environment config if not already done",
+    ensureEnvLoaded:
+      "Load `.env` files and initialize environment config if not already done",
     args: "Raw command-line arguments array",
     exitProcess: "Exit the process with the given code",
     getArgs: "Get command-line arguments (cross-runtime)",
     hasEnvLoaded: "Check whether `.env` files have already been loaded",
     loadEnv: "Load environment variables from `.env` files",
     markEnvLoaded: "Mark environment variables as loaded",
-    parseCliArgs: "Parse raw CLI arguments into a structured object with aliases",
+    parseCliArgs:
+      "Parse raw CLI arguments into a structured object with aliases",
     routeCommand: "Route and execute the appropriate CLI command",
-    supportsEnvFiles: "Check whether `.env` file loading is supported in the current runtime",
+    supportsEnvFiles:
+      "Check whether `.env` file loading is supported in the current runtime",
   },
 };
 
@@ -946,7 +1088,11 @@ function createSyntheticEntry(slug: string): ExportEntry {
   };
 }
 
-function createDeepImport(exportPath: string, filePath: string, parentSlug: string): DeepImport {
+function createDeepImport(
+  exportPath: string,
+  filePath: string,
+  parentSlug: string,
+): DeepImport {
   const slugPath = exportPath.replace("./", "");
   const subSlug = slugPath.slice(parentSlug.length + 1);
   return {
@@ -1069,7 +1215,9 @@ function parseBarrelJSDoc(content: string): BarrelJSDoc {
 
   finishExample();
 
-  const description = normalizePublicDocText(descLines.join(" ").replace(/\s+/g, " ").trim());
+  const description = normalizePublicDocText(
+    descLines.join(" ").replace(/\s+/g, " ").trim(),
+  );
   return { description, moduleName, examples };
 }
 
@@ -1122,14 +1270,18 @@ async function getDenoDoc(filePath: string): Promise<DocNode[]> {
 
 function normalizeDenoDoc(parsed: unknown): DocNode[] {
   if (Array.isArray(parsed)) {
-    return resolveDenoDocReferences((parsed as DocNode[]).filter(isPublicDocNode));
+    return resolveDenoDocReferences(
+      (parsed as DocNode[]).filter(isPublicDocNode),
+    );
   }
 
   const root = asRecord(parsed);
   if (!root) return [];
 
   if (Array.isArray(root.nodes)) {
-    return resolveDenoDocReferences((root.nodes as DocNode[]).filter(isPublicDocNode));
+    return resolveDenoDocReferences(
+      (root.nodes as DocNode[]).filter(isPublicDocNode),
+    );
   }
 
   const nodes = asRecord(root.nodes);
@@ -1189,7 +1341,9 @@ function normalizeDenoDocDeclaration(
     node.enumDef = def;
   } else if (kind === "reference") {
     const referenceDef = asRecord(declaration.reference_def);
-    node.referenceTarget = normalizeLocation(def.target ?? referenceDef?.target);
+    node.referenceTarget = normalizeLocation(
+      def.target ?? referenceDef?.target,
+    );
   }
 
   return node;
@@ -1271,7 +1425,9 @@ function normalizeLocation(value: unknown): DenoDocLocation | undefined {
   };
 }
 
-function locationKey(location: DenoDocLocation | undefined): string | undefined {
+function locationKey(
+  location: DenoDocLocation | undefined,
+): string | undefined {
   if (
     !location?.filename ||
     typeof location.line !== "number" ||
@@ -1436,7 +1592,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 // 4. Categorize doc nodes with source-owned descriptions
 // ---------------------------------------------------------------------------
 
-function categorizeNodes(nodes: DocNode[], importPath: string): CategorizedExports {
+function categorizeNodes(
+  nodes: DocNode[],
+  importPath: string,
+): CategorizedExports {
   const result: CategorizedExports = {
     functions: [],
     types: [],
@@ -1501,7 +1660,9 @@ function getSourceHref(location: DenoDocLocation | undefined): string {
   if (!relativePath) return "";
 
   const lineNumber = location?.line;
-  const line = typeof lineNumber === "number" && lineNumber > 0 ? `#L${lineNumber}` : "";
+  const line = typeof lineNumber === "number" && lineNumber > 0
+    ? `#L${lineNumber}`
+    : "";
   return `${SOURCE_BASE_URL}/${relativePath}${line}`;
 }
 
@@ -1590,7 +1751,11 @@ function renderType(t: TsType | undefined): string {
       return t.union.map((u) => {
         const rendered = renderType(u);
         // Wrap fn types in parens when inside a union
-        if (u.kind === "fnOrConstructor" || (u.kind === "parenthesized" && u.parenthesized?.kind === "fnOrConstructor")) {
+        if (
+          u.kind === "fnOrConstructor" ||
+          (u.kind === "parenthesized" &&
+            u.parenthesized?.kind === "fnOrConstructor")
+        ) {
           return `(${rendered})`;
         }
         return rendered;
@@ -1652,7 +1817,9 @@ function renderType(t: TsType | undefined): string {
 
     case "indexedAccess": {
       if (!t.indexedAccess) return t.repr || "unknown";
-      return `${renderType(t.indexedAccess.objType)}[${renderType(t.indexedAccess.indexType)}]`;
+      return `${renderType(t.indexedAccess.objType)}[${
+        renderType(t.indexedAccess.indexType)
+      }]`;
     }
 
     case "typeOperator": {
@@ -1710,8 +1877,10 @@ const API_DOCS: Record<string, APIDocs> = {
   },
   "veryfront/chat": {
     expandTypes: [
-      "UseChatOptions", "UseChatResult",
-      "UseAgentOptions", "UseAgentResult",
+      "UseChatOptions",
+      "UseChatResult",
+      "UseAgentOptions",
+      "UseAgentResult",
     ],
   },
   "veryfront/workflow": {
@@ -1720,7 +1889,12 @@ const API_DOCS: Record<string, APIDocs> = {
   },
   "veryfront/middleware": {
     methods: { MiddlewarePipeline: "Composable middleware chain" },
-    expandTypes: ["CorsOptions", "RateLimitOptions", "LoggerOptions", "TimeoutOptions"],
+    expandTypes: [
+      "CorsOptions",
+      "RateLimitOptions",
+      "LoggerOptions",
+      "TimeoutOptions",
+    ],
   },
   "veryfront/provider": {
     functions: {
@@ -1760,17 +1934,22 @@ const API_DOCS: Record<string, APIDocs> = {
 // 5b-i. Method descriptions and param descriptions for interface/class methods
 // ---------------------------------------------------------------------------
 
-const METHOD_DESCRIPTIONS: Record<string, Record<string, { desc: string; params?: Record<string, string> }>> = {
+const METHOD_DESCRIPTIONS: Record<
+  string,
+  Record<string, { desc: string; params?: Record<string, string> }>
+> = {
   Agent: {
     generate: {
-      desc: "Run the agent and return a complete response. Accepts a string or message array as input.",
+      desc:
+        "Run the agent and return a complete response. Accepts a string or message array as input.",
       params: {
         input: "Prompt string or message history",
         context: "Additional context passed to the agent",
       },
     },
     stream: {
-      desc: "Run the agent and stream the response. Returns a result with `.toDataStreamResponse()` for API routes.",
+      desc:
+        "Run the agent and stream the response. Returns a result with `.toDataStreamResponse()` for API routes.",
       params: {
         input: "Prompt string",
         messages: "Conversation message history",
@@ -1780,13 +1959,15 @@ const METHOD_DESCRIPTIONS: Record<string, Record<string, { desc: string; params?
       },
     },
     respond: {
-      desc: "Handle an incoming HTTP request and return a streaming `Response`. Reads messages from the request body.",
+      desc:
+        "Handle an incoming HTTP request and return a streaming `Response`. Reads messages from the request body.",
     },
     getMemory: {
       desc: "Get the agent's memory instance.",
     },
     getMemoryStats: {
-      desc: "Get memory usage statistics (message count, estimated tokens, type).",
+      desc:
+        "Get memory usage statistics (message count, estimated tokens, type).",
     },
     clearMemory: {
       desc: "Clear all stored messages from memory.",
@@ -1796,8 +1977,11 @@ const METHOD_DESCRIPTIONS: Record<string, Record<string, { desc: string; params?
   },
   Sandbox: {
     create: {
-      desc: "Create a new sandbox session. Claims a warm pod or creates a new one.",
-      params: { options: "Sandbox creation options (auth token + optional API URL)." },
+      desc:
+        "Create a new sandbox session. Claims a warm pod or creates a new one.",
+      params: {
+        options: "Sandbox creation options (auth token + optional API URL).",
+      },
     },
     get: {
       desc: "Reconnect to an existing sandbox session.",
@@ -1835,7 +2019,8 @@ const METHOD_DESCRIPTIONS: Record<string, Record<string, { desc: string; params?
       params: { middleware: "Middleware handler function" },
     },
     useFor: {
-      desc: "Add a middleware handler that only runs for matching URL patterns.",
+      desc:
+        "Add a middleware handler that only runs for matching URL patterns.",
       params: { pattern: "URL pattern to match", "": "Middleware handler" },
     },
     onTeardown: {
@@ -1866,7 +2051,7 @@ const METHOD_DESCRIPTIONS: Record<string, Record<string, { desc: string; params?
 const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
   AgentConfig: {
     id: "Unique identifier (auto-generated if omitted)",
-    model: "Provider and model (e.g. `\"openai/gpt-4o\"`)",
+    model: 'Provider and model (e.g. `"openai/gpt-4o"`)',
     system: "System prompt: string, function, or async function",
     tools: "Tools available to the agent",
     maxSteps: "Max tool-call iterations per request",
@@ -1875,11 +2060,14 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     middleware: "Execution middleware pipeline",
     edge: "Edge runtime configuration",
     multimodal: "Enable vision and/or audio",
-    allowedModels: 'Restrict runtime model overrides to these "provider/model" strings',
-    skills: "Enable all discovered skills (`true`) or only selected skill IDs (`string[]`)",
+    allowedModels:
+      'Restrict runtime model overrides to these "provider/model" strings',
+    skills:
+      "Enable all discovered skills (`true`) or only selected skill IDs (`string[]`)",
   },
   SandboxOptions: {
-    apiUrl: "Veryfront API base URL. Defaults to VERYFRONT_API_URL environment variable.",
+    apiUrl:
+      "Veryfront API base URL. Defaults to VERYFRONT_API_URL environment variable.",
     authToken: "JWT used for sandbox API authentication.",
   },
   ExecResult: {
@@ -1893,13 +2081,13 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     exitCode: "Exit code for `exit` events.",
   },
   MemoryConfig: {
-    type: "Memory strategy (`\"buffer\"`, `\"conversation\"`, `\"summary\"`)",
+    type: 'Memory strategy (`"buffer"`, `"conversation"`, `"summary"`)',
     maxMessages: "Max messages to retain",
     maxTokens: "Token budget for memory",
     persistence: "Storage backend for memory",
   },
   EdgeConfig: {
-    runtime: "Target runtime (`\"edge\"` or `\"nodejs\"`)",
+    runtime: 'Target runtime (`"edge"` or `"nodejs"`)',
     regions: "Deployment regions",
   },
   ToolConfig: {
@@ -1917,8 +2105,10 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     body: "Extra body fields sent with each request",
     credentials: "Fetch credentials mode",
     model: 'Override model at runtime (e.g. "openai/gpt-4o")',
-    systemPrompt: "System prompt for browser-side inference (server uses agent config)",
-    browserFallback: "Enable/disable browser fallback when server can't provide AI. Default: true",
+    systemPrompt:
+      "System prompt for browser-side inference (server uses agent config)",
+    browserFallback:
+      "Enable/disable browser fallback when server can't provide AI. Default: true",
     onError: "Error callback",
     onFinish: "Completion callback",
     onResponse: "Raw response callback",
@@ -1931,7 +2121,8 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
     model: "Current model override (undefined = use agent default)",
     setModel: "Change the model for subsequent requests",
     inferenceMode: "Where inference is currently happening",
-    browserStatus: "Browser-side model loading/inference status (null when not using browser fallback)",
+    browserStatus:
+      "Browser-side model loading/inference status (null when not using browser fallback)",
     handleInputChange: "Bind to input onChange",
     handleSubmit: "Submit current input",
     sendMessage: "Send a message programmatically",
@@ -1999,7 +2190,7 @@ const PROPERTY_DESCRIPTIONS: Record<string, Record<string, string>> = {
   ParallelOptions: {
     steps: "Steps to run concurrently",
     maxConcurrency: "Max parallel executions",
-    strategy: "Completion strategy (`\"all\"`, `\"race\"`, `\"allSettled\"`)",
+    strategy: 'Completion strategy (`"all"`, `"race"`, `"allSettled"`)',
     checkpoint: "Persist state after this node",
     retry: "Retry configuration",
     timeout: "Node timeout (ms or duration string)",
@@ -2078,7 +2269,11 @@ function findNode(nodes: DocNode[], name: string): DocNode | undefined {
   return nodes.find((n) => n.name === name);
 }
 
-function getPropertyDescription(typeName: string, propName: string, prop: InterfaceProperty): string {
+function getPropertyDescription(
+  typeName: string,
+  propName: string,
+  prop: InterfaceProperty,
+): string {
   // Prefer upstream JSDoc
   if (prop.jsDoc?.doc) return oneLineDoc(prop.jsDoc.doc);
   // Fall back to curated
@@ -2158,7 +2353,10 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
       // If configType is specified, expand that interface as a param table
       if (fnSpec.configType) {
         const configNode = findNode(nodes, fnSpec.configType);
-        if (configNode?.interfaceDef?.properties && configNode.interfaceDef.properties.length > 0) {
+        if (
+          configNode?.interfaceDef?.properties &&
+          configNode.interfaceDef.properties.length > 0
+        ) {
           lines.push(
             ...renderPropertyTable(
               fnSpec.configType,
@@ -2195,7 +2393,11 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
           }
 
           const paramNames = method.params.map((p) => p.name).join(", ");
-          lines.push(`### \`${typeName.charAt(0).toLowerCase() + typeName.slice(1)}.${method.name}(${paramNames})\``);
+          lines.push(
+            `### \`${
+              typeName.charAt(0).toLowerCase() + typeName.slice(1)
+            }.${method.name}(${paramNames})\``,
+          );
           lines.push("");
 
           // Method description: upstream JSDoc first, then curated fallback
@@ -2209,7 +2411,10 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 
           // If the param is a typed object literal, expand it
           const firstParam = method.params[0];
-          if (method.params.length === 1 && firstParam?.tsType?.kind === "typeLiteral") {
+          if (
+            method.params.length === 1 &&
+            firstParam?.tsType?.kind === "typeLiteral"
+          ) {
             const paramDescs = methodMeta[method.name]?.params ?? {};
             const props = firstParam.tsType.typeLiteral?.properties ?? [];
             if (props.length > 0) {
@@ -2218,7 +2423,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
                 optional: p.optional,
                 tsType: p.tsType,
                 // Prefer curated param description, then upstream JSDoc
-                jsDoc: paramDescs[p.name] ? { doc: paramDescs[p.name] } : p.jsDoc,
+                jsDoc: paramDescs[p.name]
+                  ? { doc: paramDescs[p.name] }
+                  : p.jsDoc,
                 location: p.location,
               }));
               lines.push(
@@ -2234,7 +2441,9 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 
           // Return type
           if (method.returnType) {
-            lines.push(`**Returns:** ${mdxType(renderType(method.returnType))}`);
+            lines.push(
+              `**Returns:** ${mdxType(renderType(method.returnType))}`,
+            );
             lines.push("");
           }
         }
@@ -2255,9 +2464,11 @@ function generateAPISection(nodes: DocNode[], importPath: string): string[] {
 
           const fd = method.functionDef;
           const paramNames = fd.params.map((p) => p.name).join(", ");
-          const instanceName = typeName.charAt(0).toLowerCase() + typeName.slice(1);
+          const instanceName = typeName.charAt(0).toLowerCase() +
+            typeName.slice(1);
           const callTarget = method.isStatic ? typeName : instanceName;
-          const isAccessor = method.kind === "getter" || method.kind === "setter";
+          const isAccessor = method.kind === "getter" ||
+            method.kind === "setter";
           const signature = isAccessor
             ? `${callTarget}.${method.name}`
             : `${callTarget}.${method.name}(${paramNames})`;
@@ -2313,7 +2524,9 @@ function generateTypeReference(nodes: DocNode[], importPath: string): string[] {
     if (node?.interfaceDef?.properties) {
       properties = node.interfaceDef.properties;
     } else if (node?.typeAliasDef?.tsType?.kind === "typeLiteral") {
-      properties = node.typeAliasDef.tsType.typeLiteral?.properties?.map((p) => ({
+      properties = node.typeAliasDef.tsType.typeLiteral?.properties?.map((
+        p,
+      ) => ({
         name: p.name,
         optional: p.optional,
         tsType: p.tsType,
@@ -2481,7 +2694,9 @@ function generateMD(
     lines.push("");
     lines.push("```ts");
     if (importNames.length <= 3) {
-      lines.push(`import { ${importNames.join(", ")} } from "${entry.importPath}";`);
+      lines.push(
+        `import { ${importNames.join(", ")} } from "${entry.importPath}";`,
+      );
     } else {
       lines.push(`import {`);
       for (const name of importNames) {
@@ -2570,7 +2785,9 @@ function generateMD(
       lines.push("```ts");
       const sample = pickDeepImportSample(di.exports);
       if (sample.length > 0) {
-        lines.push(`import { ${sample.join(", ")} } from "${di.deep.importPath}";`);
+        lines.push(
+          `import { ${sample.join(", ")} } from "${di.deep.importPath}";`,
+        );
       } else {
         lines.push(`import "${di.deep.importPath}";`);
       }
@@ -2591,7 +2808,11 @@ function generateMD(
         lines.push("| Name | Description | Source |");
         lines.push("|------|-------------|--------|");
         for (const item of items) {
-          lines.push(`| \`${item.name}\` | ${item.description || ""} | ${sourceCell(item)} |`);
+          lines.push(
+            `| \`${item.name}\` | ${item.description || ""} | ${
+              sourceCell(item)
+            } |`,
+          );
         }
         lines.push("");
       }
@@ -2601,8 +2822,7 @@ function generateMD(
   // Related: reference modules and public user guides.
   const related = RELATED_MODULES[entry.importPath];
   const relatedGuides = RELATED_GUIDES[entry.importPath];
-  const hasAnyRelated =
-    (related && related.length > 0) ||
+  const hasAnyRelated = (related && related.length > 0) ||
     (relatedGuides && relatedGuides.length > 0);
 
   if (hasAnyRelated) {
@@ -2613,7 +2833,9 @@ function generateMD(
       lines.push("Reference modules:");
       lines.push("");
       for (const r of related) {
-        const displayName = r.path === "root" ? "veryfront" : `veryfront/${r.path}`;
+        const displayName = r.path === "root"
+          ? "veryfront"
+          : `veryfront/${r.path}`;
         const target = r.path === "root" ? "index" : r.path;
         lines.push(`- [\`${displayName}\`](./${target}.md): ${r.reason}`);
       }
@@ -2628,7 +2850,6 @@ function generateMD(
       }
       lines.push("");
     }
-
   }
 
   return lines.join("\n");
@@ -2649,7 +2870,11 @@ function sourceCell(summary: ExportSummary): string {
 }
 
 function relatedGuideHref(slug: string): string {
-  const section = GETTING_STARTED_GUIDES.has(slug) ? "getting-started" : "guides";
+  const section = GETTING_STARTED_GUIDES.has(slug)
+    ? "getting-started"
+    : CONCEPT_DOCS.has(slug)
+    ? "concepts"
+    : "guides";
   return `../../${section}/${slug}.md`;
 }
 
@@ -2664,7 +2889,9 @@ function generateReadmeMD(
 
   lines.push("---");
   lines.push('title: "API reference"');
-  lines.push('description: "Exact imports, exported names, types, and module-level examples for Veryfront Code."');
+  lines.push(
+    'description: "Exact imports, exported names, types, and module-level examples for Veryfront Code."',
+  );
   lines.push("order: 1");
   lines.push("---");
   lines.push("");
@@ -2680,9 +2907,11 @@ function generateReadmeMD(
     "Start with the module you import from. Each module page shows the recommended import form, examples, exported symbols, and related guides.",
   );
   lines.push("");
-  lines.push("For task-based help, use the Getting Started and Guides sections first. Use API Reference when you already know which module or symbol you need.");
+  lines.push(
+    "For task-based help, use the Getting Started and Guides sections first. Use API Reference when you already know which module or symbol you need.",
+  );
   lines.push("");
-  lines.push("## Module index");
+  lines.push("## Contents");
   lines.push("");
   lines.push("| Import | Description |");
   lines.push("|--------|-------------|");
@@ -2690,13 +2919,19 @@ function generateReadmeMD(
     const desc = entry.isSynthetic
       ? (entry.syntheticDescription ?? "")
       : (jsdoc.description || "");
-    lines.push(`| [\`${entry.importPath}\`](./veryfront/${entry.slug}.md) | ${normalizePublicDocText(desc)} |`);
+    lines.push(
+      `| [\`${entry.importPath}\`](./veryfront/${entry.slug}.md) | ${
+        normalizePublicDocText(desc)
+      } |`,
+    );
   }
   lines.push("");
   return lines.join("\n");
 }
 
-async function removeStaleReferencePages(expectedSlugs: Set<string>): Promise<void> {
+async function removeStaleReferencePages(
+  expectedSlugs: Set<string>,
+): Promise<void> {
   const staleFiles: string[] = [];
 
   try {
@@ -2742,7 +2977,9 @@ async function main() {
   for (const [idx, group] of groups.entries()) {
     const entry = group.parent;
     console.log(
-      `Processing ${entry.importPath}${entry.isSynthetic ? " (synthetic)" : ` (${entry.filePath})`}...`,
+      `Processing ${entry.importPath}${
+        entry.isSynthetic ? " (synthetic)" : ` (${entry.filePath})`
+      }...`,
     );
 
     let jsdoc: BarrelJSDoc;
@@ -2794,17 +3031,24 @@ async function main() {
     }
 
     const order = idx + 1;
-    const md = normalizeGeneratedMarkdown(generateMD(entry, jsdoc, exports, nodes, order, deepRenders));
+    const md = normalizeGeneratedMarkdown(
+      generateMD(entry, jsdoc, exports, nodes, order, deepRenders),
+    );
     const outPath = `${VERYFRONT_DIR}/${entry.slug}.md`;
     await Deno.writeTextFile(outPath, md);
     console.log(`  Wrote ${outPath}`);
   }
 
-  // Write the structure README at the docs/api-reference root.
-  const readmeMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
-  const readmePath = `${OUTPUT_DIR}/README.md`;
-  await Deno.writeTextFile(readmePath, readmeMD);
-  console.log(`\nWrote ${readmePath}`);
+  // Write the public overview at the docs/api-reference root.
+  const indexMD = normalizeGeneratedMarkdown(generateReadmeMD(indexData));
+  const indexPath = `${OUTPUT_DIR}/index.md`;
+  await Deno.writeTextFile(indexPath, indexMD);
+  try {
+    await Deno.remove(`${OUTPUT_DIR}/README.md`);
+  } catch (err) {
+    if (!(err instanceof Deno.errors.NotFound)) throw err;
+  }
+  console.log(`\nWrote ${indexPath}`);
   console.log(`Generated ${groups.length} MD files in ${VERYFRONT_DIR}`);
   console.log(
     `Source JSDoc coverage: ${sourceDocStats.documented}/${sourceDocStats.total} public declarations documented (${sourceDocStats.missing} missing).`,

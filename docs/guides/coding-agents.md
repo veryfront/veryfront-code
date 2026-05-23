@@ -10,7 +10,7 @@ This is the CLI's built-in MCP server. It is separate from the application-facin
 
 ## Prerequisites
 
-- A Veryfront project (see [Create a project](../getting-started/create-a-project.md)).
+- A Veryfront project (see [Create project](../getting-started/create-project.md)).
 - An MCP-aware coding agent such as Claude Code, Cursor, or any client that
   speaks Model Context Protocol over HTTP or stdio.
 
@@ -137,7 +137,7 @@ deno run -A cli/main.ts mcp
 
 - [MCP server](./mcp-server.md): expose _your_ app's tools, prompts, and resources to MCP clients
 - [Skills](./skills.md): give agents project-level instructions as `SKILL.md` files
-- [Create a project](../getting-started/create-a-project.md): scaffold a project the agent can drive
+- [Create project](../getting-started/create-project.md): scaffold a project the agent can drive
 
 ## Related
 

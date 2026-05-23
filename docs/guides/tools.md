@@ -8,7 +8,7 @@ A tool is a typed function an agent can call. It declares input, describes when 
 
 ## Prerequisites
 
-- A Veryfront project running locally (see [Create a project](../getting-started/create-a-project.md)).
+- A Veryfront project running locally (see [Create project](../getting-started/create-project.md)).
 - An agent that will call the tool, or an API route that invokes the tool
   directly (see [Agents](./agents.md) and [API routes](./api-routes.md)).
 - `zod` is available in the project (it is bundled with `veryfront`).
