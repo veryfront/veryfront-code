@@ -245,7 +245,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "concepts/index.md": {
     references: [],
     snippets: [
-      "Concepts explain why Veryfront Code is shaped",
+      "How Veryfront framework primitives",
+      "Use this section when you need context",
       "Framework primitives",
       "Project conventions",
       "Agent memory",
