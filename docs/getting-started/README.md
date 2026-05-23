@@ -20,7 +20,7 @@ the same order as the public docs navigation.
 
 ## Related
 
-- [`docs/concepts/veryfront-code.md`](../concepts/veryfront-code.md) for the
+- [`docs/concepts/framework-overview.md`](../concepts/framework-overview.md) for the
   framework overview and documentation map.
 - [`docs/guides/`](../guides/) for task guides and decision guides.
 - [`docs/api-reference/`](../api-reference/) for generated API reference.

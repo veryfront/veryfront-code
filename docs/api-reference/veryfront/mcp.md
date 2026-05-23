@@ -1,7 +1,7 @@
 ---
 title: "veryfront/mcp"
 description: "MCP server exposing tools, prompts, and resources."
-order: 16
+order: 15
 ---
 
 MCP server exposing tools, prompts, and resources.

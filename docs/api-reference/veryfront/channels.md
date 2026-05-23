@@ -1,7 +1,7 @@
 ---
 title: "veryfront/channels"
 description: "Channel transports for the Veryfront control plane and AG-UI invoke route."
-order: 30
+order: 3
 ---
 
 Channel transports for the Veryfront control plane and AG-UI invoke route.

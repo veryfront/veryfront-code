@@ -9,13 +9,19 @@ interface GuideContract {
 const PUBLIC_DOC_DIRS = ["getting-started", "guides", "concepts"] as const;
 const CONCEPT_FILES = new Set<string>([
   "concepts/index.md",
-  "concepts/veryfront-code.md",
+  "concepts/framework-overview.md",
   "concepts/framework-primitives.md",
-  "concepts/project-conventions.md",
-  "concepts/agent-memory.md",
-  "concepts/job-execution-model.md",
-  "concepts/integration-runtime.md",
-  "concepts/extension-system.md",
+  "concepts/framework-conventions.md",
+  "concepts/agent.md",
+  "concepts/tool.md",
+  "concepts/workflow.md",
+  "concepts/task.md",
+  "concepts/job.md",
+  "concepts/cron-job.md",
+  "concepts/integration.md",
+  "concepts/mcp-server.md",
+  "concepts/sandbox.md",
+  "concepts/framework-extensions.md",
 ]);
 
 async function listPublishedGuideFiles(): Promise<string[]> {
@@ -221,7 +227,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "React",
     ],
   },
-  "concepts/veryfront-code.md": {
+  "concepts/framework-overview.md": {
     references: [],
     snippets: [
       "Agents",
@@ -248,11 +254,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "How Veryfront framework primitives",
       "Use this section when you need context",
       "Framework primitives",
-      "Project conventions",
-      "Agent memory",
-      "Job execution model",
-      "Integration runtime",
-      "Extension system",
+      "Framework conventions",
+      "Framework extensions",
     ],
   },
   "concepts/framework-primitives.md": {
@@ -266,10 +269,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Workflow",
       "Task",
       "Job",
+      "Cron job",
+      "MCP server",
       "Ownership boundaries",
     ],
   },
-  "concepts/project-conventions.md": {
+  "concepts/framework-conventions.md": {
     references: [
       "../guides/project-structure.md",
       "../api-reference/veryfront/index.md",
@@ -281,40 +286,70 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "tools/",
     ],
   },
-  "concepts/agent-memory.md": {
+  "concepts/agent.md": {
     references: [
-      "../guides/memory-and-streaming.md",
+      "../guides/agents.md",
       "../api-reference/veryfront/agent.md",
-      "../api-reference/veryfront/chat.md",
     ],
-    snippets: ["State boundaries", "Memory strategies", "Streaming transport"],
+    snippets: ["model reasoning", "tools", "AG-UI"],
   },
-  "concepts/job-execution-model.md": {
+  "concepts/tool.md": {
     references: [
-      "../guides/jobs.md",
+      "../guides/tools.md",
+      "../api-reference/veryfront/tool.md",
+    ],
+    snippets: ["callable capability", "input", "output"],
+  },
+  "concepts/workflow.md": {
+    references: [
+      "../guides/workflows.md",
+      "../api-reference/veryfront/workflow.md",
+    ],
+    snippets: ["multi-step coordination", "durable state", "steps"],
+  },
+  "concepts/task.md": {
+    references: [
       "../guides/tasks.md",
       "../api-reference/veryfront/jobs.md",
     ],
-    snippets: [
-      "Execution identities",
-      "Events and logs",
-      "Workflow run",
-      "Job run",
-    ],
+    snippets: ["background work", "target", "job"],
   },
-  "concepts/integration-runtime.md": {
+  "concepts/job.md": {
+    references: [
+      "../guides/jobs.md",
+      "../api-reference/veryfront/jobs.md",
+    ],
+    snippets: ["durable execution", "status", "events"],
+  },
+  "concepts/cron-job.md": {
+    references: [
+      "../guides/jobs.md",
+      "../api-reference/veryfront/jobs.md",
+    ],
+    snippets: ["schedule", "job runs", "trigger"],
+  },
+  "concepts/integration.md": {
     references: [
       "../guides/integrations.md",
-      "../guides/oauth.md",
       "../api-reference/veryfront/integrations.md",
     ],
-    snippets: [
-      "Runtime flow",
-      "Project and per-user authorization",
-      "Connector catalog",
-    ],
+    snippets: ["connector metadata", "auth", "remote tool"],
   },
-  "concepts/extension-system.md": {
+  "concepts/mcp-server.md": {
+    references: [
+      "../guides/mcp-server.md",
+      "../api-reference/veryfront/mcp.md",
+    ],
+    snippets: ["assistant-facing", "tools", "prompts"],
+  },
+  "concepts/sandbox.md": {
+    references: [
+      "../guides/sandbox.md",
+      "../api-reference/veryfront/sandbox.md",
+    ],
+    snippets: ["isolated command", "file execution", "host process"],
+  },
+  "concepts/framework-extensions.md": {
     references: [
       "../guides/extensions.md",
       "../guides/extension-authoring.md",

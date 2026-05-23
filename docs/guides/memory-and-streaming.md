@@ -9,8 +9,7 @@ sends, and nothing else. Configure `memory` on the agent to persist history
 across requests, and use `createAgUiHandler` to stream the response back.
 
 Memory configuration is independent of model selection, so these examples omit
-`model` and follow the runtime default. For the boundary between client state,
-server memory, and storage, see [Agent memory](../concepts/agent-memory.md).
+`model` and follow the runtime default.
 
 ## Prerequisites
 

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/integrations"
 description: "Integration metadata and SVG icons for all connectors."
-order: 23
+order: 12
 ---
 
 Integration metadata and SVG icons for all connectors.

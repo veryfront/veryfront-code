@@ -1,7 +1,7 @@
 ---
 title: "veryfront/agent"
 description: "AI agents with memory, tools, and multi-agent composition."
-order: 9
+order: 2
 ---
 
 AI agents with memory, tools, and multi-agent composition.

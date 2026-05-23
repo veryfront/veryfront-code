@@ -799,6 +799,39 @@ const SYNTHETIC_PARENTS: Record<string, { description: string }> = {
   },
 };
 
+const API_REFERENCE_INDEX_DESCRIPTIONS: Record<string, string> = {
+  "veryfront": "Core app config and routing.",
+  "veryfront/agent": "Agents, AG-UI handlers, and memory.",
+  "veryfront/channels": "Control-plane and invoke transports.",
+  "veryfront/chat": "Chat components and hooks.",
+  "veryfront/cli": "CLI runtime helpers.",
+  "veryfront/context": "Page context.",
+  "veryfront/embedding": "Embedding and retrieval helpers.",
+  "veryfront/extensions": "Extension contracts and loader helpers.",
+  "veryfront/fonts": "Font components.",
+  "veryfront/fs": "Filesystem and path utilities.",
+  "veryfront/head": "Document metadata components.",
+  "veryfront/integrations": "Connector metadata and remote tools.",
+  "veryfront/jobs": "Jobs, cron jobs, and background runs.",
+  "veryfront/markdown": "Markdown rendering.",
+  "veryfront/mcp": "MCP server helpers.",
+  "veryfront/mdx": "MDX component overrides.",
+  "veryfront/middleware": "HTTP middleware.",
+  "veryfront/oauth": "OAuth provider helpers.",
+  "veryfront/observability": "Tracing, metrics, errors, and logs.",
+  "veryfront/prompt": "MCP prompt definitions.",
+  "veryfront/provider": "Model provider registry.",
+  "veryfront/resource": "MCP resource definitions.",
+  "veryfront/router": "Client navigation and route context.",
+  "veryfront/sandbox": "Isolated execution.",
+  "veryfront/schemas": "Validation schemas.",
+  "veryfront/server": "Server runtime helpers.",
+  "veryfront/testing": "Test utilities.",
+  "veryfront/tool": "Tool definitions and execution.",
+  "veryfront/utils": "Runtime utilities.",
+  "veryfront/workflow": "Workflows.",
+};
+
 function isTopLevelExportPath(path: string): boolean {
   return path.split("/").length <= 2;
 }
@@ -883,7 +916,10 @@ function getModuleGroups(): ModuleGroup[] {
     group.deepImports.sort((a, b) => a.importPath.localeCompare(b.importPath));
   }
 
-  return order.map((slug) => groups.get(slug)!).filter(Boolean);
+  return order
+    .map((slug) => groups.get(slug)!)
+    .filter(Boolean)
+    .sort((a, b) => a.parent.importPath.localeCompare(b.parent.importPath));
 }
 
 // ---------------------------------------------------------------------------
@@ -2592,30 +2628,18 @@ function generateReadmeMD(
   lines.push("order: 1");
   lines.push("---");
   lines.push("");
-  lines.push("# Framework API reference");
-  lines.push("");
-  lines.push(
-    "Use this reference when you need exact imports, exported names, types, and module-level examples for `veryfront`.",
-  );
-  lines.push("");
-  lines.push("## How to use this reference");
-  lines.push("");
-  lines.push(
-    "Start with the module you import from. Each module page shows the recommended import form, examples, exported symbols, and related guides.",
-  );
-  lines.push("");
-  lines.push(
-    "For task-based help, use the Getting Started and Guides sections first. Use API Reference when you already know which module or symbol you need.",
-  );
-  lines.push("");
   lines.push("## Contents");
   lines.push("");
   lines.push("| Import | Description |");
   lines.push("|--------|-------------|");
-  for (const { entry, jsdoc } of entries) {
-    const desc = entry.isSynthetic
-      ? (entry.syntheticDescription ?? "")
-      : (jsdoc.description || "");
+  const sortedEntries = [...entries].sort((a, b) =>
+    a.entry.importPath.localeCompare(b.entry.importPath)
+  );
+  for (const { entry, jsdoc } of sortedEntries) {
+    const desc = API_REFERENCE_INDEX_DESCRIPTIONS[entry.importPath] ??
+      (entry.isSynthetic
+        ? (entry.syntheticDescription ?? "")
+        : (jsdoc.description || ""));
     lines.push(
       `| [\`${entry.importPath}\`](./veryfront/${entry.slug}.md) | ${
         normalizePublicDocText(desc)

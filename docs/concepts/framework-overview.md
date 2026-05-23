@@ -1,6 +1,6 @@
 ---
-title: "Veryfront Code"
-description: "What Veryfront Code is and which framework primitives it provides."
+title: "Framework overview"
+description: "How Veryfront Code combines app surfaces, AI primitives, runtime services, and extensions."
 order: 1
 ---
 

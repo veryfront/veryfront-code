@@ -1,7 +1,7 @@
 ---
 title: "veryfront/markdown"
 description: "Markdown rendering with syntax highlighting and diagrams."
-order: 7
+order: 14
 ---
 
 Markdown rendering with syntax highlighting and diagrams.

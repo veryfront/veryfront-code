@@ -1,7 +1,7 @@
 ---
 title: "veryfront/server"
 description: "Server runtime APIs. Creates and runs a Veryfront server in tests, custom runtimes, and production adapters."
-order: 29
+order: 26
 ---
 
 Server runtime APIs. Creates and runs a Veryfront server in tests, custom runtimes, and production adapters.
@@ -52,7 +52,7 @@ await server.fetch(new Request("https://example.com/health"));
 | `createVeryfrontServer` | Create veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L149) |
 | `startDevServer` | Starts dev server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/index.ts#L15) |
 | `startNodeVeryfrontServer` | Starts node veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L559) |
-| `startProductionServer` | Starts production server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L167) |
+| `startProductionServer` | Starts production server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L163) |
 | `startServer` | Start a Veryfront server in development or production mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L328) |
 | `startVeryfrontServer` | Starts veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L539) |
 | `toNodeHandler` | Convert a Web API request handler into a Node.js HTTP listener. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/node-handler.ts#L4) |
@@ -71,15 +71,15 @@ await server.fetch(new Request("https://example.com/health"));
 | `BuildStats` | Public API contract for build stats. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/build-types.ts#L28) |
 | `CreateVeryfrontServerOptions` | Options accepted by create veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L28) |
 | `DevServerOptions` | Options accepted by dev server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L2) |
-| `DiscoveryOptions` | Configuration for AI primitives discovery during server startup | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L118) |
+| `DiscoveryOptions` | Configuration for AI primitives discovery during server startup | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L114) |
 | `FileWatcherMetrics` | Public API contract for file watcher metrics. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L33) |
 | `NodeVeryfrontServiceServer` | Public API contract for node veryfront service server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L75) |
 | `RouteDirectory` | Public API contract for route directory. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/dev-server/types.ts#L27) |
-| `ServerHandle` | Public API contract for server handle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L153) |
+| `ServerHandle` | Public API contract for server handle. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L149) |
 | `StartDevModeOptions` | Options accepted by start dev mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L101) |
 | `StartNodeVeryfrontServerOptions` | Options accepted by start node veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L43) |
 | `StartProductionModeOptions` | Options accepted by start production mode. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L110) |
-| `StartProductionServerOptions` | Options accepted by start production server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L159) |
+| `StartProductionServerOptions` | Options accepted by start production server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/production-server.ts#L155) |
 | `StartServerOptions` | Server options. Defaults to development mode with HMR. Set `mode: "production"` for a production server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L126) |
 | `StartVeryfrontServerOptions` | Options accepted by start veryfront server. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/service-server.ts#L53) |
 | `VeryfrontHandler` | Web API request handler with WebSocket upgrade and HMR helpers. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/server/index.ts#L141) |

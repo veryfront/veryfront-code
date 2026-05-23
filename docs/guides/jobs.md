@@ -13,9 +13,6 @@ Veryfront jobs run durable, project-scoped background work on the platform. Crea
 - **logs** are raw debugging output.
 - A **batch** groups related jobs together.
 
-For the conceptual split between tasks, jobs, cron jobs, workflow runs,
-events, and logs, see [Job execution model](../concepts/job-execution-model.md).
-
 ## Prerequisites
 
 - A Veryfront Cloud project and a `VERYFRONT_API_TOKEN`. Set

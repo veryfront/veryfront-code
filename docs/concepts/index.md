@@ -10,12 +10,18 @@ framework boundaries are not clear.
 
 ## Contents
 
-| Concept                                           | Explains                                                        |
-| ------------------------------------------------- | --------------------------------------------------------------- |
-| [Veryfront Code](./veryfront-code.md)             | The framework model and its main surfaces.                      |
-| [Framework primitives](./framework-primitives.md) | Agents, tools, workflows, jobs, integrations, MCP, and sandbox. |
-| [Project conventions](./project-conventions.md)   | Routing, auto-discovery, shared code, content, and config.      |
-| [Agent memory](./agent-memory.md)                 | Client state, server memory, streaming, and storage boundaries. |
-| [Job execution model](./job-execution-model.md)   | Tasks, jobs, cron jobs, workflow runs, events, and logs.        |
-| [Integration runtime](./integration-runtime.md)   | Connector config, OAuth, token state, and remote tools.         |
-| [Extension system](./extension-system.md)         | Factories, contracts, capabilities, setup, and teardown.        |
+| Concept                                             | Explains                                                        |
+| --------------------------------------------------- | --------------------------------------------------------------- |
+| [Framework overview](./framework-overview.md)       | The framework model and its main surfaces.                      |
+| [Framework primitives](./framework-primitives.md)   | Agents, tools, workflows, jobs, integrations, MCP, and sandbox. |
+| [Agent](./agent.md)                                 | Model reasoning and streamed output.                            |
+| [Tool](./tool.md)                                   | One callable capability.                                        |
+| [Workflow](./workflow.md)                           | Multi-step coordination.                                        |
+| [Task](./task.md)                                   | Background work definition.                                     |
+| [Job](./job.md)                                     | Durable background execution.                                   |
+| [Cron job](./cron-job.md)                           | Scheduled job creation.                                         |
+| [Integration](./integration.md)                     | External service capabilities.                                  |
+| [MCP server](./mcp-server.md)                       | Assistant-facing protocol surface.                              |
+| [Sandbox](./sandbox.md)                             | Isolated command and file execution.                            |
+| [Framework conventions](./framework-conventions.md) | Routing, auto-discovery, shared code, content, and config.      |
+| [Framework extensions](./framework-extensions.md)   | Factories, contracts, capabilities, setup, and teardown.        |

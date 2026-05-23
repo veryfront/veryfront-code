@@ -1,7 +1,7 @@
 ---
 title: "veryfront/workflow"
 description: "DAG-based agentic workflows with human-in-the-loop support."
-order: 11
+order: 30
 ---
 
 DAG-based agentic workflows with human-in-the-loop support.

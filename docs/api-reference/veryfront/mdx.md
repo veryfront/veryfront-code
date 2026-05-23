@@ -1,7 +1,7 @@
 ---
 title: "veryfront/mdx"
 description: "Component overrides for `.mdx` page rendering."
-order: 8
+order: 16
 ---
 
 Component overrides for `.mdx` page rendering.
