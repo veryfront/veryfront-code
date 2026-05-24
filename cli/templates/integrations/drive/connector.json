@@ -206,6 +206,68 @@
           }
         }
       }
+    },
+    {
+      "id": "update_file",
+      "name": "Update File",
+      "description": "Rename a file, update its description, or move it to a different folder in Google Drive",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://www.googleapis.com/drive/v3/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Drive file ID to update",
+            "required": true
+          },
+          "addParents": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated parent folder IDs to add (use with removeParents to move)"
+          },
+          "removeParents": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated parent folder IDs to remove (use with addParents to move)"
+          },
+          "fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Partial response field selector",
+            "default": "id, name, mimeType, webViewLink, modifiedTime, parents"
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "New file name"
+          },
+          "description": {
+            "type": "string",
+            "description": "New file description"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_file",
+      "name": "Delete File",
+      "description": "Permanently delete a file or folder from Google Drive",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://www.googleapis.com/drive/v3/files/{fileId}",
+        "params": {
+          "fileId": {
+            "type": "string",
+            "in": "path",
+            "description": "Google Drive file ID to delete",
+            "required": true
+          }
+        }
+      }
     }
   ],
   "prompts": [

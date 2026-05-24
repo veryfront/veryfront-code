@@ -86,6 +86,36 @@
         },
         "response": { "transform": "messages" }
       }
+    },
+    {
+      "id": "get_thread",
+      "name": "Get Thread",
+      "description": "Get all replies in a Slack message thread",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/conversations.replies",
+        "body": {
+          "channel": { "type": "string", "description": "Channel ID containing the thread", "required": true },
+          "ts": { "type": "string", "description": "Timestamp (ts) of the parent message", "required": true },
+          "limit": { "type": "number", "description": "Max replies (1-1000)", "default": 20 }
+        },
+        "response": { "transform": "messages" }
+      }
+    },
+    {
+      "id": "list_users",
+      "name": "List Users",
+      "description": "List members of the Slack workspace",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://slack.com/api/users.list",
+        "body": {
+          "limit": { "type": "number", "description": "Max users (1-1000)", "default": 100 }
+        },
+        "response": { "transform": "members" }
+      }
     }
   ],
   "prompts": [

@@ -361,6 +361,171 @@
           }
         }
       }
+    },
+    {
+      "id": "get_pr",
+      "name": "Get Pull Request",
+      "description": "Get details of a specific pull request (title, body, status, author, reviewers, labels)",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}",
+        "params": {
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          },
+          "pull_number": {
+            "type": "number",
+            "in": "path",
+            "description": "Pull request number",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_pr",
+      "name": "Create Pull Request",
+      "description": "Create a new pull request in a repository",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.github.com/repos/{owner}/{repo}/pulls",
+        "params": {
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          }
+        },
+        "body": {
+          "title": {
+            "type": "string",
+            "description": "PR title",
+            "required": true
+          },
+          "body": {
+            "type": "string",
+            "description": "PR description (markdown)"
+          },
+          "head": {
+            "type": "string",
+            "description": "Branch to merge from (e.g. feature-branch or owner:feature-branch)",
+            "required": true
+          },
+          "base": {
+            "type": "string",
+            "description": "Branch to merge into (e.g. main)",
+            "required": true
+          },
+          "draft": {
+            "type": "boolean",
+            "description": "Create as draft PR",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "merge_pr",
+      "name": "Merge Pull Request",
+      "description": "Merge an open pull request",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/merge",
+        "params": {
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          },
+          "pull_number": {
+            "type": "number",
+            "in": "path",
+            "description": "Pull request number to merge",
+            "required": true
+          }
+        },
+        "body": {
+          "commit_title": {
+            "type": "string",
+            "description": "Merge commit title"
+          },
+          "commit_message": {
+            "type": "string",
+            "description": "Merge commit message"
+          },
+          "merge_method": {
+            "type": "string",
+            "description": "Merge method: merge, squash, or rebase",
+            "default": "merge"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_commits",
+      "name": "List Commits",
+      "description": "List commits for a repository, branch, or file path",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.github.com/repos/{owner}/{repo}/commits",
+        "params": {
+          "owner": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository owner",
+            "required": true
+          },
+          "repo": {
+            "type": "string",
+            "in": "path",
+            "description": "Repository name",
+            "required": true
+          },
+          "sha": {
+            "type": "string",
+            "in": "query",
+            "description": "SHA or branch name to list commits from"
+          },
+          "path": {
+            "type": "string",
+            "in": "query",
+            "description": "Only include commits touching this file path"
+          },
+          "per_page": {
+            "type": "number",
+            "in": "query",
+            "description": "Results per page (max 100)",
+            "default": 30
+          }
+        }
+      }
     }
   ],
   "prompts": [

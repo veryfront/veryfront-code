@@ -77,6 +77,12 @@ export interface GitHubCommit {
   author: { login: string; avatar_url: string } | null;
 }
 
+export interface GitHubMergeResult {
+  sha: string;
+  merged: boolean;
+  message: string;
+}
+
 /**
  * GitHub OAuth provider configuration
  */
@@ -161,8 +167,29 @@ export function createGitHubClient(userId: string): {
   listCommits(
     owner: string,
     repo: string,
-    options?: { sha?: string; perPage?: number },
+    options?: { sha?: string; path?: string; perPage?: number },
   ): Promise<GitHubCommit[]>;
+  createPullRequest(
+    owner: string,
+    repo: string,
+    options: {
+      title: string;
+      body?: string;
+      head: string;
+      base: string;
+      draft?: boolean;
+    },
+  ): Promise<GitHubPullRequest>;
+  mergePullRequest(
+    owner: string,
+    repo: string,
+    pullNumber: number,
+    options?: {
+      commit_title?: string;
+      commit_message?: string;
+      merge_method?: "merge" | "squash" | "rebase";
+    },
+  ): Promise<GitHubMergeResult>;
   getUser(): Promise<{ login: string; name: string; email: string }>;
 } {
   async function getAccessToken(): Promise<string> {
@@ -306,10 +333,28 @@ export function createGitHubClient(userId: string): {
     listCommits(owner, repo, options = {}): Promise<GitHubCommit[]> {
       const params = new URLSearchParams();
       if (options.sha) params.set("sha", options.sha);
+      if (options.path) params.set("path", options.path);
       if (options.perPage) params.set("per_page", String(options.perPage));
 
       return apiRequest<GitHubCommit[]>(
         `/repos/${owner}/${repo}/commits${toQueryString(params)}`,
+      );
+    },
+
+    createPullRequest(owner, repo, options): Promise<GitHubPullRequest> {
+      return apiRequest<GitHubPullRequest>(`/repos/${owner}/${repo}/pulls`, {
+        method: "POST",
+        body: JSON.stringify(options),
+      });
+    },
+
+    mergePullRequest(owner, repo, pullNumber, options = {}): Promise<GitHubMergeResult> {
+      return apiRequest<GitHubMergeResult>(
+        `/repos/${owner}/${repo}/pulls/${pullNumber}/merge`,
+        {
+          method: "PUT",
+          body: JSON.stringify(options),
+        },
       );
     },
 
