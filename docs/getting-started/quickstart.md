@@ -1,6 +1,6 @@
 ---
 title: "Quickstart"
-description: "Scaffold, run, and test your first Veryfront agent app."
+description: "Build your first Veryfront agent app."
 order: -1
 ---
 
@@ -41,9 +41,10 @@ From the project directory, authenticate with Veryfront Cloud:
 veryfront login
 ```
 
-This lets the app use the Veryfront Cloud gateway. You can also set
-`VERYFRONT_API_TOKEN` directly. Direct provider keys such as `OPENAI_API_KEY`
-or `ANTHROPIC_API_KEY` also work; see [Providers](../guides/providers.md).
+This lets the app use the Veryfront Cloud gateway for model inference. You can
+also set `VERYFRONT_API_TOKEN` directly. Direct provider keys such as
+`OPENAI_API_KEY` or `ANTHROPIC_API_KEY` also work; see
+[Providers](../guides/providers.md).
 
 ## Run it locally
 

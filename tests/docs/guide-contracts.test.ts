@@ -580,9 +580,14 @@ describe("published guide contracts", () => {
       if (
         !CONCEPT_FILES.has(filename) &&
         filename !== "getting-started/index.md" &&
-        filename !== "guides/index.md"
+        filename !== "guides/index.md" &&
+        filename !== "getting-started/installation.md"
       ) {
         assertStringIncludes(guide, "## Verify it worked");
+      }
+
+      if (filename === "getting-started/installation.md") {
+        assertStringIncludes(guide, "## Verify the CLI");
       }
     });
   }
