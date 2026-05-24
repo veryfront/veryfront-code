@@ -9,7 +9,7 @@ clear and prevents overlapping agents, workflows, jobs, and integrations.
 
 ## Quick choice
 
-| If you need to...                                           | Use                    | Start with                                  |
+| Goal                                                        | Use                    | Start with                                  |
 | ----------------------------------------------------------- | ---------------------- | ------------------------------------------- |
 | Receive browser, HTTP, or webhook traffic                   | App route or API route | [Pages and routing](./pages-and-routing.md) |
 | Answer users with model reasoning, tools, memory, or skills | Agent                  | [Agents](./agents.md)                       |
@@ -27,7 +27,7 @@ clear and prevents overlapping agents, workflows, jobs, and integrations.
 
 ## Decision rules
 
-| Primitive   | Use this when                                                                 | Do not use this when                                                          |
+| Primitive   | Use for                                                                       | Do not use for                                                                |
 | ----------- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------- |
 | App route   | A browser, HTTP client, or webhook needs an entry point.                      | The work should outlive the request or be reused outside routing.             |
 | Agent       | The model must decide, explain, call tools, use memory, or stream a response. | The work is deterministic and can be a function, task, or workflow step.      |

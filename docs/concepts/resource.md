@@ -23,8 +23,8 @@ data that should be loaded by name.
 A resource is read. A tool is called. A prompt gives instructions. MCP servers
 can expose all three, but each has a different contract.
 
-This distinction matters because assistants should not need to call a mutating
-tool just to inspect context.
+This distinction matters because assistants should read context without calling
+a mutating tool.
 
 ## Wrong fit
 

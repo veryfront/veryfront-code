@@ -22,7 +22,7 @@ veryfront knowledge ingest uploads/contracts/a.pdf uploads/contracts/b.pdf uploa
 
 ## Prerequisites
 
-Authenticate with the CLI and make sure the target project is known:
+Authenticate with the CLI and set the target project:
 
 ```bash
 export VERYFRONT_API_TOKEN=<TOKEN>
@@ -191,8 +191,8 @@ deno run -A cli/main.ts knowledge ingest uploads/contracts/q1.pdf --json
 
 ### `Missing API token`
 
-Set `VERYFRONT_API_TOKEN`, run `veryfront login`, or make sure your local CLI
-config already has a saved token.
+Set `VERYFRONT_API_TOKEN`, run `veryfront login`, or use a local CLI config with
+a saved token.
 
 ### `Could not determine project slug`
 

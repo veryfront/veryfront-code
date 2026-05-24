@@ -177,14 +177,14 @@ await jobs.cron.trigger(cronJob.id);
 
 Use **Studio** when:
 
-- you are using a first-party flow that already creates jobs for you
-- you want to inspect status, events, batches, and retries visually
+- A first-party flow already creates jobs for you.
+- You want to inspect status, events, batches, and retries visually.
 
 Use the **SDK / API** when:
 
-- you need to create jobs directly
-- you need cron scheduling
-- you are building automation or agent-driven project operations
+- You create jobs directly.
+- You need cron scheduling.
+- You are building automation or agent-driven project operations.
 
 ## Verify it worked
 
