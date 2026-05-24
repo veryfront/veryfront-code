@@ -70,10 +70,11 @@ const sandbox = Sandbox.createLazy({
 });
 ```
 
-If you need to override the resolved credentials, pass `authToken`
-explicitly. This can be a JWT or a Studio-generated API key.
+To override the resolved credentials, pass `authToken` explicitly. This can be a
+JWT or a Studio-generated API key.
 
-If you need project-scoped billing or isolation, pass `projectId` when creating the session.
+For project-scoped billing or isolation, pass `projectId` when creating the
+session.
 
 ```ts
 const sandbox = await Sandbox.create({
