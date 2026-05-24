@@ -69,7 +69,6 @@ describe("integration endpoint specs", () => {
   it("adds static endpoint specs for the next configured integration providers", () => {
     const expectedEndpointCounts = new Map([
       ["hubspot", 5],
-      ["dropbox", 5],
       ["drive", 7],
       ["docs-google", 5],
       ["sheets", 16],
@@ -329,13 +328,6 @@ describe("integration endpoint specs", () => {
       hubspotCreateContact.endpoint?.body?.properties?.required,
       true,
     );
-
-    const dropboxListFiles = getTool("dropbox", "list_files");
-    assertEquals(
-      dropboxListFiles.endpoint?.url,
-      "https://api.dropboxapi.com/2/files/list_folder",
-    );
-    assertEquals(dropboxListFiles.endpoint?.body?.path?.default, "");
 
     const driveCreateFolder = getTool("drive", "create_folder");
     assertEquals(
