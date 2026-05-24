@@ -572,12 +572,13 @@ describe("Guide: installation.md", () => {
     for (
       const heading of [
         "## Requirements",
-        "## Install",
+        "## Blank or existing project",
+        "## New scaffolded project",
+        "## Install the CLI",
         "### macOS and Linux",
         "### Windows",
-        "### Existing project",
         "### npx (one-shot)",
-        "## Verify it worked",
+        "## Verify the CLI",
       ]
     ) {
       assertStringIncludes(guide, heading);

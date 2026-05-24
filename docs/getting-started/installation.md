@@ -1,65 +1,19 @@
 ---
 title: "Installation"
-description: "Install the Veryfront CLI and framework on macOS, Linux, or Windows."
+description: "Install Veryfront Code on macOS, Linux, or Windows."
 order: 2
 ---
 
 ## Requirements
 
 - macOS 12 or later, Linux x86_64 or arm64 (glibc), or Windows 10 or later.
-- Node.js 18.18 or later for `npm`, `npx`, and app builds.
-- Deno 1.45 or later, or Bun 1.1 or later, if you use those runtimes.
+- A JavaScript runtime: Node.js 18.18 or later, Deno 1.45 or later, or Bun
+  1.1 or later.
 - 1 GB of free disk space and 2 GB of RAM for local development.
 
-## Install
+## Blank or existing project
 
-Use a binary installer for a global CLI. Use a package manager when you already
-have an app. Use `npx` when you want to run the CLI once.
-
-<CodeGroup>
-
-```bash curl
-curl -fsSL https://veryfront.com/install.sh | sh
-```
-
-```powershell PowerShell
-irm https://veryfront.com/install.ps1 | iex
-```
-
-```bash Homebrew
-brew install veryfront/tap/veryfront
-```
-
-```bash npx
-npx veryfront
-```
-
-</CodeGroup>
-
-### macOS and Linux
-
-```bash
-curl -fsSL https://veryfront.com/install.sh | sh
-```
-
-This installs the latest standalone binary and adds it to your shell path.
-Homebrew installs the same binary:
-
-```bash
-brew install veryfront/tap/veryfront
-```
-
-### Windows
-
-```powershell
-irm https://veryfront.com/install.ps1 | iex
-```
-
-This installs the latest standalone binary and adds it to your user path.
-
-### Existing project
-
-Add Veryfront to an existing app when you do not want to scaffold a new project.
+Add Veryfront Code to an existing or blank Node.js, Deno, or Bun project.
 
 <CodeGroup>
 
@@ -85,6 +39,58 @@ deno add npm:veryfront
 
 </CodeGroup>
 
+## New scaffolded project
+
+Create a new Veryfront Code project when you want scaffolding and starter files.
+
+<CodeGroup>
+
+```bash npm
+npm create veryfront
+```
+
+```bash pnpm
+pnpm create veryfront
+```
+
+```bash yarn
+yarn create veryfront
+```
+
+```bash bun
+bun create veryfront
+```
+
+</CodeGroup>
+
+## Install the CLI
+
+Install the CLI globally when you use Veryfront commands often.
+
+### macOS and Linux
+
+Use the standalone installer:
+
+```bash
+curl -fsSL https://veryfront.com/install.sh | sh
+```
+
+This installs the latest standalone binary and adds it to your shell path.
+
+### Windows
+
+```powershell
+irm https://veryfront.com/install.ps1 | iex
+```
+
+This installs the latest standalone binary and adds it to your user path.
+
+### Homebrew
+
+```bash
+brew install veryfront/tap/veryfront
+```
+
 ### npx (one-shot)
 
 ```bash
@@ -93,7 +99,7 @@ npx veryfront
 
 Runs the latest `veryfront` CLI without installing it globally.
 
-## Verify it worked
+## Verify the CLI
 
 ```bash
 veryfront --version
