@@ -10,6 +10,7 @@
     "tokenUrl": "https://api.figma.com/v1/oauth/token",
     "scopes": [
       "file_content:read",
+      "file_comments:read",
       "file_comments:write"
     ],
     "callbackPath": "/api/auth/figma/callback",
@@ -38,6 +39,16 @@
     }
   ],
   "tools": [
+    {
+      "id": "get_me",
+      "name": "Get Me",
+      "description": "Get the authenticated user's Figma profile (id, email, handle). Use this to verify the connection and identify the user.",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.figma.com/v1/me"
+      }
+    },
     {
       "id": "list_files",
       "name": "List Files",
@@ -153,7 +164,7 @@
     {
       "id": "list_projects",
       "name": "List Projects",
-      "description": "List all projects in a team",
+      "description": "List all projects in a team. The teamId is the numeric ID found in the Figma URL: figma.com/files/team/{teamId}/...",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -162,7 +173,7 @@
           "teamId": {
             "type": "string",
             "in": "path",
-            "description": "Figma team ID",
+            "description": "Numeric Figma team ID from the URL: figma.com/files/team/{teamId}/...",
             "required": true
           }
         },

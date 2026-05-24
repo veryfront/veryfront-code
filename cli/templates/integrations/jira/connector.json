@@ -126,7 +126,7 @@
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
-        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search/jql",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search",
         "params": {
           "cloudId": {
             "type": "string",
@@ -146,10 +146,11 @@
             "description": "Maximum issues to return",
             "default": 50
           },
-          "nextPageToken": {
-            "type": "string",
+          "startAt": {
+            "type": "number",
             "in": "query",
-            "description": "Pagination token returned by Jira search/jql for the next page"
+            "description": "Pagination offset",
+            "default": 0
           },
           "fields": {
             "type": "array",
