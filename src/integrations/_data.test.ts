@@ -48,7 +48,7 @@ describe("integration endpoint specs", () => {
     const expectedEndpointCounts = new Map([
       ["airtable", 11],
       ["discord", 5],
-      ["figma", 5],
+      ["figma", 6],
       ["notion", 8],
     ]);
 
@@ -203,11 +203,11 @@ describe("integration endpoint specs", () => {
     assertEquals(jiraSearchIssues.endpoint?.method, "GET");
     assertEquals(
       jiraSearchIssues.endpoint?.url,
-      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search/jql",
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search",
     );
     assertEquals(jiraSearchIssues.endpoint?.params?.jql?.required, true);
-    assertEquals(jiraSearchIssues.endpoint?.params?.nextPageToken?.in, "query");
-    assertEquals(jiraSearchIssues.endpoint?.params?.startAt, undefined);
+    assertEquals(jiraSearchIssues.endpoint?.params?.startAt?.in, "query");
+    assertEquals(jiraSearchIssues.endpoint?.params?.nextPageToken, undefined);
     assertEquals(jiraSearchIssues.endpoint?.body, undefined);
 
     const jiraGetProject = getTool("jira", "get_project");
