@@ -38,6 +38,27 @@
   ],
   "tools": [
     {
+      "id": "list_calendars",
+      "name": "List Calendars",
+      "description": "List all calendars in the authenticated user's calendar list",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/calendar/v3/users/me/calendarList",
+        "params": {
+          "maxResults": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum calendars to return",
+            "default": 100
+          }
+        },
+        "response": {
+          "transform": "items"
+        }
+      }
+    },
+    {
       "id": "list_events",
       "name": "List Events",
       "description": "Get upcoming calendar events",

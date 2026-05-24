@@ -341,6 +341,45 @@
           }
         }
       }
+    },
+    {
+      "id": "transition_issue",
+      "name": "Transition Issue",
+      "description": "Move a Jira issue to a new workflow status. First call get_transitions to get valid transition IDs, then pass the ID here.",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/issue/{issueIdOrKey}/transitions",
+        "params": {
+          "cloudId": {
+            "type": "string",
+            "in": "path",
+            "description": "Atlassian cloud ID from OAuth accessible resources",
+            "required": true
+          },
+          "issueIdOrKey": {
+            "type": "string",
+            "in": "path",
+            "description": "Jira issue ID or key",
+            "required": true
+          }
+        },
+        "body": {
+          "transition": {
+            "type": "object",
+            "description": "Transition object with id field, e.g. {\"id\": \"21\"}",
+            "required": true
+          },
+          "fields": {
+            "type": "object",
+            "description": "Optional field updates to apply during the transition"
+          },
+          "comment": {
+            "type": "object",
+            "description": "Optional comment in Atlassian Document Format to add with the transition"
+          }
+        }
+      }
     }
   ],
   "prompts": [

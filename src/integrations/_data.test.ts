@@ -18,7 +18,7 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
-  it("adds endpoint specs for all 60 tools across the 5 targeted integrations", () => {
+  it("adds endpoint specs for all 67 tools across the 5 targeted integrations", () => {
     const targetedConnectors = [
       "calendar",
       "github",
@@ -41,7 +41,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 60);
+    assertEquals(totalEndpointTools, 67);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -70,7 +70,7 @@ describe("integration endpoint specs", () => {
     const expectedEndpointCounts = new Map([
       ["hubspot", 5],
       ["dropbox", 5],
-      ["drive", 5],
+      ["drive", 7],
       ["docs-google", 5],
       ["sheets", 16],
       ["onedrive", 4],
@@ -95,7 +95,7 @@ describe("integration endpoint specs", () => {
     const expectedEndpointCounts = new Map([
       ["asana", 10],
       ["gitlab", 10],
-      ["jira", 10],
+      ["jira", 11],
       ["confluence", 6],
       ["salesforce", 5],
       ["outlook", 5],
