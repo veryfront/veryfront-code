@@ -120,6 +120,134 @@ describe("agent/hosted-stream-finalization", () => {
     ]);
   });
 
+  it("fails empty hosted responses when a provider body read fails before output", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedResponse({
+      isAborted: false,
+      streamError: new Error("error reading a body from connection"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        persistedMessage: { id: "msg-1" },
+        finalizedMessage: { id: "msg-1", parts: [] },
+        fallbackChunks: ["chunk-1"],
+        hasIncompleteToolParts: false,
+        metadata: { modelId: "openai/gpt-5.4" },
+      }),
+      shouldFailEmptyMessage: () => true,
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "EMPTY_RESPONSE",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(
+          `dispatch:${state.status}:${state.terminalErrorCode}:${state.terminalErrorMessage}`,
+        );
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "flush",
+      "dispatch:failed:EMPTY_RESPONSE:error reading a body from connection",
+      "cleanup",
+    ]);
+  });
+
+  it("completes hosted responses with content when a late provider body read fails", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedResponse({
+      isAborted: false,
+      streamError: new Error("error reading a body from connection"),
+      getFinalStep: async () => ({ step: 1, finishReason: "stop" }),
+      buildState: async () => ({
+        persistedMessage: { id: "msg-1" },
+        finalizedMessage: { id: "msg-1", parts: ["text"] },
+        fallbackChunks: ["chunk-1"],
+        hasIncompleteToolParts: false,
+        metadata: { modelId: "openai/gpt-5.4" },
+      }),
+      shouldFailEmptyMessage: () => false,
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(`dispatch:${state.status}:${state.metadata?.modelId}`);
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "append:chunk-1",
+      "flush",
+      "dispatch:completed:openai/gpt-5.4",
+      "cleanup",
+    ]);
+  });
+
+  it("fails hosted responses with content when a body read fails without a final step finish reason", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedResponse({
+      isAborted: false,
+      streamError: new Error("error reading a body from connection"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        persistedMessage: { id: "msg-1" },
+        finalizedMessage: { id: "msg-1", parts: ["partial text"] },
+        fallbackChunks: [],
+        hasIncompleteToolParts: false,
+        metadata: { modelId: "openai/gpt-5.4" },
+      }),
+      shouldFailEmptyMessage: () => false,
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(
+          `dispatch:${state.status}:${state.terminalErrorCode}:${state.terminalErrorMessage}`,
+        );
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "flush",
+      "dispatch:failed:STREAM_ERROR:error reading a body from connection",
+      "cleanup",
+    ]);
+  });
+
   it("finalizes hosted detached streams through detached fallback state", async () => {
     const calls: string[] = [];
 
@@ -191,6 +319,82 @@ describe("agent/hosted-stream-finalization", () => {
       "append:tool-1",
       "flush",
       "dispatch:failed:STREAM_ERROR:insufficient credits",
+      "cleanup",
+    ]);
+  });
+
+  it("completes hosted detached streams with output when a late provider body read fails", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedDetached({
+      isAborted: false,
+      mirroredDurableOutput: true,
+      streamError: new Error("error reading a body from connection"),
+      getFinalStep: async () => ({ step: 1, finishReason: "stop" }),
+      buildState: async () => ({
+        hasContent: false,
+        fallbackChunks: [],
+        hasIncompleteToolParts: false,
+      }),
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(`dispatch:${state.status}`);
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, ["flush", "dispatch:completed", "cleanup"]);
+  });
+
+  it("fails hosted detached streams with output when a body read fails without a final step finish reason", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedDetached({
+      isAborted: false,
+      mirroredDurableOutput: true,
+      streamError: new Error("error reading a body from connection"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        hasContent: false,
+        fallbackChunks: [],
+        hasIncompleteToolParts: false,
+      }),
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(
+          `dispatch:${state.status}:${state.terminalErrorCode}:${state.terminalErrorMessage}`,
+        );
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "flush",
+      "dispatch:failed:STREAM_ERROR:error reading a body from connection",
       "cleanup",
     ]);
   });
