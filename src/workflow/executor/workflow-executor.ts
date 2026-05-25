@@ -30,6 +30,7 @@ import { mergeInjectedWorkflowEnv } from "#veryfront/jobs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
+import { isBlobRef } from "../blob/guards.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
 const logger = baseLogger.component("workflow-executor");
@@ -135,10 +136,7 @@ export class WorkflowExecutor {
       fn: (id: string) => Promise<T>,
       fallback: T,
     ): Promise<T> => {
-      const blob = ref as Record<string, unknown> | null | undefined;
-      return blob?.__kind === "blob" && typeof blob.id === "string"
-        ? fn(blob.id)
-        : Promise.resolve(fallback);
+      return isBlobRef(ref) ? fn(ref.id) : Promise.resolve(fallback);
     };
 
     this.blobResolver = {
