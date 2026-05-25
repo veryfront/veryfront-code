@@ -19,12 +19,12 @@ Keep the first production path narrow: one route, one check, one deploy.
 
 Choose one route or API boundary to verify across every stage.
 
-| Boundary | Add | Verify locally |
-| --- | --- | --- |
-| Page | `app/page.tsx` or another route under `app/` | Open the route in the browser |
-| API route | `app/api/<name>/route.ts` | Run `curl http://localhost:3000/api/<name>` |
-| Agent chat | Page plus `app/api/ag-ui/route.ts` | Send one message and confirm streamed output |
-| Workflow or task trigger | API route or CLI command | Trigger one run and inspect the result |
+| Boundary                 | Add                                          | Verify locally                               |
+| ------------------------ | -------------------------------------------- | -------------------------------------------- |
+| Page                     | `app/page.tsx` or another route under `app/` | Open the route in the browser                |
+| API route                | `app/api/<name>/route.ts`                    | Run `curl http://localhost:3000/api/<name>`  |
+| Agent chat               | Page plus `app/api/ag-ui/route.ts`           | Send one message and confirm streamed output |
+| Workflow or task trigger | API route or CLI command                     | Trigger one run and inspect the result       |
 
 Add only the primitive that route needs now. Use
 [Choose a primitive](./choose-a-primitive.md) when more than one option looks
@@ -58,7 +58,7 @@ export default defineConfig({
 
 ```bash
 veryfront build
-veryfront start
+veryfront serve
 ```
 
 Open the same route you tested in development. For API routes, compare the dev
@@ -116,7 +116,7 @@ output.
 After `veryfront build`:
 
 - `dist/` or your configured `outDir` contains compiled assets.
-- `veryfront start` serves the build locally.
+- `veryfront serve` serves the build locally.
 - The route you chose responds the same way it did in development.
 
 After `veryfront deploy`:

@@ -94,7 +94,7 @@ describe("command-definitions", () => {
     it("has output option with default", () => {
       const outputOpt = (build.options ?? []).find((o) => o.flag.includes("--output"));
       assertExists(outputOpt);
-      assertEquals(outputOpt.default, ".veryfront/output");
+      assertEquals(outputOpt.default, "dist");
     });
   });
 

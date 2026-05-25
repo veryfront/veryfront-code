@@ -91,7 +91,7 @@ The CLI MCP exposes a focused toolset for the development loop. The names below 
 | `vf_create_project`      | Bootstrap a new project from a template.                     |
 | `vf_list_local_projects` | Find Veryfront projects on the filesystem.                   |
 
-For the full toolset and current argument shapes, call `vf_get_schema` from the agent (or run `veryfront schema --json` from your shell). That command is the source of truth and stays in sync with the CLI you have installed.
+Use `tools/list` to inspect the tools exposed by the active MCP connection. Use `vf_get_schema` from the agent, or `veryfront schema --json` from your shell, when you need the CLI command schema.
 
 ## Verify it worked
 
@@ -111,7 +111,7 @@ curl -s -X POST http://localhost:3002/mcp \
 
 A working server returns a JSON-RPC response whose `result.tools` array lists `vf_get_errors`, `vf_scaffold`, and the other tools above. If you get a connection-refused error, the dev server is not running or is on a non-default port; check the dashboard for the printed MCP URL.
 
-From inside a connected coding agent, ask it to "list routes" or "show recent dev errors". It should call the matching `vf_*` tool and stream the result back as text.
+From inside a connected coding agent, ask it to "list routes" or "show recent dev errors". It calls the matching `vf_*` tool and streams the result back as text.
 
 ## Troubleshooting
 

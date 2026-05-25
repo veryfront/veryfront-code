@@ -26,10 +26,10 @@ This writes the production output to `dist/`.
 
 ## Run the production build locally
 
-Stop the dev server, then start the production server:
+Stop the dev server, then serve the production build:
 
 ```bash
-veryfront start
+veryfront serve
 ```
 
 Open [http://localhost:3000](http://localhost:3000). Confirm the same pages and
@@ -60,4 +60,4 @@ After `veryfront deploy`, run:
 veryfront open
 ```
 
-The deployed page and API routes should respond.
+The deployed page and API routes respond.

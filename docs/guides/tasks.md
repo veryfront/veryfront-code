@@ -95,12 +95,10 @@ File extensions `.ts`, `.tsx`, `.js`, `.jsx` are supported. Test files and `node
 ### CLI
 
 ```bash
-# Run a task by ID
 veryfront task sync-data
-
-# List discovered tasks
-veryfront task --list
 ```
+
+Task IDs come from files under `tasks/`.
 
 ### As a cloud job
 

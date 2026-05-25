@@ -58,6 +58,24 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/agent.md"],
     snippets: ["createAgUiHandler", "load-skill-reference", "RunFinished"],
   },
+  "guides/build-a-rag-app.md": {
+    references: [
+      "../api-reference/veryfront/embedding.md",
+      "../api-reference/veryfront/agent.md",
+      "../api-reference/veryfront/chat.md",
+    ],
+    snippets: [
+      "ragStore",
+      "createUploadHandler",
+      "app/api/ingest/route.ts",
+      "indexContentDir",
+      "createAgUiHandler",
+      "beforeStream",
+      "useUploads",
+      "AI Gateway",
+      "VERYFRONT_DEFAULT_EMBEDDING_MODEL",
+    ],
+  },
   "guides/api-routes.md": {
     references: [
       "../api-reference/veryfront/agent.md",
@@ -170,7 +188,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: [
       "Pick one production path",
       "veryfront build",
-      "veryfront start",
+      "veryfront serve",
       "veryfront deploy",
       "veryfront open",
     ],
@@ -509,7 +527,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
     snippets: [
       "veryfront build",
-      "veryfront start",
+      "veryfront serve",
       "veryfront deploy",
       "veryfront open",
     ],
