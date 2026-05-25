@@ -3,8 +3,8 @@
 This folder holds the source content for the published Veryfront Code
 Getting Started flow.
 
-These pages guide a reader from installation through deployment. Keep these
-pages in the same order as the public docs navigation.
+These pages help a reader get started with Veryfront Code. Keep these pages
+in the same order as the public docs navigation.
 
 ## Pages
 
