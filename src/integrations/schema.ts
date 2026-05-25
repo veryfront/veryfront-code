@@ -23,7 +23,6 @@ const integrationNames = [
   "discord",
   "hubspot",
   "stripe",
-  "dropbox",
   "salesforce",
   "twitter",
   "onedrive",

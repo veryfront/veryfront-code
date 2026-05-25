@@ -50,7 +50,6 @@ export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "discord",
   "hubspot",
   "stripe",
-  "dropbox",
   "salesforce",
   "twitter",
   "onedrive",

@@ -672,7 +672,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     confluenceConfig: "Confluence",
     discordConfig: "Discord",
     driveConfig: "Google Drive",
-    dropboxConfig: "Dropbox",
     figmaConfig: "Figma",
     freshdeskConfig: "Freshdesk",
     githubConfig: "GitHub",

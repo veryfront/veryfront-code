@@ -63,7 +63,6 @@ const INTEGRATION_ICONS: Record<string, string> = {
   monday: "monday",
   clickup: "clickup",
   figma: "figma",
-  dropbox: "dropbox",
   drive: "drive",
   onedrive: "onedrive",
   sharepoint: "sharepoint",

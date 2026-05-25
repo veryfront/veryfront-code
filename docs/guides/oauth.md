@@ -69,7 +69,7 @@ per-user slot: never in a single shared slot.
 
 Pre-configured providers include: GitHub, Google, Discord, Slack, Twitter/X,
 Facebook, LinkedIn, Microsoft, Apple, Spotify, Twitch, Notion, Figma, Linear,
-Jira, Confluence, Dropbox, Box, Zoom, HubSpot, Salesforce, Stripe, Shopify,
+Jira, Confluence, Box, Zoom, HubSpot, Salesforce, Stripe, Shopify,
 GitLab, Bitbucket, and more.
 
 Each provider exports a config object (e.g., `githubConfig`, `gmailConfig`,
@@ -102,7 +102,6 @@ Then set the credentials as environment variables on the API:
 | Notion                                           | `NOTION_`       | https://www.notion.so/my-integrations                             |
 | Figma                                            | `FIGMA_`        | https://www.figma.com/developers/apps                             |
 | Discord                                          | `DISCORD_`      | https://discord.com/developers/applications                       |
-| Dropbox                                          | `DROPBOX_`      | https://www.dropbox.com/developers/apps                           |
 | Airtable                                         | `AIRTABLE_`     | https://airtable.com/create/oauth                                 |
 | Asana                                            | `ASANA_`        | https://app.asana.com/0/developer-console                         |
 | Bitbucket                                        | `BITBUCKET_`    | https://bitbucket.org/workspace/settings/oauth-consumers          |

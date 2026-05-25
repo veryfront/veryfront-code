@@ -31,7 +31,6 @@ export {
   clickupConfig,
   commonServices,
   discordConfig,
-  dropboxConfig,
   figmaConfig,
   freshdeskConfig,
   githubConfig,

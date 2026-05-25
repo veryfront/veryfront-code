@@ -27,7 +27,7 @@ Visit `http://localhost:3000/api/auth/{service}` to connect each service.
 - [Developer Tools](#developer-tools) (GitHub, GitLab, Bitbucket, Figma, Sentry, PostHog)
 - [CRM & Sales](#crm--sales) (Salesforce, HubSpot, Pipedrive, Intercom, Zendesk, Freshdesk)
 - [Databases](#databases) (Supabase, Neon, Airtable, Snowflake)
-- [Cloud & Storage](#cloud--storage) (AWS, Dropbox, Box)
+- [Cloud & Storage](#cloud--storage) (AWS, Box)
 - [Finance](#finance) (Stripe, QuickBooks, Xero)
 - [Marketing](#marketing) (Mailchimp, Twitter)
 - [E-commerce](#e-commerce) (Shopify)
@@ -505,17 +505,6 @@ Uses IAM credentials.
 AWS_ACCESS_KEY_ID=your-access-key
 AWS_SECRET_ACCESS_KEY=your-secret-key
 AWS_REGION=us-east-1
-```
-
-### Dropbox
-
-1. Go to [Dropbox App Console](https://www.dropbox.com/developers/apps)
-2. Create app with Full Dropbox or App folder access
-3. OAuth2 redirect: `http://localhost:3000/api/auth/dropbox/callback`
-
-```env
-DROPBOX_CLIENT_ID=your-app-key
-DROPBOX_CLIENT_SECRET=your-app-secret
 ```
 
 ### Box

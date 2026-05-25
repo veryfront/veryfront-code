@@ -400,19 +400,6 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     link: "https://app.clickup.com/settings/apps",
     envVars: ["CLICKUP_CLIENT_ID", "CLICKUP_CLIENT_SECRET"],
   },
-  dropbox: {
-    title: "Dropbox App Setup",
-    category: "storage",
-    steps: [
-      "Go to Dropbox App Console",
-      "Create new app",
-      "Choose Scoped access and Full Dropbox",
-      "Add redirect URI: http://localhost:3000/api/auth/dropbox/callback",
-      "Copy App Key and Secret to .env",
-    ],
-    link: "https://www.dropbox.com/developers/apps",
-    envVars: ["DROPBOX_CLIENT_ID", "DROPBOX_CLIENT_SECRET"],
-  },
   box: {
     title: "Box App Setup",
     category: "storage",
