@@ -185,7 +185,7 @@ async function requestJson<T>(
   const request = new Request(buildUrl(context.apiBaseUrl, path), init);
   const headers = new Headers(request.headers);
 
-  if (!headers.has("Content-Type") && request.method !== "GET" && request.method !== "HEAD") {
+  if (request.method !== "GET" && request.method !== "HEAD") {
     headers.set("Content-Type", "application/json");
   }
 

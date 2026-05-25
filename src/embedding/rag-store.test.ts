@@ -178,6 +178,7 @@ describe("ragStore", () => {
     }>();
     const embeddingVectors = new Map<string, number[]>();
     const authHeaders: Array<string | null> = [];
+    const postContentTypes: Array<string | null> = [];
 
     await withMockFetch(
       async (input: string | URL | Request, init?: RequestInit) => {
@@ -185,6 +186,9 @@ describe("ragStore", () => {
         const url = new URL(request.url);
         const path = url.pathname;
         authHeaders.push(request.headers.get("authorization"));
+        if (request.method === "POST") {
+          postContentTypes.push(request.headers.get("content-type"));
+        }
 
         const fileMatch = path.match(/^\/projects\/[^/]+\/branches\/[^/]+\/files\/(.+)\/chunks$/);
         const filePath = fileMatch ? decodeURIComponent(fileMatch[1]!) : null;
@@ -333,6 +337,10 @@ describe("ragStore", () => {
 
         assertEquals(embeddingVectors.size > 0, true);
         assertEquals(authHeaders.some((header) => header === "Bearer vf_test_cloud"), true);
+        assertEquals(
+          postContentTypes.every((contentType) => contentType === "application/json"),
+          true,
+        );
 
         await store.removeDocument(id);
         assertEquals(await store.listDocuments(), []);

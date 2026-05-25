@@ -25,6 +25,7 @@ import {
   useChatContextOptional,
   useCompletion,
 } from "../../src/chat/index.ts";
+import { createUploadHandler, ragStore, useUploads } from "../../src/embedding/index.ts";
 import { defineConfig } from "../../src/config/index.ts";
 import {
   type ExtensionFactory,
@@ -67,6 +68,7 @@ const EXISTING_GUIDE_EXAMPLE_SUITE = [
 
 const THIS_GUIDE_EXAMPLE_SUITE = [
   "agent-service-runtime.md",
+  "build-a-rag-app.md",
   "chat-hooks.md",
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
@@ -195,6 +197,54 @@ describe("Guide: chat-hooks.md", () => {
   });
 });
 
+describe("Guide: build-a-rag-app.md", () => {
+  it("uses the public RAG, chat, upload, and AG-UI helpers", async () => {
+    const guide = await readGuide("build-a-rag-app.md");
+    const template = await getTemplate("docs-agent");
+
+    assertEquals(typeof ragStore, "function");
+    assertEquals(typeof createUploadHandler, "function");
+    assertEquals(typeof useUploads, "function");
+    assertEquals(typeof useChat, "function");
+    assertEquals(typeof createAgUiHandler, "function");
+    assertExists(template);
+    assert(
+      template.some((file) => file.path === "store.ts"),
+      "docs-agent template includes store.ts",
+    );
+    assert(
+      template.some((file) => file.path === "app/api/ag-ui/route.ts"),
+      "docs-agent template includes the AG-UI route",
+    );
+    assert(
+      template.some((file) => file.path === "app/api/ingest/route.ts"),
+      "docs-agent template includes the ingestion route",
+    );
+    assert(
+      template.some((file) => file.path === "app/api/uploads/route.ts"),
+      "docs-agent template includes the upload route",
+    );
+    assert(
+      template.some((file) => file.path === "app/api/uploads/[id]/route.ts"),
+      "docs-agent template includes the upload delete route",
+    );
+    assertStringIncludes(guide, 'useUploads({ api: "/api/uploads" })');
+    assertStringIncludes(guide, "disabled={uploads.uploading}");
+    assertStringIncludes(guide, 'import { store } from "../../../store.ts";');
+    assertStringIncludes(guide, 'import { store } from "../../../../store.ts";');
+    assertStringIncludes(guide, "await store.indexContentDir();");
+    assertStringIncludes(guide, "const results = await store.search(query, { topK: 5 });");
+    assertStringIncludes(guide, ".veryfront/rag/uploads/");
+    assertStringIncludes(guide, "DocumentExtractor");
+    assertStringIncludes(guide, "XLS, XLSX");
+    assertStringIncludes(guide, "OCR is not a separate step.");
+    assertStringIncludes(guide, "chunkOptions");
+    assertStringIncludes(guide, "maxChars: 2000");
+    assertStringIncludes(guide, "VERYFRONT_API_TOKEN");
+    assertStringIncludes(guide, "AI Gateway");
+  });
+});
+
 describe("Guide: coding-agents.md", () => {
   it("documents both MCP transports, per-client config, and the vf_* tool surface", async () => {
     const guide = await readGuide("coding-agents.md");
@@ -272,13 +322,14 @@ describe("Guide: deploying.md", () => {
       const command of [
         "veryfront dev",
         "veryfront build",
-        "veryfront start",
+        "veryfront serve",
         "veryfront deploy",
         "veryfront open",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
+    assertEquals(guide.includes("veryfront start"), false);
   });
 });
 
@@ -613,19 +664,20 @@ describe("Guide: create-frontend.md", () => {
 });
 
 describe("Guide: deploy-project.md", () => {
-  it("documents the build, start, deploy, and open sequence", async () => {
+  it("documents the build, serve, deploy, and open sequence", async () => {
     const guide = await readGuide("deploy-project.md");
 
     for (
       const command of [
         "veryfront build",
-        "veryfront start",
+        "veryfront serve",
         "veryfront deploy",
         "veryfront open",
       ]
     ) {
       assertStringIncludes(guide, command);
     }
+    assertEquals(guide.includes("veryfront start"), false);
   });
 });
 
@@ -707,5 +759,12 @@ describe("Guide: tasks.md", () => {
         synced: 2,
       },
     );
+  });
+
+  it("does not document a task list flag the CLI does not support", async () => {
+    const guide = await readGuide("tasks.md");
+
+    assertStringIncludes(guide, "veryfront task sync-data");
+    assertEquals(guide.includes("veryfront task --list"), false);
   });
 });

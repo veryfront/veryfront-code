@@ -7,7 +7,6 @@ export const POST = createAgUiHandler("rag", {
     if (!query) return;
 
     try {
-      await store.indexContentDir();
       const results = await store.search(query, { topK: 5 });
       if (results.length === 0) return;
 

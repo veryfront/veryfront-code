@@ -44,16 +44,18 @@ export MCP_TOKEN=<TOKEN>
 veryfront dev
 ```
 
-Smoke test the route by sending an MCP `initialize` request:
+Smoke test the route by sending an MCP `initialize` request and storing the session ID:
 
 ```bash
-curl -i http://localhost:3000/api/mcp \
+SESSION_ID=$(curl -i http://localhost:3000/api/mcp \
   -H "Authorization: Bearer $MCP_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}' \
+  | awk -F': ' 'tolower($1) == "mcp-session-id" {print $2}' \
+  | tr -d '\r')
 ```
 
-The response should include a `MCP-Session-Id` header and a JSON-RPC result with server capabilities.
+The response includes a `MCP-Session-Id` header and a JSON-RPC result with server capabilities.
 
 ### Auth is required
 
@@ -168,11 +170,18 @@ Use any MCP-aware client (Claude Desktop, an MCP CLI, or `curl`) to call the
 `tools/list` method:
 
 ```bash
+SESSION_ID=$(curl -i http://localhost:3000/api/mcp \
+  -H "Authorization: Bearer $MCP_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"curl","version":"0.0.0"}}}' \
+  | awk -F': ' 'tolower($1)=="mcp-session-id"{gsub(/\r/,"",$2); print $2}')
+
 curl -X POST http://localhost:3000/api/mcp \
   -H "Authorization: Bearer $MCP_TOKEN" \
+  -H "MCP-Session-Id: $SESSION_ID" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-A working server returns a JSON-RPC response that lists every registered
-tool. Calling without the bearer token should return `401 Unauthorized`.
+A working server returns a JSON-RPC response that lists every registered tool.
+Calling without the bearer token returns `401 Unauthorized`.

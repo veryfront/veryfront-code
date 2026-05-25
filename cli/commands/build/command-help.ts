@@ -9,7 +9,7 @@ export const buildHelp: CommandHelp = {
     {
       flag: "-o, --output <dir>",
       description: "Output directory",
-      default: ".veryfront/output",
+      default: "dist",
     },
     {
       flag: "--no-compress",

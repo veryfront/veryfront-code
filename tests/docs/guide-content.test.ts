@@ -1,7 +1,4 @@
-import {
-  assertEquals,
-  assertStringIncludes,
-} from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 describe("guide content contracts", () => {
@@ -46,6 +43,49 @@ describe("guide content contracts", () => {
     assertEquals(guide.includes("deploy` prints a URL"), false);
     assertEquals(guide.includes("CLI prints a production URL"), false);
     assertStringIncludes(guide, "veryfront open");
+  });
+
+  it("uses serve for local production builds", async () => {
+    const docs = [
+      "docs/getting-started/deploy-project.md",
+      "docs/guides/deploying.md",
+    ];
+
+    for (const path of docs) {
+      const text = await Deno.readTextFile(path);
+
+      assertStringIncludes(text, "veryfront serve");
+      assertEquals(text.includes("veryfront start"), false);
+    }
+  });
+
+  it("documents the MCP session header for post-init tool calls", async () => {
+    const guide = await Deno.readTextFile("docs/guides/mcp-server.md");
+
+    assertStringIncludes(guide, "MCP-Session-Id");
+    assertStringIncludes(guide, "SESSION_ID=$(curl -i");
+    assertStringIncludes(guide, '-H "MCP-Session-Id: $SESSION_ID"');
+    assertEquals(
+      guide.includes(
+        'curl -X POST http://localhost:3000/api/mcp \\\n  -H "Authorization: Bearer $MCP_TOKEN" \\\n  -H "Content-Type: application/json" \\\n  -d',
+      ),
+      false,
+    );
+  });
+
+  it("does not describe CLI schema as the MCP tool schema", async () => {
+    const guide = await Deno.readTextFile("docs/guides/coding-agents.md");
+
+    assertStringIncludes(
+      guide,
+      "Use `tools/list` to inspect the tools exposed by the active MCP connection.",
+    );
+    assertStringIncludes(guide, "`vf_get_schema`");
+    assertStringIncludes(guide, "CLI command schema");
+    assertEquals(
+      guide.includes("For the full toolset and current argument shapes, call `vf_get_schema`"),
+      false,
+    );
   });
 
   it("recommends the current Node.js LTS in onboarding docs", async () => {
