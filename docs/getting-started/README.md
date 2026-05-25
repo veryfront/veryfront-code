@@ -3,9 +3,8 @@
 This folder holds the source content for the published Veryfront Code
 Getting Started flow.
 
-These pages help a reader install Veryfront, create a project, add the first
-agent, chat page, API route, and deploy the project. Keep these pages in
-the same order as the public docs navigation.
+These pages guide a reader from installation through deployment. Keep these
+pages in the same order as the public docs navigation.
 
 ## Pages
 
