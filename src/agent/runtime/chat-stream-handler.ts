@@ -131,6 +131,75 @@ function logProviderToolPart(
   });
 }
 
+function getStreamErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (
+    typeof error === "object" && error !== null && "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function isLateProviderBodyReadError(error: unknown): boolean {
+  return /error reading a body from connection/i.test(getStreamErrorMessage(error));
+}
+
+function hasCompletedStepSignal(finishReason: string | null): boolean {
+  switch (finishReason) {
+    case "stop":
+    case "length":
+    case "tool-calls":
+    case "content-filter":
+    case "other":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function hasStreamOutput(state: ChatStreamState): boolean {
+  return state.accumulatedText.length > 0 || state.toolCalls.size > 0 ||
+    state.toolResults.length > 0;
+}
+
+function shouldIgnoreLateProviderBodyReadError(state: ChatStreamState, error: unknown): boolean {
+  return hasStreamOutput(state) && hasCompletedStepSignal(state.finishReason) &&
+    isLateProviderBodyReadError(error);
+}
+
+async function readNextStreamPart(
+  iterator: AsyncIterator<unknown>,
+  state: ChatStreamState,
+): Promise<IteratorResult<unknown>> {
+  try {
+    return await iterator.next();
+  } catch (error) {
+    if (!shouldIgnoreLateProviderBodyReadError(state, error)) {
+      throw error;
+    }
+
+    logger.warn("Ignoring late provider body read error after completed stream step", {
+      finishReason: state.finishReason,
+      toolCallCount: state.toolCalls.size,
+      toolResultCount: state.toolResults.length,
+      textLength: state.accumulatedText.length,
+      error: getStreamErrorMessage(error),
+    });
+
+    return { done: true, value: undefined };
+  }
+}
+
 export function createStreamState(): ChatStreamState {
   return {
     accumulatedText: "",
@@ -295,7 +364,14 @@ export function processStream(
 
     throwIfAborted(abortSignal);
 
-    for await (const part of result.fullStream) {
+    const streamIterator = result.fullStream[Symbol.asyncIterator]();
+    while (true) {
+      const next = await readNextStreamPart(streamIterator, state);
+      if (next.done) {
+        break;
+      }
+
+      const part = next.value;
       throwIfAborted(abortSignal);
       eventCount++;
 

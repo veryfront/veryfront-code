@@ -161,6 +161,37 @@ describe("chat-stream-handler", () => {
       assertEquals(state.usage, { promptTokens: 0, completionTokens: 0, totalTokens: 0 });
     });
 
+    it("ignores a late provider body read error after a completed tool-call step", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "tool-input-start", id: "tc-1", toolName: "gmail__get_email" };
+            yield { type: "tool-input-delta", id: "tc-1", delta: '{"id":"msg-1"}' };
+            yield { type: "finish", finishReason: "tool-calls", totalUsage: null };
+            throw new Error("error reading a body from connection");
+          },
+        },
+        textStream: {
+          async *[Symbol.asyncIterator]() {},
+        },
+      };
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.finishReason, "tool-calls");
+      assertEquals(state.toolCalls.size, 1);
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-1", toolName: "gmail__get_email" },
+        {
+          type: "tool-input-delta",
+          toolCallId: "tc-1",
+          inputTextDelta: '{"id":"msg-1"}',
+        },
+      ]);
+    });
+
     it("processes tool-input-start and tool-input-delta", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
