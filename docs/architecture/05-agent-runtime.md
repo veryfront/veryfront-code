@@ -165,6 +165,9 @@ import path in the current public export map.
 
 - Keep tool inventory construction separate from provider transport adapters.
 - Keep streamed runtime chunks separate from durable hosted run state.
+- Treat provider body-read transport failures as non-fatal only after hosted
+  finalization has durable assistant output; empty output and semantic provider
+  errors remain terminal failures.
 - Add focused tests next to [`src/agent/runtime/`](../../src/agent/runtime/) when
   changing message normalization, tool conversion, streaming, or provider
   compatibility.

@@ -81,10 +81,43 @@ async function cleanupAfterFinalization(cleanup: () => Promise<void> | void): Pr
   await cleanup();
 }
 
-function shouldFailStreamError(
-  input: { isAborted: boolean; streamError?: unknown | null },
-): boolean {
-  return !input.isAborted && input.streamError != null;
+function getStreamErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (
+    typeof error === "object" && error !== null && "message" in error &&
+    typeof error.message === "string"
+  ) {
+    return error.message;
+  }
+
+  return String(error);
+}
+
+function isLateProviderBodyReadError(error: unknown): boolean {
+  return /error reading a body from connection/i.test(getStreamErrorMessage(error));
+}
+
+function shouldFailStreamError(input: {
+  isAborted: boolean;
+  hasOutput: boolean;
+  streamError?: unknown | null;
+}): boolean {
+  if (input.isAborted || input.streamError == null) {
+    return false;
+  }
+
+  if (input.hasOutput && isLateProviderBodyReadError(input.streamError)) {
+    return false;
+  }
+
+  return true;
 }
 
 /** Response payload for finalize hosted. */
@@ -118,7 +151,13 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
 
   await appendFallbackChunks(state.fallbackChunks, options.appendFallbackChunk);
   await options.flushMirror();
-  if (shouldFailStreamError({ isAborted: options.isAborted, streamError: options.streamError })) {
+  if (
+    shouldFailStreamError({
+      isAborted: options.isAborted,
+      hasOutput: true,
+      streamError: options.streamError,
+    })
+  ) {
     const terminalError = await options.resolveEmptyTerminalError({
       finalStep,
       streamError: options.streamError,
@@ -170,7 +209,13 @@ export async function finalizeHostedDetached<TChunk>(
 
   await appendFallbackChunks(state.fallbackChunks, options.appendFallbackChunk);
   await options.flushMirror();
-  if (shouldFailStreamError({ isAborted: options.isAborted, streamError: options.streamError })) {
+  if (
+    shouldFailStreamError({
+      isAborted: options.isAborted,
+      hasOutput: options.mirroredDurableOutput || state.hasContent,
+      streamError: options.streamError,
+    })
+  ) {
     const terminalError = await options.resolveEmptyTerminalError({
       finalStep,
       streamError: options.streamError,
