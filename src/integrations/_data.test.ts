@@ -202,11 +202,11 @@ describe("integration endpoint specs", () => {
     assertEquals(jiraSearchIssues.endpoint?.method, "GET");
     assertEquals(
       jiraSearchIssues.endpoint?.url,
-      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search",
+      "https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search/jql",
     );
     assertEquals(jiraSearchIssues.endpoint?.params?.jql?.required, true);
-    assertEquals(jiraSearchIssues.endpoint?.params?.startAt?.in, "query");
-    assertEquals(jiraSearchIssues.endpoint?.params?.nextPageToken, undefined);
+    assertEquals(jiraSearchIssues.endpoint?.params?.startAt, undefined);
+    assertEquals(jiraSearchIssues.endpoint?.params?.nextPageToken?.in, "query");
     assertEquals(jiraSearchIssues.endpoint?.body, undefined);
 
     const jiraGetProject = getTool("jira", "get_project");
