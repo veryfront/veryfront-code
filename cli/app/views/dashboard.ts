@@ -90,12 +90,11 @@ function renderBanner(state: AppState): string {
   textLines.push(`${brand("Veryfront")} ${dim("is now running")}`);
   textLines.push("");
 
-  // Server URL and MCP URL - always reserve both lines to prevent jumps
+  // Server URL and MCP URL, always reserve both lines to prevent jumps.
   textLines.push(`${dim("Url")} ${brand(state.server.url)}`);
 
-  if (state.mcp.enabled && state.mcp.transport === "http") {
-    const port = state.mcp.httpPort ?? 9999;
-    textLines.push(`${dim("Mcp")} ${brand(`http://veryfront.me:${port}/mcp`)}`);
+  if (state.mcp.enabled && state.mcp.transport === "http" && state.mcp.httpPort !== undefined) {
+    textLines.push(`${dim("Mcp")} ${brand(`http://veryfront.me:${state.mcp.httpPort}/mcp`)}`);
   } else {
     textLines.push("");
   }

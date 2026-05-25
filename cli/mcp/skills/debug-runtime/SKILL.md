@@ -8,7 +8,8 @@ Diagnose runtime errors by connecting to the dev server via MCP.
    ```bash
    veryfront dev
    ```
-   MCP is available on port 9999.
+   MCP is available on the dev server port plus 2. The default URL is
+   `http://localhost:3002/mcp`.
 
 2. **Check for errors** (via MCP)
    Use `vf_get_errors` to get current runtime errors.
@@ -31,5 +32,5 @@ Diagnose runtime errors by connecting to the dev server via MCP.
 ## Error Recovery
 
 - **Dev server not running**: Start with `veryfront dev`
-- **MCP not responding**: Check port 9999, restart dev server
+- **MCP not responding**: Check the printed MCP URL, restart dev server
 - **Error persists after fix**: Clear cache with `veryfront clean`, restart dev

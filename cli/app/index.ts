@@ -1,8 +1,7 @@
 /**
  * CLI App Shell
  *
- * Interactive app-like CLI experience with dashboard, project navigation,
- * and MCP integration for coding agents.
+ * Interactive app-like CLI experience with dashboard and project navigation.
  */
 
 // Core app

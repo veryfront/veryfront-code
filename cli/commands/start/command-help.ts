@@ -3,18 +3,13 @@ import type { CommandHelp } from "../../help/types.ts";
 export const startHelp: CommandHelp = {
   name: "start",
   category: "project",
-  description: "Start development dashboard with proxy and MCP integration",
+  description: "Start the production dashboard and proxy server",
   usage: "veryfront start [options]",
   options: [
     {
       flag: "-p, --port <number>",
       description: "Port to run on",
       default: "8080",
-    },
-    {
-      flag: "--mcp-port <number>",
-      description: "MCP server port",
-      default: "9999",
     },
     {
       flag: "--project <path>",

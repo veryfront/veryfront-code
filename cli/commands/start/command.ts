@@ -11,7 +11,6 @@ const logger = cliLogger.component("global");
 
 export interface StartOptions {
   port: number;
-  mcpPort: number;
   projectPath: string | null;
   headless: boolean;
 }
@@ -125,7 +124,7 @@ async function trySetupProxy(localProjects: Map<string, string>): Promise<ProxyS
 }
 
 export async function startCommand(options: StartOptions): Promise<void> {
-  const { port, mcpPort, projectPath, headless } = options;
+  const { port, projectPath, headless } = options;
 
   onGlobalError((error, type) => {
     const isFatal = (error.name === "RangeError" && error.message.includes("Maximum call stack")) ||
@@ -174,7 +173,6 @@ export async function startCommand(options: StartOptions): Promise<void> {
 
   const app = createApp({
     port,
-    mcpPort,
     headless,
     projects: discovered.projects,
     examples: discovered.examples,
@@ -225,9 +223,6 @@ export async function startCommand(options: StartOptions): Promise<void> {
 
   await server.ready;
 
-  const { createMCPServer } = await import("../../mcp/index.ts");
-  const mcpServer = await createMCPServer({ httpPort: mcpPort });
-
   app.setServerReady();
 
   let shuttingDown = false;
@@ -240,7 +235,6 @@ export async function startCommand(options: StartOptions): Promise<void> {
 
     try {
       app.stop();
-      await mcpServer.stop();
       shutdownController.abort();
       await server.stop();
       await proxy.close();
