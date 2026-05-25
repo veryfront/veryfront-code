@@ -8,6 +8,9 @@ Connect Claude Code, Cursor, Codex, or any MCP-aware coding agent to your Veryfr
 
 This is the CLI's built-in MCP server. It is separate from the application-facing MCP server (see [MCP server](./mcp-server.md)), which exposes _your_ tools to MCP clients. The CLI MCP exposes _Veryfront dev tools_ to your coding agent.
 
+The CLI MCP server is development-only. `veryfront start` does not expose
+`vf_*` tools in production.
+
 ## Prerequisites
 
 - A Veryfront project (see [Create project](../getting-started/create-project.md)).
@@ -23,11 +26,11 @@ The CLI MCP server supports two transports. Most agents work with HTTP.
 | HTTP      | Your agent supports remote MCP URLs (Claude Code, Cursor, Codex). | Auto-starts with `veryfront dev`.   |
 | stdio     | Your agent only supports stdio MCP servers.                       | Run `veryfront mcp` from the agent. |
 
-When you run `veryfront dev`, the HTTP MCP server listens on `--port + 2` (default `3002`). When you run `veryfront start`, it listens on `9999`. The endpoint is always `/mcp`.
+When you run `veryfront dev`, the HTTP MCP server listens on `--port + 2`
+(default `3002`). The endpoint is always `/mcp`.
 
 ```
 http://localhost:3002/mcp        # dev
-http://localhost:9999/mcp        # production
 ```
 
 The dev server also accepts the `veryfront.me` hostname, which resolves to `127.0.0.1` and is what the CLI prints by default.
@@ -114,7 +117,8 @@ From inside a connected coding agent, ask it to "list routes" or "show recent de
 
 ### The agent does not see Veryfront tools
 
-The dev server must be running. The HTTP MCP only listens while `veryfront dev` or `veryfront start` is active.
+The dev server must be running. The HTTP MCP only listens while `veryfront dev`
+is active.
 
 ### Port already in use
 

@@ -184,7 +184,7 @@ Diagnose runtime errors via MCP.
 
 ## Steps
 
-1. Ensure \`veryfront dev\` is running (MCP on port 9999)
+1. Ensure \`veryfront dev\` is running (MCP on the dev server port plus 2)
 2. Use vf_get_errors for current runtime errors
 3. Use vf_get_debug_context for stack traces
 4. Read veryfront://logs resource for server logs
@@ -194,7 +194,7 @@ Diagnose runtime errors via MCP.
 ## Error Recovery
 
 - **Dev server not running**: Start with veryfront dev
-- **MCP not responding**: Check port 9999, restart
+- **MCP not responding**: Check the printed MCP URL, restart
 - **Error persists**: veryfront clean, restart dev`,
     directory: "core:debug-runtime",
   },

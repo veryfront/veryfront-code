@@ -215,6 +215,13 @@ describe("Guide: coding-agents.md", () => {
     ) {
       assertStringIncludes(guide, snippet);
     }
+
+    assertEquals(guide.includes("http://localhost:9999/mcp"), false);
+    assertEquals(guide.includes("veryfront start`, it listens"), false);
+    assertEquals(
+      guide.includes("HTTP MCP only listens while `veryfront dev` or `veryfront start`"),
+      false,
+    );
   });
 });
 

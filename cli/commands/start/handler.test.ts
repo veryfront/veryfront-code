@@ -34,26 +34,6 @@ describe("commands/start/handler", () => {
     });
   });
 
-  describe("mcp-port parsing via DEFAULT_MCP_PORT (9999)", () => {
-    it("uses default mcp port 9999 when not specified", () => {
-      const args: ParsedArgs = { _: ["start"] };
-      const mcpPort = typeof args["mcp-port"] === "number" ? args["mcp-port"] : 9999;
-      assertEquals(mcpPort, 9999);
-    });
-
-    it("uses explicit mcp-port when provided as number", () => {
-      const args: ParsedArgs = { _: ["start"], "mcp-port": 7000 };
-      const mcpPort = typeof args["mcp-port"] === "number" ? args["mcp-port"] : 9999;
-      assertEquals(mcpPort, 7000);
-    });
-
-    it("uses default mcp port when value is not a number", () => {
-      const args: ParsedArgs = { _: ["start"], "mcp-port": "invalid" };
-      const mcpPort = typeof args["mcp-port"] === "number" ? args["mcp-port"] : 9999;
-      assertEquals(mcpPort, 9999);
-    });
-  });
-
   describe("project path extraction", () => {
     it("extracts project path from --project flag", () => {
       const args: ParsedArgs = { _: ["start"], project: "my-project" };

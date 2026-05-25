@@ -55,7 +55,7 @@ The CLI groups commands by category. Each command supports `--help` for its full
 | `veryfront init` | Initialize a new Veryfront project |
 | `veryfront install` | Install AI assistant integrations (Cursor, Claude Code, etc.) |
 | `veryfront open` | Open project URLs in the browser |
-| `veryfront start` | Start development dashboard with proxy and MCP integration |
+| `veryfront start` | Start the production dashboard and proxy server |
 | `veryfront studio` | Open Veryfront Studio in browser |
 | `veryfront uninstall` | Remove AI assistant integrations |
 

@@ -26,7 +26,8 @@ Create a new Veryfront application with proper structure and conventions.
    ```bash
    veryfront dev
    ```
-   Verify MCP is available on port 9999.
+   Verify MCP is available at the printed dev MCP URL. The default URL is
+   `http://localhost:3002/mcp`.
 
 ## Error Recovery
 

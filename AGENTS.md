@@ -164,7 +164,7 @@ Keep common CLI behavior consistent with the command router and `cli/AGENTS.md`.
 
 - Use `veryfront mcp` for stdio MCP sessions.
 - In `veryfront dev`, the HTTP MCP server starts on the app port plus `2`.
-- In `veryfront start`, the HTTP MCP server defaults to port `9999` unless configured otherwise.
+- `veryfront start` does not start the CLI MCP server or expose `vf_*` tools.
 - Prefer `vf_bootstrap` for initial context. It replaces separate project-context lookup calls for normal agent startup.
 - MCP help highlights `vf_list_local_projects`, `vf_list_templates`, `vf_list_integrations`, `vf_create_project`, `vf_get_errors`, `vf_preview_route`, `vf_scaffold`, `vf_list_routes`, and `vf_trigger_hmr`.
 - The standalone MCP runtime also exposes tools such as `vf_bootstrap`, `vf_get_project_context`, `vf_get_conventions`, `vf_get_status`, `vf_get_logs`, `vf_run_tests`, `vf_run_lint`, `vf_build`, and `vf_trigger_deploy`.
