@@ -1,5 +1,5 @@
 /**
- * OAuth 2.0 with 37 pre-configured providers.
+ * OAuth 2.0 with 36 pre-configured providers.
  *
  * @example
  * ```typescript
@@ -39,7 +39,6 @@ export {
   confluenceConfig,
   discordConfig,
   driveConfig,
-  dropboxConfig,
   figmaConfig,
   freshdeskConfig,
   githubConfig,

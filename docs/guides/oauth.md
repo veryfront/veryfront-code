@@ -69,7 +69,7 @@ per-user slot: never in a single shared slot.
 
 Pre-configured providers include: GitHub, Google, Discord, Slack, Twitter/X,
 Facebook, LinkedIn, Microsoft, Apple, Spotify, Twitch, Notion, Figma, Linear,
-Jira, Confluence, Dropbox, Box, Zoom, HubSpot, Salesforce, Stripe, Shopify,
+Jira, Confluence, Box, Zoom, HubSpot, Salesforce, Stripe, Shopify,
 GitLab, Bitbucket, and more.
 
 Each provider exports a config object (e.g., `githubConfig`, `gmailConfig`,

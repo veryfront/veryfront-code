@@ -110,7 +110,6 @@ export const INTEGRATION_CATEGORIES: readonly IntegrationCategory[] = [
       { id: "sheets", label: "Google Sheets", description: "Spreadsheets" },
       { id: "onedrive", label: "OneDrive", description: "Microsoft files" },
       { id: "sharepoint", label: "SharePoint", description: "Enterprise content" },
-      { id: "dropbox", label: "Dropbox", description: "File storage" },
       { id: "box", label: "Box", description: "Enterprise files" },
       { id: "airtable", label: "Airtable", description: "Database, spreadsheet" },
     ],

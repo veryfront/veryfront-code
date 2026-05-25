@@ -79,7 +79,6 @@ export const GET = createOAuthCallbackHandler(gmailConfig);
 | `confluenceConfig` | Configuration used by confluence. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L32) |
 | `discordConfig` | Configuration used by discord. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L71) |
 | `driveConfig` | Configuration used by drive. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L59) |
-| `dropboxConfig` | Configuration used by dropbox. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L129) |
 | `figmaConfig` | Configuration used by figma. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L58) |
 | `freshdeskConfig` | Configuration used by freshdesk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L238) |
 | `githubConfig` | Configuration used by github. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L4) |

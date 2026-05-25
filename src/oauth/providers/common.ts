@@ -125,22 +125,6 @@ export const airtableConfig: OAuthServiceConfig = {
   useBasicAuth: true,
 };
 
-/** Configuration used by dropbox. */
-export const dropboxConfig: OAuthServiceConfig = {
-  providerId: "dropbox",
-  serviceId: "dropbox",
-  displayName: "Dropbox",
-  authorizationUrl: "https://www.dropbox.com/oauth2/authorize",
-  tokenUrl: "https://api.dropbox.com/oauth2/token",
-  clientIdEnvVar: "DROPBOX_CLIENT_ID",
-  clientSecretEnvVar: "DROPBOX_CLIENT_SECRET",
-  apiBaseUrl: "https://api.dropboxapi.com/2",
-  defaultScopes: [],
-  additionalAuthParams: {
-    token_access_type: "offline",
-  },
-};
-
 /** Configuration used by hubspot. */
 export const hubspotConfig: OAuthServiceConfig = {
   providerId: "hubspot",
@@ -382,7 +366,6 @@ export const commonServices = {
   linear: linearConfig,
   gitlab: gitlabConfig,
   airtable: airtableConfig,
-  dropbox: dropboxConfig,
   hubspot: hubspotConfig,
   salesforce: salesforceConfig,
   twitter: twitterConfig,
