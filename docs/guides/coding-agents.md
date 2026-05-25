@@ -127,12 +127,3 @@ The dev MCP port follows the dev server port (`--port + 2`). If you start the de
 ### CORS error from a browser-based agent
 
 The HTTP MCP only accepts requests from `localhost`, `127.0.0.1`, and `veryfront.me`. Browser agents that run from any other origin are rejected by design.
-
-### `Unknown command: mcp`
-
-Your installed CLI is older than the version that added MCP. Update with `npm install -g veryfront@latest`, or run from source:
-
-```bash
-cd veryfront-code
-deno run -A cli/main.ts mcp
-```
