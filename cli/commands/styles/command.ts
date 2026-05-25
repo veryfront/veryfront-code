@@ -70,6 +70,22 @@ type StyleArtifactSelector =
   }
   | { branch?: never; environmentName?: never; releaseId: string; type: "release"; value: string };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+export function normalizeStyleArtifactBuildConfigInput(parsed: unknown): unknown {
+  if (!isRecord(parsed)) {
+    return parsed;
+  }
+
+  if (parsed.source === "webhook" && isRecord(parsed.payload)) {
+    return parsed.payload;
+  }
+
+  return parsed;
+}
+
 function parseStyleArtifactBuildConfig(rawConfig: string | undefined): StyleArtifactBuildConfig {
   if (!rawConfig) {
     throw new Error("Missing --config JSON");
@@ -82,7 +98,7 @@ function parseStyleArtifactBuildConfig(rawConfig: string | undefined): StyleArti
     throw new Error("Invalid --config JSON");
   }
 
-  return StyleArtifactBuildConfigSchema.parse(parsed);
+  return StyleArtifactBuildConfigSchema.parse(normalizeStyleArtifactBuildConfigInput(parsed));
 }
 
 function resolveStyleArtifactSelector(
