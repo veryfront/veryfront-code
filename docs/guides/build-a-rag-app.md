@@ -212,8 +212,10 @@ With cloud bootstrap:
   through AI Gateway.
 
 The default cloud embedding model is
-`veryfront-cloud/openai/text-embedding-3-small`. Override it only when you need a
-specific embedding model:
+`veryfront-cloud/openai/text-embedding-3-small`. Set
+`VERYFRONT_DEFAULT_EMBEDDING_MODEL` to `provider/model`, such as
+`google/text-embedding-004`; Cloud bootstrap routes it as
+`veryfront-cloud/google/text-embedding-004`:
 
 ```bash title="Terminal"
 export VERYFRONT_DEFAULT_EMBEDDING_MODEL=google/text-embedding-004
