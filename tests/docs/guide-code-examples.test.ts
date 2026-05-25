@@ -218,6 +218,8 @@ describe("Guide: coding-agents.md", () => {
 
     assertEquals(guide.includes("http://localhost:9999/mcp"), false);
     assertEquals(guide.includes("veryfront start`, it listens"), false);
+    assertEquals(guide.includes("Unknown command: mcp"), false);
+    assertEquals(guide.includes("deno run -A cli/main.ts mcp"), false);
     assertEquals(
       guide.includes("HTTP MCP only listens while `veryfront dev` or `veryfront start`"),
       false,

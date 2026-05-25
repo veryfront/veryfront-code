@@ -212,6 +212,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Contents",
       "Before you start",
       "Installation",
+      "Coding agents",
       "TypeScript",
       "React",
     ],

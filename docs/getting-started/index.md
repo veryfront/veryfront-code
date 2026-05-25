@@ -12,12 +12,13 @@ plus a code editor and terminal. AI know-how is not required.
 
 ## Contents
 
-| Page                                    | Goal                            |
-| --------------------------------------- | ------------------------------- |
-| [Quickstart](./quickstart.md)           | Build the first app end-to-end. |
-| [Installation](./installation.md)       | Install the CLI or framework.   |
-| [Create project](./create-project.md)   | Scaffold and run a project.     |
-| [Create agent](./create-agent.md)       | Define and invoke an agent.     |
-| [Create API](./create-api.md)           | Expose the agent route.         |
-| [Create frontend](./create-frontend.md) | Add a chat UI for the agent.    |
-| [Deploy project](./deploy-project.md)   | Build and ship the project.     |
+| Page                                        | Goal                                       |
+| ------------------------------------------- | ------------------------------------------ |
+| [Quickstart](./quickstart.md)               | Build the first app end-to-end.            |
+| [Installation](./installation.md)           | Install the CLI or framework.              |
+| [Create project](./create-project.md)       | Scaffold and run a project.                |
+| [Create agent](./create-agent.md)           | Define and invoke an agent.                |
+| [Create API](./create-api.md)               | Expose the agent route.                    |
+| [Create frontend](./create-frontend.md)     | Add a chat UI for the agent.               |
+| [Coding agents](../guides/coding-agents.md) | Connect an editor agent to the dev server. |
+| [Deploy project](./deploy-project.md)       | Build and ship the project.                |
