@@ -1,15 +1,37 @@
 ---
 title: "Configuration"
-description: "`veryfront.config.ts` options, environment variables, and runtime settings."
+description: "Override Veryfront conventions with config and environment variables."
 order: 9
 ---
 
-Configure a Veryfront project in two places: `veryfront.config.ts` for project structure, build settings, and feature defaults; environment variables for secrets and deployment-specific values. The framework reads both automatically.
+Veryfront follows convention over configuration. Start with the default
+directories and runtime behavior. Add `veryfront.config.ts` when a project needs
+to deviate from those conventions.
+
+Use environment variables for secrets and deployment-specific values. The
+framework reads config and environment variables automatically.
 
 ## Prerequisites
 
 - A project created with `veryfront init` (see [Create project](../getting-started/create-project.md)).
-- Write access to `veryfront.config.ts` and the project's `.env` file.
+- Write access to `veryfront.config.ts` when you need to override conventions.
+- Write access to the project's `.env` file or deployment environment when you
+  need secrets or deployment-specific values.
+
+## When to use config
+
+Use `veryfront.config.ts` for stable project choices:
+
+- Change directory conventions.
+- Select app-router or pages-router mode.
+- Change build output or trailing-slash behavior.
+- Add a custom layout or app wrapper.
+- Tune discovery paths for agents, tools, skills, prompts, resources,
+  workflows, or tasks.
+- Set project-level provider or MCP defaults.
+
+Do not add config just to mirror defaults. Keep the file small and add options
+when the project has a concrete reason to deviate.
 
 ## Config file
 
@@ -23,7 +45,8 @@ export default defineConfig({
 });
 ```
 
-`defineConfig` provides TypeScript autocompletion but doesn't transform the config: it's a pass-through for type safety.
+`defineConfig` provides TypeScript autocompletion but doesn't transform the
+config. It is a pass-through for type safety.
 
 ## Options
 
@@ -234,7 +257,7 @@ The framework reads `veryfront.config.ts` automatically. Your config values are 
 ## Verify it worked
 
 After editing `veryfront.config.ts`, restart `veryfront dev`. The dev banner
-should print the resolved `title`, output directory, and router mode. Set a
+prints the resolved `title`, output directory, and router mode. Set a
 distinctive `title` and check that the document title in the browser matches.
 
 For environment variables, read them back from a temporary API route. For

@@ -154,7 +154,13 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/configuration.md": {
     references: ["../api-reference/veryfront/index.md"],
-    snippets: ["defineConfig", "VERYFRONT_API_TOKEN", "getEnv"],
+    snippets: [
+      "convention over configuration",
+      "deviate from those conventions",
+      "defineConfig",
+      "VERYFRONT_API_TOKEN",
+      "getEnv",
+    ],
   },
   "guides/data-fetching.md": {
     references: ["../api-reference/veryfront/index.md"],
