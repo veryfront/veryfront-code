@@ -67,18 +67,13 @@ const EXISTING_GUIDE_EXAMPLE_SUITE = [
 
 const THIS_GUIDE_EXAMPLE_SUITE = [
   "agent-service-runtime.md",
-  "chat-composition.md",
   "chat-hooks.md",
-  "chat-theming.md",
   "chat-ui.md",
   "cli-knowledge-ingestion.md",
   "coding-agents.md",
   "create-agent.md",
   "deploying.md",
   "extension-authoring.md",
-  "extension-lifecycle.md",
-  "extension-publishing.md",
-  "extension-testing.md",
   "extensions.md",
   "head-and-seo.md",
   "installation.md",
@@ -88,7 +83,6 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "deploy-project.md",
   "integrations.md",
   "pages-and-routing.md",
-  "production-path.md",
   "project-structure.md",
   "quickstart.md",
   "sandbox.md",
@@ -169,15 +163,15 @@ describe("Guide: chat-ui.md", () => {
     assertEquals(typeof createAgUiHandler, "function");
     assertExists(Chat);
     assertEquals(typeof (Chat as Record<string, unknown>).render, "function");
-  });
-});
-
-describe("Guide: chat-composition.md", () => {
-  it("uses exported compound Chat and Message components", () => {
     assertExists((Chat as Record<string, unknown>).Root);
     assertExists((Chat as Record<string, unknown>).MessageList);
     assertExists((Chat as Record<string, unknown>).Composer);
     assertExists((Message as Record<string, unknown>).Root);
+    assertExists(ChatWithSidebar);
+    assertExists(ChatContextProvider);
+    assertExists(ComposerContextProvider);
+    assertExists(MessageContextProvider);
+    assertEquals(typeof useChatContextOptional, "function");
 
     const element = React.createElement(
       (Chat as Record<string, React.ComponentType<Record<string, unknown>>>)
@@ -198,16 +192,6 @@ describe("Guide: chat-hooks.md", () => {
     assertEquals(typeof useChat, "function");
     assertEquals(typeof useAgent, "function");
     assertEquals(typeof useCompletion, "function");
-  });
-});
-
-describe("Guide: chat-theming.md", () => {
-  it("uses exported chat composition and context APIs", () => {
-    assertExists(ChatWithSidebar);
-    assertExists(ChatContextProvider);
-    assertExists(ComposerContextProvider);
-    assertExists(MessageContextProvider);
-    assertEquals(typeof useChatContextOptional, "function");
   });
 });
 
@@ -271,9 +255,31 @@ describe("Guide: deploying.md", () => {
     assertEquals(config.build?.outDir, "dist");
     assertEquals(config.build?.trailingSlash, false);
   });
+
+  it("keeps the production path command sequence aligned with the CLI guides", async () => {
+    const guide = await readGuide("deploying.md");
+
+    for (
+      const command of [
+        "veryfront dev",
+        "veryfront build",
+        "veryfront start",
+        "veryfront deploy",
+        "veryfront open",
+      ]
+    ) {
+      assertStringIncludes(guide, command);
+    }
+  });
 });
 
 describe("Guide: extension-authoring.md", () => {
+  const loader = new ExtensionLoader(noopLogger);
+
+  afterEach(async () => {
+    await loader.teardownAll();
+  });
+
   it("uses a valid extension factory and custom provided contract", async () => {
     interface CurrentUserProvider {
       getUser(): Promise<{ id: string } | null>;
@@ -297,14 +303,6 @@ describe("Guide: extension-authoring.md", () => {
     const extension = authExtension();
     assertEquals(validateExtension(extension), []);
     assertEquals(await currentUserProvider.getUser(), null);
-  });
-});
-
-describe("Guide: extension-lifecycle.md", () => {
-  const loader = new ExtensionLoader(noopLogger);
-
-  afterEach(async () => {
-    await loader.teardownAll();
   });
 
   it("loads providers before consumers and tears down loaded extensions", async () => {
@@ -344,14 +342,6 @@ describe("Guide: extension-lifecycle.md", () => {
       "consumer:teardown",
       "provider:teardown",
     ]);
-  });
-});
-
-describe("Guide: extension-testing.md", () => {
-  const loader = new ExtensionLoader(noopLogger);
-
-  afterEach(async () => {
-    await loader.teardownAll();
   });
 
   it("verifies a factory and resolves a CacheStore through the loader", async () => {
@@ -393,9 +383,7 @@ describe("Guide: extension-testing.md", () => {
     await resolved.set("key", "value", 60);
     assertEquals(await resolved.get("key"), "value");
   });
-});
 
-describe("Guide: extension-publishing.md", () => {
   it("uses package metadata that Veryfront discovery recognizes", () => {
     const metadata = parsePackageMetadata({
       name: "@myorg/ext-custom-cache",
@@ -482,25 +470,6 @@ describe("Guide: pages-and-routing.md", () => {
 
     assertEquals(link.type, Link);
     assertEquals(router.type, RouterProvider);
-  });
-});
-
-describe("Guide: production-path.md", () => {
-  it("keeps the production path command sequence aligned with the CLI guides", async () => {
-    const guide = await readGuide("production-path.md");
-
-    for (
-      const command of [
-        "veryfront init",
-        "veryfront dev",
-        "veryfront build",
-        "veryfront start",
-        "veryfront deploy",
-        "veryfront open",
-      ]
-    ) {
-      assertStringIncludes(guide, command);
-    }
   });
 });
 

@@ -41,18 +41,16 @@ describe("guide content contracts", () => {
   });
 
   it("does not claim deploy prints the production URL", async () => {
-    for (const filename of ["deploying.md", "production-path.md"]) {
-      const guide = await Deno.readTextFile(`docs/guides/${filename}`);
+    const guide = await Deno.readTextFile("docs/guides/deploying.md");
 
-      assertEquals(guide.includes("deploy` prints a URL"), false);
-      assertEquals(guide.includes("CLI prints a production URL"), false);
-      assertStringIncludes(guide, "veryfront open");
-    }
+    assertEquals(guide.includes("deploy` prints a URL"), false);
+    assertEquals(guide.includes("CLI prints a production URL"), false);
+    assertStringIncludes(guide, "veryfront open");
   });
 
   it("recommends the current Node.js LTS in onboarding docs", async () => {
     const docs = [
-      "docs/guides/production-path.md",
+      "docs/guides/deploying.md",
       "cli/templates/features/mdx/files/app/docs/getting-started/page.mdx",
     ];
 

@@ -46,9 +46,6 @@ Primary source areas:
 
 - [Extensions](../guides/extensions.md)
 - [Extension authoring](../guides/extension-authoring.md)
-- [Extension lifecycle](../guides/extension-lifecycle.md)
-- [Extension publishing](../guides/extension-publishing.md)
-- [Extension testing](../guides/extension-testing.md)
 
 ## Related reference
 

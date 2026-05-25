@@ -18,7 +18,7 @@ import type {
   WorkflowContext,
   WorkflowNode,
 } from "../types.ts";
-import { parseDuration } from "../types.ts";
+import { parseDuration, validateRetryConfig } from "../types.ts";
 import type { BlobStorage } from "../blob/types.ts";
 
 /**
@@ -110,6 +110,10 @@ export class StepExecutor {
           `StepExecutor can only execute 'step' nodes, but node "${node.id}" has type '${config.type}'. ` +
           `This is likely a bug in the DAG executor routing.`,
       });
+    }
+
+    if (config.retry) {
+      validateRetryConfig(config.retry);
     }
 
     const retryConfig = { ...DEFAULT_RETRY, ...config.retry };
