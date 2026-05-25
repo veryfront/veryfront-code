@@ -5,27 +5,28 @@ description: "How Veryfront framework primitives, conventions, and runtime fit t
 order: 0
 ---
 
-Use this section when you need context before choosing an approach. Use it when
-framework boundaries are not clear.
+Concepts explain how Veryfront Code is organized and where each primitive
+belongs. Start here when ownership, lifecycle, or framework boundaries are not
+clear.
 
 ## Contents
 
 | Concept                                             | Explains                                                   |
 | --------------------------------------------------- | ---------------------------------------------------------- |
-| [Veryfront Code](./framework-overview.md)           | The framework model and its main surfaces.                 |
-| [Framework primitives](./framework-primitives.md)   | Apps, AI primitives, runtime work, MCP, and extensions.    |
-| [App](./app.md)                                     | User-facing routes, APIs, data, and rendering.             |
-| [Agent](./agent.md)                                 | Model reasoning and streamed output.                       |
-| [Tool](./tool.md)                                   | One callable capability.                                   |
-| [Skill](./skill.md)                                 | Reusable agent instructions and tool policy.               |
-| [Prompt](./prompt.md)                               | Reusable instruction template.                             |
-| [Resource](./resource.md)                           | Readable project data for MCP.                             |
-| [Task](./task.md)                                   | Background work definition.                                |
-| [Workflow](./workflow.md)                           | Multi-step coordination.                                   |
-| [Job](./job.md)                                     | Durable background execution.                              |
-| [Cron job](./cron-job.md)                           | Scheduled job creation.                                    |
-| [Integration](./integration.md)                     | External service capabilities.                             |
-| [MCP server](./mcp-server.md)                       | Assistant-facing protocol surface.                         |
+| [Veryfront Code](./framework-overview.md)           | How the main framework surfaces fit together.              |
+| [Framework primitives](./framework-primitives.md)   | Overview of framework primitives.                          |
+| [App](./app.md)                                     | The user-facing route and rendering boundary.              |
+| [Agent](./agent.md)                                 | The model reasoning loop and output boundary.              |
+| [Tool](./tool.md)                                   | The contract for one callable capability.                  |
+| [Skill](./skill.md)                                 | How skills package reusable agent instructions.            |
+| [Prompt](./prompt.md)                               | Reusable instruction templates for MCP.                    |
+| [Resource](./resource.md)                           | Read-only context exposed through MCP.                     |
+| [Task](./task.md)                                   | Background work before it becomes a job run.               |
+| [Workflow](./workflow.md)                           | Multi-step work with visible process state.                |
+| [Job](./job.md)                                     | Durable records for background execution.                  |
+| [Cron job](./cron-job.md)                           | Schedules that create job runs.                            |
+| [Integration](./integration.md)                     | External service access, auth, and remote tools.           |
+| [MCP server](./mcp-server.md)                       | Tools, prompts, and resources exposed to assistants.       |
 | [Sandbox](./sandbox.md)                             | Isolated command and file execution.                       |
-| [Framework conventions](./framework-conventions.md) | Routing, auto-discovery, shared code, content, and config. |
-| [Framework extensions](./framework-extensions.md)   | Factories, contracts, capabilities, setup, and teardown.   |
+| [Framework conventions](./framework-conventions.md) | File layout, auto-discovery, shared code, content, config. |
+| [Framework extensions](./framework-extensions.md)   | Replaceable runtime infrastructure.                        |

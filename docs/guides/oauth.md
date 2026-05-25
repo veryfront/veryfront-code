@@ -50,7 +50,7 @@ export const GET = createOAuthCallbackHandler(githubConfig);
 
 Set your credentials via environment variables:
 
-```
+```bash
 GITHUB_CLIENT_ID=your-client-id
 GITHUB_CLIENT_SECRET=your-client-secret
 ```
@@ -65,7 +65,7 @@ per-user slot: never in a single shared slot.
 > `(serviceId, userId)`, so one user cannot overwrite another user's tokens by
 > completing an OAuth flow.
 
-## Available providers
+## Choose a provider
 
 Pre-configured providers include: GitHub, Google, Discord, Slack, Twitter/X,
 Facebook, LinkedIn, Microsoft, Apple, Spotify, Twitch, Notion, Figma, Linear,
@@ -73,58 +73,17 @@ Jira, Confluence, Dropbox, Box, Zoom, HubSpot, Salesforce, Stripe, Shopify,
 GitLab, Bitbucket, and more.
 
 Each provider exports a config object (e.g., `githubConfig`, `gmailConfig`,
-`discordConfig`).
+`discordConfig`). Use the matching export from
+[`veryfront/oauth`](../api-reference/veryfront/oauth.md) as the source of truth
+for exact config names.
 
 ## API setup for OAuth credentials
 
-If you are running your own API/service layer for integrations, register an
-OAuth app for each provider you enable and configure the matching credentials
-there.
-
-### Provider registration
-
 For each OAuth provider, create an application and configure the callback URL:
 
-```
+```text
 https://<api-host>/api/oauth/callback/{integration-name}
 ```
-
-Then set the credentials as environment variables on the API:
-
-| Provider                                         | Variable Prefix | Registration URL                                                  |
-| ------------------------------------------------ | --------------- | ----------------------------------------------------------------- |
-| GitHub                                           | `GITHUB_`       | https://github.com/settings/developers                            |
-| Google (Gmail, Calendar, Docs, Drive, Sheets)    | `GOOGLE_`       | https://console.cloud.google.com/apis/credentials                 |
-| Slack                                            | `SLACK_`        | https://api.slack.com/apps                                        |
-| Microsoft (Outlook, Teams, OneDrive, SharePoint) | `MICROSOFT_`    | https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps      |
-| Atlassian (Jira, Confluence)                     | `ATLASSIAN_`    | https://developer.atlassian.com/console/myapps/                   |
-| Linear                                           | `LINEAR_`       | https://linear.app/settings/api                                   |
-| Notion                                           | `NOTION_`       | https://www.notion.so/my-integrations                             |
-| Figma                                            | `FIGMA_`        | https://www.figma.com/developers/apps                             |
-| Discord                                          | `DISCORD_`      | https://discord.com/developers/applications                       |
-| Dropbox                                          | `DROPBOX_`      | https://www.dropbox.com/developers/apps                           |
-| Airtable                                         | `AIRTABLE_`     | https://airtable.com/create/oauth                                 |
-| Asana                                            | `ASANA_`        | https://app.asana.com/0/developer-console                         |
-| Bitbucket                                        | `BITBUCKET_`    | https://bitbucket.org/workspace/settings/oauth-consumers          |
-| Box                                              | `BOX_`          | https://app.box.com/developers/console                            |
-| ClickUp                                          | `CLICKUP_`      | https://app.clickup.com/settings/integrations                     |
-| Freshdesk                                        | `FRESHDESK_`    | https://developers.freshdesk.com/                                 |
-| GitLab                                           | `GITLAB_`       | https://gitlab.com/-/profile/applications                         |
-| HubSpot                                          | `HUBSPOT_`      | https://app.hubspot.com/developer                                 |
-| Intercom                                         | `INTERCOM_`     | https://app.intercom.com/a/apps/_/developer-hub                   |
-| Mailchimp                                        | `MAILCHIMP_`    | https://admin.mailchimp.com/account/oauth2/                       |
-| Monday.com                                       | `MONDAY_`       | https://monday.com/developers/apps                                |
-| Pipedrive                                        | `PIPEDRIVE_`    | https://developers.pipedrive.com/docs/marketplace                 |
-| QuickBooks                                       | `QUICKBOOKS_`   | https://developer.intuit.com/app/developer/dashboard              |
-| Salesforce                                       | `SALESFORCE_`   | https://login.salesforce.com/lightning/setup/ConnectedApplication |
-| ServiceNow                                       | `SERVICENOW_`   | Instance admin, Application Registry                              |
-| Shopify                                          | `SHOPIFY_`      | https://partners.shopify.com/organizations                        |
-| Trello                                           | `TRELLO_`       | https://trello.com/power-ups/admin                                |
-| Twitter/X                                        | `TWITTER_`      | https://developer.twitter.com/en/portal/dashboard                 |
-| Webex                                            | `WEBEX_`        | https://developer.webex.com/my-apps                               |
-| Xero                                             | `XERO_`         | https://developer.xero.com/app/manage                             |
-| Zendesk                                          | `ZENDESK_`      | https://zendesk.com/admin/apps-integrations                       |
-| Zoom                                             | `ZOOM_`         | https://marketplace.zoom.us/develop                               |
 
 Each provider needs two variables:
 
@@ -165,20 +124,9 @@ Graph permissions.
 ### API-key integrations
 
 These integrations use API keys set by the developer in their project
-environment variables. No OAuth app is needed:
-
-| Integration | Required Variables                                                                     |
-| ----------- | -------------------------------------------------------------------------------------- |
-| Anthropic   | `ANTHROPIC_API_KEY`                                                                    |
-| AWS         | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`                             |
-| Mixpanel    | `MIXPANEL_PROJECT_TOKEN`, `MIXPANEL_API_SECRET`, `MIXPANEL_PROJECT_ID`                 |
-| Neon        | `NEON_API_KEY`, `DATABASE_URL`                                                         |
-| PostHog     | `POSTHOG_API_KEY`                                                                      |
-| Sentry      | `SENTRY_AUTH_TOKEN`, `SENTRY_ORG`                                                      |
-| Snowflake   | `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USERNAME`, `SNOWFLAKE_PASSWORD`, `SNOWFLAKE_WAREHOUSE` |
-| Stripe      | `STRIPE_SECRET_KEY`                                                                    |
-| Supabase    | `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_KEY`                            |
-| Twilio      | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`                       |
+environment variables. No OAuth app is needed. Use
+[Integrations](./integrations.md) for connector setup and keep API-key
+variables in your deployment environment.
 
 ## Token storage
 
