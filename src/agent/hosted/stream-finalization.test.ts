@@ -169,7 +169,7 @@ describe("agent/hosted-stream-finalization", () => {
     await finalizeHostedResponse({
       isAborted: false,
       streamError: new Error("error reading a body from connection"),
-      getFinalStep: async () => ({ step: 1 }),
+      getFinalStep: async () => ({ step: 1, finishReason: "stop" }),
       buildState: async () => ({
         persistedMessage: { id: "msg-1" },
         finalizedMessage: { id: "msg-1", parts: ["text"] },
@@ -201,6 +201,49 @@ describe("agent/hosted-stream-finalization", () => {
       "append:chunk-1",
       "flush",
       "dispatch:completed:openai/gpt-5.4",
+      "cleanup",
+    ]);
+  });
+
+  it("fails hosted responses with content when a body read fails without a final step finish reason", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedResponse({
+      isAborted: false,
+      streamError: new Error("error reading a body from connection"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        persistedMessage: { id: "msg-1" },
+        finalizedMessage: { id: "msg-1", parts: ["partial text"] },
+        fallbackChunks: [],
+        hasIncompleteToolParts: false,
+        metadata: { modelId: "openai/gpt-5.4" },
+      }),
+      shouldFailEmptyMessage: () => false,
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(
+          `dispatch:${state.status}:${state.terminalErrorCode}:${state.terminalErrorMessage}`,
+        );
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "flush",
+      "dispatch:failed:STREAM_ERROR:error reading a body from connection",
       "cleanup",
     ]);
   });
@@ -287,7 +330,7 @@ describe("agent/hosted-stream-finalization", () => {
       isAborted: false,
       mirroredDurableOutput: true,
       streamError: new Error("error reading a body from connection"),
-      getFinalStep: async () => ({ step: 1 }),
+      getFinalStep: async () => ({ step: 1, finishReason: "stop" }),
       buildState: async () => ({
         hasContent: false,
         fallbackChunks: [],
@@ -313,6 +356,47 @@ describe("agent/hosted-stream-finalization", () => {
     });
 
     assertEquals(calls, ["flush", "dispatch:completed", "cleanup"]);
+  });
+
+  it("fails hosted detached streams with output when a body read fails without a final step finish reason", async () => {
+    const calls: string[] = [];
+
+    await finalizeHostedDetached({
+      isAborted: false,
+      mirroredDurableOutput: true,
+      streamError: new Error("error reading a body from connection"),
+      getFinalStep: async () => ({ step: 1 }),
+      buildState: async () => ({
+        hasContent: false,
+        fallbackChunks: [],
+        hasIncompleteToolParts: false,
+      }),
+      resolveEmptyTerminalError: ({ streamError }) => ({
+        code: "STREAM_ERROR",
+        message: streamError instanceof Error ? streamError.message : String(streamError),
+      }),
+      appendFallbackChunk: async (chunk) => {
+        calls.push(`append:${chunk}`);
+      },
+      flushMirror: async () => {
+        calls.push("flush");
+      },
+      dispatchTerminalState: async (state) => {
+        calls.push(
+          `dispatch:${state.status}:${state.terminalErrorCode}:${state.terminalErrorMessage}`,
+        );
+      },
+      resolveTerminalState: () => ({ status: "completed" }),
+      cleanup: async () => {
+        calls.push("cleanup");
+      },
+    });
+
+    assertEquals(calls, [
+      "flush",
+      "dispatch:failed:STREAM_ERROR:error reading a body from connection",
+      "cleanup",
+    ]);
   });
 
   it("propagates cleanup errors after dispatching terminal state", async () => {

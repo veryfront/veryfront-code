@@ -104,16 +104,41 @@ function isLateProviderBodyReadError(error: unknown): boolean {
   return /error reading a body from connection/i.test(getStreamErrorMessage(error));
 }
 
+function hasFinalStepCompletionSignal(finalStep: unknown): boolean {
+  if (
+    typeof finalStep !== "object" || finalStep === null || !("finishReason" in finalStep) ||
+    typeof finalStep.finishReason !== "string"
+  ) {
+    return false;
+  }
+
+  switch (finalStep.finishReason) {
+    case "stop":
+    case "length":
+    case "tool-calls":
+    case "content-filter":
+    case "other":
+      return true;
+    default:
+      return false;
+  }
+}
+
 function shouldFailStreamError(input: {
   isAborted: boolean;
   hasOutput: boolean;
+  finalStep: unknown;
   streamError?: unknown | null;
 }): boolean {
   if (input.isAborted || input.streamError == null) {
     return false;
   }
 
-  if (input.hasOutput && isLateProviderBodyReadError(input.streamError)) {
+  if (
+    input.hasOutput &&
+    hasFinalStepCompletionSignal(input.finalStep) &&
+    isLateProviderBodyReadError(input.streamError)
+  ) {
     return false;
   }
 
@@ -155,6 +180,7 @@ export async function finalizeHostedResponse<TMessage, TChunk>(
     shouldFailStreamError({
       isAborted: options.isAborted,
       hasOutput: true,
+      finalStep,
       streamError: options.streamError,
     })
   ) {
@@ -213,6 +239,7 @@ export async function finalizeHostedDetached<TChunk>(
     shouldFailStreamError({
       isAborted: options.isAborted,
       hasOutput: options.mirroredDurableOutput || state.hasContent,
+      finalStep,
       streamError: options.streamError,
     })
   ) {
