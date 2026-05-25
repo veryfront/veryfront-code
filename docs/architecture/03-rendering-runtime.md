@@ -41,7 +41,6 @@ Primary source areas:
 
 - [Pages and routing](../guides/pages-and-routing.md)
 - [Head and SEO](../guides/head-and-seo.md)
-- [Chat composition](../guides/chat-composition.md)
 - [Chat UI](../guides/chat-ui.md)
 
 ## Related reference

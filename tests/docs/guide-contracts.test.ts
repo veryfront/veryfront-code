@@ -69,17 +69,9 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "ReadableStream",
     ],
   },
-  "guides/chat-composition.md": {
-    references: ["../api-reference/veryfront/chat.md"],
-    snippets: ["Chat.MessageList", "Message.Root", "ChatWithSidebar"],
-  },
   "guides/chat-hooks.md": {
     references: ["../api-reference/veryfront/chat.md"],
     snippets: ["useChat", "useAgent", "useCompletion"],
-  },
-  "guides/chat-theming.md": {
-    references: ["../api-reference/veryfront/chat.md"],
-    snippets: ["theme", "attachments", "Context providers"],
   },
   "guides/chat-ui.md": {
     references: [
@@ -87,7 +79,17 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/markdown.md",
     ],
-    snippets: ["Chat", "useChat", "createAgUiHandler"],
+    snippets: [
+      "Chat",
+      "useChat",
+      "createAgUiHandler",
+      "Chat.MessageList",
+      "Message.Root",
+      "ChatWithSidebar",
+      "theme",
+      "attachments",
+      "chat context providers",
+    ],
   },
   "guides/cli-knowledge-ingestion.md": {
     references: ["../api-reference/veryfront/cli.md"],
@@ -134,25 +136,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Sandbox",
     ],
   },
-  "guides/production-path.md": {
-    references: [
-      "../getting-started/create-project.md",
-      "./choose-a-primitive.md",
-      "./pages-and-routing.md",
-      "./api-routes.md",
-      "./deploying.md",
-      "../api-reference/veryfront/index.md",
-    ],
-    snippets: [
-      "veryfront init",
-      "veryfront dev",
-      "veryfront build",
-      "veryfront start",
-      "veryfront deploy",
-      "veryfront open",
-      "production path",
-    ],
-  },
   "getting-started/quickstart.md": {
     references: [
       "./installation.md",
@@ -185,6 +168,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/utils.md",
     ],
     snippets: [
+      "Pick one production path",
       "veryfront build",
       "veryfront start",
       "veryfront deploy",
@@ -192,20 +176,21 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     ],
   },
   "guides/extension-authoring.md": {
-    references: ["../api-reference/veryfront/extensions.md"],
-    snippets: ["veryfront extension init", "ExtensionFactory", "capabilities"],
-  },
-  "guides/extension-lifecycle.md": {
-    references: ["../api-reference/veryfront/extensions.md"],
-    snippets: ["setup", "teardown", "veryfront.config.ts"],
-  },
-  "guides/extension-publishing.md": {
-    references: ["../api-reference/veryfront/extensions.md"],
-    snippets: ["veryfront.extension", "deno add", "semver"],
-  },
-  "guides/extension-testing.md": {
-    references: ["../api-reference/veryfront/testing.md"],
-    snippets: ["ExtensionLoader", "tryResolve", "deno test"],
+    references: [
+      "../api-reference/veryfront/extensions.md",
+      "../api-reference/veryfront/testing.md",
+    ],
+    snippets: [
+      "veryfront extension init",
+      "ExtensionFactory",
+      "capabilities",
+      "ExtensionLoader",
+      "tryResolve",
+      "veryfront.extension",
+      "deno add",
+      "setup()",
+      "teardown()",
+    ],
   },
   "guides/extensions.md": {
     references: ["../api-reference/veryfront/extensions.md"],
@@ -243,21 +228,23 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "guides/index.md": {
     references: [],
     snippets: [
-      "Guides help you complete specific work",
-      "Contents",
-      "Primitive or area",
+      "Guides are recipes for specific goals",
+      "Start a project",
+      "Build routes",
+      "Add AI behavior",
+      "Run background work",
+      "Connect external systems",
       "Configuration",
-      "Pages and routing",
       "Workflows",
       "Extensions",
-      "Building and deploying",
+      "Build and deploy",
     ],
   },
   "concepts/index.md": {
     references: [],
     snippets: [
       "How Veryfront framework primitives",
-      "Use this section when you need context",
+      "Concepts explain how Veryfront Code is organized",
       "Framework primitives",
       "Framework conventions",
       "Framework extensions",
@@ -382,10 +369,14 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: [
       "../guides/extensions.md",
       "../guides/extension-authoring.md",
-      "../guides/extension-lifecycle.md",
       "../api-reference/veryfront/extensions.md",
     ],
-    snippets: ["Characteristics", "Boundary", "Contract", "Common extension areas"],
+    snippets: [
+      "What extensions own",
+      "When to use extensions",
+      "Contract",
+      "Use a normal project module",
+    ],
   },
   "guides/integrations.md": {
     references: ["../api-reference/veryfront/integrations.md"],

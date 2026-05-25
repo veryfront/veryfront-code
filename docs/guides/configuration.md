@@ -188,69 +188,27 @@ defineConfig({
 
 ## Environment variables
 
-Set environment variables in `.env` files or your deployment platform:
+Set secrets and deployment-specific values in `.env` files or your deployment
+platform. Keep stable project structure in `veryfront.config.ts`.
 
-### Veryfront Cloud bootstrap
+Common groups:
 
-| Variable                                        | Description                                                                                                                              |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `VERYFRONT_API_TOKEN`                           | Veryfront API token for cloud/bootstrap-aware features and agent service registration                                                    |
-| `VERYFRONT_PROJECT_ID`                          | Project id used for project-scoped agent service registration                                                                            |
-| `VERYFRONT_PROJECT_SLUG`                        | Project slug used by Veryfront Cloud-aware features                                                                                      |
-| `VERYFRONT_API_URL`                             | Override the hosted API URL for self-hosted API deployments                                                                              |
-| `VERYFRONT_AGENT_SERVICE_NAME`                  | Optional agent service name. Defaults to the nearest project manifest name, then `veryfront-agent-service`                               |
-| `VERYFRONT_AGENT_SERVICE_URL`                   | Public URL for a separately deployed agent service that should register with the control plane                                           |
-| `VERYFRONT_AGENT_SERVICE_KEY`                   | Optional stable key for this agent service instance. Defaults to a deterministic key derived from service name, agent id, scope, and URL |
-| `VERYFRONT_AGENT_SERVICE_REGISTRATION`          | Agent service registration mode: `auto`, `enabled`, or `disabled`. Defaults to `auto`                                                    |
-| `VERYFRONT_AGENT_SERVICE_HEARTBEAT_INTERVAL_MS` | Push runtime heartbeat interval in milliseconds. Defaults to `30000`                                                                     |
-| `VERYFRONT_AGENT_SERVICE_REGION`                | Optional region metadata for the registered agent service                                                                                |
-| `VERYFRONT_API_BASE_URL`                        | Override the REST API base URL directly                                                                                                  |
-| `VERYFRONT_DEFAULT_MODEL`                       | Override the default Veryfront Cloud model                                                                                               |
-| `VERYFRONT_DEFAULT_EMBEDDING_MODEL`             | Override the default Veryfront Cloud embedding model                                                                                     |
-| `VERYFRONT_RAG_BACKEND`                         | Override the default RAG backend selection                                                                                               |
+- **Cloud bootstrap**: `VERYFRONT_API_TOKEN`, `VERYFRONT_PROJECT_ID`,
+  `VERYFRONT_PROJECT_SLUG`, and `VERYFRONT_API_URL`.
+- **Agent services**: `VERYFRONT_AGENT_SERVICE_NAME`,
+  `VERYFRONT_AGENT_SERVICE_URL`, `VERYFRONT_AGENT_SERVICE_KEY`,
+  `VERYFRONT_AGENT_SERVICE_REGISTRATION`, and
+  `VERYFRONT_AGENT_SERVICE_REGION`.
+- **Provider keys**: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`,
+  and provider-specific base URLs.
+- **Runtime**: `PORT`, `NODE_ENV`, `REDIS_URL`, request timeouts, SSR limits,
+  and `VERYFRONT_EXPERIMENTAL_RSC`.
+- **Observability**: `VERYFRONT_OTEL`, `OTEL_TRACES_ENABLED`,
+  `OTEL_METRICS_ENABLED`, OTLP endpoints, and `OTEL_SERVICE_NAME`.
 
-### Provider API keys
-
-| Variable                       | Description                          |
-| ------------------------------ | ------------------------------------ |
-| `OPENAI_API_KEY`               | OpenAI API key                       |
-| `OPENAI_BASE_URL`              | Custom OpenAI-compatible endpoint    |
-| `ANTHROPIC_API_KEY`            | Anthropic API key                    |
-| `ANTHROPIC_BASE_URL`           | Custom Anthropic-compatible endpoint |
-| `GOOGLE_API_KEY`               | Google AI API key                    |
-| `GOOGLE_GENERATIVE_AI_API_KEY` | Alternate Google AI API key env name |
-
-### Local AI
-
-| Variable                     | Description                                                                                                                                 |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `VERYFRONT_DISABLE_LOCAL_AI` | Set to `1` to disable server-side local model fallback (browser fallback may still run unless `browserFallback: false` is set in `useChat`) |
-
-### Framework
-
-| Variable                        | Description                            |
-| ------------------------------- | -------------------------------------- |
-| `PORT`                          | Server port (default: 3000)            |
-| `NODE_ENV`                      | `development`, `production`, or `test` |
-| `REDIS_URL`                     | Redis connection URL                   |
-| `REQUEST_TIMEOUT_MS`            | Incoming HTTP request timeout          |
-| `VF_HTTP_FETCH_TIMEOUT`         | Outgoing fetch timeout                 |
-| `SSR_MAX_CONCURRENT_TRANSFORMS` | Concurrency limit for SSR transforms   |
-| `VERYFRONT_EXPERIMENTAL_RSC`    | Force-enable RSC experimental mode     |
-
-### Observability
-
-| Variable                              | Description                                   |
-| ------------------------------------- | --------------------------------------------- |
-| `VERYFRONT_OTEL`                      | Enable Veryfront tracing and metrics defaults |
-| `OTEL_TRACES_ENABLED`                 | Enable OpenTelemetry tracing explicitly       |
-| `OTEL_METRICS_ENABLED`                | Enable OpenTelemetry metrics explicitly       |
-| `OTEL_EXPORTER_OTLP_ENDPOINT`         | Shared OTLP collector endpoint                |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`  | Trace-specific OTLP endpoint                  |
-| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | Metrics-specific OTLP endpoint                |
-| `OTEL_SERVICE_NAME`                   | Service name for traces                       |
-
-For runtime-specific env behavior, `veryfront/config` and the cloud bootstrap helpers resolve these values per request where needed. Prefer environment variables for secrets and deployment-specific values, and keep `veryfront.config.ts` for stable project structure and feature defaults.
+Use [Providers](./providers.md) for model-provider setup. Use
+[Agent service runtime](./agent-service-runtime.md) for the registration
+variables used by standalone agent services.
 
 ## Environment-based config
 

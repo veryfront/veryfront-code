@@ -58,14 +58,14 @@ By convention:
 - `VERYFRONT_DEFAULT_MODEL`, `VERYFRONT_DEFAULT_EMBEDDING_MODEL`, and
   `VERYFRONT_RAG_BACKEND` are escape hatches, not required config
 
-## Explicit provider environment variables
+## Set provider environment variables
 
-| Variable            | Provider                          |
-| ------------------- | --------------------------------- |
-| `OPENAI_API_KEY`    | OpenAI                            |
-| `ANTHROPIC_API_KEY` | Anthropic                         |
-| `GOOGLE_API_KEY`    | Google                            |
-| `OPENAI_BASE_URL`   | Custom OpenAI-compatible endpoint |
+Set only the variables for the provider you use:
+
+- `OPENAI_API_KEY` for OpenAI.
+- `ANTHROPIC_API_KEY` for Anthropic.
+- `GOOGLE_API_KEY` for Google.
+- `OPENAI_BASE_URL` for OpenAI-compatible services.
 
 Explicit provider env vars still work when you want to pin a provider directly:
 
