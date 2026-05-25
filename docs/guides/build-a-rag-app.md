@@ -54,14 +54,14 @@ Create upload routes that share the same store:
 
 ```ts title="app/api/uploads/route.ts"
 import { createUploadHandler } from "veryfront/embedding";
-import { store } from "../../../store";
+import { store } from "../../../store.ts";
 
 export const { POST, GET } = createUploadHandler(store);
 ```
 
 ```ts title="app/api/uploads/[id]/route.ts"
 import { createUploadHandler } from "veryfront/embedding";
-import { store } from "../../../../store";
+import { store } from "../../../../store.ts";
 
 export const { DELETE } = createUploadHandler(store);
 ```
@@ -69,12 +69,31 @@ export const { DELETE } = createUploadHandler(store);
 `POST` ingests a file, `GET` lists ingested documents, and `DELETE` removes a
 document.
 
+## Understand ingestion
+
+Upload ingestion does three things:
+
+- **Extracts text**: Text, Markdown, and MDX are read directly. CSV files are
+  converted into row text with headers. PDF, DOCX, XLS, XLSX, PPTX, HTML, RTF,
+  EPUB, JSON, and XML use the `DocumentExtractor` extension backed by
+  `@veryfront/ext-document-kreuzberg`.
+- **Chunks and embeds**: Text is split with `chunkOptions` before embedding.
+  Defaults are `maxChars: 2000`, `overlap: 200`, and
+  `separators: ["\n\n", "\n", " ", ""]`.
+- **Stores data**: Cloud mode stores the original uploaded file as a source file
+  blob under `.veryfront/rag/uploads/`. Local mode stores only the RAG index in
+  `data/index.json`.
+
+OCR is not a separate step. For scanned PDFs or image-only files, run OCR before
+calling `store.ingest()`. Local mode fills embeddings on first search. Cloud
+mode chunks and embeds during ingestion.
+
 ## Add bundled content ingestion
 
 Use a separate ingestion route for files that ship with the app:
 
 ```ts title="app/api/ingest/route.ts"
-import { store } from "../../../store";
+import { store } from "../../../store.ts";
 
 export async function POST() {
   await store.indexContentDir();
@@ -98,7 +117,7 @@ Use `beforeStream` to retrieve context before the agent runs:
 
 ```ts title="app/api/ag-ui/route.ts"
 import { createAgUiHandler } from "veryfront/agent";
-import { store } from "../../../store";
+import { store } from "../../../store.ts";
 
 export const POST = createAgUiHandler("rag", {
   beforeStream: async ({ lastUserText }) => {

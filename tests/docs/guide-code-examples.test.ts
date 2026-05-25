@@ -230,8 +230,16 @@ describe("Guide: build-a-rag-app.md", () => {
     );
     assertStringIncludes(guide, 'useUploads({ api: "/api/uploads" })');
     assertStringIncludes(guide, "disabled={uploads.uploading}");
+    assertStringIncludes(guide, 'import { store } from "../../../store.ts";');
+    assertStringIncludes(guide, 'import { store } from "../../../../store.ts";');
     assertStringIncludes(guide, "await store.indexContentDir();");
     assertStringIncludes(guide, "const results = await store.search(query, { topK: 5 });");
+    assertStringIncludes(guide, ".veryfront/rag/uploads/");
+    assertStringIncludes(guide, "DocumentExtractor");
+    assertStringIncludes(guide, "XLS, XLSX");
+    assertStringIncludes(guide, "OCR is not a separate step.");
+    assertStringIncludes(guide, "chunkOptions");
+    assertStringIncludes(guide, "maxChars: 2000");
     assertStringIncludes(guide, "VERYFRONT_API_TOKEN");
     assertStringIncludes(guide, "AI Gateway");
   });
