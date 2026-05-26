@@ -91,6 +91,7 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "skills.md",
   "tasks.md",
   "workflows-advanced.md",
+  "examples/dora-compliance-agent.md",
 ] as const;
 
 const GUIDE_CODE_EXAMPLE_COVERAGE = new Set<string>([
@@ -123,11 +124,23 @@ async function guideFilesWithCodeFences(): Promise<string[]> {
   for (const dir of GUIDE_DIRS) {
     for await (const entry of Deno.readDir(dir)) {
       if (
-        !entry.isFile || !entry.name.endsWith(".md") ||
-        entry.name === "README.md"
-      ) continue;
-      const content = await readGuide(entry.name);
-      if (content.includes("```")) names.push(entry.name);
+        entry.isFile && entry.name.endsWith(".md") &&
+        entry.name !== "README.md"
+      ) {
+        const content = await readGuide(entry.name);
+        if (content.includes("```")) names.push(entry.name);
+      } else if (entry.isDirectory) {
+        for await (const child of Deno.readDir(`${dir}/${entry.name}`)) {
+          if (
+            child.isFile && child.name.endsWith(".md") &&
+            child.name !== "README.md"
+          ) {
+            const rel = `${entry.name}/${child.name}`;
+            const content = await readGuide(rel);
+            if (content.includes("```")) names.push(rel);
+          }
+        }
+      }
     }
   }
   return names.sort();

@@ -36,6 +36,15 @@ async function listPublishedGuideFiles(): Promise<string[]> {
         entry.isFile && entry.name.endsWith(".md") && entry.name !== "README.md"
       ) {
         guideFiles.push(`${dir}/${entry.name}`);
+      } else if (entry.isDirectory) {
+        for await (const child of Deno.readDir(`docs/${dir}/${entry.name}`)) {
+          if (
+            child.isFile && child.name.endsWith(".md") &&
+            child.name !== "README.md"
+          ) {
+            guideFiles.push(`${dir}/${entry.name}/${child.name}`);
+          }
+        }
       }
     }
   }
@@ -580,6 +589,26 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "blobStorage",
       "useWorkflow",
       "useWorkflowStart",
+    ],
+  },
+  "guides/examples/dora-compliance-agent.md": {
+    references: [
+      "../../getting-started/installation.md",
+      "../providers.md",
+      "../agents.md",
+      "../tools.md",
+      "../skills.md",
+      "../chat-ui.md",
+      "../../getting-started/deploy-project.md",
+    ],
+    snippets: [
+      "dora-rubric",
+      "parseContract",
+      "veryfront init dora-compliance-agent",
+      'createAgUiHandler("resilience")',
+      "proposed_amendment",
+      "Art. 30",
+      "not legal advice",
     ],
   },
 };
