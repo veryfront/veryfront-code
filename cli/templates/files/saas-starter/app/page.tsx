@@ -42,7 +42,7 @@ export default function LandingPage(): JSX.Element {
               Start free
             </a>
             <a
-              href="https://veryfront.com/code/guides"
+              href="https://veryfront.com/docs/code/guides"
               className="px-6 py-2.5 border border-neutral-200 dark:border-neutral-800 text-neutral-700 dark:text-neutral-300 rounded-full font-medium hover:bg-neutral-50 dark:hover:bg-neutral-900 transition-colors"
             >
               Documentation

@@ -12,7 +12,7 @@ export default tool({
     // Popular options: Tavily, SerpAPI, Brave Search
     throw new Error(
       "No search API configured. " +
-        "See https://veryfront.com/code/guides/tools for setup instructions.",
+        "See https://veryfront.com/docs/code/guides/tools for setup instructions.",
     );
   },
 });
