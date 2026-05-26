@@ -2426,13 +2426,9 @@ function generateMD(
   lines.push("---");
   lines.push("");
 
-  // Description paragraph. The page title comes from the frontmatter
-  // `title:` and is rendered by Mintlify; emitting a markdown H1 here
-  // would render as a duplicate heading on the published page.
-  if (description) {
-    lines.push(description);
-    lines.push("");
-  }
+  // The page title and description come from frontmatter and are rendered by
+  // the docs shell. Do not emit the description as body copy, or API reference
+  // pages show duplicate subtitles.
   if (entry.isSynthetic) {
     lines.push(
       `\`${entry.importPath}\` has no direct exports. Use the deep imports below.`,

@@ -4,8 +4,6 @@ description: "Veryfront CLI entry point."
 order: 5
 ---
 
-Veryfront CLI entry point.
-
 ## Examples
 
 ```sh

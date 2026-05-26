@@ -4,8 +4,6 @@ description: "Component overrides for `.mdx` page rendering."
 order: 16
 ---
 
-Component overrides for `.mdx` page rendering.
-
 ## Import
 
 ```ts
@@ -30,16 +28,16 @@ For runtime markdown string rendering, use `veryfront/markdown` instead.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MDXProvider` | Render MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L13) |
+| `MDXProvider` | Render MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L12) |
 
 ### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `useMDXComponents` | React hook for mdxcomponents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L21) |
+| `useMDXComponents` | React hook for mdxcomponents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L20) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `MDXProviderProps` | Props accepted by MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L7) |
+| `MDXProviderProps` | Props accepted by MDX provider. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/react/components/MDXProvider.tsx#L6) |
