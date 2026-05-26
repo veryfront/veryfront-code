@@ -49,7 +49,7 @@ Out of scope:
 
 Per template:
 
-1. Build the local npm package once: `deno task build` → `./npm/`.
+1. Build the local npm package once: `deno task build:npm` → `./npm/`.
 2. Scaffold via the local CLI:
    `deno run -A cli/main.ts init <name> -t <template> --skip-install --skip-env-prompt`.
 3. Rewrite the scaffolded `package.json` so the `veryfront` dependency points
@@ -86,7 +86,7 @@ Watch list:
   `bun install`, spawn `bun run dev`, poll for HTTP ready, kill the process
   tree.
 - New: `tests/_helpers/local-tarball.ts` — resolve the path to `./npm/`. Hard
-  fail with an actionable message ("Run `deno task build` first") if missing.
+  fail with an actionable message ("Run `deno task build:npm` first") if missing.
 - Extracted: `tests/_helpers/scaffold-template.ts` — pulled out of the existing
   Deno smoke test so both runtimes share one code path. Update the Deno test to
   consume it.
@@ -139,7 +139,7 @@ describe("bun templates smoke", {
   is set (by the nightly workflow), absence of `bun` is a hard module-load
   error instead.
 - Missing `./npm/` tarball: hard-fail in `beforeAll` with an actionable
-  message ("Run `deno task build` first") only when the suite is active.
+  message ("Run `deno task build:npm` first") only when the suite is active.
 - HTTP readiness timeout: 30s, polled inside `waitForReady`.
 - Per-template overall budget: 90s, enforced by an `AbortController` that
   wraps the whole test body and triggers `killTree` on timeout. The Deno
@@ -187,7 +187,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.1.x # pin; bump manually
-      - run: deno task build
+      - run: deno task build:npm
       - run: mkdir -p "$RUNNER_TEMP/bun-smoke-logs"
       - env:
           VF_REQUIRE_BUN: "1"
@@ -232,7 +232,7 @@ those first keeps the Phase 2 test green on day one.
 | ------------------------------------- | ----------------------------------------------------------------------- |
 | `bun` not on PATH, local              | Every per-template test registered via `it.ignore`; suite reports skips |
 | `bun` not on PATH, `VF_REQUIRE_BUN=1` | Module-load error before any test runs                                  |
-| `./npm/` not present (suite active)   | `beforeAll` throws with "Run `deno task build` first"                   |
+| `./npm/` not present (suite active)   | `beforeAll` throws with "Run `deno task build:npm` first"               |
 | HTTP not ready in 30s                 | Test fails; dev-server log captured to `VF_BUN_SMOKE_LOG_DIR`           |
 | Per-template > 90s overall            | `AbortController` cancels, `killTree` runs, test fails with timeout msg |
 | `bun install` non-zero exit           | Test fails; install log captured                                        |
