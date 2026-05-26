@@ -1,5 +1,9 @@
 "use client";
 
+// Demo sign-in: the buttons below pass straight through to /dashboard so the
+// starter is usable out of the box. To wire up real OAuth, scaffold provider
+// routes at app/api/auth/google/route.ts and app/api/auth/github/route.ts and
+// point the hrefs there. See https://veryfront.com/docs/code/guides/oauth.
 export default function LoginPage(): JSX.Element {
   return (
     <div className="min-h-screen flex items-center justify-center bg-neutral-50 dark:bg-neutral-950 px-4">
@@ -15,7 +19,7 @@ export default function LoginPage(): JSX.Element {
 
         <div className="bg-white dark:bg-neutral-900 rounded-2xl border border-neutral-200 dark:border-neutral-800 p-6 space-y-3">
           <a
-            href="/api/auth/google"
+            href="/dashboard"
             className="flex items-center justify-center gap-2 w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-800 rounded-xl text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -39,7 +43,7 @@ export default function LoginPage(): JSX.Element {
             Continue with Google
           </a>
           <a
-            href="/api/auth/github"
+            href="/dashboard"
             className="flex items-center justify-center gap-2 w-full px-4 py-2.5 border border-neutral-200 dark:border-neutral-800 rounded-xl text-sm font-medium text-neutral-700 dark:text-neutral-300 hover:bg-neutral-50 dark:hover:bg-neutral-800 transition-colors"
           >
             <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
