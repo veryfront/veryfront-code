@@ -194,6 +194,66 @@ function splitPackageSubpath(specifier: string): { name: string; subpath: string
   return { name, subpath: rest ? `./${rest}` : "." };
 }
 
+// Pick the relative file path from a `package.json#exports` entry, which can
+// be a string, a conditional object (`{ import, default, ... }`), or an
+// array of those.
+function pickExportEntry(entry: unknown): string | null {
+  if (typeof entry === "string") return entry;
+  if (Array.isArray(entry)) {
+    for (const e of entry) {
+      const v = pickExportEntry(e);
+      if (v) return v;
+    }
+    return null;
+  }
+  if (entry && typeof entry === "object") {
+    const obj = entry as Record<string, unknown>;
+    const candidate = obj.import ?? obj.node ?? obj.default;
+    return candidate ? pickExportEntry(candidate) : null;
+  }
+  return null;
+}
+
+// Resolve a subpath (`.` or `./foo/bar`) against a `package.json#exports`
+// map. Honors literal keys first, then matches `./*`-style glob patterns
+// where the trailing `*` is substituted with the captured remainder.
+// Returns the resolved relative path (e.g. `./debounce.js`) or null when
+// no entry matches.
+function resolveExportPath(exports: unknown, subpath: string): string | null {
+  if (!exports || typeof exports !== "object") return null;
+  const map = exports as Record<string, unknown>;
+
+  // Literal key (covers "." and exact subpaths like "./jsx-runtime").
+  if (subpath in map) return pickExportEntry(map[subpath]);
+
+  // Glob keys like "./*", "./feature/*", "./lib/*.js". Pick the longest
+  // matching prefix so more specific patterns win over `./*`.
+  let bestKey: string | null = null;
+  let bestPrefixLen = -1;
+  for (const key of Object.keys(map)) {
+    const star = key.indexOf("*");
+    if (star === -1) continue;
+    const prefix = key.slice(0, star);
+    const suffix = key.slice(star + 1);
+    if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
+    if (subpath.length < prefix.length + suffix.length) continue;
+    if (prefix.length > bestPrefixLen) {
+      bestKey = key;
+      bestPrefixLen = prefix.length;
+    }
+  }
+  if (!bestKey) return null;
+
+  const star = bestKey.indexOf("*");
+  const captured = subpath.slice(
+    bestKey.slice(0, star).length,
+    subpath.length - bestKey.slice(star + 1).length,
+  );
+  const template = pickExportEntry(map[bestKey]);
+  if (!template) return null;
+  return template.replace("*", captured);
+}
+
 /**
  * Rewrite imports for Node.js runtime
  * - Resolves relative imports to file:// URLs
@@ -220,8 +280,10 @@ export async function rewriteDiscoveryImports(
 
     // Resolve a bare specifier (optionally with subpath) to a file:// URL,
     // honoring the package's `exports` map for subpath imports such as
-    // `react/jsx-runtime` or `lodash-es/debounce`. Results are memoized per
-    // (projectDir, specifier).
+    // `react/jsx-runtime` or `lodash-es/debounce`. Successful resolutions
+    // are memoized per (projectDir, specifier); failures are NOT cached
+    // so a subsequent `npm install` of the missing dep is picked up
+    // without a process restart.
     const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
       const cacheKey = `${projectDir}::${specifier}`;
       const cached = resolvedSpecifierCache.get(cacheKey);
@@ -236,16 +298,13 @@ export async function rewriteDiscoveryImports(
 
         try {
           const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-          const exportEntry = pkgJson.exports?.[subpath];
-          const exportPath = typeof exportEntry === "string"
-            ? exportEntry
-            : exportEntry?.import ?? exportEntry?.default;
+          const exportPath = resolveExportPath(pkgJson.exports, subpath);
 
           const entryPoint = exportPath ??
             (subpath === "."
               ? (pkgJson.module ?? pkgJson.main ?? "index.js")
-              // No exports entry for this subpath: fall back to joining the
-              // subpath onto the package dir (e.g. `dotenv/config.js`).
+              // No exports entry matched: fall back to joining the subpath
+              // onto the package dir (e.g. `dotenv/config.js`).
               : subpath.replace(/^\.\//, ""));
 
           const resolved = pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
@@ -259,7 +318,8 @@ export async function rewriteDiscoveryImports(
         }
       }
 
-      resolvedSpecifierCache.set(cacheKey, null);
+      // Intentionally do NOT cache nulls — a missing-then-installed package
+      // should be resolvable on the next pass without a process restart.
       return null;
     };
 

@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { rewriteDiscoveryImports, rewriteForDeno } from "./import-rewriter.ts";
 
@@ -269,6 +269,85 @@ describe("discovery/import-rewriter", () => {
 
       assertStringIncludes(transformed, 'import type { Foo } from "some-pkg-not-installed"');
       assertStringIncludes(transformed, 'export type { Bar } from "another-missing-pkg"');
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("resolves bare-package subpath imports via package.json#exports glob patterns (lodash-es style)", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const pkgDir = `${projectDir}/node_modules/lodash-es`;
+    await Deno.mkdir(pkgDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${pkgDir}/package.json`,
+      JSON.stringify({
+        name: "lodash-es",
+        version: "4.17.21",
+        type: "module",
+        exports: {
+          ".": "./lodash.js",
+          "./*": "./*.js",
+        },
+      }),
+    );
+    await Deno.writeTextFile(`${pkgDir}/lodash.js`, "");
+    await Deno.writeTextFile(`${pkgDir}/debounce.js`, "");
+    await Deno.writeTextFile(`${pkgDir}/throttle.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        [
+          'import debounce from "lodash-es/debounce";',
+          'import throttle from "lodash-es/throttle";',
+        ].join("\n"),
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      // Glob pattern `./*` → `./*.js` must produce `debounce.js`, not bare `debounce`
+      assertStringIncludes(transformed, "lodash-es/debounce.js");
+      assertStringIncludes(transformed, "lodash-es/throttle.js");
+      assertEquals(transformed.includes('"lodash-es/debounce"'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not cache missing-package lookups, so a later install is picked up without restart", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const pkgDir = `${projectDir}/node_modules/late-installed`;
+    const code = 'import x from "late-installed";';
+
+    try {
+      // First pass: package not present yet → should leave bare import alone.
+      const before = await rewriteDiscoveryImports(
+        code,
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+      assertStringIncludes(before, 'from "late-installed"');
+      assert(!before.includes("file://"));
+
+      // Simulate `npm install` between passes.
+      await Deno.mkdir(pkgDir, { recursive: true });
+      await Deno.writeTextFile(
+        `${pkgDir}/package.json`,
+        JSON.stringify({ name: "late-installed", main: "./index.js" }),
+      );
+      await Deno.writeTextFile(`${pkgDir}/index.js`, "");
+
+      // Second pass: must now resolve — null lookups are intentionally
+      // NOT cached so dev servers recover after `npm install` without a
+      // process restart.
+      const after = await rewriteDiscoveryImports(
+        code,
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+      assertStringIncludes(after, "late-installed/index.js");
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
