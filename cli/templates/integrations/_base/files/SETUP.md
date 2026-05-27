@@ -47,7 +47,6 @@ Visit `http://localhost:3000/api/auth/{service}` to connect each service.
    - Gmail API
    - Google Calendar API
    - Google Drive API
-   - Google Docs API
    - Google Sheets API
 4. Go to **OAuth consent screen**:
    - User Type: External (or Internal for Workspace)

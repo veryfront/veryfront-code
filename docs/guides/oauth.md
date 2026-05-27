@@ -105,13 +105,12 @@ SLACK_CLIENT_SECRET=<SLACK_CLIENT_SECRET>
 
 ### Google APIs (shared credentials)
 
-Google Calendar, Gmail, Docs, Drive, and Sheets all use the same
+Google Calendar, Gmail, Drive, Google Docs listing/search, and Sheets all use the same
 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`. Register one Google OAuth app and
 enable all required APIs in the Cloud Console:
 
 - [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com)
 - [Gmail API](https://console.cloud.google.com/apis/library/gmail.googleapis.com)
-- [Google Docs API](https://console.cloud.google.com/apis/library/docs.googleapis.com)
 - [Google Drive API](https://console.cloud.google.com/apis/library/drive.googleapis.com)
 - [Google Sheets API](https://console.cloud.google.com/apis/library/sheets.googleapis.com)
 
