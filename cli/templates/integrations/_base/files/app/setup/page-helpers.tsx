@@ -475,19 +475,6 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     link: "https://login.salesforce.com/",
     envVars: ["SALESFORCE_CLIENT_ID", "SALESFORCE_CLIENT_SECRET"],
   },
-  hubspot: {
-    title: "HubSpot App Setup",
-    category: "sales",
-    steps: [
-      "Go to HubSpot Developer Portal",
-      "Create new app",
-      "Add redirect URI: http://localhost:3000/api/auth/hubspot/callback",
-      "Select required scopes",
-      "Copy Client ID and Secret to .env",
-    ],
-    link: "https://developers.hubspot.com/",
-    envVars: ["HUBSPOT_CLIENT_ID", "HUBSPOT_CLIENT_SECRET"],
-  },
   pipedrive: {
     title: "Pipedrive OAuth Setup",
     category: "sales",

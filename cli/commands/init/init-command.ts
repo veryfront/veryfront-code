@@ -72,7 +72,6 @@ const INTEGRATION_ICONS: Record<string, string> = {
   neon: "database",
   snowflake: "database",
   salesforce: "salesforce",
-  hubspot: "hubspot",
   pipedrive: "pipedrive",
   zendesk: "zendesk",
   intercom: "intercom",

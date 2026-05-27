@@ -25,7 +25,7 @@ Visit `http://localhost:3000/api/auth/{service}` to connect each service.
 - [Communication](#communication) (Slack, Twilio, Zoom, Webex)
 - [Project Management](#project-management) (Asana, Monday, Trello, ClickUp, Linear, Notion)
 - [Developer Tools](#developer-tools) (GitHub, GitLab, Bitbucket, Figma, Sentry, PostHog)
-- [CRM & Sales](#crm--sales) (Salesforce, HubSpot, Pipedrive, Intercom, Zendesk, Freshdesk)
+- [CRM & Sales](#crm--sales) (Salesforce, Pipedrive, Intercom, Zendesk, Freshdesk)
 - [Databases](#databases) (Supabase, Neon, Airtable, Snowflake)
 - [Cloud & Storage](#cloud--storage) (AWS, Box)
 - [Finance](#finance) (Stripe, QuickBooks, Xero)
@@ -357,18 +357,6 @@ POSTHOG_HOST=https://app.posthog.com
 ```env
 SALESFORCE_CLIENT_ID=your-consumer-key
 SALESFORCE_CLIENT_SECRET=your-consumer-secret
-```
-
-### HubSpot
-
-1. Go to [HubSpot Developers](https://developers.hubspot.com/)
-2. Create app in your developer account
-3. Configure OAuth redirect: `http://localhost:3000/api/auth/hubspot/callback`
-4. Select required scopes
-
-```env
-HUBSPOT_CLIENT_ID=your-client-id
-HUBSPOT_CLIENT_SECRET=your-client-secret
 ```
 
 ### Pipedrive
