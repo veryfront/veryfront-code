@@ -194,6 +194,14 @@ export async function importModule(
     jsxImportSource: "react",
     resolveExtensions: [".ts", ".tsx", ".js", ".jsx", ".mjs"],
     plugins,
+    // Externalize all bare-specifier imports so npm packages a tool/agent file
+    // depends on (e.g. `pdf-parse`, `mammoth`) are not pulled into the
+    // discovery bundle. Discovery only needs the module's exports; the
+    // implementation runs server-side at request time and can resolve npm
+    // packages natively via the project's node_modules / import map.
+    // Without this, esbuild under platform: "neutral" tries to bundle CJS
+    // npm packages and fails on their Node built-in references (fs, http, ...).
+    packages: "external",
     external: [
       "zod",
       "node:*",
