@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 
-import { assertEquals, assertExists, assertThrows } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  assertEquals,
+  assertExists,
+  assertStringIncludes,
+  assertThrows,
+} from "#veryfront/testing/assert.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontAPIOperations } from "./operations.ts";
 
 function createOps(
@@ -23,6 +28,24 @@ function assertMethodExists<T extends object>(obj: T, key: keyof T): void {
 }
 
 describe("VeryfrontAPIOperations", () => {
+  const originalFetch = globalThis.fetch;
+
+  function stubJsonFetch(handler: (url: string, init?: RequestInit) => unknown): void {
+    globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const body = handler(String(input), init);
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    }) as typeof fetch;
+  }
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
   describe("class", () => {
     it("should export VeryfrontAPIOperations class", () => {
       assertExists(VeryfrontAPIOperations);
@@ -113,6 +136,47 @@ describe("VeryfrontAPIOperations", () => {
 
     it("should have lookupProjectByDomain method", () => {
       assertMethodExists(createOps(), "lookupProjectByDomain");
+    });
+  });
+
+  describe("published server function access", () => {
+    it("requests release file lists with server functions for runtime route discovery", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          data: [],
+          page_info: { self: null, first: null, next: null, prev: null },
+          release_id: "release-id",
+          release_version: "v1",
+        };
+      });
+
+      await createOps().listReleaseFiles("project-slug", "release-id");
+
+      assertStringIncludes(requestedUrl, "include_server_functions=true");
+    });
+
+    it("requests release file content with server functions for runtime handlers", async () => {
+      let requestedUrl = "";
+      stubJsonFetch((url) => {
+        requestedUrl = url;
+        return {
+          id: "file-id",
+          version_id: "version-id",
+          path: "pages/api/articles-2.ts",
+          content: "export default () => {}",
+          size: 21,
+          type: "function",
+          updated_at: "2026-04-23T00:00:00.000Z",
+          release_id: "release-id",
+          release_version: "v1",
+        };
+      });
+
+      await createOps().getReleaseFile("project-slug", "release-id", "pages/api/articles-2.ts");
+
+      assertStringIncludes(requestedUrl, "include_server_functions=true");
     });
   });
 });

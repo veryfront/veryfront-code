@@ -105,6 +105,11 @@ function buildListParams(options: ListFilesOptions): URLSearchParams {
   return params;
 }
 
+function addRuntimeServerFunctionAccess(params: URLSearchParams): URLSearchParams {
+  params.set("include_server_functions", "true");
+  return params;
+}
+
 function mapProjectFile<T extends ProjectFile>(file: T): ProjectFile {
   return {
     id: file.id,
@@ -290,7 +295,7 @@ export class VeryfrontAPIOperations {
     environmentName = "production",
     options: ListFilesOptions = {},
   ): Promise<FileListResult> {
-    const params = buildListParams(options);
+    const params = addRuntimeServerFunctionAccess(buildListParams(options));
     const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
       encodeURIComponent(environmentName)
     }/files?${params}`;
@@ -343,9 +348,10 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams());
         const url = `/projects/${encodeURIComponent(projectRef)}/environments/${
           encodeURIComponent(environmentName)
-        }/files/${encodeURIComponent(pathOrId)}`;
+        }/files/${encodeURIComponent(pathOrId)}?${params}`;
         logger.debug("getEnvironmentFile", { projectRef, environmentName, pathOrId });
 
         const raw = await this.request(url);
@@ -374,7 +380,7 @@ export class VeryfrontAPIOperations {
     version = "latest",
     options: ListFilesOptions = {},
   ): Promise<FileListResult> {
-    const params = buildListParams(options);
+    const params = addRuntimeServerFunctionAccess(buildListParams(options));
     const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
       encodeURIComponent(version)
     }/files?${params}`;
@@ -405,9 +411,10 @@ export class VeryfrontAPIOperations {
     return withSpan(
       SpanNames.API_GET_FILE,
       async () => {
+        const params = addRuntimeServerFunctionAccess(new URLSearchParams());
         const url = `/projects/${encodeURIComponent(projectRef)}/releases/${
           encodeURIComponent(version)
-        }/files/${encodeURIComponent(pathOrId)}`;
+        }/files/${encodeURIComponent(pathOrId)}?${params}`;
         logger.debug("getReleaseFile", { projectRef, version, pathOrId });
 
         const raw = await this.request(url);
