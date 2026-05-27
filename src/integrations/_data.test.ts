@@ -18,6 +18,10 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
+  it("does not expose Discord until a bot-token channel/message implementation exists", () => {
+    assertEquals(connectors.some((item) => item.name === "discord"), false);
+  });
+
   it("adds endpoint specs for all 68 tools across the 5 targeted integrations", () => {
     const targetedConnectors = [
       "calendar",
@@ -47,7 +51,6 @@ describe("integration endpoint specs", () => {
   it("adds endpoint specs for the newly configured integration providers", () => {
     const expectedEndpointCounts = new Map([
       ["airtable", 11],
-      ["discord", 3],
       ["figma", 6],
       ["notion", 8],
     ]);
@@ -64,21 +67,6 @@ describe("integration endpoint specs", () => {
         `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
       );
     }
-  });
-
-  it("keeps Discord OAuth tools limited to user-token-supported endpoints", () => {
-    const connector = getConnector("discord");
-    assertEquals(
-      connector.tools.map((tool) => tool.id),
-      ["list_guilds", "get_guild_member", "get_user"],
-    );
-
-    const getGuildMember = getTool("discord", "get_guild_member");
-    assertEquals(
-      getGuildMember.endpoint?.url,
-      "https://discord.com/api/v10/users/@me/guilds/{guildId}/member",
-    );
-    assertEquals(getGuildMember.endpoint?.params?.guildId?.required, true);
   });
 
   it("adds static endpoint specs for the next configured integration providers", () => {
@@ -114,7 +102,6 @@ describe("integration endpoint specs", () => {
       ["salesforce", 5],
       ["outlook", 5],
       ["teams", 6],
-      ["discord", 3],
     ]);
 
     for (

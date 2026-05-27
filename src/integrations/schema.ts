@@ -20,7 +20,6 @@ const integrationNames = [
   "supabase",
   "neon",
   "sharepoint",
-  "discord",
   "hubspot",
   "stripe",
   "salesforce",

@@ -216,20 +216,6 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     link: "https://api.slack.com/apps",
     envVars: ["SLACK_CLIENT_ID", "SLACK_CLIENT_SECRET"],
   },
-  discord: {
-    title: "Discord App Setup",
-    category: "communication",
-    steps: [
-      "Go to Discord Developer Portal",
-      "Click New Application",
-      "Go to OAuth2 section",
-      "Add redirect: http://localhost:3000/api/auth/discord/callback",
-      "Copy Client ID and Secret to .env",
-      "Add bot permissions as needed",
-    ],
-    link: "https://discord.com/developers/applications",
-    envVars: ["DISCORD_CLIENT_ID", "DISCORD_CLIENT_SECRET"],
-  },
   zoom: {
     title: "Zoom App Setup",
     category: "communication",
