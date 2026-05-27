@@ -18,7 +18,7 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
-  it("adds endpoint specs for all 67 tools across the 5 targeted integrations", () => {
+  it("adds endpoint specs for all 68 tools across the 5 targeted integrations", () => {
     const targetedConnectors = [
       "calendar",
       "github",
@@ -41,13 +41,13 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 67);
+    assertEquals(totalEndpointTools, 68);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
     const expectedEndpointCounts = new Map([
       ["airtable", 11],
-      ["discord", 5],
+      ["discord", 3],
       ["figma", 6],
       ["notion", 8],
     ]);
@@ -64,6 +64,21 @@ describe("integration endpoint specs", () => {
         `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
       );
     }
+  });
+
+  it("keeps Discord OAuth tools limited to user-token-supported endpoints", () => {
+    const connector = getConnector("discord");
+    assertEquals(
+      connector.tools.map((tool) => tool.id),
+      ["list_guilds", "get_guild_member", "get_user"],
+    );
+
+    const getGuildMember = getTool("discord", "get_guild_member");
+    assertEquals(
+      getGuildMember.endpoint?.url,
+      "https://discord.com/api/v10/users/@me/guilds/{guildId}/member",
+    );
+    assertEquals(getGuildMember.endpoint?.params?.guildId?.required, true);
   });
 
   it("adds static endpoint specs for the next configured integration providers", () => {
@@ -92,14 +107,14 @@ describe("integration endpoint specs", () => {
 
   it("adds callable endpoint specs for remaining configured OAuth providers", () => {
     const expectedEndpointCounts = new Map([
-      ["asana", 10],
+      ["asana", 11],
       ["gitlab", 10],
       ["jira", 11],
       ["confluence", 6],
       ["salesforce", 5],
       ["outlook", 5],
       ["teams", 6],
-      ["discord", 5],
+      ["discord", 3],
     ]);
 
     for (
@@ -123,6 +138,14 @@ describe("integration endpoint specs", () => {
       "https://app.asana.com/api/1.0/tasks",
     );
     assertEquals(asanaListTasks.endpoint?.params?.project?.in, "query");
+
+    const asanaDeleteTask = getTool("asana", "delete_task");
+    assertEquals(asanaDeleteTask.endpoint?.method, "DELETE");
+    assertEquals(
+      asanaDeleteTask.endpoint?.url,
+      "https://app.asana.com/api/1.0/tasks/{taskGid}",
+    );
+    assertEquals(asanaDeleteTask.endpoint?.params?.taskGid?.required, true);
 
     const asanaListWorkspaces = getTool("asana", "list_workspaces");
     assertEquals(
@@ -727,6 +750,11 @@ describe("integration endpoint specs", () => {
       linearListUsers.endpoint?.query ?? "",
       "users(first: $first)",
     );
+
+    const linearDeleteIssue = getTool("linear", "delete_issue");
+    assertStringIncludes(linearDeleteIssue.endpoint?.query ?? "", "issueDelete");
+    assertStringIncludes(linearDeleteIssue.endpoint?.query ?? "", "permanentlyDelete");
+    assertEquals(linearDeleteIssue.endpoint?.params?.id?.required, true);
 
     const linearAddComment = getTool("linear", "add_comment");
     assertStringIncludes(
