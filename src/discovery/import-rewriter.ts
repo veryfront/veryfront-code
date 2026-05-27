@@ -250,7 +250,7 @@ function resolveExportPath(exports: unknown, subpath: string): string | null {
   );
   const template = pickExportEntry(map[bestKey]);
   if (!template) return null;
-  return template.replace("*", captured);
+  return template.replaceAll("*", captured);
 }
 
 /**
