@@ -146,9 +146,14 @@ async function transformAndCacheFallbackDep(
 ): Promise<string | null> {
   // Prefer the main path's fully-resolved cache entry when present —
   // that output is strictly higher quality than what the fallback
-  // produces (no `#veryfront/` / React / HTTP rewriting here).
+  // produces (no `#veryfront/` / React / HTTP rewriting here). But
+  // never propagate a cycle placeholder: the main path stores those
+  // mid-transform and treats them as invalid (see `isCyclePlaceholder`
+  // / the cache-invalidation branch upstream). If the fallback wrote
+  // a placeholder into a cache file, an importer would silently see
+  // `export {}` and any named import would be `undefined` at runtime.
   const mainCached = frameworkFileCache.get(resolvedPath);
-  if (mainCached) {
+  if (mainCached && !isCyclePlaceholder(mainCached)) {
     return await cacheTransformedCode(mainCached, resolvedPath, ctx.fs);
   }
   const fallbackCached = fallbackTransformCache.get(resolvedPath);
@@ -178,7 +183,21 @@ async function transformAndCacheFallbackDep(
     return null;
   }
 
-  const compiled = await compileFallbackSource(depContent, resolvedPath);
+  // Catch esbuild failures (bad syntax, encoding issues) so one bad
+  // `.src` dep does not abort the entire top-level fallback. The bare
+  // import is left in the parent and the runtime's own loader will
+  // surface a clear "Module not found" instead of a stack trace
+  // pointing at an unrelated parent file.
+  let compiled: string;
+  try {
+    compiled = await compileFallbackSource(depContent, resolvedPath);
+  } catch (error) {
+    logger.warn(
+      `${LOG_PREFIX} Depth-limit fallback could not compile dependency`,
+      { resolvedPath: resolvedPath.slice(-60), error: String(error) },
+    );
+    return null;
+  }
   const rewritten = await rewriteFallbackRelativeImports(compiled, resolvedPath, ctx, visited);
   fallbackTransformCache.set(resolvedPath, rewritten);
   return await cacheTransformedCode(rewritten, resolvedPath, ctx.fs);

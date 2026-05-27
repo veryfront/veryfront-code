@@ -171,6 +171,89 @@ describe("transformFrameworkCode depth-limit fallback", {
     }
   });
 
+  it("does not propagate a cycle placeholder from frameworkFileCache into the fallback cache file", async () => {
+    const { frameworkFileCache } = await import("./constants.ts");
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-cycle-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const depPath = `${srcDir}/dep.ts.src`;
+    // Real content for the dep on disk
+    await Deno.writeTextFile(depPath, "export const X = 42;\n");
+    // Simulate the main path having pre-cached a cycle placeholder for this dep
+    const placeholder = `/* Cycle detected: ${depPath} */\nexport {};`;
+    frameworkFileCache.set(depPath, placeholder);
+
+    const ownerPath = `${srcDir}/owner.ts.src`;
+    const ownerContent = 'import { X } from "./dep.js"; export const y = X;';
+    await Deno.writeTextFile(ownerPath, ownerContent);
+
+    try {
+      const transformed = await transformFrameworkCode(
+        ownerContent,
+        ownerPath,
+        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      // The emitted cache file URL must not link to a file whose contents
+      // are the cycle-placeholder. Read it back and check for the real
+      // dep's content (`export const X = 42`).
+      const match = transformed.match(/from "file:\/\/([^"]+\.mjs)"/);
+      assert(match, `fallback did not emit a .mjs URL: ${transformed}`);
+      const cachePath = match[1]!;
+      const written = await Deno.readTextFile(cachePath);
+      assertEquals(
+        written.includes("Cycle detected"),
+        false,
+        `cycle placeholder leaked into fallback cache file: ${written}`,
+      );
+      assertStringIncludes(written, "X = 42");
+    } finally {
+      frameworkFileCache.delete(depPath);
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("survives one bad .src dep without aborting the whole parent fallback", async () => {
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-baddep-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    // A dep whose content is invalid TypeScript — esbuild should reject it.
+    const badDep = `${srcDir}/bad.ts.src`;
+    await Deno.writeTextFile(badDep, "export const = ;;; not valid syntax @@@");
+    const goodDep = `${srcDir}/good.ts.src`;
+    await Deno.writeTextFile(goodDep, "export const G = 1;\n");
+
+    const ownerPath = `${srcDir}/owner.ts.src`;
+    const ownerContent = [
+      `import "./bad.js";`,
+      `import { G } from "./good.js";`,
+      `export const y = G;`,
+    ].join("\n");
+    await Deno.writeTextFile(ownerPath, ownerContent);
+
+    try {
+      // Must not throw: the bad dep is logged + left bare, the parent's
+      // own compilation still succeeds. The exact rewriting of the good
+      // dep depends on whether the test runtime has loaded the bundler
+      // extension; the load-bearing assertion is "did not throw".
+      const transformed = await transformFrameworkCode(
+        ownerContent,
+        ownerPath,
+        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      // Survived: the parent file produced output. The bad-dep handling
+      // is verified by the absence of an unhandled exception above.
+      assert(transformed.length > 0, "fallback returned empty output");
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
   it("leaves bare-package imports alone in the fallback output", async () => {
     const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-fallback-" });
     const srcDir = `${tmp}/src`;
