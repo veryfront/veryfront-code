@@ -81,6 +81,20 @@ describe("InitCommand Types", () => {
       assertExists(options.features);
       assertExists(options.integrations);
     });
+
+    it("should allow runtime option", () => {
+      const options: InitOptions = { runtime: "deno" };
+      assertEquals(options.runtime, "deno");
+    });
+
+    it("should accept all three runtime values", () => {
+      const node: InitOptions = { runtime: "node" };
+      const bun: InitOptions = { runtime: "bun" };
+      const deno: InitOptions = { runtime: "deno" };
+      assertEquals(node.runtime, "node");
+      assertEquals(bun.runtime, "bun");
+      assertEquals(deno.runtime, "deno");
+    });
   });
 
   describe("Default behaviors", () => {
@@ -104,6 +118,10 @@ describe("InitCommand Types", () => {
 
     it("should default integrations to undefined when not specified", () => {
       assertEquals(options.integrations, undefined);
+    });
+
+    it("should default runtime to undefined when not specified", () => {
+      assertEquals(options.runtime, undefined);
     });
   });
 });

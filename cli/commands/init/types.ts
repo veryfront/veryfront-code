@@ -11,6 +11,8 @@ export type InitTemplate =
 
 export type EnvValues = Record<string, string>;
 
+export type InitRuntime = "node" | "bun" | "deno";
+
 export interface InitOptions {
   name?: string;
   template?: InitTemplate;
@@ -25,4 +27,6 @@ export interface InitOptions {
   deploy?: boolean;
   /** Overwrite existing directory */
   force?: boolean;
+  /** Runtime for the scaffolded project. Defaults to "node". */
+  runtime?: InitRuntime;
 }
