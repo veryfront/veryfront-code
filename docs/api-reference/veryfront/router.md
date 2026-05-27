@@ -1,7 +1,7 @@
 ---
 title: "veryfront/router"
 description: "React router exports for client navigation and route context."
-order: 23
+order: 22
 ---
 
 ## Import

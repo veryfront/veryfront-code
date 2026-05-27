@@ -1,7 +1,7 @@
 ---
 title: "veryfront/context"
 description: "React page-context exports for MDX and route-aware rendering."
-order: 6
+order: 5
 ---
 
 ## Import

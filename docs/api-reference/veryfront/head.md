@@ -1,7 +1,7 @@
 ---
 title: "veryfront/head"
 description: "React head exports for document metadata rendering."
-order: 11
+order: 10
 ---
 
 ## Import

@@ -1,7 +1,7 @@
 ---
 title: "veryfront/fs"
 description: "Public filesystem, path, and cwd utilities."
-order: 10
+order: 9
 ---
 
 ## Import

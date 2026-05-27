@@ -155,7 +155,7 @@ defineConfig({
     skills: {
       discovery: {
         enabled: true,
-        paths: ["skills", "internal/skills"],
+        paths: ["skills", "team-skills"],
       },
     },
     prompts: {

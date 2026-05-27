@@ -9,8 +9,8 @@
  *    examples.
  * 2. Every public import surface has a reference page at
  *    `docs/api-reference/veryfront/<slug>.md`. The root export maps to
- *    `index.md`. Synthetic parents that only own deep imports (e.g.
- *    `channels`) also require a page.
+ *    `index.md`. Synthetic parents that only own deep imports also require
+ *    a page.
  * 3. The public `docs/api-reference/index.md` landing page exists.
  * 4. Generated reference tables do not contain known placeholder wording.
  *
@@ -22,7 +22,7 @@
 const ROOT = Deno.cwd();
 
 /** Slugs that own only deep imports and have no top-level barrel JSDoc. */
-const SYNTHETIC_PARENTS = new Set<string>(["channels"]);
+const SYNTHETIC_PARENTS = new Set<string>();
 
 interface ValidationError {
   exportPath: string;
@@ -126,9 +126,11 @@ function main(): void {
     }
   }
 
-  // Required reference pages: one per top-level slug plus synthetic parents.
+  // Required reference pages: one per top-level export plus synthetic parents.
+  // Deep imports without a synthetic parent are intentionally omitted from the
+  // public reference tree.
   const requiredSlugs = new Set<string>();
-  for (const [exportPath] of Object.entries(exports)) {
+  for (const [exportPath] of topLevel) {
     requiredSlugs.add(topLevelSlug(exportPath));
   }
   for (const slug of SYNTHETIC_PARENTS) {

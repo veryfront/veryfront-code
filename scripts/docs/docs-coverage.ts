@@ -1,6 +1,6 @@
 #!/usr/bin/env -S deno run --allow-read
 
-const SYNTHETIC_PARENTS = new Set<string>(["channels"]);
+const SYNTHETIC_PARENTS = new Set<string>();
 
 export interface DocsCoverageReport {
   publicExports: {
@@ -181,7 +181,7 @@ export async function collectDocsCoverage(
   );
 
   const requiredSlugs = new Set<string>();
-  for (const exportPath of exportPaths) {
+  for (const exportPath of topLevelExports) {
     requiredSlugs.add(topLevelSlug(exportPath));
   }
   for (const slug of SYNTHETIC_PARENTS) requiredSlugs.add(slug);

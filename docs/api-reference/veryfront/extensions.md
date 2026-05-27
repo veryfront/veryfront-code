@@ -1,7 +1,7 @@
 ---
 title: "veryfront/extensions"
 description: "Extension authoring types and runtime helpers."
-order: 8
+order: 7
 ---
 
 ## Import

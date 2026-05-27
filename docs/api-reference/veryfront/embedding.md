@@ -1,7 +1,7 @@
 ---
 title: "veryfront/embedding"
 description: "RAG primitives for chunking, embedding, and similarity search."
-order: 7
+order: 6
 ---
 
 ## Import

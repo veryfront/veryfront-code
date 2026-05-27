@@ -1,7 +1,7 @@
 ---
 title: "veryfront/mcp"
 description: "MCP server exposing tools, prompts, and resources."
-order: 15
+order: 14
 ---
 
 ## Import

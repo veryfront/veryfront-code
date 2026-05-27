@@ -1,7 +1,7 @@
 ---
 title: "veryfront/fonts"
 description: "Load Google Fonts as a React component."
-order: 9
+order: 8
 ---
 
 ## Import
