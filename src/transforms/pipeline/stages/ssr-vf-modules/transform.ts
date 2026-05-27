@@ -87,14 +87,25 @@ export async function cacheTransformedCode(
   });
 }
 
+// Fallback-only cache for depth-limit fallback transforms. Kept separate
+// from `frameworkFileCache` so the fallback's esbuild-only output never
+// poisons the main path, which expects fully-resolved code (`#veryfront/`,
+// React, HTTP imports all rewritten). The fallback still reads
+// `frameworkFileCache` first, so when the main path has already produced
+// a high-quality entry the fallback prefers it.
+const fallbackTransformCache = new Map<string, string>();
+
 /**
  * Pick an esbuild loader for a file path, honoring the embedded `.src`
- * suffix used in compiled binaries (`foo.ts.src` → `ts`).
+ * suffix used in compiled binaries (`foo.ts.src` → `ts`). Recognizes
+ * `.mjs`/`.cjs` as plain JS and `.mts`/`.cts` as TypeScript.
  */
 function pickFallbackLoader(sourcePath: string): "tsx" | "ts" | "jsx" | "js" {
-  const ext = sourcePath.match(/\.(tsx?|jsx?)(?:\.src)?$/)?.[1] ?? "tsx";
+  const ext = sourcePath
+    .match(/\.(tsx?|jsx?|m[jt]s|c[jt]s)(?:\.src)?$/i)?.[1]
+    ?.toLowerCase();
   if (ext === "tsx") return "tsx";
-  if (ext === "ts") return "ts";
+  if (ext === "ts" || ext === "mts" || ext === "cts") return "ts";
   if (ext === "jsx") return "jsx";
   return "js";
 }
@@ -133,15 +144,25 @@ async function transformAndCacheFallbackDep(
   ctx: TransformContext,
   visited: Set<string>,
 ): Promise<string | null> {
-  // Reuse already-transformed framework code when possible.
-  const cachedCode = frameworkFileCache.get(resolvedPath);
-  if (cachedCode) {
-    return await cacheTransformedCode(cachedCode, resolvedPath, ctx.fs);
+  // Prefer the main path's fully-resolved cache entry when present —
+  // that output is strictly higher quality than what the fallback
+  // produces (no `#veryfront/` / React / HTTP rewriting here).
+  const mainCached = frameworkFileCache.get(resolvedPath);
+  if (mainCached) {
+    return await cacheTransformedCode(mainCached, resolvedPath, ctx.fs);
+  }
+  const fallbackCached = fallbackTransformCache.get(resolvedPath);
+  if (fallbackCached) {
+    return await cacheTransformedCode(fallbackCached, resolvedPath, ctx.fs);
   }
 
   if (visited.has(resolvedPath)) {
-    // Cycle: nothing safe to emit. Caller will log and leave the bare
-    // import alone (same as a failed resolve).
+    // Cycle: bail and leave the parent's import bare. Logged so a stuck
+    // dev server isn't silently producing un-loadable cache files.
+    logger.warn(
+      `${LOG_PREFIX} Depth-limit fallback skipping cycle`,
+      { resolvedPath: resolvedPath.slice(-60) },
+    );
     return null;
   }
   visited.add(resolvedPath);
@@ -159,7 +180,7 @@ async function transformAndCacheFallbackDep(
 
   const compiled = await compileFallbackSource(depContent, resolvedPath);
   const rewritten = await rewriteFallbackRelativeImports(compiled, resolvedPath, ctx, visited);
-  frameworkFileCache.set(resolvedPath, rewritten);
+  fallbackTransformCache.set(resolvedPath, rewritten);
   return await cacheTransformedCode(rewritten, resolvedPath, ctx.fs);
 }
 

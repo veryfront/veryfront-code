@@ -99,6 +99,78 @@ describe("transformFrameworkCode depth-limit fallback", {
     }
   });
 
+  it("does not poison frameworkFileCache with fallback output", async () => {
+    const { frameworkFileCache } = await import("./constants.ts");
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-cache-iso-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const depPath = `${srcDir}/dep.ts.src`;
+    await Deno.writeTextFile(depPath, "export const X = 1;\n");
+    const ownerPath = `${srcDir}/owner.ts.src`;
+    const ownerContent = 'import { X } from "./dep.js"; export const y = X;';
+    await Deno.writeTextFile(ownerPath, ownerContent);
+
+    const cacheKeysBefore = new Set(frameworkFileCache.keys());
+
+    try {
+      await transformFrameworkCode(
+        ownerContent,
+        ownerPath,
+        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      // The fallback emits esbuild-only code (no `#veryfront/` / React
+      // rewriting). It must not write that into the cache the main
+      // transform path also reads — otherwise a later main-path call for
+      // the same dep would receive degraded output.
+      const newKeys = [...frameworkFileCache.keys()].filter((k) => !cacheKeysBefore.has(k));
+      assertEquals(
+        newKeys.includes(depPath),
+        false,
+        `fallback poisoned frameworkFileCache with ${depPath}`,
+      );
+      assertEquals(
+        newKeys.includes(ownerPath),
+        false,
+        `fallback poisoned frameworkFileCache with ${ownerPath}`,
+      );
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("uses the ts loader for .mts and the js loader for .mjs / .cjs", async () => {
+    // Indirectly verify the loader picker via the fallback output: pass
+    // TypeScript-only syntax (`as const`) through a `.mts.src` source and
+    // confirm esbuild produced JS (would throw if loaded as `js`).
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-mts-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const sourcePath = `${srcDir}/uses-as-const.mts.src`;
+    const sourceContent = 'export const TAG = "x" as const;';
+    await Deno.writeTextFile(sourcePath, sourceContent);
+
+    try {
+      const transformed = await transformFrameworkCode(
+        sourceContent,
+        sourcePath,
+        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      // `as const` is TS-only; if the loader had picked `js`, esbuild
+      // would have thrown a syntax error. Surviving transform proves the
+      // loader matched `.mts` to `ts`.
+      assertStringIncludes(transformed, 'const TAG = "x"');
+      assertEquals(transformed.includes("as const"), false);
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
   it("leaves bare-package imports alone in the fallback output", async () => {
     const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-fallback-" });
     const srcDir = `${tmp}/src`;
