@@ -1,6 +1,6 @@
 ---
 title: "veryfront/sandbox"
-description: "Sandbox module for ephemeral compute environments. Provides the `Sandbox` class for creating and interacting with isolated execution environments."
+description: "Ephemeral compute environments for isolated execution."
 order: 24
 ---
 

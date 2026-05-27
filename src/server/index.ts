@@ -1,8 +1,5 @@
 /**
- * Server runtime APIs.
- *
- * Creates and runs a Veryfront server in tests, custom runtimes, and
- * production adapters.
+ * Create and run Veryfront servers.
  *
  * @module server
  *
