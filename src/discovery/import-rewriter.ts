@@ -121,7 +121,17 @@ function rewriteBareNpmImportsForDeno(code: string): string {
     })
     .replace(/import\s*\(\s*["']([^"']+)["']\s*\)/g, (match, specifier: string) => {
       return isUnprefixedNpmSpecifier(specifier) ? `import("npm:${specifier}")` : match;
-    });
+    })
+    // Side-effect-only imports: `import "reflect-metadata";`, `import "dotenv/config";`.
+    // Match `import` not followed by `(` and without a `from` clause.
+    .replace(
+      /(^|[\n;{}])(\s*)import\s+["']([^"']+)["'](\s*;?)/g,
+      (match, lead: string, indent: string, specifier: string, tail: string) => {
+        return isUnprefixedNpmSpecifier(specifier)
+          ? `${lead}${indent}import "npm:${specifier}"${tail}`
+          : match;
+      },
+    );
 }
 
 export function rewriteForDeno(
@@ -181,8 +191,24 @@ export async function rewriteDiscoveryImports(
         `from "${pathToFileURL(pathHelper.resolve(fileDir, relativePath)).href}"`,
     );
 
-    // Resolve npm package to file URL
-    const resolvePackageToFileUrl = async (packageName: string): Promise<string | null> => {
+    // Split `react/jsx-runtime` → { name: "react", subpath: "./jsx-runtime" } and
+    // `@scope/pkg/sub/path` → { name: "@scope/pkg", subpath: "./sub/path" }.
+    // The bare package name resolves to a single package.json; the subpath
+    // is then read from the package's `exports` map or, failing that,
+    // joined onto the package directory.
+    const splitPackageSubpath = (specifier: string): { name: string; subpath: string } => {
+      const parts = specifier.split("/");
+      const segments = specifier.startsWith("@") ? parts.slice(0, 2) : parts.slice(0, 1);
+      const name = segments.join("/");
+      const rest = parts.slice(segments.length).join("/");
+      return { name, subpath: rest ? `./${rest}` : "." };
+    };
+
+    // Resolve a bare specifier (optionally with subpath) to a file:// URL,
+    // honoring the package's `exports` map for subpath imports such as
+    // `react/jsx-runtime` or `lodash-es/debounce`.
+    const resolvePackageToFileUrl = async (specifier: string): Promise<string | null> => {
+      const { name: packageName, subpath } = splitPackageSubpath(specifier);
       let searchDir = projectDir;
 
       for (let i = 0; i < 10; i++) {
@@ -191,12 +217,17 @@ export async function rewriteDiscoveryImports(
 
         try {
           const pkgJson = JSON.parse(await fs.readTextFile(packageJsonPath));
-          const dotExport = pkgJson.exports?.["."];
-          const entryPoint =
-            (typeof dotExport === "string" ? dotExport : dotExport?.import ?? dotExport?.default) ??
-              pkgJson.module ??
-              pkgJson.main ??
-              "index.js";
+          const exportEntry = pkgJson.exports?.[subpath];
+          const exportPath = typeof exportEntry === "string"
+            ? exportEntry
+            : exportEntry?.import ?? exportEntry?.default;
+
+          const entryPoint = exportPath ??
+            (subpath === "."
+              ? (pkgJson.module ?? pkgJson.main ?? "index.js")
+              // No exports entry for this subpath: fall back to joining the
+              // subpath onto the package dir (e.g. `dotenv/config.js`).
+              : subpath.replace(/^\.\//, ""));
 
           return pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
         } catch (_) {
@@ -210,28 +241,43 @@ export async function rewriteDiscoveryImports(
       return null;
     };
 
-    // Rewrite package imports
+    // Rewrite package imports — covers `from "spec"`, `import("spec")`, and
+    // side-effect `import "spec";` forms for the given (possibly-subpathed)
+    // specifier.
     const rewritePackageImports = async (input: string, pkg: string): Promise<string> => {
       const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       const staticImportRegex = new RegExp(`from\\s*["']${escapedPkg}["']`, "g");
       const dynamicImportRegex = new RegExp(`import\\s*\\(\\s*["']${escapedPkg}["']\\s*\\)`, "g");
+      const sideEffectRegex = new RegExp(
+        `(^|[\\n;{}])(\\s*)import\\s+["']${escapedPkg}["'](\\s*;?)`,
+        "g",
+      );
 
-      if (!staticImportRegex.test(input) && !dynamicImportRegex.test(input)) return input;
+      if (
+        !staticImportRegex.test(input) &&
+        !dynamicImportRegex.test(input) &&
+        !sideEffectRegex.test(input)
+      ) return input;
 
       const resolvedUrl = await resolvePackageToFileUrl(pkg);
       if (!resolvedUrl) return input;
 
       return input
         .replace(staticImportRegex, `from "${resolvedUrl}"`)
-        .replace(dynamicImportRegex, `import("${resolvedUrl}")`);
+        .replace(dynamicImportRegex, `import("${resolvedUrl}")`)
+        .replace(
+          sideEffectRegex,
+          (_m, lead: string, indent: string, tail: string) =>
+            `${lead}${indent}import "${resolvedUrl}"${tail}`,
+        );
     };
 
     // Collect every bare specifier the transformed source still imports,
     // then resolve each to a file:// URL in the project's node_modules.
     // With `packages: "external"` in the discovery bundler, npm packages a
-    // tool/agent depends on (e.g. `pdf-parse`, `mammoth`) survive as bare
-    // imports here and need explicit resolution before the temp module is
-    // loaded from outside the project's resolution root.
+    // tool/agent depends on (e.g. `pdf-parse`, `mammoth`, `react/jsx-runtime`)
+    // survive as bare imports here and need explicit resolution before the
+    // temp module is loaded from outside the project's resolution root.
     const collectBareSpecifiers = (input: string): string[] => {
       const specifiers = new Set<string>();
       for (const match of input.matchAll(/from\s*["']([^"']+)["']/g)) {
@@ -239,6 +285,15 @@ export async function rewriteDiscoveryImports(
         if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
       }
       for (const match of input.matchAll(/import\s*\(\s*["']([^"']+)["']\s*\)/g)) {
+        const s = match[1];
+        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
+      }
+      // Side-effect imports: `import "reflect-metadata";`, `import "dotenv/config";`.
+      for (
+        const match of input.matchAll(
+          /(?:^|[\n;{}])\s*import\s+["']([^"']+)["']\s*;?/g,
+        )
+      ) {
         const s = match[1];
         if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
       }
