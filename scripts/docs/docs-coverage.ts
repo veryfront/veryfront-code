@@ -86,6 +86,33 @@ async function listMarkdownFiles(path: string): Promise<string[]> {
   return names.sort();
 }
 
+async function listGuideMarkdownFiles(path: string): Promise<string[]> {
+  const names: string[] = [];
+  try {
+    for await (const entry of Deno.readDir(path)) {
+      if (entry.isFile && entry.name.endsWith(".md")) {
+        names.push(entry.name);
+      } else if (entry.isDirectory) {
+        for await (const child of Deno.readDir(`${path}/${entry.name}`)) {
+          // Skip subdir README.md the same way the validator and test
+          // walkers do. The downstream call site only filters top-level
+          // README; without this, a nested README would be treated as a
+          // published guide.
+          if (
+            child.isFile && child.name.endsWith(".md") &&
+            child.name !== "README.md"
+          ) {
+            names.push(`${entry.name}/${child.name}`);
+          }
+        }
+      }
+    }
+  } catch {
+    return names;
+  }
+  return names.sort();
+}
+
 function extractStringArrayConst(source: string, name: string): string[] {
   const pattern = new RegExp(
     `const\\s+${name}\\s*=\\s*\\[([\\s\\S]*?)\\]\\s+as\\s+const`,
@@ -216,7 +243,7 @@ export async function collectDocsCoverage(
   const guidePages: GuidePage[] = [];
   for (const section of ["getting-started", "guides", "concepts"]) {
     const guideDir = fromRoot(root, `docs/${section}`);
-    const guideFiles = (await listMarkdownFiles(guideDir)).filter((name) =>
+    const guideFiles = (await listGuideMarkdownFiles(guideDir)).filter((name) =>
       name !== "README.md"
     );
     for (const file of guideFiles) {

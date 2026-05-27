@@ -55,6 +55,10 @@ const REF_SLUG_TO_FILE: Record<string, string> = {};
 
 // Collect all public guide .md files. README.md is repo-maintainer
 // documentation, not a published guide, so it is skipped from guide validation.
+//
+// Within each section, walk top-level files AND one level of subdirectories.
+// Subdir guides (e.g. guides/examples/foo.md) keep a "<subdir>/<basename>" slug
+// scoped to their section. Slug uniqueness within a section is enforced below.
 const guideFiles: PublicDocFile[] = [];
 for (
   const section of [
@@ -77,6 +81,25 @@ for (
       };
       guideFiles.push(file);
       GUIDE_SLUG_TO_FILE[slug] = file;
+    } else if (entry.isDirectory) {
+      const subdir = entry.name;
+      for (const child of Deno.readDirSync(`${section.dir}/${subdir}`)) {
+        if (
+          child.isFile && child.name.endsWith(".md") &&
+          child.name !== "README.md"
+        ) {
+          const slug = `${subdir}/${child.name.replace(".md", "")}`;
+          const file = {
+            filename: `${subdir}/${child.name}`,
+            filepath: `${section.dir}/${subdir}/${child.name}`,
+            section: section.name,
+            shortName: `${section.name}/${subdir}/${child.name}`,
+            slug,
+          };
+          guideFiles.push(file);
+          GUIDE_SLUG_TO_FILE[slug] = file;
+        }
+      }
     }
   }
 }
@@ -220,7 +243,7 @@ for (const catalogFile of catalogFiles) {
   }
 
   const linkRe =
-    /\((?:\.\/|\.\.\/guides\/|\.\.\/getting-started\/|\.\.\/concepts\/)([a-z0-9-]+)\.md\)/g;
+    /\((?:\.\/|\.\.\/guides\/|\.\.\/getting-started\/|\.\.\/concepts\/)([a-z0-9-/]+)\.md\)/g;
   let m: RegExpExecArray | null;
   while ((m = linkRe.exec(content))) {
     const slug = m[1];
