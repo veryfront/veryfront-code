@@ -37,7 +37,6 @@ export {
   calendarConfig,
   clickupConfig,
   confluenceConfig,
-  discordConfig,
   driveConfig,
   figmaConfig,
   freshdeskConfig,

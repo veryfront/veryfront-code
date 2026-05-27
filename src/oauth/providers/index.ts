@@ -30,7 +30,6 @@ export {
   boxConfig,
   clickupConfig,
   commonServices,
-  discordConfig,
   figmaConfig,
   freshdeskConfig,
   githubConfig,

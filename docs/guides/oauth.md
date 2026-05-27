@@ -67,13 +67,13 @@ per-user slot: never in a single shared slot.
 
 ## Choose a provider
 
-Pre-configured providers include: GitHub, Google, Discord, Slack, Twitter/X,
+Pre-configured providers include: GitHub, Google, Slack, Twitter/X,
 Facebook, LinkedIn, Microsoft, Apple, Spotify, Twitch, Notion, Figma, Linear,
 Jira, Confluence, Box, Zoom, HubSpot, Salesforce, Stripe, Shopify,
 GitLab, Bitbucket, and more.
 
-Each provider exports a config object (e.g., `githubConfig`, `gmailConfig`,
-`discordConfig`). Use the matching export from
+Each provider exports a config object (e.g., `githubConfig`, `gmailConfig`).
+Use the matching export from
 [`veryfront/oauth`](../api-reference/veryfront/oauth.md) as the source of truth
 for exact config names.
 
@@ -137,11 +137,7 @@ state rows are consumed atomically (one-shot):
 
 ```ts
 import { createOAuthCallbackHandler, githubConfig } from "veryfront/oauth";
-import type {
-  OAuthTokens,
-  StoredOAuthState,
-  TokenStore,
-} from "veryfront/oauth";
+import type { OAuthTokens, StoredOAuthState, TokenStore } from "veryfront/oauth";
 
 const redisTokenStore: TokenStore = {
   async getTokens(serviceId, userId) {
@@ -207,10 +203,7 @@ export const POST = createOAuthDisconnectHandler(githubConfig, {
 For providers not included, create your own config:
 
 ```ts
-import {
-  createOAuthCallbackHandler,
-  createOAuthInitHandler,
-} from "veryfront/oauth";
+import { createOAuthCallbackHandler, createOAuthInitHandler } from "veryfront/oauth";
 
 const myProvider = {
   providerId: "my-provider",

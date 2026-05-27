@@ -67,19 +67,6 @@ export const figmaConfig: OAuthServiceConfig = {
   defaultScopes: ["file_read"],
 };
 
-/** Configuration used by discord. */
-export const discordConfig: OAuthServiceConfig = {
-  providerId: "discord",
-  serviceId: "discord",
-  displayName: "Discord",
-  authorizationUrl: "https://discord.com/api/oauth2/authorize",
-  tokenUrl: "https://discord.com/api/oauth2/token",
-  clientIdEnvVar: "DISCORD_CLIENT_ID",
-  clientSecretEnvVar: "DISCORD_CLIENT_SECRET",
-  apiBaseUrl: "https://discord.com/api/v10",
-  defaultScopes: ["identify", "guilds"],
-};
-
 /** Configuration used by linear. */
 export const linearConfig: OAuthServiceConfig = {
   providerId: "linear",
@@ -362,7 +349,6 @@ export const commonServices = {
   slack: slackConfig,
   notion: notionConfig,
   figma: figmaConfig,
-  discord: discordConfig,
   linear: linearConfig,
   gitlab: gitlabConfig,
   airtable: airtableConfig,

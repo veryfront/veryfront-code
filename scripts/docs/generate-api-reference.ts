@@ -670,7 +670,6 @@ const DESCRIPTIONS: Record<string, Record<string, string>> = {
     calendarConfig: "Google Calendar",
     clickupConfig: "ClickUp",
     confluenceConfig: "Confluence",
-    discordConfig: "Discord",
     driveConfig: "Google Drive",
     figmaConfig: "Figma",
     freshdeskConfig: "Freshdesk",
