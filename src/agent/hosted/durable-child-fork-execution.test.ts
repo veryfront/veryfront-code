@@ -130,6 +130,8 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       {
         ok: false,
         status: "failed",
+        text: "invoke_agent failed: setup failed",
+        summary: { text: "invoke_agent failed: setup failed" },
         childConversationId: CHILD_CONVERSATION_ID,
         sourceTargetKind: "preview_branch",
         runtimeTargetKind: "preview_branch",
@@ -149,6 +151,8 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       {
         ok: false,
         status: "failed",
+        text: "invoke_agent failed: child failed",
+        summary: { text: "invoke_agent failed: child failed" },
         childConversationId: CHILD_CONVERSATION_ID,
         childRunId: "run_child_1",
         childMessageId: CHILD_MESSAGE_ID,
@@ -270,6 +274,8 @@ describe("agent/hosted-durable-child-fork-execution", () => {
       {
         ok: false,
         status: "failed",
+        text: "invoke_agent failed: setup failed",
+        summary: { text: "invoke_agent failed: setup failed" },
         childConversationId: CHILD_CONVERSATION_ID,
         childRunId: "run_child_1",
         childMessageId: CHILD_MESSAGE_ID,

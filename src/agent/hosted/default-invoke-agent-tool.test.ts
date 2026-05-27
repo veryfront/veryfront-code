@@ -76,6 +76,12 @@ Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure b
   assertEquals(result, {
     ok: false,
     status: "failed",
+    text:
+      "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
+    summary: {
+      text:
+        "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
+    },
     terminalErrorCode: "DURABLE_INVOKE_CONTEXT_UNAVAILABLE",
     terminalErrorMessage:
       "invoke_agent requires durable conversation context when durable child runs are enabled.",
@@ -105,6 +111,12 @@ Deno.test("createDefaultHostedInvokeAgentTool adds child selection guidance and 
   assertEquals(result, {
     ok: false,
     status: "failed",
+    text:
+      "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
+    summary: {
+      text:
+        "invoke_agent failed: invoke_agent requires durable conversation context when durable child runs are enabled.",
+    },
     terminalErrorCode: "DURABLE_INVOKE_CONTEXT_UNAVAILABLE",
     terminalErrorMessage:
       "invoke_agent requires durable conversation context when durable child runs are enabled.",
