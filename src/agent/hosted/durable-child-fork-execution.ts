@@ -128,9 +128,13 @@ export type ExecuteHostedLocalChildInvokeInput = {
 export function buildHostedDurableChildInvokeFailureResult(
   input: BuildHostedDurableChildInvokeFailureResultInput,
 ): HostedDurableChildInvokeResult {
+  const failureText = `invoke_agent failed: ${input.terminalErrorMessage}`;
+
   return {
     ok: false,
     status: "failed",
+    text: failureText,
+    summary: buildChildRunResultSummary(failureText),
     ...(input.childConversationId ? { childConversationId: input.childConversationId } : {}),
     ...(input.childRunId ? { childRunId: input.childRunId } : {}),
     ...(input.childMessageId ? { childMessageId: input.childMessageId } : {}),
