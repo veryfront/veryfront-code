@@ -27,12 +27,14 @@ change and what it should say.
 - A single-page chat UI with drag-and-drop file attachment.
 - A Veryfront Cloud deploy.
 
-The example runs on Node.js 18.18+ because the contract-parsing libraries
-(`pdf-parse`, `mammoth`) are Node-only.
+The example targets Node.js 18.18+ as the primary runtime because the
+contract-parsing libraries (`pdf-parse`, `mammoth`) are Node-only. The
+same project also runs unchanged under [Bun](https://bun.sh) and
+[Deno](https://deno.com) — see [Other runtimes](#other-runtimes) below.
 
 ## Prerequisites
 
-- Node.js 18.18 or later. See [Installation](../../getting-started/installation.md).
+- Node.js 18.18 or later (or Bun 1.1+, or Deno 1.45+). See [Installation](../../getting-started/installation.md).
 - The Veryfront CLI installed.
 - An `OPENAI_API_KEY` in your local environment. See [Providers](../providers.md)
   for other providers.
@@ -164,7 +166,12 @@ Install the parsers:
 
 ```bash
 npm install pdf-parse mammoth
+npm install --save-dev @types/pdf-parse
 ```
+
+> Bun users: `bun add pdf-parse mammoth && bun add -d @types/pdf-parse`.
+> Deno users: add the same entries to `deno.json#imports` (or rely on
+> `nodeModulesDir: "auto"` to pick them up from `node_modules`).
 
 Create `tools/parse-contract.ts`:
 
@@ -172,8 +179,8 @@ Create `tools/parse-contract.ts`:
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { tool } from "veryfront/tool";
-import { z } from "zod";
-// @ts-ignore - pdf-parse ships CJS without types; consider installing community types via `npm install --save-dev @types/pdf-parse`.
+import { defineSchema } from "veryfront/schemas";
+// @ts-ignore - pdf-parse ships CJS without types; install @types/pdf-parse for typings.
 import pdfParse from "pdf-parse";
 import mammoth from "mammoth";
 
@@ -181,9 +188,11 @@ const UPLOAD_DIR = path.resolve(".veryfront/uploads");
 
 export default tool({
   description: "Read an uploaded contract file by fileId and return its text and media type.",
-  inputSchema: z.object({
-    fileId: z.string().describe("Upload id returned by POST /api/uploads"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      fileId: v.string().describe("Upload id returned by POST /api/uploads"),
+    })
+  )(),
   execute: async ({ fileId }) => {
     if (!/^[a-zA-Z0-9_-]+$/.test(fileId)) {
       throw new Error(`Invalid fileId: ${fileId}`);
@@ -218,6 +227,10 @@ Notes for the reader:
 
 - The filename `parse-contract.ts` produces the discovered tool id
   `parseContract`. Reference the tool that way in agent configs.
+- `inputSchema` uses `defineSchema` from `veryfront/schemas` so the
+  generic parameter on `tool()` can infer `{ fileId: string }` without a
+  cast. Raw zod schemas work at runtime (the framework adapts them) but
+  are typed as `Schema<unknown>`, so prefer `defineSchema` here.
 - The `fileId` regex and the `startsWith` boundary check together
   prevent path traversal - the tool refuses anything that is not a slug,
   and refuses any resolved path that escapes the upload directory.
@@ -393,11 +406,27 @@ above the chat instead of being injected into chat history.
 Start the dev server:
 
 ```bash
-veryfront dev
+npm run dev
 ```
 
 Open `http://localhost:3000`, drop an ICT services contract (PDF or
 DOCX) into the chat composer, and wait for the streamed JSON report.
+
+### Other runtimes
+
+Bun:
+
+```bash
+bun install
+bun run dev
+```
+
+Deno (uses the project's `deno.json`; no separate install step because
+`nodeModulesDir: "auto"` populates `node_modules/` on first run):
+
+```bash
+deno task dev
+```
 
 A well-formed response looks like:
 
