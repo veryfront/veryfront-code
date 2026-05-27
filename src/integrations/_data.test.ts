@@ -18,8 +18,9 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
-  it("does not expose Discord until a bot-token channel/message implementation exists", () => {
+  it("does not expose retired integrations until they have verified working tool surfaces", () => {
     assertEquals(connectors.some((item) => item.name === "discord"), false);
+    assertEquals(connectors.some((item) => item.name === "hubspot"), false);
   });
 
   it("adds endpoint specs for all 68 tools across the 5 targeted integrations", () => {
@@ -69,9 +70,14 @@ describe("integration endpoint specs", () => {
     }
   });
 
+  it("requests the Figma current user scope needed by get_me", () => {
+    const figma = getConnector("figma");
+    assertEquals(figma.auth.scopes?.includes("current_user:read"), true);
+    assertEquals(figma.auth.scopes?.includes("file_content:read"), true);
+  });
+
   it("adds static endpoint specs for the next configured integration providers", () => {
     const expectedEndpointCounts = new Map([
-      ["hubspot", 5],
       ["drive", 7],
       ["docs-google", 5],
       ["sheets", 16],
@@ -325,20 +331,6 @@ describe("integration endpoint specs", () => {
   });
 
   it("keeps newly added static endpoints executor-compatible", () => {
-    const hubspotListContacts = getTool("hubspot", "list_contacts");
-    assertEquals(
-      hubspotListContacts.endpoint?.url,
-      "https://api.hubapi.com/crm/v3/objects/contacts",
-    );
-    assertEquals(hubspotListContacts.endpoint?.response?.transform, "results");
-
-    const hubspotCreateContact = getTool("hubspot", "create_contact");
-    assertEquals(hubspotCreateContact.endpoint?.method, "POST");
-    assertEquals(
-      hubspotCreateContact.endpoint?.body?.properties?.required,
-      true,
-    );
-
     const driveCreateFolder = getTool("drive", "create_folder");
     assertEquals(
       driveCreateFolder.endpoint?.url,

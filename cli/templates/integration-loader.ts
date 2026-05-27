@@ -47,7 +47,6 @@ export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "supabase",
   "neon",
   "sharepoint",
-  "hubspot",
   "stripe",
   "salesforce",
   "twitter",

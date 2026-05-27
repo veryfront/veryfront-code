@@ -9,6 +9,7 @@
     "authorizationUrl": "https://www.figma.com/oauth",
     "tokenUrl": "https://api.figma.com/v1/oauth/token",
     "scopes": [
+      "current_user:read",
       "file_content:read",
       "file_comments:read",
       "file_comments:write"
