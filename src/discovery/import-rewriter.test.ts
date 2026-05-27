@@ -94,6 +94,39 @@ describe("discovery/import-rewriter", () => {
     assertStringIncludes(transformed, 'import "./side-effects.ts"');
   });
 
+  it("rewrites `export … from` re-exports of bare npm packages for Deno", () => {
+    const transformed = rewriteForDeno(
+      [
+        'export { z } from "zod";',
+        'export * from "pdf-parse";',
+        'export { type ZodSchema } from "zod";',
+      ].join("\n"),
+      "/project/tools",
+    );
+
+    assertStringIncludes(transformed, 'export { z } from "npm:zod"');
+    assertStringIncludes(transformed, 'export * from "npm:pdf-parse"');
+    assertEquals(transformed.includes('from "zod";'), false);
+    assertEquals(transformed.includes('from "pdf-parse";'), false);
+  });
+
+  it("does not rewrite `import type` / `export type` lines for Deno", () => {
+    const transformed = rewriteForDeno(
+      [
+        'import type { ZodSchema } from "zod";',
+        'export type { ZodSchema } from "zod";',
+        'import { z, type ZodTypeAny } from "zod";',
+      ].join("\n"),
+      "/project/tools",
+    );
+
+    // type-only lines are erased by TS; they must not gain an npm: prefix
+    assertStringIncludes(transformed, 'import type { ZodSchema } from "zod"');
+    assertStringIncludes(transformed, 'export type { ZodSchema } from "zod"');
+    // The value-bearing `import { z, type ZodTypeAny }` is still rewritten
+    assertStringIncludes(transformed, 'import { z, type ZodTypeAny } from "npm:zod"');
+  });
+
   it("leaves node:, file:, relative, and veryfront specifiers untouched", () => {
     const transformed = rewriteForDeno(
       [
@@ -184,6 +217,58 @@ describe("discovery/import-rewriter", () => {
       assertStringIncludes(transformed, "dotenv/lib/main.js");
       assertEquals(transformed.includes('import "dotenv/config"'), false);
       assertEquals(transformed.includes('from "dotenv"'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("rewrites `export … from` re-exports of bare npm packages in the Node discovery path", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const zodDir = `${projectDir}/node_modules/zod`;
+    await Deno.mkdir(zodDir, { recursive: true });
+    await Deno.writeTextFile(
+      `${zodDir}/package.json`,
+      JSON.stringify({ name: "zod", version: "3.24.0", main: "./index.js" }),
+    );
+    await Deno.writeTextFile(`${zodDir}/index.js`, "");
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        [
+          'export { z } from "zod";',
+          'export * from "zod";',
+        ].join("\n"),
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertStringIncludes(transformed, "zod/index.js");
+      assertEquals(transformed.includes('export { z } from "zod"'), false);
+      assertEquals(transformed.includes('export * from "zod"'), false);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
+  it("does not resolve `import type` lines in the Node discovery path", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    // Intentionally no node_modules — a real resolution would fail.
+    // The rewriter must not even try, because `import type` is erased.
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        [
+          'import type { Foo } from "some-pkg-not-installed";',
+          'export type { Bar } from "another-missing-pkg";',
+        ].join("\n"),
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      assertStringIncludes(transformed, 'import type { Foo } from "some-pkg-not-installed"');
+      assertStringIncludes(transformed, 'export type { Bar } from "another-missing-pkg"');
     } finally {
       await Deno.remove(projectDir, { recursive: true });
     }
