@@ -52,4 +52,14 @@ describe("interactive-wizard", () => {
       assertEquals(shouldRunWizard({ template: "minimal" }), false);
     });
   });
+
+  describe("runInteractiveWizard (non-TTY skipped path)", () => {
+    it("returns runtime: 'node' when not interactive", async () => {
+      const { runInteractiveWizard } = await import("./interactive-wizard.ts");
+      // In Deno test runner `canRunWizard()` returns false; the skipped branch fires.
+      const result = await runInteractiveWizard("smoke-app");
+      assertEquals(result.runtime, "node");
+      assertEquals(result.skipped, true);
+    });
+  });
 });
