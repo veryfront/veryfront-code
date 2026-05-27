@@ -9,7 +9,8 @@ import { cliLogger } from "#cli/utils";
 import { resolvePath } from "./path-utils.ts";
 import { initCommand } from "./init-command.ts";
 import type { ParsedArgs } from "#cli/shared/types";
-import type { InitTemplate } from "./types.ts";
+import type { InitRuntime, InitTemplate } from "./types.ts";
+import { parseRuntime } from "./runtime.ts";
 import type { IntegrationName } from "../../templates/types.ts";
 
 /**
@@ -24,6 +25,9 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
   let env: Record<string, string> | undefined;
   const deploy = Boolean(args.deploy);
   const force = Boolean(args.force || args.f);
+  let runtime: InitRuntime | undefined = args.runtime !== undefined
+    ? parseRuntime(args.runtime)
+    : undefined;
 
   // Load config file if provided
   const configPath = args.config || args.c;
@@ -40,6 +44,7 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
         skipInstall?: boolean;
         skipEnvPrompt?: boolean;
         env?: Record<string, string>;
+        runtime?: unknown;
       };
 
       // Config values serve as defaults, CLI args take precedence
@@ -49,6 +54,9 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
       skipInstall ||= config.skipInstall ?? false;
       skipEnvPrompt ||= config.skipEnvPrompt ?? false;
       env = config.env;
+      if (runtime === undefined && config.runtime !== undefined) {
+        runtime = parseRuntime(config.runtime);
+      }
 
       cliLogger.debug(`Loaded config from ${resolvedPath}`);
     } catch (error) {
@@ -75,5 +83,6 @@ export async function handleInitCommand(args: ParsedArgs): Promise<void> {
     env,
     deploy,
     force,
+    runtime,
   });
 }
