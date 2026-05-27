@@ -230,9 +230,10 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   const runtime: InitRuntime = options.runtime ?? wizardRuntime;
-  // Map runtime to package-manager preference. "node" → undefined so detection
-  // (lockfile / user agent) decides; "bun"/"deno" force the matching pm.
-  const pmPreference: PackageManager | undefined = runtime === "node" ? undefined : runtime;
+  // Map runtime to package-manager preference. "node" → "npm" so an explicit
+  // --runtime node always uses npm regardless of lockfiles or user agent;
+  // "bun"/"deno" force the matching pm.
+  const pmPreference: PackageManager = runtime === "node" ? "npm" : runtime;
 
   const projectDir = projectName ? join(cwd(), projectName) : cwd();
   const fs = createFileSystem();
