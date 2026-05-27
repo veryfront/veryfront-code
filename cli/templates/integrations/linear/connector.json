@@ -168,6 +168,35 @@
       }
     },
     {
+      "id": "delete_issue",
+      "name": "Delete Issue",
+      "description": "Archive a Linear issue. By default this is non-permanent so canary-created issues do not remain active.",
+      "requiresWrite": true,
+      "endpoint": {
+        "type": "graphql",
+        "method": "POST",
+        "url": "https://api.linear.app/graphql",
+        "query": "mutation($id: String!, $permanentlyDelete: Boolean) { issueDelete(id: $id, permanentlyDelete: $permanentlyDelete) { success } }",
+        "params": {
+          "id": {
+            "type": "string",
+            "in": "body",
+            "description": "Issue ID",
+            "required": true
+          },
+          "permanentlyDelete": {
+            "type": "boolean",
+            "in": "body",
+            "description": "Whether to permanently delete the issue. Defaults to false (archive).",
+            "default": false
+          }
+        },
+        "response": {
+          "transform": "issueDelete"
+        }
+      }
+    },
+    {
       "id": "list_projects",
       "name": "List Projects",
       "description": "List all projects in the workspace",

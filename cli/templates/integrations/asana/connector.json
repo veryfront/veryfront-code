@@ -158,6 +158,24 @@
       }
     },
     {
+      "id": "delete_task",
+      "name": "Delete Task",
+      "description": "Delete an Asana task by GID",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://app.asana.com/api/1.0/tasks/{taskGid}",
+        "params": {
+          "taskGid": {
+            "type": "string",
+            "in": "path",
+            "description": "Asana task GID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
       "id": "list_projects",
       "name": "List Projects",
       "description": "List all projects in the workspace",
