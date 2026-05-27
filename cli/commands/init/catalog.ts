@@ -71,7 +71,6 @@ export const INTEGRATION_CATEGORIES: readonly IntegrationCategory[] = [
       { id: "slack", label: "Slack", description: "Messages, channels, search" },
       { id: "outlook", label: "Outlook", description: "Email via Microsoft Graph" },
       { id: "teams", label: "Teams", description: "Chat, meetings" },
-      { id: "discord", label: "Discord", description: "Messages, server management" },
       { id: "webex", label: "Webex", description: "Messaging, meetings" },
       { id: "zoom", label: "Zoom", description: "Meetings, webinars" },
       { id: "twilio", label: "Twilio", description: "SMS, voice" },

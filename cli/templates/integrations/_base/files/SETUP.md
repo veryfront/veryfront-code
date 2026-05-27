@@ -164,19 +164,6 @@ SLACK_CLIENT_ID=your-client-id
 SLACK_CLIENT_SECRET=your-client-secret
 ```
 
-### Discord
-
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications)
-2. Create **New Application**
-3. Go to **OAuth2**:
-   - Add redirect: `http://localhost:3000/api/auth/discord/callback`
-   - Scopes: `identify`, `guilds`, `messages.read`
-
-```env
-DISCORD_CLIENT_ID=your-client-id
-DISCORD_CLIENT_SECRET=your-client-secret
-```
-
 ### Twilio (SMS/WhatsApp)
 
 1. Go to [Twilio Console](https://console.twilio.com/)

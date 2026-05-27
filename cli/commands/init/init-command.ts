@@ -49,7 +49,6 @@ const INTEGRATION_ICONS: Record<string, string> = {
   outlook: "mail",
   slack: "slack",
   teams: "teams",
-  discord: "discord",
   calendar: "calendar",
   github: "github",
   gitlab: "gitlab",

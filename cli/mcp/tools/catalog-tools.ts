@@ -230,13 +230,6 @@ const INTEGRATIONS: IntegrationInfo[] = [
     authType: "oauth2",
   },
   {
-    name: "discord",
-    displayName: "Discord",
-    category: "communication",
-    description: "Chat and community",
-    authType: "oauth2",
-  },
-  {
     name: "zoom",
     displayName: "Zoom",
     category: "communication",
