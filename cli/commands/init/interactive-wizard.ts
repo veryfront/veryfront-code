@@ -4,7 +4,7 @@ import { isCiEnv, isDenoTestingEnv } from "veryfront/config";
 import { isInteractive as checkIsInteractive } from "veryfront/platform";
 import { select, textInput } from "../../utils/terminal-select.ts";
 import { getTemplateSelectOptions, TEMPLATES } from "./catalog.ts";
-import type { InitTemplate } from "./types.ts";
+import type { InitRuntime, InitTemplate } from "./types.ts";
 
 /** Reject path separators and traversal so the name stays a single directory. */
 export function validateProjectName(name: string): string | null {
@@ -16,6 +16,7 @@ export function validateProjectName(name: string): string | null {
 export interface WizardResult {
   projectName: string | null; // null = use current directory
   template: InitTemplate;
+  runtime: InitRuntime;
   initGit: boolean;
   skipped: boolean;
   cancelled: boolean;
@@ -25,11 +26,15 @@ function canRunWizard(): boolean {
   return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
 
-export async function runInteractiveWizard(existingName?: string): Promise<WizardResult> {
+export async function runInteractiveWizard(
+  existingName?: string,
+  presetRuntime?: InitRuntime,
+): Promise<WizardResult> {
   if (!canRunWizard()) {
     return {
       projectName: existingName ?? null,
       template: "minimal",
+      runtime: presetRuntime ?? "node",
       initGit: false,
       skipped: true,
       cancelled: false,
@@ -70,6 +75,7 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
       return {
         projectName: null,
         template: "minimal",
+        runtime: "node",
         initGit: false,
         skipped: false,
         cancelled: true,
@@ -83,6 +89,7 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
         return {
           projectName: null,
           template: "minimal",
+          runtime: "node",
           initGit: false,
           skipped: false,
           cancelled: true,
@@ -95,6 +102,7 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
         return {
           projectName: null,
           template: "minimal",
+          runtime: "node",
           initGit: false,
           skipped: false,
           cancelled: true,
@@ -116,6 +124,7 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
     return {
       projectName: null,
       template: "minimal",
+      runtime: "node",
       initGit: false,
       skipped: false,
       cancelled: true,
@@ -123,6 +132,34 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
   }
 
   const template = templateChoice as InitTemplate;
+
+  // Runtime selection (skipped when CLI passed --runtime explicitly)
+  let runtime: InitRuntime = presetRuntime ?? "node";
+  if (presetRuntime === undefined) {
+    const runtimeChoice = await select(
+      "What runtime should this project use?",
+      [
+        { value: "node", label: "Node.js", description: "Default" },
+        { value: "bun", label: "Bun", description: "Fast JS runtime" },
+        { value: "deno", label: "Deno", description: "Secure-by-default" },
+      ],
+      0,
+    );
+
+    if (runtimeChoice === null) {
+      console.log(muted("\n  Cancelled.\n"));
+      return {
+        projectName: null,
+        template: "minimal",
+        runtime: "node",
+        initGit: false,
+        skipped: false,
+        cancelled: true,
+      };
+    }
+
+    runtime = runtimeChoice as InitRuntime;
+  }
 
   // Git init prompt
   const gitChoice = await select(
@@ -139,6 +176,7 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
     return {
       projectName: null,
       template: "minimal",
+      runtime: "node",
       initGit: false,
       skipped: false,
       cancelled: true,
@@ -158,10 +196,18 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
     console.log(`  ${brand("Location:")} ./  ${dim("(current folder)")}`);
   }
   console.log(`  ${brand("Template:")} ${templateLabel}`);
+  console.log(`  ${brand("Runtime:")} ${runtime}`);
   console.log(`  ${brand("Git:")} ${initGit ? "Yes" : "No"}`);
   console.log("");
 
-  return { projectName, template, initGit, skipped: false, cancelled: false };
+  return {
+    projectName,
+    template,
+    runtime,
+    initGit,
+    skipped: false,
+    cancelled: false,
+  };
 }
 
 export function shouldRunWizard(options: { template?: string }): boolean {

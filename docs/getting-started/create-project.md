@@ -23,6 +23,27 @@ Choose `minimal` for a blank app or `ai-agent` for an agent and chat route. Pass
 veryfront init test-app --template ai-agent
 ```
 
+### Choose a runtime
+
+By default, `veryfront init` scaffolds projects for **Node.js**. Pass
+`--runtime <node|bun|deno>` to select a different JavaScript runtime:
+
+```bash
+veryfront init test-app --template ai-agent --runtime bun
+veryfront init test-app --template ai-agent --runtime deno
+```
+
+What this changes:
+
+- All runtimes get the same `package.json` and template files.
+- `--runtime deno` additionally writes a thin `deno.json` so `deno task dev` /
+  `deno task build` / `deno task preview` work without extra setup. Deno reads
+  npm dependencies directly from `package.json` via `nodeModulesDir: "auto"`.
+- The install command and the printed next-steps match your runtime
+  (`npm install` / `bun install` / `deno install`).
+
+You can also set `"runtime": "deno"` in the JSON file passed to `--config`.
+
 ### Use a package manager
 
 Use these commands when you do not have the Veryfront CLI installed globally.

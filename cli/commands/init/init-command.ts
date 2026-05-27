@@ -10,8 +10,9 @@ import { box } from "../../ui/box.ts";
 import { ensureDir } from "#std/fs.ts";
 import { join } from "veryfront/platform/path";
 import { createPackageJson } from "./config-generator.ts";
+import { createDenoConfig } from "./deno-config-generator.ts";
 import { createError, toError } from "veryfront/errors";
-import type { InitOptions, InitTemplate } from "./types.ts";
+import type { InitOptions, InitRuntime, InitTemplate } from "./types.ts";
 import { cwd } from "veryfront/platform";
 import { createFileSystem } from "veryfront/platform";
 import {
@@ -19,6 +20,7 @@ import {
   getInstallCommand,
   getRunCommand,
   installDependencies,
+  type PackageManager,
 } from "../../utils/package-manager.ts";
 import { generateGitignoreContent, promptForEnvVars } from "../../utils/env-prompt.ts";
 import type { EnvVarConfig, ResolvedIntegration, TemplateFile } from "../../templates/types.ts";
@@ -209,8 +211,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
   }
 
+  let wizardRuntime: InitRuntime = "node";
   if (shouldRunWizard(options)) {
-    const wizardResult = await runInteractiveWizard(name);
+    const wizardResult = await runInteractiveWizard(name, options.runtime);
     if (wizardResult.cancelled) {
       return;
     }
@@ -219,9 +222,16 @@ export async function initCommand(options: InitOptions): Promise<void> {
       projectName = wizardResult.projectName;
     }
     initGit = wizardResult.initGit;
+    wizardRuntime = wizardResult.runtime;
   } else {
     template = options.template ?? "minimal";
   }
+
+  const runtime: InitRuntime = options.runtime ?? wizardRuntime;
+  // Map runtime to package-manager preference. "node" → "npm" so an explicit
+  // --runtime node always uses npm regardless of lockfiles or user agent;
+  // "bun"/"deno" force the matching pm.
+  const pmPreference: PackageManager = runtime === "node" ? "npm" : runtime;
 
   const projectDir = projectName ? join(cwd(), projectName) : cwd();
   const fs = createFileSystem();
@@ -364,6 +374,9 @@ export async function initCommand(options: InitOptions): Promise<void> {
           npmDependencies: integration.config.npmDependencies,
         })),
       });
+      if (runtime === "deno") {
+        await createDenoConfig(projectDir);
+      }
     }
 
     if (allEnvVars.length) {
@@ -415,7 +428,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   (options as InitOptions & { _featureTips?: string[] })._featureTips = featureTips;
 
   if (!options.skipInstall) {
-    const pm = await detectPackageManager(projectDir);
+    const pm = await detectPackageManager(projectDir, pmPreference);
     const installSpinner = quiet ? null : createSpinner(`Installing dependencies with ${pm}...`);
     const installSuccess = await installDependencies(projectDir, {
       silent: true,
@@ -498,7 +511,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
   }
 
   // Build success box with next steps
-  const pm = await detectPackageManager(projectDir);
+  const pm = await detectPackageManager(projectDir, pmPreference);
   const devCommand = getRunCommand(pm, "dev");
 
   const localSteps: string[] = [];

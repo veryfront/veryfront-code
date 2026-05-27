@@ -52,4 +52,28 @@ describe("interactive-wizard", () => {
       assertEquals(shouldRunWizard({ template: "minimal" }), false);
     });
   });
+
+  describe("runInteractiveWizard (non-TTY skipped path)", () => {
+    it("returns runtime: 'node' by default when not interactive", async () => {
+      const { runInteractiveWizard } = await import("./interactive-wizard.ts");
+      // In Deno test runner `canRunWizard()` returns false; the skipped branch fires.
+      const result = await runInteractiveWizard("smoke-app");
+      assertEquals(result.runtime, "node");
+      assertEquals(result.skipped, true);
+    });
+
+    it("honors presetRuntime even when not interactive", async () => {
+      const { runInteractiveWizard } = await import("./interactive-wizard.ts");
+      const result = await runInteractiveWizard("smoke-app", "bun");
+      assertEquals(result.runtime, "bun");
+      assertEquals(result.skipped, true);
+    });
+
+    it("honors presetRuntime: 'deno'", async () => {
+      const { runInteractiveWizard } = await import("./interactive-wizard.ts");
+      const result = await runInteractiveWizard("smoke-app", "deno");
+      assertEquals(result.runtime, "deno");
+      assertEquals(result.skipped, true);
+    });
+  });
 });
