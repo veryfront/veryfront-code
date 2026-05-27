@@ -30,7 +30,7 @@ change and what it should say.
 The example targets Node.js 18.18+ as the primary runtime because the
 contract-parsing libraries (`pdf-parse`, `mammoth`) are Node-only. The
 same project also runs unchanged under [Bun](https://bun.sh) and
-[Deno](https://deno.com) — see [Other runtimes](#other-runtimes) below.
+[Deno](https://deno.com) - see [Other runtimes](#other-runtimes) below.
 
 ## Prerequisites
 
