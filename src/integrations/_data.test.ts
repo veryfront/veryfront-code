@@ -17,6 +17,10 @@ function getTool(connectorName: string, toolId: string) {
   return tool;
 }
 
+function hasTool(connectorName: string, toolId: string) {
+  return getConnector(connectorName).tools.some((item) => item.id === toolId);
+}
+
 describe("integration endpoint specs", () => {
   it("does not expose Discord until a bot-token channel/message implementation exists", () => {
     assertEquals(connectors.some((item) => item.name === "discord"), false);
@@ -73,7 +77,7 @@ describe("integration endpoint specs", () => {
     const expectedEndpointCounts = new Map([
       ["hubspot", 5],
       ["drive", 7],
-      ["docs-google", 5],
+      ["docs-google", 2],
       ["sheets", 16],
       ["onedrive", 4],
       ["sharepoint", 5],
@@ -349,12 +353,19 @@ describe("integration endpoint specs", () => {
       "application/vnd.google-apps.folder",
     );
 
-    const docsCreateDocument = getTool("docs-google", "create_document");
+    const docsListDocuments = getTool("docs-google", "list_documents");
     assertEquals(
-      docsCreateDocument.endpoint?.url,
-      "https://docs.googleapis.com/v1/documents",
+      docsListDocuments.endpoint?.url,
+      "https://www.googleapis.com/drive/v3/files",
     );
-    assertEquals(docsCreateDocument.endpoint?.body?.title?.required, true);
+    const docsSearchDocuments = getTool("docs-google", "search_documents");
+    assertEquals(
+      docsSearchDocuments.endpoint?.url,
+      "https://www.googleapis.com/drive/v3/files",
+    );
+    assertEquals(hasTool("docs-google", "get_document"), false);
+    assertEquals(hasTool("docs-google", "create_document"), false);
+    assertEquals(hasTool("docs-google", "update_document"), false);
 
     const sheetsReadRange = getTool("sheets", "read_range");
     assertEquals(sheetsReadRange.endpoint?.params?.spreadsheetId?.in, "path");
