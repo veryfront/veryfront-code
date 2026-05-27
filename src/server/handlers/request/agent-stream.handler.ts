@@ -62,7 +62,7 @@ const VERYFRONT_PLATFORM_REMOTE_TOOL_NAMES = new Set(["search_knowledge", "get_f
 // Per-environment env var cache shared across all agent stream requests (60s TTL)
 const _agentEnvVarCache = new EnvironmentVariableCache(
   (environmentId, token, projectSlug) => {
-    const apiBaseUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org";
+    const apiBaseUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
     return fetchProjectEnvVars(apiBaseUrl, projectSlug, environmentId, token);
   },
 );
@@ -76,7 +76,7 @@ async function _resolveProductionEnvironmentId(
 ): Promise<string | null> {
   const cached = _productionEnvIdCache.get(projectSlug);
   if (cached) return cached;
-  const apiBaseUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org";
+  const apiBaseUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
   try {
     const res = await fetch(
       `${apiBaseUrl}/projects/${encodeURIComponent(projectSlug)}/environments`,
@@ -141,7 +141,7 @@ function withVeryfrontPlatformRemoteTools(input: {
     return input.agent;
   }
 
-  const apiUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org";
+  const apiUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
   const remoteTools = input.agent.config.remoteTools ?? [];
   const platformRemoteToolSource = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
     createRemoteMCPToolSource({
@@ -169,7 +169,7 @@ function buildAgentStreamEnv(input: {
   proxyToken?: string | null;
   projectSlug?: string | null;
 }): Record<string, string> {
-  const apiUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org";
+  const apiUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
   return {
     ...input.envVars,
     // Framework-owned values must override project env to keep request-scoped
@@ -386,7 +386,7 @@ export class AgentStreamHandler extends BaseHandler {
               createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
                 ...this.deps,
                 projectAgentSandbox: {
-                  apiUrl: getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org",
+                  apiUrl: getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com",
                   authToken: ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || undefined,
                   projectId: ctx.projectId ?? null,
                 },
