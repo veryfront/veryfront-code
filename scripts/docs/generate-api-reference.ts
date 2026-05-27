@@ -2616,9 +2616,7 @@ function generateReadmeMD(
   lines.push("---");
   lines.push('title: "API reference"');
   lines.push('sidebarTitle: "Overview"');
-  lines.push(
-    'description: "Exact imports, exported names, types, and module-level examples for Veryfront Code."',
-  );
+  lines.push('description: "Veryfront Code API reference."');
   lines.push("order: 1");
   lines.push("---");
   lines.push("");

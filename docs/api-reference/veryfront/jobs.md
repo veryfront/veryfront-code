@@ -1,6 +1,6 @@
 ---
 title: "veryfront/jobs"
-description: "Jobs module for durable project-scoped background execution. Provides a public SDK surface for one-off jobs, cron jobs, batch summaries, job target discovery, and the canonical split between user-visible `events` and raw debugging `logs`. Task definitions run as job runs with `task:<task-id>` targets. Workflow definitions run as workflow runs with `workflow:<workflow-id>` targets and are backed by jobs for queueing and dispatch."
+description: "Durable background jobs, cron jobs, and task runs."
 order: 13
 ---
 

@@ -1,6 +1,5 @@
 /**
- * Runtime utilities: runtime detection, structured logging, constants
- * (breakpoints, timeouts, HTTP codes), hashing, memoization, and feature flags.
+ * Runtime detection, logging, constants, hashing, and feature flags.
  *
  * @module utils
  *

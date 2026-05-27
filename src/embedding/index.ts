@@ -1,8 +1,5 @@
 /**
- * Embedding — RAG primitives for chunking, embedding, and similarity search.
- *
- * Provides a facade over the framework's current embedding runtime and
- * LangChain text splitting behind veryfront's own API.
+ * RAG primitives for chunking, embedding, and similarity search.
  *
  * @module embedding
  *

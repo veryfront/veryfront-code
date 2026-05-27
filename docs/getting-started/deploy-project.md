@@ -1,6 +1,6 @@
 ---
 title: "Deploy project"
-description: "Build a Veryfront project for production and ship it to Veryfront Cloud or another host."
+description: "Build and deploy a Veryfront project."
 order: 7
 ---
 

@@ -1,6 +1,5 @@
 /**
- * Cross-runtime test utilities — BDD framework (describe/it), assertions,
- * test isolation, filesystem/env helpers, and timing utilities for Deno, Node, and Bun.
+ * Cross-runtime BDD assertions and test helpers.
  *
  * @example
  * ```ts

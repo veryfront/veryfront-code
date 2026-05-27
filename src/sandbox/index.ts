@@ -1,8 +1,5 @@
 /**
- * Sandbox module for ephemeral compute environments.
- *
- * Provides the `Sandbox` class for creating and interacting with
- * isolated execution environments.
+ * Ephemeral compute environments for isolated execution.
  *
  * @example
  * ```ts
