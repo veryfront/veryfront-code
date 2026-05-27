@@ -94,20 +94,42 @@ function rewriteDenoCompiledVeryfrontImports(code: string): string {
  * - Resolves relative imports to absolute file:// URLs
  * - For compiled binaries, rewrites veryfront imports to use globals
  */
+/**
+ * True for bare npm imports that need an `npm:` prefix for Deno to resolve
+ * them when the discovery module is loaded from a temp directory. Excludes
+ * relative paths, absolute URLs, Node built-ins, and the veryfront package
+ * (handled by the dedicated rewrites above).
+ */
+function isUnprefixedNpmSpecifier(specifier: string): boolean {
+  if (!specifier) return false;
+  if (specifier.startsWith(".") || specifier.startsWith("/")) return false;
+  if (specifier.startsWith("npm:") || specifier.startsWith("jsr:")) return false;
+  if (specifier.startsWith("node:")) return false;
+  if (
+    specifier.startsWith("file:") ||
+    specifier.startsWith("http:") ||
+    specifier.startsWith("https:")
+  ) return false;
+  if (specifier === "veryfront" || specifier.startsWith("veryfront/")) return false;
+  return true;
+}
+
+function rewriteBareNpmImportsForDeno(code: string): string {
+  return code
+    .replace(/from\s+["']([^"']+)["']/g, (match, specifier: string) => {
+      return isUnprefixedNpmSpecifier(specifier) ? `from "npm:${specifier}"` : match;
+    })
+    .replace(/import\s*\(\s*["']([^"']+)["']\s*\)/g, (match, specifier: string) => {
+      return isUnprefixedNpmSpecifier(specifier) ? `import("npm:${specifier}")` : match;
+    });
+}
+
 export function rewriteForDeno(
   code: string,
   fileDir: string,
   options: DenoRewriteOptions = {},
 ): string {
-  const npmReplacements: Array<[RegExp, string]> = [
-    [/from\s+["']zod["']/g, 'from "npm:zod"'],
-    [/import\s*\(\s*["']zod["']\s*\)/g, 'import("npm:zod")'],
-  ];
-
   let transformed = code;
-  for (const [pattern, replacement] of npmReplacements) {
-    transformed = transformed.replace(pattern, replacement);
-  }
 
   // Handle relative imports
   transformed = transformed.replace(
@@ -125,6 +147,12 @@ export function rewriteForDeno(
       options.resolveSpecifier ?? ((specifier) => import.meta.resolve(specifier)),
     );
   }
+
+  // Prefix any remaining bare npm specifiers with `npm:` so Deno can resolve
+  // them from the temp directory the discovery module is loaded from. Covers
+  // `zod` plus arbitrary npm packages a tool/agent depends on, after the
+  // discovery bundler externalizes them via `packages: "external"`.
+  transformed = rewriteBareNpmImportsForDeno(transformed);
 
   return transformed;
 }
@@ -198,10 +226,26 @@ export async function rewriteDiscoveryImports(
         .replace(dynamicImportRegex, `import("${resolvedUrl}")`);
     };
 
-    // Rewrite external package imports
-    const externalPackages = ["zod"];
+    // Collect every bare specifier the transformed source still imports,
+    // then resolve each to a file:// URL in the project's node_modules.
+    // With `packages: "external"` in the discovery bundler, npm packages a
+    // tool/agent depends on (e.g. `pdf-parse`, `mammoth`) survive as bare
+    // imports here and need explicit resolution before the temp module is
+    // loaded from outside the project's resolution root.
+    const collectBareSpecifiers = (input: string): string[] => {
+      const specifiers = new Set<string>();
+      for (const match of input.matchAll(/from\s*["']([^"']+)["']/g)) {
+        const s = match[1];
+        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
+      }
+      for (const match of input.matchAll(/import\s*\(\s*["']([^"']+)["']\s*\)/g)) {
+        const s = match[1];
+        if (s && isUnprefixedNpmSpecifier(s)) specifiers.add(s);
+      }
+      return [...specifiers];
+    };
 
-    for (const pkg of externalPackages) {
+    for (const pkg of collectBareSpecifiers(transformed)) {
       transformed = await rewritePackageImports(transformed, pkg);
     }
 
