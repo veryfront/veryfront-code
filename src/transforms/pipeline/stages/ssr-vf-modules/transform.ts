@@ -87,6 +87,185 @@ export async function cacheTransformedCode(
   });
 }
 
+// Fallback-only cache for depth-limit fallback transforms. Kept separate
+// from `frameworkFileCache` so the fallback's esbuild-only output never
+// poisons the main path, which expects fully-resolved code (`#veryfront/`,
+// React, HTTP imports all rewritten). The fallback still reads
+// `frameworkFileCache` first, so when the main path has already produced
+// a high-quality entry the fallback prefers it.
+const fallbackTransformCache = new Map<string, string>();
+
+/**
+ * Pick an esbuild loader for a file path, honoring the embedded `.src`
+ * suffix used in compiled binaries (`foo.ts.src` → `ts`). Recognizes
+ * `.mjs`/`.cjs` as plain JS and `.mts`/`.cts` as TypeScript.
+ */
+function pickFallbackLoader(sourcePath: string): "tsx" | "ts" | "jsx" | "js" {
+  const ext = sourcePath
+    .match(/\.(tsx?|jsx?|m[jt]s|c[jt]s)(?:\.src)?$/i)?.[1]
+    ?.toLowerCase();
+  if (ext === "tsx") return "tsx";
+  if (ext === "ts" || ext === "mts" || ext === "cts") return "ts";
+  if (ext === "jsx") return "jsx";
+  return "js";
+}
+
+/**
+ * Compile a framework source file with esbuild only (no recursive
+ * import resolution). Used by the depth-limit fallback and by its
+ * nested handling of embedded `.src` dependencies.
+ */
+async function compileFallbackSource(
+  content: string,
+  sourcePath: string,
+): Promise<string> {
+  const { transform } = await import("veryfront/extensions/bundler");
+  const result = await transform(content, {
+    loader: pickFallbackLoader(sourcePath),
+    jsx: "automatic",
+    jsxImportSource: "react",
+    format: "esm",
+    target: "es2022",
+  });
+  return result.code;
+}
+
+/**
+ * Transform and cache a single dependency referenced from the depth-limit
+ * fallback. Required for compiled binaries where the resolver returns
+ * embedded `.src` paths (e.g. `foo.ts.src`) — those are not loadable
+ * module URLs, so the fallback must materialize a real `.mjs` cache file.
+ *
+ * Recursion is bounded by `visited` (cycle guard) and by `frameworkFileCache`
+ * (per-process dedupe), the same primitives the main transform path uses.
+ */
+async function transformAndCacheFallbackDep(
+  resolvedPath: string,
+  ctx: TransformContext,
+  visited: Set<string>,
+): Promise<string | null> {
+  // Prefer the main path's fully-resolved cache entry when present —
+  // that output is strictly higher quality than what the fallback
+  // produces (no `#veryfront/` / React / HTTP rewriting here). But
+  // never propagate a cycle placeholder: the main path stores those
+  // mid-transform and treats them as invalid (see `isCyclePlaceholder`
+  // / the cache-invalidation branch upstream). If the fallback wrote
+  // a placeholder into a cache file, an importer would silently see
+  // `export {}` and any named import would be `undefined` at runtime.
+  const mainCached = frameworkFileCache.get(resolvedPath);
+  if (mainCached && !isCyclePlaceholder(mainCached)) {
+    return await cacheTransformedCode(mainCached, resolvedPath, ctx.fs);
+  }
+  const fallbackCached = fallbackTransformCache.get(resolvedPath);
+  if (fallbackCached) {
+    return await cacheTransformedCode(fallbackCached, resolvedPath, ctx.fs);
+  }
+
+  if (visited.has(resolvedPath)) {
+    // Cycle: bail and leave the parent's import bare. Logged so a stuck
+    // dev server isn't silently producing un-loadable cache files.
+    logger.warn(
+      `${LOG_PREFIX} Depth-limit fallback skipping cycle`,
+      { resolvedPath: resolvedPath.slice(-60) },
+    );
+    return null;
+  }
+  visited.add(resolvedPath);
+
+  let depContent: string;
+  try {
+    depContent = await ctx.fs.readTextFile(resolvedPath);
+  } catch (error) {
+    logger.warn(
+      `${LOG_PREFIX} Depth-limit fallback could not read dependency`,
+      { resolvedPath: resolvedPath.slice(-60), error: String(error) },
+    );
+    return null;
+  }
+
+  // Catch esbuild failures (bad syntax, encoding issues) so one bad
+  // `.src` dep does not abort the entire top-level fallback. The bare
+  // import is left in the parent and the runtime's own loader will
+  // surface a clear "Module not found" instead of a stack trace
+  // pointing at an unrelated parent file.
+  let compiled: string;
+  try {
+    compiled = await compileFallbackSource(depContent, resolvedPath);
+  } catch (error) {
+    logger.warn(
+      `${LOG_PREFIX} Depth-limit fallback could not compile dependency`,
+      { resolvedPath: resolvedPath.slice(-60), error: String(error) },
+    );
+    return null;
+  }
+  const rewritten = await rewriteFallbackRelativeImports(compiled, resolvedPath, ctx, visited);
+  fallbackTransformCache.set(resolvedPath, rewritten);
+  return await cacheTransformedCode(rewritten, resolvedPath, ctx.fs);
+}
+
+/**
+ * Rewrite relative imports in the depth-limit fallback output. Each
+ * `./foo.js` / `../bar.js` is resolved against `sourcePath` and emitted
+ * as an absolute `file://` URL so the cached fallback module is
+ * executable from the cache directory.
+ *
+ * In dev mode the resolver returns a `.ts` / `.js` path the runtime can
+ * load directly, so we point at the source file. In compiled binaries
+ * it returns a `.src` path the runtime cannot load — those deps are
+ * transformed and cached on the fly via {@link transformAndCacheFallbackDep}
+ * and the import is rewritten to the resulting cache URL. Imports that
+ * fail to resolve are left untouched and a warning is logged.
+ */
+async function rewriteFallbackRelativeImports(
+  code: string,
+  sourcePath: string,
+  ctx: TransformContext,
+  visited: Set<string> = new Set(),
+): Promise<string> {
+  visited.add(sourcePath);
+
+  const relativeImports = findRelativeImports(code);
+  if (relativeImports.length === 0) return code;
+
+  const replacements = new Map<string, string>();
+  for (const specifier of relativeImports) {
+    // Skip non-code imports the runtime cannot load this way.
+    if (/\.(json|css|svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot)$/.test(specifier)) {
+      continue;
+    }
+    const resolvedPath = await resolveRelativeFrameworkImport(specifier, sourcePath, ctx.fs);
+    if (!resolvedPath) {
+      logger.warn(
+        `${LOG_PREFIX} Depth-limit fallback could not resolve relative import "${specifier}"`,
+        { sourcePath: sourcePath.slice(-60) },
+      );
+      continue;
+    }
+
+    // Embedded sources (.tsx.src / .ts.src / .jsx.src / .js.src) used by
+    // compiled binaries are not loadable by the runtime. Materialize a
+    // cache file the runtime can import instead of linking at the .src
+    // source. Regular .ts/.tsx/.js/.jsx/.mjs paths are pointed at
+    // directly — the runtime handles them natively.
+    if (resolvedPath.endsWith(".src")) {
+      const cacheUrlPath = await transformAndCacheFallbackDep(resolvedPath, ctx, visited);
+      if (!cacheUrlPath) continue;
+      replacements.set(specifier, `file://${cacheUrlPath}`);
+    } else {
+      replacements.set(specifier, `file://${resolvedPath}`);
+    }
+  }
+
+  if (replacements.size === 0) return code;
+
+  return await replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      return replacements.get(specifier) ?? null;
+    }
+    return null;
+  });
+}
+
 /**
  * Core transformation logic for framework TypeScript/TSX files.
  * Compiles to JavaScript and recursively resolves all imports:
@@ -106,21 +285,13 @@ export async function transformFrameworkCode(
       sourcePath: sourcePath.slice(-60),
       depth,
     });
-    // Return minimally transformed code - it will fail at runtime but won't hang
-    const { transform } = await import("veryfront/extensions/bundler");
-    const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
-    let loader: "tsx" | "ts" | "jsx" | "js" = "js";
-    if (ext === "tsx") loader = "tsx";
-    else if (ext === "ts") loader = "ts";
-    else if (ext === "jsx") loader = "jsx";
-    const result = await transform(content, {
-      loader,
-      jsx: "automatic",
-      jsxImportSource: "react",
-      format: "esm",
-      target: "es2022",
-    });
-    return result.code;
+    // Compile the file, then rewrite its relative imports so the cached
+    // fallback module is loadable from the cache directory. Without this
+    // rewriting the fallback emits raw `./foo.js` imports that resolve
+    // against the cache dir (where those siblings do not exist), producing
+    // a runtime "Module not found".
+    const compiled = await compileFallbackSource(content, sourcePath);
+    return await rewriteFallbackRelativeImports(compiled, sourcePath, ctx);
   }
 
   // Check if already transformed (before cycle check to handle concurrent requests)
