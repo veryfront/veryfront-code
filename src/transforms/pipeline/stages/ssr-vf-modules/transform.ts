@@ -88,6 +88,53 @@ export async function cacheTransformedCode(
 }
 
 /**
+ * Rewrite relative imports in the depth-limit fallback output. Each
+ * `./foo.js` / `../bar.js` is resolved against `sourcePath` and emitted
+ * as an absolute `file://` URL so the cached fallback module is
+ * executable from the cache directory.
+ *
+ * The fallback path bypasses recursive transformation, so this
+ * rewriting is the only thing keeping cached fallback files loadable.
+ * Imports that fail to resolve are left untouched and a warning is
+ * logged — they will fail at runtime, matching the previous behavior
+ * for that specific case.
+ */
+async function rewriteFallbackRelativeImports(
+  code: string,
+  sourcePath: string,
+  ctx: TransformContext,
+): Promise<string> {
+  const relativeImports = findRelativeImports(code);
+  if (relativeImports.length === 0) return code;
+
+  const replacements = new Map<string, string>();
+  for (const specifier of relativeImports) {
+    // Skip non-code imports the runtime cannot load this way.
+    if (/\.(json|css|svg|png|jpg|jpeg|gif|ico|woff2?|ttf|eot)$/.test(specifier)) {
+      continue;
+    }
+    const resolvedPath = await resolveRelativeFrameworkImport(specifier, sourcePath, ctx.fs);
+    if (!resolvedPath) {
+      logger.warn(
+        `${LOG_PREFIX} Depth-limit fallback could not resolve relative import "${specifier}"`,
+        { sourcePath: sourcePath.slice(-60) },
+      );
+      continue;
+    }
+    replacements.set(specifier, `file://${resolvedPath}`);
+  }
+
+  if (replacements.size === 0) return code;
+
+  return await replaceSpecifiers(code, (specifier) => {
+    if (specifier.startsWith("./") || specifier.startsWith("../")) {
+      return replacements.get(specifier) ?? null;
+    }
+    return null;
+  });
+}
+
+/**
  * Core transformation logic for framework TypeScript/TSX files.
  * Compiles to JavaScript and recursively resolves all imports:
  * - #veryfront/ imports (internal framework imports)
@@ -106,7 +153,13 @@ export async function transformFrameworkCode(
       sourcePath: sourcePath.slice(-60),
       depth,
     });
-    // Return minimally transformed code - it will fail at runtime but won't hang
+    // Compile the file, then rewrite its relative imports to absolute
+    // file:// URLs pointing at the resolved source files. The runtime can
+    // load those directly (they are already-published .js with sibling
+    // relative imports the loader resolves naturally). Without this
+    // rewriting the fallback would emit code with bare `./foo.js` imports
+    // and the caller would cache it under .cache/.../framework/, where
+    // those siblings do not exist — producing a runtime "Module not found".
     const { transform } = await import("veryfront/extensions/bundler");
     const ext = sourcePath.match(/\.(tsx?|jsx?)$/)?.[1] ?? "tsx";
     let loader: "tsx" | "ts" | "jsx" | "js" = "js";
@@ -120,7 +173,7 @@ export async function transformFrameworkCode(
       format: "esm",
       target: "es2022",
     });
-    return result.code;
+    return await rewriteFallbackRelativeImports(result.code, sourcePath, ctx);
   }
 
   // Check if already transformed (before cycle check to handle concurrent requests)
