@@ -52,6 +52,53 @@ describe("transformFrameworkCode depth-limit fallback", {
     }
   });
 
+  it("transforms and caches embedded .src dependencies so the fallback works in compiled binaries", async () => {
+    // In compiled binaries the resolver returns *.ts.src / *.js.src paths,
+    // which the runtime cannot import directly. The fallback must materialize
+    // a real .mjs cache file and link the import to that, not to the .src
+    // source.
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-src-fallback-" });
+    const srcDir = `${tmp}/src/utils`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    // Only the .src copy exists (mirrors compiled-binary layout).
+    const helperSrcPath = `${srcDir}/helper.ts.src`;
+    await Deno.writeTextFile(helperSrcPath, "export const HELPER = 7;\n");
+
+    const ownerPath = `${srcDir}/owner.ts.src`;
+    const ownerContent = [
+      `import { HELPER } from "./helper.js";`,
+      `export const value = HELPER;`,
+    ].join("\n");
+    await Deno.writeTextFile(ownerPath, ownerContent);
+
+    try {
+      const transformed = await transformFrameworkCode(
+        ownerContent,
+        ownerPath,
+        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      // The fallback must NOT embed the .src path as the import URL.
+      assert(
+        !transformed.includes(".src"),
+        `fallback emitted .src path: ${transformed}`,
+      );
+      assertEquals(transformed.includes('from "./helper.js"'), false);
+      // It must link to a real .mjs cache file that exists.
+      const match = transformed.match(/from "file:\/\/([^"]+\.mjs)"/);
+      assert(match, `fallback did not emit a .mjs file:// URL: ${transformed}`);
+      const cachePath = match[1]!;
+      assert(
+        await Deno.stat(cachePath).then(() => true).catch(() => false),
+        `cache file does not exist on disk: ${cachePath}`,
+      );
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
   it("leaves bare-package imports alone in the fallback output", async () => {
     const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-fallback-" });
     const srcDir = `${tmp}/src`;
