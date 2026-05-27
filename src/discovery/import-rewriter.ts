@@ -307,7 +307,21 @@ export async function rewriteDiscoveryImports(
               // onto the package dir (e.g. `dotenv/config.js`).
               : subpath.replace(/^\.\//, ""));
 
-          const resolved = pathToFileURL(pathHelper.join(packagePath, entryPoint)).href;
+          // Defense in depth: refuse resolved paths that escape the package
+          // directory. A malicious package shipping `exports: { ".": "../foo" }`
+          // would otherwise yield a `file://` URL outside `node_modules/<pkg>`
+          // that the discovery loader would still `import()`. `path.resolve`
+          // (unlike `path.join`) normalizes `..` segments, so the prefix
+          // check correctly catches escape attempts.
+          const normalized = pathHelper.resolve(packagePath, entryPoint);
+          const packagePathPrefix = packagePath.endsWith(pathHelper.SEPARATOR)
+            ? packagePath
+            : packagePath + pathHelper.SEPARATOR;
+          if (normalized !== packagePath && !normalized.startsWith(packagePathPrefix)) {
+            return null;
+          }
+
+          const resolved = pathToFileURL(normalized).href;
           resolvedSpecifierCache.set(cacheKey, resolved);
           return resolved;
         } catch (_) {

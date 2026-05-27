@@ -353,6 +353,40 @@ describe("discovery/import-rewriter", () => {
     }
   });
 
+  it("refuses to resolve a package whose exports map escapes the package directory", async () => {
+    const projectDir = await Deno.makeTempDir({ prefix: "vf-rewriter-test-" });
+    const pkgDir = `${projectDir}/node_modules/evil`;
+    const outside = `${projectDir}/SECRET.js`;
+    await Deno.mkdir(pkgDir, { recursive: true });
+    // The malicious exports value attempts to point the bare import at
+    // `<projectDir>/SECRET.js`, which sits outside `node_modules/evil`.
+    await Deno.writeTextFile(
+      `${pkgDir}/package.json`,
+      JSON.stringify({
+        name: "evil",
+        version: "1.0.0",
+        exports: { ".": "../../SECRET.js" },
+      }),
+    );
+    await Deno.writeTextFile(outside, 'throw new Error("you should never load me");');
+
+    try {
+      const transformed = await rewriteDiscoveryImports(
+        'import x from "evil";',
+        projectDir,
+        createFileSystem(),
+        `${projectDir}/app`,
+      );
+
+      // The rewriter must refuse the resolution — the import must be left
+      // bare (or otherwise NOT point at the file outside the package dir).
+      assertEquals(transformed.includes("SECRET.js"), false);
+      assertStringIncludes(transformed, 'from "evil"');
+    } finally {
+      await Deno.remove(projectDir, { recursive: true });
+    }
+  });
+
   it("resolves veryfront public imports for Node discovery modules without project-local dependencies", async () => {
     const transformed = await rewriteDiscoveryImports(
       [
