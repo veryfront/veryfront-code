@@ -47,7 +47,7 @@
         "type": "graphql",
         "method": "POST",
         "url": "https://api.linear.app/graphql",
-        "query": "query($query: String!, $first: Int) { issueSearch(query: $query, first: $first) { nodes { id identifier title description state { name } assignee { name } priority priorityLabel createdAt updatedAt } } }",
+        "query": "query($query: String!, $first: Int) { searchIssues(term: $query, first: $first) { nodes { id identifier title description state { name } assignee { name } priority priorityLabel createdAt updatedAt } } }",
         "params": {
           "query": {
             "type": "string",
@@ -63,7 +63,7 @@
           }
         },
         "response": {
-          "transform": "issueSearch"
+          "transform": "searchIssues"
         }
       }
     },

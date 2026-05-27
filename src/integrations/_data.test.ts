@@ -706,7 +706,7 @@ describe("integration endpoint specs", () => {
     const linearSearchIssues = getTool("linear", "search_issues");
     assertStringIncludes(
       linearSearchIssues.endpoint?.query ?? "",
-      "issueSearch(query: $query, first: $first)",
+      "searchIssues(term: $query, first: $first)",
     );
 
     const linearCreateIssue = getTool("linear", "create_issue");
