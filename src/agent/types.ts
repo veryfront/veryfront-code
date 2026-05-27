@@ -94,6 +94,17 @@ export interface AgentConfig {
   model?: ModelString;
   system: string | (() => string) | (() => Promise<string>);
   tools?: true | Record<string, Tool | boolean>;
+  /**
+   * Optional sandbox selection for runtime-owned sandbox tools such as `bash`.
+   * `id` attaches to an existing sandbox session and detaches on run cleanup.
+   * When omitted, sandbox tools lazily create a request/project-scoped session.
+   */
+  sandbox?: {
+    id?: string;
+    sandboxId?: string;
+    sessionId?: string;
+    projectId?: string;
+  };
   remoteTools?: RemoteToolSource[];
   /**
    * Optional remote tool name allowlist. When set, only matching tools from
