@@ -143,7 +143,6 @@ function rewriteBareNpmImportsForDeno(code: string): string {
  * - Resolves relative imports to absolute file:// URLs
  * - For compiled binaries, rewrites veryfront imports to use globals
  */
-
 export function rewriteForDeno(
   code: string,
   fileDir: string,
@@ -338,7 +337,7 @@ export async function rewriteDiscoveryImports(
     };
 
     const rewritePackageImports = (input: string, pkg: string, resolvedUrl: string): string => {
-      const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const escapedPkg = escapeRegExp(pkg);
       const staticImportRegex = new RegExp(
         `(^|[\\s;{}])((?:import|export)\\b[^"']*?\\bfrom\\s+)["']${escapedPkg}["']`,
         "g",
