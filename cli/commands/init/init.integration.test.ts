@@ -191,6 +191,94 @@ describe("init command integration", () => {
     });
   });
 
+  describe("runtime selection", () => {
+    it("does NOT write deno.json by default (runtime defaults to node)", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "minimal",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
+      assertEquals(result.code, 0);
+      assertEquals(await exists(join(projectDir, "package.json")), true);
+      assertEquals(await exists(join(projectDir, "deno.json")), false);
+    });
+
+    it("does NOT write deno.json for --runtime node", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "minimal",
+        "--runtime",
+        "node",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
+      assertEquals(result.code, 0);
+      assertEquals(await exists(join(projectDir, "deno.json")), false);
+    });
+
+    it("does NOT write deno.json for --runtime bun", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "minimal",
+        "--runtime",
+        "bun",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
+      assertEquals(result.code, 0);
+      assertEquals(await exists(join(projectDir, "deno.json")), false);
+    });
+
+    it("writes both package.json and deno.json for --runtime deno", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "minimal",
+        "--runtime",
+        "deno",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
+      assertEquals(result.code, 0);
+      assertEquals(await exists(join(projectDir, "package.json")), true);
+      assertEquals(await exists(join(projectDir, "deno.json")), true);
+
+      const parsed = JSON.parse(
+        await readTextFile(join(projectDir, "deno.json")),
+      );
+      assertEquals(parsed.nodeModulesDir, "auto");
+      assertEquals(parsed.tasks.dev, "deno run -A npm:veryfront dev");
+      assertExists(parsed.tasks.build);
+      assertExists(parsed.tasks.preview);
+    });
+
+    it("rejects an invalid --runtime value before scaffolding", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "minimal",
+        "--runtime",
+        "rust",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
+      // Non-zero exit; the project directory must not exist.
+      assertEquals(result.code !== 0, true);
+      assertEquals(await exists(projectDir), false);
+      // The error message should surface the validator.
+      assertEquals(
+        ((result.stdout ?? "") + (result.stderr ?? "")).includes(
+          "Invalid runtime value",
+        ),
+        true,
+      );
+    });
+  });
+
   describe("wizard behavior in non-TTY", () => {
     it("should skip wizard and use minimal template when name is provided", async () => {
       // When a name is provided, wizard should be skipped
