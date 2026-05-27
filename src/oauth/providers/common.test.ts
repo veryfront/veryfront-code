@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { slackConfig } from "./common.ts";
+import { commonServices, slackConfig } from "./common.ts";
 
 const SLACK_SETUP_SCOPES = [
   "channels:history",
@@ -24,6 +24,11 @@ async function readSlackConnectorScopes(): Promise<string[]> {
 }
 
 describe("oauth provider configs", () => {
+  it("does not expose removed Discord or Dropbox OAuth provider configs", () => {
+    assertEquals("discord" in commonServices, false);
+    assertEquals("dropbox" in commonServices, false);
+  });
+
   it("keeps the Slack runtime scopes aligned with the connector surface", async () => {
     assertEquals(slackConfig.defaultScopes, await readSlackConnectorScopes());
     assertEquals(slackConfig.defaultScopes, SLACK_SETUP_SCOPES);

@@ -22,7 +22,7 @@ Visit `http://localhost:3000/api/auth/{service}` to connect each service.
 - [Google Services](#google-services) (Gmail, Calendar, Drive, Docs, Sheets)
 - [Microsoft Services](#microsoft-services) (Outlook, Teams, SharePoint, OneDrive)
 - [Atlassian Services](#atlassian-services) (Jira, Confluence)
-- [Communication](#communication) (Slack, Discord, Twilio, Zoom, Webex)
+- [Communication](#communication) (Slack, Twilio, Zoom, Webex)
 - [Project Management](#project-management) (Asana, Monday, Trello, ClickUp, Linear, Notion)
 - [Developer Tools](#developer-tools) (GitHub, GitLab, Bitbucket, Figma, Sentry, PostHog)
 - [CRM & Sales](#crm--sales) (Salesforce, HubSpot, Pipedrive, Intercom, Zendesk, Freshdesk)

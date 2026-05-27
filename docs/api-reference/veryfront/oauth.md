@@ -75,7 +75,6 @@ export const GET = createOAuthCallbackHandler(gmailConfig);
 | `calendarConfig` | Configuration used by calendar. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L34) |
 | `clickupConfig` | Configuration used by clickup. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L334) |
 | `confluenceConfig` | Configuration used by confluence. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/atlassian.ts#L31) |
-| `discordConfig` | Configuration used by discord. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L70) |
 | `driveConfig` | Configuration used by drive. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/google.ts#L58) |
 | `figmaConfig` | Configuration used by figma. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L57) |
 | `freshdeskConfig` | Configuration used by freshdesk. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/oauth/providers/common.ts#L221) |
