@@ -1,7 +1,7 @@
 ---
 title: "veryfront/mdx"
 description: "Component overrides for `.mdx` page rendering."
-order: 16
+order: 15
 ---
 
 ## Import

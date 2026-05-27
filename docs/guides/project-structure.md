@@ -148,7 +148,7 @@ export default defineConfig({
   ai: {
     tools: { discovery: { paths: ["tools"] } },
     agents: { discovery: { paths: ["agents"] } },
-    skills: { discovery: { paths: ["skills", "internal/skills"] } },
+    skills: { discovery: { paths: ["skills", "team-skills"] } },
   },
 });
 ```

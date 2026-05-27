@@ -1,7 +1,7 @@
 ---
 title: "veryfront/chat"
 description: "Chat UI components and streaming hooks."
-order: 4
+order: 3
 ---
 
 ## Import

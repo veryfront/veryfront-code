@@ -1,7 +1,7 @@
 ---
 title: "veryfront/oauth"
 description: "OAuth 2.0 with 36 pre-configured providers."
-order: 18
+order: 17
 ---
 
 ## Import

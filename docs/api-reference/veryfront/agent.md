@@ -1931,6 +1931,4 @@ import { assertCompleted, assertContains, assertDurableRunCanaryCompleted } from
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `durableRunCanaryRunnerInternals` | White-box helpers used by durable run canary tests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/testing/durable-run-canaries/runner.ts#L611) |
 | `getDurableRunCanaryMessageSchema` | Zod schema for get durable run canary message. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/testing/durable-run-canaries/runner.ts#L37) |
-| `liveEvalRunnerInternals` | White-box helpers used by live eval runner tests. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/testing/live-evals/runner.ts#L631) |
