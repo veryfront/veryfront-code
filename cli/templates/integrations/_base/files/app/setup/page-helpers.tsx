@@ -110,10 +110,10 @@ export const OAUTH_SETUP_GUIDES: Record<string, SetupGuide> = {
     category: "google",
     steps: [
       "Uses same Google OAuth credentials",
-      "Enable Drive API in Google Cloud Console",
+      "Enable Docs API in Google Cloud Console",
       "Add redirect URI: http://localhost:3000/api/auth/docs-google/callback",
     ],
-    link: "https://console.cloud.google.com/apis/library/drive.googleapis.com",
+    link: "https://console.cloud.google.com/apis/library/docs.googleapis.com",
     envVars: ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"],
   },
   outlook: {
