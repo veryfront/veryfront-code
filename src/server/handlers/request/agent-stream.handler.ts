@@ -383,7 +383,14 @@ export class AgentStreamHandler extends BaseHandler {
             }
 
             const runAgentStream = () =>
-              createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, this.deps);
+              createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
+                ...this.deps,
+                projectAgentSandbox: {
+                  apiUrl: getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.org",
+                  authToken: ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || undefined,
+                  projectId: ctx.projectId ?? null,
+                },
+              });
             const shouldIsolateEnv = !!ctx.proxyToken;
             const response = shouldIsolateEnv
               ? await runWithProjectEnv(

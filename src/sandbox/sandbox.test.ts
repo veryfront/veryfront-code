@@ -1358,6 +1358,40 @@ describe("Sandbox", () => {
         await sandbox.close();
       }
     });
+
+    it("attaches to a configured existing sandbox without deleting it on close", async () => {
+      mockFetch([
+        jsonResponse({
+          id: "existing-1",
+          endpoint: "https://existing.example.com",
+          status: "running",
+        }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        sandboxId: "existing-1",
+        authToken: "token",
+        apiUrl: "https://api.test.com",
+      });
+
+      assertEquals(await sandbox.executeCommand("echo ok"), {
+        stdout: "ok\n",
+        stderr: "",
+        exitCode: 0,
+      });
+      await sandbox.close();
+
+      assertEquals(fetchCalls.map((call) => [call.url, call.init?.method ?? "GET"]), [
+        ["https://api.test.com/sandbox-sessions/existing-1", "GET"],
+        ["https://api.test.com/sandbox-sessions/existing-1/heartbeat", "POST"],
+        ["https://existing.example.com/exec", "POST"],
+      ]);
+    });
   });
 
   describe("list()", () => {

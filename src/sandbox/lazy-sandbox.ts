@@ -13,6 +13,15 @@ import {
 
 /** Options accepted by lazy sandbox. */
 export interface LazySandboxOptions extends SandboxOptions {
+  /**
+   * Optional existing sandbox session to attach to instead of creating a new one.
+   * Attached sessions are detached, not deleted, on close unless deleteOnClose is true.
+   */
+  sandboxId?: string;
+  /** Optional known endpoint for sandboxId; avoids the initial control-plane lookup. */
+  sandboxEndpoint?: string;
+  /** Delete the sandbox when closing. Defaults to true for created sessions and false for sandboxId. */
+  deleteOnClose?: boolean;
   getProjectId?: () => string | null | undefined;
   startupTimeoutMs?: number;
   pollIntervalMs?: number;
@@ -77,6 +86,9 @@ export function resolveDefaultSandboxRuntimeEndpoint(input: { endpoint: string }
 export class LazySandbox {
   private readonly apiUrl: string;
   private readonly authToken: string;
+  private readonly sandboxId: string | undefined;
+  private readonly sandboxEndpoint: string | undefined;
+  private readonly deleteOnClose: boolean;
   private readonly getProjectId: () => string | null | undefined;
   private readonly startupTimeoutMs: number;
   private readonly pollIntervalMs: number;
@@ -106,6 +118,9 @@ export class LazySandbox {
   constructor(options: LazySandboxOptions = {}) {
     this.apiUrl = resolveSandboxApiUrl(options);
     this.authToken = resolveSandboxAuthToken(options);
+    this.sandboxId = options.sandboxId?.trim() || undefined;
+    this.sandboxEndpoint = options.sandboxEndpoint?.trim() || undefined;
+    this.deleteOnClose = options.deleteOnClose ?? !this.sandboxId;
     this.getProjectId = options.getProjectId ?? (() => options.projectId);
     this.startupTimeoutMs = options.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -411,7 +426,9 @@ export class LazySandbox {
           return;
         }
 
-        await this.deleteSession(currentSessionId);
+        if (this.deleteOnClose) {
+          await this.deleteSession(currentSessionId);
+        }
         this.resetSessionState(currentSessionId);
       })(),
     };
@@ -440,6 +457,11 @@ export class LazySandbox {
   }
 
   private async bootstrapSession(): Promise<void> {
+    if (this.sandboxId) {
+      await this.attachExistingSession(this.sandboxId);
+      return;
+    }
+
     const projectId = this.resolveProjectId();
     const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions`, {
       method: "POST",
@@ -464,7 +486,7 @@ export class LazySandbox {
       this.startHeartbeatLoop();
     } catch (error) {
       const currentSessionId = this.sessionId;
-      if (currentSessionId) {
+      if (currentSessionId && this.deleteOnClose) {
         await this.deleteSession(currentSessionId);
       }
       this.resetSessionState(currentSessionId ?? undefined);
@@ -478,6 +500,38 @@ export class LazySandbox {
     }
 
     return (await this.waitForReadySession(session.id)).endpoint;
+  }
+
+  private async attachExistingSession(sessionId: string): Promise<void> {
+    const projectId = this.resolveProjectId();
+    this.sessionId = sessionId;
+    this.sessionProjectId = projectId;
+
+    try {
+      const session = this.sandboxEndpoint
+        ? { id: sessionId, endpoint: this.sandboxEndpoint, status: "running" }
+        : await this.getSession(sessionId);
+      this.endpoint = await this.resolveReadyEndpoint(session);
+      await this.heartbeat(true);
+      this.startHeartbeatLoop();
+    } catch (error) {
+      this.resetSessionState(sessionId);
+      throw error;
+    }
+  }
+
+  private async getSession(sessionId: string): Promise<SandboxSessionRecord> {
+    const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions/${sessionId}`, {
+      headers: this.authHeaders(),
+    });
+
+    if (!res.ok) {
+      throw REQUEST_ERROR.create({
+        detail: `Failed to get sandbox: ${res.status} ${await res.text()}`,
+      });
+    }
+
+    return await res.json() as SandboxSessionRecord;
   }
 
   private async waitForReadySession(sessionId: string): Promise<SandboxSessionRecord> {
@@ -510,7 +564,7 @@ export class LazySandbox {
 
   private async touchSession(): Promise<void> {
     const projectId = this.resolveProjectId();
-    if (this.endpoint && this.sessionProjectId !== projectId) {
+    if (!this.sandboxId && this.endpoint && this.sessionProjectId !== projectId) {
       const currentSessionId = this.sessionId;
       if (currentSessionId) {
         await this.deleteSession(currentSessionId);
@@ -654,7 +708,9 @@ export class LazySandbox {
     const sessionId = this.sessionId;
     if (!sessionId) return;
 
-    await this.deleteSession(sessionId);
+    if (this.deleteOnClose) {
+      await this.deleteSession(sessionId);
+    }
     this.resetSessionState(sessionId);
   }
 

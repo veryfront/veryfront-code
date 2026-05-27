@@ -5,6 +5,16 @@ import {
   AgentRuntime,
 } from "#veryfront/agent";
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
+import type {
+  AgentServiceSandboxToolsOptions,
+  AgentServiceSandboxToolsResult,
+} from "#veryfront/sandbox";
+import { createAgentServiceSandboxTools } from "#veryfront/sandbox";
+import { tryResolve } from "#veryfront/extensions/contracts.ts";
+import {
+  type SandboxShellToolsProvider,
+  SandboxShellToolsProviderName,
+} from "#veryfront/extensions/sandbox/index.ts";
 import { SKILL_TOOL_IDS } from "#veryfront/skill/types.ts";
 import { type Tool, toolRegistry } from "#veryfront/tool";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
@@ -23,6 +33,7 @@ import { serverLogger } from "#veryfront/utils";
 const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown()));
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
 const logger = serverLogger.component("internal-agent-run-stream");
+const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
 
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
@@ -37,6 +48,15 @@ function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
 
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
+  projectAgentSandbox?: {
+    apiUrl?: string;
+    authToken?: string;
+    projectId?: string | null;
+  };
+  createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
+  createAgentServiceSandboxTools?: (
+    input: AgentServiceSandboxToolsOptions,
+  ) => Promise<AgentServiceSandboxToolsResult>;
   createRuntime?: (
     agent: Agent,
     mergedTools: Agent["config"]["tools"],
@@ -93,6 +113,7 @@ function buildMergedTools(
   input: RuntimeRunAgentInput,
   sessionManager: AgentRunSessionManager,
   availableForwardedToolNames?: string[],
+  availableLocalTools?: Record<string, Tool | boolean>,
 ) {
   const injectedTools = Object.fromEntries(
     input.tools.map((tool) => [
@@ -132,10 +153,11 @@ function buildMergedTools(
     if (entry === true) {
       if (
         toolRegistry.get(toolName) ||
+        availableLocalTools?.[toolName] ||
         availableForwardedToolNames?.includes(toolName) ||
         sourceAllowedRemoteToolNames.includes(toolName)
       ) {
-        merged[toolName] = true;
+        merged[toolName] = availableLocalTools?.[toolName] ?? true;
       }
       continue;
     }
@@ -147,6 +169,85 @@ function buildMergedTools(
 
   const filtered = { ...merged, ...injectedTools };
   return Object.keys(filtered).length > 0 ? filtered : undefined;
+}
+
+async function loadDefaultCreateBashTool(): Promise<
+  AgentServiceSandboxToolsOptions["createBashTool"]
+> {
+  const provider = tryResolve<SandboxShellToolsProvider>(SandboxShellToolsProviderName);
+  if (provider) return provider;
+
+  const { createBashSandboxShellToolsProvider } = await import(
+    "../../extensions/ext-sandbox-shell-tools/src/index.ts"
+  );
+  return createBashSandboxShellToolsProvider;
+}
+
+function getStringProperty(value: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
+}
+
+function getAgentSandboxConfig(agent: Agent): { sandboxId?: string; projectId?: string } {
+  const config = agent.config as Agent["config"] & { sandbox?: unknown };
+  if (!isRecord(config.sandbox)) {
+    return {};
+  }
+
+  return {
+    sandboxId: getStringProperty(config.sandbox, ["id", "sandboxId", "sessionId"]),
+    projectId: getStringProperty(config.sandbox, ["projectId"]),
+  };
+}
+
+function shouldExposeSandboxBash(agent: Agent): boolean {
+  const tools = agent.config.tools;
+  return isRecord(tools) && tools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME] === true;
+}
+
+async function buildProjectAgentSandboxTools(input: {
+  agent: Agent;
+  deps: RuntimeAgentStreamExecutionDeps;
+}): Promise<{ tools?: Record<string, Tool | boolean>; closeSandbox?: () => Promise<void> }> {
+  if (!shouldExposeSandboxBash(input.agent)) {
+    return {};
+  }
+
+  const sandboxConfig = getAgentSandboxConfig(input.agent);
+  const createBashTool = input.deps.createBashTool ?? await loadDefaultCreateBashTool();
+  const createSandboxTools = input.deps.createAgentServiceSandboxTools ??
+    createAgentServiceSandboxTools;
+  const sandboxResult = await createSandboxTools({
+    createBashTool,
+    ...(input.deps.projectAgentSandbox?.apiUrl
+      ? { apiUrl: input.deps.projectAgentSandbox.apiUrl }
+      : {}),
+    ...(input.deps.projectAgentSandbox?.authToken
+      ? { authToken: input.deps.projectAgentSandbox.authToken }
+      : {}),
+    ...(sandboxConfig.sandboxId
+      ? { sandboxId: sandboxConfig.sandboxId, deleteOnClose: false }
+      : {}),
+    getProjectId: () => sandboxConfig.projectId ?? input.deps.projectAgentSandbox?.projectId,
+  });
+
+  const bash = sandboxResult.tools[PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME];
+  if (!bash) {
+    await sandboxResult.closeSandbox();
+    return {};
+  }
+
+  return {
+    tools: {
+      [PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME]: bash as Tool,
+    },
+    closeSandbox: sandboxResult.closeSandbox,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -219,11 +320,13 @@ export async function createRuntimeAgentStreamResponse(
   const allowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
   const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(input.forwardedProps);
   const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
+  const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });
   const mergedTools = buildMergedTools(
     agent,
     input,
     deps.sessionManager,
     availableForwardedToolNames,
+    sandboxTools.tools,
   );
   const runtimeAgent: RuntimeFilteredAgent = {
     ...agent,
@@ -272,6 +375,13 @@ export async function createRuntimeAgentStreamResponse(
     });
   } catch (error) {
     deps.sessionManager.failRun(input.runId);
+    await sandboxTools.closeSandbox?.().catch((cleanupError) => {
+      logger.warn("Internal agent runtime sandbox cleanup failed after setup error", {
+        runId: input.runId,
+        agentId: agent.id,
+        error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+      });
+    });
     logger.error("Internal agent runtime stream setup failed", {
       runId: input.runId,
       threadId: input.threadId,
@@ -423,6 +533,13 @@ export async function createRuntimeAgentStreamResponse(
         if (clientAttached) {
           controller.close();
         }
+        await sandboxTools.closeSandbox?.().catch((cleanupError) => {
+          logger.warn("Internal agent runtime sandbox cleanup failed", {
+            runId: input.runId,
+            agentId: agent.id,
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+          });
+        });
         logger.debug("Internal agent runtime stream response closed", {
           runId: input.runId,
           threadId: input.threadId,

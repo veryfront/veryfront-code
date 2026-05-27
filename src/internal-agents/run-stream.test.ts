@@ -2,6 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { Agent } from "#veryfront/agent";
+import type {
+  AgentServiceSandboxToolsOptions,
+  AgentServiceSandboxToolsResult,
+  CreateSandboxBashTool,
+} from "#veryfront/sandbox";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
 
@@ -138,5 +143,161 @@ describe("internal-agents/run-stream", () => {
     );
 
     assertEquals(capturedToolNames, ["get_file", "search_knowledge"]);
+  });
+
+  it("materializes explicitly configured sandbox bash before constructing the runtime", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const sandboxInputs: AgentServiceSandboxToolsOptions[] = [];
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "builder-agent",
+      config: {
+        id: "builder-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          bash: true,
+          missing_tool: true,
+        },
+        sandbox: {
+          id: "sandbox-existing",
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "builder-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        projectAgentSandbox: {
+          apiUrl: "https://api.test",
+          authToken: "runtime-token",
+          projectId: "project-1",
+        },
+        createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+        createAgentServiceSandboxTools: (sandboxInput) => {
+          sandboxInputs.push(sandboxInput);
+          return Promise.resolve({
+            tools: {
+              bash: {
+                description: "Run bash",
+                execute: async () => ({ stdout: "ok", stderr: "", exitCode: 0 }),
+              },
+              sandbox_read_file: {
+                description: "Read sandbox file",
+                execute: async () => "",
+              },
+            },
+            sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+            closeSandbox: async () => {},
+          });
+        },
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolNames, ["bash"]);
+    assertEquals(
+      sandboxInputs.map((sandboxInput) => ({
+        apiUrl: sandboxInput.apiUrl,
+        authToken: sandboxInput.authToken,
+        projectId: sandboxInput.getProjectId?.(),
+        sandboxId: sandboxInput.sandboxId,
+        deleteOnClose: sandboxInput.deleteOnClose,
+      })),
+      [
+        {
+          apiUrl: "https://api.test",
+          authToken: "runtime-token",
+          projectId: "project-1",
+          sandboxId: "sandbox-existing",
+          deleteOnClose: false,
+        },
+      ],
+    );
+  });
+
+  it("does not materialize sandbox bash without an explicit bash tool declaration", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let sandboxToolCalls = 0;
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "builder-agent",
+      config: {
+        id: "builder-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          missing_tool: true,
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "builder-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        projectAgentSandbox: {
+          apiUrl: "https://api.test",
+          authToken: "runtime-token",
+          projectId: "project-1",
+        },
+        createBashTool: (() => Promise.resolve({ tools: {} })) as CreateSandboxBashTool,
+        createAgentServiceSandboxTools: () => {
+          sandboxToolCalls += 1;
+          return Promise.resolve({
+            tools: {},
+            sandbox: {} as AgentServiceSandboxToolsResult["sandbox"],
+            closeSandbox: async () => {},
+          });
+        },
+        createRuntime: (_agent, mergedTools) => {
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolNames, []);
+    assertEquals(sandboxToolCalls, 0);
   });
 });
