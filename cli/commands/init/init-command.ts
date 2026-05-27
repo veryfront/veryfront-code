@@ -215,7 +215,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
 
   let wizardRuntime: InitRuntime = "node";
   if (shouldRunWizard(options)) {
-    const wizardResult = await runInteractiveWizard(name);
+    const wizardResult = await runInteractiveWizard(name, options.runtime);
     if (wizardResult.cancelled) {
       return;
     }

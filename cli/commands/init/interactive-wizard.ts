@@ -26,12 +26,15 @@ function canRunWizard(): boolean {
   return !(isCiEnv() || isDenoTestingEnv()) && checkIsInteractive();
 }
 
-export async function runInteractiveWizard(existingName?: string): Promise<WizardResult> {
+export async function runInteractiveWizard(
+  existingName?: string,
+  presetRuntime?: InitRuntime,
+): Promise<WizardResult> {
   if (!canRunWizard()) {
     return {
       projectName: existingName ?? null,
       template: "minimal",
-      runtime: "node",
+      runtime: presetRuntime ?? "node",
       initGit: false,
       skipped: true,
       cancelled: false,
@@ -130,6 +133,34 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
 
   const template = templateChoice as InitTemplate;
 
+  // Runtime selection (skipped when CLI passed --runtime explicitly)
+  let runtime: InitRuntime = presetRuntime ?? "node";
+  if (presetRuntime === undefined) {
+    const runtimeChoice = await select(
+      "What runtime should this project use?",
+      [
+        { value: "node", label: "Node.js", description: "Default" },
+        { value: "bun", label: "Bun", description: "Fast JS runtime" },
+        { value: "deno", label: "Deno", description: "Secure-by-default" },
+      ],
+      0,
+    );
+
+    if (runtimeChoice === null) {
+      console.log(muted("\n  Cancelled.\n"));
+      return {
+        projectName: null,
+        template: "minimal",
+        runtime: "node",
+        initGit: false,
+        skipped: false,
+        cancelled: true,
+      };
+    }
+
+    runtime = runtimeChoice as InitRuntime;
+  }
+
   // Git init prompt
   const gitChoice = await select(
     "Initialize a git repository?",
@@ -165,13 +196,14 @@ export async function runInteractiveWizard(existingName?: string): Promise<Wizar
     console.log(`  ${brand("Location:")} ./  ${dim("(current folder)")}`);
   }
   console.log(`  ${brand("Template:")} ${templateLabel}`);
+  console.log(`  ${brand("Runtime:")} ${runtime}`);
   console.log(`  ${brand("Git:")} ${initGit ? "Yes" : "No"}`);
   console.log("");
 
   return {
     projectName,
     template,
-    runtime: "node",
+    runtime,
     initGit,
     skipped: false,
     cancelled: false,
