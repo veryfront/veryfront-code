@@ -128,6 +128,42 @@ function resolveReactSpecifier(
 }
 
 /**
+ * veryfront's own React re-export modules under `FRAMEWORK_ROOT/react/`
+ * mapped to the bare specifier they stand in for. Each re-export bridges to
+ * project React via `export * from "react"` (etc.), which during SSR resolves
+ * to the project's `node_modules` copy — a *different* React instance than
+ * the esm.sh react-dom bundle uses. The dnt build rewrites framework
+ * `import ... from "react"` to a relative import of these files, so a
+ * framework module that does `useEffect` ends up reading a null dispatcher.
+ * Rewriting these imports straight to the esm.sh bundle keeps every SSR
+ * module on a single React instance.
+ */
+const REACT_REEXPORT_SPECIFIERS: Record<string, string> = {
+  "react.js": "react",
+  "react-dom.js": "react-dom",
+  "react-dom-client.js": "react-dom/client",
+  "react-dom-server.js": "react-dom/server",
+  "jsx-runtime.js": "react/jsx-runtime",
+  "jsx-dev-runtime.js": "react/jsx-dev-runtime",
+};
+
+/**
+ * If `resolvedPath` is one of veryfront's React re-export modules
+ * (`FRAMEWORK_ROOT/react/*.js`), return the esm.sh URL it should be rewritten
+ * to for the given React version. Returns `null` for anything else.
+ */
+export function reactReExportToEsmUrl(
+  resolvedPath: string,
+  reactVersion: string,
+): string | null {
+  const reactDir = join(FRAMEWORK_ROOT, "react") + "/";
+  if (!resolvedPath.startsWith(reactDir)) return null;
+  const specifier = REACT_REEXPORT_SPECIFIERS[resolvedPath.slice(reactDir.length)];
+  if (!specifier) return null;
+  return resolveReactSpecifier(specifier, reactVersion);
+}
+
+/**
  * Pick an esbuild loader for a file path, honoring the embedded `.src`
  * suffix used in compiled binaries (`foo.ts.src` → `ts`). Recognizes
  * `.mjs`/`.cjs` as plain JS and `.mts`/`.cts` as TypeScript.
@@ -272,6 +308,14 @@ async function rewriteFallbackRelativeImports(
         `${LOG_PREFIX} Depth-limit fallback could not resolve relative import "${specifier}"`,
         { sourcePath: sourcePath.slice(-60) },
       );
+      continue;
+    }
+
+    // Same React-instance fix as the main path: route React re-exports to the
+    // esm.sh bundle instead of linking veryfront's project-React bridge.
+    const reactUrl = reactReExportToEsmUrl(resolvedPath, ctx.reactVersion);
+    if (reactUrl) {
+      replacements.set(specifier, reactUrl);
       continue;
     }
 
@@ -431,6 +475,15 @@ export async function transformFrameworkCode(
           logger.warn(
             `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
           );
+          continue;
+        }
+
+        // veryfront's own React re-exports bridge to project React, which is a
+        // different instance than the esm.sh react-dom bundle during SSR.
+        // Point these straight at the esm.sh bundle so SSR shares one React.
+        const reactUrl = reactReExportToEsmUrl(resolvedPath, ctx.reactVersion);
+        if (reactUrl) {
+          relativeReplacements.set(specifier, reactUrl);
           continue;
         }
 

@@ -3,8 +3,44 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { transformFrameworkCode } from "./transform.ts";
-import { MAX_RELATIVE_IMPORT_DEPTH } from "./constants.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { reactReExportToEsmUrl, transformFrameworkCode } from "./transform.ts";
+import { FRAMEWORK_ROOT, MAX_RELATIVE_IMPORT_DEPTH } from "./constants.ts";
+import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+
+describe("reactReExportToEsmUrl", () => {
+  const reactPath = (name: string) => join(FRAMEWORK_ROOT, "react", name);
+
+  it("maps the React re-export to the esm.sh react bundle URL", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("react.js"), "19.2.4"),
+      buildReactUrl("react", "19.2.4"),
+    );
+  });
+
+  it("maps react-dom client/server re-exports", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("react-dom-client.js"), "19.2.4"),
+      buildReactUrl("react-dom", "19.2.4", "/client", true),
+    );
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("react-dom-server.js"), "19.2.4"),
+      buildReactUrl("react-dom", "19.2.4", "/server", true),
+    );
+  });
+
+  it("maps jsx-runtime re-exports", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("jsx-runtime.js"), "19.2.4"),
+      buildReactUrl("react", "19.2.4", "/jsx-runtime", true),
+    );
+  });
+
+  it("returns null for non-react-re-export framework files", () => {
+    assertEquals(reactReExportToEsmUrl(join(FRAMEWORK_ROOT, "src", "foo.js"), "19.2.4"), null);
+    assertEquals(reactReExportToEsmUrl(reactPath("not-a-reexport.js"), "19.2.4"), null);
+  });
+});
 
 // esbuild starts a child process that lives across tests, so we disable sanitizers
 describe("transformFrameworkCode depth-limit fallback", {
