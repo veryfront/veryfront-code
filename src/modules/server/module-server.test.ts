@@ -161,6 +161,17 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
     assertEquals(text.includes("./version-constant.js"), true);
   });
 
+  it("should serve browser React shims imported by npm framework modules", async () => {
+    const response = await serve(
+      new Request("http://localhost:3000/_vf_modules/react/react.js"),
+    );
+
+    assertEquals(response.status, 200);
+    const text = await response.text();
+    assertEquals(text.includes("react"), true);
+    assertEquals(text.includes("export"), true);
+  });
+
   it("should serve browser-safe framework version constants with the embedded version", async () => {
     const response = await serve(
       new Request("http://localhost:3000/_vf_modules/_veryfront/utils/version-constant.js"),

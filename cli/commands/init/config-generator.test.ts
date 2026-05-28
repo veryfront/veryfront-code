@@ -29,6 +29,18 @@ describe("config-generator", () => {
       }
     });
 
+    it("pins React defaults to the framework npm shim version", async () => {
+      const tmpDir = await Deno.makeTempDir();
+      try {
+        await createPackageJson(tmpDir, "test-project");
+        const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
+        assertEquals(pkg.dependencies.react, "^19.2.4");
+        assertEquals(pkg.dependencies["react-dom"], "^19.2.4");
+      } finally {
+        await Deno.remove(tmpDir, { recursive: true });
+      }
+    });
+
     it("merges npmDependencies from selected integrations", async () => {
       const tmpDir = await Deno.makeTempDir();
       try {

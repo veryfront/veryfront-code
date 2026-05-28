@@ -476,6 +476,8 @@ async function findSourceFile(
   }
 
   const isFrameworkPath = basePathWithoutExt.startsWith("_veryfront/");
+  const isFrameworkPackageAssetPath = basePathWithoutExt.startsWith("react/") ||
+    basePathWithoutExt.startsWith("deps/");
 
   // Check embedded polyfills first (no filesystem access needed).
   // These cover both compiled-binary polyfills (node:async_hooks etc.)
@@ -496,11 +498,11 @@ async function findSourceFile(
     };
   }
 
-  if (isFrameworkPath) {
+  if (isFrameworkPath || isFrameworkPackageAssetPath) {
     const frameworkResult = await resolveFrameworkSourcePath(
-      basePathWithoutExt.slice("_veryfront/".length),
+      isFrameworkPath ? basePathWithoutExt.slice("_veryfront/".length) : basePathWithoutExt,
       {
-        extraLookupDirs: [join(projectDir, "src")],
+        extraLookupDirs: [FRAMEWORK_ROOT, join(projectDir, "src")],
         extensions,
       },
     );

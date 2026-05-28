@@ -3,7 +3,7 @@ import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 
 // Keep init scaffold aligned with current framework default React major/minor.
-const DEFAULT_INIT_REACT_VERSION = "19.1.1";
+const DEFAULT_INIT_REACT_VERSION = "19.2.4";
 
 export interface CreatePackageJsonOptions {
   /**

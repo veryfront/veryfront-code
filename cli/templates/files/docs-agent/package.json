@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "@kreuzberg/node": "^4.4.2",
+    "@kreuzberg/wasm": "4.5.2"
+  }
+}

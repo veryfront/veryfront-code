@@ -182,12 +182,32 @@ describe("init command integration", () => {
         "neon",
         "--skip-install",
         "--skip-env-prompt",
-      ]);
+      ], {
+        env: { VERYFRONT_EXPERIMENTAL_INTEGRATIONS: "neon" },
+      });
 
       assertEquals(result.code, 0);
 
       const pkg = JSON.parse(await readTextFile(join(projectDir, "package.json")));
       assertEquals(pkg.dependencies.pg, "^8.13.1");
+    });
+
+    it("includes document extraction dependencies for docs-agent uploads", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "docs-agent",
+        "--runtime",
+        "node",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
+
+      assertEquals(result.code, 0);
+
+      const pkg = JSON.parse(await readTextFile(join(projectDir, "package.json")));
+      assertEquals(pkg.dependencies["@kreuzberg/node"], "^4.4.2");
+      assertEquals(pkg.dependencies["@kreuzberg/wasm"], "4.5.2");
     });
   });
 
