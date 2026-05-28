@@ -106,9 +106,27 @@ describe("sandbox/shell-tools", () => {
     assertEquals(receivedToolCallId, "call_123");
   });
 
+  it("uses the tool map key when bash-tool definitions omit an id", () => {
+    const normalized = normalizeBashToolSet({
+      bash: {
+        description: "Run commands",
+        inputSchemaJson: {
+          type: "object",
+          properties: {
+            command: { type: "string" },
+          },
+        },
+      },
+    });
+
+    assertEquals(normalized.bash?.id, "bash");
+  });
+
   it("handles invalid definitions gracefully", () => {
-    assertEquals(normalizeBashToolSet({ bad: "not-an-object" }), { bad: {} });
-    assertEquals(normalizeBashToolSet({ bad: null }), { bad: {} });
-    assertEquals(normalizeBashToolSet({ tool: { inputSchemaJson: "bad" } }), { tool: {} });
+    assertEquals(normalizeBashToolSet({ bad: "not-an-object" }), { bad: { id: "bad" } });
+    assertEquals(normalizeBashToolSet({ bad: null }), { bad: { id: "bad" } });
+    assertEquals(normalizeBashToolSet({ tool: { inputSchemaJson: "bad" } }), {
+      tool: { id: "tool" },
+    });
   });
 });
