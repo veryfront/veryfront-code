@@ -4,7 +4,6 @@
  * @module extensions/ext-sandbox-shell-tools
  */
 
-import { createBashTool as createBashToolImpl } from "bash-tool";
 import type { ExtensionFactory } from "veryfront/extensions";
 import {
   type CreateSandboxShellToolsInput,
@@ -23,6 +22,7 @@ export function createSandboxShellToolsProvider(
 }
 
 const provider = createSandboxShellToolsProvider(async (input) => {
+  const { createBashTool: createBashToolImpl } = await import("bash-tool");
   return await createBashToolImpl(input);
 });
 

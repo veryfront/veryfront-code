@@ -55,7 +55,7 @@ describe("VeryfrontStrategy", () => {
     });
   });
 
-  describe("SSR overrides", () => {
+  describe("lightweight barrel overrides", () => {
     it("should redirect veryfront/workflow to React-only submodule for SSR", () => {
       const result = strategy.rewrite(
         makeInfo("veryfront/workflow"),
@@ -72,15 +72,15 @@ describe("VeryfrontStrategy", () => {
       );
     });
 
-    it("should NOT redirect veryfront/workflow for browser target", () => {
+    it("should redirect veryfront/workflow to React-only submodule for browser hydration", () => {
       const result = strategy.rewrite(
         makeInfo("veryfront/workflow"),
         makeCtx({ target: "browser" }),
       );
       assert(result.specifier !== null, "specifier should not be null");
       assert(
-        !result.specifier!.includes("/workflow/react/"),
-        `Browser target should use full module, got: ${result.specifier}`,
+        result.specifier!.includes("/workflow/react/index.js"),
+        `Expected workflow/react/index.js in browser, got: ${result.specifier}`,
       );
     });
 

@@ -123,6 +123,16 @@ describe("html-generation/utils", () => {
       assertEquals(imports["veryfront/context"], imports["veryfront/head"]);
     });
 
+    it("should map workflow client imports to the React hooks submodule", async () => {
+      const result = await buildImportMapJson();
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(
+        imports["veryfront/workflow"],
+        "/_vf_modules/_veryfront/workflow/react/index.js",
+      );
+    });
+
     it("should format JSON with proper indentation", async () => {
       const result = await buildImportMapJson();
 
