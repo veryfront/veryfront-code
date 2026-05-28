@@ -28,6 +28,13 @@ export interface IntegrationEndpoint {
   contentType?: string;
   response?: {
     transform?: string;
+    enrich?: {
+      type: "gmail-message-metadata";
+      url: string;
+      idField?: string;
+      metadataHeaders?: string[];
+      maxItems?: number;
+    };
   };
 }
 

@@ -134,6 +134,19 @@ export const getIntegrationEndpointBodyFieldSchema = defineSchema((v) =>
 );
 export const IntegrationEndpointBodyFieldSchema = lazySchema(getIntegrationEndpointBodyFieldSchema);
 
+export const getIntegrationEndpointResponseEnrichmentSchema = defineSchema((v) =>
+  v.object({
+    type: v.enum(["gmail-message-metadata"]),
+    url: v.string(),
+    idField: v.string().optional(),
+    metadataHeaders: v.array(v.string()).optional(),
+    maxItems: v.number().optional(),
+  })
+);
+export const IntegrationEndpointResponseEnrichmentSchema = lazySchema(
+  getIntegrationEndpointResponseEnrichmentSchema,
+);
+
 export const getIntegrationEndpointSchema = defineSchema((v) =>
   v.object({
     type: v.enum(["rest", "graphql"]).optional(),
@@ -143,7 +156,10 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
     params: v.record(v.string(), getIntegrationEndpointParamSchema()).optional(),
     body: v.record(v.string(), getIntegrationEndpointBodyFieldSchema()).optional(),
     contentType: v.string().optional(),
-    response: v.object({ transform: v.string().optional() }).optional(),
+    response: v.object({
+      transform: v.string().optional(),
+      enrich: getIntegrationEndpointResponseEnrichmentSchema().optional(),
+    }).optional(),
   })
 );
 export const IntegrationEndpointSchema = lazySchema(getIntegrationEndpointSchema);

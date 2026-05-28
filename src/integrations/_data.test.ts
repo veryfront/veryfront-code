@@ -794,9 +794,24 @@ describe("integration endpoint specs", () => {
 
     const gmailListEmails = getTool("gmail", "list_emails");
     assertEquals(gmailListEmails.endpoint?.params?.labelIds?.type, "string[]");
+    assertEquals(
+      gmailListEmails.endpoint?.response?.enrich?.type,
+      "gmail-message-metadata",
+    );
+    assertEquals(
+      gmailListEmails.endpoint?.response?.enrich?.metadataHeaders,
+      ["From", "To", "Subject", "Date"],
+    );
 
     const gmailGetEmail = getTool("gmail", "get_email");
     assertEquals(gmailGetEmail.endpoint?.params?.format?.default, "full");
+    assertEquals(gmailGetEmail.endpoint?.params?.metadataHeaders?.type, "string[]");
+
+    const gmailSearchEmails = getTool("gmail", "search_emails");
+    assertEquals(
+      gmailSearchEmails.endpoint?.response?.enrich?.type,
+      "gmail-message-metadata",
+    );
 
     const linearSearchIssues = getTool("linear", "search_issues");
     assertStringIncludes(
