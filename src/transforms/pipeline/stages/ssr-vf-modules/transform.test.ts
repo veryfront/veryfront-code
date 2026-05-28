@@ -254,14 +254,14 @@ describe("transformFrameworkCode depth-limit fallback", {
     }
   });
 
-  it("leaves bare-package imports alone in the fallback output", async () => {
+  it("leaves non-react bare-package imports alone in the fallback output", async () => {
     const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-fallback-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
-    const sourcePath = `${srcDir}/uses-react.js`;
+    const sourcePath = `${srcDir}/uses-lodash.js`;
     const sourceContent = [
-      `import React from "react";`,
-      `export const cls = React;`,
+      `import { merge } from "lodash";`,
+      `export const fn = merge;`,
     ].join("\n");
     await Deno.writeTextFile(sourcePath, sourceContent);
 
@@ -269,15 +269,51 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         sourceContent,
         sourcePath,
-        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
 
-      // Bare specifier `react` is the runtime's responsibility — fallback
-      // must not invent a file:// URL for it.
-      assertStringIncludes(transformed, 'from "react"');
+      // Non-react bare specifiers are the runtime's responsibility — the
+      // fallback must not invent a URL for them.
+      assertStringIncludes(transformed, 'from "lodash"');
       assert(!transformed.includes("file://"));
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("rewrites react imports in the fallback so SSR shares one React instance", async () => {
+    // Regression: when a deep framework file exceeds the relative-import
+    // depth limit, the fallback used to leave bare `react` imports. Those
+    // resolve to the project's own React copy, distinct from the esm.sh
+    // React bundle used elsewhere during SSR — two React instances, so the
+    // dispatcher is null and the first hook throws
+    // "Cannot read properties of null (reading 'useEffect')". The fallback
+    // must rewrite react/react-dom to the same esm.sh URLs the main path uses.
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-react-id-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const sourcePath = `${srcDir}/uses-react.js`;
+    const sourceContent = [
+      `import { useEffect } from "react";`,
+      `export const hook = useEffect;`,
+    ].join("\n");
+    await Deno.writeTextFile(sourcePath, sourceContent);
+
+    try {
+      const transformed = await transformFrameworkCode(
+        sourceContent,
+        sourcePath,
+        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      // `react` must no longer be bare — it must point at the esm.sh bundle
+      // pinned to the requested version.
+      assertEquals(transformed.includes('from "react"'), false);
+      assertStringIncludes(transformed, "esm.sh/react@19.2.4");
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }

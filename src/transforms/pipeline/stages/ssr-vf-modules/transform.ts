@@ -96,6 +96,38 @@ export async function cacheTransformedCode(
 const fallbackTransformCache = new Map<string, string>();
 
 /**
+ * Resolve a bare `react` / `react-dom` (or subpath) specifier to its esm.sh
+ * URL for the given React version. Returns `null` for anything that is not a
+ * React specifier.
+ *
+ * Both the main transform path and the depth-limit fallback use this so a
+ * framework module always links against the single esm.sh React bundle used
+ * during SSR. Leaving `react` bare would resolve it to the project's own
+ * React copy — a second React instance whose dispatcher is null, which makes
+ * the first hook throw "Cannot read properties of null (reading 'useEffect')".
+ */
+function resolveReactSpecifier(
+  specifier: string,
+  reactVersion: string,
+  reactImportMap: Record<string, string> = getReactImportMap(reactVersion),
+): string | null {
+  const mapped = reactImportMap[specifier];
+  if (mapped) return mapped;
+  if (specifier.startsWith("react/")) {
+    return buildReactUrl("react", reactVersion, "/" + specifier.slice("react/".length), true);
+  }
+  if (specifier.startsWith("react-dom/")) {
+    return buildReactUrl(
+      "react-dom",
+      reactVersion,
+      "/" + specifier.slice("react-dom/".length),
+      true,
+    );
+  }
+  return null;
+}
+
+/**
  * Pick an esbuild loader for a file path, honoring the embedded `.src`
  * suffix used in compiled binaries (`foo.ts.src` → `ts`). Recognizes
  * `.mjs`/`.cjs` as plain JS and `.mts`/`.cts` as TypeScript.
@@ -224,8 +256,9 @@ async function rewriteFallbackRelativeImports(
 ): Promise<string> {
   visited.add(sourcePath);
 
+  // Note: we do not early-return when there are no relative imports, because
+  // react/react-dom specifiers still need rewriting below.
   const relativeImports = findRelativeImports(code);
-  if (relativeImports.length === 0) return code;
 
   const replacements = new Map<string, string>();
   for (const specifier of relativeImports) {
@@ -256,13 +289,16 @@ async function rewriteFallbackRelativeImports(
     }
   }
 
-  if (replacements.size === 0) return code;
+  // React imports must be rewritten even when there are no relative imports,
+  // so SSR links against the single esm.sh React bundle (see
+  // resolveReactSpecifier).
+  const reactImportMap = getReactImportMap(ctx.reactVersion);
 
   return await replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       return replacements.get(specifier) ?? null;
     }
-    return null;
+    return resolveReactSpecifier(specifier, ctx.reactVersion, reactImportMap);
   });
 }
 
@@ -495,28 +531,7 @@ export async function transformFrameworkCode(
         return relativeReplacements.get(specifier) ?? null;
       }
 
-      const mapped = reactImportMap[specifier];
-      if (mapped) return mapped;
-
-      if (specifier.startsWith("react/")) {
-        return buildReactUrl(
-          "react",
-          ctx.reactVersion,
-          "/" + specifier.slice("react/".length),
-          true,
-        );
-      }
-
-      if (specifier.startsWith("react-dom/")) {
-        return buildReactUrl(
-          "react-dom",
-          ctx.reactVersion,
-          "/" + specifier.slice("react-dom/".length),
-          true,
-        );
-      }
-
-      return null;
+      return resolveReactSpecifier(specifier, ctx.reactVersion, reactImportMap);
     });
 
     // Cache HTTP imports to local filesystem
