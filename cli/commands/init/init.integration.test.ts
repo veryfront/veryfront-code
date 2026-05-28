@@ -14,8 +14,19 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/testing/deno-compat.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
+import type { TemplateName } from "../../templates/types.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });
+
+const STARTER_TEMPLATES: TemplateName[] = [
+  "minimal",
+  "ai-agent",
+  "docs-agent",
+  "agentic-workflow",
+  "multi-agent-system",
+  "coding-agent",
+  "saas-starter",
+];
 
 function randomSuffix(): string {
   return Math.random().toString(36).substring(2, 8);
@@ -242,6 +253,90 @@ describe("init command integration", () => {
       assertEquals(result.code, 0);
       assertEquals(await exists(join(projectDir, "package.json")), false);
       assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
+    });
+
+    it("does not write package.json in quiet mode for any starter template", async () => {
+      for (const template of STARTER_TEMPLATES) {
+        const name = `quiet-${template}-${randomSuffix()}`;
+        const dir = join(TEST_DIR, name);
+
+        try {
+          const result = await runQuietInitCommand({
+            name,
+            template,
+            skipInstall: true,
+            skipEnvPrompt: true,
+            quiet: true,
+          });
+          const output = (result.stdout ?? "") + (result.stderr ?? "");
+
+          assertEquals(result.code, 0, `${template} quiet init failed: ${output}`);
+          assertEquals(
+            await exists(join(dir, "package.json")),
+            false,
+            `${template} quiet init must not leave a package.json`,
+          );
+          assertEquals(
+            await exists(join(dir, "app")),
+            true,
+            `${template} quiet init should scaffold app files`,
+          );
+        } finally {
+          await remove(dir, { recursive: true }).catch(() => {});
+        }
+      }
+    });
+
+    it("generates complete package metadata for every starter template and runtime", async () => {
+      const runtimes = ["node", "bun", "deno"] as const;
+
+      for (const template of STARTER_TEMPLATES) {
+        for (const runtime of runtimes) {
+          const name = `pkg-${runtime}-${template}-${randomSuffix()}`;
+          const dir = join(TEST_DIR, name);
+
+          try {
+            const result = await runInitCommand([
+              name,
+              "-t",
+              template,
+              "--runtime",
+              runtime,
+              "--skip-install",
+              "--skip-env-prompt",
+            ]);
+            const output = (result.stdout ?? "") + (result.stderr ?? "");
+
+            assertEquals(
+              result.code,
+              0,
+              `${template} ${runtime} init failed: ${output}`,
+            );
+
+            const pkg = JSON.parse(await readTextFile(join(dir, "package.json")));
+            assertEquals(pkg.scripts.dev, "veryfront dev");
+            assertEquals(pkg.scripts.build, "veryfront build");
+            assertEquals(pkg.scripts.preview, "veryfront preview");
+            assertExists(pkg.dependencies.veryfront);
+            assertExists(pkg.dependencies.react);
+            assertExists(pkg.dependencies["react-dom"]);
+            assertEquals(pkg.dependencies.zod, "^3.24.0");
+
+            if (template === "docs-agent") {
+              assertEquals(pkg.dependencies["@kreuzberg/node"], "^4.4.2");
+              assertEquals(pkg.dependencies["@kreuzberg/wasm"], "4.5.2");
+            }
+
+            assertEquals(
+              await exists(join(dir, "deno.json")),
+              runtime === "deno",
+              `${template} ${runtime} should only write deno.json for deno runtime`,
+            );
+          } finally {
+            await remove(dir, { recursive: true }).catch(() => {});
+          }
+        }
+      }
     });
   });
 

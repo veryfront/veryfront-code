@@ -2,7 +2,18 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
+import { getTemplate, templateConfigs } from "./index.ts";
 import type { TemplateName } from "./types.ts";
+
+const STARTER_TEMPLATES: TemplateName[] = [
+  "ai-agent",
+  "docs-agent",
+  "multi-agent-system",
+  "agentic-workflow",
+  "coding-agent",
+  "saas-starter",
+  "minimal",
+];
 
 const STYLED_STARTER_TEMPLATES: TemplateName[] = [
   "ai-agent",
@@ -30,6 +41,29 @@ async function collectTemplateTsFiles(dir: URL): Promise<URL[]> {
 }
 
 describe("cli/templates", () => {
+  it("keeps starter npm dependencies out of root package template files", async () => {
+    const offenders: string[] = [];
+
+    for (const templateName of STARTER_TEMPLATES) {
+      const files = await getTemplate(templateName);
+      assertExists(files, `${templateName} should load from the template registry`);
+
+      if (files.some((file) => file.path === "package.json")) {
+        offenders.push(templateName);
+      }
+    }
+
+    assertEquals(
+      offenders,
+      [],
+      `Starter templates must use template config for npm dependencies, not root package.json files. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+    assertEquals(templateConfigs["docs-agent"]?.npmDependencies?.["@kreuzberg/node"], "^4.4.2");
+    assertEquals(templateConfigs["docs-agent"]?.npmDependencies?.["@kreuzberg/wasm"], "4.5.2");
+  });
+
   it("ships a Tailwind entry stylesheet for styled starter templates", async () => {
     for (const templateName of STYLED_STARTER_TEMPLATES) {
       const globalsPath = new URL(`./files/${templateName}/globals.css`, import.meta.url);
