@@ -241,6 +241,44 @@ export function collectGeneratedToolResults(
   return generatedToolResults;
 }
 
+export function shouldContinueAfterStreamStep(
+  state: Pick<ChatStreamState, "accumulatedText" | "finishReason" | "toolCalls" | "toolResults">,
+): boolean {
+  if (!state.toolCalls.size) {
+    return false;
+  }
+
+  if (state.finishReason === "tool-calls") {
+    return true;
+  }
+
+  if (state.finishReason !== "stop") {
+    return false;
+  }
+
+  if (state.accumulatedText.trim().length > 0) {
+    return false;
+  }
+
+  const finalToolResults = collectFinalStreamToolResults(state);
+  if (!finalToolResults.size) {
+    return false;
+  }
+
+  for (const [toolCallId, toolCall] of state.toolCalls) {
+    const toolResult = finalToolResults.get(toolCallId);
+    if (!toolResult) {
+      return false;
+    }
+
+    if (toolCall.providerExecuted !== true && toolResult.providerExecuted !== true) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function captureStreamedToolCallInput(
   toolCall: Pick<StreamingToolCall, "arguments">,
 ): {
@@ -1194,7 +1232,7 @@ export class AgentRuntime {
         );
       };
 
-      if (state.finishReason !== "tool-calls" || !state.toolCalls.size) {
+      if (!shouldContinueAfterStreamStep(state)) {
         for (const toolResult of finalToolResults.values()) {
           await persistToolResult(toolResult);
         }

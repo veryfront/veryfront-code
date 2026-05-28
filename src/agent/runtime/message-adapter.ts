@@ -28,6 +28,17 @@ type AgentRuntimeMessageLikePart =
     input: Record<string, unknown>;
   }
   | {
+    type: "tool_call";
+    id?: string;
+    name?: string;
+    tool_call_id?: string;
+    tool_name?: string;
+    toolCallId?: string;
+    toolName?: string;
+    input?: Record<string, unknown>;
+    args?: Record<string, unknown>;
+  }
+  | {
     type: "tool-result";
     toolCallId: string;
     toolName: string;
@@ -38,6 +49,15 @@ type AgentRuntimeMessageLikePart =
     toolCallId: string;
     toolName: string;
     output: unknown;
+  }
+  | {
+    type: "tool_result";
+    tool_call_id?: string;
+    tool_name?: string;
+    toolCallId?: string;
+    toolName?: string;
+    result?: unknown;
+    output?: unknown;
   }
   | { type: "image"; url: string; mediaType: string }
   | { type: "file"; url: string; mediaType: string };
@@ -289,12 +309,17 @@ export function getAgentRuntimeToolCallPart(
     return null;
   }
 
-  if (part.type !== "tool-call" && !part.type.startsWith("tool-")) {
+  if (part.type !== "tool_call" && part.type !== "tool-call" && !part.type.startsWith("tool-")) {
     return null;
   }
 
-  const toolCallId = getOptionalStringField(part, "toolCallId");
-  const toolName = getOptionalStringField(part, "toolName") ?? part.type.replace(/^tool-/, "");
+  const toolCallId = getOptionalStringField(part, "toolCallId") ??
+    getOptionalStringField(part, "tool_call_id") ??
+    getOptionalStringField(part, "id");
+  const toolName = getOptionalStringField(part, "toolName") ??
+    getOptionalStringField(part, "tool_name") ??
+    getOptionalStringField(part, "name") ??
+    part.type.replace(/^tool-/, "");
   if (!toolCallId || toolName.length === 0) {
     return null;
   }
@@ -310,12 +335,14 @@ export function getAgentRuntimeToolCallPart(
 export function getAgentRuntimeToolResultPart(
   part: unknown,
 ): { toolCallId: string; toolName: string; output: unknown } | null {
-  if (!isRecord(part) || part.type !== "tool-result") {
+  if (!isRecord(part) || part.type !== "tool-result" && part.type !== "tool_result") {
     return null;
   }
 
-  const toolCallId = getOptionalStringField(part, "toolCallId");
-  const toolName = getOptionalStringField(part, "toolName");
+  const toolCallId = getOptionalStringField(part, "toolCallId") ??
+    getOptionalStringField(part, "tool_call_id");
+  const toolName = getOptionalStringField(part, "toolName") ??
+    getOptionalStringField(part, "tool_name");
   if (!toolCallId || !toolName) {
     return null;
   }
@@ -323,7 +350,11 @@ export function getAgentRuntimeToolResultPart(
   return {
     toolCallId,
     toolName,
-    output: Object.hasOwn(part, "result") ? part.result : null,
+    output: Object.hasOwn(part, "result")
+      ? part.result
+      : Object.hasOwn(part, "output")
+      ? part.output
+      : null,
   };
 }
 
