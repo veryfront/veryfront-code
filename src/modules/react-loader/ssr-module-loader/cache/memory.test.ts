@@ -106,6 +106,39 @@ describe("modules/react-loader/ssr-module-loader/cache/memory", () => {
       const stats = getTransformStats();
       assertEquals(stats.activeProjects.has("test-drop-zero"), false);
     });
+
+    it("bypass=true always acquires, even past the per-project limit", () => {
+      resetState();
+      if (getTransformPerProjectLimit() <= 0) return; // limit disabled
+
+      const projectId = "test-bypass-proj";
+
+      // Fill the project to its limit with normal acquisitions.
+      for (let i = 0; i < getTransformPerProjectLimit(); i++) {
+        assertEquals(acquireTransformSlot(projectId), true);
+      }
+      // Normal acquisition is now refused...
+      assertEquals(acquireTransformSlot(projectId), false);
+      // ...but a bypassing caller (e.g. single-tenant dev) still gets through.
+      assertEquals(acquireTransformSlot(projectId, true), true);
+
+      for (let i = 0; i < getTransformPerProjectLimit(); i++) {
+        releaseTransformSlot(projectId);
+      }
+    });
+
+    it("bypass=true does not change the project's tracked count", () => {
+      resetState();
+      if (getTransformPerProjectLimit() <= 0) return;
+
+      const projectId = "test-bypass-count";
+      assertEquals(acquireTransformSlot(projectId, true), true);
+      // A bypassing acquire must not consume a tracked slot.
+      assertEquals(getTransformStats().activeProjects.has(projectId), false);
+      // A bypassing release must be a no-op (no underflow / phantom entry).
+      releaseTransformSlot(projectId, true);
+      assertEquals(getTransformStats().activeProjects.has(projectId), false);
+    });
   });
 
   describe("getTransformStats", () => {

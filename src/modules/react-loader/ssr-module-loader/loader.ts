@@ -95,7 +95,16 @@ export class SSRModuleLoader {
     const semaphore = useSemaphore ? getTransformSemaphore() : undefined;
     let semaphoreAcquired = false;
 
-    if (!await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS)) {
+    // The per-project limit is noisy-neighbor protection for multi-tenant
+    // cloud. The dev server is single-tenant, so the limit only produces
+    // false "at capacity" failures when a cold-cache render fans out across
+    // the framework tree. Bypass it in dev; the global semaphore still bounds
+    // total concurrency.
+    const bypassProjectLimit = this.options.dev === true;
+
+    if (
+      !await tryAcquireTransformSlot(projectId, TRANSFORM_ACQUIRE_TIMEOUT_MS, bypassProjectLimit)
+    ) {
       throw createTransformCapacityError(
         mode,
         `Project ${projectId} at transform capacity. Consider reducing page complexity or request rate.`,
@@ -120,7 +129,7 @@ export class SSRModuleLoader {
       if (semaphore && semaphoreAcquired) {
         semaphore.release();
       }
-      releaseTransformSlot(projectId);
+      releaseTransformSlot(projectId, bypassProjectLimit);
     }
   }
 

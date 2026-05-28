@@ -85,10 +85,15 @@ const RATE_LIMIT_BYPASS_PREFIXES = ["local-", "test_"];
  *
  * Note: The "__single__" project and projects with "local-" prefix bypass
  * rate limiting since there's no noisy-neighbor concern in single-project mode.
+ * `bypass` forces the same behavior for callers that know they are
+ * single-tenant (e.g. the dev server, whose projectId is the project slug and
+ * therefore does not match the prefix allowlist). When bypassing, no slot is
+ * tracked, so the matching {@link releaseTransformSlot} must also bypass.
  */
-export function acquireTransformSlot(projectId: string): boolean {
+export function acquireTransformSlot(projectId: string, bypass = false): boolean {
   const limit = getTransformPerProjectLimit();
   if (limit <= 0) return true;
+  if (bypass) return true;
   if (RATE_LIMIT_BYPASS_PROJECTS.has(projectId)) return true;
   if (RATE_LIMIT_BYPASS_PREFIXES.some((prefix) => projectId.startsWith(prefix))) return true;
 
@@ -110,23 +115,26 @@ const PROJECT_SLOT_RETRY_INTERVAL_MS = 50;
 export async function tryAcquireTransformSlot(
   projectId: string,
   timeoutMs: number,
+  bypass = false,
 ): Promise<boolean> {
-  if (acquireTransformSlot(projectId)) return true;
+  if (acquireTransformSlot(projectId, bypass)) return true;
 
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await new Promise<void>((resolve) => setTimeout(resolve, PROJECT_SLOT_RETRY_INTERVAL_MS)); // no cleanup needed: one-shot
-    if (acquireTransformSlot(projectId)) return true;
+    if (acquireTransformSlot(projectId, bypass)) return true;
   }
 
   return false;
 }
 
 /**
- * Release a project-level transform slot.
+ * Release a project-level transform slot. `bypass` must match the value
+ * passed to the corresponding {@link acquireTransformSlot} so a bypassing
+ * caller never decrements another caller's tracked count.
  */
-export function releaseTransformSlot(projectId: string): void {
-  if (getTransformPerProjectLimit() <= 0) return;
+export function releaseTransformSlot(projectId: string, bypass = false): void {
+  if (bypass || getTransformPerProjectLimit() <= 0) return;
 
   const current = projectTransformCounts.get(projectId) ?? 0;
   if (current <= 1) {
