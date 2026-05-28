@@ -95,8 +95,10 @@ describe("integration endpoint specs", () => {
   });
 
   it("does not expose retired integrations until they have verified working tool surfaces", () => {
-    assertEquals(connectors.some((item) => item.name === "discord"), false);
-    assertEquals(connectors.some((item) => item.name === "hubspot"), false);
+    const connectorNames = connectors.map((item) => item.name as string);
+
+    assertEquals(connectorNames.includes("discord"), false);
+    assertEquals(connectorNames.includes("hubspot"), false);
   });
 
   it("adds endpoint specs for all 68 tools across the 5 targeted integrations", () => {

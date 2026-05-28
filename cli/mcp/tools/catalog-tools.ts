@@ -174,7 +174,7 @@ const INTEGRATIONS: IntegrationInfo[] = INTEGRATION_CATEGORIES.flatMap((category
       displayName: integration.label,
       category: getMcpCategory(category.name),
       description: integration.description,
-      authType: connector.auth.type,
+      authType: connector.auth.type as IntegrationInfo["authType"],
     }];
   })
 );

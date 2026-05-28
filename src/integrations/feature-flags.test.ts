@@ -44,6 +44,7 @@ describe("integration feature flags", () => {
 
     assertEquals(isVisibleIntegration("salesforce"), true);
     assertEquals(isVisibleIntegration("stripe"), true);
+    assertEquals(isVisibleIntegration("not-a-provider"), false);
   });
 
   it("filters collections by integration id", () => {

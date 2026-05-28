@@ -1,3 +1,4 @@
+import { isVisibleIntegration } from "../../integrations/feature-flags.ts";
 import type { OAuthServiceConfig } from "../types.ts";
 
 /** Configuration used by github. */
@@ -344,7 +345,7 @@ export const pipedriveConfig: OAuthServiceConfig = {
   defaultScopes: [],
 };
 
-export const commonServices = {
+const allCommonServices = {
   github: githubConfig,
   slack: slackConfig,
   notion: notionConfig,
@@ -369,4 +370,8 @@ export const commonServices = {
   trello: trelloConfig,
   clickup: clickupConfig,
   pipedrive: pipedriveConfig,
-};
+} as const;
+
+export const commonServices = Object.fromEntries(
+  Object.entries(allCommonServices).filter(([name]) => isVisibleIntegration(name)),
+) as Partial<typeof allCommonServices>;

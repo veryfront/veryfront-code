@@ -23,7 +23,59 @@ export const SUPPORTED_INTEGRATION_NAMES = [
   "teams",
 ] as const;
 
+export const DECLARED_INTEGRATION_NAMES = [
+  "gmail",
+  "slack",
+  "github",
+  "calendar",
+  "jira",
+  "notion",
+  "servicenow",
+  "confluence",
+  "linear",
+  "gitlab",
+  "outlook",
+  "teams",
+  "figma",
+  "sheets",
+  "airtable",
+  "supabase",
+  "neon",
+  "sharepoint",
+  "stripe",
+  "salesforce",
+  "twitter",
+  "onedrive",
+  "bitbucket",
+  "sentry",
+  "posthog",
+  "zendesk",
+  "asana",
+  "monday",
+  "zoom",
+  "trello",
+  "box",
+  "shopify",
+  "clickup",
+  "intercom",
+  "pipedrive",
+  "mailchimp",
+  "webex",
+  "freshdesk",
+  "quickbooks",
+  "xero",
+  "drive",
+  "docs-google",
+  "snowflake",
+  "mixpanel",
+  "twilio",
+  "anthropic",
+  "aws",
+  "hubspot",
+] as const;
+
 const supportedIntegrations = new Set<string>(SUPPORTED_INTEGRATION_NAMES);
+const declaredIntegrations = new Set<string>(DECLARED_INTEGRATION_NAMES);
 
 function normalizeIntegrationName(name: string): string {
   return name.trim().toLowerCase();
@@ -41,16 +93,21 @@ function readEnv(name: string): string | undefined {
   return processEnv?.[name];
 }
 
+export function isDeclaredIntegration(name: string | null | undefined): boolean {
+  return typeof name === "string" && declaredIntegrations.has(normalizeIntegrationName(name));
+}
+
 export function isSupportedIntegration(name: string | null | undefined): boolean {
   return typeof name === "string" && supportedIntegrations.has(normalizeIntegrationName(name));
 }
 
 export function isExperimentalIntegrationEnabled(name: string | null | undefined): boolean {
-  if (typeof name !== "string") return false;
+  if (typeof name !== "string" || !isDeclaredIntegration(name)) return false;
 
   const value = readEnv(EXPERIMENTAL_INTEGRATIONS_ENV);
   if (!value) return false;
 
+  const normalizedName = normalizeIntegrationName(name);
   const normalizedValue = value.trim().toLowerCase();
   if (["1", "true", "all", "*"].includes(normalizedValue)) return true;
 
@@ -58,7 +115,7 @@ export function isExperimentalIntegrationEnabled(name: string | null | undefined
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean)
-    .includes(normalizeIntegrationName(name));
+    .includes(normalizedName);
 }
 
 export function isVisibleIntegration(name: string | null | undefined): boolean {
