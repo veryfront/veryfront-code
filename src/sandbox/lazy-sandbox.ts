@@ -52,6 +52,8 @@ const DEFAULT_CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_EXEC_START_TIMEOUT_MS = 30_000;
 const DEFAULT_EXEC_START_MAX_ATTEMPTS = 3;
 const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
+const CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS = 2;
+const DATA_PLANE_READINESS_FAILURE_PREFIX = "Sandbox data plane did not become ready:";
 const RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES = new Set([404, 502, 503, 504]);
 const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
   "ECONNREFUSED",
@@ -463,6 +465,22 @@ export class LazySandbox {
       return;
     }
 
+    for (let attempt = 1; attempt <= CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        await this.bootstrapCreatedSession();
+        return;
+      } catch (error) {
+        if (
+          attempt >= CREATED_SESSION_BOOTSTRAP_MAX_ATTEMPTS ||
+          !isDataPlaneReadinessFailure(error)
+        ) {
+          throw error;
+        }
+      }
+    }
+  }
+
+  private async bootstrapCreatedSession(): Promise<void> {
     const projectId = this.resolveProjectId();
     const res = await this.fetchControl(`${this.apiUrl}/sandbox-sessions`, {
       method: "POST",
@@ -786,6 +804,16 @@ function isRetryableExecStartStatus(status: number): boolean {
 
 function isRetryableExecStartError(error: unknown): boolean {
   return error instanceof Error && /fetch failed/i.test(error.message);
+}
+
+function isDataPlaneReadinessFailure(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  const detail = "detail" in error && typeof error.detail === "string" ? error.detail : undefined;
+  return error.message.startsWith(DATA_PLANE_READINESS_FAILURE_PREFIX) ||
+    detail?.startsWith(DATA_PLANE_READINESS_FAILURE_PREFIX) === true;
 }
 
 function shouldReprovisionAfterExecStartFailure(error: unknown): boolean {
