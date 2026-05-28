@@ -1,0 +1,14 @@
+# Twilio Integration
+# Get your credentials at https://console.twilio.com/
+# Trial account: Can only send to verified numbers, messages prefixed with trial notice
+# Production account: Remove all restrictions by upgrading at https://console.twilio.com/billing
+
+# Your Twilio Account SID (starts with AC)
+TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Your Twilio Auth Token (keep this secret!)
+TWILIO_AUTH_TOKEN=your_auth_token_here
+
+# Your Twilio phone number in E.164 format (e.g., +14155552671)
+# Get one at: https://console.twilio.com/us1/develop/phone-numbers/manage/search
+TWILIO_PHONE_NUMBER=+1234567890

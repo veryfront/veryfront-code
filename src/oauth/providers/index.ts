@@ -22,18 +22,34 @@ export {
   teamsConfig,
 } from "./microsoft.ts";
 
-export { atlassianServices, confluenceConfig, jiraConfig } from "./atlassian.ts";
+export { atlassianServices, bitbucketConfig, confluenceConfig, jiraConfig } from "./atlassian.ts";
 
 export {
   airtableConfig,
   asanaConfig,
+  boxConfig,
+  clickupConfig,
   commonServices,
   figmaConfig,
+  freshdeskConfig,
   githubConfig,
   gitlabConfig,
+  hubspotConfig,
+  intercomConfig,
   linearConfig,
+  mailchimpConfig,
+  mondayConfig,
   notionConfig,
+  pipedriveConfig,
+  quickbooksConfig,
+  salesforceConfig,
+  shopifyConfig,
   slackConfig,
+  trelloConfig,
+  twitterConfig,
+  webexConfig,
+  xeroConfig,
+  zoomConfig,
 } from "./common.ts";
 
 export type {

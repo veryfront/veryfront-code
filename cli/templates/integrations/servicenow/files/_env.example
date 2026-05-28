@@ -1,0 +1,5 @@
+# ServiceNow OAuth Configuration
+# Get these from your ServiceNow instance: System OAuth > Application Registry
+SERVICENOW_INSTANCE=your-instance.service-now.com
+SERVICENOW_CLIENT_ID=your_client_id
+SERVICENOW_CLIENT_SECRET=your_client_secret

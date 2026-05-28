@@ -1,0 +1,6 @@
+# PostHog Integration
+# Get your API key at https://app.posthog.com/project/settings
+# Create a Personal API Key for server-side access
+
+POSTHOG_API_KEY=phx_your_api_key_here
+POSTHOG_HOST=https://app.posthog.com

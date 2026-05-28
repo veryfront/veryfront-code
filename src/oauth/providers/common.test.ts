@@ -29,19 +29,6 @@ describe("oauth provider configs", () => {
     assertEquals("dropbox" in commonServices, false);
   });
 
-  it("only exposes supported common OAuth provider configs", () => {
-    assertEquals(Object.keys(commonServices), [
-      "github",
-      "slack",
-      "notion",
-      "figma",
-      "linear",
-      "gitlab",
-      "airtable",
-      "asana",
-    ]);
-  });
-
   it("keeps the Slack runtime scopes aligned with the connector surface", async () => {
     assertEquals(slackConfig.defaultScopes, await readSlackConnectorScopes());
     assertEquals(slackConfig.defaultScopes, SLACK_SETUP_SCOPES);

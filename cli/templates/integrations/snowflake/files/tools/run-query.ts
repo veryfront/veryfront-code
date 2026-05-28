@@ -1,0 +1,132 @@
+import { tool } from "veryfront/tool";
+import { defineSchema } from "veryfront/schemas";
+import { getQueryStatus, runQuery } from "../../lib/snowflake-client.ts";
+
+export default tool({
+  id: "run-query",
+  description:
+    "Execute a SQL query against your Snowflake data warehouse. Supports SELECT, INSERT, UPDATE, DELETE, and other SQL operations.",
+  inputSchema: defineSchema((v) => v.object({
+    sql: v
+      .string()
+      .describe(
+        "The SQL query to execute. Can be SELECT, INSERT, UPDATE, DELETE, or DDL statements.",
+      ),
+    database: v
+      .string()
+      .optional()
+      .describe(
+        "The database to use for this query. If not specified, uses the default database.",
+      ),
+    schema: v
+      .string()
+      .optional()
+      .describe(
+        "The schema to use for this query. If not specified, uses the default schema.",
+      ),
+    timeout: v
+      .number()
+      .min(1)
+      .max(300)
+      .default(60)
+      .describe("Query timeout in seconds (1-300). Default is 60 seconds."),
+    async: v
+      .boolean()
+      .default(false)
+      .describe(
+        "Execute query asynchronously. If true, returns immediately with a statement handle to check status later.",
+      ),
+  }))(),
+  async execute({ sql, database, schema, timeout, async: asyncExec }) {
+    const result = await runQuery(sql, database, schema, {
+      timeout,
+      async: asyncExec,
+    });
+
+    if (asyncExec && result.statementHandle) {
+      return {
+        status: "submitted",
+        statementHandle: result.statementHandle,
+        message:
+          "Query submitted for async execution. Use the statement handle to check status.",
+      };
+    }
+
+    return {
+      status: "completed",
+      sql,
+      database: database ?? "default",
+      schema: schema ?? "PUBLIC",
+      columns: result.columns,
+      rowCount: result.rowCount,
+      rows: result.rows,
+      statementHandle: result.statementHandle,
+    };
+  },
+});
+
+export const checkQueryStatus = tool({
+  id: "check-query-status",
+  description:
+    "Check the status and retrieve results of an asynchronously executed query.",
+  inputSchema: defineSchema((v) => v.object({
+    statementHandle: v
+      .string()
+      .describe("The statement handle returned from an async query execution."),
+  }))(),
+  async execute({ statementHandle }) {
+    const status = await getQueryStatus(statementHandle);
+
+    if (status.code === "090001") {
+      return {
+        status: "running",
+        message: status.message,
+        statementHandle,
+      };
+    }
+
+    if (status.code && status.code !== "000000") {
+      return {
+        status: "failed",
+        code: status.code,
+        message: status.message,
+        statementHandle,
+      };
+    }
+
+    const rowType = status.resultSetMetaData?.rowType ?? [];
+    const columns = rowType.map((col) => ({
+      name: col.name,
+      type: col.type,
+      nullable: col.nullable,
+    }));
+
+    if (!status.data || !status.resultSetMetaData) {
+      return {
+        status: "completed",
+        columns,
+        rowCount: status.resultSetMetaData?.numRows ?? 0,
+        rows: [],
+        stats: status.stats,
+        statementHandle,
+      };
+    }
+
+    const rows = status.data.map((row) => {
+      const obj: Record<string, unknown> = {};
+      rowType.forEach((col, index) => {
+        obj[col.name] = row[index];
+      });
+      return obj;
+    });
+
+    return {
+      status: "completed",
+      columns,
+      rowCount: status.resultSetMetaData?.numRows ?? 0,
+      rows,
+      stats: status.stats,
+      statementHandle,
+    };
+  },
+});

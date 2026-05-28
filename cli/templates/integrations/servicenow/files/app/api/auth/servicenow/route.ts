@@ -1,0 +1,40 @@
+function getEnv(name: string): string | undefined {
+  if (typeof Deno !== "undefined") {
+    // @ts-ignore: Deno global
+    return Deno.env.get(name);
+  }
+
+  // @ts-ignore: Node process
+  return globalThis.process?.env?.[name];
+}
+
+export function GET(request: Request): Response {
+  const instance = getEnv("SERVICENOW_INSTANCE");
+  const clientId = getEnv("SERVICENOW_CLIENT_ID");
+
+  if (!instance || !clientId) {
+    return Response.json(
+      { error: "ServiceNow OAuth not configured" },
+      { status: 500 },
+    );
+  }
+
+  const instanceUrl = instance.includes("://") ? instance : `https://${instance}`;
+
+  const baseUrl = getEnv("NEXT_PUBLIC_APP_URL");
+  if (!baseUrl) {
+    return Response.json(
+      { error: "NEXT_PUBLIC_APP_URL environment variable is required" },
+      { status: 500 },
+    );
+  }
+  const redirectUri = `${baseUrl}/api/auth/servicenow/callback`;
+
+  const authUrl = new URL(`${instanceUrl}/oauth_auth.do`);
+  authUrl.searchParams.set("response_type", "code");
+  authUrl.searchParams.set("client_id", clientId);
+  authUrl.searchParams.set("redirect_uri", redirectUri);
+  authUrl.searchParams.set("state", crypto.randomUUID());
+
+  return Response.redirect(authUrl.toString(), 302);
+}

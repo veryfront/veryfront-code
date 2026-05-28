@@ -112,6 +112,46 @@ export const airtableConfig: OAuthServiceConfig = {
   useBasicAuth: true,
 };
 
+/** Configuration used by hubspot. */
+export const hubspotConfig: OAuthServiceConfig = {
+  providerId: "hubspot",
+  serviceId: "hubspot",
+  displayName: "HubSpot",
+  authorizationUrl: "https://app.hubspot.com/oauth/authorize",
+  tokenUrl: "https://api.hubapi.com/oauth/v1/token",
+  clientIdEnvVar: "HUBSPOT_CLIENT_ID",
+  clientSecretEnvVar: "HUBSPOT_CLIENT_SECRET",
+  apiBaseUrl: "https://api.hubapi.com",
+  defaultScopes: ["crm.objects.contacts.read", "crm.objects.contacts.write"],
+};
+
+/** Configuration used by salesforce. */
+export const salesforceConfig: OAuthServiceConfig = {
+  providerId: "salesforce",
+  serviceId: "salesforce",
+  displayName: "Salesforce",
+  authorizationUrl: "https://login.salesforce.com/services/oauth2/authorize",
+  tokenUrl: "https://login.salesforce.com/services/oauth2/token",
+  clientIdEnvVar: "SALESFORCE_CLIENT_ID",
+  clientSecretEnvVar: "SALESFORCE_CLIENT_SECRET",
+  apiBaseUrl: "https://login.salesforce.com/services/data/v59.0",
+  defaultScopes: ["api", "refresh_token"],
+};
+
+/** Configuration used by twitter. */
+export const twitterConfig: OAuthServiceConfig = {
+  providerId: "twitter",
+  serviceId: "twitter",
+  displayName: "Twitter/X",
+  authorizationUrl: "https://twitter.com/i/oauth2/authorize",
+  tokenUrl: "https://api.twitter.com/2/oauth2/token",
+  clientIdEnvVar: "TWITTER_CLIENT_ID",
+  clientSecretEnvVar: "TWITTER_CLIENT_SECRET",
+  apiBaseUrl: "https://api.twitter.com/2",
+  defaultScopes: ["tweet.read", "users.read", "offline.access"],
+  useBasicAuth: true,
+};
+
 /** Configuration used by asana. */
 export const asanaConfig: OAuthServiceConfig = {
   providerId: "asana",
@@ -125,6 +165,185 @@ export const asanaConfig: OAuthServiceConfig = {
   defaultScopes: ["default"],
 };
 
+/** Configuration used by monday. */
+export const mondayConfig: OAuthServiceConfig = {
+  providerId: "monday",
+  serviceId: "monday",
+  displayName: "Monday.com",
+  authorizationUrl: "https://auth.monday.com/oauth2/authorize",
+  tokenUrl: "https://auth.monday.com/oauth2/token",
+  clientIdEnvVar: "MONDAY_CLIENT_ID",
+  clientSecretEnvVar: "MONDAY_CLIENT_SECRET",
+  apiBaseUrl: "https://api.monday.com/v2",
+  defaultScopes: ["me:read", "boards:read", "boards:write"],
+};
+
+/** Configuration used by zoom. */
+export const zoomConfig: OAuthServiceConfig = {
+  providerId: "zoom",
+  serviceId: "zoom",
+  displayName: "Zoom",
+  authorizationUrl: "https://zoom.us/oauth/authorize",
+  tokenUrl: "https://zoom.us/oauth/token",
+  clientIdEnvVar: "ZOOM_CLIENT_ID",
+  clientSecretEnvVar: "ZOOM_CLIENT_SECRET",
+  apiBaseUrl: "https://api.zoom.us/v2",
+  defaultScopes: ["meeting:read", "meeting:write", "user:read"],
+  useBasicAuth: true,
+};
+
+/** Configuration used by intercom. */
+export const intercomConfig: OAuthServiceConfig = {
+  providerId: "intercom",
+  serviceId: "intercom",
+  displayName: "Intercom",
+  authorizationUrl: "https://app.intercom.com/oauth",
+  tokenUrl: "https://api.intercom.io/auth/eagle/token",
+  clientIdEnvVar: "INTERCOM_CLIENT_ID",
+  clientSecretEnvVar: "INTERCOM_CLIENT_SECRET",
+  apiBaseUrl: "https://api.intercom.io",
+  defaultScopes: [],
+};
+
+/** Configuration used by freshdesk. */
+export const freshdeskConfig: OAuthServiceConfig = {
+  providerId: "freshdesk",
+  serviceId: "freshdesk",
+  displayName: "Freshdesk",
+  authorizationUrl: "https://accounts.freshworks.com/authorize",
+  tokenUrl: "https://accounts.freshworks.com/oauth/token",
+  clientIdEnvVar: "FRESHDESK_CLIENT_ID",
+  clientSecretEnvVar: "FRESHDESK_CLIENT_SECRET",
+  apiBaseUrl: "https://domain.freshdesk.com/api/v2",
+  defaultScopes: ["freshdesk"],
+};
+
+/** Configuration used by mailchimp. */
+export const mailchimpConfig: OAuthServiceConfig = {
+  providerId: "mailchimp",
+  serviceId: "mailchimp",
+  displayName: "Mailchimp",
+  authorizationUrl: "https://login.mailchimp.com/oauth2/authorize",
+  tokenUrl: "https://login.mailchimp.com/oauth2/token",
+  clientIdEnvVar: "MAILCHIMP_CLIENT_ID",
+  clientSecretEnvVar: "MAILCHIMP_CLIENT_SECRET",
+  apiBaseUrl: "https://server.api.mailchimp.com/3.0",
+  defaultScopes: [],
+};
+
+/** Configuration used by shopify. */
+export const shopifyConfig: OAuthServiceConfig = {
+  providerId: "shopify",
+  serviceId: "shopify",
+  displayName: "Shopify",
+  authorizationUrl: "https://shop.myshopify.com/admin/oauth/authorize",
+  tokenUrl: "https://shop.myshopify.com/admin/oauth/access_token",
+  clientIdEnvVar: "SHOPIFY_CLIENT_ID",
+  clientSecretEnvVar: "SHOPIFY_CLIENT_SECRET",
+  apiBaseUrl: "https://shop.myshopify.com/admin/api/2024-01",
+  defaultScopes: ["read_products", "write_products", "read_orders"],
+};
+
+/** Configuration used by quickbooks. */
+export const quickbooksConfig: OAuthServiceConfig = {
+  providerId: "quickbooks",
+  serviceId: "quickbooks",
+  displayName: "QuickBooks",
+  authorizationUrl: "https://appcenter.intuit.com/connect/oauth2",
+  tokenUrl: "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+  clientIdEnvVar: "QUICKBOOKS_CLIENT_ID",
+  clientSecretEnvVar: "QUICKBOOKS_CLIENT_SECRET",
+  apiBaseUrl: "https://quickbooks.api.intuit.com/v3",
+  defaultScopes: ["com.intuit.quickbooks.accounting"],
+};
+
+/** Configuration used by xero. */
+export const xeroConfig: OAuthServiceConfig = {
+  providerId: "xero",
+  serviceId: "xero",
+  displayName: "Xero",
+  authorizationUrl: "https://login.xero.com/identity/connect/authorize",
+  tokenUrl: "https://identity.xero.com/connect/token",
+  clientIdEnvVar: "XERO_CLIENT_ID",
+  clientSecretEnvVar: "XERO_CLIENT_SECRET",
+  apiBaseUrl: "https://api.xero.com/api.xro/2.0",
+  defaultScopes: [
+    "openid",
+    "profile",
+    "email",
+    "accounting.transactions",
+    "offline_access",
+  ],
+};
+
+/** Configuration used by box. */
+export const boxConfig: OAuthServiceConfig = {
+  providerId: "box",
+  serviceId: "box",
+  displayName: "Box",
+  authorizationUrl: "https://account.box.com/api/oauth2/authorize",
+  tokenUrl: "https://api.box.com/oauth2/token",
+  clientIdEnvVar: "BOX_CLIENT_ID",
+  clientSecretEnvVar: "BOX_CLIENT_SECRET",
+  apiBaseUrl: "https://api.box.com/2.0",
+  defaultScopes: [],
+};
+
+/** Configuration used by webex. */
+export const webexConfig: OAuthServiceConfig = {
+  providerId: "webex",
+  serviceId: "webex",
+  displayName: "Webex",
+  authorizationUrl: "https://webexapis.com/v1/authorize",
+  tokenUrl: "https://webexapis.com/v1/access_token",
+  clientIdEnvVar: "WEBEX_CLIENT_ID",
+  clientSecretEnvVar: "WEBEX_CLIENT_SECRET",
+  apiBaseUrl: "https://webexapis.com/v1",
+  defaultScopes: ["spark:all", "spark:kms"],
+};
+
+/** Configuration used by trello. */
+export const trelloConfig: OAuthServiceConfig = {
+  providerId: "trello",
+  serviceId: "trello",
+  displayName: "Trello",
+  authorizationUrl: "https://trello.com/1/authorize",
+  tokenUrl: "https://trello.com/1/OAuthGetAccessToken",
+  clientIdEnvVar: "TRELLO_CLIENT_ID",
+  clientSecretEnvVar: "TRELLO_CLIENT_SECRET",
+  apiBaseUrl: "https://api.trello.com/1",
+  defaultScopes: ["read", "write"],
+  additionalAuthParams: {
+    expiration: "never",
+  },
+};
+
+/** Configuration used by clickup. */
+export const clickupConfig: OAuthServiceConfig = {
+  providerId: "clickup",
+  serviceId: "clickup",
+  displayName: "ClickUp",
+  authorizationUrl: "https://app.clickup.com/api",
+  tokenUrl: "https://api.clickup.com/api/v2/oauth/token",
+  clientIdEnvVar: "CLICKUP_CLIENT_ID",
+  clientSecretEnvVar: "CLICKUP_CLIENT_SECRET",
+  apiBaseUrl: "https://api.clickup.com/api/v2",
+  defaultScopes: [],
+};
+
+/** Configuration used by pipedrive. */
+export const pipedriveConfig: OAuthServiceConfig = {
+  providerId: "pipedrive",
+  serviceId: "pipedrive",
+  displayName: "Pipedrive",
+  authorizationUrl: "https://oauth.pipedrive.com/oauth/authorize",
+  tokenUrl: "https://oauth.pipedrive.com/oauth/token",
+  clientIdEnvVar: "PIPEDRIVE_CLIENT_ID",
+  clientSecretEnvVar: "PIPEDRIVE_CLIENT_SECRET",
+  apiBaseUrl: "https://api.pipedrive.com/v1",
+  defaultScopes: [],
+};
+
 export const commonServices = {
   github: githubConfig,
   slack: slackConfig,
@@ -133,5 +352,21 @@ export const commonServices = {
   linear: linearConfig,
   gitlab: gitlabConfig,
   airtable: airtableConfig,
+  hubspot: hubspotConfig,
+  salesforce: salesforceConfig,
+  twitter: twitterConfig,
   asana: asanaConfig,
+  monday: mondayConfig,
+  zoom: zoomConfig,
+  intercom: intercomConfig,
+  freshdesk: freshdeskConfig,
+  mailchimp: mailchimpConfig,
+  shopify: shopifyConfig,
+  quickbooks: quickbooksConfig,
+  xero: xeroConfig,
+  box: boxConfig,
+  webex: webexConfig,
+  trello: trelloConfig,
+  clickup: clickupConfig,
+  pipedrive: pipedriveConfig,
 };

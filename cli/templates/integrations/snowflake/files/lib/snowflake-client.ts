@@ -1,0 +1,335 @@
+import {
+  getSnowflakeAccount,
+  getSnowflakeDatabase,
+  getSnowflakePassword,
+  getSnowflakeSchema,
+  getSnowflakeUsername,
+  getSnowflakeWarehouse,
+} from "./token-store.ts";
+
+interface SnowflakeStatementResponse {
+  statementHandle: string;
+  statementStatusUrl: string;
+  message?: string;
+  code?: string;
+}
+
+interface SnowflakeQueryResult {
+  resultSetMetaData: {
+    rowType: Array<{
+      name: string;
+      type: string;
+      nullable: boolean;
+      scale?: number;
+      precision?: number;
+      length?: number;
+    }>;
+    numRows: number;
+    format?: string;
+    partitionInfo?: Array<{
+      rowCount: number;
+      uncompressedSize: number;
+    }>;
+  };
+  data: unknown[][];
+  code?: string;
+  message?: string;
+  statementHandle?: string;
+  statementStatusUrl?: string;
+}
+
+interface SnowflakeQueryStatusResponse {
+  message: string;
+  code: string;
+  statementHandle: string;
+  statementStatusUrl: string;
+  sqlText?: string;
+  resultSetMetaData?: SnowflakeQueryResult["resultSetMetaData"];
+  data?: unknown[][];
+  stats?: {
+    numRowsInserted?: number;
+    numRowsUpdated?: number;
+    numRowsDeleted?: number;
+    numDuplicateRowsUpdated?: number;
+  };
+}
+
+interface DatabaseInfo {
+  name: string;
+  created_on: string;
+  owner: string;
+  comment?: string;
+}
+
+interface SchemaInfo {
+  name: string;
+  database_name: string;
+  created_on: string;
+  owner: string;
+  comment?: string;
+}
+
+interface TableInfo {
+  name: string;
+  database_name: string;
+  schema_name: string;
+  kind: string;
+  created_on: string;
+  row_count?: number;
+  bytes?: number;
+  owner: string;
+  comment?: string;
+}
+
+interface ColumnInfo {
+  name: string;
+  type: string;
+  kind: string;
+  null?: string;
+  default?: string;
+  primary_key?: string;
+  unique_key?: string;
+  check?: string;
+  expression?: string;
+  comment?: string;
+}
+
+interface SnowflakeError extends Error {
+  code?: string;
+  sqlState?: string;
+}
+
+/** Validate a Snowflake identifier (database, schema, or table name). */
+function validateIdentifier(value: string, label: string): string {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+    throw new Error(
+      `Invalid ${label}: must start with a letter or underscore and contain only letters, numbers, and underscores`,
+    );
+  }
+  return value;
+}
+
+async function snowflakeFetch<T>(
+  endpoint: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const account = getSnowflakeAccount();
+  const username = getSnowflakeUsername();
+  const password = getSnowflakePassword();
+
+  const baseUrl = `https://${account}.snowflakecomputing.com/api/v2`;
+  const authHeader = `Basic ${btoa(`${username}:${password}`)}`;
+
+  const response = await fetch(`${baseUrl}${endpoint}`, {
+    ...options,
+    headers: {
+      Authorization: authHeader,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      "X-Snowflake-Authorization-Token-Type": "KEYPAIR_JWT",
+      ...options.headers,
+    },
+  });
+
+  if (response.ok) return await response.json();
+
+  const errorData = (await response.json().catch(() => ({}))) as Partial<SnowflakeError>;
+  const errorMessage =
+    errorData.message ??
+    `Snowflake API error: ${response.status} ${response.statusText}`;
+
+  const err: SnowflakeError = new Error(errorMessage);
+  err.code = errorData.code;
+  err.sqlState = errorData.sqlState;
+  throw err;
+}
+
+async function submitStatement(
+  sqlText: string,
+  database?: string,
+  schema?: string,
+  timeout?: number,
+  async_exec = false,
+): Promise<SnowflakeStatementResponse | SnowflakeQueryResult> {
+  const warehouse = getSnowflakeWarehouse();
+
+  const requestBody = {
+    statement: sqlText,
+    warehouse,
+    database: database ?? getSnowflakeDatabase(),
+    schema: schema ?? getSnowflakeSchema(),
+    timeout: timeout ?? 60,
+    resultSetMetaData: { format: "json" },
+    parameters: {},
+  };
+
+  const endpoint = async_exec ? "/statements?async=true" : "/statements";
+
+  return await snowflakeFetch<SnowflakeStatementResponse | SnowflakeQueryResult>(
+    endpoint,
+    {
+      method: "POST",
+      body: JSON.stringify(requestBody),
+    },
+  );
+}
+
+export async function getQueryStatus(
+  statementHandle: string,
+): Promise<SnowflakeQueryStatusResponse> {
+  return await snowflakeFetch<SnowflakeQueryStatusResponse>(
+    `/statements/${statementHandle}`,
+  );
+}
+
+export async function cancelQuery(statementHandle: string): Promise<void> {
+  await snowflakeFetch(`/statements/${statementHandle}/cancel`, {
+    method: "POST",
+  });
+}
+
+function transformResults(result: SnowflakeQueryResult): Record<string, unknown>[] {
+  if (result.data.length === 0) return [];
+
+  const columns = result.resultSetMetaData.rowType.map((col) => col.name);
+
+  return result.data.map((row) => {
+    const obj: Record<string, unknown> = {};
+    for (let i = 0; i < columns.length; i++) obj[columns[i]] = row[i];
+    return obj;
+  });
+}
+
+export async function runQuery(
+  sql: string,
+  database?: string,
+  schema?: string,
+  options: {
+    timeout?: number;
+    async?: boolean;
+  } = {},
+): Promise<{
+  columns: Array<{ name: string; type: string; nullable: boolean }>;
+  rows: Record<string, unknown>[];
+  rowCount: number;
+  statementHandle?: string;
+}> {
+  const result = await submitStatement(
+    sql,
+    database,
+    schema,
+    options.timeout,
+    options.async,
+  );
+
+  if ("statementHandle" in result && !("data" in result)) {
+    return {
+      columns: [],
+      rows: [],
+      rowCount: 0,
+      statementHandle: result.statementHandle,
+    };
+  }
+
+  const queryResult = result as SnowflakeQueryResult;
+
+  return {
+    columns: queryResult.resultSetMetaData.rowType.map((col) => ({
+      name: col.name,
+      type: col.type,
+      nullable: col.nullable,
+    })),
+    rows: transformResults(queryResult),
+    rowCount: queryResult.resultSetMetaData.numRows,
+    statementHandle: queryResult.statementHandle,
+  };
+}
+
+export async function listDatabases(): Promise<DatabaseInfo[]> {
+  const result = await runQuery("SHOW DATABASES");
+  return result.rows as DatabaseInfo[];
+}
+
+export async function listSchemas(database: string): Promise<SchemaInfo[]> {
+  validateIdentifier(database, "database name");
+  const result = await runQuery(`SHOW SCHEMAS IN DATABASE ${database}`);
+  return result.rows as SchemaInfo[];
+}
+
+export async function listTables(
+  database: string,
+  schema: string,
+): Promise<TableInfo[]> {
+  validateIdentifier(database, "database name");
+  validateIdentifier(schema, "schema name");
+  const result = await runQuery(`SHOW TABLES IN ${database}.${schema}`);
+  return result.rows as TableInfo[];
+}
+
+export async function describeTable(
+  database: string,
+  schema: string,
+  table: string,
+): Promise<{
+  columns: ColumnInfo[];
+  primaryKeys: string[];
+}> {
+  validateIdentifier(database, "database name");
+  validateIdentifier(schema, "schema name");
+  validateIdentifier(table, "table name");
+  const result = await runQuery(`DESCRIBE TABLE ${database}.${schema}.${table}`);
+
+  const columns = result.rows as ColumnInfo[];
+  const primaryKeys = columns
+    .filter((col) => col.primary_key === "Y")
+    .map((col) => col.name);
+
+  return { columns, primaryKeys };
+}
+
+export async function getTableRowCount(
+  database: string,
+  schema: string,
+  table: string,
+): Promise<number> {
+  validateIdentifier(database, "database name");
+  validateIdentifier(schema, "schema name");
+  validateIdentifier(table, "table name");
+  const result = await runQuery(
+    `SELECT COUNT(*) as count FROM ${database}.${schema}.${table}`,
+  );
+
+  const count = result.rows[0]?.count;
+  return count == null ? 0 : Number(count);
+}
+
+export async function getSessionInfo(): Promise<{
+  version: string;
+  warehouse: string;
+  database?: string;
+  schema?: string;
+  user: string;
+  role?: string;
+}> {
+  const result = await runQuery(`
+    SELECT
+      CURRENT_VERSION() as version,
+      CURRENT_WAREHOUSE() as warehouse,
+      CURRENT_DATABASE() as database,
+      CURRENT_SCHEMA() as schema,
+      CURRENT_USER() as user,
+      CURRENT_ROLE() as role
+  `);
+
+  const row = result.rows[0];
+  if (!row) throw new Error("Failed to get session info");
+
+  return row as {
+    version: string;
+    warehouse: string;
+    database?: string;
+    schema?: string;
+    user: string;
+    role?: string;
+  };
+}

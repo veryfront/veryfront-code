@@ -9,6 +9,7 @@
  */
 
 import { createFileSystem, join } from "veryfront/fs";
+import { filterVisibleIntegrations } from "../../src/integrations/feature-flags.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import {
   buildIntegrationDirectory,
@@ -26,29 +27,75 @@ import type {
 } from "./types.ts";
 
 /**
- * Available integrations that can be added via --integrations flag
+ * All declared integrations. Unsupported integrations stay in the source tree,
+ * but are only available when explicitly enabled with
+ * VERYFRONT_EXPERIMENTAL_INTEGRATIONS.
  */
-export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
-  "airtable",
-  "asana",
-  "calendar",
-  "confluence",
-  "docs-google",
-  "drive",
-  "figma",
-  "github",
-  "gitlab",
+export const ALL_AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "gmail",
-  "jira",
-  "linear",
-  "notion",
-  "onedrive",
-  "outlook",
-  "sharepoint",
-  "sheets",
   "slack",
+  "github",
+  "calendar",
+  "jira",
+  "notion",
+  "servicenow",
+  "confluence",
+  "linear",
+  "gitlab",
+  "outlook",
   "teams",
+  "figma",
+  "sheets",
+  "airtable",
+  "supabase",
+  "neon",
+  "sharepoint",
+  "stripe",
+  "salesforce",
+  "twitter",
+  "onedrive",
+  "bitbucket",
+  "sentry",
+  "posthog",
+  "zendesk",
+  // New integrations
+  "asana",
+  "monday",
+  "zoom",
+  "trello",
+  "box",
+  "shopify",
+  "clickup",
+  "intercom",
+  "pipedrive",
+  "mailchimp",
+  "webex",
+  "freshdesk",
+  "quickbooks",
+  "xero",
+  // 50+ integrations
+  "drive",
+  "docs-google",
+  "snowflake",
+  "mixpanel",
+  "twilio",
+  "anthropic",
+  "aws",
 ];
+
+/**
+ * Default available integrations that can be added via --integrations flag.
+ * Prefer getAvailableIntegrations() when runtime feature-flag changes matter.
+ */
+export const AVAILABLE_INTEGRATIONS: IntegrationName[] = filterVisibleIntegrations(
+  ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
+).map((integration) => integration.id as IntegrationName);
+
+export function getAvailableIntegrations(): IntegrationName[] {
+  return filterVisibleIntegrations(
+    ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
+  ).map((integration) => integration.id as IntegrationName);
+}
 
 /**
  * Available use-cases that can be selected via --usecase flag
@@ -87,7 +134,7 @@ export const USE_CASE_CONFIGS: Record<UseCaseName, UseCaseConfig> = {
     name: "support",
     displayName: "Customer Support",
     description: "Ticket management, knowledge base, and escalation",
-    integrations: ["confluence", "slack", "notion"],
+    integrations: ["servicenow", "slack", "notion"],
     defaultPrompts: ["check-ticket-status", "search-kb", "escalate-issue"],
     chatUI: "widget",
     icon: "support",
@@ -164,7 +211,7 @@ export function validateIntegrations(integrations: IntegrationName[]): {
   valid: boolean;
   errors: string[];
 } {
-  const errors = buildUnknownIntegrationErrors(integrations, AVAILABLE_INTEGRATIONS);
+  const errors = buildUnknownIntegrationErrors(integrations, getAvailableIntegrations());
 
   return { valid: errors.length === 0, errors };
 }

@@ -26,39 +26,19 @@ describe("guide content contracts", () => {
     );
   });
 
-  it("does not document removed OAuth provider exports", async () => {
+  it("documents feature-gated integrations without describing them as removed", async () => {
     const docs = [
+      await Deno.readTextFile("docs/guides/integrations.md"),
       await Deno.readTextFile("docs/guides/oauth.md"),
       await Deno.readTextFile("docs/api-reference/veryfront/oauth.md"),
     ].join("\n");
 
-    const removedProviderReferences = [
-      "bitbucketConfig",
-      "boxConfig",
-      "clickupConfig",
-      "freshdeskConfig",
-      "hubspotConfig",
-      "intercomConfig",
-      "mailchimpConfig",
-      "mondayConfig",
-      "pipedriveConfig",
-      "quickbooksConfig",
-      "salesforceConfig",
-      "shopifyConfig",
-      "trelloConfig",
-      "twitterConfig",
-      "webexConfig",
-      "xeroConfig",
-      "zoomConfig",
-      "HubSpot",
-      "Salesforce",
-      "Shopify",
-      "Bitbucket",
-    ];
+    assertStringIncludes(docs, "VERYFRONT_EXPERIMENTAL_INTEGRATIONS");
+    assertStringIncludes(docs, "feature-gated integrations");
+    assertStringIncludes(docs, "salesforceConfig");
+    assertStringIncludes(docs, "Salesforce");
 
-    for (const reference of removedProviderReferences) {
-      assertEquals(docs.includes(reference), false);
-    }
+    assertEquals(docs.includes("removed OAuth provider exports"), false);
   });
 
   it("does not document caller-provided endUserId as tool context authority", async () => {

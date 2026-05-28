@@ -1,0 +1,5 @@
+# Shopify OAuth Configuration
+# Get your credentials from https://partners.shopify.com
+SHOPIFY_CLIENT_ID=your-client-id
+SHOPIFY_CLIENT_SECRET=your-client-secret
+SHOPIFY_SHOP_DOMAIN=mystore.myshopify.com

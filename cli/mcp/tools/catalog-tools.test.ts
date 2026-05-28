@@ -4,7 +4,8 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../../src/integrations/feature-flags.ts";
 import {
   vfCreateProject,
   vfListExamples,
@@ -14,6 +15,8 @@ import {
 } from "./catalog-tools.ts";
 
 describe("mcp/tools/catalog-tools", () => {
+  afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
+
   describe("vfListExamples", () => {
     it("has correct tool name", () => {
       assertEquals(vfListExamples.name, "vf_list_examples");
@@ -89,11 +92,22 @@ describe("mcp/tools/catalog-tools", () => {
     it("returns integrations when executed", async () => {
       const result = await vfListIntegrations.execute({ category: "all" });
       assertEquals(Array.isArray(result), true);
+      assertEquals(result.some((integration) => integration.name === "figma"), true);
+      assertEquals(result.some((integration) => integration.name === "sentry"), true);
+      assertEquals(result.length >= 20, true);
     });
 
     it("filters by category when provided", async () => {
       const result = await vfListIntegrations.execute({ category: "productivity" });
       assertEquals(Array.isArray(result), true);
+    });
+
+    it("returns feature-gated integrations only when enabled", async () => {
+      Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "sentry");
+
+      const result = await vfListIntegrations.execute({ category: "all" });
+
+      assertEquals(result.some((integration) => integration.name === "sentry"), true);
     });
   });
 

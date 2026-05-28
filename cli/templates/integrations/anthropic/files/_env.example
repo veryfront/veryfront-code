@@ -1,0 +1,4 @@
+# Anthropic Admin API Configuration
+# Get your admin API key from https://console.anthropic.com
+# Admin keys provide full access to organization management features
+ANTHROPIC_ADMIN_API_KEY=sk-ant-admin-your-api-key-here

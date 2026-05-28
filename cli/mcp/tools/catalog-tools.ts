@@ -7,6 +7,9 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
+import { connectors } from "../../../src/integrations/_data.ts";
+import { filterVisibleIntegrations } from "../../../src/integrations/feature-flags.ts";
+import { INTEGRATION_CATEGORIES } from "../../commands/init/catalog.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, toSlug } from "./helpers.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
@@ -44,17 +47,17 @@ const EXAMPLES: ExampleInfo[] = [
   },
   {
     name: "support-bot",
-    description: "Multi-agent customer support with Confluence and Slack",
+    description: "Multi-agent customer support with Zendesk and Slack",
     template: "multi-agent-system",
-    integrations: ["confluence", "slack", "notion"],
+    integrations: ["zendesk", "slack", "notion"],
     features: ["Ticket management", "Knowledge base", "Escalation"],
     difficulty: "intermediate",
   },
   {
     name: "data-analyst",
-    description: "RAG-powered data analyst with Sheets and Airtable",
+    description: "RAG-powered data analyst with Sheets and Snowflake",
     template: "docs-agent",
-    integrations: ["sheets", "airtable", "notion"],
+    integrations: ["sheets", "snowflake", "notion"],
     features: ["Document search", "Chart generation", "Reports"],
     difficulty: "advanced",
   },
@@ -68,9 +71,9 @@ const EXAMPLES: ExampleInfo[] = [
   },
   {
     name: "saas-starter",
-    description: "Full-stack AI SaaS with auth, docs, and per-user memory",
+    description: "Full-stack AI SaaS with auth, billing, and per-user memory",
     template: "saas-starter",
-    integrations: ["github", "slack"],
+    integrations: ["stripe"],
     features: ["Auth", "Per-user memory", "Dashboard", "API"],
     difficulty: "advanced",
   },
@@ -127,144 +130,54 @@ interface IntegrationInfo {
   displayName: string;
   category: string;
   description: string;
-  authType: "oauth2" | "api-key";
+  authType: "oauth2" | "oauth1" | "api-key";
 }
 
-const INTEGRATIONS: IntegrationInfo[] = [
-  {
-    name: "airtable",
-    displayName: "Airtable",
-    category: "data",
-    description: "Database and spreadsheets",
-    authType: "oauth2",
-  },
-  {
-    name: "asana",
-    displayName: "Asana",
-    category: "productivity",
-    description: "Tasks and projects",
-    authType: "oauth2",
-  },
-  {
-    name: "calendar",
-    displayName: "Google Calendar",
-    category: "productivity",
-    description: "Manage events and schedules",
-    authType: "oauth2",
-  },
-  {
-    name: "confluence",
-    displayName: "Confluence",
-    category: "productivity",
-    description: "Wiki pages and spaces",
-    authType: "oauth2",
-  },
-  {
-    name: "docs-google",
-    displayName: "Google Docs",
-    category: "data",
-    description: "Read and edit documents",
-    authType: "oauth2",
-  },
-  {
-    name: "drive",
-    displayName: "Google Drive",
-    category: "data",
-    description: "Manage files and folders",
-    authType: "oauth2",
-  },
-  {
-    name: "figma",
-    displayName: "Figma",
-    category: "design",
-    description: "Design files and comments",
-    authType: "oauth2",
-  },
-  {
-    name: "github",
-    displayName: "GitHub",
-    category: "development",
-    description: "Manage repos, issues, and PRs",
-    authType: "oauth2",
-  },
-  {
-    name: "gitlab",
-    displayName: "GitLab",
-    category: "development",
-    description: "Manage projects and pipelines",
-    authType: "oauth2",
-  },
-  {
-    name: "gmail",
-    displayName: "Gmail",
-    category: "communication",
-    description: "Read, send, and manage emails",
-    authType: "oauth2",
-  },
-  {
-    name: "jira",
-    displayName: "Jira",
-    category: "development",
-    description: "Track issues and projects",
-    authType: "oauth2",
-  },
-  {
-    name: "linear",
-    displayName: "Linear",
-    category: "development",
-    description: "Issue tracking and project management",
-    authType: "oauth2",
-  },
-  {
-    name: "notion",
-    displayName: "Notion",
-    category: "productivity",
-    description: "Read and write Notion pages",
-    authType: "oauth2",
-  },
-  {
-    name: "onedrive",
-    displayName: "OneDrive",
-    category: "data",
-    description: "Microsoft files",
-    authType: "oauth2",
-  },
-  {
-    name: "outlook",
-    displayName: "Outlook",
-    category: "communication",
-    description: "Email and calendar",
-    authType: "oauth2",
-  },
-  {
-    name: "sharepoint",
-    displayName: "SharePoint",
-    category: "data",
-    description: "Enterprise content",
-    authType: "oauth2",
-  },
-  {
-    name: "sheets",
-    displayName: "Google Sheets",
-    category: "data",
-    description: "Read and write spreadsheets",
-    authType: "oauth2",
-  },
-  {
-    name: "slack",
-    displayName: "Slack",
-    category: "communication",
-    description: "Send messages and manage channels",
-    authType: "oauth2",
-  },
-  {
-    name: "teams",
-    displayName: "Microsoft Teams",
-    category: "communication",
-    description: "Chat and collaboration",
-    authType: "oauth2",
-  },
-];
+function getMcpCategory(categoryName: string): string {
+  switch (categoryName) {
+    case "Communication":
+      return "communication";
+    case "Productivity":
+      return "productivity";
+    case "Development":
+      return "development";
+    case "Storage":
+      return "data";
+    case "Infrastructure":
+      return "infrastructure";
+    case "Sales & CRM":
+      return "sales";
+    case "Support":
+      return "support";
+    case "Finance":
+      return "finance";
+    case "Marketing":
+      return "marketing";
+    case "Design":
+      return "design";
+    case "AI Providers":
+      return "ai";
+    default:
+      return "other";
+  }
+}
+
+const connectorByName = new Map(connectors.map((connector) => [connector.name, connector]));
+
+const INTEGRATIONS: IntegrationInfo[] = INTEGRATION_CATEGORIES.flatMap((category) =>
+  category.integrations.flatMap((integration) => {
+    const connector = connectorByName.get(integration.id);
+    if (!connector) return [];
+
+    return [{
+      name: integration.id,
+      displayName: integration.label,
+      category: getMcpCategory(category.name),
+      description: integration.description,
+      authType: connector.auth.type,
+    }];
+  })
+);
 
 interface UsecaseInfo {
   name: string;
@@ -293,7 +206,7 @@ const USECASES: UsecaseInfo[] = [
     name: "support",
     displayName: "Customer Support",
     description: "Ticket management, knowledge base, and escalation",
-    integrations: ["confluence", "slack", "notion"],
+    integrations: ["zendesk", "slack", "notion"],
     chatUI: "widget",
   },
   {
@@ -357,7 +270,20 @@ export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
 const getListIntegrationsInput = defineSchema((v) =>
   v.object({
     category: v
-      .enum(["all", "productivity", "development", "communication", "data", "design"])
+      .enum([
+        "all",
+        "productivity",
+        "development",
+        "communication",
+        "data",
+        "infrastructure",
+        "sales",
+        "support",
+        "finance",
+        "marketing",
+        "design",
+        "ai",
+      ])
       .optional()
       .default("all")
       .describe("Filter integrations by category"),
@@ -376,8 +302,9 @@ export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[
   inputSchema: listIntegrationsInput,
   execute: (input) => {
     const { category } = input;
-    if (category === "all") return Promise.resolve(INTEGRATIONS);
-    return Promise.resolve(INTEGRATIONS.filter((i) => i.category === category));
+    const integrations = filterVisibleIntegrations(INTEGRATIONS);
+    if (category === "all") return Promise.resolve(integrations);
+    return Promise.resolve(integrations.filter((i) => i.category === category));
   },
 };
 

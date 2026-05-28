@@ -173,20 +173,21 @@ describe("init command integration", () => {
       assertExists(packageJson.includes("veryfront"));
     });
 
-    it("copies files from selected supported integrations", async () => {
+    it("merges npm dependencies from selected integrations into package.json", async () => {
       const result = await runInitCommand([
         projectName,
         "-t",
         "minimal",
         "--integrations",
-        "figma",
+        "neon",
         "--skip-install",
         "--skip-env-prompt",
       ]);
 
       assertEquals(result.code, 0);
-      assertEquals(await exists(join(projectDir, "tools", "get-file.ts")), true);
-      assertEquals(await exists(join(projectDir, "lib", "figma-client.ts")), true);
+
+      const pkg = JSON.parse(await readTextFile(join(projectDir, "package.json")));
+      assertEquals(pkg.dependencies.pg, "^8.13.1");
     });
   });
 
