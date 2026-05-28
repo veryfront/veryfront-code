@@ -8,6 +8,7 @@ import {
   collectPersistedToolResults,
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
+  shouldContinueAfterStreamStep,
 } from "./index.ts";
 import type { ChatStreamState } from "./chat-stream-handler.ts";
 import type { Message } from "../types.ts";
@@ -19,6 +20,120 @@ function createState(
 }
 
 describe("agent runtime streamed tool result collection", () => {
+  it("continues after provider-executed tool results arrive without assistant text", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "stop",
+      toolCalls: new Map([
+        [
+          "toolu_provider_1",
+          {
+            id: "toolu_provider_1",
+            name: "gmail__get_email",
+            arguments: '{"messageId":"missing-message"}',
+            inputAvailable: true,
+            providerExecuted: true,
+            dynamic: true,
+          },
+        ],
+      ]),
+      toolResults: [
+        {
+          toolCallId: "toolu_provider_1",
+          toolName: "gmail__get_email",
+          output: { error: "tool_error", message: "Requested entity was not found." },
+          providerExecuted: true,
+          dynamic: true,
+        },
+      ],
+    });
+
+    assertEquals(shouldContinue, true);
+  });
+
+  it("stops after provider-executed tool results when the assistant already answered", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "I found two likely junk messages.",
+      finishReason: "stop",
+      toolCalls: new Map([
+        [
+          "toolu_provider_2",
+          {
+            id: "toolu_provider_2",
+            name: "gmail__list_emails",
+            arguments: '{"labelIds":["INBOX"]}',
+            inputAvailable: true,
+            providerExecuted: true,
+            dynamic: true,
+          },
+        ],
+      ]),
+      toolResults: [
+        {
+          toolCallId: "toolu_provider_2",
+          toolName: "gmail__list_emails",
+          output: { data: [] },
+          providerExecuted: true,
+          dynamic: true,
+        },
+      ],
+    });
+
+    assertEquals(shouldContinue, false);
+  });
+
+  it("stops after provider-executed tool errors when the stream finished with error", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "error",
+      toolCalls: new Map([
+        [
+          "toolu_provider_error",
+          {
+            id: "toolu_provider_error",
+            name: "web_search",
+            arguments: '{"query":"Veryfront"}',
+            inputAvailable: true,
+            providerExecuted: true,
+            dynamic: true,
+          },
+        ],
+      ]),
+      toolResults: [
+        {
+          toolCallId: "toolu_provider_error",
+          toolName: "web_search",
+          error: "Provider timeout",
+          providerExecuted: true,
+          dynamic: true,
+        },
+      ],
+    });
+
+    assertEquals(shouldContinue, false);
+  });
+
+  it("continues normal client-executed tool-call steps", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_client_1",
+          {
+            id: "toolu_client_1",
+            name: "read_file",
+            arguments: '{"path":"app/page.tsx"}',
+            inputAvailable: true,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, true);
+  });
+
   it("ignores preliminary streamed tool results when a final result exists", () => {
     const finalToolResults = collectFinalStreamToolResults(
       createState([

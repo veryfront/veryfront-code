@@ -289,6 +289,46 @@ describe("agent runtime message adapter", () => {
     ]);
   });
 
+  it("preserves stored snake_case tool-call and tool-result parts when replaying agent runtime messages", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      {
+        role: "assistant",
+        parts: [
+          {
+            type: "tool_call",
+            id: TOOL_CALL_ID,
+            name: TOOL_NAME,
+            input: { query: "rollout" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: TOOL_CALL_ID,
+            tool_name: TOOL_NAME,
+            output: { matches: 2 },
+          },
+        ],
+      },
+    ]);
+
+    assertEquals(providerMessages, [
+      {
+        role: "assistant",
+        content: [providerToolCallPart({ query: "rollout" })],
+      },
+      {
+        role: "tool",
+        content: [
+          providerToolResultPart(jsonOutput({ matches: 2 })),
+        ],
+      },
+    ]);
+  });
+
   it("converts native image AgentRuntimeMessage part back to structured user content", () => {
     const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
       agentRuntimeMessage(
