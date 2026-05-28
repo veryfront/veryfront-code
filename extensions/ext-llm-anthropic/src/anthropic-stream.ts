@@ -77,6 +77,7 @@ export async function* streamAnthropicCompatibleParts(
   const reasoningBlocks = new Map<number, AnthropicStreamReasoningState>();
   let finishReason: string | { unified: string; raw: string } | null = null;
   let usage: RuntimeUsage | undefined;
+  let completedClientToolUseStep = false;
 
   for await (const chunk of stream) {
     buffer += decoder.decode(chunk, { stream: true });
@@ -277,6 +278,9 @@ export async function* streamAnthropicCompatibleParts(
           input: current.input.length > 0 ? current.input : "{}",
           ...(current.providerExecuted ? { providerExecuted: true } : {}),
         };
+        if (!current.providerExecuted) {
+          completedClientToolUseStep = true;
+        }
         toolCalls.delete(index);
         continue;
       }
@@ -288,6 +292,15 @@ export async function* streamAnthropicCompatibleParts(
           finishReason = normalizedFinishReason;
         }
       }
+    }
+
+    if (completedClientToolUseStep && toolCalls.size === 0) {
+      yield {
+        type: "finish",
+        finishReason: { unified: "tool-calls", raw: "tool_use" },
+        ...(usage ? { usage } : {}),
+      };
+      return;
     }
   }
 

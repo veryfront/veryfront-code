@@ -12,6 +12,15 @@ function streamFromText(text: string): ReadableStream<Uint8Array> {
   });
 }
 
+function hangingStreamFromText(text: string): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  return new ReadableStream({
+    start(controller) {
+      controller.enqueue(encoder.encode(text));
+    },
+  });
+}
+
 async function collectParts(stream: ReadableStream<Uint8Array>): Promise<unknown[]> {
   const parts: unknown[] = [];
   for await (const part of streamAnthropicCompatibleParts(stream)) {
@@ -116,6 +125,47 @@ describe("ext-llm-anthropic/anthropic-stream", () => {
       { type: "reasoning-start", id: "thinking-0" },
       { type: "reasoning-end", id: "thinking-0" },
       { type: "finish", finishReason: null },
+    ]);
+  });
+
+  it("ends a client tool-use step once the tool call is complete", async () => {
+    let timeoutId: number | undefined;
+    const parts = await Promise.race([
+      collectParts(hangingStreamFromText([
+        data({
+          type: "content_block_start",
+          index: 0,
+          content_block: { type: "tool_use", id: "toolu_1", name: "bash" },
+        }),
+        data({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "input_json_delta", partial_json: '{"command":"pwd"}' },
+        }),
+        data({ type: "content_block_stop", index: 0 }),
+      ].join(""))),
+      new Promise<"timeout">((resolve) => {
+        timeoutId = setTimeout(() => resolve("timeout"), 50);
+      }),
+    ]).finally(() => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+    });
+
+    assertEquals(parts, [
+      { type: "tool-input-start", id: "toolu_1", toolName: "bash" },
+      { type: "tool-input-delta", id: "toolu_1", delta: '{"command":"pwd"}' },
+      {
+        type: "tool-call",
+        toolCallId: "toolu_1",
+        toolName: "bash",
+        input: '{"command":"pwd"}',
+      },
+      {
+        type: "finish",
+        finishReason: { unified: "tool-calls", raw: "tool_use" },
+      },
     ]);
   });
 });
