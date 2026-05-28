@@ -26,6 +26,41 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("does not document removed OAuth provider exports", async () => {
+    const docs = [
+      await Deno.readTextFile("docs/guides/oauth.md"),
+      await Deno.readTextFile("docs/api-reference/veryfront/oauth.md"),
+    ].join("\n");
+
+    const removedProviderReferences = [
+      "bitbucketConfig",
+      "boxConfig",
+      "clickupConfig",
+      "freshdeskConfig",
+      "hubspotConfig",
+      "intercomConfig",
+      "mailchimpConfig",
+      "mondayConfig",
+      "pipedriveConfig",
+      "quickbooksConfig",
+      "salesforceConfig",
+      "shopifyConfig",
+      "trelloConfig",
+      "twitterConfig",
+      "webexConfig",
+      "xeroConfig",
+      "zoomConfig",
+      "HubSpot",
+      "Salesforce",
+      "Shopify",
+      "Bitbucket",
+    ];
+
+    for (const reference of removedProviderReferences) {
+      assertEquals(docs.includes(reference), false);
+    }
+  });
+
   it("does not document caller-provided endUserId as tool context authority", async () => {
     const guide = await Deno.readTextFile("docs/guides/tools.md");
 

@@ -67,10 +67,10 @@ per-user slot: never in a single shared slot.
 
 ## Choose a provider
 
-Pre-configured providers include: GitHub, Google, Slack, Twitter/X,
-Facebook, LinkedIn, Microsoft, Apple, Spotify, Twitch, Notion, Figma, Linear,
-Jira, Confluence, Box, Zoom, HubSpot, Salesforce, Stripe, Shopify,
-GitLab, Bitbucket, and more.
+Pre-configured provider exports are available for supported end-user
+integrations: GitHub, Slack, Notion, Figma, Linear, GitLab, Airtable, Asana,
+Gmail, Calendar, Sheets, Google Drive, Jira, Confluence, Outlook, Teams,
+SharePoint, and OneDrive.
 
 Each provider exports a config object (e.g., `githubConfig`, `gmailConfig`).
 Use the matching export from
