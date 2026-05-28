@@ -138,10 +138,12 @@ function resolveReactSpecifier(
  * Rewriting these imports straight to the esm.sh bundle keeps every SSR
  * module on a single React instance.
  *
- * Keys must match the re-export filenames the build emits under
- * `FRAMEWORK_ROOT/react/` (see `scripts/build/npm-react-shims.ts` and the
- * package's `react/` directory). If the build renames one, add it here too —
- * a stale key silently reintroduces the dual-React-instance bug.
+ * Keys must match the compiled re-export filenames under
+ * `FRAMEWORK_ROOT/react/`, which the build emits from the `react/*.ts` source
+ * modules (`react.ts`, `react-dom.ts`, `react-dom-client.ts`,
+ * `react-dom-server.ts`, `jsx-runtime.ts`, `jsx-dev-runtime.ts`). If one is
+ * renamed or added, update this map too: a stale key silently reintroduces
+ * the dual-React-instance bug.
  */
 const REACT_REEXPORT_SPECIFIERS: Record<string, string> = {
   "react.js": "react",

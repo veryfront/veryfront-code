@@ -40,6 +40,31 @@ describe("reactReExportToEsmUrl", () => {
     assertEquals(reactReExportToEsmUrl(join(FRAMEWORK_ROOT, "src", "foo.js"), "19.2.4"), null);
     assertEquals(reactReExportToEsmUrl(reactPath("not-a-reexport.js"), "19.2.4"), null);
   });
+
+  // Drift guard: every React re-export source module under `react/` must have
+  // a routing entry, otherwise SSR would link it to project React (the
+  // dual-instance bug) and nothing would catch the regression.
+  it("routes every React re-export source module to an esm.sh URL", async () => {
+    const reactSrcDir = new URL("../../../../../react/", import.meta.url);
+    const sources: string[] = [];
+    for await (const entry of Deno.readDir(reactSrcDir)) {
+      if (entry.isFile && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+        sources.push(entry.name);
+      }
+    }
+    // Sanity: the source dir was found and is non-trivial.
+    assertEquals(sources.length >= 6, true);
+
+    for (const name of sources) {
+      const compiled = name.replace(/\.ts$/, ".js");
+      const url = reactReExportToEsmUrl(reactPath(compiled), "19.2.4");
+      assertEquals(
+        typeof url === "string" && url.includes("esm.sh"),
+        true,
+        `react/${name} has no esm.sh routing entry in REACT_REEXPORT_SPECIFIERS`,
+      );
+    }
+  });
 });
 
 // esbuild starts a child process that lives across tests, so we disable sanitizers
