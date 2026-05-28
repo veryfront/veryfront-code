@@ -44,17 +44,17 @@ const EXAMPLES: ExampleInfo[] = [
   },
   {
     name: "support-bot",
-    description: "Multi-agent customer support with Zendesk and Slack",
+    description: "Multi-agent customer support with Confluence and Slack",
     template: "multi-agent-system",
-    integrations: ["zendesk", "slack", "notion"],
+    integrations: ["confluence", "slack", "notion"],
     features: ["Ticket management", "Knowledge base", "Escalation"],
     difficulty: "intermediate",
   },
   {
     name: "data-analyst",
-    description: "RAG-powered data analyst with Sheets and Snowflake",
+    description: "RAG-powered data analyst with Sheets and Airtable",
     template: "docs-agent",
-    integrations: ["sheets", "snowflake", "notion"],
+    integrations: ["sheets", "airtable", "notion"],
     features: ["Document search", "Chart generation", "Reports"],
     difficulty: "advanced",
   },
@@ -68,9 +68,9 @@ const EXAMPLES: ExampleInfo[] = [
   },
   {
     name: "saas-starter",
-    description: "Full-stack AI SaaS with auth, billing, and per-user memory",
+    description: "Full-stack AI SaaS with auth, docs, and per-user memory",
     template: "saas-starter",
-    integrations: ["stripe"],
+    integrations: ["github", "slack"],
     features: ["Auth", "Per-user memory", "Dashboard", "API"],
     difficulty: "advanced",
   },
@@ -132,10 +132,17 @@ interface IntegrationInfo {
 
 const INTEGRATIONS: IntegrationInfo[] = [
   {
-    name: "gmail",
-    displayName: "Gmail",
+    name: "airtable",
+    displayName: "Airtable",
+    category: "data",
+    description: "Database and spreadsheets",
+    authType: "oauth2",
+  },
+  {
+    name: "asana",
+    displayName: "Asana",
     category: "productivity",
-    description: "Read, send, and manage emails",
+    description: "Tasks and projects",
     authType: "oauth2",
   },
   {
@@ -146,38 +153,31 @@ const INTEGRATIONS: IntegrationInfo[] = [
     authType: "oauth2",
   },
   {
-    name: "slack",
-    displayName: "Slack",
-    category: "communication",
-    description: "Send messages and manage channels",
-    authType: "oauth2",
-  },
-  {
-    name: "notion",
-    displayName: "Notion",
+    name: "confluence",
+    displayName: "Confluence",
     category: "productivity",
-    description: "Read and write Notion pages",
-    authType: "oauth2",
-  },
-  {
-    name: "sheets",
-    displayName: "Google Sheets",
-    category: "data",
-    description: "Read and write spreadsheets",
-    authType: "oauth2",
-  },
-  {
-    name: "drive",
-    displayName: "Google Drive",
-    category: "productivity",
-    description: "Manage files and folders",
+    description: "Wiki pages and spaces",
     authType: "oauth2",
   },
   {
     name: "docs-google",
     displayName: "Google Docs",
-    category: "productivity",
+    category: "data",
     description: "Read and edit documents",
+    authType: "oauth2",
+  },
+  {
+    name: "drive",
+    displayName: "Google Drive",
+    category: "data",
+    description: "Manage files and folders",
+    authType: "oauth2",
+  },
+  {
+    name: "figma",
+    displayName: "Figma",
+    category: "design",
+    description: "Design files and comments",
     authType: "oauth2",
   },
   {
@@ -195,6 +195,13 @@ const INTEGRATIONS: IntegrationInfo[] = [
     authType: "oauth2",
   },
   {
+    name: "gmail",
+    displayName: "Gmail",
+    category: "communication",
+    description: "Read, send, and manage emails",
+    authType: "oauth2",
+  },
+  {
     name: "jira",
     displayName: "Jira",
     category: "development",
@@ -209,17 +216,17 @@ const INTEGRATIONS: IntegrationInfo[] = [
     authType: "oauth2",
   },
   {
-    name: "sentry",
-    displayName: "Sentry",
-    category: "development",
-    description: "Error tracking and monitoring",
-    authType: "api-key",
+    name: "notion",
+    displayName: "Notion",
+    category: "productivity",
+    description: "Read and write Notion pages",
+    authType: "oauth2",
   },
   {
-    name: "teams",
-    displayName: "Microsoft Teams",
-    category: "communication",
-    description: "Chat and collaboration",
+    name: "onedrive",
+    displayName: "OneDrive",
+    category: "data",
+    description: "Microsoft files",
     authType: "oauth2",
   },
   {
@@ -230,46 +237,32 @@ const INTEGRATIONS: IntegrationInfo[] = [
     authType: "oauth2",
   },
   {
-    name: "zoom",
-    displayName: "Zoom",
+    name: "sharepoint",
+    displayName: "SharePoint",
+    category: "data",
+    description: "Enterprise content",
+    authType: "oauth2",
+  },
+  {
+    name: "sheets",
+    displayName: "Google Sheets",
+    category: "data",
+    description: "Read and write spreadsheets",
+    authType: "oauth2",
+  },
+  {
+    name: "slack",
+    displayName: "Slack",
     category: "communication",
-    description: "Video meetings",
+    description: "Send messages and manage channels",
     authType: "oauth2",
   },
   {
-    name: "airtable",
-    displayName: "Airtable",
-    category: "data",
-    description: "Database and spreadsheets",
+    name: "teams",
+    displayName: "Microsoft Teams",
+    category: "communication",
+    description: "Chat and collaboration",
     authType: "oauth2",
-  },
-  {
-    name: "snowflake",
-    displayName: "Snowflake",
-    category: "data",
-    description: "Data warehouse queries",
-    authType: "api-key",
-  },
-  {
-    name: "supabase",
-    displayName: "Supabase",
-    category: "data",
-    description: "Database and auth",
-    authType: "api-key",
-  },
-  {
-    name: "neon",
-    displayName: "Neon",
-    category: "data",
-    description: "Serverless Postgres",
-    authType: "oauth2",
-  },
-  {
-    name: "anthropic",
-    displayName: "Anthropic",
-    category: "ai",
-    description: "Claude AI models",
-    authType: "api-key",
   },
 ];
 
@@ -300,7 +293,7 @@ const USECASES: UsecaseInfo[] = [
     name: "support",
     displayName: "Customer Support",
     description: "Ticket management, knowledge base, and escalation",
-    integrations: ["zendesk", "slack", "notion"],
+    integrations: ["confluence", "slack", "notion"],
     chatUI: "widget",
   },
   {
@@ -364,7 +357,7 @@ export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
 const getListIntegrationsInput = defineSchema((v) =>
   v.object({
     category: v
-      .enum(["all", "productivity", "development", "communication", "data", "ai"])
+      .enum(["all", "productivity", "development", "communication", "data", "design"])
       .optional()
       .default("all")
       .describe("Filter integrations by category"),

@@ -43,28 +43,7 @@ export const confluenceConfig: OAuthServiceConfig = {
   ],
 };
 
-/** Configuration used by bitbucket. */
-export const bitbucketConfig: OAuthServiceConfig = {
-  ...atlassianBase,
-  serviceId: "bitbucket",
-  displayName: "Bitbucket",
-  authorizationUrl: "https://bitbucket.org/site/oauth2/authorize",
-  tokenUrl: "https://bitbucket.org/site/oauth2/access_token",
-  clientIdEnvVar: "BITBUCKET_CLIENT_ID",
-  clientSecretEnvVar: "BITBUCKET_CLIENT_SECRET",
-  apiBaseUrl: "https://api.bitbucket.org/2.0",
-  additionalAuthParams: {},
-  defaultScopes: [
-    "repository",
-    "repository:write",
-    "pullrequest",
-    "pullrequest:write",
-    "account",
-  ],
-};
-
 export const atlassianServices = {
   jira: jiraConfig,
   confluence: confluenceConfig,
-  bitbucket: bitbucketConfig,
 } as const;

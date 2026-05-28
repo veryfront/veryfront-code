@@ -18,6 +18,40 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
+  it("only declares the supported end-user integration surface", () => {
+    const supportedConnectors = [
+      "airtable",
+      "asana",
+      "calendar",
+      "confluence",
+      "docs-google",
+      "drive",
+      "figma",
+      "github",
+      "gitlab",
+      "gmail",
+      "jira",
+      "linear",
+      "notion",
+      "onedrive",
+      "outlook",
+      "sharepoint",
+      "sheets",
+      "slack",
+      "teams",
+    ];
+
+    assertEquals(connectors.map((item) => item.name), supportedConnectors);
+
+    for (const connector of connectors) {
+      assertEquals(
+        connector.tools.every((tool) => Boolean(tool.endpoint)),
+        true,
+        `Expected every ${connector.name} tool to be endpoint-backed`,
+      );
+    }
+  });
+
   it("does not expose retired integrations until they have verified working tool surfaces", () => {
     assertEquals(connectors.some((item) => item.name === "discord"), false);
     assertEquals(connectors.some((item) => item.name === "hubspot"), false);
@@ -105,7 +139,6 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 11],
       ["confluence", 6],
-      ["salesforce", 5],
       ["outlook", 5],
       ["teams", 6],
     ]);
@@ -288,16 +321,6 @@ describe("integration endpoint specs", () => {
     assertEquals(
       confluenceGetPage.endpoint?.params?.["body-format"]?.default,
       "storage",
-    );
-
-    const salesforceListAccounts = getTool("salesforce", "list_accounts");
-    assertEquals(
-      salesforceListAccounts.endpoint?.url,
-      "{{oauth.raw.instance_url}}/services/data/v61.0/query",
-    );
-    assertStringIncludes(
-      salesforceListAccounts.endpoint?.params?.q?.default as string,
-      "Account",
     );
 
     const outlookSendEmail = getTool("outlook", "send_email");

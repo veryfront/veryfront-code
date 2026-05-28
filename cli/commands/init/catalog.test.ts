@@ -61,13 +61,7 @@ describe("catalog", () => {
         "Productivity",
         "Development",
         "Storage",
-        "Infrastructure",
-        "Sales & CRM",
-        "Support",
-        "Finance",
-        "Marketing",
         "Design",
-        "AI Providers",
       ]);
     });
 
@@ -104,7 +98,7 @@ describe("catalog", () => {
       assertEquals(ids.includes("notion"), true);
       assertEquals(ids.includes("github"), true);
       assertEquals(ids.includes("drive"), true);
-      assertEquals(ids.includes("stripe"), true);
+      assertEquals(ids.includes("figma"), true);
     });
   });
 

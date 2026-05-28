@@ -35,19 +35,19 @@ describe("config-generator", () => {
         await createPackageJson(tmpDir, "demo", {
           integrations: [
             {
-              name: "neon",
-              npmDependencies: { pg: "^8.13.1" },
+              name: "github",
+              npmDependencies: { octokit: "^4.0.0" },
             },
             {
-              name: "stripe",
-              npmDependencies: { stripe: "^17.0.0" },
+              name: "slack",
+              npmDependencies: { "@slack/web-api": "^7.0.0" },
             },
           ],
         });
 
         const pkg = JSON.parse(await Deno.readTextFile(join(tmpDir, "package.json")));
-        assertEquals(pkg.dependencies.pg, "^8.13.1");
-        assertEquals(pkg.dependencies.stripe, "^17.0.0");
+        assertEquals(pkg.dependencies.octokit, "^4.0.0");
+        assertEquals(pkg.dependencies["@slack/web-api"], "^7.0.0");
         // existing defaults still present
         assertEquals(pkg.dependencies.veryfront !== undefined, true);
         assertEquals(pkg.dependencies.react !== undefined, true);

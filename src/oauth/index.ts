@@ -1,5 +1,5 @@
 /**
- * OAuth 2.0 with 36 pre-configured providers.
+ * OAuth 2.0 with supported pre-configured providers.
  *
  * @example
  * ```typescript
@@ -32,39 +32,22 @@ export { OAuthProvider, OAuthService } from "./providers/base.ts";
 export {
   airtableConfig,
   asanaConfig,
-  bitbucketConfig,
-  boxConfig,
   calendarConfig,
-  clickupConfig,
   confluenceConfig,
   driveConfig,
   figmaConfig,
-  freshdeskConfig,
   githubConfig,
   gitlabConfig,
   gmailConfig,
-  hubspotConfig,
-  intercomConfig,
   jiraConfig,
   linearConfig,
-  mailchimpConfig,
-  mondayConfig,
   notionConfig,
   oneDriveConfig,
   outlookConfig,
-  pipedriveConfig,
-  quickbooksConfig,
-  salesforceConfig,
   sharePointConfig,
   sheetsConfig,
-  shopifyConfig,
   slackConfig,
   teamsConfig,
-  trelloConfig,
-  twitterConfig,
-  webexConfig,
-  xeroConfig,
-  zoomConfig,
 } from "./providers/index.ts";
 
 export { MemoryTokenStore } from "./token-store/index.ts";

@@ -35,9 +35,6 @@ export default defineConfig({
     linear: {
       perUser: true,
     },
-
-    // API-key based (no OAuth needed)
-    stripe: {},
   },
 });
 ```
@@ -78,9 +75,9 @@ directly.
 
 ## Available integrations
 
-The built-in connector catalog covers categories such as project management,
-code hosting, communication, documents, storage, CRM, databases, analytics,
-finance, support, calendar, marketing, commerce, and social platforms.
+The built-in connector catalog covers the supported end-user surface: Google
+Workspace, Microsoft 365, Atlassian, Slack, GitHub, GitLab, Asana, Linear,
+Notion, Figma, and Airtable.
 
 Use the generated integration metadata reference when you need exact exported
 names or icon metadata:
