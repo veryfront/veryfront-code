@@ -99,10 +99,30 @@ describe("normalizeNpmPackageMetadata", () => {
 });
 
 describe("npm supply-chain policy", () => {
-	it("statically loads auto-enabled sandbox shell dependencies for binary builds", async () => {
+	it("lazy-loads auto-enabled sandbox shell dependencies for npm CLI startup", async () => {
 		const source = await Deno.readTextFile("extensions/ext-sandbox-shell-tools/src/index.ts");
 
-		assertEquals(source.includes('from "bash-tool"'), true);
+		assertEquals(source.includes('import("bash-tool")'), true);
+		assertEquals(source.includes('from "bash-tool"'), false);
+	});
+
+	it("keeps workflow React hooks off the broad errors barrel", async () => {
+		const hookSources = [
+			"src/workflow/react/use-approval.ts",
+			"src/workflow/react/use-workflow.ts",
+			"src/workflow/react/use-workflow-list.ts",
+			"src/workflow/react/use-workflow-start.ts",
+		];
+
+		for (const path of hookSources) {
+			const source = await Deno.readTextFile(path);
+			assertEquals(
+				source.includes('from "#veryfront/errors"'),
+				false,
+				`${path} must not import the browser-unsafe errors barrel`,
+			);
+			assertStringIncludes(source, '#veryfront/errors/error-registry.ts');
+		}
 	});
 });
 

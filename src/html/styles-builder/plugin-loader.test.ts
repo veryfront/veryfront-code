@@ -191,6 +191,41 @@ describe("styles-builder/plugin-loader", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("uses the non-Deno import path in Node-like runtimes with Deno shims", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalProcess = Object.getOwnPropertyDescriptor(globalThis, "process");
+    let fetchCallCount = 0;
+
+    Object.defineProperty(globalThis, "process", {
+      configurable: true,
+      value: { versions: { node: "22.0.0" } },
+    });
+
+    globalThis.fetch = (() => {
+      fetchCallCount++;
+      if (fetchCallCount === 1) {
+        return Promise.resolve(
+          new Response(`export * from "/v1/node-like-plugin.bundle.mjs";`, { status: 200 }),
+        );
+      }
+      return Promise.resolve(
+        new Response(`export default { id: "node-like-plugin" };`, { status: 200 }),
+      );
+    }) as typeof fetch;
+
+    try {
+      const plugin = await loadModuleFromEsmSh("@tailwindcss/typography@0.5.19");
+      assertEquals((plugin as { default?: { id?: string } }).default?.id, "node-like-plugin");
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalProcess) {
+        Object.defineProperty(globalThis, "process", originalProcess);
+      } else {
+        delete (globalThis as { process?: unknown }).process;
+      }
+    }
+  });
 });
 
 describe("styles-builder/plugin-loader allowlist enforcement (VULN-FS-1)", () => {

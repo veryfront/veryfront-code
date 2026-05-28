@@ -50,6 +50,18 @@ describe("starter templates smoke", {
           200,
           `${templateName} should render / successfully`,
         );
+
+        const html = await response.text();
+        assertEquals(
+          html.includes("Module not found"),
+          false,
+          `${templateName} should not render a module resolution error`,
+        );
+        assertEquals(
+          html.includes("Internal Server Error"),
+          false,
+          `${templateName} should not render a server error`,
+        );
       });
     });
   }

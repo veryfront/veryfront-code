@@ -17,6 +17,7 @@ agents/
   writer.ts                    Writing agent
 workflows/content-pipeline.ts  Workflow definition
 app/
+  api/workflows/              Demo workflow API routes
   page.tsx                     Workflow dashboard
   workflows/[id]/page.tsx      Run detail and approval UI
 ```

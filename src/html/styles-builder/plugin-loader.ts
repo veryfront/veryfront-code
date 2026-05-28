@@ -71,7 +71,18 @@ try {
 // tailwindcss imports that live in the extension package, not in core.
 
 function isRealDenoRuntime(): boolean {
-  return typeof Deno !== "undefined" && typeof Deno.version === "object";
+  const global = globalThis as {
+    Bun?: unknown;
+    process?: { versions?: { node?: string; deno?: string } };
+  };
+  const isNodeLike = global.process?.versions?.node != null && !global.process?.versions?.deno;
+
+  return !global.Bun &&
+    !isNodeLike &&
+    typeof Deno !== "undefined" &&
+    typeof Deno.version === "object" &&
+    typeof Deno.build === "object" &&
+    typeof Deno.build.os === "string";
 }
 
 function encodeToBase64(source: string): string {
