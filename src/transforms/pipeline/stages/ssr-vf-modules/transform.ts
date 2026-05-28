@@ -350,12 +350,25 @@ async function rewriteFallbackRelativeImports(
   // React imports must be rewritten even when there are no relative imports,
   // so SSR links against the single esm.sh React bundle (see
   // resolveReactSpecifier).
-  return await replaceSpecifiers(code, (specifier) => {
+  const rewritten = await replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       return replacements.get(specifier) ?? null;
     }
     return resolveReactSpecifier(specifier, ctx.reactVersion, reactImportMap);
   });
+
+  // Materialize any `https://esm.sh/...` React imports as local file:// bundles
+  // (same pass the main path runs). The cached fallback module is later loaded
+  // from file://, and Node rejects `import ... from "https:"`
+  // (ERR_UNSUPPORTED_ESM_URL_SCHEME); leaving the remote specifier in would
+  // break SSR under Node whenever a deep framework file hits this fallback.
+  const importMap = await loadImportMap(ctx.projectDir);
+  const cacheResult = await cacheHttpImportsToLocal(rewritten, {
+    cacheDir: getHttpBundleCacheDir(),
+    importMap,
+    reactVersion: ctx.reactVersion,
+  });
+  return cacheResult.code;
 }
 
 /**

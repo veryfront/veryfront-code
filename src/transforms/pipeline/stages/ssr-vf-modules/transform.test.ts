@@ -315,7 +315,11 @@ describe("transformFrameworkCode depth-limit fallback", {
     }
   });
 
-  it("leaves non-react bare-package imports alone in the fallback output", async () => {
+  it("materializes bare npm imports to loadable file:// bundles in the fallback", async () => {
+    // The fallback runs the same http-cache pass as the main path, so bare
+    // npm specifiers are resolved to local file:// bundles rather than left
+    // for ad-hoc runtime resolution. This keeps the fallback's cached output
+    // self-contained and Node-loadable.
     const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-fallback-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
@@ -335,23 +339,24 @@ describe("transformFrameworkCode depth-limit fallback", {
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
 
-      // Non-react bare specifiers are the runtime's responsibility — the
-      // fallback must not invent a URL for them.
-      assertStringIncludes(transformed, 'from "lodash"');
-      assert(!transformed.includes("file://"));
+      // No bare specifier and no remote https: import left behind.
+      assertEquals(transformed.includes('from "lodash"'), false);
+      assertEquals(/from\s+["']https:\/\//.test(transformed), false);
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
   });
 
-  it("rewrites react imports in the fallback so SSR shares one React instance", async () => {
+  it("rewrites react imports in the fallback to a loadable, single-instance bundle", async () => {
     // Regression: when a deep framework file exceeds the relative-import
     // depth limit, the fallback used to leave bare `react` imports. Those
     // resolve to the project's own React copy, distinct from the esm.sh
     // React bundle used elsewhere during SSR — two React instances, so the
     // dispatcher is null and the first hook throws
     // "Cannot read properties of null (reading 'useEffect')". The fallback
-    // must rewrite react/react-dom to the same esm.sh URLs the main path uses.
+    // rewrites react/react-dom to the esm.sh bundle, then (like the main path)
+    // materializes it to a local file:// bundle so Node can load the cached
+    // fallback module (Node rejects `import ... from "https:"`).
     const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-react-id-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
@@ -371,10 +376,12 @@ describe("transformFrameworkCode depth-limit fallback", {
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
 
-      // `react` must no longer be bare — it must point at the esm.sh bundle
-      // pinned to the requested version.
+      // Not bare (dual-instance bug) and not a raw https: import (Node would
+      // reject it when the cached fallback module loads). It must be a local
+      // file:// bundle.
       assertEquals(transformed.includes('from "react"'), false);
-      assertStringIncludes(transformed, "esm.sh/react@19.2.4");
+      assertEquals(/from\s+["']https:\/\//.test(transformed), false);
+      assertStringIncludes(transformed, "file://");
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }
