@@ -206,6 +206,31 @@ await build({
 		}
 		console.log(`📝 Copied ${rscClientFiles.length} RSC client files`);
 
+		// Transpile the kreuzberg upload-extraction worker into the npm package.
+		// It is spawned via `new Worker(new URL("./upload-extraction-worker.js"))`
+		// (see extensions/ext-document-kreuzberg/src/index.ts), so dnt never traces
+		// it as a static import and would otherwise omit it from the build. Strip
+		// the TypeScript types and rewrite the sibling `./kreuzberg.ts` import to the
+		// transpiled `./kreuzberg.js` that dnt emits next to it.
+		const esbuild = await import("npm:esbuild@0.27.4");
+		try {
+			const workerSrc = "./extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts";
+			const workerDest =
+				"./npm/esm/extensions/ext-document-kreuzberg/src/upload-extraction-worker.js";
+			const transpiled = await esbuild.transform(await Deno.readTextFile(workerSrc), {
+				loader: "ts",
+				format: "esm",
+				target: "esnext",
+			});
+			await Deno.writeTextFile(
+				workerDest,
+				transpiled.code.replaceAll("./kreuzberg.ts", "./kreuzberg.js"),
+			);
+			console.log("📝 Transpiled ext-document-kreuzberg upload-extraction worker");
+		} finally {
+			await esbuild.stop();
+		}
+
 		// Fix dnt polyfill bug: process.argv[1] can be undefined in dynamic imports
 		patchFile(
 			"./npm/esm/_dnt.polyfills.js",

@@ -10,6 +10,7 @@
  */
 
 import type { KreuzbergExtractor } from "veryfront/extensions/compat";
+import { isDeno } from "./runtime.ts";
 
 type KreuzbergModule = {
   initWasm?: () => Promise<void>;
@@ -33,8 +34,8 @@ async function loadKreuzbergNode(): Promise<any> {
 }
 
 export async function loadKreuzberg(): Promise<KreuzbergExtractor> {
-  const isDeno = typeof Deno !== "undefined";
-
+  // Node/Bun load the native @kreuzberg/node; only a real Deno runtime uses the
+  // WASM build. See ./runtime.ts for why a bare `Deno` check is unreliable here.
   if (!isDeno) {
     return loadKreuzbergNode();
   }
