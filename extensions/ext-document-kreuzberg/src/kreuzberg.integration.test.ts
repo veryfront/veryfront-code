@@ -9,6 +9,13 @@
 
 import { assertStringIncludes } from "@std/assert";
 import { describe, it } from "@std/testing/bdd";
+import { loadUpload } from "veryfront/embedding";
+import { ExtensionLoader } from "../../../src/extensions/loader.ts";
+import { createBuiltinExtensions } from "../../../src/extensions/builtin-extensions.ts";
+import {
+  createLLMProviderRegistry,
+  LLMProviderRegistryName,
+} from "../../../src/extensions/llm/index.ts";
 import { KreuzbergDocumentExtractor } from "./index.ts";
 
 function toBytes(text: string): Uint8Array {
@@ -53,5 +60,30 @@ describe("ext-document-kreuzberg integration", () => {
     const buffer = toBytes(html).buffer.slice(0) as ArrayBuffer;
     const content = await impl.extractInWorker(buffer, "text/html");
     assertStringIncludes(content, "Worker Hello");
+  });
+
+  it("extracts uploads through the built-in DocumentExtractor registration", opts, async () => {
+    const logs: string[] = [];
+    const logger = {
+      info: (...args: unknown[]) => logs.push(args.join(" ")),
+      warn: (...args: unknown[]) => logs.push(args.join(" ")),
+      error: (...args: unknown[]) => logs.push(args.join(" ")),
+    };
+    const loader = new ExtensionLoader(logger);
+    loader.primeContracts({ [LLMProviderRegistryName]: createLLMProviderRegistry() });
+
+    try {
+      await loader.setupAll(createBuiltinExtensions(), {});
+      const html = "<html><body><h1>Docs Agent</h1><p>Kreuzberg upload path.</p></body></html>";
+      const buffer = toBytes(html).buffer.slice(0) as ArrayBuffer;
+
+      const content = await loadUpload(buffer, "text/html");
+
+      assertStringIncludes(logs.join("\n"), "ext-document-kreuzberg");
+      assertStringIncludes(content, "Docs Agent");
+      assertStringIncludes(content, "Kreuzberg upload path");
+    } finally {
+      await loader.teardownAll();
+    }
   });
 });

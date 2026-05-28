@@ -37,6 +37,26 @@ function runInitCommand(
   });
 }
 
+function runQuietInitCommand(
+  options: Record<string, unknown>,
+  cwd = TEST_DIR,
+): Promise<{ code: number; stdout?: string; stderr?: string }> {
+  const initCommandUrl = new URL("./init-command.ts", import.meta.url).href;
+  const configPath = new URL("../../../deno.json", import.meta.url).pathname;
+  return runCommand("deno", {
+    args: [
+      "eval",
+      "--config",
+      configPath,
+      `import { initCommand } from ${JSON.stringify(initCommandUrl)}; await initCommand(${
+        JSON.stringify(options)
+      });`,
+    ],
+    cwd,
+    capture: true,
+  });
+}
+
 describe("init command integration", () => {
   const projectName = `test-project-${randomSuffix()}`;
   const projectDir = join(TEST_DIR, projectName);
@@ -182,12 +202,46 @@ describe("init command integration", () => {
         "neon",
         "--skip-install",
         "--skip-env-prompt",
-      ]);
+      ], {
+        env: { VERYFRONT_EXPERIMENTAL_INTEGRATIONS: "neon" },
+      });
 
       assertEquals(result.code, 0);
 
       const pkg = JSON.parse(await readTextFile(join(projectDir, "package.json")));
       assertEquals(pkg.dependencies.pg, "^8.13.1");
+    });
+
+    it("includes document extraction dependencies for docs-agent uploads", async () => {
+      const result = await runInitCommand([
+        projectName,
+        "-t",
+        "docs-agent",
+        "--runtime",
+        "node",
+        "--skip-install",
+        "--skip-env-prompt",
+      ]);
+
+      assertEquals(result.code, 0);
+
+      const pkg = JSON.parse(await readTextFile(join(projectDir, "package.json")));
+      assertEquals(pkg.dependencies["@kreuzberg/node"], "^4.4.2");
+      assertEquals(pkg.dependencies["@kreuzberg/wasm"], "4.5.2");
+    });
+
+    it("does not write a partial package.json for quiet docs-agent projects", async () => {
+      const result = await runQuietInitCommand({
+        name: projectName,
+        template: "docs-agent",
+        skipInstall: true,
+        skipEnvPrompt: true,
+        quiet: true,
+      });
+
+      assertEquals(result.code, 0);
+      assertEquals(await exists(join(projectDir, "package.json")), false);
+      assertEquals(await exists(join(projectDir, "app", "page.tsx")), true);
     });
   });
 

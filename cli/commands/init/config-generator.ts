@@ -3,9 +3,11 @@ import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 
 // Keep init scaffold aligned with current framework default React major/minor.
-const DEFAULT_INIT_REACT_VERSION = "19.1.1";
+const DEFAULT_INIT_REACT_VERSION = "19.2.4";
 
 export interface CreatePackageJsonOptions {
+  /** Template-owned dependencies that must be installed for generated apps. */
+  dependencies?: Record<string, string>;
   /**
    * Selected integrations whose `connector.json#npmDependencies` should be
    * merged into the generated project's `package.json#dependencies`.
@@ -26,11 +28,11 @@ export async function createPackageJson(
   const fs = createFileSystem();
 
   // Read any existing package.json (e.g. from template) to merge dependencies
-  let templateDeps: Record<string, string> = {};
+  const templateDeps: Record<string, string> = { ...(options.dependencies ?? {}) };
   const pkgPath = join(projectDir, "package.json");
   if (await fs.exists(pkgPath)) {
     const existing = JSON.parse(await fs.readTextFile(pkgPath));
-    templateDeps = existing.dependencies ?? {};
+    Object.assign(templateDeps, existing.dependencies ?? {});
   }
 
   // Merge per-integration deps. First declaration wins; collisions are logged.

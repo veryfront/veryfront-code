@@ -369,6 +369,7 @@ export async function initCommand(options: InitOptions): Promise<void> {
     // Skip in quiet/TUI mode since local dev uses CDN and package.json can cause hydration issues
     if (!options.quiet) {
       await createPackageJson(projectDir, projectName, {
+        dependencies: templateConfig?.npmDependencies,
         integrations: loadedIntegrations.map((integration) => ({
           name: integration.config.name,
           npmDependencies: integration.config.npmDependencies,

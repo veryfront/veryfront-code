@@ -39,7 +39,14 @@ export {
   validateFeatures,
 } from "./feature-loader.ts";
 
-export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {};
+export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
+  "docs-agent": {
+    npmDependencies: {
+      "@kreuzberg/node": "^4.4.2",
+      "@kreuzberg/wasm": "4.5.2",
+    },
+  },
+};
 
 const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [
   "ai-agent",
