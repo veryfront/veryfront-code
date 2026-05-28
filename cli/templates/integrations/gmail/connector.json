@@ -44,7 +44,7 @@
     {
       "id": "list_emails",
       "name": "List Emails",
-      "description": "List email message IDs from inbox. Use get-email to fetch full content for each message.",
+      "description": "List Gmail message summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens. Use get-email only when full message content is needed.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -53,7 +53,7 @@
           "maxResults": {
             "type": "number",
             "in": "query",
-            "description": "Maximum number of messages to return (1-500)",
+            "description": "Maximum number of message summaries to return (1-50)",
             "default": 20
           },
           "q": {
@@ -73,7 +73,13 @@
           }
         },
         "response": {
-          "transform": "messages"
+          "enrich": {
+            "type": "gmail-message-metadata",
+            "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}",
+            "idField": "id",
+            "metadataHeaders": ["From", "To", "Subject", "Date"],
+            "maxItems": 50
+          }
         }
       }
     },
@@ -118,6 +124,11 @@
             "in": "query",
             "description": "Format: full, metadata, minimal, raw",
             "default": "full"
+          },
+          "metadataHeaders": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Headers to include when format is metadata, e.g. From, To, Subject, Date"
           }
         }
       }
@@ -125,7 +136,7 @@
     {
       "id": "search_emails",
       "name": "Search Emails",
-      "description": "Search emails by query",
+      "description": "Search Gmail messages and return summaries with IDs, sender, recipient, subject, date, snippet, labels, and pagination tokens.",
       "requiresWrite": false,
       "endpoint": {
         "method": "GET",
@@ -140,7 +151,7 @@
           "maxResults": {
             "type": "number",
             "in": "query",
-            "description": "Maximum results",
+            "description": "Maximum number of message summaries to return (1-50)",
             "default": 10
           },
           "pageToken": {
@@ -150,7 +161,13 @@
           }
         },
         "response": {
-          "transform": "messages"
+          "enrich": {
+            "type": "gmail-message-metadata",
+            "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}",
+            "idField": "id",
+            "metadataHeaders": ["From", "To", "Subject", "Date"],
+            "maxItems": 50
+          }
         }
       }
     },
