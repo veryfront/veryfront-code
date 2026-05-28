@@ -201,11 +201,29 @@ describe("integration endpoint specs", () => {
     }
   });
 
-  it("adds callable endpoint specs for the Sentry API-key provider", () => {
+  it("adds callable endpoint specs for the Sentry OAuth provider", () => {
     const sentry = getConnector("sentry");
     const endpointTools = sentry.tools.filter((tool) => tool.endpoint);
 
-    assertEquals(endpointTools.length, 4);
+    assertEquals(sentry.auth.type, "oauth2");
+    assertEquals(sentry.auth.provider, "sentry");
+    assertEquals(sentry.auth.tokenAuthMethod, "none");
+    assertEquals(sentry.auth.pkce, true);
+    assertEquals(
+      sentry.envVars?.map((envVar) => envVar.name).includes("SENTRY_CLIENT_SECRET"),
+      false,
+    );
+    assertEquals(
+      endpointTools.map((tool) => tool.id).sort(),
+      ["get_issue", "list_issues", "list_organizations", "list_projects", "resolve_issue"],
+    );
+
+    const listOrganizations = getTool("sentry", "list_organizations");
+    assertEquals(
+      listOrganizations.endpoint?.url,
+      "https://sentry.io/api/0/organizations/",
+    );
+    assertEquals(listOrganizations.endpoint?.params?.owner?.in, "query");
 
     const listProjects = getTool("sentry", "list_projects");
     assertEquals(
