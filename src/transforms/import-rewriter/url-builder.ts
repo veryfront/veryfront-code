@@ -5,8 +5,15 @@
  * Ensures consistent URLs across SSR and browser for hydration parity.
  */
 
-/** Default React version - used when not specified */
-export const DEFAULT_REACT_VERSION = "19.1.1";
+/**
+ * Default React version - used when not specified.
+ *
+ * MUST match the React version the build bundles (see `react/deno.json`),
+ * because veryfront's framework React re-export is generated against that
+ * version and references its named exports. A drift guard in
+ * `src/utils/constants/cdn.test.ts` enforces this.
+ */
+export const DEFAULT_REACT_VERSION = "19.2.4";
 
 /** Tailwind CSS version */
 export const TAILWIND_VERSION = "4.1.8";

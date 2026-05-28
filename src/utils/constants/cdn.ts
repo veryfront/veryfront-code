@@ -6,7 +6,7 @@ export const REACT_VERSION_17 = "17.0.2";
 export const REACT_VERSION_18_2 = "18.2.0";
 export const REACT_VERSION_18_3 = "18.3.1";
 export const REACT_VERSION_19_RC = "19.0.0-rc.0";
-export const REACT_VERSION_19 = "19.1.1";
+export const REACT_VERSION_19 = "19.2.4";
 
 /** Shared React default version value. */
 export const REACT_DEFAULT_VERSION = REACT_VERSION_19;
