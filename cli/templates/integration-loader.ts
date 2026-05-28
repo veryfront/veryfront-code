@@ -9,6 +9,7 @@
  */
 
 import { createFileSystem, join } from "veryfront/fs";
+import { filterVisibleIntegrations } from "../../src/integrations/feature-flags.ts";
 import { loadTemplateFromDirectory } from "./loader.ts";
 import {
   buildIntegrationDirectory,
@@ -26,9 +27,11 @@ import type {
 } from "./types.ts";
 
 /**
- * Available integrations that can be added via --integrations flag
+ * All declared integrations. Unsupported integrations stay in the source tree,
+ * but are only available when explicitly enabled with
+ * VERYFRONT_EXPERIMENTAL_INTEGRATIONS.
  */
-export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
+export const ALL_AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "gmail",
   "slack",
   "github",
@@ -79,6 +82,20 @@ export const AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "anthropic",
   "aws",
 ];
+
+/**
+ * Default available integrations that can be added via --integrations flag.
+ * Prefer getAvailableIntegrations() when runtime feature-flag changes matter.
+ */
+export const AVAILABLE_INTEGRATIONS: IntegrationName[] = filterVisibleIntegrations(
+  ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
+).map((integration) => integration.id as IntegrationName);
+
+export function getAvailableIntegrations(): IntegrationName[] {
+  return filterVisibleIntegrations(
+    ALL_AVAILABLE_INTEGRATIONS.map((name) => ({ id: name })),
+  ).map((integration) => integration.id as IntegrationName);
+}
 
 /**
  * Available use-cases that can be selected via --usecase flag
@@ -194,7 +211,7 @@ export function validateIntegrations(integrations: IntegrationName[]): {
   valid: boolean;
   errors: string[];
 } {
-  const errors = buildUnknownIntegrationErrors(integrations, AVAILABLE_INTEGRATIONS);
+  const errors = buildUnknownIntegrationErrors(integrations, getAvailableIntegrations());
 
   return { valid: errors.length === 0, errors };
 }

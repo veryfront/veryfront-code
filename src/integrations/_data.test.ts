@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors } from "./_data.ts";
+import { filterVisibleIntegrations } from "./feature-flags.ts";
 
 function getConnector(name: string) {
   const connector = connectors.find((item) => item.name === name);
@@ -18,9 +19,86 @@ function getTool(connectorName: string, toolId: string) {
 }
 
 describe("integration endpoint specs", () => {
+  it("keeps all source connectors while showing only the supported end-user surface by default", () => {
+    const supportedConnectors = [
+      "airtable",
+      "asana",
+      "calendar",
+      "confluence",
+      "docs-google",
+      "drive",
+      "figma",
+      "github",
+      "gitlab",
+      "gmail",
+      "jira",
+      "linear",
+      "notion",
+      "onedrive",
+      "outlook",
+      "sentry",
+      "sharepoint",
+      "sheets",
+      "slack",
+      "teams",
+    ];
+    const sourceConnectors = [
+      "airtable",
+      "anthropic",
+      "asana",
+      "aws",
+      "bitbucket",
+      "calendar",
+      "confluence",
+      "docs-google",
+      "drive",
+      "figma",
+      "github",
+      "gitlab",
+      "gmail",
+      "jira",
+      "linear",
+      "mixpanel",
+      "neon",
+      "notion",
+      "onedrive",
+      "outlook",
+      "posthog",
+      "salesforce",
+      "sentry",
+      "servicenow",
+      "sharepoint",
+      "sheets",
+      "shopify",
+      "slack",
+      "snowflake",
+      "stripe",
+      "supabase",
+      "teams",
+      "trello",
+      "twilio",
+    ];
+
+    assertEquals(connectors.map((item) => item.name), sourceConnectors);
+    assertEquals(
+      filterVisibleIntegrations(connectors).map((item) => item.name),
+      supportedConnectors,
+    );
+
+    for (const connector of filterVisibleIntegrations(connectors)) {
+      assertEquals(
+        connector.tools.every((tool) => Boolean(tool.endpoint)),
+        true,
+        `Expected every ${connector.name} tool to be endpoint-backed`,
+      );
+    }
+  });
+
   it("does not expose retired integrations until they have verified working tool surfaces", () => {
-    assertEquals(connectors.some((item) => item.name === "discord"), false);
-    assertEquals(connectors.some((item) => item.name === "hubspot"), false);
+    const connectorNames = connectors.map((item) => item.name as string);
+
+    assertEquals(connectorNames.includes("discord"), false);
+    assertEquals(connectorNames.includes("hubspot"), false);
   });
 
   it("adds endpoint specs for all 68 tools across the 5 targeted integrations", () => {
@@ -105,7 +183,6 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 11],
       ["confluence", 6],
-      ["salesforce", 5],
       ["outlook", 5],
       ["teams", 6],
     ]);
@@ -122,6 +199,55 @@ describe("integration endpoint specs", () => {
         `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
       );
     }
+  });
+
+  it("adds callable endpoint specs for the Sentry OAuth provider", () => {
+    const sentry = getConnector("sentry");
+    const endpointTools = sentry.tools.filter((tool) => tool.endpoint);
+
+    assertEquals(sentry.auth.type, "oauth2");
+    assertEquals(sentry.auth.provider, "sentry");
+    assertEquals(sentry.auth.tokenAuthMethod, "none");
+    assertEquals(sentry.auth.pkce, true);
+    assertEquals(
+      sentry.envVars?.map((envVar) => envVar.name).includes("SENTRY_CLIENT_SECRET"),
+      false,
+    );
+    assertEquals(
+      endpointTools.map((tool) => tool.id).sort(),
+      ["get_issue", "list_issues", "list_organizations", "list_projects", "resolve_issue"],
+    );
+
+    const listOrganizations = getTool("sentry", "list_organizations");
+    assertEquals(
+      listOrganizations.endpoint?.url,
+      "https://sentry.io/api/0/organizations/",
+    );
+    assertEquals(listOrganizations.endpoint?.params?.owner?.in, "query");
+
+    const listProjects = getTool("sentry", "list_projects");
+    assertEquals(
+      listProjects.endpoint?.url,
+      "https://sentry.io/api/0/organizations/{organizationSlug}/projects/",
+    );
+    assertEquals(listProjects.endpoint?.params?.organizationSlug?.required, true);
+
+    const listIssues = getTool("sentry", "list_issues");
+    assertEquals(
+      listIssues.endpoint?.url,
+      "https://sentry.io/api/0/projects/{organizationSlug}/{projectSlug}/issues/",
+    );
+    assertEquals(listIssues.endpoint?.params?.projectSlug?.required, true);
+
+    const getIssue = getTool("sentry", "get_issue");
+    assertEquals(
+      getIssue.endpoint?.url,
+      "https://sentry.io/api/0/organizations/{organizationSlug}/issues/{issueId}/",
+    );
+
+    const resolveIssue = getTool("sentry", "resolve_issue");
+    assertEquals(resolveIssue.endpoint?.method, "PUT");
+    assertEquals(resolveIssue.endpoint?.body?.status?.default, "resolved");
   });
 
   it("keeps remaining OAuth provider endpoints executor-compatible", () => {
@@ -288,16 +414,6 @@ describe("integration endpoint specs", () => {
     assertEquals(
       confluenceGetPage.endpoint?.params?.["body-format"]?.default,
       "storage",
-    );
-
-    const salesforceListAccounts = getTool("salesforce", "list_accounts");
-    assertEquals(
-      salesforceListAccounts.endpoint?.url,
-      "{{oauth.raw.instance_url}}/services/data/v61.0/query",
-    );
-    assertStringIncludes(
-      salesforceListAccounts.endpoint?.params?.q?.default as string,
-      "Account",
     );
 
     const outlookSendEmail = getTool("outlook", "send_email");

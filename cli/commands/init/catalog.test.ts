@@ -4,7 +4,8 @@ import "#veryfront/schemas/_test-setup.ts";
  */
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { EXPERIMENTAL_INTEGRATIONS_ENV } from "../../../src/integrations/feature-flags.ts";
 import {
   getAllIntegrations,
   getIntegrationSelectOptions,
@@ -16,6 +17,8 @@ import {
 } from "./catalog.ts";
 
 describe("catalog", () => {
+  afterEach(() => Deno.env.delete(EXPERIMENTAL_INTEGRATIONS_ENV));
+
   describe("TEMPLATES", () => {
     it("contains expected templates", () => {
       assertEquals(TEMPLATES.length, 7);
@@ -88,14 +91,10 @@ describe("catalog", () => {
   describe("getAllIntegrations", () => {
     it("returns flat array of all integrations", () => {
       const all = getAllIntegrations();
-      const expectedCount = INTEGRATION_CATEGORIES.reduce(
-        (sum, cat) => sum + cat.integrations.length,
-        0,
-      );
-      assertEquals(all.length, expectedCount);
+      assertEquals(all.length, 20);
     });
 
-    it("includes integrations from all categories", () => {
+    it("includes default-visible integrations from supported categories", () => {
       const all = getAllIntegrations();
       const ids = all.map((i) => i.id);
 
@@ -103,7 +102,19 @@ describe("catalog", () => {
       assertEquals(ids.includes("gmail"), true);
       assertEquals(ids.includes("notion"), true);
       assertEquals(ids.includes("github"), true);
+      assertEquals(ids.includes("sentry"), true);
       assertEquals(ids.includes("drive"), true);
+      assertEquals(ids.includes("figma"), true);
+      assertEquals(ids.includes("salesforce"), false);
+      assertEquals(ids.includes("stripe"), false);
+    });
+
+    it("includes feature-gated integrations when explicitly enabled", () => {
+      Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce,stripe");
+
+      const ids = getAllIntegrations().map((i) => i.id);
+
+      assertEquals(ids.includes("salesforce"), true);
       assertEquals(ids.includes("stripe"), true);
     });
   });
@@ -157,7 +168,7 @@ describe("catalog", () => {
     it("includes category headers", () => {
       const options = getIntegrationSelectOptionsWithHeaders();
       const headers = options.filter((o) => o.isHeader);
-      assertEquals(headers.length, INTEGRATION_CATEGORIES.length);
+      assertEquals(headers.length, 5);
     });
 
     it("header values have __header_ prefix", () => {
@@ -174,6 +185,16 @@ describe("catalog", () => {
       const integrations = options.filter((o) => !o.isHeader);
       const all = getAllIntegrations();
       assertEquals(integrations.length, all.length);
+    });
+
+    it("adds headers for feature-gated categories when enabled", () => {
+      Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
+
+      const headers = getIntegrationSelectOptionsWithHeaders()
+        .filter((o) => o.isHeader)
+        .map((o) => o.label);
+
+      assertEquals(headers.includes("── Sales & CRM ──"), true);
     });
 
     it("headers have formatted labels with dashes", () => {

@@ -26,6 +26,21 @@ describe("guide content contracts", () => {
     );
   });
 
+  it("documents feature-gated integrations without describing them as removed", async () => {
+    const docs = [
+      await Deno.readTextFile("docs/guides/integrations.md"),
+      await Deno.readTextFile("docs/guides/oauth.md"),
+      await Deno.readTextFile("docs/api-reference/veryfront/oauth.md"),
+    ].join("\n");
+
+    assertStringIncludes(docs, "VERYFRONT_EXPERIMENTAL_INTEGRATIONS");
+    assertStringIncludes(docs, "feature-gated integrations");
+    assertStringIncludes(docs, "salesforceConfig");
+    assertStringIncludes(docs, "Salesforce");
+
+    assertEquals(docs.includes("removed OAuth provider exports"), false);
+  });
+
   it("does not document caller-provided endUserId as tool context authority", async () => {
     const guide = await Deno.readTextFile("docs/guides/tools.md");
 

@@ -35,9 +35,6 @@ export default defineConfig({
     linear: {
       perUser: true,
     },
-
-    // API-key based (no OAuth needed)
-    stripe: {},
   },
 });
 ```
@@ -78,9 +75,17 @@ directly.
 
 ## Available integrations
 
-The built-in connector catalog covers categories such as project management,
-code hosting, communication, documents, storage, CRM, databases, analytics,
-finance, support, calendar, marketing, commerce, and social platforms.
+The built-in connector catalog shows the supported end-user surface by default:
+Google Workspace (including Google Calendar), Microsoft 365, Atlassian, Slack,
+GitHub, GitLab, Asana, Linear, Notion, Figma, Airtable, and Sentry.
+
+Additional connector templates remain in the source tree but are hidden from the
+CLI, MCP catalog tools, and runtime connector list unless they are explicitly
+enabled with `VERYFRONT_EXPERIMENTAL_INTEGRATIONS`. Set it to a comma-separated
+list such as `salesforce,stripe`, or to `all` for local experimentation. These
+feature-gated templates are Anthropic, AWS, Bitbucket, Mixpanel, Neon, PostHog,
+Salesforce, ServiceNow, Shopify, Snowflake, Stripe, Supabase, Trello, and
+Twilio.
 
 Use the generated integration metadata reference when you need exact exported
 names or icon metadata:

@@ -1,5 +1,9 @@
 /**
- * OAuth 2.0 with 36 pre-configured providers.
+ * OAuth 2.0 with pre-configured providers.
+ *
+ * Default supported integrations are visible in the CLI/MCP/runtime connector
+ * surface. Additional provider configs are retained for feature-gated
+ * integrations enabled with VERYFRONT_EXPERIMENTAL_INTEGRATIONS.
  *
  * @example
  * ```typescript

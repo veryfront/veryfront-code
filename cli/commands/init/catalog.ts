@@ -6,6 +6,10 @@
 import type { IntegrationName } from "../../templates/types.ts";
 import type { InitTemplate } from "./types.ts";
 import type { SelectOption } from "../../utils/terminal-select.ts";
+import {
+  filterVisibleIntegrations,
+  isVisibleIntegration,
+} from "../../../src/integrations/feature-flags.ts";
 
 // ============================================================================
 // Templates
@@ -79,7 +83,7 @@ export const INTEGRATION_CATEGORIES: readonly IntegrationCategory[] = [
   {
     name: "Productivity",
     integrations: [
-      { id: "calendar", label: "Calendar", description: "Google Calendar events" },
+      { id: "calendar", label: "Google Calendar", description: "Google Calendar events" },
       { id: "notion", label: "Notion", description: "Pages, databases, blocks" },
       { id: "jira", label: "Jira", description: "Issues, projects, sprints" },
       { id: "linear", label: "Linear", description: "Issue tracking" },
@@ -166,7 +170,9 @@ export const INTEGRATION_CATEGORIES: readonly IntegrationCategory[] = [
 
 /** Get all integrations as a flat array */
 export function getAllIntegrations(): IntegrationOption[] {
-  return INTEGRATION_CATEGORIES.flatMap((cat) => [...cat.integrations]);
+  return filterVisibleIntegrations(
+    INTEGRATION_CATEGORIES.flatMap((cat) => [...cat.integrations]),
+  );
 }
 
 /** Get integrations as SelectOption[] for terminal-select */
@@ -201,6 +207,11 @@ export function getIntegrationSelectOptionsWithHeaders(): Array<
   const choices: Array<SelectOption & { isHeader?: boolean }> = [];
 
   for (const category of INTEGRATION_CATEGORIES) {
+    const integrations = category.integrations.filter((integration) =>
+      isVisibleIntegration(integration.id)
+    );
+    if (integrations.length === 0) continue;
+
     choices.push({
       value: `__header_${category.name}`,
       label: `── ${category.name} ──`,
@@ -208,7 +219,7 @@ export function getIntegrationSelectOptionsWithHeaders(): Array<
       isHeader: true,
     });
 
-    for (const integration of category.integrations) {
+    for (const integration of integrations) {
       choices.push({
         value: integration.id,
         label: integration.label,

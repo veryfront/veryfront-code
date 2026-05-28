@@ -5,56 +5,201 @@
   "description": "Monitor errors, track issues, and manage Sentry projects",
   "category": "development",
   "auth": {
-    "type": "api-key",
-    "tokenName": "Auth Token",
-    "docsUrl": "https://docs.sentry.io/api/auth/",
+    "type": "oauth2",
+    "provider": "sentry",
+    "authorizationUrl": "https://sentry.io/oauth/authorize/",
+    "tokenUrl": "https://sentry.io/oauth/token/",
+    "scopes": [
+      "org:read",
+      "project:read",
+      "event:read",
+      "event:write"
+    ],
+    "callbackPath": "/oauth/callback/sentry",
+    "tokenAuthMethod": "none",
+    "pkce": true,
+    "supportsRefreshToken": true,
     "requiredApis": [
       {
-        "name": "Sentry API",
-        "enableUrl": "https://sentry.io/settings/account/api/auth-tokens/"
+        "name": "Sentry OAuth Application",
+        "enableUrl": "https://sentry.io/settings/account/api/applications/"
       }
     ]
   },
   "envVars": [
     {
-      "name": "SENTRY_AUTH_TOKEN",
-      "description": "Sentry Auth Token for API access",
+      "name": "SENTRY_CLIENT_ID",
+      "description": "Sentry OAuth Client ID from your public OAuth application",
       "required": true,
-      "sensitive": true,
+      "sensitive": false,
       "docsUrl": "https://docs.sentry.io/api/auth/"
     },
     {
       "name": "SENTRY_ORG",
-      "description": "Your Sentry organization slug",
-      "required": true,
+      "description": "Default Sentry organization slug for prompts that do not specify one",
+      "required": false,
       "sensitive": false,
-      "docsUrl": "https://docs.sentry.io/api/"
+      "docsUrl": "https://docs.sentry.io/api/organizations/"
     }
   ],
   "tools": [
     {
+      "id": "list_organizations",
+      "name": "List Organizations",
+      "description": "List Sentry organizations available to the authenticated user so agents can discover organization slugs before project or issue calls",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://sentry.io/api/0/organizations/",
+        "params": {
+          "owner": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Restrict results to organizations where the authenticated user is an owner"
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Filter organizations by name, slug, status, id, email, or member id"
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor"
+          }
+        }
+      }
+    },
+    {
       "id": "list_projects",
       "name": "List Projects",
-      "description": "List all projects in your Sentry organization",
-      "requiresWrite": false
+      "description": "List Sentry projects for an organization",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://sentry.io/api/0/organizations/{organizationSlug}/projects/",
+        "params": {
+          "organizationSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry organization slug",
+            "required": true
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor"
+          }
+        }
+      }
     },
     {
       "id": "list_issues",
       "name": "List Issues",
-      "description": "List issues/errors in a Sentry project with optional filters",
-      "requiresWrite": false
+      "description": "List Sentry issues for a project",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://sentry.io/api/0/projects/{organizationSlug}/{projectSlug}/issues/",
+        "params": {
+          "organizationSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry organization slug",
+            "required": true
+          },
+          "projectSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry project slug",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Sentry issue search query, for example is:unresolved"
+          },
+          "statsPeriod": {
+            "type": "string",
+            "in": "query",
+            "description": "Stats period, for example 24h, 14d, or 30d"
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum number of issues to return"
+          },
+          "cursor": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor"
+          }
+        }
+      }
     },
     {
       "id": "get_issue",
       "name": "Get Issue",
-      "description": "Get detailed information about a specific Sentry issue",
-      "requiresWrite": false
+      "description": "Get details for a Sentry issue",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://sentry.io/api/0/organizations/{organizationSlug}/issues/{issueId}/",
+        "params": {
+          "organizationSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry organization slug",
+            "required": true
+          },
+          "issueId": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry issue ID",
+            "required": true
+          },
+          "collapse": {
+            "type": "string[]",
+            "in": "query",
+            "description": "Optional response sections to collapse"
+          }
+        }
+      }
     },
     {
       "id": "resolve_issue",
       "name": "Resolve Issue",
-      "description": "Mark a Sentry issue as resolved",
-      "requiresWrite": true
+      "description": "Resolve a Sentry issue",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://sentry.io/api/0/organizations/{organizationSlug}/issues/{issueId}/",
+        "params": {
+          "organizationSlug": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry organization slug",
+            "required": true
+          },
+          "issueId": {
+            "type": "string",
+            "in": "path",
+            "description": "Sentry issue ID",
+            "required": true
+          }
+        },
+        "body": {
+          "status": {
+            "type": "string",
+            "description": "New issue status",
+            "default": "resolved"
+          },
+          "statusDetails": {
+            "type": "object",
+            "description": "Optional Sentry status details"
+          }
+        }
+      }
     }
   ],
   "prompts": [
@@ -80,5 +225,9 @@
       "icon": "activity"
     }
   ],
-  "suggestedWith": ["github", "slack", "linear"]
+  "suggestedWith": [
+    "github",
+    "slack",
+    "linear"
+  ]
 }

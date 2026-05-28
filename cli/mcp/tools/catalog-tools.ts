@@ -7,6 +7,9 @@ import type { InferSchema } from "veryfront/extensions/schema";
 import { join } from "veryfront/platform/path";
 import { cwd } from "veryfront/platform";
 import { withSpan } from "veryfront/observability/otlp-setup";
+import { connectors } from "../../../src/integrations/_data.ts";
+import { filterVisibleIntegrations } from "../../../src/integrations/feature-flags.ts";
+import { INTEGRATION_CATEGORIES } from "../../commands/init/catalog.ts";
 import type { MCPTool } from "../tools.ts";
 import { directoryExists, formatError, toSlug } from "./helpers.ts";
 import type { InitTemplate } from "../../commands/init/types.ts";
@@ -127,151 +130,54 @@ interface IntegrationInfo {
   displayName: string;
   category: string;
   description: string;
-  authType: "oauth2" | "api-key";
+  authType: "oauth2" | "oauth1" | "api-key";
 }
 
-const INTEGRATIONS: IntegrationInfo[] = [
-  {
-    name: "gmail",
-    displayName: "Gmail",
-    category: "productivity",
-    description: "Read, send, and manage emails",
-    authType: "oauth2",
-  },
-  {
-    name: "calendar",
-    displayName: "Google Calendar",
-    category: "productivity",
-    description: "Manage events and schedules",
-    authType: "oauth2",
-  },
-  {
-    name: "slack",
-    displayName: "Slack",
-    category: "communication",
-    description: "Send messages and manage channels",
-    authType: "oauth2",
-  },
-  {
-    name: "notion",
-    displayName: "Notion",
-    category: "productivity",
-    description: "Read and write Notion pages",
-    authType: "oauth2",
-  },
-  {
-    name: "sheets",
-    displayName: "Google Sheets",
-    category: "data",
-    description: "Read and write spreadsheets",
-    authType: "oauth2",
-  },
-  {
-    name: "drive",
-    displayName: "Google Drive",
-    category: "productivity",
-    description: "Manage files and folders",
-    authType: "oauth2",
-  },
-  {
-    name: "docs-google",
-    displayName: "Google Docs",
-    category: "productivity",
-    description: "Read and edit documents",
-    authType: "oauth2",
-  },
-  {
-    name: "github",
-    displayName: "GitHub",
-    category: "development",
-    description: "Manage repos, issues, and PRs",
-    authType: "oauth2",
-  },
-  {
-    name: "gitlab",
-    displayName: "GitLab",
-    category: "development",
-    description: "Manage projects and pipelines",
-    authType: "oauth2",
-  },
-  {
-    name: "jira",
-    displayName: "Jira",
-    category: "development",
-    description: "Track issues and projects",
-    authType: "oauth2",
-  },
-  {
-    name: "linear",
-    displayName: "Linear",
-    category: "development",
-    description: "Issue tracking and project management",
-    authType: "oauth2",
-  },
-  {
-    name: "sentry",
-    displayName: "Sentry",
-    category: "development",
-    description: "Error tracking and monitoring",
-    authType: "api-key",
-  },
-  {
-    name: "teams",
-    displayName: "Microsoft Teams",
-    category: "communication",
-    description: "Chat and collaboration",
-    authType: "oauth2",
-  },
-  {
-    name: "outlook",
-    displayName: "Outlook",
-    category: "communication",
-    description: "Email and calendar",
-    authType: "oauth2",
-  },
-  {
-    name: "zoom",
-    displayName: "Zoom",
-    category: "communication",
-    description: "Video meetings",
-    authType: "oauth2",
-  },
-  {
-    name: "airtable",
-    displayName: "Airtable",
-    category: "data",
-    description: "Database and spreadsheets",
-    authType: "oauth2",
-  },
-  {
-    name: "snowflake",
-    displayName: "Snowflake",
-    category: "data",
-    description: "Data warehouse queries",
-    authType: "api-key",
-  },
-  {
-    name: "supabase",
-    displayName: "Supabase",
-    category: "data",
-    description: "Database and auth",
-    authType: "api-key",
-  },
-  {
-    name: "neon",
-    displayName: "Neon",
-    category: "data",
-    description: "Serverless Postgres",
-    authType: "oauth2",
-  },
-  {
-    name: "anthropic",
-    displayName: "Anthropic",
-    category: "ai",
-    description: "Claude AI models",
-    authType: "api-key",
-  },
-];
+function getMcpCategory(categoryName: string): string {
+  switch (categoryName) {
+    case "Communication":
+      return "communication";
+    case "Productivity":
+      return "productivity";
+    case "Development":
+      return "development";
+    case "Storage":
+      return "data";
+    case "Infrastructure":
+      return "infrastructure";
+    case "Sales & CRM":
+      return "sales";
+    case "Support":
+      return "support";
+    case "Finance":
+      return "finance";
+    case "Marketing":
+      return "marketing";
+    case "Design":
+      return "design";
+    case "AI Providers":
+      return "ai";
+    default:
+      return "other";
+  }
+}
+
+const connectorByName = new Map(connectors.map((connector) => [connector.name, connector]));
+
+const INTEGRATIONS: IntegrationInfo[] = INTEGRATION_CATEGORIES.flatMap((category) =>
+  category.integrations.flatMap((integration) => {
+    const connector = connectorByName.get(integration.id);
+    if (!connector) return [];
+
+    return [{
+      name: integration.id,
+      displayName: integration.label,
+      category: getMcpCategory(category.name),
+      description: integration.description,
+      authType: connector.auth.type as IntegrationInfo["authType"],
+    }];
+  })
+);
 
 interface UsecaseInfo {
   name: string;
@@ -364,7 +270,20 @@ export const vfListTemplates: MCPTool<ListTemplatesInput, TemplateInfo[]> = {
 const getListIntegrationsInput = defineSchema((v) =>
   v.object({
     category: v
-      .enum(["all", "productivity", "development", "communication", "data", "ai"])
+      .enum([
+        "all",
+        "productivity",
+        "development",
+        "communication",
+        "data",
+        "infrastructure",
+        "sales",
+        "support",
+        "finance",
+        "marketing",
+        "design",
+        "ai",
+      ])
       .optional()
       .default("all")
       .describe("Filter integrations by category"),
@@ -383,8 +302,9 @@ export const vfListIntegrations: MCPTool<ListIntegrationsInput, IntegrationInfo[
   inputSchema: listIntegrationsInput,
   execute: (input) => {
     const { category } = input;
-    if (category === "all") return Promise.resolve(INTEGRATIONS);
-    return Promise.resolve(INTEGRATIONS.filter((i) => i.category === category));
+    const integrations = filterVisibleIntegrations(INTEGRATIONS);
+    if (category === "all") return Promise.resolve(integrations);
+    return Promise.resolve(integrations.filter((i) => i.category === category));
   },
 };
 

@@ -29,6 +29,11 @@ describe("oauth provider configs", () => {
     assertEquals("dropbox" in commonServices, false);
   });
 
+  it("hides feature-gated CRM OAuth provider configs from common services by default", () => {
+    assertEquals("hubspot" in commonServices, false);
+    assertEquals("salesforce" in commonServices, false);
+  });
+
   it("keeps the Slack runtime scopes aligned with the connector surface", async () => {
     assertEquals(slackConfig.defaultScopes, await readSlackConnectorScopes());
     assertEquals(slackConfig.defaultScopes, SLACK_SETUP_SCOPES);
