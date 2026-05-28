@@ -468,6 +468,24 @@ describe("tool-helpers", () => {
       }
     });
 
+    it("exposes inline configured tools under the configured map key", async () => {
+      const upstreamTool = tool({
+        id: "upstream-bash",
+        description: "Run bash",
+        inputSchema: defineSchema((v) => v.object({ command: v.string() }))(),
+        execute: async () => ({ ok: true }),
+      });
+
+      const defs = await getAvailableTools(
+        {
+          bash: upstreamTool,
+        },
+        { includeIntegrationTools: false },
+      );
+
+      assertEquals(defs.map((def) => def.name), ["bash"]);
+    });
+
     it("forwarded definitions are filtered by allowedRemoteToolNames", async () => {
       toolRegistry.clearAll();
 

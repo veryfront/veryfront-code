@@ -115,6 +115,8 @@ async function generateManifest(): Promise<TemplateManifest> {
 			files[mappedPath] = content;
 		}
 
+		if (Object.keys(files).length === 0) continue;
+
 		manifest.templates[`integration:${integrationName}`] = { files };
 	}
 

@@ -288,7 +288,7 @@ function addToolDefinition(
   // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
   tool: Tool<any, any>,
 ): void {
-  const def = toolToProviderDefinition(tool);
+  const def = toolToProviderDefinition({ ...tool, id: name });
   logToolDefinition(name, def);
   tools.push(def);
 }

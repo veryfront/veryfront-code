@@ -118,12 +118,15 @@ function normalizeJsonSchema(value: unknown): JsonSchema | undefined {
   return schema;
 }
 
-function normalizeBashTool(toolDefinition: unknown): SandboxShellToolDefinition {
+function normalizeBashTool(
+  toolName: string,
+  toolDefinition: unknown,
+): SandboxShellToolDefinition {
   if (!isRecord(toolDefinition)) {
-    return {};
+    return { id: toolName };
   }
 
-  const normalized: SandboxShellToolDefinition = {};
+  const normalized: SandboxShellToolDefinition = { id: toolName };
   const id = toolDefinition.id;
   const type = toolDefinition.type;
   const description = toolDefinition.description;
@@ -163,7 +166,7 @@ export function normalizeBashToolSet(bashTools: Record<string, unknown>): Sandbo
   return Object.fromEntries(
     Object.entries(bashTools).map((
       [name, toolDefinition],
-    ) => [name, normalizeBashTool(toolDefinition)]),
+    ) => [name, normalizeBashTool(name, toolDefinition)]),
   );
 }
 
