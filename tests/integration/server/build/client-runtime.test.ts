@@ -137,11 +137,11 @@ describe(
         assertStringIncludes(html, "/jsx-dev-runtime");
       });
 
-      it("should use React 19.1.1", async () => {
+      it("should use React 19.2.4", async () => {
         const html = await generateImportMap();
 
-        assertStringIncludes(html, "react@19.1.1");
-        assertStringIncludes(html, "react-dom@19.1.1");
+        assertStringIncludes(html, "react@19.2.4");
+        assertStringIncludes(html, "react-dom@19.2.4");
       });
 
       it("should have valid JSON structure", async () => {
@@ -189,7 +189,7 @@ describe(
         const importMap = await generateImportMap();
         const appCode = generateAppModule();
 
-        assert(importMap.includes("19.1.1"));
+        assert(importMap.includes("19.2.4"));
         assertStringIncludes(appCode, "2.0.0");
       });
     });
