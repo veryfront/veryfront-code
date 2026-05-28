@@ -168,8 +168,9 @@ describe({ name: "serveModule", sanitizeResources: false, sanitizeOps: false }, 
 
     assertEquals(response.status, 200);
     const text = await response.text();
-    assertEquals(text.includes("react"), true);
     assertEquals(text.includes("export"), true);
+    assertEquals(text.includes("https://esm.sh/react@19.2.4"), true);
+    assertEquals(text.includes("@veryfront/react-upstream"), false);
   });
 
   it("should serve browser-safe framework version constants with the embedded version", async () => {

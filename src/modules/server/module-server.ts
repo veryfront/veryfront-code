@@ -19,6 +19,7 @@ import {
   FRAMEWORK_ROOT,
   resolveFrameworkSourcePath,
 } from "#veryfront/platform/compat/framework-source-resolver.ts";
+import { getReactUrls, REACT_DEFAULT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 
 const logger = serverLogger.component("module-server");
 
@@ -336,7 +337,12 @@ export function serveModule(req: Request, options: ModuleServerOptions): Promise
       }
 
       try {
-        const findResult = await findSourceFile(secureFs, projectDir, filePathWithoutExt);
+        const findResult = await findSourceFile(
+          secureFs,
+          projectDir,
+          filePathWithoutExt,
+          reactVersion,
+        );
         if (!findResult) {
           logger.warn("Module not found", {
             modulePath,
@@ -442,10 +448,64 @@ interface FindSourceFileResult {
   embeddedContent?: string;
 }
 
+const REACT_PACKAGE_ASSET_SPECIFIERS: Record<string, string> = {
+  "react/react": "react",
+  "react/react-dom": "react-dom",
+  "react/react-dom-client": "react-dom/client",
+  "react/react-dom-server": "react-dom/server",
+  "react/jsx-runtime": "react/jsx-runtime",
+  "react/jsx-dev-runtime": "react/jsx-dev-runtime",
+};
+
+function hasUnsafePackageAssetPath(path: string): boolean {
+  return path.includes("\0") || path.includes("%") || /(^|[/\\])\.\.([/\\]|$)/.test(path);
+}
+
+function createBrowserReactPackageShim(
+  basePathWithoutExt: string,
+  reactVersion = REACT_DEFAULT_VERSION,
+): string | null {
+  const specifier = REACT_PACKAGE_ASSET_SPECIFIERS[basePathWithoutExt];
+  if (!specifier) return null;
+
+  const url = getReactUrls(reactVersion)[specifier];
+  if (!url) return null;
+
+  const defaultExport = specifier === "react" ||
+      specifier === "react-dom" ||
+      specifier === "react-dom/client" ||
+      specifier === "react-dom/server"
+    ? `export { default } from ${JSON.stringify(url)};\n`
+    : "";
+
+  return `export * from ${JSON.stringify(url)};\n${defaultExport}`;
+}
+
+async function findFrameworkPackageAssetFile(
+  fs: ReturnType<typeof createFileSystem>,
+  basePathWithoutExt: string,
+  extensions: readonly string[],
+): Promise<string | null> {
+  if (hasUnsafePackageAssetPath(basePathWithoutExt)) return null;
+
+  for (const ext of extensions) {
+    const candidatePath = join(FRAMEWORK_ROOT, basePathWithoutExt + ext);
+    try {
+      const stat = await fs.stat(candidatePath);
+      if (stat.isFile) return candidatePath;
+    } catch {
+      /* expected: package asset may not exist in source checkouts */
+    }
+  }
+
+  return null;
+}
+
 async function findSourceFile(
   secureFs: ReturnType<typeof createSecureFs>,
   projectDir: string,
   basePath: string,
+  reactVersion?: string,
 ): Promise<FindSourceFileResult | null> {
   // Extensions including .src for compiled binary embedded sources
   const extensions = [
@@ -498,11 +558,31 @@ async function findSourceFile(
     };
   }
 
-  if (isFrameworkPath || isFrameworkPackageAssetPath) {
+  if (isFrameworkPackageAssetPath) {
+    const browserReactShim = createBrowserReactPackageShim(basePathWithoutExt, reactVersion);
+    if (browserReactShim) {
+      return {
+        path: `embedded:${basePathWithoutExt}.js`,
+        isFrameworkFile: true,
+        embeddedContent: browserReactShim,
+      };
+    }
+
+    const packageAssetPath = await findFrameworkPackageAssetFile(
+      createFileSystem(),
+      basePathWithoutExt,
+      extensions,
+    );
+    if (packageAssetPath) {
+      return { path: packageAssetPath, isFrameworkFile: true };
+    }
+  }
+
+  if (isFrameworkPath) {
     const frameworkResult = await resolveFrameworkSourcePath(
-      isFrameworkPath ? basePathWithoutExt.slice("_veryfront/".length) : basePathWithoutExt,
+      basePathWithoutExt.slice("_veryfront/".length),
       {
-        extraLookupDirs: [FRAMEWORK_ROOT, join(projectDir, "src")],
+        extraLookupDirs: [join(projectDir, "src")],
         extensions,
       },
     );
