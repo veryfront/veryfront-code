@@ -1107,6 +1107,67 @@ describe("Sandbox", () => {
       }
     });
 
+    it("reprovisions SDK-created Kubernetes sessions when the runtime endpoint never becomes ready", async () => {
+      setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
+      mockTimers({ advanceTimeByMs: true });
+      mockFetch([
+        jsonResponse({
+          id: "stale",
+          endpoint: "https://2826936518.sandbox.veryfront.org",
+          status: "running",
+        }),
+        () => {
+          throw new TypeError("fetch failed");
+        },
+        () => {
+          throw new TypeError("fetch failed");
+        },
+        jsonResponse({ ok: true }),
+        jsonResponse({
+          id: "fresh",
+          endpoint: "https://1373820032.sandbox.veryfront.org",
+          status: "running",
+        }),
+        jsonResponse({ status: "ok" }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        startupTimeoutMs: 3,
+        pollIntervalMs: 2,
+        controlRequestTimeoutMs: 0,
+      });
+
+      try {
+        assertEquals(await sandbox.executeCommand("echo ok"), {
+          stdout: "ok\n",
+          stderr: "",
+          exitCode: 0,
+        });
+
+        assertEquals(fetchCalls.map((call) => call.url), [
+          "https://api.test.com/sandbox-sessions",
+          "http://sandbox.veryfront-sandbox-2826936518.svc.cluster.local/readyz",
+          "http://sandbox.veryfront-sandbox-2826936518.svc.cluster.local/readyz",
+          "https://api.test.com/sandbox-sessions/stale",
+          "https://api.test.com/sandbox-sessions",
+          "http://sandbox.veryfront-sandbox-1373820032.svc.cluster.local/readyz",
+          "https://api.test.com/sandbox-sessions/fresh/heartbeat",
+          "http://sandbox.veryfront-sandbox-1373820032.svc.cluster.local/exec",
+        ]);
+        assertEquals(fetchCalls[3]!.init?.method, "DELETE");
+      } finally {
+        await sandbox.close();
+      }
+    });
+
     it("times out stalled lazy background-command control requests", async () => {
       let capturedSignal: AbortSignal | undefined;
 
