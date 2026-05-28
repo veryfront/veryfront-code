@@ -572,6 +572,98 @@ function maskGeneric(toolName: string, charCount: number): string {
   return `[${toolName} output omitted (${charCount} chars)]`;
 }
 
+const EMAIL_SUMMARY_TOOL_RE = /(?:^|__)(?:list_emails|search_emails)$/;
+const EMAIL_SUMMARY_FIELDS = [
+  "id",
+  "threadId",
+  "from",
+  "sender",
+  "to",
+  "subject",
+  "date",
+  "receivedDateTime",
+  "snippet",
+  "labelIds",
+  "isUnread",
+  "unread",
+] as const;
+
+function isEmailSummaryTool(toolName: string): boolean {
+  return EMAIL_SUMMARY_TOOL_RE.test(toolName);
+}
+
+function compactEmailContactValue(value: Record<string, unknown>): Record<string, unknown> | null {
+  const compact: Record<string, unknown> = {};
+  const emailAddress = value.emailAddress;
+
+  if (isRecord(emailAddress)) {
+    if (typeof emailAddress.name === "string") compact.name = emailAddress.name;
+    if (typeof emailAddress.address === "string") compact.address = emailAddress.address;
+  }
+
+  for (const field of ["name", "address", "email"] as const) {
+    if (typeof value[field] === "string") compact[field] = value[field];
+  }
+
+  return Object.keys(compact).length > 0 ? compact : null;
+}
+
+function compactEmailMessageValue(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) return null;
+
+  const compact: Record<string, unknown> = {};
+  for (const field of EMAIL_SUMMARY_FIELDS) {
+    const fieldValue = value[field];
+    if (typeof fieldValue === "string") {
+      compact[field] = field === "snippet" ? truncate(fieldValue, 300) : fieldValue;
+    } else if (typeof fieldValue === "boolean" || typeof fieldValue === "number") {
+      compact[field] = fieldValue;
+    } else if (Array.isArray(fieldValue)) {
+      compact[field] = fieldValue.filter((item) => typeof item === "string");
+    } else if (isRecord(fieldValue) && (field === "from" || field === "sender")) {
+      const contact = compactEmailContactValue(fieldValue);
+      if (contact) compact[field] = contact;
+    }
+  }
+
+  return Object.keys(compact).length > 0 ? compact : null;
+}
+
+function compactEmailSummaryOutput(rawValue: unknown): Record<string, unknown> | null {
+  const parsed = tryParseJson(rawValue);
+  const output = isRecord(parsed) ? parsed : null;
+  const sourceMessages = Array.isArray(parsed)
+    ? parsed
+    : Array.isArray(output?.messages)
+    ? output.messages
+    : Array.isArray(output?.value)
+    ? output.value
+    : null;
+
+  if (!sourceMessages) return null;
+
+  const messages = sourceMessages
+    .map((message) => compactEmailMessageValue(message))
+    .filter((message): message is Record<string, unknown> => message !== null);
+
+  if (messages.length === 0) return null;
+
+  const compacted: Record<string, unknown> = {
+    messageCount: messages.length,
+    messages,
+    omitted: "large email bodies and provider-specific payload fields",
+  };
+
+  if (output && "nextPageToken" in output) {
+    compacted.nextPageToken = output.nextPageToken;
+  }
+  if (output && "resultSizeEstimate" in output) {
+    compacted.resultSizeEstimate = output.resultSizeEstimate;
+  }
+
+  return compacted;
+}
+
 function getOutputValue(output: unknown): unknown {
   if (!isRecord(output)) return output;
   if ((output.type === "text" || output.type === "json") && "value" in output) {
@@ -638,26 +730,30 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
 
       let masked: unknown;
 
-      switch (toolName) {
-        case "readFile":
-        case "get_file":
-          masked = maskReadFile(input, charCount);
-          break;
-        case "bash":
-          masked = maskBash(input, rawValue, charCount);
-          break;
-        case "web_search":
-          masked = maskWebSearch(rawValue);
-          break;
-        case "web_fetch":
-          masked = maskWebFetch(input, charCount);
-          break;
-        case "task":
-          masked = maskTask(rawValue, charCount);
-          break;
-        default:
-          masked = maskGeneric(toolName, charCount);
-          break;
+      if (isEmailSummaryTool(toolName)) {
+        masked = compactEmailSummaryOutput(rawValue) ?? maskGeneric(toolName, charCount);
+      } else {
+        switch (toolName) {
+          case "readFile":
+          case "get_file":
+            masked = maskReadFile(input, charCount);
+            break;
+          case "bash":
+            masked = maskBash(input, rawValue, charCount);
+            break;
+          case "web_search":
+            masked = maskWebSearch(rawValue);
+            break;
+          case "web_fetch":
+            masked = maskWebFetch(input, charCount);
+            break;
+          case "task":
+            masked = maskTask(rawValue, charCount);
+            break;
+          default:
+            masked = maskGeneric(toolName, charCount);
+            break;
+        }
       }
 
       return { ...part, output: wrapToolResultOutput(part.output, masked) };
