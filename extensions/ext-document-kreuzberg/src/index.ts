@@ -10,6 +10,7 @@
 import type { ExtensionFactory } from "veryfront/extensions";
 import type { DocumentExtractor, KreuzbergExtractor } from "veryfront/extensions/compat";
 import { loadKreuzberg } from "./kreuzberg.ts";
+import { isDeno } from "./runtime.ts";
 
 /** Maximum time to wait for document text extraction before aborting. */
 const EXTRACTION_TIMEOUT_MS = 30_000;
@@ -19,9 +20,14 @@ function extractInWorkerDeno(
   mimeType: string,
 ): Promise<string> {
   return new Promise<string>((resolve, reject) => {
-    // Static URL literal so `deno compile` traces the worker script into
-    // the binary's embedded module graph.
-    const workerUrl = new URL("./upload-extraction-worker.ts", import.meta.url);
+    // The worker ships as raw TypeScript in the compiled binary and from source
+    // (where `compile-binary.ts` force-includes it), but as transpiled JS in the
+    // npm package consumed via `deno run npm:veryfront`. Pick the sibling that
+    // matches whichever build is executing this module.
+    const workerFile = import.meta.url.endsWith(".ts")
+      ? "./upload-extraction-worker.ts"
+      : "./upload-extraction-worker.js";
+    const workerUrl = new URL(workerFile, import.meta.url);
     const worker = new Worker(workerUrl, { type: "module" });
 
     const timer = setTimeout(() => {
@@ -62,7 +68,9 @@ export class KreuzbergDocumentExtractor implements DocumentExtractor {
   }
 
   async extractInWorker(buffer: ArrayBuffer, mimeType: string): Promise<string> {
-    const isDeno = typeof Deno !== "undefined";
+    // Only a real Deno runtime gets the isolated Worker; Node/Bun extract
+    // in-process via @kreuzberg/node. See ./runtime.ts for why a bare `Deno`
+    // check is unreliable in the dnt npm build.
     if (!isDeno) {
       const { extractBytes } = await loadKreuzberg();
       const result = await extractBytes(new Uint8Array(buffer), mimeType);

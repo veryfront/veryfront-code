@@ -12,6 +12,8 @@ const DEFAULT_INCLUDES = [
   "src/platform/polyfills",
   "src/proxy/main.ts",
   "src/security/sandbox/worker-script.ts",
+  // Spawned via `new Worker(new URL(...))`, which deno compile does not trace.
+  "extensions/ext-document-kreuzberg/src/upload-extraction-worker.ts",
   "src/rendering/rsc",
   "src/utils/clsx.ts",
   "dist/framework-src",
