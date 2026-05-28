@@ -16,6 +16,8 @@ import {
   type ProviderModelMessage,
   type UploadedFileReference,
 } from "./types.ts";
+import { historicalToolSummaries } from "../integrations/_tool_summaries.ts";
+import type { IntegrationEndpointHistoricalSummary } from "../integrations/schema.ts";
 
 const CHARS_PER_TOKEN = 4;
 
@@ -572,27 +574,13 @@ function maskGeneric(toolName: string, charCount: number): string {
   return `[${toolName} output omitted (${charCount} chars)]`;
 }
 
-const EMAIL_SUMMARY_TOOL_RE = /(?:^|__)(?:list_emails|search_emails)$/;
-const EMAIL_SUMMARY_FIELDS = [
-  "id",
-  "threadId",
-  "from",
-  "sender",
-  "to",
-  "subject",
-  "date",
-  "receivedDateTime",
-  "snippet",
-  "labelIds",
-  "isUnread",
-  "unread",
-] as const;
+type HistoricalToolSummaryField = IntegrationEndpointHistoricalSummary["itemFields"][number];
+type HistoricalToolSummaryContract = IntegrationEndpointHistoricalSummary;
 
-function isEmailSummaryTool(toolName: string): boolean {
-  return EMAIL_SUMMARY_TOOL_RE.test(toolName);
-}
+function compactContactValue(value: unknown): Record<string, unknown> | string | null {
+  if (typeof value === "string") return value;
+  if (!isRecord(value)) return null;
 
-function compactEmailContactValue(value: Record<string, unknown>): Record<string, unknown> | null {
   const compact: Record<string, unknown> = {};
   const emailAddress = value.emailAddress;
 
@@ -608,57 +596,107 @@ function compactEmailContactValue(value: Record<string, unknown>): Record<string
   return Object.keys(compact).length > 0 ? compact : null;
 }
 
-function compactEmailMessageValue(value: unknown): Record<string, unknown> | null {
+function compactHistoricalField(
+  field: HistoricalToolSummaryField,
+  fieldValue: unknown,
+): unknown {
+  if (field.kind === "contact") {
+    return compactContactValue(fieldValue);
+  }
+
+  if (field.kind === "contact-array") {
+    if (!Array.isArray(fieldValue)) return null;
+    const contacts = fieldValue
+      .map((item) => compactContactValue(item))
+      .filter((item): item is Record<string, unknown> | string => item !== null);
+    return contacts.length > 0 ? contacts : null;
+  }
+
+  if (field.kind === "string-array") {
+    if (!Array.isArray(fieldValue)) return null;
+    const strings = fieldValue.filter((item) => typeof item === "string");
+    return strings.length > 0 ? strings : null;
+  }
+
+  if (typeof fieldValue === "string") {
+    return field.maxLength ? truncate(fieldValue, field.maxLength) : fieldValue;
+  }
+
+  if (typeof fieldValue === "boolean" || typeof fieldValue === "number") {
+    return fieldValue;
+  }
+
+  if (Array.isArray(fieldValue)) {
+    const strings = fieldValue.filter((item) => typeof item === "string");
+    return strings.length > 0 ? strings : null;
+  }
+
+  return null;
+}
+
+function compactHistoricalItemValue(
+  value: unknown,
+  fields: readonly HistoricalToolSummaryField[],
+): Record<string, unknown> | null {
   if (!isRecord(value)) return null;
 
   const compact: Record<string, unknown> = {};
-  for (const field of EMAIL_SUMMARY_FIELDS) {
-    const fieldValue = value[field];
-    if (typeof fieldValue === "string") {
-      compact[field] = field === "snippet" ? truncate(fieldValue, 300) : fieldValue;
-    } else if (typeof fieldValue === "boolean" || typeof fieldValue === "number") {
-      compact[field] = fieldValue;
-    } else if (Array.isArray(fieldValue)) {
-      compact[field] = fieldValue.filter((item) => typeof item === "string");
-    } else if (isRecord(fieldValue) && (field === "from" || field === "sender")) {
-      const contact = compactEmailContactValue(fieldValue);
-      if (contact) compact[field] = contact;
-    }
+  for (const field of fields) {
+    const fieldValue = compactHistoricalField(field, value[field.name]);
+    if (fieldValue !== null) compact[field.name] = fieldValue;
   }
 
   return Object.keys(compact).length > 0 ? compact : null;
 }
 
-function compactEmailSummaryOutput(rawValue: unknown): Record<string, unknown> | null {
+function findHistoricalToolSummaryContract(
+  toolName: string,
+): HistoricalToolSummaryContract | null {
+  return historicalToolSummaries[toolName] ?? null;
+}
+
+function getHistoricalSummaryItems(
+  parsed: unknown,
+  contract: HistoricalToolSummaryContract,
+): readonly unknown[] | null {
+  if (Array.isArray(parsed)) return parsed;
+  if (!isRecord(parsed)) return null;
+
+  for (const key of contract.collectionKeys) {
+    const value = parsed[key];
+    if (Array.isArray(value)) return value;
+  }
+
+  return null;
+}
+
+function compactHistoricalToolSummaryOutput(
+  rawValue: unknown,
+  contract: HistoricalToolSummaryContract,
+): Record<string, unknown> | null {
   const parsed = tryParseJson(rawValue);
   const output = isRecord(parsed) ? parsed : null;
-  const sourceMessages = Array.isArray(parsed)
-    ? parsed
-    : Array.isArray(output?.messages)
-    ? output.messages
-    : Array.isArray(output?.value)
-    ? output.value
-    : null;
+  const sourceItems = getHistoricalSummaryItems(parsed, contract);
 
-  if (!sourceMessages) return null;
+  if (!sourceItems) return null;
 
-  const messages = sourceMessages
-    .map((message) => compactEmailMessageValue(message))
-    .filter((message): message is Record<string, unknown> => message !== null);
+  const items = sourceItems
+    .map((item) => compactHistoricalItemValue(item, contract.itemFields))
+    .filter((item): item is Record<string, unknown> => item !== null);
 
-  if (messages.length === 0) return null;
+  if (items.length === 0) return null;
 
   const compacted: Record<string, unknown> = {
-    messageCount: messages.length,
-    messages,
-    omitted: "large email bodies and provider-specific payload fields",
+    [`${contract.collectionName}Count`]: items.length,
+    [contract.collectionName]: items,
+    omitted: contract.omitted,
   };
 
-  if (output && "nextPageToken" in output) {
-    compacted.nextPageToken = output.nextPageToken;
-  }
-  if (output && "resultSizeEstimate" in output) {
-    compacted.resultSizeEstimate = output.resultSizeEstimate;
+  if (output && contract.outputFields) {
+    for (const field of contract.outputFields) {
+      const fieldValue = compactHistoricalField(field, output[field.name]);
+      if (fieldValue !== null) compacted[field.name] = fieldValue;
+    }
   }
 
   return compacted;
@@ -730,8 +768,10 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
 
       let masked: unknown;
 
-      if (isEmailSummaryTool(toolName)) {
-        masked = compactEmailSummaryOutput(rawValue) ?? maskGeneric(toolName, charCount);
+      const summaryContract = findHistoricalToolSummaryContract(toolName);
+      if (summaryContract) {
+        masked = compactHistoricalToolSummaryOutput(rawValue, summaryContract) ??
+          maskGeneric(toolName, charCount);
       } else {
         switch (toolName) {
           case "readFile":

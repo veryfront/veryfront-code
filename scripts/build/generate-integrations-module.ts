@@ -1,5 +1,5 @@
 /**
- * Generates src/integrations/_data.ts from connector.json + SVG files.
+ * Generates src/integrations/_data.ts and summary metadata from connector.json + SVG files.
  * Validates every connector against the Zod schema at build time.
  *
  * Usage:
@@ -19,9 +19,13 @@ if (!tryResolve<SchemaValidator>("SchemaValidator")) {
 
 const integrationsDir = "./cli/templates/integrations";
 const dataPath = "./src/integrations/_data.ts";
+const summaryPath = "./src/integrations/_tool_summaries.ts";
 
 const connectors: IntegrationConfig[] = [];
 const icons: [string, string][] = [];
+const historicalToolSummaries: [string, NonNullable<
+  NonNullable<IntegrationConfig["tools"][number]["endpoint"]>["response"]
+>["historicalSummary"]][] = [];
 const errors: string[] = [];
 
 for await (const entry of Deno.readDir(integrationsDir)) {
@@ -58,6 +62,11 @@ for await (const entry of Deno.readDir(integrationsDir)) {
     }
 
     connectors.push(result.data);
+    for (const tool of result.data.tools) {
+      const historicalSummary = tool.endpoint?.response?.historicalSummary;
+      if (!tool.id || !historicalSummary) continue;
+      historicalToolSummaries.push([`${result.data.name}__${tool.id}`, historicalSummary]);
+    }
 
     if (result.data.icon) {
       try {
@@ -80,6 +89,7 @@ if (errors.length > 0) {
 
 connectors.sort((a, b) => a.name.localeCompare(b.name));
 icons.sort((a, b) => a[0].localeCompare(b[0]));
+historicalToolSummaries.sort((a, b) => a[0].localeCompare(b[0]));
 
 const connectorLines = formatGeneratedModuleEntries(
   connectors.map((c) => `  ${JSON.stringify(c)}`),
@@ -88,6 +98,12 @@ const connectorLines = formatGeneratedModuleEntries(
 const iconLines = formatGeneratedModuleEntries(
   icons.map(([name, svg]) =>
     `  ${JSON.stringify(name)}: ${JSON.stringify(svg)}`
+  ),
+);
+
+const historicalToolSummaryLines = formatGeneratedModuleEntries(
+  historicalToolSummaries.map(([toolName, summary]) =>
+    `  ${JSON.stringify(toolName)}: ${JSON.stringify(summary)}`
   ),
 );
 
@@ -106,6 +122,20 @@ ${iconLines}
 `,
 );
 
+await Deno.writeTextFile(
+  summaryPath,
+  `// Auto-generated — do not edit
+import type { IntegrationEndpointHistoricalSummary } from "./schema.ts";
+
+export const historicalToolSummaries: Record<string, IntegrationEndpointHistoricalSummary> = {
+${historicalToolSummaryLines}
+};
+`,
+);
+
 console.log(
   `✅ Generated ${dataPath} (${connectors.length} connectors, ${icons.length} icons)`,
+);
+console.log(
+  `✅ Generated ${summaryPath} (${historicalToolSummaries.length} summary contracts)`,
 );

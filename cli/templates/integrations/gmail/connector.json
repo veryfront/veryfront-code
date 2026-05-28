@@ -79,6 +79,26 @@
             "idField": "id",
             "metadataHeaders": ["From", "To", "Subject", "Date"],
             "maxItems": 50
+          },
+          "historicalSummary": {
+            "collectionKeys": ["messages", "data"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "threadId" },
+              { "name": "from", "kind": "contact" },
+              { "name": "sender", "kind": "contact" },
+              { "name": "to" },
+              { "name": "subject" },
+              { "name": "date" },
+              { "name": "internalDate" },
+              { "name": "snippet", "maxLength": 300 },
+              { "name": "labelIds", "kind": "string-array" },
+              { "name": "isUnread" },
+              { "name": "unread" }
+            ],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "resultSizeEstimate" }],
+            "omitted": "large email bodies and provider-specific payload fields"
           }
         }
       }
@@ -167,6 +187,26 @@
             "idField": "id",
             "metadataHeaders": ["From", "To", "Subject", "Date"],
             "maxItems": 50
+          },
+          "historicalSummary": {
+            "collectionKeys": ["messages", "data"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "threadId" },
+              { "name": "from", "kind": "contact" },
+              { "name": "sender", "kind": "contact" },
+              { "name": "to" },
+              { "name": "subject" },
+              { "name": "date" },
+              { "name": "internalDate" },
+              { "name": "snippet", "maxLength": 300 },
+              { "name": "labelIds", "kind": "string-array" },
+              { "name": "isUnread" },
+              { "name": "unread" }
+            ],
+            "outputFields": [{ "name": "nextPageToken" }, { "name": "resultSizeEstimate" }],
+            "omitted": "large email bodies and provider-specific payload fields"
           }
         }
       }

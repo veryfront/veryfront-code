@@ -20,6 +20,7 @@
 export type {
   EnvVarConfig,
   IntegrationConfig,
+  IntegrationEndpointHistoricalSummary,
   IntegrationName,
   IntegrationPrompt,
   IntegrationToolMeta,
@@ -30,6 +31,7 @@ export type {
 export {
   EnvVarSchema,
   IntegrationConfigSchema,
+  IntegrationEndpointHistoricalSummarySchema,
   IntegrationNameSchema,
   IntegrationPromptSchema,
   IntegrationToolSchema,
