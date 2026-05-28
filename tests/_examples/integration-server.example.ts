@@ -102,7 +102,7 @@ describe("Example Integration Test - Environment Variables", () => {
     "should use custom environment variables",
     { timeout: TEST_TIMEOUTS.INTEGRATION },
     async () => {
-      await withTestContext("env-vars-example", async (context) => {
+      await withTestContext("environment-variables-example", async (context) => {
         context.setEnv({
           TEST_MODE: "enabled",
           API_KEY: "test-key-123",
