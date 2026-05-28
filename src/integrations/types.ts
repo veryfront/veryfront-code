@@ -18,6 +18,26 @@ interface IntegrationEndpointBodyField {
   required?: boolean;
 }
 
+export type IntegrationHistoricalSummaryFieldKind =
+  | "scalar"
+  | "string-array"
+  | "contact"
+  | "contact-array";
+
+export interface IntegrationHistoricalSummaryField {
+  name: string;
+  kind?: IntegrationHistoricalSummaryFieldKind;
+  maxLength?: number;
+}
+
+export interface IntegrationHistoricalSummary {
+  collection_keys: string[];
+  collection_name: string;
+  item_fields: IntegrationHistoricalSummaryField[];
+  output_fields?: IntegrationHistoricalSummaryField[];
+  omitted: string;
+}
+
 export interface IntegrationEndpoint {
   type?: "rest" | "graphql";
   method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
@@ -35,6 +55,7 @@ export interface IntegrationEndpoint {
       metadataHeaders?: string[];
       maxItems?: number;
     };
+    historical_summary?: IntegrationHistoricalSummary;
   };
 }
 

@@ -147,6 +147,30 @@ export const IntegrationEndpointResponseEnrichmentSchema = lazySchema(
   getIntegrationEndpointResponseEnrichmentSchema,
 );
 
+export const getIntegrationEndpointHistoricalSummaryFieldSchema = defineSchema((v) =>
+  v.object({
+    name: v.string(),
+    kind: v.enum(["scalar", "string-array", "contact", "contact-array"]).optional(),
+    maxLength: v.number().optional(),
+  })
+);
+export const IntegrationEndpointHistoricalSummaryFieldSchema = lazySchema(
+  getIntegrationEndpointHistoricalSummaryFieldSchema,
+);
+
+export const getIntegrationEndpointHistoricalSummarySchema = defineSchema((v) =>
+  v.object({
+    collectionKeys: v.array(v.string()),
+    collectionName: v.string(),
+    itemFields: v.array(getIntegrationEndpointHistoricalSummaryFieldSchema()),
+    outputFields: v.array(getIntegrationEndpointHistoricalSummaryFieldSchema()).optional(),
+    omitted: v.string(),
+  })
+);
+export const IntegrationEndpointHistoricalSummarySchema = lazySchema(
+  getIntegrationEndpointHistoricalSummarySchema,
+);
+
 export const getIntegrationEndpointSchema = defineSchema((v) =>
   v.object({
     type: v.enum(["rest", "graphql"]).optional(),
@@ -159,6 +183,7 @@ export const getIntegrationEndpointSchema = defineSchema((v) =>
     response: v.object({
       transform: v.string().optional(),
       enrich: getIntegrationEndpointResponseEnrichmentSchema().optional(),
+      historicalSummary: getIntegrationEndpointHistoricalSummarySchema().optional(),
     }).optional(),
   })
 );
@@ -225,6 +250,10 @@ export type OAuthField = InferSchema<ReturnType<typeof getOAuthFieldSchema>>;
 export type OAuthConfig = InferSchema<ReturnType<typeof getOAuthConfigSchema>>;
 /** Public API contract for integration tool meta. */
 export type IntegrationToolMeta = InferSchema<ReturnType<typeof getIntegrationToolSchema>>;
+/** Provider-declared summary contract for old tool outputs kept actionable across turns. */
+export type IntegrationEndpointHistoricalSummary = InferSchema<
+  ReturnType<typeof getIntegrationEndpointHistoricalSummarySchema>
+>;
 /** Public API contract for integration prompt. */
 export type IntegrationPrompt = InferSchema<ReturnType<typeof getIntegrationPromptSchema>>;
 /** Configuration used by integration. */

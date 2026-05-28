@@ -3,6 +3,7 @@ import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/tes
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { airtableConfig } from "../oauth/providers/common.ts";
 import { connectors } from "./_data.ts";
+import { historicalToolSummaries } from "./_tool_summaries.ts";
 import { filterVisibleIntegrations } from "./feature-flags.ts";
 
 function getConnector(name: string) {
@@ -872,5 +873,44 @@ describe("integration endpoint specs", () => {
       "commentCreate(input: { issueId: $issueId, body: $body })",
     );
     assertEquals(linearAddComment.endpoint?.params?.body?.required, true);
+  });
+
+  it("publishes provider-declared historical summary contracts for email list/search tools", () => {
+    const gmailListEmails = getTool("gmail", "list_emails");
+    const outlookListEmails = getTool("outlook", "list_emails");
+
+    assertEquals(gmailListEmails.endpoint?.response?.historicalSummary, {
+      collectionKeys: ["messages", "data"],
+      collectionName: "messages",
+      itemFields: [
+        { name: "id" },
+        { name: "threadId" },
+        { name: "from", kind: "contact" },
+        { name: "sender", kind: "contact" },
+        { name: "to" },
+        { name: "subject" },
+        { name: "date" },
+        { name: "internalDate" },
+        { name: "snippet", maxLength: 300 },
+        { name: "labelIds", kind: "string-array" },
+        { name: "isUnread" },
+        { name: "unread" },
+      ],
+      outputFields: [{ name: "nextPageToken" }, { name: "resultSizeEstimate" }],
+      omitted: "large email bodies and provider-specific payload fields",
+    });
+    assertEquals(outlookListEmails.endpoint?.response?.historicalSummary?.outputFields, [
+      { name: "@odata.nextLink" },
+      { name: "@odata.count" },
+    ]);
+    assertEquals(
+      historicalToolSummaries["gmail__list_emails"],
+      gmailListEmails.endpoint?.response?.historicalSummary,
+    );
+    assertEquals(
+      historicalToolSummaries["outlook__search_emails"],
+      getTool("outlook", "search_emails").endpoint?.response?.historicalSummary,
+    );
+    assertEquals(historicalToolSummaries["custom__search_emails"], undefined);
   });
 });

@@ -188,6 +188,135 @@ Deno.test("maskOldToolOutputs keeps compact email metadata for historical email 
   assertEquals(compacted.debug, undefined);
 });
 
+Deno.test("maskOldToolOutputs keeps provider-scoped Outlook email action fields", () => {
+  const messages = [
+    { role: "user", content: "check outlook" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-outlook-list",
+          toolName: "outlook__list_emails",
+          input: { folderId: "inbox", $top: 25 },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-outlook-list",
+          toolName: "outlook__list_emails",
+          output: {
+            type: "json",
+            value: {
+              value: [
+                {
+                  id: "outlook-message-1",
+                  conversationId: "outlook-thread-1",
+                  sender: {
+                    emailAddress: {
+                      name: "Planner",
+                      address: "noreply@example.com",
+                    },
+                  },
+                  toRecipients: [
+                    {
+                      emailAddress: {
+                        name: "Koji",
+                        address: "koji@example.com",
+                      },
+                    },
+                  ],
+                  subject: "You have late tasks",
+                  receivedDateTime: "2026-05-28T10:00:00Z",
+                  bodyPreview: "Preview text ".repeat(40),
+                  isRead: false,
+                  importance: "normal",
+                  hasAttachments: true,
+                  body: { contentType: "html", content: "<p>body</p>".repeat(200) },
+                },
+              ],
+              "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/messages?$skip=10",
+              debug: "internal detail ".repeat(100),
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "summarize the first one" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+  const toolMessage = masked[2];
+  if (toolMessage?.role !== "tool") {
+    throw new Error("expected tool message");
+  }
+  const output = toolMessage.content[0]?.output;
+  if (output?.type !== "text") {
+    throw new Error("expected compacted text output");
+  }
+  const compacted = JSON.parse(output.value);
+
+  assertEquals(compacted.messages[0].id, "outlook-message-1");
+  assertEquals(compacted.messages[0].conversationId, "outlook-thread-1");
+  assertEquals(compacted.messages[0].sender, {
+    name: "Planner",
+    address: "noreply@example.com",
+  });
+  assertEquals(compacted.messages[0].toRecipients, [
+    { name: "Koji", address: "koji@example.com" },
+  ]);
+  assertEquals(compacted.messages[0].isRead, false);
+  assertEquals(compacted.messages[0].hasAttachments, true);
+  assertEquals(
+    compacted["@odata.nextLink"],
+    "https://graph.microsoft.com/v1.0/me/messages?$skip=10",
+  );
+  assertEquals(compacted.messages[0].body, undefined);
+  assertEquals(compacted.debug, undefined);
+});
+
+Deno.test("maskOldToolOutputs does not summarize unresearched email-like providers", () => {
+  const messages = [
+    { role: "user", content: "search mail" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-custom-search",
+          toolName: "custom__search_emails",
+          input: { q: "invoice" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-custom-search",
+          toolName: "custom__search_emails",
+          output: {
+            type: "json",
+            value: {
+              messages: [{ id: "custom-1", body: "body ".repeat(200) }],
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "continue" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+
+  assertStringIncludes(JSON.stringify(masked[2]), "[custom__search_emails output omitted");
+});
+
 Deno.test("enforceTokenBudget compresses the oldest turn before dropping later turns", () => {
   const messages = [
     { role: "user" as const, content: "old request ".repeat(100) },

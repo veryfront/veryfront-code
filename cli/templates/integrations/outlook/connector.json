@@ -80,7 +80,28 @@
           }
         },
         "response": {
-          "transform": "value"
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "data", "messages"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "conversationId" },
+              { "name": "from", "kind": "contact" },
+              { "name": "sender", "kind": "contact" },
+              { "name": "toRecipients", "kind": "contact-array" },
+              { "name": "subject" },
+              { "name": "receivedDateTime" },
+              { "name": "sentDateTime" },
+              { "name": "bodyPreview", "maxLength": 300 },
+              { "name": "categories", "kind": "string-array" },
+              { "name": "isRead" },
+              { "name": "importance" },
+              { "name": "hasAttachments" }
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "large email bodies and provider-specific message fields"
+          }
         }
       }
     },
@@ -157,7 +178,28 @@
           }
         },
         "response": {
-          "transform": "value"
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": ["value", "data", "messages"],
+            "collectionName": "messages",
+            "itemFields": [
+              { "name": "id" },
+              { "name": "conversationId" },
+              { "name": "from", "kind": "contact" },
+              { "name": "sender", "kind": "contact" },
+              { "name": "toRecipients", "kind": "contact-array" },
+              { "name": "subject" },
+              { "name": "receivedDateTime" },
+              { "name": "sentDateTime" },
+              { "name": "bodyPreview", "maxLength": 300 },
+              { "name": "categories", "kind": "string-array" },
+              { "name": "isRead" },
+              { "name": "importance" },
+              { "name": "hasAttachments" }
+            ],
+            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "omitted": "large email bodies and provider-specific message fields"
+          }
         }
       }
     },
