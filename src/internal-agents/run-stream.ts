@@ -34,6 +34,10 @@ const getAnyObjectSchema = defineSchema((v) => v.record(v.string(), v.unknown())
 const anyObjectSchema = lazySchema(getAnyObjectSchema) as Schema<Record<string, unknown>>;
 const logger = serverLogger.component("internal-agent-run-stream");
 const PROJECT_AGENT_SANDBOX_BASH_TOOL_NAME = "bash";
+const INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS = 25_000;
+const INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME = new TextEncoder().encode(
+  ": internal-agent-runtime-heartbeat\n\n",
+);
 
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
@@ -52,6 +56,7 @@ export interface RuntimeAgentStreamExecutionDeps {
     apiUrl?: string;
     authToken?: string;
     projectId?: string | null;
+    sandboxEndpoint?: string;
   };
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   createAgentServiceSandboxTools?: (
@@ -193,7 +198,9 @@ function getStringProperty(value: Record<string, unknown>, keys: string[]): stri
   return undefined;
 }
 
-function getAgentSandboxConfig(agent: Agent): { sandboxId?: string; projectId?: string } {
+function getAgentSandboxConfig(
+  agent: Agent,
+): { sandboxId?: string; sandboxEndpoint?: string; projectId?: string } {
   const config = agent.config as Agent["config"] & { sandbox?: unknown };
   if (!isRecord(config.sandbox)) {
     return {};
@@ -201,6 +208,7 @@ function getAgentSandboxConfig(agent: Agent): { sandboxId?: string; projectId?: 
 
   return {
     sandboxId: getStringProperty(config.sandbox, ["id", "sandboxId", "sessionId"]),
+    sandboxEndpoint: getStringProperty(config.sandbox, ["endpoint", "sandboxEndpoint"]),
     projectId: getStringProperty(config.sandbox, ["projectId"]),
   };
 }
@@ -232,6 +240,12 @@ async function buildProjectAgentSandboxTools(input: {
       : {}),
     ...(sandboxConfig.sandboxId
       ? { sandboxId: sandboxConfig.sandboxId, deleteOnClose: false }
+      : {}),
+    ...(sandboxConfig.sandboxEndpoint ?? input.deps.projectAgentSandbox?.sandboxEndpoint
+      ? {
+        sandboxEndpoint: sandboxConfig.sandboxEndpoint ??
+          input.deps.projectAgentSandbox?.sandboxEndpoint,
+      }
       : {}),
     getProjectId: () => sandboxConfig.projectId ?? input.deps.projectAgentSandbox?.projectId,
   });
@@ -391,6 +405,7 @@ export async function createRuntimeAgentStreamResponse(
     throw error;
   }
 
+  let stopHeartbeat: (() => void) | undefined;
   const response = new ReadableStream<Uint8Array>({
     start: async (controller) => {
       const state = createStreamTransformState();
@@ -398,6 +413,13 @@ export async function createRuntimeAgentStreamResponse(
       const decoder = new TextDecoder();
       let remainder = "";
       let aborted = false;
+      let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+      stopHeartbeat = () => {
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+          heartbeatTimer = undefined;
+        }
+      };
 
       const enqueueIfAttached = (event: string, payload: Record<string, unknown>) => {
         const encodedEvent = formatAgUiEvent(event, payload);
@@ -407,6 +429,17 @@ export async function createRuntimeAgentStreamResponse(
 
         try {
           controller.enqueue(encodedEvent);
+        } catch {
+          clientAttached = false;
+        }
+      };
+      const enqueueHeartbeatIfAttached = () => {
+        if (!clientAttached) {
+          return;
+        }
+
+        try {
+          controller.enqueue(INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME);
         } catch {
           clientAttached = false;
         }
@@ -449,6 +482,10 @@ export async function createRuntimeAgentStreamResponse(
         threadId: input.threadId,
         agentId: agent.id,
       });
+      heartbeatTimer = setInterval(
+        enqueueHeartbeatIfAttached,
+        INTERNAL_AGENT_RUNTIME_HEARTBEAT_INTERVAL_MS,
+      );
 
       try {
         while (true) {
@@ -529,6 +566,8 @@ export async function createRuntimeAgentStreamResponse(
           });
         }
       } finally {
+        stopHeartbeat?.();
+        stopHeartbeat = undefined;
         abortSignal.removeEventListener("abort", abortHandler);
         if (clientAttached) {
           controller.close();
@@ -550,6 +589,8 @@ export async function createRuntimeAgentStreamResponse(
     },
     cancel() {
       clientAttached = false;
+      stopHeartbeat?.();
+      stopHeartbeat = undefined;
       logger.info("Internal agent runtime client detached", {
         runId: input.runId,
         threadId: input.threadId,

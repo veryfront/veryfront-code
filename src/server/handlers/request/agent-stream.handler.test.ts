@@ -1135,10 +1135,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertExists(firstResult.response);
     assertEquals(firstResult.response.status, 200);
 
-    const secondResult = await handler.handle(request, createCtx(publicKeyPem));
-    assertExists(secondResult.response);
-    assertEquals(secondResult.response.status, 409);
-    assertEquals(await secondResult.response.json(), { error: 'Run "run_1" is already active' });
+    try {
+      const secondResult = await handler.handle(request, createCtx(publicKeyPem));
+      assertExists(secondResult.response);
+      assertEquals(secondResult.response.status, 409);
+      assertEquals(await secondResult.response.json(), { error: 'Run "run_1" is already active' });
+    } finally {
+      await firstResult.response.body?.cancel();
+    }
   });
 
   it("returns 500 when runtime execution setup fails unexpectedly", async () => {
