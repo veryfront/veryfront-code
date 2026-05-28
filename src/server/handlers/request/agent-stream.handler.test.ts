@@ -729,7 +729,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
         );
       }
 
-      if (String(url).includes("/projects/support-agent-fork/env-vars?")) {
+      if (String(url).includes("/projects/support-agent-fork/environment-variables?")) {
         assertEquals(String(url).includes("environment_id=env-production"), true);
         return Promise.resolve(
           new Response(
@@ -809,7 +809,7 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(capturedRemoteToolNames, ["search_knowledge"]);
     assertEquals(fetchUrls, [
       "https://api.veryfront.org/projects/support-agent-fork/environments",
-      "https://api.veryfront.org/projects/support-agent-fork/env-vars?environment_id=env-production&limit=100",
+      "https://api.veryfront.org/projects/support-agent-fork/environment-variables?environment_id=env-production&limit=100",
       "https://api.veryfront.org/mcp",
     ]);
   });
