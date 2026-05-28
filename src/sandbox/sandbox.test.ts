@@ -1059,6 +1059,54 @@ describe("Sandbox", () => {
       }
     });
 
+    it("waits for Kubernetes runtime endpoint readiness even when the session is already running", async () => {
+      setEnv("KUBERNETES_SERVICE_HOST", "kubernetes.default.svc");
+      mockTimers({ advanceTimeByMs: true });
+      mockFetch([
+        jsonResponse({
+          id: "sandbox-1",
+          endpoint: "https://3912734599.sandbox.veryfront.org",
+          status: "running",
+        }),
+        (input) => {
+          const url = String(input);
+          assertStringIncludes(url, "/readyz");
+          throw new TypeError("fetch failed");
+        },
+        jsonResponse({ status: "ok" }),
+        jsonResponse({ ok: true }),
+        ndjsonResponse([
+          { type: "stdout", data: "ok\n" },
+          { type: "exit", exitCode: 0 },
+        ]),
+        jsonResponse({ ok: true }),
+      ]);
+
+      const sandbox = Sandbox.createLazy({
+        authToken: "test-token",
+        apiUrl: "https://api.test.com",
+        execStartRetryDelayMs: 1,
+      });
+
+      try {
+        assertEquals(await sandbox.executeCommand("echo ok"), {
+          stdout: "ok\n",
+          stderr: "",
+          exitCode: 0,
+        });
+
+        assertEquals(fetchCalls.map((call) => call.url), [
+          "https://api.test.com/sandbox-sessions",
+          "http://sandbox.veryfront-sandbox-3912734599.svc.cluster.local/readyz",
+          "http://sandbox.veryfront-sandbox-3912734599.svc.cluster.local/readyz",
+          "https://api.test.com/sandbox-sessions/sandbox-1/heartbeat",
+          "http://sandbox.veryfront-sandbox-3912734599.svc.cluster.local/exec",
+        ]);
+      } finally {
+        await sandbox.close();
+      }
+    });
+
     it("times out stalled lazy background-command control requests", async () => {
       let capturedSignal: AbortSignal | undefined;
 

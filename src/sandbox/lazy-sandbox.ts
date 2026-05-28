@@ -52,6 +52,7 @@ const DEFAULT_CONTROL_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_EXEC_START_TIMEOUT_MS = 30_000;
 const DEFAULT_EXEC_START_MAX_ATTEMPTS = 3;
 const DEFAULT_EXEC_START_RETRY_DELAY_MS = 1_000;
+const RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES = new Set([404, 502, 503, 504]);
 const REPROVISIONABLE_EXEC_START_ERROR_CODES = new Set([
   "ECONNREFUSED",
   "ECONNRESET",
@@ -495,11 +496,12 @@ export class LazySandbox {
   }
 
   private async resolveReadyEndpoint(session: SandboxSessionRecord): Promise<string> {
-    if (session.status === "running") {
-      return session.endpoint;
-    }
+    const readySession = session.status === "running"
+      ? session
+      : await this.waitForReadySession(session.id);
 
-    return (await this.waitForReadySession(session.id)).endpoint;
+    await this.waitForRuntimeDataPlaneReady(readySession);
+    return readySession.endpoint;
   }
 
   private async attachExistingSession(sessionId: string): Promise<void> {
@@ -560,6 +562,39 @@ export class LazySandbox {
     }
 
     throw REQUEST_ERROR.create({ detail: "Sandbox did not become ready within timeout" });
+  }
+
+  private async waitForRuntimeDataPlaneReady(session: SandboxSessionRecord): Promise<void> {
+    if (resolveDefaultSandboxRuntimeEndpoint({ endpoint: session.endpoint }) === session.endpoint) {
+      return;
+    }
+
+    const runtimeEndpoint = this.resolveRuntimeEndpointFor(session.endpoint, session.id);
+    const start = Date.now();
+    let lastFailure = `sandbox status is ${session.status}`;
+
+    while (Date.now() - start < this.startupTimeoutMs) {
+      try {
+        const res = await this.fetchControl(`${runtimeEndpoint}/readyz`);
+
+        if (res.ok) {
+          return;
+        }
+
+        lastFailure = `${res.status} ${await res.text()}`;
+        if (!RETRYABLE_DATA_PLANE_READINESS_STATUS_CODES.has(res.status)) {
+          break;
+        }
+      } catch (error) {
+        lastFailure = error instanceof Error ? error.message : String(error);
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+    }
+
+    throw REQUEST_ERROR.create({
+      detail: `Sandbox data plane did not become ready: ${lastFailure}`,
+    });
   }
 
   private async touchSession(): Promise<void> {
@@ -717,6 +752,10 @@ export class LazySandbox {
   private resolveRuntimeEndpoint(): string {
     const endpoint = this.requireEndpoint();
     const sessionId = this.requireSessionId();
+    return this.resolveRuntimeEndpointFor(endpoint, sessionId);
+  }
+
+  private resolveRuntimeEndpointFor(endpoint: string, sessionId: string): string {
     return this.resolveRuntimeEndpointOption?.({ endpoint, sessionId }) ??
       resolveDefaultSandboxRuntimeEndpoint({ endpoint });
   }
