@@ -21,8 +21,8 @@ describe("import-map-loader", () => {
       await withImportMapTestContext("import-map-load-valid", async (context, adapter) => {
         const denoConfig = {
           imports: {
-            react: "https://esm.sh/react@19.1.1",
-            "react-dom": "https://esm.sh/react-dom@19.1.1",
+            react: "https://esm.sh/react@19.2.4",
+            "react-dom": "https://esm.sh/react-dom@19.2.4",
           },
         };
 
@@ -34,11 +34,11 @@ describe("import-map-loader", () => {
         assertExists(importMap.imports);
         assertEquals(
           importMap.imports!["react"],
-          "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3",
+          "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
         );
         assertEquals(
           importMap.imports!["react-dom"],
-          "https://esm.sh/react-dom@19.1.1?external=react&target=es2022&deps=csstype@3.2.3",
+          "https://esm.sh/react-dom@19.2.4?external=react&target=es2022&deps=csstype@3.2.3",
         );
       });
     });
@@ -47,7 +47,7 @@ describe("import-map-loader", () => {
       await withImportMapTestContext("import-map-load-scopes", async (context, adapter) => {
         const denoConfig = {
           imports: {
-            react: "https://esm.sh/react@19.1.1",
+            react: "https://esm.sh/react@19.2.4",
           },
           scopes: {
             "/vendor/": {
@@ -67,7 +67,7 @@ describe("import-map-loader", () => {
         assertExists(importMap.imports);
         assertEquals(
           importMap.imports!["react"],
-          "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3",
+          "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
         );
 
         assertExists(importMap.scopes);
@@ -122,7 +122,7 @@ describe("import-map-loader", () => {
       await withImportMapTestContext("import-map-load-traverse", async (context, adapter) => {
         const denoConfig = {
           imports: {
-            react: "https://esm.sh/react@19.1.1",
+            react: "https://esm.sh/react@19.2.4",
           },
         };
 
@@ -136,7 +136,7 @@ describe("import-map-loader", () => {
         assertExists(importMap);
         assertEquals(
           importMap.imports!["react"],
-          "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3",
+          "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
         );
       });
     });
@@ -179,7 +179,7 @@ describe("import-map-loader", () => {
 
           assertEquals(
             importMap.imports!["react"],
-            "https://esm.sh/react@19.1.1?target=es2022&deps=csstype@3.2.3",
+            "https://esm.sh/react@19.2.4?target=es2022&deps=csstype@3.2.3",
           );
         },
       );
@@ -915,9 +915,9 @@ function hello() { return 'world'; }
         const denoConfig = {
           imports: {
             "@/": "./src/",
-            react: "https://esm.sh/react@19.1.1",
-            "react-dom": "https://esm.sh/react-dom@19.1.1",
-            "react-dom/server": "https://esm.sh/react-dom@19.1.1/server",
+            react: "https://esm.sh/react@19.2.4",
+            "react-dom": "https://esm.sh/react-dom@19.2.4",
+            "react-dom/server": "https://esm.sh/react-dom@19.2.4/server",
             "std/": "https://deno.land/std@0.220.0/",
             preact: "https://esm.sh/preact@10.19.3",
           },

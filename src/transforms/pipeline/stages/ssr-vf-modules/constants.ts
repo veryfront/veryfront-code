@@ -52,8 +52,14 @@ export const frameworkFileCache = new Map<string, string>();
 // Track files currently being transformed to detect cycles
 export const transformingFiles = new Set<string>();
 
-// Maximum recursion depth for relative imports
-export const MAX_RELATIVE_IMPORT_DEPTH = 10;
+// Maximum recursion depth for chained relative imports within framework
+// source. veryfront's own framework tree has relative-import chains deeper
+// than 10 (e.g. errors/utils/schemas internals reach ~11), and crossing a
+// `#veryfront/` boundary resets the counter, so this only bounds consecutive
+// `./`/`../` nesting. Cycles are caught separately by `transformingFiles`;
+// this is purely a stack-safety bound, so it is set generously above the
+// framework's real depth. Exceeding it falls back to a degraded transform.
+export const MAX_RELATIVE_IMPORT_DEPTH = 64;
 
 export interface TransformContext {
   reactVersion: string;

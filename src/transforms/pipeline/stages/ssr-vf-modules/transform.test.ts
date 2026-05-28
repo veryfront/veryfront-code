@@ -3,8 +3,69 @@ import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/a
 import { afterAll, describe, it } from "#veryfront/testing/bdd.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
-import { transformFrameworkCode } from "./transform.ts";
-import { MAX_RELATIVE_IMPORT_DEPTH } from "./constants.ts";
+import { join } from "#veryfront/compat/path/index.ts";
+import { reactReExportToEsmUrl, transformFrameworkCode } from "./transform.ts";
+import { FRAMEWORK_ROOT, MAX_RELATIVE_IMPORT_DEPTH } from "./constants.ts";
+import { buildReactUrl } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+
+describe("reactReExportToEsmUrl", () => {
+  const reactPath = (name: string) => join(FRAMEWORK_ROOT, "react", name);
+
+  it("maps the React re-export to the esm.sh react bundle URL", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("react.js"), "19.2.4"),
+      buildReactUrl("react", "19.2.4"),
+    );
+  });
+
+  it("maps react-dom client/server re-exports", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("react-dom-client.js"), "19.2.4"),
+      buildReactUrl("react-dom", "19.2.4", "/client", true),
+    );
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("react-dom-server.js"), "19.2.4"),
+      buildReactUrl("react-dom", "19.2.4", "/server", true),
+    );
+  });
+
+  it("maps jsx-runtime re-exports", () => {
+    assertEquals(
+      reactReExportToEsmUrl(reactPath("jsx-runtime.js"), "19.2.4"),
+      buildReactUrl("react", "19.2.4", "/jsx-runtime", true),
+    );
+  });
+
+  it("returns null for non-react-re-export framework files", () => {
+    assertEquals(reactReExportToEsmUrl(join(FRAMEWORK_ROOT, "src", "foo.js"), "19.2.4"), null);
+    assertEquals(reactReExportToEsmUrl(reactPath("not-a-reexport.js"), "19.2.4"), null);
+  });
+
+  // Drift guard: every React re-export source module under `react/` must have
+  // a routing entry, otherwise SSR would link it to project React (the
+  // dual-instance bug) and nothing would catch the regression.
+  it("routes every React re-export source module to an esm.sh URL", async () => {
+    const reactSrcDir = new URL("../../../../../react/", import.meta.url);
+    const sources: string[] = [];
+    for await (const entry of Deno.readDir(reactSrcDir)) {
+      if (entry.isFile && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+        sources.push(entry.name);
+      }
+    }
+    // Sanity: the source dir was found and is non-trivial.
+    assertEquals(sources.length >= 6, true);
+
+    for (const name of sources) {
+      const compiled = name.replace(/\.ts$/, ".js");
+      const url = reactReExportToEsmUrl(reactPath(compiled), "19.2.4");
+      assertEquals(
+        typeof url === "string" && url.includes("esm.sh"),
+        true,
+        `react/${name} has no esm.sh routing entry in REACT_REEXPORT_SPECIFIERS`,
+      );
+    }
+  });
+});
 
 // esbuild starts a child process that lives across tests, so we disable sanitizers
 describe("transformFrameworkCode depth-limit fallback", {
@@ -254,14 +315,18 @@ describe("transformFrameworkCode depth-limit fallback", {
     }
   });
 
-  it("leaves bare-package imports alone in the fallback output", async () => {
+  it("materializes bare npm imports to loadable file:// bundles in the fallback", async () => {
+    // The fallback runs the same http-cache pass as the main path, so bare
+    // npm specifiers are resolved to local file:// bundles rather than left
+    // for ad-hoc runtime resolution. This keeps the fallback's cached output
+    // self-contained and Node-loadable.
     const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-fallback-" });
     const srcDir = `${tmp}/src`;
     await Deno.mkdir(srcDir, { recursive: true });
-    const sourcePath = `${srcDir}/uses-react.js`;
+    const sourcePath = `${srcDir}/uses-lodash.js`;
     const sourceContent = [
-      `import React from "react";`,
-      `export const cls = React;`,
+      `import { merge } from "lodash";`,
+      `export const fn = merge;`,
     ].join("\n");
     await Deno.writeTextFile(sourcePath, sourceContent);
 
@@ -269,15 +334,54 @@ describe("transformFrameworkCode depth-limit fallback", {
       const transformed = await transformFrameworkCode(
         sourceContent,
         sourcePath,
-        { reactVersion: "19.1.1", projectDir: tmp, fs: createFileSystem() },
+        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
         false,
         MAX_RELATIVE_IMPORT_DEPTH + 1,
       );
 
-      // Bare specifier `react` is the runtime's responsibility — fallback
-      // must not invent a file:// URL for it.
-      assertStringIncludes(transformed, 'from "react"');
-      assert(!transformed.includes("file://"));
+      // No bare specifier and no remote https: import left behind.
+      assertEquals(transformed.includes('from "lodash"'), false);
+      assertEquals(/from\s+["']https:\/\//.test(transformed), false);
+    } finally {
+      await Deno.remove(tmp, { recursive: true });
+    }
+  });
+
+  it("rewrites react imports in the fallback to a loadable, single-instance bundle", async () => {
+    // Regression: when a deep framework file exceeds the relative-import
+    // depth limit, the fallback used to leave bare `react` imports. Those
+    // resolve to the project's own React copy, distinct from the esm.sh
+    // React bundle used elsewhere during SSR — two React instances, so the
+    // dispatcher is null and the first hook throws
+    // "Cannot read properties of null (reading 'useEffect')". The fallback
+    // rewrites react/react-dom to the esm.sh bundle, then (like the main path)
+    // materializes it to a local file:// bundle so Node can load the cached
+    // fallback module (Node rejects `import ... from "https:"`).
+    const tmp = await Deno.makeTempDir({ prefix: "vf-vfmod-react-id-" });
+    const srcDir = `${tmp}/src`;
+    await Deno.mkdir(srcDir, { recursive: true });
+    const sourcePath = `${srcDir}/uses-react.js`;
+    const sourceContent = [
+      `import { useEffect } from "react";`,
+      `export const hook = useEffect;`,
+    ].join("\n");
+    await Deno.writeTextFile(sourcePath, sourceContent);
+
+    try {
+      const transformed = await transformFrameworkCode(
+        sourceContent,
+        sourcePath,
+        { reactVersion: "19.2.4", projectDir: tmp, fs: createFileSystem() },
+        false,
+        MAX_RELATIVE_IMPORT_DEPTH + 1,
+      );
+
+      // Not bare (dual-instance bug) and not a raw https: import (Node would
+      // reject it when the cached fallback module loads). It must be a local
+      // file:// bundle.
+      assertEquals(transformed.includes('from "react"'), false);
+      assertEquals(/from\s+["']https:\/\//.test(transformed), false);
+      assertStringIncludes(transformed, "file://");
     } finally {
       await Deno.remove(tmp, { recursive: true });
     }

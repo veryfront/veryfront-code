@@ -96,6 +96,84 @@ export async function cacheTransformedCode(
 const fallbackTransformCache = new Map<string, string>();
 
 /**
+ * Resolve a bare `react` / `react-dom` (or subpath) specifier to its esm.sh
+ * URL for the given React version. Returns `null` for anything that is not a
+ * React specifier.
+ *
+ * Both the main transform path and the depth-limit fallback use this so a
+ * framework module always links against the single esm.sh React bundle used
+ * during SSR. Leaving `react` bare would resolve it to the project's own
+ * React copy — a second React instance whose dispatcher is null, which makes
+ * the first hook throw "Cannot read properties of null (reading 'useEffect')".
+ */
+function resolveReactSpecifier(
+  specifier: string,
+  reactVersion: string,
+  reactImportMap: Record<string, string> = getReactImportMap(reactVersion),
+): string | null {
+  const mapped = reactImportMap[specifier];
+  if (mapped) return mapped;
+  if (specifier.startsWith("react/")) {
+    return buildReactUrl("react", reactVersion, "/" + specifier.slice("react/".length), true);
+  }
+  if (specifier.startsWith("react-dom/")) {
+    return buildReactUrl(
+      "react-dom",
+      reactVersion,
+      "/" + specifier.slice("react-dom/".length),
+      true,
+    );
+  }
+  return null;
+}
+
+/**
+ * veryfront's own React re-export modules under `FRAMEWORK_ROOT/react/`
+ * mapped to the bare specifier they stand in for. Each re-export bridges to
+ * project React via `export * from "react"` (etc.), which during SSR resolves
+ * to the project's `node_modules` copy — a *different* React instance than
+ * the esm.sh react-dom bundle uses. The dnt build rewrites framework
+ * `import ... from "react"` to a relative import of these files, so a
+ * framework module that does `useEffect` ends up reading a null dispatcher.
+ * Rewriting these imports straight to the esm.sh bundle keeps every SSR
+ * module on a single React instance.
+ *
+ * Keys must match the compiled re-export filenames under
+ * `FRAMEWORK_ROOT/react/`, which the build emits from the `react/*.ts` source
+ * modules (`react.ts`, `react-dom.ts`, `react-dom-client.ts`,
+ * `react-dom-server.ts`, `jsx-runtime.ts`, `jsx-dev-runtime.ts`). If one is
+ * renamed or added, update this map too: a stale key silently reintroduces
+ * the dual-React-instance bug.
+ */
+const REACT_REEXPORT_SPECIFIERS: Record<string, string> = {
+  "react.js": "react",
+  "react-dom.js": "react-dom",
+  "react-dom-client.js": "react-dom/client",
+  "react-dom-server.js": "react-dom/server",
+  "jsx-runtime.js": "react/jsx-runtime",
+  "jsx-dev-runtime.js": "react/jsx-dev-runtime",
+};
+
+/** `FRAMEWORK_ROOT/react/` prefix, precomputed (invariant per process). */
+const REACT_REEXPORT_DIR = join(FRAMEWORK_ROOT, "react") + "/";
+
+/**
+ * If `resolvedPath` is one of veryfront's React re-export modules
+ * (`FRAMEWORK_ROOT/react/*.js`), return the esm.sh URL it should be rewritten
+ * to for the given React version. Returns `null` for anything else.
+ */
+export function reactReExportToEsmUrl(
+  resolvedPath: string,
+  reactVersion: string,
+  reactImportMap?: Record<string, string>,
+): string | null {
+  if (!resolvedPath.startsWith(REACT_REEXPORT_DIR)) return null;
+  const specifier = REACT_REEXPORT_SPECIFIERS[resolvedPath.slice(REACT_REEXPORT_DIR.length)];
+  if (!specifier) return null;
+  return resolveReactSpecifier(specifier, reactVersion, reactImportMap);
+}
+
+/**
  * Pick an esbuild loader for a file path, honoring the embedded `.src`
  * suffix used in compiled binaries (`foo.ts.src` → `ts`). Recognizes
  * `.mjs`/`.cjs` as plain JS and `.mts`/`.cts` as TypeScript.
@@ -224,8 +302,13 @@ async function rewriteFallbackRelativeImports(
 ): Promise<string> {
   visited.add(sourcePath);
 
+  // Note: we do not early-return when there are no relative imports, because
+  // react/react-dom specifiers still need rewriting below.
   const relativeImports = findRelativeImports(code);
-  if (relativeImports.length === 0) return code;
+
+  // Built once and reused for both the relative-import loop (React re-export
+  // rewriting) and the final specifier pass below.
+  const reactImportMap = getReactImportMap(ctx.reactVersion);
 
   const replacements = new Map<string, string>();
   for (const specifier of relativeImports) {
@@ -239,6 +322,14 @@ async function rewriteFallbackRelativeImports(
         `${LOG_PREFIX} Depth-limit fallback could not resolve relative import "${specifier}"`,
         { sourcePath: sourcePath.slice(-60) },
       );
+      continue;
+    }
+
+    // Same React-instance fix as the main path: route React re-exports to the
+    // esm.sh bundle instead of linking veryfront's project-React bridge.
+    const reactUrl = reactReExportToEsmUrl(resolvedPath, ctx.reactVersion, reactImportMap);
+    if (reactUrl) {
+      replacements.set(specifier, reactUrl);
       continue;
     }
 
@@ -256,14 +347,28 @@ async function rewriteFallbackRelativeImports(
     }
   }
 
-  if (replacements.size === 0) return code;
-
-  return await replaceSpecifiers(code, (specifier) => {
+  // React imports must be rewritten even when there are no relative imports,
+  // so SSR links against the single esm.sh React bundle (see
+  // resolveReactSpecifier).
+  const rewritten = await replaceSpecifiers(code, (specifier) => {
     if (specifier.startsWith("./") || specifier.startsWith("../")) {
       return replacements.get(specifier) ?? null;
     }
-    return null;
+    return resolveReactSpecifier(specifier, ctx.reactVersion, reactImportMap);
   });
+
+  // Materialize any `https://esm.sh/...` React imports as local file:// bundles
+  // (same pass the main path runs). The cached fallback module is later loaded
+  // from file://, and Node rejects `import ... from "https:"`
+  // (ERR_UNSUPPORTED_ESM_URL_SCHEME); leaving the remote specifier in would
+  // break SSR under Node whenever a deep framework file hits this fallback.
+  const importMap = await loadImportMap(ctx.projectDir);
+  const cacheResult = await cacheHttpImportsToLocal(rewritten, {
+    cacheDir: getHttpBundleCacheDir(),
+    importMap,
+    reactVersion: ctx.reactVersion,
+  });
+  return cacheResult.code;
 }
 
 /**
@@ -370,6 +475,10 @@ export async function transformFrameworkCode(
     // cycles, and frameworkFileCache deduplicates already-transformed files.
     const relativeReplacements = new Map<string, string>();
 
+    // Built once and reused for both the relative-import loop (React
+    // re-export rewriting) and the final specifier pass below.
+    const reactImportMap = getReactImportMap(ctx.reactVersion);
+
     // Prefixes for framework source directories - files outside these are
     // already-compiled JS (e.g. dnt shims) that should not be recursively transformed.
     const frameworkSrcDir = join(FRAMEWORK_ROOT, "src") + "/";
@@ -395,6 +504,15 @@ export async function transformFrameworkCode(
           logger.warn(
             `${LOG_PREFIX} Could not resolve relative import "${specifier}" in ${sourcePath}`,
           );
+          continue;
+        }
+
+        // veryfront's own React re-exports bridge to project React, which is a
+        // different instance than the esm.sh react-dom bundle during SSR.
+        // Point these straight at the esm.sh bundle so SSR shares one React.
+        const reactUrl = reactReExportToEsmUrl(resolvedPath, ctx.reactVersion, reactImportMap);
+        if (reactUrl) {
+          relativeReplacements.set(specifier, reactUrl);
           continue;
         }
 
@@ -462,9 +580,6 @@ export async function transformFrameworkCode(
       }
     }
 
-    // Rewrite imports to resolved paths
-    const reactImportMap = getReactImportMap(ctx.reactVersion);
-
     // Handle Deno import-map aliases (e.g. #deno-config) that only exist in
     // the Deno runtime and cannot be resolved by esm.sh or the HTTP cache.
     // We create a cached JS stub module so the transformed code can import it
@@ -495,28 +610,7 @@ export async function transformFrameworkCode(
         return relativeReplacements.get(specifier) ?? null;
       }
 
-      const mapped = reactImportMap[specifier];
-      if (mapped) return mapped;
-
-      if (specifier.startsWith("react/")) {
-        return buildReactUrl(
-          "react",
-          ctx.reactVersion,
-          "/" + specifier.slice("react/".length),
-          true,
-        );
-      }
-
-      if (specifier.startsWith("react-dom/")) {
-        return buildReactUrl(
-          "react-dom",
-          ctx.reactVersion,
-          "/" + specifier.slice("react-dom/".length),
-          true,
-        );
-      }
-
-      return null;
+      return resolveReactSpecifier(specifier, ctx.reactVersion, reactImportMap);
     });
 
     // Cache HTTP imports to local filesystem

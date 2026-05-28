@@ -1,7 +1,47 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { DENO_STD_BASE, ESM_CDN_BASE, getDenoStdNodeBase, getTailwindCSSUrl } from "./cdn.ts";
+import {
+  DENO_STD_BASE,
+  ESM_CDN_BASE,
+  getDenoStdNodeBase,
+  getTailwindCSSUrl,
+  REACT_DEFAULT_VERSION,
+} from "./cdn.ts";
+import { DEFAULT_REACT_VERSION } from "#veryfront/transforms/import-rewriter/url-builder.ts";
+
+/**
+ * Read the React version veryfront's build bundles from `react/deno.json`.
+ * The build generates the framework React re-export (`esm/react/react.js`)
+ * and its esm.sh shim against this exact version, so the runtime defaults
+ * must match it — otherwise the re-export references named exports (e.g.
+ * `Activity`, a React 19.2 API) that an older esm.sh bundle does not provide,
+ * producing a hard SSR module-link error.
+ */
+async function buildReactVersion(): Promise<string> {
+  const url = new URL("../../../react/deno.json", import.meta.url);
+  const config = JSON.parse(await Deno.readTextFile(url)) as {
+    imports?: Record<string, string>;
+  };
+  const reactImport = config.imports?.react ?? "";
+  const match = reactImport.match(/react@(\d+\.\d+\.\d+)/);
+  if (!match) throw new Error(`Could not parse react version from "${reactImport}"`);
+  return match[1]!;
+}
+
+describe("constants/cdn — React default version drift guard", () => {
+  it("REACT_DEFAULT_VERSION matches the version the build bundles (react/deno.json)", async () => {
+    assertEquals(REACT_DEFAULT_VERSION, await buildReactVersion());
+  });
+
+  it("DEFAULT_REACT_VERSION (url-builder) matches the build's React version", async () => {
+    assertEquals(DEFAULT_REACT_VERSION, await buildReactVersion());
+  });
+
+  it("the two React default constants agree with each other", () => {
+    assertEquals(REACT_DEFAULT_VERSION, DEFAULT_REACT_VERSION);
+  });
+});
 
 describe("constants/cdn", () => {
   describe("getDenoStdNodeBase", () => {
