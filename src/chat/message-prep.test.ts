@@ -109,6 +109,85 @@ Deno.test("maskOldToolOutputs masks large historical tool outputs and removes st
   assertEquals(masked[3], messages[3]);
 });
 
+Deno.test("maskOldToolOutputs keeps compact email metadata for historical email list results", () => {
+  const messages = [
+    { role: "user", content: "check my inbox" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-email-list",
+          toolName: "gmail__list_emails",
+          input: { labelIds: ["INBOX"], maxResults: 30 },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-email-list",
+          toolName: "gmail__list_emails",
+          output: {
+            type: "json",
+            value: {
+              messages: [
+                {
+                  id: "msg-1",
+                  threadId: "thread-1",
+                  from: "Sender <sender@example.com>",
+                  to: "koji@example.com",
+                  subject: "Suspicious offer",
+                  date: "Thu, 28 May 2026 10:00:00 +0000",
+                  snippet: "This is enough to identify the email.",
+                  labelIds: ["INBOX"],
+                  body: "large message body ".repeat(100),
+                  payload: { headers: Array.from({ length: 40 }, (_, index) => ({ index })) },
+                },
+              ],
+              nextPageToken: "next-page",
+              resultSizeEstimate: 201,
+              debug: "internal detail ".repeat(100),
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "archive the suspicious one" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+  const toolMessage = masked[2];
+  if (toolMessage?.role !== "tool") {
+    throw new Error("expected tool message");
+  }
+  const output = toolMessage.content[0]?.output;
+  if (output?.type !== "text") {
+    throw new Error("expected compacted text output");
+  }
+  const compacted = JSON.parse(output.value);
+
+  assertEquals(compacted.messages, [
+    {
+      id: "msg-1",
+      threadId: "thread-1",
+      from: "Sender <sender@example.com>",
+      to: "koji@example.com",
+      subject: "Suspicious offer",
+      date: "Thu, 28 May 2026 10:00:00 +0000",
+      snippet: "This is enough to identify the email.",
+      labelIds: ["INBOX"],
+    },
+  ]);
+  assertEquals(compacted.nextPageToken, "next-page");
+  assertEquals(compacted.resultSizeEstimate, 201);
+  assertEquals(compacted.messages[0].body, undefined);
+  assertEquals(compacted.messages[0].payload, undefined);
+  assertEquals(compacted.debug, undefined);
+});
+
 Deno.test("enforceTokenBudget compresses the oldest turn before dropping later turns", () => {
   const messages = [
     { role: "user" as const, content: "old request ".repeat(100) },
