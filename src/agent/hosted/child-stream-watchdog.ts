@@ -137,7 +137,11 @@ export async function* withHostedChildStreamIdleTimeout<T>(input: {
     }
     // Fire-and-forget: do not await, because a stalled generator's return()
     // chains onto the unsettled next() body and would itself never resolve.
-    void Promise.resolve(iterator.return?.()).catch(() => {});
+    // Defer the call via Promise.resolve().then(...) so a *synchronous* throw
+    // from a custom iterator's return() becomes a rejected promise that the
+    // no-op catch swallows — otherwise it would escape this finally and mask
+    // the original idle-timeout/abort error (or a normal done return).
+    void Promise.resolve().then(() => iterator.return?.()).catch(() => {});
   }
 }
 

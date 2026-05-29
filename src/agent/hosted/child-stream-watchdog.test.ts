@@ -196,6 +196,70 @@ Deno.test("withHostedChildStreamIdleTimeout settles an abandoned next() when the
   }
 });
 
+Deno.test("withHostedChildStreamIdleTimeout surfaces the original error when return() throws synchronously", async () => {
+  // A custom async iterable whose return() throws *synchronously* during
+  // cleanup must not let that throw escape the finally and replace the original
+  // idle-timeout error. Cleanup failures stay fire-and-forget.
+  let rejectPendingNext: ((reason: unknown) => void) | null = null;
+
+  const iterator: AsyncIterator<number> = {
+    next() {
+      return new Promise<IteratorResult<number>>((_resolve, reject) => {
+        rejectPendingNext = reject;
+      });
+    },
+    return() {
+      // Synchronous throw — evaluated before any Promise wraps it.
+      throw new Error("synchronous cleanup failure");
+    },
+  };
+
+  const stream: AsyncIterable<number> = {
+    [Symbol.asyncIterator]: () => iterator,
+  };
+
+  const unhandled: PromiseRejectionEvent[] = [];
+  const onUnhandled = (event: PromiseRejectionEvent) => {
+    unhandled.push(event);
+    event.preventDefault();
+  };
+  globalThis.addEventListener("unhandledrejection", onUnhandled);
+
+  try {
+    // Must reject with the ORIGINAL idle-timeout error, not the cleanup throw.
+    await assertRejects(
+      async () => {
+        for await (
+          const _value of withHostedChildStreamIdleTimeout({
+            stream,
+            getWatchdogState: () => ({
+              phase: "generic_idle",
+              timeoutMs: 5,
+            }),
+          })
+        ) {
+          // never yields; the iterator stalls until rejected below
+        }
+      },
+      HostedChildStreamIdleTimeoutError,
+    );
+
+    // Settle the abandoned next() so its rejection does not surface either.
+    rejectPendingNext?.(new Error("stream aborted after watchdog gave up"));
+
+    // Let microtasks/macrotasks flush so any unhandled rejection would surface.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assertEquals(
+      unhandled.length,
+      0,
+      "synchronous return() failure must not escape as an unhandled rejection",
+    );
+  } finally {
+    globalThis.removeEventListener("unhandledrejection", onUnhandled);
+  }
+});
+
 Deno.test("withHostedChildStreamIdleTimeout continues when timeout callback asks to retry", async () => {
   async function* stallingThenResumingStream() {
     yield 1;
