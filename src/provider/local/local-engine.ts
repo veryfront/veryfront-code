@@ -42,6 +42,16 @@ interface TransformersEnv {
   useBrowserCache: boolean;
 }
 
+/** Minimal Transformers.js stopping-criteria contract (see generation/stopping_criteria.js). */
+interface StoppingCriteriaInstance {
+  _call(inputIds: number[][], scores: unknown): boolean[];
+}
+
+interface StoppingCriteriaListInstance extends StoppingCriteriaInstance {
+  push(item: StoppingCriteriaInstance): void;
+  extend(items: StoppingCriteriaInstance[]): void;
+}
+
 interface TransformersModule {
   env: TransformersEnv;
   pipeline: (
@@ -57,20 +67,100 @@ interface TransformersModule {
       callback_function: (text: string) => void;
     },
   ) => unknown;
+  // Transformers.js 3.x has no `stop_strings` generate option; string-based
+  // stopping is implemented by passing a custom StoppingCriteria via the
+  // documented `stopping_criteria` generate parameter.
+  StoppingCriteria: new () => StoppingCriteriaInstance;
+  StoppingCriteriaList: new () => StoppingCriteriaListInstance;
+}
+
+/** Tokenizer surface used to decode generated token ids back to text. */
+interface DecodingTokenizer {
+  decode(tokens: number[]): string;
+}
+
+/** Options object forwarded to the Transformers.js text-generation pipeline. */
+export interface PipeOptions {
+  max_new_tokens: number;
+  temperature: number;
+  top_p?: number;
+  top_k?: number;
+  do_sample: boolean;
+  streamer: unknown;
+  stopping_criteria?: StoppingCriteriaListInstance;
+}
+
+/**
+ * Build a StoppingCriteriaList that halts generation as soon as any of the
+ * provided stop strings appears in the decoded output.
+ *
+ * Transformers.js (>=3.x) does not expose a `stop_strings` generate option,
+ * so we decode the running sequence with the tokenizer and match the stop
+ * strings against the suffix — the documented `stopping_criteria` mechanism.
+ */
+function buildStopStringCriteria(
+  transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
+  tokenizer: DecodingTokenizer,
+  stopSequences: string[],
+): StoppingCriteriaListInstance {
+  const list = new transformers.StoppingCriteriaList();
+  const base = new transformers.StoppingCriteria();
+  const criterion = base as StoppingCriteriaInstance;
+  criterion._call = (inputIds: number[][]): boolean[] =>
+    inputIds.map((ids) => {
+      const text = tokenizer.decode(ids);
+      return stopSequences.some((stop) => stop.length > 0 && text.includes(stop));
+    });
+  list.push(criterion);
+  return list;
+}
+
+/**
+ * Translate engine-level {@link GenerateOptions} into the options object passed
+ * to the Transformers.js text-generation pipeline.
+ *
+ * Exported for unit testing the option-forwarding seam (notably that
+ * `stopSequences` is not silently dropped) without downloading a model.
+ */
+export function buildPipeOptions(
+  options: GenerateOptions,
+  transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
+  tokenizer: DecodingTokenizer,
+  streamer: unknown,
+): PipeOptions {
+  const {
+    maxNewTokens = DEFAULT_MAX_NEW_TOKENS,
+    temperature = 0.7,
+    topP,
+    topK,
+    stopSequences,
+  } = options;
+
+  const pipeOptions: PipeOptions = {
+    max_new_tokens: maxNewTokens,
+    temperature,
+    top_p: topP,
+    top_k: topK,
+    do_sample: temperature > 0,
+    streamer,
+  };
+
+  if (stopSequences && stopSequences.length > 0) {
+    pipeOptions.stopping_criteria = buildStopStringCriteria(
+      transformers,
+      tokenizer,
+      stopSequences,
+    );
+  }
+
+  return pipeOptions;
 }
 
 interface Pipeline {
   tokenizer: unknown;
   (
     messages: ChatMessage[],
-    options: {
-      max_new_tokens: number;
-      temperature: number;
-      top_p?: number;
-      top_k?: number;
-      do_sample: boolean;
-      streamer: unknown;
-    },
+    options: PipeOptions,
   ): Promise<void>;
 }
 
@@ -222,13 +312,6 @@ export async function* generateStream(
   const pipe = await loadPipeline(modelInfo);
   const transformers = await getTransformers();
 
-  const {
-    maxNewTokens = DEFAULT_MAX_NEW_TOKENS,
-    temperature = 0.7,
-    topP,
-    topK,
-  } = options;
-
   // Use a queue to bridge TextStreamer callbacks → async generator
   const tokenQueue: string[] = [];
   let resolveWaiting: (() => void) | null = null;
@@ -250,17 +333,17 @@ export async function* generateStream(
     },
   });
 
+  const pipeOptions = buildPipeOptions(
+    options,
+    transformers,
+    pipe.tokenizer as DecodingTokenizer,
+    streamer,
+  );
+
   // Start generation in the background
   const generatePromise = (async () => {
     try {
-      await pipe(messages, {
-        max_new_tokens: maxNewTokens,
-        temperature,
-        top_p: topP,
-        top_k: topK,
-        do_sample: temperature > 0,
-        streamer,
-      });
+      await pipe(messages, pipeOptions);
     } finally {
       done = true;
       flushWaiting();
