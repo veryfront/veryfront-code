@@ -122,10 +122,19 @@ export class OAuthProvider {
     return headers;
   }
 
+  /**
+   * Parse a successful token-endpoint body into {@link OAuthTokens}.
+   *
+   * Returns `null` when the response carries no usable access token. A 2xx
+   * status alone is NOT sufficient evidence of success: some providers (e.g.
+   * Slack) signal errors with `200 {"ok": false, "error": ...}`, and a missing
+   * `access_token` must never be persisted as an empty-but-"connected" token.
+   * See bugs H11/H12.
+   */
   private parseTokenResponse(
     data: Record<string, unknown>,
     fallbackRefreshToken?: string,
-  ): OAuthTokens {
+  ): OAuthTokens | null {
     const mapping = this.config.tokenResponseMapping ?? {};
 
     const str = (key: string): string => {
@@ -138,6 +147,7 @@ export class OAuthProvider {
     };
 
     const accessToken = str(mapping.accessToken ?? "access_token");
+    if (!accessToken) return null;
     const refreshToken = optStr(mapping.refreshToken ?? "refresh_token") ??
       fallbackRefreshToken;
     const tokenType = str(mapping.tokenType ?? "token_type");
@@ -197,17 +207,27 @@ export class OAuthProvider {
     try {
       const { response, data } = await this.postTokenRequest(body, clientId, clientSecret);
 
-      if (!response.ok) {
+      // Some providers signal errors with a 2xx status and a body-level
+      // `ok: false` / `error` field (e.g. Slack oauth.v2.access). Treat those
+      // as failures even when the HTTP status is "ok". See bug H12.
+      const bodyError = typeof data.error === "string" ? data.error : "";
+      if (!response.ok || data.ok === false || bodyError) {
         return {
           success: false,
-          error: (typeof data.error === "string" ? data.error : "") || errorFallback,
+          error: bodyError || errorFallback,
           errorDescription:
             (typeof data.error_description === "string" ? data.error_description : "") ||
             (errorDescriptionFallback ? errorDescriptionFallback(response.status) : undefined),
         };
       }
 
-      return { success: true, tokens: this.parseTokenResponse(data, fallbackRefreshToken) };
+      // A 2xx without a usable access token is not a success. See bug H11.
+      const tokens = this.parseTokenResponse(data, fallbackRefreshToken);
+      if (!tokens) {
+        return { success: false, error: "invalid_token_response" };
+      }
+
+      return { success: true, tokens };
     } catch (error) {
       return {
         success: false,
