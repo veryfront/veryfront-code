@@ -7,7 +7,7 @@ import { buildPipeOptions } from "./local-engine.ts";
  * Minimal stand-ins for Transformers.js StoppingCriteria primitives. These
  * mirror the real `StoppingCriteria` / `StoppingCriteriaList` contracts so we
  * can verify that `buildPipeOptions` forwards `stopSequences` through the
- * library's documented `stopping_criteria` mechanism (Transformers.js 3.8.1
+ * library's documented `stopping_criteria` mechanism (Transformers.js 3.x
  * has no `stop_strings` generate option).
  */
 class FakeStoppingCriteria {
