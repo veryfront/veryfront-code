@@ -102,7 +102,7 @@ describe("integration endpoint specs", () => {
     assertEquals(connectorNames.includes("hubspot"), false);
   });
 
-  it("adds endpoint specs for all 68 tools across the 5 targeted integrations", () => {
+  it("adds endpoint specs for all 69 tools across the 5 targeted integrations", () => {
     const targetedConnectors = [
       "calendar",
       "github",
@@ -125,7 +125,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 68);
+    assertEquals(totalEndpointTools, 69);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -147,6 +147,15 @@ describe("integration endpoint specs", () => {
         `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
       );
     }
+  });
+
+  it("adds a GitHub user lookup tool", () => {
+    const tool = getTool("github", "get_user");
+
+    assertEquals(tool.requiresWrite, false);
+    assertEquals(tool.endpoint?.method, "GET");
+    assertEquals(tool.endpoint?.url, "https://api.github.com/users/{username}");
+    assertEquals(tool.endpoint?.params?.username.required, true);
   });
 
   it("requests the Figma current user scope needed by get_me", () => {
