@@ -13,6 +13,11 @@ import { renderAppRouteToHTML } from "#veryfront/server/build-app-route-renderer
 import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import { loadClientStyles } from "./asset-generation.ts";
 import { generateImportMap } from "./client-runtime.ts";
+import {
+  extractCandidatesFromFiles,
+  generateTailwindCSS,
+  hashCSS,
+} from "#veryfront/html/styles-builder/index.ts";
 
 export interface PageRenderResult {
   html: string;
@@ -65,6 +70,98 @@ function defaultTraceStep<T>(_: string, fn: () => Promise<T>): Promise<T> {
 
 function getByteLength(text: string): number {
   return new TextEncoder().encode(text).length;
+}
+
+const APP_ROUTE_STYLE_SOURCE_EXTENSIONS = [".tsx", ".jsx", ".ts", ".js", ".mdx", ".md"];
+const APP_ROUTE_STYLE_SKIP_DIRS = new Set([
+  ".deno_cache",
+  ".git",
+  ".veryfront",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
+
+async function readOptionalFile(
+  adapter: RuntimeAdapter,
+  path: string,
+): Promise<string | undefined> {
+  try {
+    return await adapter.fs.readFile(path);
+  } catch (_) {
+    return undefined;
+  }
+}
+
+async function collectAppRouteStyleSources(
+  adapter: RuntimeAdapter,
+  dir: string,
+): Promise<Array<{ path: string; content?: string }>> {
+  const files: Array<{ path: string; content?: string }> = [];
+
+  async function walk(currentDir: string): Promise<void> {
+    let entries: AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }>;
+    try {
+      entries = adapter.fs.readDir(currentDir);
+    } catch (_) {
+      return;
+    }
+
+    for await (const entry of entries) {
+      if (entry.isDirectory) {
+        if (!APP_ROUTE_STYLE_SKIP_DIRS.has(entry.name)) {
+          await walk(join(currentDir, entry.name));
+        }
+        continue;
+      }
+
+      if (!entry.isFile) continue;
+      if (!APP_ROUTE_STYLE_SOURCE_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) continue;
+
+      const path = join(currentDir, entry.name);
+      const content = await readOptionalFile(adapter, path);
+      if (content !== undefined) files.push({ path, content });
+    }
+  }
+
+  await walk(dir);
+  return files;
+}
+
+async function prepareAppRouteStylesheet(
+  options: SSGOptions,
+): Promise<string | undefined> {
+  const stylesheetPath = options.config.tailwind?.stylesheet ?? "globals.css";
+  const stylesheet = await readOptionalFile(
+    options.adapter,
+    join(options.projectDir, stylesheetPath),
+  );
+  const sourceFiles = await collectAppRouteStyleSources(options.adapter, options.projectDir);
+  const candidates = extractCandidatesFromFiles(sourceFiles, {
+    projectDir: options.projectDir,
+  });
+
+  const generated = await generateTailwindCSS(stylesheet, candidates, {
+    minify: true,
+    environment: "production",
+    buildMode: "production",
+  });
+
+  if (generated.error) {
+    logger.error("Failed to generate App Router CSS:", generated.error);
+    return undefined;
+  }
+
+  const hash = hashCSS(generated.css);
+  if (!hash) return undefined;
+
+  if (!options.dryRun) {
+    const cssPath = join(options.outputDir, "_vf/css", `${hash}.css`);
+    await options.adapter.fs.mkdir(dirname(cssPath), { recursive: true });
+    await options.adapter.fs.writeFile(cssPath, generated.css);
+  }
+
+  return `/_vf/css/${hash}.css`;
 }
 
 export async function buildPagesRoutes(
@@ -189,6 +286,10 @@ export async function buildAppRoutes(
   if (appRoutes.length === 0) return stats;
 
   logger.info("Building App Router static pages...");
+  const stylesheetHref = await traceStep(
+    "app:styles",
+    () => prepareAppRouteStylesheet(options),
+  );
 
   for (const route of appRoutes) {
     try {
@@ -200,6 +301,8 @@ export async function buildAppRoutes(
           pageFile: route.pageFile,
           contentSourceId,
           reactVersion,
+          stylesheetHref,
+          includePreviewStylesheet: false,
         }));
 
       const outputPath = getAppRouteOutputPath(outputDir, route.path);

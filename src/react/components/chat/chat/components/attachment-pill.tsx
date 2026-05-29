@@ -48,7 +48,7 @@ export function AttachmentPill({
 
   return (
     <span
-      className="relative inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-lg bg-[var(--accent)] text-xs text-[var(--card-foreground)]"
+      className="relative inline-flex items-center gap-1.5 rounded-lg bg-[var(--card)] py-1 pl-2.5 pr-1.5 text-xs text-[var(--card-foreground)] shadow-sm"
       onMouseEnter={() => setShowPreview(true)}
       onMouseLeave={() => setShowPreview(false)}
     >

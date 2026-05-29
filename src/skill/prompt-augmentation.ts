@@ -35,10 +35,10 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
   lines.push("### Skill Tools (call these as tools, never write them as text)");
   lines.push("");
   lines.push(
-    "- load-skill: Call with { skillId } to load a skill's full instructions and available references/scripts",
+    "- load-skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
   );
   lines.push(
-    "- load-skill-reference: Call with { skillId, reference } to read a reference file from the skill",
+    "- load-skill-reference: Call with { skillId, reference } to read a file from the skill's references/, resources/, or assets/ directory",
   );
   lines.push(
     "- execute-skill-script: Call with { skillId, script, args?, env?, timeoutMs? } to execute a script",

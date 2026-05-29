@@ -4,7 +4,7 @@ description: "Define project-level agent capabilities as SKILL.md files with pro
 order: 29
 ---
 
-A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, an `allowed_tools` policy, and optional reference files and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
+A skill is a directory under `skills/` containing a `SKILL.md` file. It bundles structured agent instructions, an `allowed_tools` policy, optional resource and reference files, static assets, and executable scripts. The format follows the [agentskills.io](https://agentskills.io) specification.
 
 ## Prerequisites
 
@@ -23,6 +23,8 @@ skills/
     SKILL.md
     references/
       style-guide.md
+    resources/
+      review-rubric.md
     scripts/
       lint.sh
 ```
@@ -41,9 +43,10 @@ allowed_tools: load-skill load-skill-reference execute-skill-script
 Review the submitted code changes following the project style guide.
 
 1. Load the style guide from `references/style-guide.md`
-2. Check for common issues
-3. Run the linter via `scripts/lint.sh`
-4. Provide feedback with specific line references
+2. Load the rubric from `resources/review-rubric.md`
+3. Check for common issues
+4. Run the linter via `scripts/lint.sh`
+5. Provide feedback with specific line references
 ```
 
 ## Skill structure
@@ -54,6 +57,8 @@ Each skill lives in its own directory under `skills/`:
 skills/<skill-id>/
 ├── SKILL.md              # Required: frontmatter + instructions
 ├── references/           # Optional: reference files the agent can read
+│   └── *.md
+├── resources/            # Optional: source documents or review inputs
 │   └── *.md
 ├── scripts/              # Optional: executable scripts
 │   └── *.sh
@@ -86,11 +91,11 @@ skills/
 
 When skills are available, agents get three built-in tools:
 
-| Tool                   | Description                                      |
-| ---------------------- | ------------------------------------------------ |
-| `load-skill`           | Load a skill's full instructions by ID           |
-| `load-skill-reference` | Read a reference file from a skill               |
-| `execute-skill-script` | Execute a script from a skill (5-minute timeout) |
+| Tool                   | Description                                                |
+| ---------------------- | ---------------------------------------------------------- |
+| `load-skill`           | Load a skill's full instructions by ID                     |
+| `load-skill-reference` | Read a file from `references/`, `resources/`, or `assets/` |
+| `execute-skill-script` | Execute a script from a skill (5-minute timeout)           |
 
 Enable skills on an agent:
 

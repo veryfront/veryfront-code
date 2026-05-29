@@ -76,12 +76,3 @@ details, see [API reference](../api-reference/index.md).
 | Run agents as separate services        | [Agent service runtime](./agent-service-runtime.md) |
 | Enable reusable runtime infrastructure | [Extensions](./extensions.md)                       |
 | Write, test, and package an extension  | [Author extensions](./extension-authoring.md)       |
-
-## Worked examples
-
-End-to-end applications you can fork as a starting point. Each composes
-multiple primitives into a runnable Veryfront project.
-
-| Goal                                                             | Guide                                                          |
-| ---------------------------------------------------------------- | -------------------------------------------------------------- |
-| Review an ICT contract for DORA Art. 30 with proposed amendments | [Compliance Agent (DORA)](./examples/dora-compliance-agent.md) |

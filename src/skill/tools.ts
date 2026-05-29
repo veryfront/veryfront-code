@@ -24,6 +24,7 @@ import {
   SKILL_ASSETS_DIR,
   SKILL_MD_FILENAME,
   SKILL_REFERENCES_DIR,
+  SKILL_RESOURCES_DIR,
   SKILL_SCRIPTS_DIR,
 } from "./types.ts";
 
@@ -116,11 +117,16 @@ export function createLoadSkillTool(): Tool {
       // Parse frontmatter to get instructions
       const parsed = await parseSkillFrontmatter(content);
 
-      // List available references and scripts
-      const [references, scripts] = await Promise.all([
+      // List available files the agent can load through load-skill-reference.
+      const [references, resources, scripts] = await Promise.all([
         listSkillSubdir(
           skill.rootPath,
           SKILL_REFERENCES_DIR,
+          skill.fsAdapter,
+        ),
+        listSkillSubdir(
+          skill.rootPath,
+          SKILL_RESOURCES_DIR,
           skill.fsAdapter,
         ),
         listSkillSubdir(
@@ -129,12 +135,13 @@ export function createLoadSkillTool(): Tool {
           skill.fsAdapter,
         ),
       ]);
-      const note = buildSkillAvailabilityNote(references, scripts);
+      const loadableReferences = [...references, ...resources];
+      const note = buildSkillAvailabilityNote(loadableReferences, scripts);
 
       return {
         instructions: parsed.body,
         allowedTools: skill.metadata.allowedTools,
-        references,
+        references: loadableReferences,
         scripts,
         ...(note ? { note } : {}),
       };
@@ -144,13 +151,13 @@ export function createLoadSkillTool(): Tool {
 
 /**
  * Create the load-skill-reference tool.
- * Reads a reference file from a skill's references/ or assets/ directory.
+ * Reads a reference file from a skill's references/, resources/, or assets/ directory.
  */
 export function createLoadSkillReferenceTool(): Tool {
   return tool({
     id: "load-skill-reference",
     description: "Read a reference file from a skill. Only files in the skill's " +
-      "references/ and assets/ directories are accessible.",
+      "references/, resources/, and assets/ directories are accessible.",
     inputSchema: getLoadSkillReferenceInputSchema(),
     execute: async (input): Promise<{ content: string; path: string }> => {
       const skill = skillRegistry.get(input.skillId);
@@ -163,11 +170,11 @@ export function createLoadSkillReferenceTool(): Tool {
         );
       }
 
-      // Validate path safety (only references/ and assets/ allowed)
+      // Validate path safety before reading skill-provided context.
       const validatedPath = await validateSkillPath(
         skill.rootPath,
         input.reference,
-        [SKILL_REFERENCES_DIR, SKILL_ASSETS_DIR],
+        [SKILL_REFERENCES_DIR, SKILL_RESOURCES_DIR, SKILL_ASSETS_DIR],
         skill.fsAdapter,
       );
 

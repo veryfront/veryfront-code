@@ -34,6 +34,7 @@ export const SKILL_TOOL_IDS = new Set([
 /** Conventional subdirectory names */
 export const SKILL_SCRIPTS_DIR = "scripts";
 export const SKILL_REFERENCES_DIR = "references";
+export const SKILL_RESOURCES_DIR = "resources";
 export const SKILL_ASSETS_DIR = "assets";
 
 // ── Interfaces ──────────────────────────────────────────────────────────

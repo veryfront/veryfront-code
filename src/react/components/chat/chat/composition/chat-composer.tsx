@@ -7,7 +7,7 @@
 import * as React from "react";
 import { InputBox, SubmitButton } from "../../../../primitives/index.ts";
 import { cn } from "../../theme.ts";
-import { PaperclipIcon } from "../../icons/index.ts";
+import { PlusIcon } from "../../icons/index.ts";
 import { type ModelOption, ModelSelector } from "../../model-selector.tsx";
 import type { ChatTheme } from "../../theme.ts";
 import { AttachmentPill } from "../components/attachment-pill.tsx";
@@ -37,6 +37,7 @@ export interface ChatComposerProps {
 
   // Attachments
   onAttach?: (files: FileList) => void;
+  onSelectAttachment?: () => void;
   attachAccept?: string;
   attachments?: AttachmentInfo[];
   onRemoveAttachment?: (id: string) => void;
@@ -67,6 +68,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
       model,
       onModelChange,
       onAttach,
+      onSelectAttachment,
       attachAccept,
       attachments,
       onRemoveAttachment,
@@ -78,6 +80,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
     ref,
   ) {
     const fileInputRef = React.useRef<HTMLInputElement>(null!);
+    const [attachmentMenuOpen, setAttachmentMenuOpen] = React.useState(false);
 
     return (
       <div
@@ -90,38 +93,31 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
               {children}
             </div>
           )}
+          {attachments && attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 px-2 pb-2">
+              {attachments.map((file) => (
+                <AttachmentPill
+                  key={file.id}
+                  attachment={file}
+                  onRemove={onRemoveAttachment}
+                />
+              ))}
+            </div>
+          )}
           <form
             onSubmit={(e) => {
               e.preventDefault();
               onSubmit?.(e);
             }}
           >
-            <div className="relative overflow-hidden rounded-[20px] shadow-md bg-[var(--card)] px-3 py-3 md:px-4 md:py-4 transition-all">
-              {attachments && attachments.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 pb-3">
-                  {attachments.map((file) => (
-                    <AttachmentPill
-                      key={file.id}
-                      attachment={file}
-                      onRemove={onRemoveAttachment}
-                    />
-                  ))}
-                </div>
-              )}
-              <InputBox
-                value={isListening ? transcript || input : input}
-                onChange={onChange}
-                placeholder={isListening ? "Listening..." : placeholder}
-                disabled={isLoading || isListening}
-                multiline
-                className={cn(
-                  theme?.input,
-                )}
-              />
-              <div className="flex items-center justify-between gap-2 mt-2 min-h-[38px]">
-                <div className="flex items-center gap-2">
-                  {onAttach && (
-                    <>
+            <div
+              className="relative bg-[var(--card)] px-3 py-1.5 shadow-sm transition-all"
+              style={{ borderRadius: 24 }}
+            >
+              <div className="flex min-h-[42px] items-end gap-2">
+                {(onAttach || onSelectAttachment) && (
+                  <div className="relative flex shrink-0 items-center">
+                    {onAttach && (
                       <input
                         ref={fileInputRef}
                         type="file"
@@ -144,17 +140,66 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                           border: 0,
                         }}
                       />
-                      <button
-                        type="button"
-                        onClick={() => fileInputRef.current?.click()}
-                        className="size-9 flex items-center justify-center rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-colors shrink-0"
-                        aria-label="Attach file"
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (onAttach && !onSelectAttachment) {
+                          fileInputRef.current?.click();
+                          return;
+                        }
+                        setAttachmentMenuOpen((open) => !open);
+                      }}
+                      className="size-9 flex items-center justify-center rounded-full text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--foreground)]/5 transition-colors shrink-0"
+                      aria-label="Add document"
+                      aria-expanded={attachmentMenuOpen}
+                    >
+                      <PlusIcon className="size-5" />
+                    </button>
+                    {attachmentMenuOpen && (
+                      <div
+                        className="absolute bottom-11 left-0 z-20 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-lg"
+                        style={{ minWidth: 224 }}
                       >
-                        <PaperclipIcon className="size-5" />
-                      </button>
-                    </>
+                        {onAttach && (
+                          <button
+                            type="button"
+                            className="block w-full whitespace-nowrap px-4 py-3 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--foreground)]/5"
+                            onClick={() => {
+                              setAttachmentMenuOpen(false);
+                              fileInputRef.current?.click();
+                            }}
+                          >
+                            Upload document
+                          </button>
+                        )}
+                        {onSelectAttachment && (
+                          <button
+                            type="button"
+                            className="block w-full whitespace-nowrap px-4 py-3 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--foreground)]/5"
+                            onClick={() => {
+                              setAttachmentMenuOpen(false);
+                              onSelectAttachment();
+                            }}
+                          >
+                            Select document
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                <InputBox
+                  value={isListening ? transcript || input : input}
+                  onChange={onChange}
+                  placeholder={isListening ? "Listening..." : placeholder}
+                  disabled={isLoading || isListening}
+                  multiline
+                  className={cn(
+                    "min-h-9 flex-1 py-2",
+                    theme?.input,
                   )}
-                </div>
+                />
                 <div className="flex items-center gap-2">
                   {models && models.length > 0 && onModelChange && (
                     <ModelSelector

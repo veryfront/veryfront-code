@@ -9,6 +9,7 @@ import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
 import { DEFAULT_REACT_VERSION, getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
+import { getPreviewStylesheetLink, getProdScripts } from "#veryfront/html/dev-scripts.ts";
 
 type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
 
@@ -62,8 +63,19 @@ export async function renderAppRouteToHTML(args: {
   pageFile: string;
   contentSourceId: string;
   reactVersion?: string;
+  stylesheetHref?: string;
+  includePreviewStylesheet?: boolean;
 }): Promise<string> {
-  const { adapter, projectDir, routePath, pageFile, contentSourceId, reactVersion } = args;
+  const {
+    adapter,
+    projectDir,
+    routePath,
+    pageFile,
+    contentSourceId,
+    reactVersion,
+    stylesheetHref,
+    includePreviewStylesheet,
+  } = args;
 
   const appRoot = join(projectDir, "app");
   const layoutCandidates = getLayoutsForRoute(appRoot, routePath);
@@ -105,6 +117,13 @@ export async function renderAppRouteToHTML(args: {
 
   const htmlInner = await renderToStringAdapter(element);
   const title = "Veryfront App";
+  const shouldIncludePreviewStylesheet = includePreviewStylesheet ?? !stylesheetHref;
+  const stylesheetLink = stylesheetHref
+    ? `<link rel="stylesheet" href="${stylesheetHref}">`
+    : shouldIncludePreviewStylesheet
+    ? getPreviewStylesheetLink()
+    : "";
+  const runtimeScripts = getProdScripts(routePath);
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -118,31 +137,12 @@ export async function renderAppRouteToHTML(args: {
   ${JSON.stringify({ imports: getReactUrls(reactVersion ?? DEFAULT_REACT_VERSION) }, null, 4)}
   </script>
 
+  ${stylesheetLink}
 </head>
 <body>
   <div id="root">${htmlInner}</div>
 
-  <!-- Veryfront Runtime -->
-  <script type="module">
-    // Basic app initialization for App Router pages
-    async function initializeApp() {
-      try {
-        // Import the app module if it exists
-        const appModule = await import('/_veryfront/app.js').catch(() => null);
-        if (appModule) {
-          console.log('App module loaded');
-        }
-      } catch (error) {
-        console.error('Failed to initialize app:', error);
-      }
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initializeApp, { once: true });
-    } else {
-      initializeApp();
-    }
-  </script>
+  ${runtimeScripts}
 </body>
 </html>`;
 }

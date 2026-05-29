@@ -591,26 +591,6 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "useWorkflowStart",
     ],
   },
-  "guides/examples/dora-compliance-agent.md": {
-    references: [
-      "../../getting-started/installation.md",
-      "../providers.md",
-      "../agents.md",
-      "../tools.md",
-      "../skills.md",
-      "../chat-ui.md",
-      "../../getting-started/deploy-project.md",
-    ],
-    snippets: [
-      "dora-rubric",
-      "parseContract",
-      "veryfront init dora-compliance-agent",
-      'createAgUiHandler("resilience")',
-      "proposed_amendment",
-      "Art. 30",
-      "not legal advice",
-    ],
-  },
 };
 
 describe("published guide contracts", () => {
