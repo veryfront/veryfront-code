@@ -96,6 +96,53 @@ Deno.test("toNodeHandler preserves multiple Set-Cookie headers as distinct value
   assertEquals(cookies.includes("b=2; Path=/"), true);
 });
 
+Deno.test("toNodeHandler does not throw when getSetCookie is unavailable (early Node 18)", async () => {
+  // Simulate a runtime whose Headers predates Headers.prototype.getSetCookie
+  // (Node < ~18.14). We wrap a real Headers in a Proxy that hides getSetCookie
+  // while still exposing an iterator that yields each Set-Cookie as a distinct
+  // entry (matching undici's iteration behaviour). A real Response is returned
+  // but with its `headers` accessor pointed at the legacy-like object.
+  const realHeaders = new Headers();
+  realHeaders.append("Set-Cookie", "a=1; Path=/");
+  realHeaders.append("Set-Cookie", "b=2; Path=/");
+  realHeaders.set("content-type", "text/plain");
+
+  const legacyHeaders = new Proxy(realHeaders, {
+    get(target, prop, receiver) {
+      // Pretend getSetCookie does not exist on this runtime.
+      if (prop === "getSetCookie") return undefined;
+      const value = Reflect.get(target, prop, receiver);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  }) as unknown as Headers;
+
+  const handler = () => {
+    const response = new Response("ok", { status: 200 });
+    Object.defineProperty(response, "headers", {
+      get: () => legacyHeaders,
+      configurable: true,
+    });
+    return response;
+  };
+
+  const nodeHandler = toNodeHandler(handler);
+  const res = createFakeRes();
+  await nodeHandler(
+    createFakeReq({ url: "/" }),
+    res as unknown as import("node:http").ServerResponse,
+  );
+
+  // Must not have fallen into the catch block and emitted a 500.
+  assertEquals(res.statusCode, 200);
+  assertEquals(res.ended, true);
+
+  // Fallback preserves both cookies when the iterator exposes them separately.
+  const cookies = collectSetCookies(res);
+  assertEquals(cookies.length, 2);
+  assertEquals(cookies.includes("a=1; Path=/"), true);
+  assertEquals(cookies.includes("b=2; Path=/"), true);
+});
+
 Deno.test("toNodeHandler passes array-valued request headers through to the Request", async () => {
   let seen: string | null = null;
   const handler = (req: Request) => {

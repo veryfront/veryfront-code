@@ -27,11 +27,34 @@ export function toNodeHandler(
 
       if (response.status === 101) return;
       const outHeaders: Record<string, string | string[]> = {};
-      for (const [key, value] of response.headers) {
-        if (key.toLowerCase() === "set-cookie") continue;
-        outHeaders[key] = value;
+      const setCookies: string[] = [];
+      // Headers.prototype.getSetCookie landed in Node ~18.14, but our published
+      // engines.node is ">=18.0.0". On early 18.x it is undefined, so calling it
+      // unconditionally throws for every response and turns valid requests into
+      // 500s. Feature-detect it and fall back to the header iterator.
+      const getSetCookie = response.headers.getSetCookie;
+      if (typeof getSetCookie === "function") {
+        // Modern path: getSetCookie returns each Set-Cookie as a distinct value.
+        setCookies.push(...getSetCookie.call(response.headers));
+        for (const [key, value] of response.headers) {
+          if (key.toLowerCase() === "set-cookie") continue;
+          outHeaders[key] = value;
+        }
+      } else {
+        // Fallback for runtimes without getSetCookie. The undici-based Headers
+        // iterator yields each Set-Cookie as its own entry (it is the one header
+        // that is NOT comma-joined during iteration), so iterating preserves
+        // multiples where the platform allows it. If a runtime does collapse
+        // them into a single comma-joined string we still pass that one value
+        // through unchanged rather than throwing — degrade gracefully, never 500.
+        for (const [key, value] of response.headers) {
+          if (key.toLowerCase() === "set-cookie") {
+            setCookies.push(value);
+            continue;
+          }
+          outHeaders[key] = value;
+        }
       }
-      const setCookies = response.headers.getSetCookie();
       if (setCookies.length > 0) outHeaders["Set-Cookie"] = setCookies;
       res.writeHead(response.status, outHeaders);
       if (response.body) {
