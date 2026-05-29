@@ -183,9 +183,10 @@ export function tool<TInput = unknown, TOutput = unknown>(
     outputSchema: config.outputSchema,
     outputSchemaJson,
     execute: async (input: TInput, context?: ToolExecutionContext) => {
+      let validated = input;
       if (hasSchemaParse(config.inputSchema)) {
         try {
-          config.inputSchema.parse(input);
+          validated = config.inputSchema.parse(input) as TInput;
         } catch (error) {
           throw toError(
             createError({
@@ -196,7 +197,7 @@ export function tool<TInput = unknown, TOutput = unknown>(
         }
       }
 
-      return await config.execute(input, context);
+      return await config.execute(validated, context);
     },
     mcp: config.mcp,
   };
@@ -231,7 +232,7 @@ export function dynamicTool(config: DynamicToolConfig): Tool<unknown, unknown> {
     inputSchemaJson,
     execute: async (input: unknown, context?: ToolExecutionContext) => {
       if (hasSchemaParse(config.inputSchema)) {
-        config.inputSchema.parse(input);
+        input = config.inputSchema.parse(input);
       } else if (input === undefined) {
         input = {};
       } else if (input === null || typeof input !== "object") {
