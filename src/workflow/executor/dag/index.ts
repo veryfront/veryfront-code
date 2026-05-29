@@ -238,7 +238,9 @@ export class DAGExecutor {
       workflowId: "",
       status: "running",
       input: context.input,
-      nodeStates: {},
+      // Carry already-accumulated child states so completed children are
+      // skipped on resume instead of re-executing (H8).
+      nodeStates,
       currentNodes: [],
       context,
       checkpoints: [],
@@ -332,7 +334,9 @@ export class DAGExecutor {
         workflowId: "",
         status: "running",
         input: context.input,
-        nodeStates: {},
+        // Carry already-accumulated child states so completed children are
+        // skipped on resume instead of re-executing (H8).
+        nodeStates,
         currentNodes: [],
         context: { ...context },
         checkpoints: [],
@@ -395,7 +399,9 @@ export class DAGExecutor {
       workflowId: "",
       status: "running",
       input: context.input,
-      nodeStates: {},
+      // Carry already-accumulated child states so completed children are
+      // skipped on resume instead of re-executing (H8).
+      nodeStates,
       currentNodes: [],
       context,
       checkpoints: [],
@@ -533,12 +539,23 @@ export class DAGExecutor {
     let lastError: string | undefined;
 
     const existingLoopState = context[`${node.id}_loop_state`] as
-      | { iteration: number; previousResults: unknown[] }
+      | {
+        iteration: number;
+        previousResults: unknown[];
+        iterationNodeStates?: Record<string, NodeState>;
+      }
       | undefined;
+
+    // Child node states for the in-flight (resumed) iteration, so its already
+    // completed steps are not re-executed on resume (H9).
+    let resumeIterationNodeStates: Record<string, NodeState> | undefined;
+    let resumeIteration: number | undefined;
 
     if (existingLoopState) {
       iteration = existingLoopState.iteration;
       previousResults.push(...existingLoopState.previousResults);
+      resumeIterationNodeStates = existingLoopState.iterationNodeStates;
+      resumeIteration = existingLoopState.iteration;
     }
 
     while (iteration < config.maxIterations) {
@@ -559,12 +576,20 @@ export class DAGExecutor {
         ? config.steps(context, loopContext)
         : config.steps;
 
+      // On resume, rehydrate the in-flight iteration's child node states so its
+      // already-completed steps are skipped instead of re-executed (H9).
+      const iterationNodeStates = resumeIteration === iteration && resumeIterationNodeStates
+        ? { ...resumeIterationNodeStates }
+        : {};
+      // Only rehydrate once; subsequent iterations start fresh.
+      resumeIterationNodeStates = undefined;
+
       const result = await this.execute(steps, {
         id: `${node.id}_iter_${iteration}`,
         workflowId: "",
         status: "running",
         input: context.input,
-        nodeStates: {},
+        nodeStates: iterationNodeStates,
         currentNodes: [],
         context: { ...context, _loop: loopContext },
         checkpoints: [],
@@ -587,7 +612,13 @@ export class DAGExecutor {
           state,
           contextUpdates: {
             ...result.context,
-            [`${node.id}_loop_state`]: { iteration, previousResults },
+            [`${node.id}_loop_state`]: {
+              iteration,
+              previousResults,
+              // Persist the in-flight iteration's child states so completed
+              // steps are not re-executed when this iteration resumes (H9).
+              iterationNodeStates: result.nodeStates,
+            },
           },
           waiting: true,
         };
