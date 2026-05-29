@@ -127,10 +127,22 @@ export function mergeUsage(
     current.cacheCreationInputTokens;
   const cacheReadInputTokens = next.cacheReadInputTokens ?? current.cacheReadInputTokens;
 
+  // Prefer the provider-reported total (latest non-undefined wins, matching the
+  // ?? semantics used for input/output above). Providers like Gemini 2.5
+  // thinking models and OpenAI reasoning models report a total that exceeds
+  // input + output because it includes reasoning/thoughts tokens. Recomputing
+  // the sum would discard those, undercounting usage. Take the larger of the
+  // provider total and the recomputed sum so we never undercount.
+  const reportedTotal = next.totalTokens ?? current.totalTokens;
+  const recomputedTotal = (inputTokens ?? 0) + (outputTokens ?? 0);
+  const totalTokens = reportedTotal !== undefined
+    ? Math.max(reportedTotal, recomputedTotal)
+    : recomputedTotal;
+
   return {
     inputTokens,
     outputTokens,
-    totalTokens: (inputTokens ?? 0) + (outputTokens ?? 0),
+    totalTokens,
     ...(cacheCreationInputTokens !== undefined ? { cacheCreationInputTokens } : {}),
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
   };
