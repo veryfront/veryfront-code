@@ -1,3 +1,5 @@
+import { startDemoWorkflowRun } from "../../sample-runs.ts";
+
 export async function POST(
   request: Request,
   context: { params: Record<string, string> },
@@ -5,15 +7,15 @@ export async function POST(
   const body = await request.json().catch(() => ({})) as {
     input?: { topic?: string };
   };
-  const runId = `run-${Date.now()}`;
+  const run = startDemoWorkflowRun(context.params.workflowId, body.input);
 
   return Response.json({
     success: true,
-    runId,
-    id: runId,
-    workflowId: context.params.workflowId,
-    status: "pending",
-    input: body.input ?? {},
-    createdAt: new Date().toISOString(),
+    runId: run.id,
+    id: run.id,
+    workflowId: run.workflowId,
+    status: run.status,
+    input: run.input,
+    createdAt: run.createdAt,
   });
 }

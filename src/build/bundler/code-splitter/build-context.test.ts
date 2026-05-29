@@ -18,6 +18,7 @@ describe("build/bundler/code-splitter/build-context", () => {
       "veryfront/chat",
       "veryfront/markdown",
       "veryfront/mdx",
+      "veryfront/workflow",
     ];
 
     function assertIncludesAll(

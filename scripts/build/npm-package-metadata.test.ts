@@ -1,5 +1,9 @@
 import { assertEquals, assertStringIncludes } from "#std/assert";
 import { describe, it } from "#std/testing/bdd";
+import {
+	BROWSER_SAFE_CLIENT_MODULES,
+	BROWSER_SAFE_EXPORTS,
+} from "./browser-safe-exports.mjs";
 import { normalizeNpmPackageMetadata } from "./npm-package-metadata.ts";
 
 describe("normalizeNpmPackageMetadata", () => {
@@ -123,6 +127,25 @@ describe("npm supply-chain policy", () => {
 			);
 			assertStringIncludes(source, '#veryfront/errors/error-registry.ts');
 		}
+	});
+
+	it("keeps workflow React hooks in the browser-safe npm patch set", () => {
+		assertEquals(BROWSER_SAFE_EXPORTS.includes("./workflow"), false);
+		assertEquals(BROWSER_SAFE_CLIENT_MODULES.includes("src/workflow/react/index.js"), true);
+		assertEquals(
+			BROWSER_SAFE_CLIENT_MODULES.includes("src/workflow/react/use-workflow-start.js"),
+			true,
+		);
+	});
+
+	it("normalizes dnt interval shims for browser-safe client modules", async () => {
+		const source = await Deno.readTextFile("scripts/build/build-npm-dnt.ts");
+
+		assertStringIncludes(source, 'replaceAll("dntShim.setInterval", "globalThis.setInterval")');
+		assertStringIncludes(
+			source,
+			'replaceAll("dntShim.clearInterval", "globalThis.clearInterval")',
+		);
 	});
 });
 

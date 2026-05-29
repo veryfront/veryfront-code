@@ -15,6 +15,7 @@ const VERYFRONT_CLIENT_MODULES = [
   "veryfront/chat",
   "veryfront/markdown",
   "veryfront/mdx",
+  "veryfront/workflow",
 ];
 
 /** Gets list of external dependencies to exclude from bundle */

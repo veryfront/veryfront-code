@@ -7,6 +7,7 @@
  */
 
 import { loadTemplateFromDirectory, templateDirectoryExists } from "./loader.ts";
+import { STARTER_TEMPLATE_NAMES } from "./types.ts";
 import type {
   EnvVarConfig,
   FeatureConfig,
@@ -48,15 +49,7 @@ export const templateConfigs: Partial<Record<TemplateName, TemplateConfig>> = {
   },
 };
 
-const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [
-  "ai-agent",
-  "docs-agent",
-  "multi-agent-system",
-  "agentic-workflow",
-  "coding-agent",
-  "saas-starter",
-  "minimal",
-];
+const DIRECTORY_BASED_TEMPLATES: TemplateName[] = [...STARTER_TEMPLATE_NAMES];
 
 export async function getTemplate(name: TemplateName): Promise<TemplateFile[] | null> {
   if (name === "pages-router" || name === "app-router") {

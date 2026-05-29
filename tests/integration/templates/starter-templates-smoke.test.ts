@@ -4,19 +4,9 @@ import { dirname, join } from "#veryfront/compat/path";
 import { mkdir, writeTextFile } from "#veryfront/testing/deno-compat.ts";
 
 import { getTemplate } from "../../../cli/templates/index.ts";
-import type { TemplateName } from "../../../cli/templates/types.ts";
+import { STARTER_TEMPLATE_NAMES, type TemplateName } from "../../../cli/templates/types.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { createTestDenoConfig } from "../../_helpers/import-maps.ts";
-
-const STARTER_TEMPLATES: TemplateName[] = [
-  "minimal",
-  "ai-agent",
-  "docs-agent",
-  "multi-agent-system",
-  "agentic-workflow",
-  "coding-agent",
-  "saas-starter",
-];
 
 async function scaffoldTemplate(projectDir: string, templateName: TemplateName): Promise<void> {
   const files = await getTemplate(templateName);
@@ -35,7 +25,7 @@ describe("starter templates smoke", {
   sanitizeOps: false,
   sanitizeResources: false,
 }, () => {
-  for (const templateName of STARTER_TEMPLATES) {
+  for (const templateName of STARTER_TEMPLATE_NAMES) {
     it(`renders ${templateName} root route`, async () => {
       await withTestContext(`starter-template-${templateName}`, async (context) => {
         await writeTextFile(join(context.projectDir, "deno.json"), createTestDenoConfig());

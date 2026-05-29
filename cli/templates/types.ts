@@ -35,6 +35,16 @@ export type TemplateName =
   | "pages-router"
   | "app-router";
 
+export const STARTER_TEMPLATE_NAMES = [
+  "minimal",
+  "ai-agent",
+  "docs-agent",
+  "agentic-workflow",
+  "multi-agent-system",
+  "coding-agent",
+  "saas-starter",
+] as const satisfies readonly TemplateName[];
+
 export type FeatureName = "ai" | "auth" | "workflows" | "mdx" | "redis" | "blob";
 
 export interface FeatureConfig {

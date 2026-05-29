@@ -379,7 +379,11 @@ function normalizeBrowserTimerShim(
 		.replaceAll("dntShim.dntGlobalThis.setTimeout", "globalThis.setTimeout")
 		.replaceAll("dntShim.setTimeout", "globalThis.setTimeout")
 		.replaceAll("dntShim.dntGlobalThis.clearTimeout", "globalThis.clearTimeout")
-		.replaceAll("dntShim.clearTimeout", "globalThis.clearTimeout");
+		.replaceAll("dntShim.clearTimeout", "globalThis.clearTimeout")
+		.replaceAll("dntShim.dntGlobalThis.setInterval", "globalThis.setInterval")
+		.replaceAll("dntShim.setInterval", "globalThis.setInterval")
+		.replaceAll("dntShim.dntGlobalThis.clearInterval", "globalThis.clearInterval")
+		.replaceAll("dntShim.clearInterval", "globalThis.clearInterval");
 
 	if (patched === content) {
 		console.log(`ℹ️  ${description} not needed for ${path}`);

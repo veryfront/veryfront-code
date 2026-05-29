@@ -14,19 +14,9 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { join } from "#veryfront/compat/path/index.ts";
 import { exists, makeTempDir, readTextFile, remove, stat } from "#veryfront/testing/deno-compat.ts";
 import { runCommand } from "#veryfront/compat/process.ts";
-import type { TemplateName } from "../../templates/types.ts";
+import { STARTER_TEMPLATE_NAMES } from "../../templates/types.ts";
 
 const TEST_DIR = await makeTempDir({ prefix: "veryfront-init-test-" });
-
-const STARTER_TEMPLATES: TemplateName[] = [
-  "minimal",
-  "ai-agent",
-  "docs-agent",
-  "agentic-workflow",
-  "multi-agent-system",
-  "coding-agent",
-  "saas-starter",
-];
 
 function randomSuffix(): string {
   return Math.random().toString(36).substring(2, 8);
@@ -256,7 +246,7 @@ describe("init command integration", () => {
     });
 
     it("does not write package.json in quiet mode for any starter template", async () => {
-      for (const template of STARTER_TEMPLATES) {
+      for (const template of STARTER_TEMPLATE_NAMES) {
         const name = `quiet-${template}-${randomSuffix()}`;
         const dir = join(TEST_DIR, name);
 
@@ -290,7 +280,7 @@ describe("init command integration", () => {
     it("generates complete package metadata for every starter template and runtime", async () => {
       const runtimes = ["node", "bun", "deno"] as const;
 
-      for (const template of STARTER_TEMPLATES) {
+      for (const template of STARTER_TEMPLATE_NAMES) {
         for (const runtime of runtimes) {
           const name = `pkg-${runtime}-${template}-${randomSuffix()}`;
           const dir = join(TEST_DIR, name);
