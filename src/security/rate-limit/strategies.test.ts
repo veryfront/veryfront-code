@@ -82,6 +82,24 @@ describe("fixedWindowStrategy", () => {
       assertEquals(resultB.allowed, true);
     });
   });
+
+  it("should honor configured windowMs in the store state (not hardcoded 60s)", async () => {
+    await withStore(async (store) => {
+      const windowMs = 600_000; // 10 minutes
+      const config = createConfig({ maxRequests: 2, windowMs });
+      const before = Date.now();
+
+      await fixedWindowStrategy("window-key", config, store);
+
+      const state = store.getState("window-key");
+      // resetTime must reflect the configured 10-minute window, not the
+      // hardcoded 60s constant the store previously used.
+      assertEquals(
+        state !== undefined && state.resetTime >= before + windowMs,
+        true,
+      );
+    });
+  });
 });
 
 describe("slidingWindowStrategy", () => {

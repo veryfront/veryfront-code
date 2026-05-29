@@ -15,7 +15,7 @@ export interface RateLimitConfig {
 }
 
 export interface RateLimitStore {
-  increment(key: string): Promise<number>;
+  increment(key: string, windowMs?: number): Promise<number>;
   get(key: string): Promise<number>;
   reset(key: string): Promise<void>;
   resetAll(): Promise<void>;
