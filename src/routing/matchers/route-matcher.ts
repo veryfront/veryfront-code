@@ -1,4 +1,5 @@
 import type { Route, RouteMatch } from "./types.ts";
+import { safeDecodeParam } from "./decode-param.ts";
 
 const CATCH_ALL_PATTERN = /\[\[?\.\.\.(\w+)\]\]?/g;
 
@@ -20,7 +21,7 @@ function decodeCatchAllValue(value?: string): string[] {
   return value
     .split("/")
     .filter(Boolean)
-    .map((segment) => decodeURIComponent(segment));
+    .map((segment) => safeDecodeParam(segment));
 }
 
 export function matchRoute(pathname: string, route: Route): RouteMatch | null {
@@ -32,9 +33,7 @@ export function matchRoute(pathname: string, route: Route): RouteMatch | null {
 
   for (const [index, name] of (route.paramNames ?? []).entries()) {
     const value = match[index + 1] ?? "";
-    params[name] = catchAllParams.has(name)
-      ? decodeCatchAllValue(value)
-      : decodeURIComponent(value);
+    params[name] = catchAllParams.has(name) ? decodeCatchAllValue(value) : safeDecodeParam(value);
   }
 
   return { params, route };

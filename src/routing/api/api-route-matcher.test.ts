@@ -16,6 +16,26 @@ afterEach((): void => {
 });
 
 describe("ApiRouteMatcher", () => {
+  describe("Malformed percent-encoding", () => {
+    it("does not throw on malformed encoding in a dynamic segment", () => {
+      const router = createRouter();
+      router.addRoute("/api/users/[id]", "pages/api/users/[id].ts");
+
+      const match = router.match("/api/users/%zz");
+      assertExists(match);
+      assertEquals(match.params.id, "%zz");
+    });
+
+    it("does not throw on malformed encoding in a catch-all segment", () => {
+      const router = createRouter();
+      router.addRoute("/api/files/[...path]", "pages/api/files/[...path].ts");
+
+      const match = router.match("/api/files/ok/%zz");
+      assertExists(match);
+      assertEquals(match.params.path, ["ok", "%zz"]);
+    });
+  });
+
   describe("Static routes", () => {
     it("matches exact static routes", () => {
       const router = createRouter();
