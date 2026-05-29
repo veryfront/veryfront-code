@@ -33,6 +33,16 @@
   ],
   "tools": [
     {
+      "id": "get_current_user",
+      "name": "Get Current User",
+      "description": "Get the authenticated GitHub user identity",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.github.com/user"
+      }
+    },
+    {
       "id": "list_repos",
       "name": "List Repositories",
       "description": "Get list of user's repositories",
@@ -57,6 +67,60 @@
             "in": "query",
             "description": "Results per page (max 100)",
             "default": 30
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "repositories",
+              "data"
+            ],
+            "collectionName": "repositories",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "full_name"
+              },
+              {
+                "name": "owner",
+                "kind": "contact"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "private"
+              },
+              {
+                "name": "archived"
+              },
+              {
+                "name": "open_issues_count"
+              },
+              {
+                "name": "default_branch"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "pushed_at"
+              }
+            ],
+            "omitted": "repository descriptions and provider-specific payload fields"
           }
         }
       }
@@ -135,6 +199,60 @@
             "in": "query",
             "description": "Results per page",
             "default": 30
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "pullRequests",
+              "data"
+            ],
+            "collectionName": "pullRequests",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "closed_at"
+              },
+              {
+                "name": "merged_at"
+              },
+              {
+                "name": "draft"
+              }
+            ],
+            "omitted": "pull request bodies, diff details, and provider-specific payload fields"
           }
         }
       }
@@ -227,7 +345,7 @@
         "type": "graphql",
         "method": "POST",
         "url": "https://api.github.com/graphql",
-        "query": "query($owner: String!, $repo: String!, $first: Int, $states: [IssueState!]) { repository(owner: $owner, name: $repo) { issues(first: $first, states: $states, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { id number title body state url createdAt updatedAt author { login } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } } } }",
+        "query": "query($owner: String!, $repo: String!, $first: Int, $states: [IssueState!]) { repository(owner: $owner, name: $repo) { issues(first: $first, states: $states, orderBy: { field: UPDATED_AT, direction: DESC }) { nodes { id number title body state url createdAt updatedAt author { login } labels(first: 10) { nodes { name } } assignees(first: 10) { nodes { login } } } pageInfo { hasNextPage endCursor } } } }",
         "params": {
           "owner": {
             "type": "string",
@@ -257,7 +375,65 @@
           }
         },
         "response": {
-          "transform": "repository.issues.nodes"
+          "transform": "repository.issues.nodes",
+          "historicalSummary": {
+            "collectionKeys": [
+              "issues",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "issues",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "pageInfo",
+                "kind": "object"
+              }
+            ],
+            "omitted": "issue bodies, comments, and provider-specific payload fields"
+          }
         }
       }
     },
@@ -287,6 +463,63 @@
             "in": "path",
             "description": "Issue number",
             "required": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "issue",
+              "data"
+            ],
+            "collectionName": "issues",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "closed_at"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              }
+            ],
+            "singleItem": true,
+            "omitted": "issue body, comments, timeline, and provider-specific payload fields"
           }
         }
       }
@@ -406,6 +639,72 @@
             "in": "path",
             "description": "Pull request number",
             "required": true
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "pullRequest",
+              "data"
+            ],
+            "collectionName": "pullRequests",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "closed_at"
+              },
+              {
+                "name": "merged_at"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "draft"
+              },
+              {
+                "name": "mergeable"
+              }
+            ],
+            "singleItem": true,
+            "omitted": "pull request body, diff, reviews, and provider-specific payload fields"
           }
         }
       }
@@ -541,6 +840,40 @@
             "in": "query",
             "description": "Results per page (max 100)",
             "default": 30
+          },
+          "page": {
+            "type": "number",
+            "in": "query",
+            "description": "Page number for pagination"
+          }
+        },
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "commits",
+              "data"
+            ],
+            "collectionName": "commits",
+            "itemFields": [
+              {
+                "name": "sha"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "committer",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "full commit messages, verification payloads, and file details"
           }
         }
       }

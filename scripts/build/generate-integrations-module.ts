@@ -133,6 +133,16 @@ ${historicalToolSummaryLines}
 `,
 );
 
+const fmt = new Deno.Command(Deno.execPath(), {
+  args: ["fmt", summaryPath],
+  stdout: "inherit",
+  stderr: "inherit",
+});
+const fmtStatus = await fmt.output();
+if (!fmtStatus.success) {
+  throw new Error(`Failed to format generated ${summaryPath}`);
+}
+
 console.log(
   `✅ Generated ${dataPath} (${connectors.length} connectors, ${icons.length} icons)`,
 );

@@ -589,8 +589,10 @@ function compactContactValue(value: unknown): Record<string, unknown> | string |
     if (typeof emailAddress.address === "string") compact.address = emailAddress.address;
   }
 
-  for (const field of ["name", "address", "email"] as const) {
-    if (typeof value[field] === "string") compact[field] = value[field];
+  for (const field of ["login", "name", "address", "email", "id"] as const) {
+    if (typeof value[field] === "string" || typeof value[field] === "number") {
+      compact[field] = value[field];
+    }
   }
 
   return Object.keys(compact).length > 0 ? compact : null;
@@ -616,6 +618,17 @@ function compactHistoricalField(
     if (!Array.isArray(fieldValue)) return null;
     const strings = fieldValue.filter((item) => typeof item === "string");
     return strings.length > 0 ? strings : null;
+  }
+
+  if (field.kind === "object") {
+    if (!isRecord(fieldValue)) return null;
+    const compact: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(fieldValue)) {
+      if (typeof value === "string" || typeof value === "boolean" || typeof value === "number") {
+        compact[key] = value;
+      }
+    }
+    return Object.keys(compact).length > 0 ? compact : null;
   }
 
   if (typeof fieldValue === "string") {
@@ -666,6 +679,8 @@ function getHistoricalSummaryItems(
     const value = parsed[key];
     if (Array.isArray(value)) return value;
   }
+
+  if (contract.singleItem) return [parsed];
 
   return null;
 }
