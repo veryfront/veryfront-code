@@ -565,6 +565,33 @@ describe("RedisBackend", () => {
     it("should fail to extend non-existent lock", async () => {
       assertEquals(await backend.extendLock("no-such-lock", 10000), false);
     });
+
+    it("releaseLock should not delete a lock owned by another worker", async () => {
+      // Worker A acquires the lock.
+      assertEquals(await backend.acquireLock("run-own", 5000), true);
+      const lockKey = "test:lock:run-own";
+
+      // Simulate lock expiry + worker B acquiring it: overwrite the stored
+      // value with worker B's token.
+      mockRedis.store.set(lockKey, "worker-B-token");
+
+      // Worker A tries to release -- it must NOT delete worker B's lock.
+      await backend.releaseLock("run-own");
+
+      assertEquals(mockRedis.store.get(lockKey), "worker-B-token");
+    });
+
+    it("extendLock should not extend a lock owned by another worker", async () => {
+      // Worker A acquires the lock.
+      assertEquals(await backend.acquireLock("run-own2", 5000), true);
+      const lockKey = "test:lock:run-own2";
+
+      // Simulate worker B taking over the lock.
+      mockRedis.store.set(lockKey, "worker-B-token");
+
+      // Worker A tries to extend -- it must NOT succeed.
+      assertEquals(await backend.extendLock("run-own2", 10000), false);
+    });
   });
 
   describe("stalled run recovery", () => {

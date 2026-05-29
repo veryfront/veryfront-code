@@ -41,6 +41,8 @@ export class RedisBackend implements WorkflowBackend {
   private connectionPromise: Promise<RedisAdapter> | null = null;
   private config: RedisBackendInternalConfig;
   private initialized = false;
+  /** Per-run lock tokens for ownership-checked release/extend (Redlock pattern). */
+  private lockValues = new Map<string, string>();
 
   constructor(config: RedisBackendConfig = {}) {
     this.config = {
@@ -552,20 +554,40 @@ export class RedisBackend implements WorkflowBackend {
     const lockValue = crypto.randomUUID();
 
     const result = await client.set(this.lockKey(runId), lockValue, { nx: true, px: duration });
-    return result === "OK";
+    if (result === "OK") {
+      // Remember our token so release/extend can verify ownership (Redlock).
+      this.lockValues.set(runId, lockValue);
+      return true;
+    }
+    return false;
   }
 
   async releaseLock(runId: string): Promise<void> {
     const client = await this.ensureClient();
-    await client.del(this.lockKey(runId));
+    const key = this.lockKey(runId);
+    const ourValue = this.lockValues.get(runId);
+
+    // Only release if we still own the lock (compare-and-delete). Without a
+    // known token we never owned it, so do nothing.
+    if (ourValue === undefined) return;
+
+    const current = await client.get(key);
+    if (current === ourValue) {
+      await client.del(key);
+    }
+    this.lockValues.delete(runId);
   }
 
   async extendLock(runId: string, duration: number): Promise<boolean> {
     const client = await this.ensureClient();
     const key = this.lockKey(runId);
+    const ourValue = this.lockValues.get(runId);
 
-    const exists = await client.exists(key);
-    if (exists === 0) return false;
+    // Only extend if we still own the lock (compare-and-pexpire).
+    if (ourValue === undefined) return false;
+
+    const current = await client.get(key);
+    if (current !== ourValue) return false;
 
     await client.expire(key, Math.ceil(duration / 1000));
     return true;
