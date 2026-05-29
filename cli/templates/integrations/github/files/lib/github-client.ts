@@ -103,6 +103,17 @@ export interface GitHubMergeResult {
   message: string;
 }
 
+export interface GitHubUser {
+  id: number;
+  node_id: string;
+  login: string;
+  name: string | null;
+  email: string | null;
+  html_url: string;
+  avatar_url: string;
+  type: string;
+}
+
 /**
  * GitHub OAuth provider configuration
  */
@@ -210,7 +221,7 @@ export function createGitHubClient(userId: string): {
       merge_method?: "merge" | "squash" | "rebase";
     },
   ): Promise<GitHubMergeResult>;
-  getUser(): Promise<{ login: string; name: string; email: string }>;
+  getUser(): Promise<GitHubUser>;
   getUserByUsername(username: string): Promise<GitHubUser>;
 } {
   async function getAccessToken(): Promise<string> {
@@ -379,7 +390,7 @@ export function createGitHubClient(userId: string): {
       );
     },
 
-    getUser(): Promise<{ login: string; name: string; email: string }> {
+    getUser(): Promise<GitHubUser> {
       return apiRequest("/user");
     },
 

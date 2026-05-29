@@ -150,7 +150,7 @@ export const IntegrationEndpointResponseEnrichmentSchema = lazySchema(
 export const getIntegrationEndpointHistoricalSummaryFieldSchema = defineSchema((v) =>
   v.object({
     name: v.string(),
-    kind: v.enum(["scalar", "string-array", "contact", "contact-array"]).optional(),
+    kind: v.enum(["scalar", "string-array", "contact", "contact-array", "object"]).optional(),
     maxLength: v.number().optional(),
   })
 );
@@ -164,6 +164,7 @@ export const getIntegrationEndpointHistoricalSummarySchema = defineSchema((v) =>
     collectionName: v.string(),
     itemFields: v.array(getIntegrationEndpointHistoricalSummaryFieldSchema()),
     outputFields: v.array(getIntegrationEndpointHistoricalSummaryFieldSchema()).optional(),
+    singleItem: v.boolean().optional(),
     omitted: v.string(),
   })
 );

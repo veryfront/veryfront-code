@@ -279,6 +279,75 @@ Deno.test("maskOldToolOutputs keeps provider-scoped Outlook email action fields"
   assertEquals(compacted.debug, undefined);
 });
 
+Deno.test("maskOldToolOutputs keeps GitHub issue identifiers for follow-up calls", () => {
+  const messages = [
+    { role: "user", content: "inspect issue" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-github-issue",
+          toolName: "github__get_issue",
+          input: { owner: "veryfront", repo: "veryfront-code", issue_number: 1932 },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-github-issue",
+          toolName: "github__get_issue",
+          output: {
+            type: "json",
+            value: {
+              id: 3189234567,
+              node_id: "I_kwDOExample",
+              number: 1932,
+              title: "Improve GitHub integration",
+              state: "open",
+              html_url: "https://github.com/veryfront/veryfront-code/issues/1932",
+              user: { login: "octocat", id: 1 },
+              created_at: "2026-05-28T10:00:00Z",
+              updated_at: "2026-05-29T10:00:00Z",
+              body: "large issue body ".repeat(200),
+            },
+          },
+        },
+      ],
+    },
+    { role: "user", content: "comment on it" },
+  ] satisfies ProviderModelMessage[];
+
+  const masked = maskOldToolOutputs(messages);
+  const toolMessage = masked[2];
+  if (toolMessage?.role !== "tool") {
+    throw new Error("expected tool message");
+  }
+  const output = toolMessage.content[0]?.output;
+  if (output?.type !== "text") {
+    throw new Error("expected compacted text output");
+  }
+  const compacted = JSON.parse(output.value);
+
+  assertEquals(compacted.issues, [
+    {
+      id: 3189234567,
+      node_id: "I_kwDOExample",
+      number: 1932,
+      title: "Improve GitHub integration",
+      state: "open",
+      html_url: "https://github.com/veryfront/veryfront-code/issues/1932",
+      user: { login: "octocat", id: 1 },
+      created_at: "2026-05-28T10:00:00Z",
+      updated_at: "2026-05-29T10:00:00Z",
+    },
+  ]);
+  assertEquals(compacted.issues[0].body, undefined);
+});
+
 Deno.test("maskOldToolOutputs does not summarize unresearched email-like providers", () => {
   const messages = [
     { role: "user", content: "search mail" },

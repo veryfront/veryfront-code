@@ -102,7 +102,7 @@ describe("integration endpoint specs", () => {
     assertEquals(connectorNames.includes("hubspot"), false);
   });
 
-  it("adds endpoint specs for all 69 tools across the 5 targeted integrations", () => {
+  it("adds endpoint specs for all 70 tools across the 5 targeted integrations", () => {
     const targetedConnectors = [
       "calendar",
       "github",
@@ -125,7 +125,7 @@ describe("integration endpoint specs", () => {
       totalEndpointTools += endpointTools.length;
     }
 
-    assertEquals(totalEndpointTools, 69);
+    assertEquals(totalEndpointTools, 70);
   });
 
   it("adds endpoint specs for the newly configured integration providers", () => {
@@ -882,6 +882,50 @@ describe("integration endpoint specs", () => {
       "commentCreate(input: { issueId: $issueId, body: $body })",
     );
     assertEquals(linearAddComment.endpoint?.params?.body?.required, true);
+  });
+
+  it("declares the GitHub current user identity tool", () => {
+    const tool = getTool("github", "get_current_user");
+
+    assertEquals(tool.requiresWrite, false);
+    assertEquals(tool.endpoint?.method, "GET");
+    assertEquals(tool.endpoint?.url, "https://api.github.com/user");
+    assertEquals(historicalToolSummaries["github__get_current_user"], undefined);
+  });
+
+  it("publishes provider-declared historical summary contracts for GitHub read tools", () => {
+    const listRepos = getTool("github", "list_repos");
+    const listIssues = getTool("github", "list_issues");
+    const getIssue = getTool("github", "get_issue");
+    const getPr = getTool("github", "get_pr");
+
+    assertEquals(listRepos.endpoint?.response?.historicalSummary?.itemFields, [
+      { name: "id" },
+      { name: "node_id" },
+      { name: "name" },
+      { name: "full_name" },
+      { name: "owner", kind: "contact" },
+      { name: "html_url" },
+      { name: "private" },
+      { name: "archived" },
+      { name: "open_issues_count" },
+      { name: "default_branch" },
+      { name: "updated_at" },
+      { name: "pushed_at" },
+    ]);
+    assertEquals(listIssues.endpoint?.response?.historicalSummary?.outputFields, [
+      { name: "pageInfo", kind: "object" },
+    ]);
+    assertEquals(getIssue.endpoint?.response?.historicalSummary?.singleItem, true);
+    assertEquals(getPr.endpoint?.response?.historicalSummary?.singleItem, true);
+    assertEquals(
+      historicalToolSummaries["github__list_repos"],
+      listRepos.endpoint?.response?.historicalSummary,
+    );
+    assertEquals(
+      historicalToolSummaries["github__get_pr"],
+      getPr.endpoint?.response?.historicalSummary,
+    );
   });
 
   it("publishes provider-declared historical summary contracts for email list/search tools", () => {
