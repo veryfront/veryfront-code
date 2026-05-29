@@ -18,6 +18,26 @@ function getEnv(key: string): string | undefined {
 
 const GITHUB_API_BASE = "https://api.github.com";
 
+export interface GitHubUser {
+  id: number;
+  login: string;
+  name: string | null;
+  type: string;
+  html_url: string;
+  avatar_url: string;
+  company: string | null;
+  blog: string;
+  location: string | null;
+  email: string | null;
+  bio: string | null;
+  twitter_username: string | null;
+  public_repos: number;
+  followers: number;
+  following: number;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface GitHubRepo {
   id: number;
   name: string;
@@ -191,6 +211,7 @@ export function createGitHubClient(userId: string): {
     },
   ): Promise<GitHubMergeResult>;
   getUser(): Promise<{ login: string; name: string; email: string }>;
+  getUserByUsername(username: string): Promise<GitHubUser>;
 } {
   async function getAccessToken(): Promise<string> {
     const token = await getValidToken(githubOAuthProvider, userId, "github");
@@ -360,6 +381,10 @@ export function createGitHubClient(userId: string): {
 
     getUser(): Promise<{ login: string; name: string; email: string }> {
       return apiRequest("/user");
+    },
+
+    getUserByUsername(username): Promise<GitHubUser> {
+      return apiRequest<GitHubUser>(`/users/${encodeURIComponent(username)}`);
     },
   };
 }
