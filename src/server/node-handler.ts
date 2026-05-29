@@ -7,10 +7,12 @@ export function toNodeHandler(
   return async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-      const headers: Record<string, string> = {};
+      const headers = new Headers();
       for (const [key, value] of Object.entries(req.headers)) {
-        if (typeof value === "string") headers[key] = value;
-        else if (Array.isArray(value)) headers[key] = value[0] ?? "";
+        if (typeof value === "string") headers.append(key, value);
+        else if (Array.isArray(value)) {
+          for (const entry of value) headers.append(key, entry);
+        }
       }
       const method = req.method ?? "GET";
       const body = method === "GET" || method === "HEAD" ? null : req;
@@ -24,7 +26,14 @@ export function toNodeHandler(
       const response = await handler(new Request(url.toString(), init));
 
       if (response.status === 101) return;
-      res.writeHead(response.status, Object.fromEntries(response.headers));
+      const outHeaders: Record<string, string> = {};
+      for (const [key, value] of response.headers) {
+        if (key.toLowerCase() === "set-cookie") continue;
+        outHeaders[key] = value;
+      }
+      res.writeHead(response.status, outHeaders);
+      const setCookies = response.headers.getSetCookie();
+      if (setCookies.length > 0) res.setHeader("Set-Cookie", setCookies);
       if (response.body) {
         const reader = response.body.getReader();
         while (true) {
