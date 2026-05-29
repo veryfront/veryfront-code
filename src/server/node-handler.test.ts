@@ -3,6 +3,7 @@ import { toNodeHandler } from "./node-handler.ts";
 
 type FakeRes = {
   statusCode?: number;
+  headersSent: boolean;
   writeHeadHeaders?: Record<string, unknown>;
   setHeaderCalls: Array<[string, unknown]>;
   chunks: Uint8Array[];
@@ -15,14 +16,21 @@ type FakeRes = {
 
 function createFakeRes(): FakeRes {
   return {
+    headersSent: false,
     setHeaderCalls: [],
     chunks: [],
     ended: false,
     writeHead(status, headers) {
+      // Mirror Node: the head can only be written once, and never after
+      // headers have already been flushed.
+      if (this.headersSent) throw new Error("ERR_HTTP_HEADERS_SENT");
       this.statusCode = status;
       this.writeHeadHeaders = headers;
+      this.headersSent = true;
     },
     setHeader(name, value) {
+      // Mirror Node: headers cannot be mutated once they have been sent.
+      if (this.headersSent) throw new Error("ERR_HTTP_HEADERS_SENT");
       this.setHeaderCalls.push([name, value]);
     },
     write(chunk) {

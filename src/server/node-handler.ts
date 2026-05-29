@@ -26,14 +26,14 @@ export function toNodeHandler(
       const response = await handler(new Request(url.toString(), init));
 
       if (response.status === 101) return;
-      const outHeaders: Record<string, string> = {};
+      const outHeaders: Record<string, string | string[]> = {};
       for (const [key, value] of response.headers) {
         if (key.toLowerCase() === "set-cookie") continue;
         outHeaders[key] = value;
       }
-      res.writeHead(response.status, outHeaders);
       const setCookies = response.headers.getSetCookie();
-      if (setCookies.length > 0) res.setHeader("Set-Cookie", setCookies);
+      if (setCookies.length > 0) outHeaders["Set-Cookie"] = setCookies;
+      res.writeHead(response.status, outHeaders);
       if (response.body) {
         const reader = response.body.getReader();
         while (true) {
