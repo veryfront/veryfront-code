@@ -185,5 +185,63 @@ describe("rendering/rsc/server-renderer/tree-processor", {
       const result = await renderChildren(children, new Map(), new Map());
       assertEquals(result.length, 2);
     });
+
+    it("should HTML-escape raw text children (XSS H14)", async () => {
+      const result = await renderChildren(
+        "<img src=x onerror=alert(1)>",
+        new Map(),
+        new Map(),
+      );
+      assertEquals(result.length, 1);
+      assertEquals(result[0]!.type, "html");
+      const html = (result[0] as { html: string }).html;
+      assertEquals(html.includes("&lt;img"), true);
+      assertEquals(html.includes("<img"), false);
+    });
+  });
+
+  describe("XSS H14 - mixed text + client-component children", () => {
+    it("should escape a text sibling next to a client component", async () => {
+      function ClientWidget() {
+        return React.createElement("div", null, "widget");
+      }
+      (ClientWidget as any).__rsc_client = true;
+
+      const clientManifest = new Map<string, ClientComponentMeta>();
+      clientManifest.set("ClientWidget", {
+        id: "ClientWidget",
+        path: "./components/ClientWidget.tsx",
+        exports: ["default"],
+      });
+
+      const element = React.createElement(
+        "div",
+        null,
+        "<img src=x onerror=alert(1)>",
+        React.createElement(ClientWidget),
+      );
+
+      const result = await renderTree(
+        element as any,
+        {},
+        clientManifest,
+        new Map<string, string>(),
+      );
+
+      assertEquals(result.type, "html");
+      const html = (result as { html: string }).html;
+      assertEquals(html.includes("&lt;img"), true);
+      assertEquals(html.includes("onerror=alert(1)>"), false);
+    });
+
+    it("should not double-escape a normal text-only element (regression)", async () => {
+      const element = React.createElement("div", null, "hello & welcome");
+      const result = await renderTree(element as any, {}, new Map(), new Map());
+      assertEquals(result.type, "html");
+      const html = (result as { html: string }).html;
+      // text-only goes through React's fast path; should escape once, not twice
+      assertEquals(html.includes("hello &amp; welcome"), true);
+      assertEquals(html.includes("&amp;amp;"), false);
+    });
   });
 });
