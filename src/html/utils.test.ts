@@ -133,6 +133,30 @@ describe("html-generation/utils", () => {
       );
     });
 
+    it("should map self-hosted workflow imports to the local lib handler", async () => {
+      const result = await buildImportMapJson({
+        config: { client: { moduleResolution: "self-hosted" } },
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertEquals(imports["veryfront/chat"], "/_veryfront/lib/chat.js");
+      assertEquals(imports["veryfront/markdown"], "/_veryfront/lib/markdown.js");
+      assertEquals(imports["veryfront/mdx"], "/_veryfront/lib/mdx.js");
+      assertEquals(imports["veryfront/workflow"], "/_veryfront/lib/workflow.js");
+    });
+
+    it("should map non-default CDN providers to published npm ESM files", async () => {
+      const result = await buildImportMapJson({
+        config: { client: { cdn: { provider: "unpkg" } } },
+      });
+      const imports = JSON.parse(result).imports as Record<string, string>;
+
+      assertStringIncludes(imports["veryfront/chat"]!, "/esm/src/chat/index.js");
+      assertStringIncludes(imports["veryfront/markdown"]!, "/esm/src/markdown/index.js");
+      assertStringIncludes(imports["veryfront/mdx"]!, "/esm/src/mdx/index.js");
+      assertStringIncludes(imports["veryfront/workflow"]!, "/esm/src/workflow/react/index.js");
+    });
+
     it("should format JSON with proper indentation", async () => {
       const result = await buildImportMapJson();
 

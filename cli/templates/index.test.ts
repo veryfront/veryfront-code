@@ -3,17 +3,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 
 import { getTemplate, templateConfigs } from "./index.ts";
-import type { TemplateName } from "./types.ts";
-
-const STARTER_TEMPLATES: TemplateName[] = [
-  "ai-agent",
-  "docs-agent",
-  "multi-agent-system",
-  "agentic-workflow",
-  "coding-agent",
-  "saas-starter",
-  "minimal",
-];
+import { STARTER_TEMPLATE_NAMES, type TemplateName } from "./types.ts";
 
 const STYLED_STARTER_TEMPLATES: TemplateName[] = [
   "ai-agent",
@@ -44,7 +34,7 @@ describe("cli/templates", () => {
   it("keeps starter npm dependencies out of root package template files", async () => {
     const offenders: string[] = [];
 
-    for (const templateName of STARTER_TEMPLATES) {
+    for (const templateName of STARTER_TEMPLATE_NAMES) {
       const files = await getTemplate(templateName);
       assertExists(files, `${templateName} should load from the template registry`);
 

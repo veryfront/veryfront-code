@@ -1,6 +1,6 @@
 import { TEMPLATES } from "../../cli/commands/init/catalog.ts";
 
-type RuntimeName = "node" | "bun";
+type RuntimeName = "node" | "bun" | "deno";
 type TemplateName = typeof TEMPLATES[number]["id"];
 
 interface CommandResult {
@@ -30,9 +30,15 @@ interface BrowserRequest {
   error?: string | null;
 }
 
-const DEFAULT_RUNTIMES: RuntimeName[] = ["node", "bun"];
-const TEMPLATE_ROUTES: Partial<Record<TemplateName, string[]>> = {
-  "agentic-workflow": ["/workflows/test-run"],
+const VALID_RUNTIMES: RuntimeName[] = ["node", "bun", "deno"];
+const DEFAULT_RUNTIMES: RuntimeName[] = VALID_RUNTIMES;
+const TEMPLATE_ROUTE_EXPECTATIONS: Partial<
+  Record<TemplateName, Array<{ route: string; contains?: string[] }>>
+> = {
+  "agentic-workflow": [
+    { route: "/", contains: ["Content Pipeline", "Recent Runs"] },
+    { route: "/workflows/test-run" },
+  ],
 };
 
 const decoder = new TextDecoder();
@@ -41,7 +47,8 @@ function parseCsvFlag(name: string): string[] | null {
   const prefix = `--${name}=`;
   const inline = Deno.args.find((arg) => arg.startsWith(prefix));
   if (inline) {
-    return inline.slice(prefix.length).split(",").map((value) => value.trim()).filter(Boolean);
+    return inline.slice(prefix.length).split(",").map((value) => value.trim())
+      .filter(Boolean);
   }
 
   const index = Deno.args.indexOf(`--${name}`);
@@ -67,7 +74,9 @@ function selectedTemplates(): TemplateName[] {
     return [...all];
   }
 
-  const invalid = requested.filter((template) => !all.includes(template as TemplateName));
+  const invalid = requested.filter((template) =>
+    !all.includes(template as TemplateName)
+  );
   if (invalid.length > 0) {
     throw new Error(`Unknown templates: ${invalid.join(", ")}`);
   }
@@ -81,7 +90,9 @@ function selectedRuntimes(): RuntimeName[] {
     return DEFAULT_RUNTIMES;
   }
 
-  const invalid = requested.filter((runtime) => runtime !== "node" && runtime !== "bun");
+  const invalid = requested.filter((runtime) =>
+    !VALID_RUNTIMES.includes(runtime as RuntimeName)
+  );
   if (invalid.length > 0) {
     throw new Error(`Unknown runtimes: ${invalid.join(", ")}`);
   }
@@ -154,14 +165,24 @@ async function runChecked(
   return result;
 }
 
-async function ensureCommand(command: string, args: string[] = ["--version"]): Promise<void> {
+async function ensureCommand(
+  command: string,
+  args: string[] = ["--version"],
+): Promise<void> {
   await runChecked(command, args, { timeoutMs: 30_000 });
 }
 
-async function packNpmPackage(rootDir: string, workDir: string): Promise<string> {
+async function packNpmPackage(
+  rootDir: string,
+  workDir: string,
+): Promise<string> {
   const packDir = `${workDir}/packed`;
   await Deno.mkdir(packDir, { recursive: true });
-  const result = await runChecked("npm", ["pack", "--pack-destination", packDir], {
+  const result = await runChecked("npm", [
+    "pack",
+    "--pack-destination",
+    packDir,
+  ], {
     cwd: `${rootDir}/npm`,
     timeoutMs: 120_000,
   });
@@ -176,7 +197,10 @@ async function packNpmPackage(rootDir: string, workDir: string): Promise<string>
   return `${packDir}/${tarball}`;
 }
 
-async function updateVeryfrontDependency(projectDir: string, tarballPath: string): Promise<void> {
+async function updateVeryfrontDependency(
+  projectDir: string,
+  tarballPath: string,
+): Promise<void> {
   const packagePath = `${projectDir}/package.json`;
   const pkg = JSON.parse(await Deno.readTextFile(packagePath));
   pkg.dependencies ??= {};
@@ -184,7 +208,45 @@ async function updateVeryfrontDependency(projectDir: string, tarballPath: string
   await Deno.writeTextFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
 }
 
-async function allocatePort(): Promise<number> {
+async function usePackedVeryfrontDenoTasks(
+  projectDir: string,
+  tarballPath: string,
+): Promise<void> {
+  const packagePath = `${projectDir}/package.json`;
+  const pkg = JSON.parse(await Deno.readTextFile(packagePath));
+  delete pkg.dependencies?.veryfront;
+  await Deno.writeTextFile(packagePath, `${JSON.stringify(pkg, null, 2)}\n`);
+
+  const packedCliDir = `${projectDir}/.veryfront-packed-cli`;
+  await Deno.mkdir(packedCliDir, { recursive: true });
+  await runChecked("tar", ["-xzf", tarballPath, "-C", packedCliDir], {
+    timeoutMs: 30_000,
+  });
+  await runChecked("deno", ["install"], {
+    cwd: `${packedCliDir}/package`,
+    timeoutMs: 180_000,
+  });
+
+  const cliPath = JSON.stringify(`${packedCliDir}/package/esm/cli/main.js`);
+  const denoConfigPath = `${projectDir}/deno.json`;
+  const config = JSON.parse(await Deno.readTextFile(denoConfigPath));
+  config.tasks ??= {};
+  config.tasks.dev = `deno run -A ${cliPath} dev`;
+  config.tasks.build = `deno run -A ${cliPath} build`;
+  config.tasks.preview = `deno run -A ${cliPath} preview`;
+  await Deno.writeTextFile(
+    denoConfigPath,
+    `${JSON.stringify(config, null, 2)}\n`,
+  );
+}
+
+function assertCondition(condition: boolean, message: string): void {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+function allocatePort(): number {
   const listener = Deno.listen({ hostname: "127.0.0.1", port: 0 });
   const port = (listener.addr as Deno.NetAddr).port;
   listener.close();
@@ -214,7 +276,34 @@ async function waitForRoute(url: string, timeoutMs = 60_000): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
-  throw new Error(`${url} did not become ready within ${timeoutMs}ms: ${lastError}`);
+  throw new Error(
+    `${url} did not become ready within ${timeoutMs}ms: ${lastError}`,
+  );
+}
+
+async function verifyHttpRoute(
+  url: string,
+  expectedText: string[] = [],
+): Promise<void> {
+  const response = await fetch(url);
+  const body = await response.text();
+
+  assertCondition(response.ok, `${url} returned HTTP ${response.status}`);
+  assertCondition(
+    !body.includes("Module not found"),
+    `${url} rendered a module resolution error`,
+  );
+  assertCondition(
+    !body.includes("Internal Server Error"),
+    `${url} rendered an internal error`,
+  );
+
+  for (const text of expectedText) {
+    assertCondition(
+      body.includes(text),
+      `${url} did not include expected text: ${text}`,
+    );
+  }
 }
 
 async function collectStream(
@@ -249,9 +338,9 @@ function startDevServer(
   stdout: string[];
   stderr: string[];
 } {
-  const command = runtime === "node" ? "npm" : "bun";
-  const args = runtime === "node"
-    ? ["run", "dev", "--", "--port", String(port)]
+  const command = runtime === "node" ? "npm" : runtime;
+  const args = runtime === "deno"
+    ? ["task", "dev", "--", "--port", String(port)]
     : ["run", "dev", "--", "--port", String(port)];
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -330,7 +419,9 @@ async function runAgentBrowser(
     commandArgs.push("--json");
   }
 
-  const result = await runChecked("agent-browser", commandArgs, { timeoutMs: 45_000 });
+  const result = await runChecked("agent-browser", commandArgs, {
+    timeoutMs: 45_000,
+  });
   return result.stdout;
 }
 
@@ -338,8 +429,12 @@ async function verifyBrowserRoute(
   session: string,
   url: string,
 ): Promise<void> {
-  await runAgentBrowser(session, ["errors", "--clear"], { json: true }).catch(() => {});
-  await runAgentBrowser(session, ["network", "requests", "--clear"], { json: true }).catch(
+  await runAgentBrowser(session, ["errors", "--clear"], { json: true }).catch(
+    () => {},
+  );
+  await runAgentBrowser(session, ["network", "requests", "--clear"], {
+    json: true,
+  }).catch(
     () => {},
   );
   await runAgentBrowser(session, ["open", url]);
@@ -350,7 +445,9 @@ async function verifyBrowserRoute(
     "agent-browser errors",
   );
   if (errors.errors.length > 0) {
-    throw new Error(`Browser errors at ${url}: ${JSON.stringify(errors.errors)}`);
+    throw new Error(
+      `Browser errors at ${url}: ${JSON.stringify(errors.errors)}`,
+    );
   }
 
   const network = parseBrowserEnvelope<BrowserRequests>(
@@ -404,7 +501,11 @@ async function scaffoldProject(
   });
 
   const projectDir = `${caseDir}/${projectName}`;
-  await updateVeryfrontDependency(projectDir, tarballPath);
+  if (runtime === "deno") {
+    await usePackedVeryfrontDenoTasks(projectDir, tarballPath);
+  } else {
+    await updateVeryfrontDependency(projectDir, tarballPath);
+  }
 
   if (rootDir.length === 0) {
     throw new Error("Root directory could not be resolved");
@@ -427,10 +528,74 @@ async function installDependencies(
     return;
   }
 
+  if (runtime === "deno") {
+    await runChecked("deno", ["install"], {
+      cwd: projectDir,
+      timeoutMs: 180_000,
+    });
+    return;
+  }
+
   await runChecked("bun", ["install"], {
     cwd: projectDir,
     timeoutMs: 180_000,
   });
+}
+
+async function verifyAgenticWorkflowDemo(rootUrl: string): Promise<void> {
+  const topic = `Runtime E2E ${crypto.randomUUID().slice(0, 8)}`;
+  const startResponse = await fetch(
+    new URL("/api/workflows/content-pipeline/start", rootUrl),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ input: { topic } }),
+    },
+  );
+  const started = await startResponse.json() as { runId?: string; id?: string };
+  const runId = started.runId ?? started.id;
+
+  assertCondition(
+    startResponse.ok,
+    `workflow start returned HTTP ${startResponse.status}`,
+  );
+  assertCondition(
+    typeof runId === "string" && runId.length > 0,
+    "workflow start omitted run id",
+  );
+
+  const listResponse = await fetch(
+    new URL("/api/workflows/runs?workflowId=content-pipeline", rootUrl),
+  );
+  const list = await listResponse.json() as {
+    runs?: Array<{ id?: string; input?: { topic?: string } }>;
+  };
+  const listedRun = list.runs?.find((run) => run.id === runId);
+  assertCondition(
+    listResponse.ok,
+    `workflow list returned HTTP ${listResponse.status}`,
+  );
+  assertCondition(
+    Boolean(listedRun),
+    "started workflow run was not returned by the list API",
+  );
+  assertCondition(
+    listedRun?.input?.topic === topic,
+    "started workflow run did not preserve the submitted topic in the list API",
+  );
+
+  const detailResponse = await fetch(
+    new URL(`/api/workflows/runs/${runId}`, rootUrl),
+  );
+  const detail = await detailResponse.json() as { input?: { topic?: string } };
+  assertCondition(
+    detailResponse.ok,
+    `workflow detail returned HTTP ${detailResponse.status}`,
+  );
+  assertCondition(
+    detail.input?.topic === topic,
+    "started workflow run did not preserve the submitted topic in the detail API",
+  );
 }
 
 async function testCase(
@@ -442,12 +607,18 @@ async function testCase(
 ): Promise<void> {
   const label = `${runtime}/${template}`;
   console.log(`test ${label}: scaffold`);
-  const projectDir = await scaffoldProject(rootDir, workDir, tarballPath, template, runtime);
+  const projectDir = await scaffoldProject(
+    rootDir,
+    workDir,
+    tarballPath,
+    template,
+    runtime,
+  );
 
   console.log(`test ${label}: install`);
   await installDependencies(projectDir, runtime, workDir);
 
-  const port = await allocatePort();
+  const port = allocatePort();
   const server = startDevServer(projectDir, runtime, port);
   const session = `vfte-${runtime[0]}-${template.replaceAll("-", "")}-${
     crypto.randomUUID().slice(0, 8)
@@ -458,11 +629,18 @@ async function testCase(
     console.log(`test ${label}: wait ${rootUrl}`);
     await waitForRoute(rootUrl);
 
-    const routes = ["/", ...(TEMPLATE_ROUTES[template] ?? [])];
-    for (const route of routes) {
+    const routes = TEMPLATE_ROUTE_EXPECTATIONS[template] ?? [{ route: "/" }];
+    for (const { route, contains } of routes) {
       const url = new URL(route, rootUrl).toString();
+      console.log(`test ${label}: http ${route}`);
+      await verifyHttpRoute(url, contains);
       console.log(`test ${label}: browser ${route}`);
       await verifyBrowserRoute(session, url);
+    }
+
+    if (template === "agentic-workflow") {
+      console.log(`test ${label}: workflow API`);
+      await verifyAgenticWorkflowDemo(rootUrl);
     }
   } catch (error) {
     const stdout = server.stdout.join("").trim();
@@ -482,7 +660,10 @@ async function testCase(
 }
 
 async function main(): Promise<void> {
-  const rootDir = new URL("../../", import.meta.url).pathname.replace(/\/$/, "");
+  const rootDir = new URL("../../", import.meta.url).pathname.replace(
+    /\/$/,
+    "",
+  );
   const templates = selectedTemplates();
   const runtimes = selectedRuntimes();
   const keepWorkDir = hasFlag("keep");
@@ -497,6 +678,9 @@ async function main(): Promise<void> {
     await ensureCommand("node");
     if (runtimes.includes("bun")) {
       await ensureCommand("bun");
+    }
+    if (runtimes.includes("deno")) {
+      await ensureCommand("deno");
     }
     await ensureCommand("agent-browser", ["--version"]);
 
@@ -517,7 +701,9 @@ async function main(): Promise<void> {
       }
     }
 
-    console.log(`passed ${templates.length * runtimes.length} template runtime e2e cases`);
+    console.log(
+      `passed ${templates.length * runtimes.length} template runtime e2e cases`,
+    );
   } finally {
     if (keepWorkDir) {
       console.log(`kept work dir: ${workDir}`);

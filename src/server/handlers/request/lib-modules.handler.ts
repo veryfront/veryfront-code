@@ -9,7 +9,14 @@ import {
   PRIORITY_MEDIUM_LIB_MODULES,
 } from "#veryfront/utils/constants/index.ts";
 
-const ALLOWED_MODULES = new Set(["chat.js", "markdown.js", "mdx.js"]);
+export const LIB_MODULE_PATHS = {
+  "chat.js": "esm/src/chat/index.js",
+  "markdown.js": "esm/src/markdown/index.js",
+  "mdx.js": "esm/src/mdx/index.js",
+  "workflow.js": "esm/src/workflow/react/index.js",
+} as const;
+
+const ALLOWED_MODULES = new Set(Object.keys(LIB_MODULE_PATHS));
 const LIB_PREFIX = "/_veryfront/lib/";
 
 export class LibModulesHandler extends BaseHandler {
@@ -116,9 +123,10 @@ export class LibModulesHandler extends BaseHandler {
   }
 
   private resolveModulePath(module: string, projectDir: string): string | null {
-    if (!ALLOWED_MODULES.has(module)) return null;
+    const relativePath = LIB_MODULE_PATHS[module as keyof typeof LIB_MODULE_PATHS];
+    if (!relativePath) return null;
 
-    const distDir = joinPath(joinPath(joinPath(projectDir, "node_modules"), "veryfront"), "dist");
-    return normalizePath(joinPath(distDir, module)) ?? null;
+    const packageDir = joinPath(joinPath(projectDir, "node_modules"), "veryfront");
+    return normalizePath(joinPath(packageDir, relativePath)) ?? null;
   }
 }

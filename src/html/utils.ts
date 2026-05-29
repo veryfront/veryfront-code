@@ -100,6 +100,7 @@ interface CdnUrlTemplates {
   veryfrontChat: (version: string) => string;
   veryfrontMarkdown: (version: string) => string;
   veryfrontMdx: (version: string) => string;
+  veryfrontWorkflow: (version: string) => string;
 }
 
 const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
@@ -116,6 +117,8 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
     veryfrontMarkdown: (v) =>
       `https://esm.sh/veryfront@${v}/markdown?external=react,react-dom&target=es2022`,
     veryfrontMdx: (v) => `https://esm.sh/veryfront@${v}/mdx?external=react,react-dom&target=es2022`,
+    veryfrontWorkflow: (v) =>
+      `https://esm.sh/veryfront@${v}/workflow/react?external=react,react-dom&target=es2022`,
   },
   unpkg: {
     react: (v) => `https://unpkg.com/react@${v}/umd/react.production.min.js`,
@@ -123,9 +126,10 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
     reactDomClient: (v) => `https://unpkg.com/react-dom@${v}/umd/react-dom.production.min.js`,
     jsxRuntime: (v) => `https://unpkg.com/react@${v}/jsx-runtime`,
     jsxDevRuntime: (v) => `https://unpkg.com/react@${v}/jsx-dev-runtime`,
-    veryfrontChat: (v) => `https://unpkg.com/veryfront@${v}/dist/chat.js`,
-    veryfrontMarkdown: (v) => `https://unpkg.com/veryfront@${v}/dist/markdown.js`,
-    veryfrontMdx: (v) => `https://unpkg.com/veryfront@${v}/dist/mdx.js`,
+    veryfrontChat: (v) => `https://unpkg.com/veryfront@${v}/esm/src/chat/index.js`,
+    veryfrontMarkdown: (v) => `https://unpkg.com/veryfront@${v}/esm/src/markdown/index.js`,
+    veryfrontMdx: (v) => `https://unpkg.com/veryfront@${v}/esm/src/mdx/index.js`,
+    veryfrontWorkflow: (v) => `https://unpkg.com/veryfront@${v}/esm/src/workflow/react/index.js`,
   },
   jsdelivr: {
     react: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/umd/react.production.min.js`,
@@ -134,9 +138,12 @@ const CDN_URL_TEMPLATES: Record<CdnProvider, CdnUrlTemplates> = {
       `https://cdn.jsdelivr.net/npm/react-dom@${v}/umd/react-dom.production.min.js`,
     jsxRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-runtime`,
     jsxDevRuntime: (v) => `https://cdn.jsdelivr.net/npm/react@${v}/jsx-dev-runtime`,
-    veryfrontChat: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/chat.js`,
-    veryfrontMarkdown: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/markdown.js`,
-    veryfrontMdx: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/dist/mdx.js`,
+    veryfrontChat: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/chat/index.js`,
+    veryfrontMarkdown: (v) =>
+      `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/markdown/index.js`,
+    veryfrontMdx: (v) => `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/mdx/index.js`,
+    veryfrontWorkflow: (v) =>
+      `https://cdn.jsdelivr.net/npm/veryfront@${v}/esm/src/workflow/react/index.js`,
   },
 };
 
@@ -156,6 +163,7 @@ function buildCdnImportMapFromTemplates(
     "veryfront/chat": templates.veryfrontChat(veryfront),
     "veryfront/markdown": templates.veryfrontMarkdown(veryfront),
     "veryfront/mdx": templates.veryfrontMdx(veryfront),
+    "veryfront/workflow": templates.veryfrontWorkflow(veryfront),
     ...(includePlatformUtilities ? PLATFORM_UTILITIES : {}),
   };
 }
@@ -185,6 +193,7 @@ function getSelfHostedImportMap(versions: DetectedVersions): Record<string, stri
     "veryfront/chat": "/_veryfront/lib/chat.js",
     "veryfront/markdown": "/_veryfront/lib/markdown.js",
     "veryfront/mdx": "/_veryfront/lib/mdx.js",
+    "veryfront/workflow": "/_veryfront/lib/workflow.js",
     "veryfront/head": PLATFORM_UTILITY_PATHS.head,
     "veryfront/router": PLATFORM_UTILITY_PATHS.router,
     "veryfront/context": PLATFORM_UTILITY_PATHS.context,

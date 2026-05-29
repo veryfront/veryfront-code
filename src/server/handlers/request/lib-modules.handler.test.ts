@@ -7,7 +7,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { LibModulesHandler } from "./lib-modules.handler.ts";
+import { LIB_MODULE_PATHS, LibModulesHandler } from "./lib-modules.handler.ts";
 
 function createHandler(): LibModulesHandler {
   return new LibModulesHandler();
@@ -67,19 +67,11 @@ describe("LibModulesHandler", () => {
   });
 
   describe("ALLOWED_MODULES whitelist", () => {
-    it("should allow agent/react.js path pattern", () => {
-      const pattern = getPattern(createHandler(), "GET");
-      assertEquals(pattern.test("/_veryfront/lib/agent/react.js"), true);
-    });
-
-    it("should allow components/chat.js path pattern", () => {
-      const pattern = getPattern(createHandler(), "GET");
-      assertEquals(pattern.test("/_veryfront/lib/components/chat.js"), true);
-    });
-
-    it("should allow primitives.js path pattern", () => {
-      const pattern = getPattern(createHandler(), "GET");
-      assertEquals(pattern.test("/_veryfront/lib/primitives.js"), true);
+    it("should resolve allowed self-hosted module paths", () => {
+      assertEquals(LIB_MODULE_PATHS["chat.js"], "esm/src/chat/index.js");
+      assertEquals(LIB_MODULE_PATHS["markdown.js"], "esm/src/markdown/index.js");
+      assertEquals(LIB_MODULE_PATHS["mdx.js"], "esm/src/mdx/index.js");
+      assertEquals(LIB_MODULE_PATHS["workflow.js"], "esm/src/workflow/react/index.js");
     });
   });
 

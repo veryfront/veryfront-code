@@ -14,13 +14,14 @@ const STATUS_STYLES: Record<string, string> = {
 export default function WorkflowDashboard(): JSX.Element {
   const [topic, setTopic] = useState('')
   const { start, isStarting } = useWorkflowStart({ workflowId: 'content-pipeline' })
-  const { runs, isLoading } = useWorkflowList()
+  const { runs, isLoading, refresh } = useWorkflowList()
 
   async function handleStart(e: React.FormEvent) {
     e.preventDefault()
     if (!topic.trim()) return
     await start({ topic: topic.trim() })
     setTopic('')
+    await refresh()
   }
 
   return (

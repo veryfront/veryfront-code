@@ -30,4 +30,9 @@ export const BROWSER_SAFE_CLIENT_MODULES = [
   "src/react/components/chat/chat/hooks/use-threads.js",
   "src/security/client/html-sanitizer.js",
   "src/platform/compat/runtime.js",
+  "src/workflow/react/index.js",
+  "src/workflow/react/use-approval.js",
+  "src/workflow/react/use-workflow.js",
+  "src/workflow/react/use-workflow-list.js",
+  "src/workflow/react/use-workflow-start.js",
 ];
