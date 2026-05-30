@@ -92,11 +92,23 @@ export interface PipeOptions {
 
 /**
  * Build a StoppingCriteriaList that halts generation as soon as any of the
- * provided stop strings appears in the decoded output.
+ * provided stop strings appears in the *newly generated* output.
  *
  * Transformers.js (>=3.x) does not expose a `stop_strings` generate option,
  * so we decode the running sequence with the tokenizer and match the stop
  * strings against the suffix — the documented `stopping_criteria` mechanism.
+ *
+ * Transformers.js passes the full sequence (prompt + generated tokens) to
+ * `_call` on every step. We must scan only the generated suffix: if a system
+ * or user message contains a configured stop string (e.g. an instruction that
+ * mentions "END"), scanning the whole sequence would return `true` on the very
+ * first generation step and truncate the response to empty.
+ *
+ * The prompt token length is not cheaply known where this list is built (the
+ * pipeline tokenizes `messages` internally), so per batch item we self-calibrate
+ * on the first `_call`: the sequence length seen on the first invocation is
+ * recorded as the prompt boundary, and only tokens at or after that boundary are
+ * decoded and matched on subsequent steps.
  */
 function buildStopStringCriteria(
   transformers: Pick<TransformersModule, "StoppingCriteria" | "StoppingCriteriaList">,
@@ -106,9 +118,19 @@ function buildStopStringCriteria(
   const list = new transformers.StoppingCriteriaList();
   const base = new transformers.StoppingCriteria();
   const criterion = base as StoppingCriteriaInstance;
+  // Per-batch-item prompt token length, captured on the first invocation.
+  const promptLengths: number[] = [];
   criterion._call = (inputIds: number[][]): boolean[] =>
-    inputIds.map((ids) => {
-      const text = tokenizer.decode(ids);
+    inputIds.map((ids, item) => {
+      if (promptLengths[item] === undefined) {
+        // First step for this item: everything seen so far is prompt. Record the
+        // boundary and never trip on the prompt itself.
+        promptLengths[item] = ids.length;
+        return false;
+      }
+      const generated = ids.slice(promptLengths[item]);
+      if (generated.length === 0) return false;
+      const text = tokenizer.decode(generated);
       return stopSequences.some((stop) => stop.length > 0 && text.includes(stop));
     });
   list.push(criterion);

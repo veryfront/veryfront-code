@@ -97,14 +97,61 @@ describe("provider/local/local-engine buildPipeOptions", () => {
 
     // deno-lint-ignore no-explicit-any
     const list = opts.stopping_criteria as any;
-    // input_ids: batch of 1, decodes to "stop"
+    // First invocation establishes the prompt boundary (empty prompt here).
+    assertEquals(list._call([[]], null), [false]);
+    // Subsequent step: generated suffix decodes to "stop" → must stop.
     const stopIds = [[18, 19, 14, 15]];
-    const result = list._call(stopIds, null);
-    assertEquals(result, [true]);
+    assertEquals(list._call(stopIds, null), [true]);
+  });
 
-    // A sequence that does not contain the stop string must NOT stop.
-    const goIds = [[6, 14]]; // "go"
-    assertEquals(list._call(goIds, null), [false]);
+  it("does NOT trigger when the stop sequence is only in the prompt, not the generated suffix", () => {
+    // Stop string "stop" lives entirely inside the prompt. The criterion must
+    // not trip until the model actually generates the stop string.
+    const opts = buildPipeOptions(
+      { maxNewTokens: 64, temperature: 0.7, stopSequences: ["stop"] },
+      fakeTransformers,
+      fakeTokenizer,
+      "streamer-sentinel",
+    );
+
+    // deno-lint-ignore no-explicit-any
+    const list = opts.stopping_criteria as any;
+
+    // Prompt tokens [18,19,14,15] decode to "stop" — a user/system message that
+    // happens to mention the stop word. First _call records this as the prompt
+    // boundary and must NOT stop.
+    const prompt = [18, 19, 14, 15]; // "stop"
+    assertEquals(list._call([[...prompt]], null), [false]);
+
+    // Model generates "go" (tokens [6,14]) — suffix has no stop string → continue.
+    assertEquals(list._call([[...prompt, 6, 14]], null), [false]);
+
+    // Model now generates "stop" in the suffix → must stop, even though the
+    // prompt also contained "stop".
+    assertEquals(list._call([[...prompt, 6, 14, 18, 19, 14, 15]], null), [true]);
+  });
+
+  it("tracks prompt length per batch item independently", () => {
+    const opts = buildPipeOptions(
+      { maxNewTokens: 64, temperature: 0.7, stopSequences: ["stop"] },
+      fakeTransformers,
+      fakeTokenizer,
+      "streamer-sentinel",
+    );
+
+    // deno-lint-ignore no-explicit-any
+    const list = opts.stopping_criteria as any;
+
+    // Two batch items with different prompt lengths, both mentioning "stop".
+    const promptA = [18, 19, 14, 15]; // "stop"
+    const promptB = [6, 14, 18, 19, 14, 15]; // "gostop"
+    assertEquals(list._call([[...promptA], [...promptB]], null), [false, false]);
+
+    // Item 0 generates "stop" → stop; item 1 generates "go" → continue.
+    assertEquals(
+      list._call([[...promptA, 18, 19, 14, 15], [...promptB, 6, 14]], null),
+      [true, false],
+    );
   });
 
   it("omits stopping_criteria entirely when no stopSequences are given", () => {
