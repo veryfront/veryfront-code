@@ -83,48 +83,65 @@ export async function* withHostedChildStreamIdleTimeout<T>(input: {
   const iterator = input.stream[Symbol.asyncIterator]();
   let pendingNext: Promise<IteratorResult<T>> | null = null;
 
-  while (true) {
-    throwIfChildRunAborted(input.abortSignal);
+  try {
+    while (true) {
+      throwIfChildRunAborted(input.abortSignal);
 
-    let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
-    const watchdogState = input.getWatchdogState();
-    if (!pendingNext) {
-      pendingNext = iterator.next();
-    }
+      let timeoutId: ReturnType<typeof globalThis.setTimeout> | null = null;
+      const watchdogState = input.getWatchdogState();
+      if (!pendingNext) {
+        pendingNext = iterator.next();
+      }
 
-    try {
-      const result = await Promise.race<
-        IteratorResult<T> | typeof HOSTED_CHILD_STREAM_TIMEOUT_TOKEN
-      >([
-        pendingNext,
-        new Promise<typeof HOSTED_CHILD_STREAM_TIMEOUT_TOKEN>((resolve) => {
-          timeoutId = globalThis.setTimeout(() => {
-            resolve(HOSTED_CHILD_STREAM_TIMEOUT_TOKEN);
-          }, watchdogState.timeoutMs);
-        }),
-      ]);
+      try {
+        const result = await Promise.race<
+          IteratorResult<T> | typeof HOSTED_CHILD_STREAM_TIMEOUT_TOKEN
+        >([
+          pendingNext,
+          new Promise<typeof HOSTED_CHILD_STREAM_TIMEOUT_TOKEN>((resolve) => {
+            timeoutId = globalThis.setTimeout(() => {
+              resolve(HOSTED_CHILD_STREAM_TIMEOUT_TOKEN);
+            }, watchdogState.timeoutMs);
+          }),
+        ]);
 
-      if (result === HOSTED_CHILD_STREAM_TIMEOUT_TOKEN) {
-        const action = await input.onIdleTimeout?.(watchdogState);
-        if (action === "continue") {
-          continue;
+        if (result === HOSTED_CHILD_STREAM_TIMEOUT_TOKEN) {
+          const action = await input.onIdleTimeout?.(watchdogState);
+          if (action === "continue") {
+            continue;
+          }
+
+          throw new HostedChildStreamIdleTimeoutError(watchdogState);
         }
 
-        throw new HostedChildStreamIdleTimeoutError(watchdogState);
-      }
+        pendingNext = null;
 
-      pendingNext = null;
+        if (result.done) {
+          return;
+        }
 
-      if (result.done) {
-        return;
-      }
-
-      yield result.value;
-    } finally {
-      if (timeoutId) {
-        globalThis.clearTimeout(timeoutId);
+        yield result.value;
+      } finally {
+        if (timeoutId) {
+          globalThis.clearTimeout(timeoutId);
+        }
       }
     }
+  } finally {
+    // If we exit while an iterator.next() is still in flight (idle timeout or
+    // abort threw before it settled), attach a no-op catch so its eventual
+    // rejection — the caller typically aborts the stream — does not surface as
+    // an unhandled promise rejection, and settle the underlying iterator.
+    if (pendingNext) {
+      void pendingNext.catch(() => {});
+    }
+    // Fire-and-forget: do not await, because a stalled generator's return()
+    // chains onto the unsettled next() body and would itself never resolve.
+    // Defer the call via Promise.resolve().then(...) so a *synchronous* throw
+    // from a custom iterator's return() becomes a rejected promise that the
+    // no-op catch swallows — otherwise it would escape this finally and mask
+    // the original idle-timeout/abort error (or a normal done return).
+    void Promise.resolve().then(() => iterator.return?.()).catch(() => {});
   }
 }
 
