@@ -37,6 +37,12 @@ export interface RedisAdapter {
   ): Promise<string | null>;
   get(key: string): Promise<string | null>;
 
+  /**
+   * Run a Lua script atomically (EVAL). Used for compare-and-delete and
+   * compare-and-pexpire so lock ownership checks cannot race (Redlock).
+   */
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
+
   quit(): Promise<void>;
   disconnect(): Promise<void>;
 }

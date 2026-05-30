@@ -329,6 +329,65 @@ describe("DAGExecutor", () => {
     });
   });
 
+  describe("composite resume (H8)", () => {
+    it("should not re-run completed children of a parallel node on resume", async () => {
+      let stepARuns = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        if (node.id === "p-step") stepARuns++;
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "par1",
+          dependsOn: [],
+          config: {
+            type: "parallel",
+            nodes: [
+              { id: "p-step", dependsOn: [], config: { type: "step" } as any },
+              {
+                id: "p-wait",
+                dependsOn: [],
+                config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      // First run: should suspend on the wait node, p-step runs once.
+      const run = createTestRun();
+      const first = await exec.execute(nodes, run);
+      assertEquals(first.waiting, true);
+      // The composite node is the waiting node reported to the executor.
+      assertEquals(first.waitingNode, "par1");
+      assertEquals(stepARuns, 1);
+      assertEquals(first.nodeStates["p-step"]!.status, "completed");
+
+      // Resume: mark the wait node completed (approval granted) and re-run with
+      // the accumulated nodeStates from the first run. The real executor resumes
+      // by passing the waiting node id as startFromNode.
+      const resumedStates = {
+        ...first.nodeStates,
+        "p-wait": {
+          ...first.nodeStates["p-wait"]!,
+          status: "completed" as const,
+          completedAt: new Date(),
+        },
+      };
+      const resumeRun = createTestRun({
+        nodeStates: resumedStates,
+        context: { ...first.context },
+      });
+
+      const second = await exec.execute(nodes, resumeRun, "par1");
+      assertEquals(second.completed, true);
+      // p-step must NOT have run a second time.
+      assertEquals(stepARuns, 1);
+    });
+  });
+
   describe("map node", () => {
     it("should execute map over items", async () => {
       const nodes: WorkflowNode[] = [
@@ -429,6 +488,70 @@ describe("DAGExecutor", () => {
       assertEquals(result.completed, true);
       const output = result.nodeStates["loop-max"]!.output as any;
       assertEquals(output.iterations, 2);
+    });
+  });
+
+  describe("loop resume (H9)", () => {
+    it("should not re-run completed steps of an in-flight loop iteration on resume", async () => {
+      let incrRuns = 0;
+      const trackingExecutor = new MockStepExecutor(new Map(), (node) => {
+        if (node.id === "l-incr") incrRuns++;
+        return { success: true, output: node.id, executionTime: 1 };
+      });
+      const exec = new DAGExecutor({ stepExecutor: trackingExecutor });
+
+      const nodes: WorkflowNode[] = [
+        {
+          id: "loop1",
+          dependsOn: [],
+          config: {
+            type: "loop",
+            maxIterations: 1,
+            while: () => true,
+            steps: [
+              { id: "l-incr", dependsOn: [], config: { type: "step" } as any },
+              {
+                id: "l-wait",
+                dependsOn: ["l-incr"],
+                config: { type: "wait", waitType: "approval", message: "approve?" } as any,
+              },
+            ],
+          } as any,
+        },
+      ];
+
+      // First run: increments once, then suspends on the wait.
+      const run = createTestRun();
+      const first = await exec.execute(nodes, run);
+      assertEquals(first.waiting, true);
+      assertEquals(first.waitingNode, "loop1");
+      assertEquals(incrRuns, 1);
+      assertEquals(first.nodeStates["l-incr"]!.status, "completed");
+
+      // Resume: approve the wait and re-run from the loop node, carrying the
+      // accumulated state. The pre-wait step must NOT run again for this
+      // iteration.
+      const resumedStates = {
+        ...first.nodeStates,
+        "l-wait": {
+          ...first.nodeStates["l-wait"]!,
+          status: "completed" as const,
+          completedAt: new Date(),
+        },
+      };
+      const resumeRun = createTestRun({
+        nodeStates: resumedStates,
+        context: { ...first.context },
+      });
+
+      const second = await exec.execute(nodes, resumeRun, "loop1");
+      // The in-flight iteration's l-incr must NOT have run a second time.
+      assertEquals(
+        incrRuns,
+        1,
+        `expected exactly 1 increment (no double-run on resume), got ${incrRuns}`,
+      );
+      assertEquals(second.completed, true);
     });
   });
 
