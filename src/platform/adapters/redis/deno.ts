@@ -110,6 +110,12 @@ export class DenoRedisAdapter implements RedisAdapter {
     return this.client.get(key);
   }
 
+  // Redis server-side Lua (EVAL). Not JavaScript eval; runs the given script
+  // atomically inside Redis for compare-and-delete / compare-and-pexpire.
+  eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+    return this.client.eval(script, keys, args);
+  }
+
   async quit(): Promise<void> {
     await this.client.close();
   }

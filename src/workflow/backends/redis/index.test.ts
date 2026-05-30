@@ -122,6 +122,30 @@ class MockRedisAdapter implements RedisAdapter {
     return Promise.resolve(this.store.get(key) ?? null);
   }
 
+  // Emulates the two Redlock Lua scripts used by the backend. Both are
+  // compare-against-token guards on KEYS[1] / ARGV[1]: release deletes the key
+  // and extend (P)EXPIREs it, atomically with respect to the JS event loop.
+  eval(script: string, keys: string[], args: string[]): Promise<unknown> {
+    const key = keys[0]!;
+    const token = args[0];
+    const owns = this.store.get(key) === token;
+
+    if (script.includes("del")) {
+      if (!owns) return Promise.resolve(0);
+      this.store.delete(key);
+      this.expiries.delete(key);
+      return Promise.resolve(1);
+    }
+
+    if (script.includes("pexpire")) {
+      if (!owns) return Promise.resolve(0);
+      this.expiries.set(key, Number(args[1]));
+      return Promise.resolve(1);
+    }
+
+    throw new Error(`MockRedisAdapter.eval: unsupported script: ${script}`);
+  }
+
   rpush(key: string, ...values: string[]): Promise<number> {
     let list = this.lists.get(key);
     if (!list) {
@@ -591,6 +615,62 @@ describe("RedisBackend", () => {
 
       // Worker A tries to extend -- it must NOT succeed.
       assertEquals(await backend.extendLock("run-own2", 10000), false);
+    });
+
+    it("releaseLock runs an atomic compare-and-delete script (no GET+DEL race)", async () => {
+      // Spy on eval to prove release goes through a single atomic Lua call and
+      // never falls back to a separate GET then DEL.
+      const evalCalls: Array<{ script: string; keys: string[]; args: string[] }> = [];
+      const realEval = mockRedis.eval.bind(mockRedis);
+      let getCalls = 0;
+      let delCalls = 0;
+      mockRedis.eval = (script: string, keys: string[], args: string[]) => {
+        evalCalls.push({ script, keys, args });
+        return realEval(script, keys, args);
+      };
+      const realGet = mockRedis.get.bind(mockRedis);
+      mockRedis.get = (key: string) => {
+        getCalls++;
+        return realGet(key);
+      };
+      const realDel = mockRedis.del.bind(mockRedis);
+      mockRedis.del = (...keys: string[]) => {
+        delCalls++;
+        return realDel(...keys);
+      };
+
+      assertEquals(await backend.acquireLock("run-atomic", 5000), true);
+      await backend.releaseLock("run-atomic");
+
+      // One atomic eval, and no separate get/del round-trips for the release.
+      assertEquals(evalCalls.length, 1);
+      assertEquals(evalCalls[0]!.script.includes("del"), true);
+      assertEquals(getCalls, 0);
+      assertEquals(delCalls, 0);
+      assertEquals(await backend.isLocked("run-atomic"), false);
+    });
+
+    it("compare-and-delete deletes only on a matching token", async () => {
+      const key = "test:lock:cad";
+
+      // Mismatched token -> script must be a no-op and return 0.
+      mockRedis.store.set(key, "owner-token");
+      const noop = await mockRedis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        [key],
+        ["other-token"],
+      );
+      assertEquals(noop, 0);
+      assertEquals(mockRedis.store.get(key), "owner-token");
+
+      // Matching token -> script deletes and returns 1.
+      const deleted = await mockRedis.eval(
+        "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+        [key],
+        ["owner-token"],
+      );
+      assertEquals(deleted, 1);
+      assertEquals(mockRedis.store.get(key), undefined);
     });
   });
 

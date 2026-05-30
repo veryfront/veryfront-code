@@ -35,6 +35,21 @@ import type { RedisBackendConfig, RedisBackendInternalConfig } from "./types.ts"
 
 const logger = agentLogger.component("redis-backend");
 
+/**
+ * Atomic compare-and-delete: delete the lock only if it still holds our token.
+ * Server-side Lua (Redis EVAL) so the GET and DEL are one indivisible step,
+ * preventing a stale owner from deleting another worker's reacquired lock.
+ */
+const RELEASE_LOCK_SCRIPT =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
+
+/**
+ * Atomic compare-and-pexpire: extend the lock TTL only if it still holds our
+ * token. Same TOCTOU protection as the release script.
+ */
+const EXTEND_LOCK_SCRIPT =
+  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end";
+
 /** Implement redis backend. */
 export class RedisBackend implements WorkflowBackend {
   private client: RedisAdapter | null = null;
@@ -571,10 +586,9 @@ export class RedisBackend implements WorkflowBackend {
     // known token we never owned it, so do nothing.
     if (ourValue === undefined) return;
 
-    const current = await client.get(key);
-    if (current === ourValue) {
-      await client.del(key);
-    }
+    // Atomic GET + DEL via Lua so a stale owner cannot delete a lock that was
+    // reacquired by another worker between the check and the delete (TOCTOU).
+    await client.eval(RELEASE_LOCK_SCRIPT, [key], [ourValue]);
     this.lockValues.delete(runId);
   }
 
@@ -586,11 +600,13 @@ export class RedisBackend implements WorkflowBackend {
     // Only extend if we still own the lock (compare-and-pexpire).
     if (ourValue === undefined) return false;
 
-    const current = await client.get(key);
-    if (current !== ourValue) return false;
-
-    await client.expire(key, Math.ceil(duration / 1000));
-    return true;
+    // Atomic GET + PEXPIRE via Lua. PEXPIRE returns 1 when the key existed and
+    // the TTL was set, 0 otherwise (e.g. our token no longer owns the lock).
+    const result = await client.eval(EXTEND_LOCK_SCRIPT, [key], [
+      ourValue,
+      String(duration),
+    ]);
+    return Number(result) === 1;
   }
 
   async isLocked(runId: string): Promise<boolean> {

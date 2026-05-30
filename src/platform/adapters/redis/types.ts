@@ -31,6 +31,7 @@ export interface DenoRedisClient {
     options?: { nx?: boolean; px?: number; ex?: number },
   ): Promise<string | null>;
   get(key: string): Promise<string | null>;
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
   close(): Promise<void>;
 }
 
@@ -79,6 +80,10 @@ export interface NodeRedisClient {
     options?: { NX?: boolean; PX?: number; EX?: number },
   ): Promise<string | null>;
   get(key: string): Promise<string | null>;
+  eval(
+    script: string,
+    options?: { keys?: string[]; arguments?: string[] },
+  ): Promise<unknown>;
   close(): Promise<void>;
   destroy(): Promise<void>;
 }
