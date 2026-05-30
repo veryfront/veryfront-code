@@ -152,7 +152,7 @@ describe("server/services/static/static-file.service", () => {
       ]);
       const repo = createMockFsRepo(files);
       const service = new StaticFileService(repo);
-      const options = makeOptions({ isPreviewMode: false, isLocalProject: true });
+      const options = makeOptions({ isPreviewMode: false, isLocalProject: false });
 
       const result = await service.resolveFile("/app.a1b2c3d4e5f6.js", options);
       if (result) {
@@ -271,6 +271,42 @@ describe("server/services/static/static-file.service", () => {
       if (result) {
         assertEquals(result.source, "public");
       }
+    });
+
+    it("should ignore generated dist files for local projects", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("<html>stale build</html>");
+      const files = new Map<string, Uint8Array>([
+        ["/project/dist/index.html", fileData],
+      ]);
+      const repo = createMockFsRepo(files);
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isLocalProject: true });
+
+      const result = await service.resolveFile("/", options);
+      assertEquals(result, null);
+    });
+
+    it("should ignore explicit dist index requests for local projects", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("<html>stale build</html>");
+      const files = new Map<string, Uint8Array>([
+        ["/project/dist/index.html", fileData],
+      ]);
+      const repo = createMockFsRepo(files);
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isLocalProject: true });
+
+      const result = await service.resolveFile("/index.html", options);
+      assertEquals(result, null);
     });
 
     it("should normalize / to /index.html", async () => {
