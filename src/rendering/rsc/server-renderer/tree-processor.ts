@@ -8,7 +8,7 @@ import {
   registerClientRef,
   type RSCComponent,
 } from "./component-detector.ts";
-import { renderAttributes, treeToHTML } from "./html-generator.ts";
+import { escapeHtml, renderAttributes, treeToHTML } from "./html-generator.ts";
 import { serializeProps } from "./prop-serializer.ts";
 
 const logger = serverLogger.component("rsc");
@@ -22,7 +22,7 @@ export async function renderTree(
   clientRefs: Map<string, string>,
 ): Promise<RSCNode> {
   if (Component == null || typeof Component === "string" || typeof Component === "number") {
-    return { type: "html", html: Component == null ? "" : String(Component) };
+    return { type: "html", html: Component == null ? "" : escapeHtml(String(Component)) };
   }
 
   if (React.isValidElement(Component)) {
@@ -30,7 +30,7 @@ export async function renderTree(
   }
 
   if (typeof Component !== "function") {
-    return { type: "html", html: String(Component) };
+    return { type: "html", html: escapeHtml(String(Component)) };
   }
 
   const rscComponent = Component as RSCComponent;
@@ -54,7 +54,7 @@ export async function renderTree(
     if (!element) return { type: "html", html: "" };
     if (React.isValidElement(element)) return processElement(element, clientManifest, clientRefs);
 
-    return { type: "html", html: String(element) };
+    return { type: "html", html: escapeHtml(String(element)) };
   } catch (error) {
     logger.error("Error rendering component:", error);
     throw error;
@@ -120,7 +120,7 @@ export function renderChildren(
         return processElement(child, clientManifest, clientRefs);
       }
 
-      return Promise.resolve({ type: "html" as const, html: String(child) });
+      return Promise.resolve({ type: "html" as const, html: escapeHtml(String(child)) });
     }),
   );
 }
