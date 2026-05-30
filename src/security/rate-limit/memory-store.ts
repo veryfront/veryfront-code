@@ -14,14 +14,14 @@ export class MemoryRateLimitStore implements RateLimitStore {
     unrefTimer(this.cleanupInterval);
   }
 
-  increment(key: string): Promise<number> {
+  increment(key: string, windowMs: number = WINDOW_MS): Promise<number> {
     const now = Date.now();
     const state = this.store.get(key);
 
     if (!state || now > state.resetTime) {
       this.store.set(key, {
         count: 1,
-        resetTime: now + WINDOW_MS,
+        resetTime: now + windowMs,
         requestTimestamps: [now],
       });
       return Promise.resolve(1);
@@ -32,7 +32,7 @@ export class MemoryRateLimitStore implements RateLimitStore {
 
     const timestamps = state.requestTimestamps;
     if (timestamps?.length && timestamps.length > MAX_TIMESTAMPS_PER_KEY) {
-      const windowStart = state.resetTime - WINDOW_MS;
+      const windowStart = state.resetTime - windowMs;
       const filtered = timestamps.filter((t) => t >= windowStart);
       state.requestTimestamps = filtered.length > MAX_TIMESTAMPS_PER_KEY
         ? filtered.slice(-MAX_TIMESTAMPS_PER_KEY)

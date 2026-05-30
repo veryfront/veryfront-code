@@ -17,7 +17,7 @@ export function fixedWindowStrategy(
   return withSpan(
     "security.rateLimit.fixedWindow",
     async () => {
-      const count = await store.increment(key);
+      const count = await store.increment(key, config.windowMs);
       const allowed = count <= config.maxRequests;
       const remaining = Math.max(0, config.maxRequests - count);
       const resetTime = Date.now() + config.windowMs;
