@@ -22,6 +22,13 @@ Deno.test("getHostedStreamErrorText recognizes credit limit errors", () => {
   assertStringIncludes(getHostedStreamErrorText(new Error("AI credit limit exceeded")), "credit");
 });
 
+Deno.test("getHostedStreamErrorText makes hosted stream timeouts transparent", () => {
+  assertEquals(
+    getHostedStreamErrorText(new Error("Stream timed out after 5 minutes")),
+    "This run timed out after 5 minutes before the agent finished. Try again to continue, or narrow the request.",
+  );
+});
+
 Deno.test("getEmptyHostedFinalizedMessageTerminalError returns default empty response error", () => {
   const result = getEmptyHostedFinalizedMessageTerminalError({ finalStep: null });
   assertEquals(result.code, "EMPTY_RESPONSE");
@@ -35,6 +42,20 @@ Deno.test("getEmptyHostedFinalizedMessageTerminalError returns stream error when
       streamError: new Error("connection lost"),
     }),
     { code: "STREAM_ERROR", message: "connection lost" },
+  );
+});
+
+Deno.test("getEmptyHostedFinalizedMessageTerminalError returns stream timeout when present", () => {
+  assertEquals(
+    getEmptyHostedFinalizedMessageTerminalError({
+      finalStep: null,
+      streamError: new Error("Chat stream idle timeout after 300000ms during tool_running"),
+    }),
+    {
+      code: "STREAM_TIMEOUT",
+      message:
+        "This run timed out after 5 minutes before the agent finished. Try again to continue, or narrow the request.",
+    },
   );
 });
 

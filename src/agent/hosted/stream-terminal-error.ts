@@ -7,6 +7,52 @@ const EMPTY_RESPONSE_TERMINAL_ERROR_MESSAGE = "Assistant completed without produ
 const EXTERNAL_SERVICE_ERROR_CODE = "EXTERNAL_SERVICE_ERROR";
 const EXTERNAL_SERVICE_ERROR_MESSAGE = "LLM provider service error";
 const STREAM_ERROR_TERMINAL_ERROR_CODE = "STREAM_ERROR";
+const STREAM_TIMEOUT_TERMINAL_ERROR_CODE = "STREAM_TIMEOUT";
+
+function formatTimeoutDuration(input: string): string | null {
+  const minuteMatch = input.match(/after\s+(\d+)\s+minutes?/i);
+  if (minuteMatch) {
+    const minutes = Number.parseInt(minuteMatch[1] ?? "", 10);
+    if (Number.isFinite(minutes) && minutes > 0) {
+      return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+    }
+  }
+
+  const millisecondMatch = input.match(/after\s+(\d+)\s*ms/i);
+  if (millisecondMatch) {
+    const milliseconds = Number.parseInt(millisecondMatch[1] ?? "", 10);
+    if (Number.isFinite(milliseconds) && milliseconds > 0) {
+      const seconds = Math.round(milliseconds / 1000);
+      if (seconds >= 60 && seconds % 60 === 0) {
+        const minutes = seconds / 60;
+        return `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+      }
+      return `${seconds} ${seconds === 1 ? "second" : "seconds"}`;
+    }
+  }
+
+  return null;
+}
+
+function getHostedStreamTimeoutTerminalError(error: unknown): HostedStreamTerminalError | null {
+  const message = getUnknownErrorMessage(error).trim();
+  const normalized = message.toLowerCase();
+  const isTimeout = normalized.includes("stream timed out") ||
+    normalized.includes("chat stream idle timeout") ||
+    normalized.includes("stream timeout");
+
+  if (!isTimeout) {
+    return null;
+  }
+
+  const duration = formatTimeoutDuration(message);
+  return {
+    code: STREAM_TIMEOUT_TERMINAL_ERROR_CODE,
+    message: duration
+      ? `This run timed out after ${duration} before the agent finished. Try again to continue, or narrow the request.`
+      : "This run timed out before the agent finished. Try again to continue, or narrow the request.",
+  };
+}
 
 /** Error shape for hosted stream terminal. */
 export type HostedStreamTerminalError = {
@@ -33,6 +79,11 @@ function getUnknownErrorMessage(error: unknown): string {
 function getHostedStreamTerminalError(streamError: unknown): HostedStreamTerminalError | null {
   if (streamError == null) {
     return null;
+  }
+
+  const timeoutError = getHostedStreamTimeoutTerminalError(streamError);
+  if (timeoutError) {
+    return timeoutError;
   }
 
   const parsedError = parseProviderError(streamError);
