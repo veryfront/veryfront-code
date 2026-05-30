@@ -171,6 +171,103 @@ Deno.test(
   },
 );
 
+/**
+ * Replace globalThis.fetch so the token endpoint returns `status` with `body`
+ * JSON. Used to exercise exchangeCode token-validation behavior (H11/H12).
+ */
+async function withTokenFetch(
+  status: number,
+  body: unknown,
+  fn: () => Promise<unknown>,
+): Promise<void> {
+  const original = globalThis.fetch;
+  globalThis.fetch = ((): Promise<Response> => {
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+  }) as typeof fetch;
+  try {
+    await fn();
+  } finally {
+    globalThis.fetch = original;
+  }
+}
+
+Deno.test(
+  "OAuthService.exchangeCode: 200 with no access_token is treated as failure (H11)",
+  async () => {
+    const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
+
+    let result: Awaited<ReturnType<typeof service.exchangeCode>> | undefined;
+    await withTokenFetch(200, { token_type: "Bearer" }, async () => {
+      result = await service.exchangeCode({ code: "abc", redirectUri: "https://app/cb" });
+    });
+
+    assert(result, "expected a result");
+    assertEquals(result!.success, false);
+    // Must not surface a usable (empty) token.
+    assertEquals(result!.tokens, undefined);
+    assertEquals(result!.error, "invalid_token_response");
+  },
+);
+
+Deno.test(
+  "OAuthService.exchangeCode: 200 with empty body is treated as failure (H11)",
+  async () => {
+    const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
+
+    let result: Awaited<ReturnType<typeof service.exchangeCode>> | undefined;
+    await withTokenFetch(200, {}, async () => {
+      result = await service.exchangeCode({ code: "abc", redirectUri: "https://app/cb" });
+    });
+
+    assert(result, "expected a result");
+    assertEquals(result!.success, false);
+    assertEquals(result!.tokens, undefined);
+  },
+);
+
+Deno.test(
+  "OAuthService.exchangeCode: 200 with body-level ok:false/error is a failure (H12)",
+  async () => {
+    const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
+
+    let result: Awaited<ReturnType<typeof service.exchangeCode>> | undefined;
+    await withTokenFetch(200, { ok: false, error: "invalid_code" }, async () => {
+      result = await service.exchangeCode({ code: "bad", redirectUri: "https://app/cb" });
+    });
+
+    assert(result, "expected a result");
+    assertEquals(result!.success, false);
+    assertEquals(result!.error, "invalid_code");
+    // No token persisted/returned.
+    assertEquals(result!.tokens, undefined);
+  },
+);
+
+Deno.test(
+  "OAuthService.exchangeCode: 200 with a valid access_token still succeeds",
+  async () => {
+    const service = new OAuthService(TEST_CONFIG, makeAuthedTokenStore(), (k) => ENV[k]);
+
+    let result: Awaited<ReturnType<typeof service.exchangeCode>> | undefined;
+    await withTokenFetch(
+      200,
+      { access_token: "real-token", token_type: "Bearer" },
+      async () => {
+        result = await service.exchangeCode({ code: "good", redirectUri: "https://app/cb" });
+      },
+    );
+
+    assert(result, "expected a result");
+    assertEquals(result!.success, true);
+    assertEquals(result!.tokens?.accessToken, "real-token");
+  },
+);
+
 Deno.test(
   "OAuthService.fetch: provider error body is not leaked into logs (SEC-010)",
   async () => {
