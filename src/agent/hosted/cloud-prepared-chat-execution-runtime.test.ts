@@ -3,7 +3,10 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createChatStreamWatchdog } from "#veryfront/chat/stream-watchdog.ts";
 import type { AgentTraceAttributes } from "./trace-attributes.ts";
 import type { HostedAgentRunTracer } from "./agent-run-lifecycle.ts";
-import { createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions } from "./cloud-prepared-chat-execution-runtime.ts";
+import {
+  createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions,
+  resolveVeryfrontCloudChatStreamWatchdogOptions,
+} from "./cloud-prepared-chat-execution-runtime.ts";
 
 function createTracer(): HostedAgentRunTracer {
   return {
@@ -59,5 +62,28 @@ describe("agent/veryfront-cloud-prepared-hosted-chat-execution-runtime", () => {
     });
 
     assertStrictEquals(options.createRootStreamWatchdog, createRootStreamWatchdog);
+  });
+
+  it("resolves chat stream watchdog timeouts from environment values", () => {
+    assertEquals(
+      resolveVeryfrontCloudChatStreamWatchdogOptions({
+        VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS: "45000",
+        VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_MS: "180000",
+      }),
+      {
+        idleTimeoutMs: 45_000,
+        toolRunningTimeoutMs: 180_000,
+      },
+    );
+  });
+
+  it("ignores invalid chat stream watchdog timeout environment values", () => {
+    assertEquals(
+      resolveVeryfrontCloudChatStreamWatchdogOptions({
+        VERYFRONT_CHAT_STREAM_IDLE_TIMEOUT_MS: "0",
+        VERYFRONT_CHAT_STREAM_TOOL_TIMEOUT_MS: "not-a-number",
+      }),
+      {},
+    );
   });
 });
