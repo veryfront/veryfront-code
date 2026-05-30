@@ -204,6 +204,30 @@ describe("tool factory", () => {
       const result = await t.execute({ x: 5 });
       assertEquals(result, 10);
     });
+
+    it("should forward parsed defaults and transforms to execute", async () => {
+      let received: unknown;
+      const t = tool({
+        id: "parsed-forward",
+        description: "desc",
+        inputSchema: defineSchema((v) =>
+          v.object({
+            limit: v.number().default(10),
+            tag: v.string().transform((s) => `tag:${s}`),
+          })
+        )(),
+        execute: (input) => {
+          received = input;
+          return input;
+        },
+      });
+      const result = await t.execute({ tag: "foo" } as unknown as {
+        limit: number;
+        tag: string;
+      });
+      assertEquals(received, { limit: 10, tag: "tag:foo" });
+      assertEquals(result, { limit: 10, tag: "tag:foo" });
+    });
   });
 
   describe("dynamicTool()", () => {
@@ -298,6 +322,27 @@ describe("tool factory", () => {
         () => t.execute({ query: 123 }),
         Error,
       );
+    });
+
+    it("should forward parsed defaults and transforms to execute", async () => {
+      let received: unknown;
+      const t = dynamicTool({
+        id: "dyn-parsed-forward",
+        description: "desc",
+        inputSchema: defineSchema((v) =>
+          v.object({
+            limit: v.number().default(10),
+            tag: v.string().transform((s) => `tag:${s}`),
+          })
+        )(),
+        execute: (input) => {
+          received = input;
+          return input;
+        },
+      });
+      const result = await t.execute({ tag: "foo" });
+      assertEquals(received, { limit: 10, tag: "tag:foo" });
+      assertEquals(result, { limit: 10, tag: "tag:foo" });
     });
 
     it("should accept valid object input without Zod schema", async () => {
