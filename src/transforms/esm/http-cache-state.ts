@@ -69,6 +69,21 @@ export function hasInjectedProcessingStack(): boolean {
 }
 
 /**
+ * Clear all HTTP bundle caches to reclaim memory.
+ * Called during memory pressure situations to prevent OOM.
+ * Returns the number of entries cleared.
+ */
+export function clearHttpBundleCaches(): number {
+  const pathsCleared = getCacheEntryCount(getCachedPaths());
+  const refreshCleared = getCacheEntryCount(getLastDistributedRefresh());
+
+  defaultCachedPaths.clear();
+  defaultLastDistributedRefresh.clear();
+
+  return pathsCleared + refreshCleared;
+}
+
+/**
  * Inject custom caches for testing.
  * Call with null to restore default behavior.
  */
