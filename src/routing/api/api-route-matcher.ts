@@ -1,6 +1,7 @@
 import type { Route, RouteMatch } from "#veryfront/routing/matchers/types.ts";
 import { getDisableLruIntervalEnv } from "#veryfront/config/env.ts";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { safeDecodeParam } from "#veryfront/routing/matchers/decode-param.ts";
 
 /** Max entries in the route-match LRU cache */
 const ROUTE_CACHE_MAX_ENTRIES = 500;
@@ -155,11 +156,11 @@ export class ApiRouteMatcher {
 
       if (catchAllParamNames.has(paramName)) {
         const segments = value ? value.split("/").filter((segment) => segment.length > 0) : [];
-        params[paramName] = segments.map((segment) => decodeURIComponent(segment));
+        params[paramName] = segments.map((segment) => safeDecodeParam(segment));
         continue;
       }
 
-      params[paramName] = decodeURIComponent(value ?? "");
+      params[paramName] = safeDecodeParam(value ?? "");
     }
 
     return params;

@@ -70,5 +70,19 @@ describe("route-matcher", () => {
 
       assertEquals(match?.params.id, "42");
     });
+
+    it("should not throw on malformed percent-encoding in dynamic param", () => {
+      const route = parseRoute("/users/[id]", "user.tsx");
+      const match = matchRoute("/users/%zz", route);
+
+      assertEquals(match?.params.id, "%zz");
+    });
+
+    it("should not throw on malformed percent-encoding in catch-all segment", () => {
+      const route = parseRoute("/files/[...path]", "files.tsx");
+      const match = matchRoute("/files/ok/%zz", route);
+
+      assertEquals(match?.params.path, ["ok", "%zz"]);
+    });
   });
 });

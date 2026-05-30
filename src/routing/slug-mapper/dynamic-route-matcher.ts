@@ -1,12 +1,20 @@
 import type { RouteParams } from "./types.ts";
 export { isDynamicRoute } from "#veryfront/utils/route-path-utils.ts";
 
+function isOptionalSpreadParam(part: string): boolean {
+  return part.startsWith("[[...") && part.endsWith("]]");
+}
+
 function isSpreadParam(part: string): boolean {
-  return part.startsWith("[...") && part.endsWith("]");
+  return isOptionalSpreadParam(part) || (part.startsWith("[...") && part.endsWith("]"));
 }
 
 function isDynamicParam(part: string): boolean {
   return part.startsWith("[") && part.endsWith("]");
+}
+
+function spreadParamName(part: string): string {
+  return isOptionalSpreadParam(part) ? part.slice(5, -2) : part.slice(4, -1);
 }
 
 export function extractParams(pattern: string, slug: string): RouteParams | null {
@@ -23,7 +31,7 @@ export function extractParams(pattern: string, slug: string): RouteParams | null
 
   for (const patternPart of patternParts) {
     if (isSpreadParam(patternPart)) {
-      const paramName = patternPart.slice(4, -1);
+      const paramName = spreadParamName(patternPart);
       params[paramName] = slugParts.slice(slugIndex);
       return params;
     }

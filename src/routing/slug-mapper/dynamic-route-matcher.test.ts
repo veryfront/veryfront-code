@@ -199,6 +199,18 @@ describe("dynamic-route-matcher", () => {
     it("should handle empty slug with non-empty pattern", () => {
       expect(extractParams("blog/[slug]", "")).toBeNull();
     });
+
+    it("should extract optional catch-all with zero segments", () => {
+      expect(extractParams("/blog/[[...slug]]", "/blog")).toEqual({ slug: [] });
+    });
+
+    it("should extract optional catch-all with multiple segments", () => {
+      expect(extractParams("/blog/[[...slug]]", "/blog/a/b")).toEqual({ slug: ["a", "b"] });
+    });
+
+    it("should extract optional catch-all without leading slashes", () => {
+      expect(extractParams("blog/[[...slug]]", "blog/a/b/c")).toEqual({ slug: ["a", "b", "c"] });
+    });
   });
 
   describe("matchesPattern", () => {
