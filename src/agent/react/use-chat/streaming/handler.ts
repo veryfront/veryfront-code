@@ -8,6 +8,7 @@ import type { ChatMessagePart, ChatToolPart } from "#veryfront/agent/react/use-c
 import { createAssistantMessage, generateClientId } from "#veryfront/agent/react/use-chat/utils.ts";
 import { buildCurrentParts } from "#veryfront/agent/react/use-chat/streaming/parts-builder.ts";
 import type {
+  OrderedMessagePart,
   OrderedReasoning,
   OrderedStep,
   OrderedToolCall,
@@ -21,6 +22,7 @@ interface StreamingState {
   reasoningBlocks: Map<string, OrderedReasoning>;
   steps: Map<number, OrderedStep>;
   messageParts: ChatMessagePart[];
+  dataParts: OrderedMessagePart[];
   currentTextId: string;
   messageId: string;
   partOrderCounter: number;
@@ -34,6 +36,7 @@ function createStreamingState(): StreamingState {
     reasoningBlocks: new Map(),
     steps: new Map(),
     messageParts: [],
+    dataParts: [],
     currentTextId: "",
     messageId: "",
     partOrderCounter: 0,
@@ -50,7 +53,13 @@ export async function handleStreamingResponse(
   const state = createStreamingState();
 
   const getBuildParts = (): ChatMessagePart[] =>
-    buildCurrentParts(state.textBlocks, state.reasoningBlocks, state.toolCalls, state.steps);
+    buildCurrentParts(
+      state.textBlocks,
+      state.reasoningBlocks,
+      state.toolCalls,
+      state.steps,
+      state.dataParts,
+    );
 
   let buffer = "";
 
@@ -101,7 +110,13 @@ export async function handleAgUiStreamingResponse(
   const state = createStreamingState();
 
   const getBuildParts = (): ChatMessagePart[] =>
-    buildCurrentParts(state.textBlocks, state.reasoningBlocks, state.toolCalls, state.steps);
+    buildCurrentParts(
+      state.textBlocks,
+      state.reasoningBlocks,
+      state.toolCalls,
+      state.steps,
+      state.dataParts,
+    );
 
   const processDecodedEvents = (events: ChatStreamEvent[]) => {
     for (const event of events) {
@@ -203,6 +218,15 @@ function processStreamEvent(
       return;
 
     default:
+      if (typeof parsed.type === "string" && parsed.type.startsWith("data-")) {
+        handleDataPart(
+          { type: parsed.type, data: parsed.data },
+          state,
+          onUpdate,
+          getBuildParts,
+        );
+        onData(parsed.data);
+      }
       return;
   }
 }
@@ -289,7 +313,9 @@ function processChatStreamEvent(
 
     default:
       if (event.type.startsWith("data-")) {
-        onData((event as { data: unknown }).data);
+        const data = (event as { data: unknown }).data;
+        handleDataPart({ type: event.type, data }, state, onUpdate, getBuildParts);
+        onData(data);
       }
       return;
   }
@@ -301,6 +327,7 @@ function handleStart(parsed: Record<string, unknown>, state: StreamingState): vo
   state.toolCalls.clear();
   state.reasoningBlocks.clear();
   state.messageParts.length = 0;
+  state.dataParts.length = 0;
 }
 
 function handleTextStart(parsed: Record<string, unknown>, state: StreamingState): void {
@@ -349,6 +376,27 @@ function handleTextEnd(parsed: Record<string, unknown>, state: StreamingState): 
   if (block.text) {
     state.messageParts.push({ type: "text", text: block.text, state: "done" });
   }
+}
+
+function handleDataPart(
+  parsed: { type: string; data?: unknown },
+  state: StreamingState,
+  onUpdate: StreamingCallbacks["onUpdate"],
+  getBuildParts: () => ChatMessagePart[],
+): void {
+  if (!state.messageId) {
+    state.messageId = generateClientId("msg");
+  }
+
+  state.dataParts.push({
+    order: state.partOrderCounter++,
+    part: {
+      type: parsed.type as `data-${string}`,
+      data: parsed.data,
+    },
+  });
+
+  onUpdate?.(getBuildParts(), state.messageId);
 }
 
 function handleToolInputStart(

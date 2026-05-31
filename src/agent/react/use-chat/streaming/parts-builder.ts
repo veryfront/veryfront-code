@@ -1,5 +1,11 @@
 import type { ChatMessagePart, ChatToolPart } from "../types.ts";
-import type { OrderedReasoning, OrderedStep, OrderedToolCall, TextBlock } from "./types.ts";
+import type {
+  OrderedMessagePart,
+  OrderedReasoning,
+  OrderedStep,
+  OrderedToolCall,
+  TextBlock,
+} from "./types.ts";
 
 interface OrderedPart {
   order: number;
@@ -11,6 +17,7 @@ export function buildCurrentParts(
   reasoningBlocks: Map<string, OrderedReasoning>,
   toolCalls: Map<string, OrderedToolCall>,
   steps?: Map<number, OrderedStep>,
+  extraParts?: OrderedMessagePart[],
 ): ChatMessagePart[] {
   const orderedParts: OrderedPart[] = [];
 
@@ -18,9 +25,19 @@ export function buildCurrentParts(
   addReasoningParts(orderedParts, reasoningBlocks);
   addToolParts(orderedParts, toolCalls);
   if (steps) addStepParts(orderedParts, steps);
+  if (extraParts) addExtraParts(orderedParts, extraParts);
 
   orderedParts.sort((a, b) => a.order - b.order);
   return orderedParts.map(({ part }) => part);
+}
+
+function addExtraParts(
+  orderedParts: OrderedPart[],
+  extraParts: OrderedMessagePart[],
+): void {
+  for (const { order, part } of extraParts) {
+    orderedParts.push({ order, part });
+  }
 }
 
 function addTextParts(

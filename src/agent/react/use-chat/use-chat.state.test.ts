@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { handleAgUiStreamingResponse } from "#veryfront/agent/react/use-chat/streaming/index.ts";
 import type { ChatMessage } from "./types.ts";
@@ -69,5 +69,45 @@ describe("use-chat internal state helpers", () => {
   it("defaults to AG-UI streaming when no transport is specified", () => {
     assertEquals(resolveUseChatStreamHandler(undefined), handleAgUiStreamingResponse);
     assertEquals(resolveUseChatStreamHandler("ag-ui"), handleAgUiStreamingResponse);
+  });
+
+  it("preserves AG-UI custom data events as assistant message parts", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: Custom",
+          'data: {"name":"dora.report","value":{"overall":"fail"}}',
+          "",
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","delta":"Done"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1"}',
+          "",
+          "event: RunFinished",
+          'data: {"threadId":"thread-1","runId":"run-1"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+
+    await handleAgUiStreamingResponse(body, {
+      onData: () => {},
+      onMessage: (message) => messages.push(message),
+    });
+
+    const message = messages[0];
+    assertExists(message);
+    assertEquals(message.parts, [
+      { type: "data-dora.report", data: { overall: "fail" } },
+      { type: "text", text: "Done", state: "done" },
+    ]);
   });
 });

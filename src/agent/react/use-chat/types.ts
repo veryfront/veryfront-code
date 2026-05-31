@@ -1,4 +1,5 @@
 import type {
+  ChatDataPart,
   ChatDynamicToolPart,
   ChatMessage,
   ChatMessagePart,
@@ -23,6 +24,7 @@ export type BrowserInferenceStatus =
   | "error";
 
 export type {
+  ChatDataPart,
   ChatDynamicToolPart,
   ChatMessage,
   ChatMessagePart,

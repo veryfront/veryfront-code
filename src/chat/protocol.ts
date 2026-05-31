@@ -66,6 +66,12 @@ export interface ChatStepPart {
   stepIndex: number;
 }
 
+/** Public API contract for chat data part. */
+export interface ChatDataPart {
+  type: `data-${string}`;
+  data: unknown;
+}
+
 /** Public API contract for chat message part. */
 export type ChatMessagePart =
   | ChatTextPart
@@ -73,7 +79,8 @@ export type ChatMessagePart =
   | ChatToolPart
   | ChatToolResultPart
   | ChatDynamicToolPart
-  | ChatStepPart;
+  | ChatStepPart
+  | ChatDataPart;
 
 /** Message shape for chat. */
 export interface ChatMessage {

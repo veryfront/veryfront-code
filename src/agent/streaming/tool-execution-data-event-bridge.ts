@@ -10,6 +10,13 @@ export type ToolExecutionDataEventBridgeStreamInput = {
 };
 
 function serializeToolExecutionDataEvent(event: ToolExecutionDataEvent): Uint8Array {
+  if (typeof event.name === "string" && event.name.length > 0) {
+    const data = Object.hasOwn(event, "value") ? event.value : event.data;
+    return new TextEncoder().encode(
+      `data: ${JSON.stringify({ type: `data-${event.name}`, data })}\n\n`,
+    );
+  }
+
   return new TextEncoder().encode(`data: ${JSON.stringify({ type: "data", data: event })}\n\n`);
 }
 

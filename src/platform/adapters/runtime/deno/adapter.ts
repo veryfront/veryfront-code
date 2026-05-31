@@ -290,12 +290,13 @@ class DenoEnvironmentAdapter implements EnvironmentAdapter {
 
 class DenoServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
-    if (typeof Deno === "undefined") {
+    const deno = globalThis.Deno;
+    if (typeof deno?.upgradeWebSocket !== "function") {
       throw NOT_SUPPORTED.create({
         detail: "DenoServerAdapter.upgradeWebSocket() can only be used in Deno runtime",
       });
     }
-    const { socket, response } = Deno.upgradeWebSocket(request);
+    const { socket, response } = deno.upgradeWebSocket(request);
     return { socket, response };
   }
 }

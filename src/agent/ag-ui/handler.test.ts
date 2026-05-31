@@ -175,6 +175,61 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, '"delta":"hello from runtime"');
   });
 
+  it("bridges direct tool data events into the AG-UI stream", async () => {
+    const testAgent = createTestAgent();
+    testAgent.agent.stream = async (input) => {
+      const publishDataEvent = input.context?.publishDataEvent;
+      if (typeof publishDataEvent === "function") {
+        await publishDataEvent({
+          type: "test.report",
+          name: "test.report",
+          value: { status: "ready" },
+        });
+      }
+
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "message-start", messageId: "assistant-msg-1" }),
+          );
+          controller.enqueue(encodeDataStreamEvent({ type: "text-start", id: "text-1" }));
+          controller.enqueue(
+            encodeDataStreamEvent({ type: "text-delta", id: "text-1", delta: "done" }),
+          );
+          controller.enqueue(encodeDataStreamEvent({ type: "text-end", id: "text-1" }));
+          controller.close();
+        },
+      });
+
+      return {
+        toDataStreamResponse: () =>
+          new Response(stream, {
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+      };
+    };
+
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            id: "msg-1",
+            role: "user",
+            parts: [{ type: "text", text: "hello" }],
+          }],
+        }),
+      }),
+    );
+
+    const body = await response.text();
+    assertStringIncludes(body, "event: Custom");
+    assertStringIncludes(body, '"name":"test.report"');
+    assertStringIncludes(body, '"status":"ready"');
+  });
+
   it("runs beforeStream before direct AG-UI streaming", async () => {
     const testAgent = createTestAgent();
     const handler = createAgUiHandler({

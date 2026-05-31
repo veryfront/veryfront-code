@@ -24,10 +24,17 @@ function upgradeWebSocketDeno(
   request: Request,
   options?: WebSocketUpgradeOptions,
 ): WebSocketUpgradeResult {
+  const deno = globalThis.Deno;
+  if (typeof deno?.upgradeWebSocket !== "function") {
+    throw NOT_SUPPORTED.create({
+      detail: "Deno.upgradeWebSocket() is not available in this runtime.",
+    });
+  }
+
   const denoOptions: Deno.UpgradeWebSocketOptions | undefined = options?.protocol
     ? { protocol: options.protocol }
     : undefined;
 
-  const { socket, response } = Deno.upgradeWebSocket(request, denoOptions);
+  const { socket, response } = deno.upgradeWebSocket(request, denoOptions);
   return { socket, response };
 }
