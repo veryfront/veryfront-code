@@ -262,7 +262,12 @@ export function shouldContinueAfterStreamStep(
 
   const finalToolResults = collectFinalStreamToolResults(state);
   if (!finalToolResults.size) {
-    return false;
+    for (const toolCall of state.toolCalls.values()) {
+      if (toolCall.inputAvailable !== true || toolCall.providerExecuted === true) {
+        return false;
+      }
+    }
+    return true;
   }
 
   for (const [toolCallId, toolCall] of state.toolCalls) {

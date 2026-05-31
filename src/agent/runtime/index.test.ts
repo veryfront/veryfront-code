@@ -134,6 +134,27 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, true);
   });
 
+  it("continues finalized client-executed tool calls when the provider reports stop", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "stop",
+      toolCalls: new Map([
+        [
+          "toolu_client_stop_1",
+          {
+            id: "toolu_client_stop_1",
+            name: "number-generator",
+            arguments: '{"min":1,"max":100}',
+            inputAvailable: true,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, true);
+  });
+
   it("ignores preliminary streamed tool results when a final result exists", () => {
     const finalToolResults = collectFinalStreamToolResults(
       createState([
