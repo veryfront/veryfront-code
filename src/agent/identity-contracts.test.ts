@@ -2,9 +2,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 
 import {
   AGENT_CATALOG_ACTIONS,
-  AGENT_CATALOG_KINDS,
+  AGENT_CATALOG_SOURCE_TYPES,
+  AGENT_CUSTOMIZATION_MODES,
+  AGENT_INSTALL_TARGETS,
   isAgentCatalogAction,
-  isAgentCatalogKind,
+  isAgentCatalogSourceType,
+  isAgentCustomizationMode,
+  isAgentInstallTarget,
   isInstalledProjectAgentKind,
   isProjectAgentExecutionKind,
   isProjectAgentKind,
@@ -13,11 +17,21 @@ import {
 } from "./identity-contracts.ts";
 
 Deno.test("agent identity constants preserve public wire values", () => {
-  assertEquals(AGENT_CATALOG_KINDS, [
-    "template_agent",
-    "installable_agent",
+  assertEquals(AGENT_CATALOG_SOURCE_TYPES, [
+    "project_agent",
+    "catalog_entry",
   ]);
-  assertEquals(AGENT_CATALOG_ACTIONS, ["fork", "install"]);
+  assertEquals(AGENT_INSTALL_TARGETS, ["project", "account"]);
+  assertEquals(AGENT_CUSTOMIZATION_MODES, [
+    "none",
+    "configure",
+    "fork_to_project",
+  ]);
+  assertEquals(AGENT_CATALOG_ACTIONS, [
+    "install_to_project",
+    "install_to_account",
+    "fork_to_project",
+  ]);
   assertEquals(PROJECT_AGENT_KINDS, [
     "source_project_agent",
     "installed_project_agent",
@@ -26,10 +40,17 @@ Deno.test("agent identity constants preserve public wire values", () => {
 });
 
 Deno.test("agent identity guards accept current wire values only", () => {
-  assertEquals(isAgentCatalogKind("template_agent"), true);
-  assertEquals(isAgentCatalogKind("catalog_entry"), false);
+  assertEquals(isAgentCatalogSourceType("project_agent"), true);
+  assertEquals(isAgentCatalogSourceType("template_agent"), false);
 
-  assertEquals(isAgentCatalogAction("install"), true);
+  assertEquals(isAgentInstallTarget("project"), true);
+  assertEquals(isAgentInstallTarget("workspace"), false);
+
+  assertEquals(isAgentCustomizationMode("fork_to_project"), true);
+  assertEquals(isAgentCustomizationMode("template_agent"), false);
+
+  assertEquals(isAgentCatalogAction("install_to_project"), true);
+  assertEquals(isAgentCatalogAction("install"), false);
   assertEquals(isAgentCatalogAction("run"), false);
 
   assertEquals(isProjectAgentKind("installed_project_agent"), true);
