@@ -63,7 +63,7 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       const attachButton = document.querySelector(
-        'button[aria-label="Attach file"]',
+        'button[aria-label="Add document"]',
       );
       assert(attachButton, "Expected attachment button to exist");
 
@@ -82,8 +82,8 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       assert(selectAction, "Expected select action to render");
       assert(menu, "Expected attachment menu to render");
       assertEquals(
-        (menu as HTMLElement).style.bottom,
-        "calc(100% + 0.5rem)",
+        (menu as HTMLElement).style.minWidth,
+        "224px",
       );
 
       flushSync(() => {

@@ -69,14 +69,6 @@ function getLayoutsForRoute(appRoot: string, routePath: string): string[] {
   return layouts;
 }
 
-function routePathToSlug(routePath: string): string {
-  return routePath === "/" ? "" : routePath.replace(/^\/+/, "");
-}
-
-function hasUseClientDirective(source: string): boolean {
-  return /^\s*['"]use client['"];?\s*$/m.test(source);
-}
-
 /**
  * Render an App Router route to HTML
  */
