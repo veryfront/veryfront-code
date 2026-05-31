@@ -221,6 +221,19 @@ async function readNextStreamPartWithTimeout(
   }
 }
 
+function requestStreamIteratorReturn(iterator: AsyncIterator<unknown>): void {
+  const returnResult = iterator.return?.();
+  if (!returnResult) {
+    return;
+  }
+
+  void Promise.resolve(returnResult).catch((error) => {
+    logger.warn("Runtime stream iterator return failed after local tool-call handoff", {
+      error: getStreamErrorMessage(error),
+    });
+  });
+}
+
 export function createStreamState(): ChatStreamState {
   return {
     accumulatedText: "",
@@ -397,7 +410,7 @@ export function processStream(
         : await readNextStreamPart(streamIterator, state);
       if (next === "timeout") {
         state.finishReason ??= "tool-calls";
-        await streamIterator.return?.();
+        requestStreamIteratorReturn(streamIterator);
         break;
       }
       if (next.done) {
