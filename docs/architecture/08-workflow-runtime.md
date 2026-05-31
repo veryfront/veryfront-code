@@ -1,7 +1,7 @@
 # Workflow runtime
 
 This page describes workflow definition and execution. It does not cover agent
-streaming, background task definitions, or job queue internals.
+streaming, background task definitions, or run queue internals.
 
 ## Responsibility
 
@@ -47,32 +47,32 @@ flowchart TD
    step executors.
 4. Checkpoint and backend code stores run progress, approvals, and recovery
    state.
-5. Worker entrypoints run job-backed workflow runs in process, subprocess, or
+5. Worker entrypoints run adapter-backed workflow runs in process, subprocess, or
    Kubernetes execution profiles.
 
 ## Platform execution model
 
-When the platform starts a workflow, it creates a canonical workflow run and a
-bound job:
+When the platform starts a workflow, it creates a canonical workflow run and
+dispatches it through a runtime adapter:
 
 - The public run has `kind = "workflow"`.
-- The bound job target is `workflow:<workflow-id>`.
-- The job service owns queueing, dispatch, retry, cancellation, logs, and worker
+- The runtime target is `workflow:<workflow-id>`.
+- The run service owns queueing, dispatch, retry, cancellation, logs, and worker
   lifecycle.
 - The workflow runtime owns step graph execution, checkpoint state, approvals,
   and workflow result state.
 
-This keeps workflow state distinct from background job mechanics while still
-using the jobs infrastructure for durable execution.
+This keeps workflow state distinct from runtime adapter mechanics while using
+the run infrastructure for durable execution.
 
 Public APIs should describe workflow execution as a workflow run. Lower-level
-worker types may still use `WorkflowRunManager` and job executor names because
-they manage the platform job that backs a workflow run.
+worker types may still use `WorkflowRunManager` and executor names because they
+manage the runtime adapter that backs a workflow run.
 
 ## Boundaries
 
-- A workflow is a step graph. It is not a job, task, cron job, or agent run.
-- A workflow run may be backed by a job. The workflow run remains the canonical
+- A workflow is a step graph. It is not a run, task, schedule, or agent run.
+- A workflow run may be backed by a runtime adapter. The workflow run remains the canonical
   public execution record for workflow APIs.
 - Workflow API clients expose workflow run operations. They do not own step
   execution semantics.

@@ -142,7 +142,7 @@ flowchart TD
    execution based on runtime credentials.
 
 Skills provide instruction packs and tool policy. They are not workflows,
-jobs, or local tool definitions. Skills are configured through project
+runs, or local tool definitions. Skills are configured through project
 discovery and `agent({ skills })`; there is no top-level `veryfront/skill`
 import path in the current public export map.
 

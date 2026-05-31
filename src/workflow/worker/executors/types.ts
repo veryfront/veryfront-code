@@ -1,10 +1,9 @@
 /**
- * Job executor interface
+ * Run executor interface
  *
- * Abstraction layer for executing job-backed workflow runs in isolated
- * environments.
+ * Abstraction layer for executing workflow runs in isolated environments.
  * Implementations can target different runtimes:
- * - K8s Jobs
+ * - Kubernetes Jobs
  * - Docker containers
  * - Local processes
  * - Cloud Run / Lambda / Fargate
@@ -13,11 +12,11 @@
 import type { WorkflowRun } from "../../types.ts";
 
 /**
- * Job configuration passed to executor
+ * Run execution configuration passed to executor
  */
-export interface JobConfig {
-  /** Unique job ID */
-  jobId: string;
+export interface RunExecutionConfig {
+  /** Unique execution ID */
+  executionId: string;
 
   /** Workflow run to execute */
   run: WorkflowRun;
@@ -25,7 +24,7 @@ export interface JobConfig {
   /** Manager ID for tracking */
   managerId: string;
 
-  /** Job timeout in milliseconds */
+  /** Run timeout in milliseconds */
   timeout: number;
 
   /** Environment variables to inject */
@@ -36,30 +35,30 @@ export interface JobConfig {
 }
 
 /**
- * Job execution status
+ * Run execution status
  */
-export type JobStatus = "pending" | "running" | "succeeded" | "failed" | "unknown";
+export type RunExecutionStatus = "pending" | "running" | "succeeded" | "failed" | "unknown";
 
 /**
- * Job information returned by executor
+ * Run execution information returned by executor
  */
-export interface JobInfo {
-  /** Unique job identifier */
-  jobId: string;
+export interface RunExecutionInfo {
+  /** Unique execution identifier */
+  executionId: string;
 
   /** Workflow run ID */
   runId: string;
 
   /** Current status */
-  status: JobStatus;
+  status: RunExecutionStatus;
 
-  /** When job was created */
+  /** When execution was created */
   createdAt: Date;
 
-  /** When job started executing */
+  /** When execution started */
   startedAt?: Date;
 
-  /** When job completed */
+  /** When execution completed */
   completedAt?: Date;
 
   /** Error message if failed */
@@ -70,14 +69,14 @@ export interface JobInfo {
 }
 
 /**
- * Job Executor Interface
+ * Run Executor Interface
  *
- * Abstracts the runtime environment for executing job-backed workflow runs.
+ * Abstracts the runtime environment for executing workflow runs.
  * Each implementation handles the specifics of its target platform.
  *
  * @example K8s
  * ```typescript
- * const executor = new K8sJobExecutor({
+ * const executor = new K8sRunExecutor({
  *   namespace: "workflows",
  *   image: "my-app:latest",
  * });
@@ -85,7 +84,7 @@ export interface JobInfo {
  *
  * @example Docker
  * ```typescript
- * const executor = new DockerJobExecutor({
+ * const executor = new DockerRunExecutor({
  *   image: "my-app:latest",
  *   network: "workflow-network",
  * });
@@ -93,38 +92,38 @@ export interface JobInfo {
  *
  * @example Local Process
  * ```typescript
- * const executor = new ProcessJobExecutor({
+ * const executor = new ProcessRunExecutor({
  *   command: "deno",
- *   args: ["run", "job-entrypoint.ts"],
+ *   args: ["run", "run-entrypoint.ts"],
  * });
  * ```
  */
-export interface JobExecutor {
+export interface RunExecutor {
   /**
-   * Create and start a job for a workflow run.
-   * @returns Job ID
+   * Create and start an isolated execution for a workflow run.
+   * @returns Execution ID
    */
-  createJob(config: JobConfig): Promise<string>;
+  createRunExecution(config: RunExecutionConfig): Promise<string>;
 
   /**
-   * Get the current status of a job
+   * Get the current status of an execution.
    */
-  getJobStatus(jobId: string): Promise<JobInfo | null>;
+  getRunExecutionStatus(executionId: string): Promise<RunExecutionInfo | null>;
 
   /**
-   * List all active jobs created by a specific manager
+   * List all active executions created by a specific manager.
    */
-  listJobs(managerId: string): Promise<JobInfo[]>;
+  listRunExecutions(managerId: string): Promise<RunExecutionInfo[]>;
 
   /**
-   * Delete/cleanup a job
-   * Called after job completion or for manual cleanup
+   * Delete/cleanup an execution.
+   * Called after completion or for manual cleanup.
    */
-  deleteJob(jobId: string): Promise<void>;
+  deleteRunExecution(executionId: string): Promise<void>;
 
   /**
    * Initialize the executor (optional)
-   * Called once before first job creation
+   * Called once before first execution creation.
    */
   initialize?(): Promise<void>;
 
@@ -136,15 +135,15 @@ export interface JobExecutor {
 }
 
 /**
- * Type guard to check if an object implements JobExecutor
+ * Type guard to check if an object implements RunExecutor
  */
-export function isJobExecutor(obj: unknown): obj is JobExecutor {
+export function isRunExecutor(obj: unknown): obj is RunExecutor {
   if (!obj || typeof obj !== "object") return false;
-  const executor = obj as JobExecutor;
+  const executor = obj as RunExecutor;
   return (
-    typeof executor.createJob === "function" &&
-    typeof executor.getJobStatus === "function" &&
-    typeof executor.listJobs === "function" &&
-    typeof executor.deleteJob === "function"
+    typeof executor.createRunExecution === "function" &&
+    typeof executor.getRunExecutionStatus === "function" &&
+    typeof executor.listRunExecutions === "function" &&
+    typeof executor.deleteRunExecution === "function"
   );
 }

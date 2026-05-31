@@ -1,7 +1,7 @@
 /**
  * Workflow run entrypoint
  *
- * Runs inside an ephemeral K8s Job container.
+ * Runs inside an ephemeral run execution container.
  * Executes a single workflow run in complete isolation.
  *
  * Environment variables:
@@ -62,7 +62,7 @@ export const EXIT_CODES = {
 /**
  * Run the workflow run entrypoint
  *
- * This function is the main entrypoint for workflow execution in a K8s Job.
+ * This function is the main entrypoint for isolated workflow execution.
  * It should be called from your container's main script.
  *
  * @example

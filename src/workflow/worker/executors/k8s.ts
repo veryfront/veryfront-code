@@ -1,23 +1,28 @@
 /**
- * Kubernetes Job executor
+ * Kubernetes-backed run executor
  *
- * Executes job-backed workflow runs as Kubernetes Jobs.
+ * Executes workflow runs as Kubernetes Job resources.
  * Each workflow runs in an ephemeral pod with complete isolation.
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
-import type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
+import type {
+  RunExecutionConfig,
+  RunExecutionInfo,
+  RunExecutionStatus,
+  RunExecutor,
+} from "./types.ts";
 
-const logger = baseLogger.component("k8s-job-executor");
+const logger = baseLogger.component("k8s-run-executor");
 
-/** Default TTL for completed K8s Jobs before automatic cleanup (seconds) */
+/** Default TTL for completed K8s Job resources before automatic cleanup (seconds) */
 const DEFAULT_TTL_AFTER_FINISHED_SECONDS = 300;
 
 /**
- * K8s Job Executor configuration
+ * Kubernetes-backed run executor configuration
  */
-export interface K8sJobExecutorConfig {
-  /** Kubernetes namespace for jobs */
+export interface K8sRunExecutorConfig {
+  /** Kubernetes namespace for run executions */
   namespace?: string;
 
   /** Container image for workflow execution */
@@ -26,10 +31,10 @@ export interface K8sJobExecutorConfig {
   /** Image pull policy */
   imagePullPolicy?: "Always" | "IfNotPresent" | "Never";
 
-  /** Service account for jobs */
+  /** Service account for run executions */
   serviceAccount?: string;
 
-  /** Resource requests/limits for job pods */
+  /** Resource requests/limits for run execution pods */
   resources?: {
     requests?: { cpu?: string; memory?: string };
     limits?: { cpu?: string; memory?: string };
@@ -38,7 +43,7 @@ export interface K8sJobExecutorConfig {
   /** Secrets to mount as environment variables */
   envFromSecrets?: string[];
 
-  /** Time to keep completed jobs for debugging (seconds) */
+  /** Time to keep completed run executions for debugging (seconds) */
   ttlAfterFinished?: number;
 
   /** Enable debug logging */
@@ -49,23 +54,29 @@ export interface K8sJobExecutorConfig {
  * Kubernetes API client interface
  */
 export interface K8sClient {
-  /** Create a Job */
-  createJob(namespace: string, job: K8sJobSpec): Promise<void>;
+  /** Create a run execution Kubernetes resource */
+  createRunExecution(namespace: string, resource: K8sRunExecutionSpec): Promise<void>;
 
-  /** Get Job status */
-  getJob(namespace: string, name: string): Promise<K8sJobStatusResponse | null>;
+  /** Get Kubernetes resource status */
+  getRunExecutionResource(
+    namespace: string,
+    name: string,
+  ): Promise<K8sRunExecutionStatusResponse | null>;
 
-  /** List Jobs with label selector */
-  listJobs(namespace: string, labelSelector: string): Promise<K8sJobStatusResponse[]>;
+  /** List run execution Kubernetes resources with label selector */
+  listRunExecutions(
+    namespace: string,
+    labelSelector: string,
+  ): Promise<K8sRunExecutionStatusResponse[]>;
 
-  /** Delete a Job */
-  deleteJob(namespace: string, name: string): Promise<void>;
+  /** Delete a run execution Kubernetes resource */
+  deleteRunExecution(namespace: string, name: string): Promise<void>;
 }
 
 /**
- * K8s Job spec
+ * K8s run execution Kubernetes resource spec
  */
-export interface K8sJobSpec {
+export interface K8sRunExecutionSpec {
   metadata: {
     name: string;
     namespace: string;
@@ -101,9 +112,9 @@ export interface K8sJobSpec {
 }
 
 /**
- * K8s Job status response
+ * K8s run execution status response
  */
-export interface K8sJobStatusResponse {
+export interface K8sRunExecutionStatusResponse {
   metadata: {
     name: string;
     labels: Record<string, string>;
@@ -125,19 +136,19 @@ export interface K8sJobStatusResponse {
 }
 
 /**
- * Kubernetes Job Executor
+ * Kubernetes-backed run executor
  */
-export class K8sJobExecutor implements JobExecutor {
+export class K8sRunExecutor implements RunExecutor {
   private config:
-    & Required<Omit<K8sJobExecutorConfig, "resources" | "serviceAccount" | "envFromSecrets">>
+    & Required<Omit<K8sRunExecutorConfig, "resources" | "serviceAccount" | "envFromSecrets">>
     & {
-      resources?: K8sJobExecutorConfig["resources"];
-      serviceAccount?: K8sJobExecutorConfig["serviceAccount"];
-      envFromSecrets?: K8sJobExecutorConfig["envFromSecrets"];
+      resources?: K8sRunExecutorConfig["resources"];
+      serviceAccount?: K8sRunExecutorConfig["serviceAccount"];
+      envFromSecrets?: K8sRunExecutorConfig["envFromSecrets"];
     };
   private k8sClient: K8sClient;
 
-  constructor(config: K8sJobExecutorConfig, k8sClient: K8sClient) {
+  constructor(config: K8sRunExecutorConfig, k8sClient: K8sClient) {
     this.k8sClient = k8sClient;
     this.config = {
       namespace: "default",
@@ -148,19 +159,19 @@ export class K8sJobExecutor implements JobExecutor {
     };
   }
 
-  async createJob(jobConfig: JobConfig): Promise<string> {
-    const { jobId, run, managerId, timeout, env, debug } = jobConfig;
-    const jobName = this.sanitizeJobName(jobId);
+  async createRunExecution(executionConfig: RunExecutionConfig): Promise<string> {
+    const { executionId, run, managerId, timeout, env, debug } = executionConfig;
+    const resourceName = this.sanitizeResourceName(executionId);
     const tenantSlug = run._tenant?.projectSlug ?? "unknown";
 
-    const job: K8sJobSpec = {
+    const resource: K8sRunExecutionSpec = {
       metadata: {
-        name: jobName,
+        name: resourceName,
         namespace: this.config.namespace,
         labels: {
-          "veryfront.com/component": "workflow-job",
+          "veryfront.com/component": "workflow-run-execution",
           "veryfront.com/manager": managerId,
-          "veryfront.com/job-id": jobId,
+          "veryfront.com/execution-id": executionId,
           "veryfront.com/run-id": run.id,
           "veryfront.com/workflow-id": run.workflowId,
           "veryfront.com/tenant": tenantSlug,
@@ -173,8 +184,8 @@ export class K8sJobExecutor implements JobExecutor {
         template: {
           metadata: {
             labels: {
-              "veryfront.com/component": "workflow-job",
-              "veryfront.com/job-id": jobId,
+              "veryfront.com/component": "workflow-run-execution",
+              "veryfront.com/execution-id": executionId,
               "veryfront.com/run-id": run.id,
               "veryfront.com/tenant": tenantSlug,
             },
@@ -188,9 +199,9 @@ export class K8sJobExecutor implements JobExecutor {
                 image: this.config.image,
                 imagePullPolicy: this.config.imagePullPolicy,
                 env: [
-                  { name: "MODE", value: "job" },
+                  { name: "MODE", value: "run" },
                   { name: "WORKFLOW_RUN_ID", value: run.id },
-                  { name: "JOB_ID", value: jobId },
+                  { name: "RUN_EXECUTION_ID", value: executionId },
                   ...this.buildTenantEnv(run),
                   ...Object.entries(env).map(([name, value]) => ({ name, value })),
                 ],
@@ -205,67 +216,74 @@ export class K8sJobExecutor implements JobExecutor {
       },
     };
 
-    await this.k8sClient.createJob(this.config.namespace, job);
+    await this.k8sClient.createRunExecution(this.config.namespace, resource);
 
     if (debug || this.config.debug) {
-      logger.info(`Created job ${jobName} for run ${run.id}`);
+      logger.info(`Created run execution ${resourceName} for run ${run.id}`);
     }
 
-    return jobId;
+    return executionId;
   }
 
-  async getJobStatus(jobId: string): Promise<JobInfo | null> {
-    const jobName = this.sanitizeJobName(jobId);
+  async getRunExecutionStatus(executionId: string): Promise<RunExecutionInfo | null> {
+    const resourceName = this.sanitizeResourceName(executionId);
 
     try {
-      const k8sJob = await this.k8sClient.getJob(this.config.namespace, jobName);
-      if (!k8sJob) {
+      const k8sResource = await this.k8sClient.getRunExecutionResource(
+        this.config.namespace,
+        resourceName,
+      );
+      if (!k8sResource) {
         return null;
       }
 
-      return this.parseJobInfo(k8sJob, jobId);
+      return this.parseRunExecutionInfo(k8sResource, executionId);
     } catch (error) {
-      logger.debug("Failed to get K8s job status", { error });
+      logger.debug("Failed to get K8s run execution status", { error });
       return null;
     }
   }
 
-  async listJobs(managerId: string): Promise<JobInfo[]> {
+  async listRunExecutions(managerId: string): Promise<RunExecutionInfo[]> {
     const labelSelector = `veryfront.com/manager=${managerId}`;
-    const k8sJobs = await this.k8sClient.listJobs(this.config.namespace, labelSelector);
+    const k8sResources = await this.k8sClient.listRunExecutions(
+      this.config.namespace,
+      labelSelector,
+    );
 
-    return k8sJobs.map((k8sJob) => {
-      const jobId = k8sJob.metadata.labels["veryfront.com/job-id"] ?? k8sJob.metadata.name;
-      return this.parseJobInfo(k8sJob, jobId);
+    return k8sResources.map((k8sResource) => {
+      const executionId = k8sResource.metadata.labels["veryfront.com/execution-id"] ??
+        k8sResource.metadata.name;
+      return this.parseRunExecutionInfo(k8sResource, executionId);
     });
   }
 
-  async deleteJob(jobId: string): Promise<void> {
-    const jobName = this.sanitizeJobName(jobId);
+  async deleteRunExecution(executionId: string): Promise<void> {
+    const resourceName = this.sanitizeResourceName(executionId);
 
     try {
-      await this.k8sClient.deleteJob(this.config.namespace, jobName);
+      await this.k8sClient.deleteRunExecution(this.config.namespace, resourceName);
 
       if (this.config.debug) {
-        logger.info(`Deleted job ${jobName}`);
+        logger.info(`Deleted run execution ${resourceName}`);
       }
     } catch (error) {
-      logger.warn(`Failed to delete job ${jobName}:`, error);
+      logger.warn(`Failed to delete run execution ${resourceName}:`, error);
     }
   }
 
   /**
-   * Convert job ID to valid K8s name
+   * Convert execution ID to a valid K8s resource name
    */
-  private sanitizeJobName(jobId: string): string {
-    return `wf-${jobId.replace(/_/g, "-").toLowerCase()}`;
+  private sanitizeResourceName(executionId: string): string {
+    return `wf-${executionId.replace(/_/g, "-").toLowerCase()}`;
   }
 
   /**
    * Build tenant environment variables
    */
   private buildTenantEnv(
-    run: JobConfig["run"],
+    run: RunExecutionConfig["run"],
   ): Array<{ name: string; value: string }> {
     if (!run._tenant) {
       return [];
@@ -299,49 +317,52 @@ export class K8sJobExecutor implements JobExecutor {
   }
 
   /**
-   * Parse K8s job response to JobInfo
+   * Parse K8s run execution response to RunExecutionInfo
    */
-  private parseJobInfo(k8sJob: K8sJobStatusResponse, jobId: string): JobInfo {
-    const runId = k8sJob.metadata.labels["veryfront.com/run-id"] ?? "";
+  private parseRunExecutionInfo(
+    k8sResource: K8sRunExecutionStatusResponse,
+    executionId: string,
+  ): RunExecutionInfo {
+    const runId = k8sResource.metadata.labels["veryfront.com/run-id"] ?? "";
 
     return {
-      jobId,
+      executionId,
       runId,
-      status: this.parseStatus(k8sJob),
-      createdAt: new Date(k8sJob.metadata.creationTimestamp),
-      startedAt: k8sJob.status.startTime ? new Date(k8sJob.status.startTime) : undefined,
-      completedAt: k8sJob.status.completionTime
-        ? new Date(k8sJob.status.completionTime)
+      status: this.parseStatus(k8sResource),
+      createdAt: new Date(k8sResource.metadata.creationTimestamp),
+      startedAt: k8sResource.status.startTime ? new Date(k8sResource.status.startTime) : undefined,
+      completedAt: k8sResource.status.completionTime
+        ? new Date(k8sResource.status.completionTime)
         : undefined,
-      error: this.extractError(k8sJob),
+      error: this.extractError(k8sResource),
       metadata: {
-        k8sName: k8sJob.metadata.name,
+        k8sName: k8sResource.metadata.name,
         namespace: this.config.namespace,
       },
     };
   }
 
   /**
-   * Parse K8s job status
+   * Parse K8s run execution status
    */
-  private parseStatus(k8sJob: K8sJobStatusResponse): JobStatus {
-    if (k8sJob.status.succeeded && k8sJob.status.succeeded > 0) {
+  private parseStatus(k8sResource: K8sRunExecutionStatusResponse): RunExecutionStatus {
+    if (k8sResource.status.succeeded && k8sResource.status.succeeded > 0) {
       return "succeeded";
     }
-    if (k8sJob.status.failed && k8sJob.status.failed > 0) {
+    if (k8sResource.status.failed && k8sResource.status.failed > 0) {
       return "failed";
     }
-    if (k8sJob.status.active && k8sJob.status.active > 0) {
+    if (k8sResource.status.active && k8sResource.status.active > 0) {
       return "running";
     }
     return "pending";
   }
 
   /**
-   * Extract error from K8s job
+   * Extract error from K8s run execution
    */
-  private extractError(k8sJob: K8sJobStatusResponse): string | undefined {
-    const failedCondition = k8sJob.status.conditions?.find(
+  private extractError(k8sResource: K8sRunExecutionStatusResponse): string | undefined {
+    const failedCondition = k8sResource.status.conditions?.find(
       (c) => c.type === "Failed" && c.status === "True",
     );
 

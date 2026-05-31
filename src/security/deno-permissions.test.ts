@@ -4,7 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BUILD_HELPER_PERMISSIONS,
   SERVER_PERMISSIONS,
-  WORKFLOW_JOB_PERMISSIONS,
+  WORKFLOW_RUN_PERMISSIONS,
 } from "./deno-permissions.ts";
 
 describe("deno-permissions", () => {
@@ -26,16 +26,16 @@ describe("deno-permissions", () => {
     });
   });
 
-  describe("WORKFLOW_JOB_PERMISSIONS (restricted)", () => {
+  describe("WORKFLOW_RUN_PERMISSIONS (restricted)", () => {
     it("only grants read, write, net, env", () => {
-      assertEquals(WORKFLOW_JOB_PERMISSIONS.includes("--allow-read"), true);
-      assertEquals(WORKFLOW_JOB_PERMISSIONS.includes("--allow-write"), true);
-      assertEquals(WORKFLOW_JOB_PERMISSIONS.includes("--allow-net"), true);
-      assertEquals(WORKFLOW_JOB_PERMISSIONS.includes("--allow-env"), true);
+      assertEquals(WORKFLOW_RUN_PERMISSIONS.includes("--allow-read"), true);
+      assertEquals(WORKFLOW_RUN_PERMISSIONS.includes("--allow-write"), true);
+      assertEquals(WORKFLOW_RUN_PERMISSIONS.includes("--allow-net"), true);
+      assertEquals(WORKFLOW_RUN_PERMISSIONS.includes("--allow-env"), true);
     });
 
     it("does NOT grant run, ffi, or sys", () => {
-      const flags = WORKFLOW_JOB_PERMISSIONS.join(" ");
+      const flags = WORKFLOW_RUN_PERMISSIONS.join(" ");
       assertEquals(flags.includes("allow-run"), false);
       assertEquals(flags.includes("allow-ffi"), false);
       assertEquals(flags.includes("allow-sys"), false);

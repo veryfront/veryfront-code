@@ -1,6 +1,6 @@
 {
   "name": "redis",
-  "description": "Redis-based async job queue for background processing",
+  "description": "Redis-backed async task queue for background processing",
   "envVars": [
     {
       "name": "REDIS_URL",
@@ -13,8 +13,8 @@
   ],
   "tips": [
     "Start Redis: docker run -p 6379:6379 redis",
-    "Queue jobs via /api/jobs endpoint",
-    "Worker processes jobs in the background",
-    "Supports job priorities and retries"
+    "Queue background work via an app-owned API endpoint",
+    "Worker processes queued tasks in the background",
+    "Supports task priorities and retries"
   ]
 }

@@ -1,10 +1,10 @@
 ---
 title: "Tasks"
-description: "Define background task functions that can run locally or as cloud jobs."
+description: "Define background task functions that can run locally or as cloud runs."
 order: 30
 ---
 
-Tasks are user-defined functions in `tasks/`. Run them locally with `veryfront task <name>` or in the cloud as job runs.
+Tasks are user-defined functions in `tasks/`. Run them locally with `veryfront task <name>` or in the cloud as task runs.
 
 ## Prerequisites
 
@@ -59,7 +59,7 @@ interface TaskDefinition {
 | `description`  | No       | What the task does                               |
 | `inputSchema`  | No       | JSON-schema-like input contract for APIs and UIs |
 | `outputSchema` | No       | JSON-schema-like output contract                 |
-| `schedulable`  | No       | Whether it can be used as a cron job target      |
+| `schedulable`  | No       | Whether it can be used as a schedule target      |
 | `run`          | Yes      | The function to execute                          |
 
 ## Task context
@@ -75,7 +75,7 @@ interface TaskContext {
 ```
 
 - **`env`**: filtered environment variables (use `envAllowlist` to restrict)
-- **`config`**: job configuration (passed when run as a cloud job)
+- **`config`**: run configuration (passed when run in the cloud)
 - **`projectId`**: project identifier (available in cloud context)
 
 ## Discovery
@@ -100,26 +100,27 @@ veryfront task sync-data
 
 Task IDs come from files under `tasks/`.
 
-### As a cloud job
+### As a cloud run
 
-Tasks with `schedulable: true` can be targeted by Jobs and Cron Jobs:
+Tasks with `schedulable: true` can be targeted by runs and schedules:
 
 ```ts
-import { VeryfrontJobsClient } from "veryfront/jobs";
+import { VeryfrontRunsClient } from "veryfront/runs";
 
-const jobs = new VeryfrontJobsClient({
+const runs = new VeryfrontRunsClient({
   authToken: process.env.VERYFRONT_API_TOKEN,
   projectReference: "my-project",
 });
 
-await jobs.create({
+await runs.createTaskRun({
+  projectId: "00000000-0000-4000-8000-000000000000",
   name: "Daily sync",
   target: "task:sync-data",
   config: { batchSize: 100 },
 });
 ```
 
-See [Jobs and cron jobs](./jobs.md) for scheduling and event monitoring.
+See [Runs](./runs.md) for run creation and event monitoring.
 
 ## Verify it worked
 
@@ -132,6 +133,6 @@ veryfront task sync-data
 A passing task prints any `console.log` output, exits with status `0`, and
 returns the value you returned from `run` as the final JSON line.
 
-For cloud execution, create a job that targets the task and check Studio for
-a `succeeded` status. See the verification block in
-[Jobs and cron jobs](./jobs.md) for the SDK-driven check.
+For cloud execution, create a run that targets the task and check Studio for
+a `completed` status. See the verification block in [Runs](./runs.md) for the
+SDK-driven check.

@@ -1,5 +1,5 @@
 /**
- * Redis client for job queue operations
+ * Redis client for task queue operations
  */
 
 function getEnv(key: string): string | undefined {
@@ -14,7 +14,7 @@ function getEnv(key: string): string | undefined {
 
 const _REDIS_URL = getEnv("REDIS_URL") ?? "redis://localhost:6379";
 
-interface Job {
+interface QueuedTask {
   id: string;
   type: string;
   data: Record<string, unknown>;
@@ -25,12 +25,12 @@ interface Job {
   error?: string;
 }
 
-const jobs = new Map<string, Job>();
+const tasks = new Map<string, QueuedTask>();
 
-export function queueJob(type: string, data: Record<string, unknown>): Promise<string> {
+export function queueTask(type: string, data: Record<string, unknown>): Promise<string> {
   const id = crypto.randomUUID();
 
-  jobs.set(id, {
+  tasks.set(id, {
     id,
     type,
     data,
@@ -38,39 +38,39 @@ export function queueJob(type: string, data: Record<string, unknown>): Promise<s
     createdAt: Date.now(),
   });
 
-  console.log(`[Redis] Queued job ${id} of type ${type}`);
+  console.log(`[Redis] Queued task ${id} of type ${type}`);
 
-  setTimeout(() => void processJob(id), 100);
+  setTimeout(() => void processTask(id), 100);
 
   return Promise.resolve(id);
 }
 
-export function getJob(id: string): Promise<Job | null> {
-  return Promise.resolve(jobs.get(id) ?? null);
+export function getTask(id: string): Promise<QueuedTask | null> {
+  return Promise.resolve(tasks.get(id) ?? null);
 }
 
-export async function processJob(id: string): Promise<void> {
-  const job = jobs.get(id);
-  if (!job) return;
+export async function processTask(id: string): Promise<void> {
+  const task = tasks.get(id);
+  if (!task) return;
 
-  job.status = "processing";
-  console.log(`[Redis] Processing job ${id}`);
+  task.status = "processing";
+  console.log(`[Redis] Processing task ${id}`);
 
   try {
     await new Promise<void>((resolve) => setTimeout(resolve, 500));
 
-    job.status = "completed";
-    job.completedAt = Date.now();
-    job.result = { processed: true };
-    console.log(`[Redis] Job ${id} completed`);
+    task.status = "completed";
+    task.completedAt = Date.now();
+    task.result = { processed: true };
+    console.log(`[Redis] Task ${id} completed`);
   } catch (error) {
-    job.status = "failed";
-    job.error = error instanceof Error ? error.message : String(error);
-    console.error(`[Redis] Job ${id} failed:`, error);
+    task.status = "failed";
+    task.error = error instanceof Error ? error.message : String(error);
+    console.error(`[Redis] Task ${id} failed:`, error);
   }
 }
 
-export function listJobs(): Promise<Job[]> {
-  const list = Array.from(jobs.values()).sort((a, b) => b.createdAt - a.createdAt);
+export function listTasks(): Promise<QueuedTask[]> {
+  const list = Array.from(tasks.values()).sort((a, b) => b.createdAt - a.createdAt);
   return Promise.resolve(list);
 }

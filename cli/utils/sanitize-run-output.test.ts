@@ -1,12 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { sanitizeJobOutputForLogging } from "./sanitize-job-output.ts";
+import { sanitizeRunOutputForLogging } from "./sanitize-run-output.ts";
 
-describe("sanitizeJobOutputForLogging", () => {
+describe("sanitizeRunOutputForLogging", () => {
   it("removes top-level tenant context", () => {
     assertEquals(
-      sanitizeJobOutputForLogging({
+      sanitizeRunOutputForLogging({
         _tenant: { token: "secret", projectSlug: "dreamy-haven" },
         ok: true,
       }),
@@ -16,7 +16,7 @@ describe("sanitizeJobOutputForLogging", () => {
 
   it("removes nested tenant context recursively", () => {
     assertEquals(
-      sanitizeJobOutputForLogging({
+      sanitizeRunOutputForLogging({
         run: {
           step: {
             _tenant: { token: "secret" },
@@ -36,7 +36,7 @@ describe("sanitizeJobOutputForLogging", () => {
 
   it("preserves arrays and primitive values", () => {
     assertEquals(
-      sanitizeJobOutputForLogging([
+      sanitizeRunOutputForLogging([
         { ok: true, _tenant: { token: "secret" } },
         "done",
         42,

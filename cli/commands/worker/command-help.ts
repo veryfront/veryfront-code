@@ -13,7 +13,7 @@ export const workerHelp: CommandHelp = {
     },
     {
       flag: "-c, --concurrency <number>",
-      description: "Maximum concurrent jobs",
+      description: "Maximum concurrent runs",
       default: "3",
     },
     {
@@ -28,13 +28,13 @@ export const workerHelp: CommandHelp = {
     },
     {
       flag: "-e, --executor <type>",
-      description: "Job executor type (process | k8s)",
+      description: "Run executor type (process | k8s)",
       default: "process",
     },
     {
       flag: "--entrypoint <path>",
       description: "Path to workflow run entrypoint script",
-      default: "./workflow-job.ts",
+      default: "./workflow-run.ts",
     },
     {
       flag: "--debug",
@@ -44,6 +44,6 @@ export const workerHelp: CommandHelp = {
   examples: [
     "veryfront worker",
     "veryfront worker --redis-url redis://prod:6379 --concurrency 5",
-    "veryfront worker --entrypoint ./src/jobs/workflow-runner.ts --debug",
+    "veryfront worker --entrypoint ./src/runs/workflow-runner.ts --debug",
   ],
 };

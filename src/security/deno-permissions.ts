@@ -23,10 +23,10 @@ export const SERVER_PERMISSIONS = [
 ] as const;
 
 /**
- * WORKFLOW_JOB — `ProcessJobExecutor` (RESTRICTED).
+ * WORKFLOW_RUN — `ProcessRunExecutor` (RESTRICTED).
  * Runs user-authored code — no `--allow-run`, `--allow-ffi`, or `--allow-sys`.
  */
-export const WORKFLOW_JOB_PERMISSIONS = [
+export const WORKFLOW_RUN_PERMISSIONS = [
   "--allow-read",
   "--allow-write",
   "--allow-net",

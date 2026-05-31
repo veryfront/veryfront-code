@@ -1,8 +1,8 @@
 import { cliLogger } from "#cli/utils";
 import { exitProcess } from "#cli/utils";
 import { withProjectSourceContext } from "#cli/shared/project-source-context";
-import { sanitizeJobOutputForLogging } from "../../utils/sanitize-job-output.ts";
-import { writeJobResultIfConfigured } from "../../utils/write-job-result.ts";
+import { sanitizeRunOutputForLogging } from "../../utils/sanitize-run-output.ts";
+import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { getEnv } from "veryfront/platform";
 import type { WorkflowArgs } from "./handler.ts";
 
@@ -65,9 +65,9 @@ async function waitForWorkflowExit(
     if (run.status === "completed") {
       cliLogger.info(`Workflow completed: ${runId}`);
       if (run.output !== undefined) {
-        await writeJobResultIfConfigured(run.output);
+        await writeRunResultIfConfigured(run.output);
         cliLogger.info(
-          `Result: ${JSON.stringify(sanitizeJobOutputForLogging(run.output), null, 2)}`,
+          `Result: ${JSON.stringify(sanitizeRunOutputForLogging(run.output), null, 2)}`,
         );
       }
       return;

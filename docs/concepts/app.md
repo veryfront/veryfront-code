@@ -20,7 +20,7 @@ capability is invoked.
 
 ## Boundary
 
-An app route can call an agent, tool, workflow, task, job, integration, or
+An app route can call an agent, tool, workflow, task, run, integration, or
 sandbox. The app still owns the request and response boundary. The primitive it
 calls owns the work behind that boundary.
 

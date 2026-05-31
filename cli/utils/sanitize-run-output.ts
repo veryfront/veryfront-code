@@ -18,6 +18,6 @@ function sanitizeValue(value: unknown): unknown {
   return sanitized;
 }
 
-export function sanitizeJobOutputForLogging(value: unknown): unknown {
+export function sanitizeRunOutputForLogging(value: unknown): unknown {
   return sanitizeValue(value);
 }

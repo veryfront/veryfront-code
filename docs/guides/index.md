@@ -55,7 +55,7 @@ details, see [API reference](../api-reference/index.md).
 | Define reusable background work            | [Tasks](./tasks.md)                                     |
 | Coordinate multi-step work                 | [Workflows](./workflows.md)                             |
 | Add loops, large artifacts, or progress UI | [Workflows: advanced](./workflows-advanced.md)          |
-| Run or schedule durable work               | [Jobs](./jobs.md)                                       |
+| Run durable work                           | [Runs](./runs.md)                                       |
 | Ingest documents into project knowledge    | [CLI knowledge ingestion](./cli-knowledge-ingestion.md) |
 
 ## Connect external systems

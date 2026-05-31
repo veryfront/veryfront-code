@@ -1,6 +1,6 @@
 ---
 title: "Framework primitives"
-description: "How Veryfront Code apps, agents, tools, skills, prompts, resources, tasks, workflows, jobs, integrations, MCP, sandbox, and extensions fit together."
+description: "How Veryfront Code apps, agents, tools, skills, prompts, resources, tasks, workflows, runs, integrations, MCP, sandbox, and extensions fit together."
 order: 2
 ---
 
@@ -23,8 +23,8 @@ that explains the work clearly.
 | [Resource](./resource.md)               | Readable project data for MCP.                  |
 | [Task](./task.md)                       | A background work target.                       |
 | [Workflow](./workflow.md)               | Multi-step coordination.                        |
-| [Job](./job.md)                         | Durable execution of work.                      |
-| [Cron job](./cron-job.md)               | Scheduled job creation.                         |
+| [Run](./run.md)                         | Durable execution of work.                      |
+| [Schedule](./schedule.md)               | Scheduled run creation.                         |
 | [Integration](./integration.md)         | External service capabilities.                  |
 | [MCP server](./mcp-server.md)           | Assistant-facing tools, prompts, and resources. |
 | [Sandbox](./sandbox.md)                 | Isolated command and file execution.            |
@@ -40,7 +40,7 @@ response. A task can run slow background work. An agent can reason about a
 user-facing decision. A skill can give the agent task-specific instructions.
 
 This keeps the project understandable. The app owns entry points. Agents own
-model decisions. Tools own deterministic actions. Workflows own process. Jobs own
+model decisions. Tools own deterministic actions. Workflows own process. Runs own
 durable execution. Extensions own replaceable runtime infrastructure.
 
 For task-focused selection, see [Choose a primitive](../guides/choose-a-primitive.md).

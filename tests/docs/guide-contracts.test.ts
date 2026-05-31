@@ -17,8 +17,8 @@ const CONCEPT_FILES = new Set<string>([
   "concepts/tool.md",
   "concepts/workflow.md",
   "concepts/task.md",
-  "concepts/job.md",
-  "concepts/cron-job.md",
+  "concepts/run.md",
+  "concepts/schedule.md",
   "concepts/prompt.md",
   "concepts/resource.md",
   "concepts/skill.md",
@@ -153,7 +153,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "../api-reference/veryfront/agent.md",
       "../api-reference/veryfront/tool.md",
       "../api-reference/veryfront/workflow.md",
-      "../api-reference/veryfront/jobs.md",
+      "../api-reference/veryfront/runs.md",
       "../api-reference/veryfront/integrations.md",
       "../api-reference/veryfront/mcp.md",
       "../api-reference/veryfront/sandbox.md",
@@ -164,7 +164,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Tool",
       "Workflow",
       "Task",
-      "Job",
+      "Run",
       "Integration",
       "MCP",
       "Sandbox",
@@ -303,8 +303,8 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
       "Tool",
       "Workflow",
       "Task",
-      "Job",
-      "Cron job",
+      "Run",
+      "Schedule",
       "Prompt",
       "Resource",
       "Skill",
@@ -355,23 +355,23 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   "concepts/task.md": {
     references: [
       "../guides/tasks.md",
-      "../api-reference/veryfront/jobs.md",
+      "../api-reference/veryfront/runs.md",
     ],
-    snippets: ["background work", "target", "job"],
+    snippets: ["background work", "target", "run"],
   },
-  "concepts/job.md": {
+  "concepts/run.md": {
     references: [
-      "../guides/jobs.md",
-      "../api-reference/veryfront/jobs.md",
+      "../guides/runs.md",
+      "../api-reference/veryfront/runs.md",
     ],
     snippets: ["durable execution", "status", "events"],
   },
-  "concepts/cron-job.md": {
+  "concepts/schedule.md": {
     references: [
-      "../guides/jobs.md",
-      "../api-reference/veryfront/jobs.md",
+      "../guides/runs.md",
+      "../api-reference/veryfront/runs.md",
     ],
-    snippets: ["schedule", "job runs", "trigger"],
+    snippets: ["schedule", "runs", "trigger"],
   },
   "concepts/prompt.md": {
     references: ["../api-reference/veryfront/prompt.md"],
@@ -423,12 +423,12 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     references: ["../api-reference/veryfront/integrations.md"],
     snippets: ["integrations", "perUser", "Available integrations"],
   },
-  "guides/jobs.md": {
-    references: ["../api-reference/veryfront/jobs.md"],
+  "guides/runs.md": {
+    references: ["../api-reference/veryfront/runs.md"],
     snippets: [
-      "createJobsClient",
+      "createRunsClient",
       "task:knowledge-ingest",
-      "jobs.targets.list",
+      "runs.events",
     ],
   },
   "guides/mcp-server.md": {
@@ -566,11 +566,11 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
     snippets: ["SKILL.md", "allowed_tools", "veryfront skills validate"],
   },
   "guides/tasks.md": {
-    references: ["../api-reference/veryfront/jobs.md"],
+    references: ["../api-reference/veryfront/runs.md"],
     snippets: [
       "veryfront task sync-data",
       "schedulable",
-      "VeryfrontJobsClient",
+      "VeryfrontRunsClient",
     ],
   },
   "guides/tools.md": {

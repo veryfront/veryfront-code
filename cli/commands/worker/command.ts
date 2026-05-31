@@ -2,7 +2,7 @@
  * Worker command - Start workflow run worker
  *
  * Polls Redis for pending/stalled workflow runs and executes them
- * as isolated processes. Supports multi-tenant execution: each job
+ * as isolated processes. Supports multi-tenant execution: each run
  * runs with its own tenant context captured at workflow creation time.
  */
 
@@ -16,9 +16,9 @@ export async function workerCommand(options: WorkerOptions): Promise<void> {
   showLogo();
 
   const { WorkflowRunManager } = await import(
-    "../../../src/workflow/worker/job-manager.ts"
+    "../../../src/workflow/worker/run-manager.ts"
   );
-  const { ProcessJobExecutor } = await import(
+  const { ProcessRunExecutor } = await import(
     "../../../src/workflow/worker/executors/process.ts"
   );
   const { RedisBackend } = await import(
@@ -41,22 +41,22 @@ export async function workerCommand(options: WorkerOptions): Promise<void> {
     await backend.initialize();
   }
 
-  // Create job executor
+  // Create run executor
   // The entrypoint script runs inside each spawned process.
   // It reads WORKFLOW_RUN_ID + TENANT_* env vars, discovers workflows
   // from the user's project, and executes the matching one.
-  const entrypointPath = options.entrypoint ?? "./workflow-job.ts";
+  const entrypointPath = options.entrypoint ?? "./workflow-run.ts";
 
   if (options.executor === "k8s") {
     cliLogger.error(
       "K8s executor requires custom configuration. Use --executor process for local dev, " +
-        "or configure K8sJobExecutor programmatically for production.",
+        "or configure K8sRunExecutor programmatically for production.",
     );
     exitProcess(1);
     return;
   }
 
-  const executor = new ProcessJobExecutor({
+  const executor = new ProcessRunExecutor({
     entrypointPath,
     env: {
       REDIS_URL: options.redisUrl,
@@ -69,7 +69,7 @@ export async function workerCommand(options: WorkerOptions): Promise<void> {
     backend,
     executor,
     pollInterval: options.pollInterval,
-    maxConcurrentJobs: options.concurrency,
+    maxConcurrentExecutions: options.concurrency,
     stalledThreshold: options.stalledThreshold,
     debug: options.debug,
   });
@@ -96,7 +96,7 @@ export async function workerCommand(options: WorkerOptions): Promise<void> {
       const stats = manager.getStats();
       cliLogger.info("Worker stopped.");
       cliLogger.info(
-        `  Jobs: ${stats.jobsCreated} created, ${stats.jobsCompleted} completed, ${stats.jobsFailed} failed`,
+        `  Runs: ${stats.executionsCreated} created, ${stats.executionsCompleted} completed, ${stats.executionsFailed} failed`,
       );
     } catch (error) {
       cliLogger.warn("Error during shutdown:", error);

@@ -37,7 +37,7 @@ framework behavior and extensions.
 ## Why this matters
 
 Routes are user and HTTP entry points. Auto-discovered entities are capabilities
-that routes, jobs, workflows, MCP servers, and agent services can use. This is
+that routes, runs, workflows, MCP servers, and agent services can use. This is
 why agents, tools, workflows, prompts, resources, and skills live at the project
 root instead of under a route directory.
 

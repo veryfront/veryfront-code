@@ -1,25 +1,25 @@
 /**
  * Workflow run manager
  *
- * Orchestrates workflow run execution via isolated jobs.
- * Uses pluggable JobExecutor interface for runtime flexibility.
+ * Orchestrates workflow run execution via isolated run executors.
+ * Uses pluggable RunExecutor interface for runtime flexibility.
  *
  * Supported runtimes:
- * - K8sJobExecutor: Kubernetes Jobs (production)
- * - ProcessJobExecutor: Child processes (local dev)
- * - DockerJobExecutor: Docker containers (future)
+ * - K8sRunExecutor: Kubernetes Job adapter (production)
+ * - ProcessRunExecutor: Child processes (local dev)
+ * - DockerRunExecutor: Docker containers (future)
  *
  * Key properties:
  * - Each workflow runs in isolation (no shared state)
- * - Supports crash recovery via stalled job detection
- * - Runtime-agnostic through JobExecutor abstraction
+ * - Supports crash recovery via stalled execution detection
+ * - Runtime-agnostic through RunExecutor abstraction
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
 import { hasLockSupport, hasWorkerSupport, type WorkflowBackend } from "../backends/types.ts";
 import type { WorkflowRun } from "../types.ts";
 import { generateId } from "../types.ts";
-import type { JobConfig, JobExecutor, JobStatus } from "./executors/types.ts";
+import type { RunExecutionConfig, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
 import { ORCHESTRATION_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("workflow-run-manager");
@@ -27,36 +27,36 @@ const logger = baseLogger.component("workflow-run-manager");
 /** Default interval between poll cycles */
 const DEFAULT_POLL_INTERVAL_MS = 5_000;
 
-/** Default timeout for a single job (30 minutes) */
-const DEFAULT_JOB_TIMEOUT_MS = 30 * 60 * 1_000;
+/** Default timeout for a single run execution (30 minutes) */
+const DEFAULT_EXECUTION_TIMEOUT_MS = 30 * 60 * 1_000;
 
 /** Default threshold after which a run is considered stalled */
 const DEFAULT_STALLED_THRESHOLD_MS = 60_000;
 
 // Re-export types for convenience
-export type { JobExecutor, JobInfo, JobStatus } from "./executors/types.ts";
+export type { RunExecutionInfo, RunExecutionStatus, RunExecutor } from "./executors/types.ts";
 
 /**
- * Configuration for the workflow run manager backed by job executors.
+ * Configuration for the workflow run manager backed by run executors.
  */
 export interface WorkflowRunManagerConfig {
   /** Backend for workflow persistence */
   backend: WorkflowBackend;
 
-  /** Job executor (K8s, Docker, Process, etc.) */
-  executor: JobExecutor;
+  /** Run executor (Kubernetes, Docker, Process, etc.) */
+  executor: RunExecutor;
 
-  /** Environment variables to inject into jobs */
+  /** Environment variables to inject into run executions */
   env?: Record<string, string>;
 
   /** Poll interval for checking pending workflows (ms) */
   pollInterval?: number;
 
-  /** Maximum concurrent jobs */
-  maxConcurrentJobs?: number;
+  /** Maximum concurrent run executions */
+  maxConcurrentExecutions?: number;
 
-  /** Job timeout (ms) - kills job if it exceeds this */
-  jobTimeout?: number;
+  /** Run timeout (ms) - kills execution if it exceeds this */
+  executionTimeout?: number;
 
   /** Time after which a run is considered stalled (ms) - for crash recovery */
   stalledThreshold?: number;
@@ -78,22 +78,22 @@ export interface ManagerStats {
   managerId: string;
   startedAt?: Date;
   pollCount: number;
-  jobsCreated: number;
-  jobsCompleted: number;
-  jobsFailed: number;
-  activeJobs: number;
+  executionsCreated: number;
+  executionsCompleted: number;
+  executionsFailed: number;
+  activeExecutions: number;
   lastPollAt?: Date;
   lastErrorAt?: Date;
   lastError?: string;
 }
 
 /**
- * Internal job tracking
+ * Internal run execution tracking
  */
-interface TrackedJob {
-  jobId: string;
+interface TrackedExecution {
+  executionId: string;
   runId: string;
-  status: JobStatus;
+  status: RunExecutionStatus;
   createdAt: Date;
 }
 
@@ -105,12 +105,12 @@ type ResolvedConfig = Required<Omit<WorkflowRunManagerConfig, "env">> & {
 /**
  * Workflow run manager
  *
- * Orchestrates workflow execution via pluggable job executors.
+ * Orchestrates workflow execution via pluggable run executors.
  * Each workflow runs in complete isolation.
  *
  * @example K8s
  * ```typescript
- * const executor = new K8sJobExecutor({
+ * const executor = new K8sRunExecutor({
  *   image: "my-app:latest",
  *   namespace: "workflows",
  * }, k8sClient);
@@ -125,8 +125,8 @@ type ResolvedConfig = Required<Omit<WorkflowRunManagerConfig, "env">> & {
  *
  * @example Local Process
  * ```typescript
- * const executor = new ProcessJobExecutor({
- *   entrypointPath: "./job-entrypoint.ts",
+ * const executor = new ProcessRunExecutor({
+ *   entrypointPath: "./workflow-run.ts",
  * });
  *
  * const manager = new WorkflowRunManager({
@@ -141,7 +141,7 @@ export class WorkflowRunManager {
   private config: ResolvedConfig;
   private status: ManagerStatus = "idle";
   private pollTimeout?: ReturnType<typeof setTimeout>;
-  private activeJobs = new Map<string, TrackedJob>();
+  private activeExecutions = new Map<string, TrackedExecution>();
   private stats: ManagerStats;
   private managerId: string;
 
@@ -150,8 +150,8 @@ export class WorkflowRunManager {
 
     this.config = {
       pollInterval: DEFAULT_POLL_INTERVAL_MS,
-      maxConcurrentJobs: 10,
-      jobTimeout: DEFAULT_JOB_TIMEOUT_MS,
+      maxConcurrentExecutions: 10,
+      executionTimeout: DEFAULT_EXECUTION_TIMEOUT_MS,
       stalledThreshold: DEFAULT_STALLED_THRESHOLD_MS,
       debug: false,
       ...config,
@@ -161,10 +161,10 @@ export class WorkflowRunManager {
       status: "idle",
       managerId: this.managerId,
       pollCount: 0,
-      jobsCreated: 0,
-      jobsCompleted: 0,
-      jobsFailed: 0,
-      activeJobs: 0,
+      executionsCreated: 0,
+      executionsCompleted: 0,
+      executionsFailed: 0,
+      activeExecutions: 0,
     };
   }
 
@@ -231,14 +231,14 @@ export class WorkflowRunManager {
    * Get manager statistics
    */
   getStats(): ManagerStats {
-    return { ...this.stats, activeJobs: this.activeJobs.size };
+    return { ...this.stats, activeExecutions: this.activeExecutions.size };
   }
 
   /**
-   * Get active jobs
+   * Get active executions
    */
-  getActiveJobs(): TrackedJob[] {
-    return Array.from(this.activeJobs.values());
+  getActiveExecutions(): TrackedExecution[] {
+    return Array.from(this.activeExecutions.values());
   }
 
   /**
@@ -263,7 +263,7 @@ export class WorkflowRunManager {
   }
 
   /**
-   * Poll for pending workflows and manage jobs
+   * Poll for pending workflows and manage run executions
    */
   private async poll(): Promise<void> {
     if (this.status !== "running") {
@@ -274,11 +274,11 @@ export class WorkflowRunManager {
     this.stats.lastPollAt = new Date();
 
     try {
-      // 1. Check status of active jobs
-      await this.syncJobStatuses();
+      // 1. Check status of active executions
+      await this.syncRunExecutionStatuses();
 
       // 2. Find workflows that need execution
-      const availableSlots = this.config.maxConcurrentJobs - this.activeJobs.size;
+      const availableSlots = this.config.maxConcurrentExecutions - this.activeExecutions.size;
       if (availableSlots <= 0) {
         return;
       }
@@ -289,7 +289,7 @@ export class WorkflowRunManager {
         limit: availableSlots,
       });
 
-      // Also check for stalled workflows (crashed jobs)
+      // Also check for stalled workflows (crashed run executions)
       let stalledRuns: WorkflowRun[] = [];
       if (hasWorkerSupport(this.config.backend)) {
         stalledRuns = await this.config.backend.findStalledRuns(this.config.stalledThreshold);
@@ -305,8 +305,8 @@ export class WorkflowRunManager {
       const runsToProcess = [...pendingRuns, ...stalledRuns].slice(0, availableSlots);
 
       for (const run of runsToProcess) {
-        // Skip if already has an active job
-        if (this.activeJobs.has(run.id)) {
+        // Skip if already has an active execution
+        if (this.activeExecutions.has(run.id)) {
           continue;
         }
 
@@ -327,7 +327,7 @@ export class WorkflowRunManager {
             }
           }
 
-          // For pending runs, acquire a short lock to avoid duplicate job creation
+          // For pending runs, acquire a short lock to avoid duplicate execution creation
           // across managers between listRuns() and updateRun().
           if (run.status === "pending" && hasLockSupport(this.config.backend)) {
             pendingLockAcquired = await this.config.backend.acquireLock(
@@ -350,7 +350,7 @@ export class WorkflowRunManager {
             continue;
           }
 
-          await this.createJobForWorkflow(runToProcess);
+          await this.createExecutionForWorkflow(runToProcess);
         } finally {
           if (pendingLockAcquired) {
             try {
@@ -371,94 +371,94 @@ export class WorkflowRunManager {
   }
 
   /**
-   * Sync job statuses with executor
+   * Sync run execution statuses with executor
    */
-  private async syncJobStatuses(): Promise<void> {
+  private async syncRunExecutionStatuses(): Promise<void> {
     try {
-      const jobs = await this.config.executor.listJobs(this.managerId);
+      const executions = await this.config.executor.listRunExecutions(this.managerId);
 
-      for (const jobInfo of jobs) {
-        const tracked = this.activeJobs.get(jobInfo.runId);
+      for (const executionInfo of executions) {
+        const tracked = this.activeExecutions.get(executionInfo.runId);
         if (!tracked) {
           continue;
         }
 
-        if (jobInfo.status === tracked.status) {
+        if (executionInfo.status === tracked.status) {
           continue;
         }
 
-        tracked.status = jobInfo.status;
+        tracked.status = executionInfo.status;
 
         // Handle terminal states
-        if (jobInfo.status === "succeeded" || jobInfo.status === "failed") {
-          this.activeJobs.delete(jobInfo.runId);
+        if (executionInfo.status === "succeeded" || executionInfo.status === "failed") {
+          this.activeExecutions.delete(executionInfo.runId);
 
-          if (jobInfo.status === "succeeded") {
-            this.stats.jobsCompleted++;
+          if (executionInfo.status === "succeeded") {
+            this.stats.executionsCompleted++;
             if (this.config.debug) {
-              logger.info(`Job completed: ${jobInfo.jobId}`);
+              logger.info(`Run execution completed: ${executionInfo.executionId}`);
             }
           } else {
-            this.stats.jobsFailed++;
+            this.stats.executionsFailed++;
             logger.error(
-              `[WorkflowRunManager] Job failed: ${jobInfo.jobId}`,
-              jobInfo.error,
+              `[WorkflowRunManager] Run execution failed: ${executionInfo.executionId}`,
+              executionInfo.error,
             );
           }
         }
       }
     } catch (error) {
-      logger.error(`Failed to sync job statuses:`, error);
+      logger.error(`Failed to sync run execution statuses:`, error);
     }
   }
 
   /**
-   * Create a job for a workflow run
+   * Create an isolated execution for a workflow run
    */
-  private async createJobForWorkflow(run: WorkflowRun): Promise<void> {
-    const jobId = generateId("job");
+  private async createExecutionForWorkflow(run: WorkflowRun): Promise<void> {
+    const executionId = generateId("run_exec");
 
-    const jobConfig: JobConfig = {
-      jobId,
+    const executionConfig: RunExecutionConfig = {
+      executionId,
       run,
       managerId: this.managerId,
-      timeout: this.config.jobTimeout,
+      timeout: this.config.executionTimeout,
       env: this.config.env ?? {},
       debug: this.config.debug,
     };
 
     try {
-      await this.config.executor.createJob(jobConfig);
+      await this.config.executor.createRunExecution(executionConfig);
 
-      const tracked: TrackedJob = {
-        jobId,
+      const tracked: TrackedExecution = {
+        executionId,
         runId: run.id,
         status: "pending",
         createdAt: new Date(),
       };
 
-      this.activeJobs.set(run.id, tracked);
-      this.stats.jobsCreated++;
+      this.activeExecutions.set(run.id, tracked);
+      this.stats.executionsCreated++;
 
       // Mark workflow as running
       await this.config.backend.updateRun(run.id, {
         status: "running",
         startedAt: new Date(),
         heartbeatAt: new Date(),
-        workerId: `job:${jobId}`,
+        workerId: `run-execution:${executionId}`,
       });
 
       if (this.config.debug) {
-        logger.info(`Created job ${jobId} for workflow ${run.id}`);
+        logger.info(`Created run execution ${executionId} for workflow ${run.id}`);
       }
     } catch (error) {
-      logger.error(`Failed to create job for ${run.id}:`, error);
+      logger.error(`Failed to create run execution for ${run.id}:`, error);
 
       // Mark workflow as failed
       await this.config.backend.updateRun(run.id, {
         status: "failed",
         error: {
-          message: `JOB_CREATION_FAILED: Failed to create execution job: ${
+          message: `RUN_EXECUTION_CREATION_FAILED: Failed to create run execution: ${
             error instanceof Error ? error.message : String(error)
           }`,
         },
@@ -477,7 +477,7 @@ export class WorkflowRunManager {
 }
 
 /**
- * Create a workflow run manager backed by job executors.
+ * Create a workflow run manager backed by run executors.
  */
 export function createWorkflowRunManager(
   config: WorkflowRunManagerConfig,

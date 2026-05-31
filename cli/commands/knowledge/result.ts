@@ -46,7 +46,7 @@ export interface KnowledgeIngestResultMetadata {
   knowledge_path: string;
 }
 
-export interface KnowledgeIngestJobResult {
+export interface KnowledgeIngestRunResult {
   kind: "knowledge_ingest";
   version: 1;
   metadata: KnowledgeIngestResultMetadata;
@@ -56,14 +56,14 @@ export interface KnowledgeIngestJobResult {
   failed: KnowledgeIngestFailedFileResult[];
 }
 
-export function buildKnowledgeIngestJobResult(input: {
+export function buildKnowledgeIngestRunResult(input: {
   requestedCount: number;
   sourceMode: KnowledgeIngestResultMetadata["source_mode"];
   knowledgePath: string;
   ingested: KnowledgeIngestFileResult[];
   skipped?: KnowledgeIngestSkippedFileResult[];
   failed?: KnowledgeIngestFailedFileResult[];
-}): KnowledgeIngestJobResult {
+}): KnowledgeIngestRunResult {
   const skipped = input.skipped ?? [];
   const failed = input.failed ?? [];
 

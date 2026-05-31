@@ -67,7 +67,7 @@
 
 | Module                 | Export Alias             | Purpose                                           |
 | ---------------------- | ------------------------ | ------------------------------------------------- |
-| **`jobs/`**            | `veryfront/jobs`         | Background jobs client (one-off and cron)         |
+| **`runs/`**            | `veryfront/runs`         | Durable runs client                               |
 | **`task/`**            | `#veryfront/task`        | Task definitions and runner                       |
 | **`sandbox/`**         | `veryfront/sandbox`      | Ephemeral compute environments                    |
 | **`channels/`**        | `#veryfront/channels`    | Control-plane agent routing                       |
@@ -518,7 +518,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 - Durable DAG-based workflow execution with Redis checkpoints
 - Step, parallel, and branch primitives
 - Crash recovery via heartbeat and stalled detection
-- Pluggable job executors (K8sJobExecutor, ProcessJobExecutor)
+- Pluggable runtime executors
 - Multi-tenant isolation with context capture/restore
 - Claude Code workflow integration
 - Workflow DSL, discovery, and runtime backends
@@ -591,14 +591,13 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 - Provider config validation
 - Skill discovery from project directories
 
-#### `jobs/` - Background Jobs
+#### `runs/` - Durable Runs
 
-**Exports**: `veryfront/jobs`
+**Exports**: `veryfront/runs`
 
-- `VeryfrontJobsClient` for one-off and cron job management
-- Job target discovery and execution
+- `VeryfrontRunsClient` for task and workflow run management
+- Canonical run creation and event reading
 - Runtime environment helpers
-- Event and log streaming
 
 #### `task/` - Task Definitions
 
@@ -606,7 +605,7 @@ See [`transforms/import-rewriter/README.md`](./transforms/import-rewriter/README
 
 - File-based task discovery from project directories
 - Task runner with typed context
-- Integration with the jobs system for background execution
+- Integration with the runs system for background execution
 
 #### `sandbox/` - Ephemeral Compute
 
@@ -783,7 +782,7 @@ AI (foundation + tool + extensions)
    skill/, chat/, discovery/, embedding/, sandbox/
 
 Services (AI + infrastructure)
-└─ jobs/, task/, channels/, integrations/, internal-agents/
+└─ runs/, task/, channels/, integrations/, internal-agents/
 
 Orchestrators (most modules)
 └─ server/, proxy/, build/, cli/

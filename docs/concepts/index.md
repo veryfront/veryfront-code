@@ -21,10 +21,10 @@ clear.
 | [Skill](./skill.md)                                 | How skills package reusable agent instructions.            |
 | [Prompt](./prompt.md)                               | Reusable instruction templates for MCP.                    |
 | [Resource](./resource.md)                           | Read-only context exposed through MCP.                     |
-| [Task](./task.md)                                   | Background work before it becomes a job run.               |
+| [Task](./task.md)                                   | Background work before it becomes a run.                   |
 | [Workflow](./workflow.md)                           | Multi-step work with visible process state.                |
-| [Job](./job.md)                                     | Durable records for background execution.                  |
-| [Cron job](./cron-job.md)                           | Schedules that create job runs.                            |
+| [Run](./run.md)                                     | Durable records for background execution.                  |
+| [Schedule](./schedule.md)                           | Triggers that create runs.                                 |
 | [Integration](./integration.md)                     | External service access, auth, and remote tools.           |
 | [MCP server](./mcp-server.md)                       | Tools, prompts, and resources exposed to assistants.       |
 | [Sandbox](./sandbox.md)                             | Isolated command and file execution.                       |

@@ -35,15 +35,9 @@ Or log in interactively:
 veryfront login
 ```
 
-`veryfront knowledge ingest` requires `python3`. Inside a Veryfront sandbox, the
-parser packages are already installed. Outside a sandbox, install them locally:
-
-```bash
-pip install docling pandas openpyxl xlrd pdfplumber python-docx python-pptx beautifulsoup4 lxml
-```
-
-The parser uses `docling` first for PDF, Office, and HTML extraction, then falls
-back to the other parser packages for supported non-text formats.
+`veryfront knowledge ingest` parses PDF, Office, EPUB, HTML, and RTF sources
+through the built-in Kreuzberg document extension. Plain text, Markdown, JSON,
+CSV, TSV, and common code files are converted directly by the CLI.
 
 ## Single-file examples
 
@@ -104,7 +98,7 @@ arguments instead.
 
 ## What the JSON output looks like
 
-With `--json`, the command returns a machine-readable job result with
+With `--json`, the command returns a machine-readable run result with
 `ingested`, `skipped`, and `failed` arrays:
 
 ```json
@@ -202,17 +196,11 @@ Set `VERYFRONT_PROJECT_SLUG` or pass the project explicitly:
 veryfront knowledge ingest uploads/contracts/q1.pdf --project my-project --json
 ```
 
-### Python package errors
+### Document extraction errors
 
-Install the parser packages listed above, or run the command inside a Veryfront
-sandbox where the knowledge-ingestion stack is already available.
-
-### `docling` is not installed
-
-Inside a Veryfront sandbox, `docling` is already installed. Outside a Veryfront
-sandbox, install `docling` if you want the same extraction path locally. If
-`docling` is not installed or extraction fails, the command falls back to the
-Python parser stack for supported formats.
+Use a supported document type and ensure the source file is readable. Rich
+document formats use the built-in Kreuzberg extension, while text-like formats
+are converted directly by the CLI.
 
 ## Verify it worked
 

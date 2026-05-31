@@ -26,7 +26,7 @@ import { generateId, parseDuration } from "../types.ts";
 import { hasLockSupport, type WorkflowBackend } from "../backends/types.ts";
 import { getCurrentRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { env as getProcessEnv } from "#veryfront/compat/process.ts";
-import { mergeInjectedWorkflowEnv } from "#veryfront/jobs/runtime-env.ts";
+import { mergeInjectedWorkflowEnv } from "#veryfront/runs/runtime-env.ts";
 import { DAGExecutor } from "./dag-executor.ts";
 import { CheckpointManager } from "./checkpoint-manager.ts";
 import { runWithWorkflowTenant, StepExecutor, type StepExecutorConfig } from "./step-executor.ts";
@@ -178,10 +178,10 @@ export class WorkflowExecutor {
 
     workflow.inputSchema?.parse(input);
 
-    // Capture current tenant context for multi-tenant job execution.
+    // Capture current tenant context for multi-tenant run execution.
     // When a workflow is started from an API route, the request context
     // carries the tenant info (slug, token, etc.). We persist it on the run
-    // so that worker processes can restore the context when executing jobs.
+    // so that worker processes can restore the context when executing runs.
     const requestCtx = getCurrentRequestContext();
     const tenant = requestCtx
       ? {

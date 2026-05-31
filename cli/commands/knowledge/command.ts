@@ -4,7 +4,7 @@ type SafeParseResult<T> = { success: true; data: T } | {
   success: false;
   error: Error & { issues: unknown[] };
 };
-import { type CommandResult, createFileSystem, getEnv, runCommand } from "veryfront/platform";
+import { createFileSystem, getEnv } from "veryfront/platform";
 import { basename } from "veryfront/platform/path";
 import { withSpan } from "veryfront/observability/otlp-setup";
 import { cliLogger } from "#cli/utils";
@@ -13,40 +13,18 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { getStringArg } from "../../shared/parsed-args.ts";
 import { downloadUploadToFile, listAllUploads, type UploadItem } from "../uploads/command.ts";
 import { putRemoteFileFromLocal } from "../files/command.ts";
-import { knowledgeIngestPythonSource } from "./parser-source.ts";
 import * as commandHelpers from "./command-helpers.ts";
-import { createJobUserLogger, type Logger, serverLogger } from "veryfront/utils";
-import { writeJobResultIfConfigured } from "../../utils/write-job-result.ts";
+import { createRunUserLogger, type Logger, serverLogger } from "veryfront/utils";
+import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 import { classifyKnowledgeSourcePath } from "./source-policy.ts";
+import { type KnowledgeParserResult, runKnowledgeParser } from "./parser.ts";
 import {
-  buildKnowledgeIngestJobResult,
+  buildKnowledgeIngestRunResult,
   type KnowledgeIngestFailedFileResult,
   type KnowledgeIngestFailureReason,
   type KnowledgeIngestFileResult,
   type KnowledgeIngestSkippedFileResult,
 } from "./result.ts";
-
-export interface KnowledgeParserResult {
-  success: true;
-  source_path: string;
-  source_filename: string;
-  source_type: string;
-  slug: string;
-  sandbox_output_path: string;
-  suggested_project_path: string;
-  description: string;
-  title: string;
-  summary: string;
-  stats: Record<string, unknown>;
-  warnings: string[];
-}
-
-export interface KnowledgeParserInput {
-  filePath: string;
-  description?: string;
-  slug?: string;
-  sourceReference?: string;
-}
 type KnowledgeSource =
   | { kind: "local"; input: string; localPath: string }
   | { kind: "upload"; input: string; uploadPath: string; localPath: string };
@@ -58,7 +36,7 @@ export interface KnowledgeSourceCollection {
 
 type DownloadResult = { uploadPath: string; localPath: string; bytes?: number };
 
-const knowledgeJobLogger = serverLogger.component("knowledge-ingest");
+const knowledgeRunLogger = serverLogger.component("knowledge-ingest");
 
 const getKnowledgeIngestArgsSchema = defineSchema((v) =>
   v.object({
@@ -129,17 +107,17 @@ function printJson(value: unknown): void {
 
 function createKnowledgeIngestEventLogger(): Logger | null {
   const projectId = getEnv("TENANT_PROJECT_ID");
-  const jobId = getEnv("JOB_ID");
+  const runExecutionId = getEnv("RUN_EXECUTION_ID");
 
-  if (!projectId || !jobId) {
+  if (!projectId || !runExecutionId) {
     return null;
   }
 
-  return createJobUserLogger(knowledgeJobLogger, {
+  return createRunUserLogger(knowledgeRunLogger, {
     projectId,
-    jobId,
-    batchId: getEnv("JOB_BATCH_ID") ?? undefined,
-    jobTarget: getEnv("JOB_TARGET") ?? undefined,
+    runExecutionId: runExecutionId,
+    batchId: getEnv("RUN_BATCH_ID") ?? undefined,
+    runTarget: getEnv("RUN_TARGET") ?? undefined,
     task: "knowledge-ingest",
   });
 }
@@ -211,6 +189,12 @@ export const buildSuggestedSlug = commandHelpers.buildSuggestedSlug;
 export const ensureUniqueSlugs = commandHelpers.ensureUniqueSlugs;
 export const deriveKnowledgeRemotePath = commandHelpers.deriveKnowledgeRemotePath;
 export const createKnowledgeIngestResult = commandHelpers.createKnowledgeIngestResult;
+export {
+  type KnowledgeParserInput,
+  type KnowledgeParserResult,
+  runKnowledgeParser,
+  runKnowledgeParsers,
+} from "./parser.ts";
 
 function resolveExplicitUploadPath(inputPath: string): string {
   return commandHelpers.resolveExplicitUploadPath(inputPath);
@@ -263,155 +247,6 @@ function classifyListedUploadsForKnowledge(uploads: UploadItem[]): {
 
 function buildSourceReference(source: KnowledgeSource): string {
   return commandHelpers.buildSourceReference(source);
-}
-
-export async function runKnowledgeParser(input: {
-  filePath: string;
-  outputDir: string;
-  description?: string;
-  slug?: string;
-  sourceReference?: string;
-  env?: Record<string, string>;
-}): Promise<KnowledgeParserResult> {
-  const [result] = await runKnowledgeParsers({
-    files: [{
-      filePath: input.filePath,
-      description: input.description,
-      slug: input.slug,
-      sourceReference: input.sourceReference,
-    }],
-    outputDir: input.outputDir,
-    env: input.env,
-  });
-
-  if (!result) {
-    throw new Error("knowledge ingest parser returned no results");
-  }
-
-  return result;
-}
-
-function isMissingPythonExecutableError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  const errorWithCode = error as Error & { code?: unknown };
-  if (errorWithCode.code === "ENOENT") {
-    return true;
-  }
-
-  return error.name === "NotFound" ||
-    /\bENOENT\b/i.test(error.message) ||
-    /not found/i.test(error.message) ||
-    /no such file or directory/i.test(error.message);
-}
-
-export async function executeKnowledgeParserCommand(input: {
-  scriptPath: string;
-  inputJsonPath: string;
-  outputJsonPath: string;
-  env?: Record<string, string>;
-}, deps: {
-  runCommandFn?: (
-    cmd: string,
-    options: {
-      args: string[];
-      env?: Record<string, string>;
-      capture: true;
-    },
-  ) => Promise<CommandResult>;
-} = {}): Promise<void> {
-  const runCommandFn = deps.runCommandFn ?? runCommand;
-  let result: CommandResult;
-  try {
-    result = await runCommandFn("python3", {
-      args: [
-        input.scriptPath,
-        "--input-json",
-        input.inputJsonPath,
-        "--output-json",
-        input.outputJsonPath,
-      ],
-      ...(input.env ? { env: input.env } : {}),
-      capture: true,
-    });
-  } catch (error) {
-    if (isMissingPythonExecutableError(error)) {
-      throw new Error(
-        "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
-      );
-    }
-    throw error;
-  }
-
-  if (result.success) {
-    return;
-  }
-
-  const stderr = result.stderr?.trim();
-  const stdout = result.stdout?.trim();
-
-  if (result.code === 1 && !stderr && !stdout) {
-    throw new Error(
-      "python3 is required. Install python3 and the supported parser packages, or run the command inside the Veryfront sandbox.",
-    );
-  }
-
-  throw new Error(stderr || stdout || "parser exited unsuccessfully");
-}
-
-export async function runKnowledgeParsers(input: {
-  files: KnowledgeParserInput[];
-  outputDir: string;
-  env?: Record<string, string>;
-}): Promise<KnowledgeParserResult[]> {
-  if (!input.files.length) {
-    return [];
-  }
-
-  const tempDir = await Deno.makeTempDir({ prefix: "veryfront-knowledge-parser-" });
-  const inputJsonPath = `${tempDir}/input.json`;
-  const outputJsonPath = `${tempDir}/output.json`;
-  const scriptPath = `${tempDir}/ingest_document_to_knowledge.py`;
-
-  try {
-    try {
-      await Deno.writeTextFile(
-        inputJsonPath,
-        JSON.stringify({
-          files: input.files.map((file) => ({
-            file_path: file.filePath,
-            description: file.description,
-            slug: file.slug,
-            source_reference: file.sourceReference,
-          })),
-          output_dir: input.outputDir,
-        }),
-      );
-      await Deno.writeTextFile(scriptPath, knowledgeIngestPythonSource);
-
-      await executeKnowledgeParserCommand({
-        scriptPath,
-        inputJsonPath,
-        outputJsonPath,
-        env: input.env,
-      });
-
-      const raw = await Deno.readTextFile(outputJsonPath);
-      const parsed = JSON.parse(raw) as KnowledgeParserResult | KnowledgeParserResult[];
-      return Array.isArray(parsed) ? parsed : [parsed];
-    } catch (error) {
-      if (error instanceof Error && error.message.startsWith("knowledge ingest parser failed")) {
-        throw error;
-      }
-
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`knowledge ingest parser failed: ${message}`);
-    }
-  } finally {
-    await Deno.remove(tempDir, { recursive: true }).catch(() => undefined);
-  }
 }
 
 export async function collectKnowledgeSources(
@@ -733,7 +568,7 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             uploadKnowledgeFile: (remotePath, localPath) =>
               putRemoteFileFromLocal(client, config.projectSlug, remotePath, localPath),
           });
-          const jobResult = buildKnowledgeIngestJobResult({
+          const runResult = buildKnowledgeIngestRunResult({
             requestedCount,
             sourceMode,
             knowledgePath: options.knowledgePath,
@@ -746,33 +581,33 @@ export async function knowledgeCommand(args: ParsedArgs): Promise<void> {
             phase: "completed",
             progress_current: requestedCount,
             progress_total: requestedCount,
-            ingested_count: jobResult.summary.ingested_count,
-            skipped_count: jobResult.summary.skipped_count,
-            failed_count: jobResult.summary.failed_count,
+            ingested_count: runResult.summary.ingested_count,
+            skipped_count: runResult.summary.skipped_count,
+            failed_count: runResult.summary.failed_count,
           });
 
-          await writeJobResultIfConfigured(jobResult);
+          await writeRunResultIfConfigured(runResult);
 
           if (options.json) {
-            printJson(jobResult);
+            printJson(runResult);
             return;
           }
 
-          for (const result of jobResult.ingested) {
+          for (const result of runResult.ingested) {
             if (!options.quiet) {
               cliLogger.info(`Ingested ${result.source} -> ${result.remotePath}`);
               cliLogger.info(`  ${result.summary}`);
             }
           }
 
-          for (const skipped of jobResult.skipped) {
+          for (const skipped of runResult.skipped) {
             if (!options.quiet) {
               cliLogger.warn(`Skipped ${skipped.source}`);
               cliLogger.warn(`  ${skipped.message}`);
             }
           }
 
-          for (const failure of jobResult.failed) {
+          for (const failure of runResult.failed) {
             if (!options.quiet) {
               cliLogger.error(`Failed ${failure.source}`);
               cliLogger.error(`  ${failure.message}`);

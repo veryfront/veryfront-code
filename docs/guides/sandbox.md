@@ -62,7 +62,7 @@ const sandbox = Sandbox.createLazy({
 });
 ```
 
-If your project context can change over time, prefer `getProjectId()` so lazy exec and async job calls inherit the latest project reference automatically:
+If your project context can change over time, prefer `getProjectId()` so lazy exec and async run calls inherit the latest project reference automatically:
 
 ```ts
 const sandbox = Sandbox.createLazy({
