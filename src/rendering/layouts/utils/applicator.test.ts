@@ -101,14 +101,14 @@ describe(
     });
 
     describe("applyLayoutsFunctionBody", () => {
-      it("should unwrap App Router document layouts before rendering inside the root", async () => {
+      it("should preserve App Router document layouts for server rendering", async () => {
         const adapter = createMockAdapter();
         const pageElement = React.createElement("button", { id: "counter" }, "Count: 0");
         const cache = createLayoutComponentCache();
 
         adapter.fs.readFile = async () =>
           `export default function RootLayout({ children }: { children: React.ReactNode }) {
-  return <html><body><main data-testid="document-layout">{children}</main></body></html>;
+  return <html lang="en"><body><main data-testid="document-layout">{children}</main></body></html>;
 }
 `;
 
@@ -127,8 +127,8 @@ describe(
         );
 
         const html = await renderToStringAdapter(result);
-        assertEquals(html.includes("<html"), false);
-        assertEquals(html.includes("<body"), false);
+        assertEquals(html.includes('<html lang="en">'), true);
+        assertEquals(html.includes("<body>"), true);
         assertEquals(html.includes('data-testid="document-layout"'), true);
         assertEquals(html.includes('id="counter"'), true);
       });

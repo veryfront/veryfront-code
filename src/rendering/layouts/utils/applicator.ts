@@ -6,23 +6,13 @@ import type { ImportMapConfig } from "#veryfront/modules/import-map/types.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import type { LayoutComponentCache } from "./component-loader.ts";
-import {
-  applyMDXLayout,
-  applyTSXLayout,
-  loadTSXComponent,
-  shouldUnwrapAppRouterDocumentLayout,
-  unwrapAppRouterDocumentLayout,
-} from "./component-loader.ts";
+import { applyMDXLayout, applyTSXLayout, loadTSXComponent } from "./component-loader.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { getElementTypeName } from "../../element-validator/primitive-checks.ts";
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 
 const logger = rendererLogger.component("apply-layouts-esm");
-
-type AppRouterDocumentLayoutFunction = (
-  props: { children?: BundledReact.ReactNode },
-) => BundledReact.ReactNode;
 
 export function applyLayoutsESM(
   pageElement: BundledReact.ReactElement,
@@ -213,11 +203,8 @@ export async function applyLayoutsFunctionBody(
       });
 
       const props = layoutDataMap?.get(item.componentPath);
-      const LayoutToApply = shouldUnwrapAppRouterDocumentLayout(item.componentPath, projectDir)
-        ? unwrapAppRouterDocumentLayout(React, LayoutComponent as AppRouterDocumentLayoutFunction)
-        : LayoutComponent;
 
-      element = React.createElement(LayoutToApply, props, child) as BundledReact.ReactElement;
+      element = React.createElement(LayoutComponent, props, child) as BundledReact.ReactElement;
 
       logger.debug("After TSX layout applied:", {
         pageElementType: React.isValidElement(element)
