@@ -39,6 +39,72 @@ describe(
       assertExists(result.tools.get("greet") ?? result.tools.get("searchWeb"));
     });
 
+    it("should discover project-authored tools with raw JSON schemas", async () => {
+      const tempDir = await Deno.makeTempDir({ prefix: "vf-discovery-json-schema-tool-" });
+      try {
+        await Deno.mkdir(`${tempDir}/tools`);
+        await Deno.writeTextFile(
+          `${tempDir}/tools/number-generator.ts`,
+          `
+          import { tool } from "veryfront/tool";
+
+          export default tool({
+            id: "number-generator",
+            description: "Generates a random number within a specified range.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                min: { type: "number" },
+                max: { type: "number" },
+              },
+              required: ["min", "max"],
+              additionalProperties: false,
+            },
+            outputSchema: {
+              type: "object",
+              properties: {
+                randomNumber: { type: "number" },
+              },
+              required: ["randomNumber"],
+              additionalProperties: false,
+            },
+            execute: async (input) => {
+              const { min, max } = input;
+              return { randomNumber: min + max };
+            },
+          });
+        `,
+        );
+
+        const result = await discoverAll({
+          baseDir: tempDir,
+          verbose: false,
+          agentDirs: [],
+          resourceDirs: [],
+          promptDirs: [],
+          workflowDirs: [],
+          taskDirs: [],
+          skillDirs: [],
+        });
+
+        const discoveredTool = result.tools.get("number-generator");
+        assertExists(discoveredTool);
+        assertEquals(result.errors, []);
+        assertEquals(discoveredTool.inputSchemaJson, {
+          type: "object",
+          properties: {
+            min: { type: "number" },
+            max: { type: "number" },
+          },
+          required: ["min", "max"],
+          additionalProperties: false,
+        });
+        assertEquals(await discoveredTool.execute({ min: 3, max: 9 }), { randomNumber: 12 });
+      } finally {
+        await Deno.remove(tempDir, { recursive: true });
+      }
+    });
+
     it("should discover resources from resources/ directory", async () => {
       const result = await discoverAll({
         baseDir: getFixturePath(),

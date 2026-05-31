@@ -19,16 +19,17 @@ export interface ToolConfig<TInput = any, TOutput = any> {
 
   /**
    * Input schema produced via `defineSchema((v) => …)` (or any
-   * `SchemaValidator`-backed builder). Validates input before `execute` runs
-   * and seeds the JSON Schema exposed to AI providers.
+   * `SchemaValidator`-backed builder), or a raw JSON Schema object for
+   * dynamic/project-authored tools. Schema validators parse before `execute`;
+   * raw JSON Schema is passed through to providers without runtime parsing.
    */
-  inputSchema: Schema<TInput>;
+  inputSchema: Schema<TInput> | JsonSchema;
 
   /**
    * Optional output schema. Hosts can use this to document or validate
    * structured tool results.
    */
-  outputSchema?: Schema<TOutput>;
+  outputSchema?: Schema<TOutput> | JsonSchema;
 
   /**
    * Allow unknown/non-contract schemas to fall back to a permissive JSON

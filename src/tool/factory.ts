@@ -24,6 +24,12 @@ interface SchemaWithParse {
   parse: (input: unknown) => unknown;
 }
 
+function isJsonSchemaObject(value: unknown): value is JsonSchema {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const type = (value as { type?: unknown }).type;
+  return typeof type === "string";
+}
+
 function isContractSchema(value: unknown): value is ContractSchemaShape {
   if (value === null || typeof value !== "object") return false;
   if ("__zod" in value) return true;
@@ -103,6 +109,11 @@ function convertSchemaToJson(
   logPrefix: string,
   permissive = false,
 ): JsonSchema {
+  if (isJsonSchemaObject(schema)) {
+    logSchemaResult(logPrefix, toolId, "Raw JSON", schema);
+    return schema;
+  }
+
   // Modern path: contract Schema<T> (defineSchema-produced) — route through
   // the SchemaValidator contract via zodToJsonSchema (which detects both
   // wrapped and raw zod shapes).
@@ -178,9 +189,9 @@ export function tool<TInput = unknown, TOutput = unknown>(
     id,
     type: "function" as const,
     description: config.description,
-    inputSchema: config.inputSchema,
+    inputSchema: config.inputSchema as Schema<TInput>,
     inputSchemaJson,
-    outputSchema: config.outputSchema,
+    outputSchema: config.outputSchema as Schema<TOutput> | undefined,
     outputSchemaJson,
     execute: async (input: TInput, context?: ToolExecutionContext) => {
       let validated = input;
