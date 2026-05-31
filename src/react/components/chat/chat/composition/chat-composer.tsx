@@ -158,12 +158,14 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                     </button>
                     {attachmentMenuOpen && (
                       <div
+                        role="menu"
                         className="absolute bottom-11 left-0 z-20 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--card)] shadow-lg"
                         style={{ minWidth: 224 }}
                       >
                         {onAttach && (
                           <button
                             type="button"
+                            role="menuitem"
                             className="block w-full whitespace-nowrap px-4 py-3 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--foreground)]/5"
                             onClick={() => {
                               setAttachmentMenuOpen(false);
@@ -176,6 +178,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                         {onSelectAttachment && (
                           <button
                             type="button"
+                            role="menuitem"
                             className="block w-full whitespace-nowrap px-4 py-3 text-left text-sm text-[var(--foreground)] transition-colors hover:bg-[var(--foreground)]/5"
                             onClick={() => {
                               setAttachmentMenuOpen(false);

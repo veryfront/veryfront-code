@@ -41,9 +41,17 @@ async function loadComponent(
   return loadComponentFromSource(src, filePath, projectDir, adapter, {
     projectId: projectDir,
     dev: false,
-    moduleServerUrl: "", // Empty string forces CDN URLs, no module server available
+    moduleServerUrl: "",
     contentSourceId,
   });
+}
+
+function routePathToSlug(routePath: string): string {
+  return routePath === "/" ? "" : routePath.replace(/^\/+/, "");
+}
+
+function hasUseClientDirective(source: string): boolean {
+  return /^\s*['"]use client['"];?\s*$/m.test(source);
 }
 
 function getLayoutsForRoute(appRoot: string, routePath: string): string[] {
@@ -59,14 +67,6 @@ function getLayoutsForRoute(appRoot: string, routePath: string): string[] {
   }
 
   return layouts;
-}
-
-function routePathToSlug(routePath: string): string {
-  return routePath === "/" ? "" : routePath.replace(/^\/+/, "");
-}
-
-function hasUseClientDirective(source: string): boolean {
-  return /^\s*['"]use client['"];?\s*$/m.test(source);
 }
 
 /**
