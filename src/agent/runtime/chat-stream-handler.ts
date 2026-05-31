@@ -396,6 +396,7 @@ export function processStream(
         )
         : await readNextStreamPart(streamIterator, state);
       if (next === "timeout") {
+        state.finishReason ??= "tool-calls";
         await streamIterator.return?.();
         break;
       }

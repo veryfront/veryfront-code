@@ -161,7 +161,7 @@ describe("chat-stream-handler", () => {
       await processStream(result, state, controller, encoder, "t", undefined);
 
       assertEquals(returned, true);
-      assertEquals(state.finishReason, null);
+      assertEquals(state.finishReason, "tool-calls");
       const toolCall = state.toolCalls.get("tc-local");
       assertEquals(toolCall?.id, "tc-local");
       assertEquals(toolCall?.name, "number-generator");
