@@ -47,7 +47,7 @@ describe("command-help", () => {
       const output = captureConsoleLog(() => showCommandHelp("knowledge"));
       assertStringIncludes(output, "veryfront knowledge ingest <source...> [options]");
       assertStringIncludes(output, "Primary subcommand: ingest");
-      assertStringIncludes(output, "Requires python3");
+      assertStringIncludes(output, "built-in Kreuzberg document extension");
     });
   });
 });

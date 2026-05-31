@@ -28,7 +28,7 @@ one runtime concern. Architecture pages do not duplicate the user guides in
 | [06-ag-ui-transport.md](./06-ag-ui-transport.md)                   | AG-UI browser transport                      |
 | [07-provider-runtime.md](./07-provider-runtime.md)                 | Provider, model, and embedding pipeline      |
 | [08-workflow-runtime.md](./08-workflow-runtime.md)                 | Workflow DAG execution                       |
-| [09-jobs-and-tasks.md](./09-jobs-and-tasks.md)                     | Jobs client and task execution               |
+| [09-runs-and-tasks.md](./09-runs-and-tasks.md)                     | Runs client and task execution               |
 | [10-mcp-runtime.md](./10-mcp-runtime.md)                           | MCP server runtime                           |
 | [11-control-plane-channels.md](./11-control-plane-channels.md)     | Signed control-plane channels                |
 | [12-extension-system.md](./12-extension-system.md)                 | Extension contracts and lifecycle            |

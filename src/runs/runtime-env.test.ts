@@ -8,7 +8,7 @@ import {
   readInjectedProjectEnv,
 } from "./runtime-env.ts";
 
-describe("jobs/runtime-env", () => {
+describe("runs/runtime-env", () => {
   it("returns an empty object when injected env JSON is missing or invalid", () => {
     assertEquals(readInjectedProjectEnv({}), {});
     assertEquals(readInjectedProjectEnv({ [INJECTED_TASK_ENV_JSON]: "not-json" }), {});

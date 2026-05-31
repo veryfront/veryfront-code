@@ -20,9 +20,9 @@ Purpose-built for TypeScript and React, Veryfront gives you everything you need 
 
 - [**Skills**](https://veryfront.com/docs/code/guides/skills) - Project-level agent capabilities defined as `SKILL.md` files following the agentskills.io specification. Skills provide prompt augmentation, tool allowlists, and script execution.
 
-- [**Jobs & Cron Jobs**](https://veryfront.com/docs/code/guides/jobs) - Run durable project-scoped background work now or on a schedule through the Veryfront platform.
+- [**Runs**](https://veryfront.com/docs/code/guides/runs) - Run durable project-scoped task and workflow definitions through the Veryfront platform.
 
-- [**Tasks**](https://veryfront.com/docs/code/guides/tasks) - File-based background task definitions discovered automatically and executable via the jobs system.
+- [**Tasks**](https://veryfront.com/docs/code/guides/tasks) - File-based background task definitions discovered automatically and executable as task runs.
 
 - [**Multi-Agent**](https://veryfront.com/docs/code/guides/multi-agent) - Compose agents that delegate to each other as tools for complex, coordinated tasks. AG-UI control-plane for hosted agent orchestration.
 
@@ -83,7 +83,7 @@ veryfront/
 │   ├── chat/            # Chat UI components and streaming
 │   ├── discovery/       # Auto-discovery of tools, agents, workflows
 │   ├── sandbox/         # Ephemeral compute environments
-│   ├── jobs/            # Background jobs client
+│   ├── runs/            # Durable runs client
 │   ├── task/            # Task definitions and runner
 │   ├── channels/        # Control-plane agent routing
 │   ├── integrations/    # Third-party connector metadata

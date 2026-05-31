@@ -2,31 +2,31 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { deleteEnv, setEnv } from "#veryfront/platform/compat/process.ts";
-import { writeJobResultIfConfigured } from "./write-job-result.ts";
+import { writeRunResultIfConfigured } from "./write-run-result.ts";
 
-const JOB_RESULT_PATH_ENV = "VERYFRONT_JOB_RESULT_PATH";
+const RUN_RESULT_PATH_ENV = "VERYFRONT_RUN_RESULT_PATH";
 
 afterEach(() => {
   try {
-    deleteEnv(JOB_RESULT_PATH_ENV);
+    deleteEnv(RUN_RESULT_PATH_ENV);
   } catch {
     // env may already be unset
   }
 });
 
-describe("writeJobResultIfConfigured", () => {
+describe("writeRunResultIfConfigured", () => {
   it("does nothing when no result path is configured", async () => {
-    await writeJobResultIfConfigured({ ok: true });
+    await writeRunResultIfConfigured({ ok: true });
   });
 
-  it("writes sanitized structured job output to the configured path", async () => {
-    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-job-result-" });
-    const resultPath = `${tempDir}/job-result.json`;
+  it("writes sanitized structured run output to the configured path", async () => {
+    const tempDir = await Deno.makeTempDir({ prefix: "veryfront-run-result-" });
+    const resultPath = `${tempDir}/run-result.json`;
 
     try {
-      setEnv(JOB_RESULT_PATH_ENV, resultPath);
+      setEnv(RUN_RESULT_PATH_ENV, resultPath);
 
-      await writeJobResultIfConfigured({
+      await writeRunResultIfConfigured({
         ok: true,
         nested: {
           _tenant: { token: "secret" },

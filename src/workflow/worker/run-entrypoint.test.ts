@@ -8,7 +8,7 @@ import { MemoryBackend } from "../backends/memory.ts";
 import { dependsOn, step, workflow } from "../dsl/index.ts";
 import { WorkflowExecutor } from "../executor/workflow-executor.ts";
 import type { WorkflowRun } from "../types.ts";
-import { EXIT_CODES, runWorkflowRun } from "./job-entrypoint.ts";
+import { EXIT_CODES, runWorkflowRun } from "./run-entrypoint.ts";
 
 const ENV_KEYS = [
   "WORKFLOW_RUN_ID",
@@ -220,7 +220,7 @@ describe("runWorkflowRun", () => {
       pendingApprovals: [],
       createdAt: new Date(),
       startedAt: new Date(),
-      workerId: "job:job-1",
+      workerId: "run-execution:run-exec-1",
     };
     await backend.createRun(run);
 
@@ -286,7 +286,7 @@ describe("runWorkflowRun", () => {
       pendingApprovals: [],
       createdAt: new Date(),
       startedAt: new Date(),
-      workerId: "job:job-2",
+      workerId: "run-execution:run-exec-2",
     };
     await backend.createRun(run);
     await backend.saveCheckpoint(run.id, {

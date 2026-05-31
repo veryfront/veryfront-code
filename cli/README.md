@@ -73,7 +73,7 @@ Run `veryfront <command> --help` for options:
 | `studio`        | Open Studio UI                       |
 
 Use one or more `uploads/...` paths for remote project-upload references in `veryfront knowledge ingest`; use `./uploads/...` or `/workspace/uploads/...` to force a local sandbox path.
-`veryfront knowledge ingest` requires `python3`; inside the Veryfront sandbox it uses `docling` for PDF, Office, and HTML extraction, and outside the sandbox it falls back to the supported parser packages when `docling` is unavailable or extraction fails.
+`veryfront knowledge ingest` parses PDF, Office, EPUB, HTML, and RTF sources through the built-in Kreuzberg document extension. Plain text, Markdown, JSON, CSV, TSV, and common code files are converted directly by the CLI.
 
 ## Adding a New Command
 

@@ -74,7 +74,7 @@ export interface UpsertStyleArtifactInput extends ResolveStyleArtifactInput {
   assetPath?: string;
   contentType?: string;
   etag?: string;
-  buildJobId?: string;
+  buildRunExecutionId?: string;
   failureReason?: string;
 }
 
@@ -84,7 +84,7 @@ export interface ProjectStyleArtifactResolution {
   assetPath?: string;
   etag?: string;
   contentType?: string;
-  buildJobId?: string;
+  buildRunExecutionId?: string;
   failureReason?: string;
   updatedAt?: string;
 }
@@ -142,7 +142,7 @@ function mapStyleArtifactResolution(raw: unknown): ProjectStyleArtifactResolutio
     assetPath: response.asset_path,
     etag: response.etag,
     contentType: response.content_type,
-    buildJobId: response.build_job_id,
+    buildRunExecutionId: response.build_run_execution_id,
     failureReason: response.failure_reason,
     updatedAt: response.updated_at,
   };
@@ -560,7 +560,7 @@ export class VeryfrontAPIOperations {
           asset_path: input.assetPath,
           content_type: input.contentType,
           etag: input.etag,
-          build_job_id: input.buildJobId,
+          build_run_execution_id: input.buildRunExecutionId,
           failure_reason: input.failureReason,
         }),
       }),

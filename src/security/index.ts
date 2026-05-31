@@ -96,5 +96,5 @@ export type { SecureFsConfig, SecurityContext, SecurityEvent } from "./secure-fs
 export {
   BUILD_HELPER_PERMISSIONS,
   SERVER_PERMISSIONS,
-  WORKFLOW_JOB_PERMISSIONS,
+  WORKFLOW_RUN_PERMISSIONS,
 } from "./deno-permissions.ts";

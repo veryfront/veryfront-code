@@ -795,7 +795,7 @@ Claude Code agents require long-running compute for agentic loops (1-30 minutes)
 │  ┌───────────────────┐   ┌────────────────────────────────┐ │
 │  │ POST /api/start   │   │ GET /api/stream (SSE)          │ │
 │  │ - Validate input  │   │ - Subscribe to Redis           │ │
-│  │ - Enqueue job     │   │ - Forward events to client     │ │
+│  │ - Enqueue run     │   │ - Forward events to client     │ │
 │  │ - Return runId    │   │ - Auto-close on complete       │ │
 │  └─────────┬─────────┘   └──────────────┬─────────────────┘ │
 └────────────│────────────────────────────│───────────────────┘
@@ -810,12 +810,12 @@ Claude Code agents require long-running compute for agentic loops (1-30 minutes)
 ┌───────────────────────────────────────────────────────────────┐
 │  Stateful Worker - Agent Executor                             │
 │  ┌─────────────────────────────────────────────────────────┐  │
-│  │ Job Executor                                            │  │
-│  │ - Dequeue jobs from Redis                               │  │
+│  │ Run Executor                                            │  │
+│  │ - Dequeue runs from Redis                               │  │
 │  │ - Run Claude Code agent loop (1-30 min)                 │  │
 │  │ - Execute tools (bash, file editor)                     │  │
 │  │ - Publish events to Redis pub/sub                       │  │
-│  │ - Update job state on completion                        │  │
+│  │ - Update run state on completion                        │  │
 │  └─────────────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────────────┘
 ```
@@ -892,7 +892,7 @@ worker:
     tag: ""
 
   # Worker runs same image, different entrypoint
-  command: ["deno", "run", "-A", "src/workflow/worker/job-entrypoint.ts"]
+  command: ["deno", "run", "-A", "src/workflow/worker/run-entrypoint.ts"]
 
   resources:
     requests:
@@ -905,14 +905,14 @@ worker:
   env:
     # Worker mode
     WORKER_MODE: "1"
-    # Redis for job queue and events
+    # Redis for run queue and events
     REDIS_URL: "redis://redis:6379"
     # Anthropic API
     ANTHROPIC_API_KEY_FROM: "secret"
-    # Concurrency (jobs processed in parallel)
+    # Concurrency (runs processed in parallel)
     WORKER_CONCURRENCY: "2"
-    # Job timeout (30 minutes)
-    WORKER_JOB_TIMEOUT: "1800000"
+    # Run timeout (30 minutes)
+    WORKER_RUN_TIMEOUT: "1800000"
     # Logging
     LOG_FORMAT: "json"
     OTEL_SERVICE_NAME: "veryfront-worker"
@@ -940,41 +940,41 @@ worker:
 ### Worker Implementation
 
 ```typescript
-// src/workflow/worker/job-entrypoint.ts
-import { JobExecutor } from "../executor/job-executor.ts";
+// src/workflow/worker/run-entrypoint.ts
+import { RunExecutor } from "../executor/run-executor.ts";
 import { createRedisBackend } from "../backends/redis.ts";
 import { RedisEventPublisher, streamingClaudeCodeAgent } from "../claude-code/index.ts";
 
 const REDIS_URL = Deno.env.get("REDIS_URL")!;
 const CONCURRENCY = parseInt(Deno.env.get("WORKER_CONCURRENCY") || "2");
 
-// Create Redis backend for job queue
+// Create Redis backend for run queue
 const backend = createRedisBackend({ url: REDIS_URL });
 
-// Create job executor
-const executor = new JobExecutor({
+// Create run executor
+const executor = new RunExecutor({
   backend,
   concurrency: CONCURRENCY,
 
-  // Handle Claude Code jobs
+  // Handle Claude Code runs
   handlers: {
-    "claude-code": async (job) => {
+    "claude-code": async (run) => {
       const publisher = new RedisEventPublisher({ url: REDIS_URL });
 
       try {
         const agent = streamingClaudeCodeAgent({
-          mode: job.input.mode || "code",
-          maxIterations: job.input.maxIterations || 20,
+          mode: run.input.mode || "code",
+          maxIterations: run.input.maxIterations || 20,
           streaming: {
             enabled: true,
             publisher,
           },
-          runId: job.runId,
+          runId: run.runId,
         });
 
         const result = await agent.generate({
-          input: job.input.task,
-          context: job.context || {},
+          input: run.input.task,
+          context: run.context || {},
         });
 
         return { success: true, result };
@@ -985,8 +985,8 @@ const executor = new JobExecutor({
   },
 
   // Error handling
-  onError: (job, error) => {
-    console.error(`[Worker] Job ${job.id} failed:`, error);
+  onError: (run, error) => {
+    console.error(`[Worker] Run ${run.id} failed:`, error);
   },
 });
 
@@ -1016,7 +1016,7 @@ export async function POST(ctx: APIContext) {
     url: Deno.env.get("REDIS_URL")!,
   });
 
-  // Enqueue job for worker
+  // Enqueue run for worker
   const runId = crypto.randomUUID();
   await backend.enqueue({
     id: runId,
@@ -1085,7 +1085,7 @@ export async function GET(ctx: APIContext) {
 | Scenario       | Worker Replicas | Notes                                |
 | -------------- | --------------- | ------------------------------------ |
 | Development    | 0 (inline)      | Run agent in-process for simplicity  |
-| Low traffic    | 1               | Single worker, 2 concurrent jobs     |
+| Low traffic    | 1               | Single worker, 2 concurrent runs     |
 | Medium traffic | 2-3             | Scale based on queue depth           |
 | High traffic   | 3-5 + HPA       | Use KEDA for queue-based autoscaling |
 
@@ -1105,8 +1105,8 @@ spec:
     - type: redis
       metadata:
         address: redis:6379
-        listName: veryfront:jobs:pending
-        listLength: "5" # Scale up when > 5 pending jobs
+        listName: veryfront:runs:pending
+        listLength: "5" # Scale up when > 5 pending runs
 ```
 
 ### Monitoring
@@ -1116,11 +1116,11 @@ spec:
 ```typescript
 // Worker metrics
 const metrics = {
-  // Job processing
-  "worker.jobs.started": Counter,
-  "worker.jobs.completed": Counter,
-  "worker.jobs.failed": Counter,
-  "worker.jobs.duration": Histogram,
+  // Run processing
+  "worker.runs.started": Counter,
+  "worker.runs.completed": Counter,
+  "worker.runs.failed": Counter,
+  "worker.runs.duration": Histogram,
 
   // Agent metrics
   "agent.iterations": Histogram,
@@ -1137,11 +1137,11 @@ const metrics = {
 **Grafana dashboard query examples:**
 
 ```promql
-# Job processing rate
-rate(worker_jobs_completed_total[5m])
+# Run processing rate
+rate(worker_runs_completed_total[5m])
 
-# Average job duration
-histogram_quantile(0.95, rate(worker_jobs_duration_bucket[5m]))
+# Average run duration
+histogram_quantile(0.95, rate(worker_runs_duration_bucket[5m]))
 
 # Queue depth
 queue_pending

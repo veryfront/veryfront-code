@@ -123,7 +123,7 @@ After `veryfront deploy`:
 
 - The CLI confirms the deployed release and environment.
 - `veryfront open` opens the deployed project.
-- The same page, API route, agent, workflow, task, or job path works in
+- The same page, API route, agent, workflow, task, or run path works in
   production.
 - The Cloud dashboard lists the deployment under the project.
 

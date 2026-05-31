@@ -4,8 +4,8 @@ description: "Choose the smallest Veryfront primitive for the work."
 order: 10
 ---
 
-Pick the smallest primitive that matches the job. This keeps project structure
-clear and prevents overlapping agents, workflows, jobs, and integrations.
+Pick the smallest primitive that matches the work. This keeps project structure
+clear and prevents overlapping agents, workflows, runs, and integrations.
 
 ## Quick choice
 
@@ -19,7 +19,7 @@ clear and prevents overlapping agents, workflows, jobs, and integrations.
 | Expose readable context to assistants                       | Resource               | [MCP server](./mcp-server.md)               |
 | Define project-owned background work                        | Task                   | [Tasks](./tasks.md)                         |
 | Coordinate multiple steps, branches, approvals, or retries  | Workflow               | [Workflows](./workflows.md)                 |
-| Run durable background work now or on a schedule            | Job or cron job        | [Jobs](./jobs.md)                           |
+| Run durable background work now or on a schedule            | Run or schedule        | [Runs](./runs.md)                           |
 | Connect agents to third-party services                      | Integration with OAuth | [Integrations](./integrations.md)           |
 | Expose project capabilities to assistants over a protocol   | MCP server             | [MCP server](./mcp-server.md)               |
 | Run isolated commands or file operations                    | Sandbox                | [Sandbox](./sandbox.md)                     |
@@ -37,7 +37,7 @@ clear and prevents overlapping agents, workflows, jobs, and integrations.
 | Resource    | An assistant needs readable project context.                                  | The operation changes state or starts work.                                   |
 | Task        | You own a reusable background function in `tasks/`.                           | The user needs conversational reasoning or streaming output.                  |
 | Workflow    | Work has ordered steps, parallel branches, retries, or human review.          | A single agent response or one background function is enough.                 |
-| Job         | You need durable execution, scheduling, batch status, or run history.         | The work can finish inside a request without durability.                      |
+| Run         | You need durable execution, scheduling, batch status, or run history.         | The work can finish inside a request without durability.                      |
 | Integration | You need provider metadata, OAuth, tokens, or remote integration tools.       | A local custom API call is enough and no shared connector behavior is needed. |
 | MCP server  | External assistants or MCP clients need tools, prompts, or resources.         | The capability is only used inside one Veryfront app route.                   |
 | Sandbox     | Code or shell work needs isolation from the app process.                      | The code can run safely in your own trusted runtime.                          |
@@ -49,7 +49,7 @@ clear and prevents overlapping agents, workflows, jobs, and integrations.
 | -------------------------------------- | -------------------------------------------------- |
 | Chat with company data                 | Agent + tools + memory + chat UI                   |
 | Human-approved content pipeline        | Workflow + agents + approval step                  |
-| Nightly sync from an external API      | Task + cron job + optional integration credentials |
+| Nightly sync from an external API      | Task + schedule + optional integration credentials |
 | Assistant help with a repeatable task  | Agent + skill + optional tools                     |
 | Assistant reads project context        | MCP server + resources                             |
 | User-authorized GitHub automation      | Integration + OAuth + tools                        |
@@ -64,6 +64,6 @@ the matching guide:
 
 - If the guide's first example solves your shape, continue there.
 - If you need two or more primitives, start with the one that owns the triggering event.
-- When choosing between `Task` and `Job`, remember that a task defines the work and a job runs it durably.
+- When choosing between `Task` and `Run`, remember that a task defines the work and a run executes it durably.
 
 Run the guide's example or validation command before adding another primitive.

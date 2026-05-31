@@ -2,7 +2,7 @@
 
 This guide governs `veryfront-code/`. Deeper `AGENTS.md` files override it for their subtrees. The `cli/` subtree has its own guide at `cli/AGENTS.md` and that guide is the narrower authority for CLI command work.
 
-Veryfront Code is the Deno-first framework and runtime package for Veryfront. It contains the public `veryfront/*` APIs, the runtime server, SSR/RSC support, agent and workflow primitives, jobs, tasks, MCP support, and CLI entrypoints.
+Veryfront Code is the Deno-first framework and runtime package for Veryfront. It contains the public `veryfront/*` APIs, the runtime server, SSR/RSC support, agent and workflow primitives, runs, tasks, MCP support, and CLI entrypoints.
 
 ## Default working style
 
@@ -60,22 +60,22 @@ Apply these rules to CLI output, command help, docs generated from this package,
 
 Use the same concept names in code, schemas, command help, docs, tests, and errors.
 
-| Term | Meaning | Do not confuse with |
-| --- | --- | --- |
-| Agent | AI runtime primitive that accepts messages, tools, context, and emits AG-UI events | Workflow or job |
-| Tool | Callable capability used by an agent or workflow step | MCP tool unless the surface is explicitly MCP |
-| Workflow | Step graph or DAG for multi-step execution | Job or cron job |
-| Task | Developer-defined background work target | Job run |
-| Job | Durable background execution of a target | Workflow definition or task definition |
-| Cron job | Schedule definition that creates job runs | Job run |
-| Agent run | Conversation-owned execution of an agent | Workflow run or job run |
-| Workflow run | Project-owned canonical run for workflow execution | Agent run |
-| Job run | Project-owned canonical run for background execution | Task definition |
-| AG-UI | Agent event protocol used for streamed agent output | REST or MCP |
-| SSE | Token and AG-UI event streaming transport | WebSocket notification |
-| WebSocket | Realtime notifications, terminal, logs, and Yjs sync | Token stream unless the specific code path uses WebSocket |
-| MCP | Tool and resource protocol surface for assistants | REST, AG-UI, or CLI |
-| Control plane | Signed management surface between Veryfront services and project runtimes | Public app route |
+| Term          | Meaning                                                                            | Do not confuse with                                       |
+| ------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Agent         | AI runtime primitive that accepts messages, tools, context, and emits AG-UI events | Workflow or task                                          |
+| Tool          | Callable capability used by an agent or workflow step                              | MCP tool unless the surface is explicitly MCP             |
+| Workflow      | Step graph or DAG for multi-step execution                                         | Task or schedule                                          |
+| Task          | Developer-defined background work target                                           | Run                                                       |
+| Run           | Durable execution of an agent, workflow, or task                                   | Definition or schedule                                    |
+| Schedule      | One-time or cron-like trigger that creates runs                                    | Run                                                       |
+| Agent run     | Conversation-owned execution of an agent                                           | Workflow run or task run                                  |
+| Workflow run  | Project-owned canonical run for workflow execution                                 | Agent run                                                 |
+| Task run      | Project-owned canonical run for task execution                                     | Task definition                                           |
+| AG-UI         | Agent event protocol used for streamed agent output                                | REST or MCP                                               |
+| SSE           | Token and AG-UI event streaming transport                                          | WebSocket notification                                    |
+| WebSocket     | Realtime notifications, terminal, logs, and Yjs sync                               | Token stream unless the specific code path uses WebSocket |
+| MCP           | Tool and resource protocol surface for assistants                                  | REST, AG-UI, or CLI                                       |
+| Control plane | Signed management surface between Veryfront services and project runtimes          | Public app route                                          |
 
 When a change adds or changes a concept, update the concept name everywhere it appears. Do not create synonyms such as "agent job" or "workflow task" unless the code has a defined type with that exact name.
 
@@ -87,7 +87,7 @@ When a change adds or changes a concept, update the concept name everywhere it a
 - CLI imports use `#cli/*` or relative imports inside `cli/`.
 - Keep runtime and control-plane boundaries explicit. Do not conflate CLI commands, public application routes, project runtime routes, and service control-plane routes.
 - Keep AG-UI streaming, durable run state, and WebSocket notifications separate in naming and docs.
-- Keep workflow, job, task, and cron job boundaries explicit.
+- Keep workflow, task, run, schedule, and runtime-adapter boundaries explicit.
 - Keep public schemas close to the runtime behavior they validate.
 - When a public schema changes, update the corresponding generated docs, examples, and tests.
 
@@ -144,21 +144,21 @@ Use the JSON envelope pattern for commands that support structured output.
 
 Keep common CLI behavior consistent with the command router and `cli/AGENTS.md`.
 
-| Surface | Meaning |
-| --- | --- |
-| `--json`, `-j` | Machine-readable output for commands that implement JSON mode |
-| `--output`, `-o` | Output destination or format, depending on command support |
-| `--yes`, `-y` | Non-interactive confirmation for supported prompts |
-| `--quiet`, `-q` | Reduced human output |
-| `--verbose` | Diagnostic output for supported commands |
-| `--no-color` | Disable ANSI color in human output |
+| Surface          | Meaning                                                       |
+| ---------------- | ------------------------------------------------------------- |
+| `--json`, `-j`   | Machine-readable output for commands that implement JSON mode |
+| `--output`, `-o` | Output destination or format, depending on command support    |
+| `--yes`, `-y`    | Non-interactive confirmation for supported prompts            |
+| `--quiet`, `-q`  | Reduced human output                                          |
+| `--verbose`      | Diagnostic output for supported commands                      |
+| `--no-color`     | Disable ANSI color in human output                            |
 
-| Exit code | Meaning |
-| --- | --- |
-| `0` | Success |
-| `1` | Runtime or command error |
-| `2` | Usage or argument error |
-| `130` | Interrupted by user |
+| Exit code | Meaning                  |
+| --------- | ------------------------ |
+| `0`       | Success                  |
+| `1`       | Runtime or command error |
+| `2`       | Usage or argument error  |
+| `130`     | Interrupted by user      |
 
 ### MCP connection and resources
 
@@ -204,7 +204,7 @@ src/
 ├── channels/           # Control-plane and invoke channels
 ├── config/             # Configuration resolution
 ├── errors/             # VeryfrontError registry
-├── jobs/               # Jobs, tasks, cron jobs, and job client schemas
+├── runs/               # Canonical run client schemas and runtime environment helpers
 ├── mcp/                # MCP protocol types and runtime support
 ├── platform/           # Deno and Node compatibility layer
 ├── provider/           # AI model providers

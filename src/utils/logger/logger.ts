@@ -58,9 +58,9 @@ export interface LogEntry {
   release_id?: string;
   branch_id?: string;
   branch_name?: string;
-  job_id?: string;
+  run_execution_id?: string;
   batch_id?: string;
-  job_target?: string;
+  run_target?: string;
   task?: string;
   event_kind?: string;
   user_visible?: string;
@@ -319,9 +319,9 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "release_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_name", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "job_id", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "run_execution_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "batch_id", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "job_target", (v) => String(v));
+    extractToEntryField(entry, mergedContext, "run_target", (v) => String(v));
     extractToEntryField(entry, mergedContext, "task", (v) => String(v));
     extractToEntryField(entry, mergedContext, "event_kind", (v) => String(v));
     extractToEntryField(entry, mergedContext, "user_visible", (v) => String(v));
@@ -595,25 +595,25 @@ export function createRequestLogger(
   return baseLogger.child(requestContext);
 }
 
-/** Create job user logger. */
-export function createJobUserLogger(
+/** Create run user logger. */
+export function createRunUserLogger(
   baseLogger: Logger,
-  jobContext: {
+  runContext: {
     projectId: string;
-    jobId: string;
+    runExecutionId: string;
     task: string;
     batchId?: string | null;
-    jobTarget?: string | null;
+    runTarget?: string | null;
     eventKind?: string;
   },
 ): Logger {
   return baseLogger.child({
-    project_id: jobContext.projectId,
-    job_id: jobContext.jobId,
-    ...(jobContext.batchId ? { batch_id: jobContext.batchId } : {}),
-    ...(jobContext.jobTarget ? { job_target: jobContext.jobTarget } : {}),
-    task: jobContext.task,
-    event_kind: jobContext.eventKind ?? "job_user_log",
+    project_id: runContext.projectId,
+    run_execution_id: runContext.runExecutionId,
+    ...(runContext.batchId ? { batch_id: runContext.batchId } : {}),
+    ...(runContext.runTarget ? { run_target: runContext.runTarget } : {}),
+    task: runContext.task,
+    event_kind: runContext.eventKind ?? "run_user_log",
     user_visible: "true",
   });
 }

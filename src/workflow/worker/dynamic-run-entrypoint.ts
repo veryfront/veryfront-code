@@ -1,7 +1,7 @@
 /**
  * Dynamic workflow run entrypoint
  *
- * Runs inside an ephemeral K8s Job or process container.
+ * Runs inside an ephemeral run execution container or process.
  * Dynamically discovers and loads workflow definitions from the user's project
  * using the Veryfront API backend.
  *

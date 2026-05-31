@@ -47,7 +47,7 @@ import {
   getRemoteIntegrationToolDefinitions,
   listConnectors,
 } from "../../src/integrations/index.ts";
-import { buildKnowledgeIngestJobResult } from "../../cli/commands/knowledge/result.ts";
+import { buildKnowledgeIngestRunResult } from "../../cli/commands/knowledge/result.ts";
 import { getTemplate } from "../../cli/templates/index.ts";
 
 const EXISTING_GUIDE_EXAMPLE_SUITE = [
@@ -55,7 +55,7 @@ const EXISTING_GUIDE_EXAMPLE_SUITE = [
   "api-routes.md",
   "configuration.md",
   "data-fetching.md",
-  "jobs.md",
+  "runs.md",
   "mcp-server.md",
   "memory-and-streaming.md",
   "middleware.md",
@@ -291,8 +291,8 @@ describe("Guide: coding-agents.md", () => {
 });
 
 describe("Guide: cli-knowledge-ingestion.md", () => {
-  it("uses the current knowledge ingest job result shape", () => {
-    const result = buildKnowledgeIngestJobResult({
+  it("uses the current knowledge ingest run result shape", () => {
+    const result = buildKnowledgeIngestRunResult({
       requestedCount: 1,
       sourceMode: "explicit_sources",
       knowledgePath: "knowledge/",

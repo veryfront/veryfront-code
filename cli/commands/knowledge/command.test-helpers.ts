@@ -1,4 +1,5 @@
 import type { ApiClient } from "#cli/shared/config";
+import type { KnowledgeParserResult } from "./parser.ts";
 
 type MockClientOverrides = {
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
@@ -67,7 +68,9 @@ export function createDownloadUploadsStub(calls: string[][] = []) {
   };
 }
 
-export function createParserSuccess(overrides: Record<string, unknown> = {}) {
+export function createParserSuccess(
+  overrides: Partial<KnowledgeParserResult> = {},
+): KnowledgeParserResult {
   return {
     success: true,
     source_path: "/workspace/uploads/contracts/q1.pdf",

@@ -15,7 +15,7 @@ import {
 } from "veryfront/rendering/styles";
 import { cliLogger, exitProcess } from "#cli/utils";
 import type { StylesArgs } from "./handler.ts";
-import { writeJobResultIfConfigured } from "../../utils/write-job-result.ts";
+import { writeRunResultIfConfigured } from "../../utils/write-run-result.ts";
 
 const getStyleArtifactBuildConfigSchema = defineSchema((v) =>
   v.object({
@@ -298,7 +298,7 @@ export async function stylesCommand(options: StylesArgs): Promise<void> {
       },
     };
 
-    await writeJobResultIfConfigured(result);
+    await writeRunResultIfConfigured(result);
     cliLogger.info(`Built style artifact ${build.hash}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

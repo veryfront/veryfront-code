@@ -10,17 +10,17 @@
  *    - Good for trusted code or single-tenant deployments
  *    - Simple setup, lower overhead
  *
- * 2. **WorkflowRunManager + K8sJobExecutor** - Kubernetes Job-backed execution
+ * 2. **WorkflowRunManager + K8sRunExecutor** - Kubernetes-resource-backed execution
  *    - Each workflow runs in an ephemeral container
  *    - Complete tenant isolation (no shared state)
  *    - Required for multi-tenant untrusted code execution
  *
- * 3. **WorkflowRunManager + ProcessJobExecutor** - Local process execution
+ * 3. **WorkflowRunManager + ProcessRunExecutor** - Local process execution
  *    - Spawns child processes for each workflow
  *    - Good for local development without K8s/Docker
  *    - Mirrors production behavior
  *
- * A workflow run can be backed by a job executor without introducing another
+ * A workflow run can be backed by a run executor without introducing another
  * user-visible execution type.
  */
 
@@ -33,29 +33,29 @@ export {
   type WorkflowWorkerConfig,
 } from "./workflow-worker.ts";
 
-// Job-backed workflow run execution (multi-tenant / untrusted code)
+// Isolated workflow run execution (multi-tenant / untrusted code)
 export {
   createWorkflowRunManager,
   type ManagerStats,
   type ManagerStatus,
   WorkflowRunManager,
   type WorkflowRunManagerConfig,
-} from "./job-manager.ts";
+} from "./run-manager.ts";
 
-// Job Executors (pluggable runtime backends)
+// Run executors (pluggable runtime backends)
 export {
-  isJobExecutor,
-  type JobConfig,
-  type JobExecutor,
-  type JobInfo,
-  type JobStatus,
+  isRunExecutor,
   type K8sClient,
-  K8sJobExecutor,
-  type K8sJobExecutorConfig,
-  type K8sJobSpec,
-  type K8sJobStatusResponse,
-  ProcessJobExecutor,
-  type ProcessJobExecutorConfig,
+  type K8sRunExecutionSpec,
+  type K8sRunExecutionStatusResponse,
+  K8sRunExecutor,
+  type K8sRunExecutorConfig,
+  ProcessRunExecutor,
+  type ProcessRunExecutorConfig,
+  type RunExecutionConfig,
+  type RunExecutionInfo,
+  type RunExecutionStatus,
+  type RunExecutor,
 } from "./executors/index.ts";
 
 // Workflow run entrypoint (runs inside ephemeral container/process)
@@ -66,7 +66,7 @@ export {
   EXIT_CODES,
   runWorkflowRun,
   type WorkflowRunEntrypointConfig,
-} from "./job-entrypoint.ts";
+} from "./run-entrypoint.ts";
 
 // Dynamic workflow run entrypoint (discovers workflows at runtime)
 // Use this when workflows are stored in Veryfront API
@@ -76,4 +76,4 @@ export {
   DYNAMIC_EXIT_CODES,
   type DynamicWorkflowRunEntrypointConfig,
   runDynamicWorkflowRun,
-} from "./dynamic-job-entrypoint.ts";
+} from "./dynamic-run-entrypoint.ts";

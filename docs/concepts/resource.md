@@ -29,6 +29,6 @@ a mutating tool.
 ## Wrong fit
 
 Do not use a resource for work that changes state, starts a process, or needs
-approval. Use a tool, workflow, task, or job for executable work.
+approval. Use a tool, workflow, task, or run for executable work.
 
 For API details, see [veryfront/resource](../api-reference/veryfront/resource.md).

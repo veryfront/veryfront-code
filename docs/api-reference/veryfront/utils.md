@@ -12,7 +12,7 @@ import {
   computeCodeHash,
   computeHash,
   computeIntegrity,
-  createJobUserLogger,
+  createRunUserLogger,
   createLockfileManager,
 } from "veryfront/utils";
 ```
@@ -98,7 +98,7 @@ serverLogger.info("Booting server", { project_id: "proj_123" });
 | `computeCodeHash` | Compute code hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L22) |
 | `computeHash` | Compute hash. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L8) |
 | `computeIntegrity` | Compute integrity. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L28) |
-| `createJobUserLogger` | Create job user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L599) |
+| `createRunUserLogger` | Create run user logger. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/logger/logger.ts#L599) |
 | `createLockfileManager` | Create lockfile manager. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/import-lockfile.ts#L76) |
 | `endRequest` | Request payload for end. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/perf-timer.ts#L73) |
 | `fnv1aHash` | FNV-1a hash for strings - returns hex string | [source](https://github.com/veryfront/veryfront-code/blob/main/src/utils/hash-utils.ts#L50) |

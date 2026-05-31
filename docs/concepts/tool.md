@@ -28,8 +28,8 @@ move the coordination into a workflow.
 
 ## Wrong fit
 
-Do not use a tool as a hidden workflow, long-running job, or large integration
-layer. Use a workflow for process, a job for durable execution, and an
+Do not use a tool as a hidden workflow, long-running run, or large integration
+layer. Use a workflow for process, a run for durable execution, and an
 integration for reusable external service access.
 
 For implementation steps, see [Tools](../guides/tools.md).

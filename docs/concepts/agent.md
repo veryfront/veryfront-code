@@ -37,7 +37,7 @@ The loop has four parts:
 
 Veryfront hides most loop plumbing behind the agent runtime. The important
 boundary is still visible: the agent decides what to do next, while tools,
-resources, jobs, and app routes own the deterministic work they perform.
+resources, runs, and app routes own the deterministic work they perform.
 
 ## Boundary
 

@@ -353,7 +353,7 @@ import { createWorkflowRegistry, discoverWorkflows, findWorkflowById } from "ver
 
 ### `veryfront/workflow/worker`
 
-Workflow worker module Provides distributed workflow execution support. Three execution profiles are available: 1. **WorkflowWorker** - In-process polling worker - Polls for stalled workflows and resumes them - Good for trusted code or single-tenant deployments - Simple setup, lower overhead 2. **WorkflowRunManager + K8sJobExecutor** - Kubernetes Job-backed execution - Each workflow runs in an ephemeral container - Complete tenant isolation (no shared state) - Required for multi-tenant untrusted code execution 3. **WorkflowRunManager + ProcessJobExecutor** - Local process execution - Spawns child processes for each workflow - Good for local development without K8s/Docker - Mirrors production behavior A workflow run can be backed by a job executor without introducing another user-visible execution type.
+Workflow worker module Provides distributed workflow execution support. Three execution profiles are available: 1. **WorkflowWorker** - In-process polling worker - Polls for stalled workflows and resumes them - Good for trusted code or single-tenant deployments - Simple setup, lower overhead 2. **WorkflowRunManager + K8sRunExecutor** - Kubernetes-backed execution - Each workflow runs in an ephemeral container - Complete tenant isolation (no shared state) - Required for multi-tenant untrusted code execution 3. **WorkflowRunManager + ProcessRunExecutor** - Local process execution - Spawns child processes for each workflow - Good for local development without K8s/Docker - Mirrors production behavior A workflow run can be backed by a run executor without introducing another user-visible execution type.
 
 ```ts
 import { createDynamicWorkflowRunEntrypoint, createWorkflowRunEntrypoint, createWorkflowRunManager } from "veryfront/workflow/worker";
@@ -363,50 +363,50 @@ import { createDynamicWorkflowRunEntrypoint, createWorkflowRunEntrypoint, create
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `DYNAMIC_EXIT_CODES` | Exit codes for the dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-job-entrypoint.ts#L49) |
-| `EXIT_CODES` | Exit codes for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-entrypoint.ts#L55) |
+| `DYNAMIC_EXIT_CODES` | Exit codes for the dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L49) |
+| `EXIT_CODES` | Exit codes for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L55) |
 
 #### Functions
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `createDynamicWorkflowRunEntrypoint` | Create a dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-job-entrypoint.ts#L239) |
-| `createWorkflowRunEntrypoint` | Create a workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-entrypoint.ts#L188) |
-| `createWorkflowRunManager` | Create a workflow run manager backed by job executors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-manager.ts#L482) |
+| `createDynamicWorkflowRunEntrypoint` | Create a dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L239) |
+| `createWorkflowRunEntrypoint` | Create a workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L188) |
+| `createWorkflowRunManager` | Create a workflow run manager backed by run executors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L482) |
 | `createWorkflowWorker` | Create a workflow worker | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L323) |
-| `isJobExecutor` | Type guard to check if an object implements JobExecutor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L141) |
-| `runDynamicWorkflowRun` | Run a workflow run with dynamic discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-job-entrypoint.ts#L79) |
-| `runWorkflowRun` | Run the workflow run entrypoint | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-entrypoint.ts#L89) |
+| `isRunExecutor` | Type guard to check if an object implements RunExecutor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L141) |
+| `runDynamicWorkflowRun` | Run a workflow run with dynamic discovery. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L79) |
+| `runWorkflowRun` | Run the workflow run entrypoint | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L89) |
 
 #### Classes
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `K8sJobExecutor` | Kubernetes Job Executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L130) |
-| `ProcessJobExecutor` | Process job executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/process.ts#L76) |
-| `WorkflowRunManager` | Workflow run manager | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-manager.ts#L140) |
+| `K8sRunExecutor` | Kubernetes run executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L130) |
+| `ProcessRunExecutor` | Process run executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/process.ts#L76) |
+| `WorkflowRunManager` | Workflow run manager | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L140) |
 | `WorkflowWorker` | Implement workflow worker. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L99) |
 
 #### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `CreateDynamicWorkflowRunEntrypointOptions` | Create a dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-job-entrypoint.ts#L230) |
-| `CreateWorkflowRunEntrypointOptions` | Create a simple workflow run entrypoint script. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-entrypoint.ts#L176) |
-| `DynamicWorkflowRunEntrypointConfig` | Configuration for the dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-job-entrypoint.ts#L60) |
-| `JobConfig` | Job configuration passed to executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L18) |
-| `JobExecutor` | Job Executor Interface | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L102) |
-| `JobInfo` | Job information returned by executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L46) |
-| `JobStatus` | Job execution status | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L41) |
+| `CreateDynamicWorkflowRunEntrypointOptions` | Create a dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L230) |
+| `CreateWorkflowRunEntrypointOptions` | Create a simple workflow run entrypoint script. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L176) |
+| `DynamicWorkflowRunEntrypointConfig` | Configuration for the dynamic workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/dynamic-run-entrypoint.ts#L60) |
+| `RunExecutionConfig` | Run execution configuration passed to executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L18) |
+| `RunExecutor` | Run executor interface | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L102) |
+| `RunExecutionInfo` | Run execution information returned by executor | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L46) |
+| `RunExecutionStatus` | Run execution status | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/types.ts#L41) |
 | `K8sClient` | Kubernetes API client interface | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L51) |
-| `K8sJobExecutorConfig` | K8s Job Executor configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L19) |
-| `K8sJobSpec` | K8s Job spec | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L68) |
-| `K8sJobStatusResponse` | K8s Job status response | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L106) |
-| `ManagerStats` | Manager statistics | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-manager.ts#L76) |
-| `ManagerStatus` | Manager status | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-manager.ts#L71) |
-| `ProcessJobExecutorConfig` | Process Job Executor configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/process.ts#L19) |
+| `K8sRunExecutorConfig` | K8s run executor configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L19) |
+| `K8sRunExecutionSpec` | K8s run execution Kubernetes resource spec | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L68) |
+| `K8sRunExecutionStatusResponse` | K8s run execution status response | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/k8s.ts#L106) |
+| `ManagerStats` | Manager statistics | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L76) |
+| `ManagerStatus` | Manager status | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L71) |
+| `ProcessRunExecutorConfig` | Process run executor configuration | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/executors/process.ts#L19) |
 | `WorkerStats` | Worker statistics | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L57) |
 | `WorkerStatus` | Worker status | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L52) |
-| `WorkflowRunEntrypointConfig` | Configuration for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-entrypoint.ts#L41) |
-| `WorkflowRunManagerConfig` | Configuration for the workflow run manager backed by job executors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/job-manager.ts#L42) |
+| `WorkflowRunEntrypointConfig` | Configuration for the workflow run entrypoint. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-entrypoint.ts#L41) |
+| `WorkflowRunManagerConfig` | Configuration for the workflow run manager backed by run executors. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/run-manager.ts#L42) |
 | `WorkflowWorkerConfig` | Configuration for the workflow worker | [source](https://github.com/veryfront/veryfront-code/blob/main/src/workflow/worker/workflow-worker.ts#L26) |

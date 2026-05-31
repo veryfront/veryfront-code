@@ -174,7 +174,7 @@ const EXCEPTIONS: Record<string, string[]> = {
   // JSDoc example references Deno.cwd() — not runtime code
   "src/extensions/index.ts": ["Deno.cwd()"],
   // JSDoc example references process.env — not runtime code
-  "src/jobs/index.ts": ["process.env"],
+  "src/runs/index.ts": ["process.env"],
   // JSDoc example references import { createServer } from "node:http"
   "src/server/index.ts": ["node: import"],
 };

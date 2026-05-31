@@ -1,18 +1,28 @@
 /**
- * Job executors
+ * Run executors
  *
- * Abstraction layer for executing job-backed workflow runs in different
+ * Abstraction layer for executing workflow runs in different
  * environments.
  */
 
 // Types
-export type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
-export { isJobExecutor } from "./types.ts";
+export type {
+  RunExecutionConfig,
+  RunExecutionInfo,
+  RunExecutionStatus,
+  RunExecutor,
+} from "./types.ts";
+export { isRunExecutor } from "./types.ts";
 
 // K8s Executor
-export { K8sJobExecutor } from "./k8s.ts";
-export type { K8sClient, K8sJobExecutorConfig, K8sJobSpec, K8sJobStatusResponse } from "./k8s.ts";
+export { K8sRunExecutor } from "./k8s.ts";
+export type {
+  K8sClient,
+  K8sRunExecutionSpec,
+  K8sRunExecutionStatusResponse,
+  K8sRunExecutorConfig,
+} from "./k8s.ts";
 
 // Process Executor (local dev)
-export { ProcessJobExecutor } from "./process.ts";
-export type { ProcessJobExecutorConfig } from "./process.ts";
+export { ProcessRunExecutor } from "./process.ts";
+export type { ProcessRunExecutorConfig } from "./process.ts";

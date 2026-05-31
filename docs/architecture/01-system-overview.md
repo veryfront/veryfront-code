@@ -2,7 +2,7 @@
 
 Veryfront Code is a Deno-first framework and runtime package for full-stack AI
 apps. It combines application routing, rendering, native agent primitives,
-workflow execution, MCP support, jobs, tasks, extensions, and deployment
+workflow execution, MCP support, runs, tasks, extensions, and deployment
 runtime support.
 
 This page is the domain map. Focused runtime and transport details live in the
@@ -19,7 +19,7 @@ flowchart LR
   server --> workflow[Workflow and background work]
 
   ai --> provider[Provider runtime]
-  workflow --> jobs[Jobs and tasks]
+  workflow --> runs[Runs and tasks]
   external[External service capabilities] --> oauth[OAuth runtime]
   external --> integration[Integration runtime]
   external --> sandbox[Sandbox runtime]
@@ -44,7 +44,7 @@ flowchart LR
 | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | App framework                  | [`src/routing/`](../../src/routing/), [`src/middleware/`](../../src/middleware/), [`src/react/`](../../src/react/), [`src/html/`](../../src/html/), [`src/data/`](../../src/data/)                                                                               | [server runtime](./04-server-runtime.md), [rendering runtime](./03-rendering-runtime.md)                                                 |
 | Agent and AI primitives        | [`src/agent/`](../../src/agent/), [`src/tool/`](../../src/tool/), [`src/prompt/`](../../src/prompt/), [`src/resource/`](../../src/resource/), [`src/skill/`](../../src/skill/), [`src/provider/`](../../src/provider/), [`src/embedding/`](../../src/embedding/) | [agent runtime](./05-agent-runtime.md), [provider runtime](./07-provider-runtime.md)                                                     |
-| Workflow and background work   | [`src/workflow/`](../../src/workflow/), [`src/jobs/`](../../src/jobs/), [`src/task/`](../../src/task/)                                                                                                                                                           | [workflow runtime](./08-workflow-runtime.md), [jobs and tasks](./09-jobs-and-tasks.md)                                                   |
+| Workflow and background work   | [`src/workflow/`](../../src/workflow/), [`src/runs/`](../../src/runs/), [`src/task/`](../../src/task/)                                                                                                                                                           | [workflow runtime](./08-workflow-runtime.md), [runs and tasks](./09-runs-and-tasks.md)                                                   |
 | Protocol surfaces              | [`src/mcp/`](../../src/mcp/), [`src/agent/ag-ui/`](../../src/agent/ag-ui/), [`src/channels/`](../../src/channels/)                                                                                                                                               | [MCP runtime](./10-mcp-runtime.md), [AG-UI transport](./06-ag-ui-transport.md), [control-plane channels](./11-control-plane-channels.md) |
 | External service capabilities  | [`src/oauth/`](../../src/oauth/), [`src/integrations/`](../../src/integrations/), [`src/sandbox/`](../../src/sandbox/)                                                                                                                                           | [OAuth runtime](./18-oauth-runtime.md), [integration runtime](./19-integration-runtime.md), [sandbox runtime](./17-sandbox-runtime.md)   |
 | Runtime platform               | [`src/platform/`](../../src/platform/), [`src/fs/`](../../src/fs/), [`src/server/project-env/`](../../src/server/project-env/)                                                                                                                                   | [runtime adapters](./15-runtime-adapters.md)                                                                                             |

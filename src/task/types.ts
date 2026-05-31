@@ -3,7 +3,7 @@
  *
  * Type definitions for the task execution system.
  * Tasks are user-defined functions in `tasks/` that can run
- * locally via `veryfront task <name>` or in the cloud as Jobs/CronJobs.
+ * locally via `veryfront task <name>` or in the cloud as runs and schedules.
  */
 
 /**
@@ -12,9 +12,9 @@
 export interface TaskContext {
   /** Environment variables */
   env: Record<string, string>;
-  /** Job config (when run as a cloud job) */
+  /** Run config (when executed by the platform) */
   config: Record<string, unknown>;
-  /** Project ID (when run as a cloud job) */
+  /** Project ID (when executed by the platform) */
   projectId?: string;
 }
 
@@ -30,7 +30,7 @@ export interface TaskDefinition {
   inputSchema?: Record<string, unknown>;
   /** Optional JSON-schema-like output contract surfaced in APIs/UIs */
   outputSchema?: Record<string, unknown>;
-  /** Whether this task can be scheduled via cron jobs */
+  /** Whether this task can be scheduled */
   schedulable?: boolean;
   /** The function to execute */
   run: (ctx: TaskContext) => Promise<unknown> | unknown;

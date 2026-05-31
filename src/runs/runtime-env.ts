@@ -1,6 +1,6 @@
 import { logger as baseLogger } from "#veryfront/utils";
 
-const logger = baseLogger.component("job-runtime-env");
+const logger = baseLogger.component("run-runtime-env");
 
 export const INJECTED_TASK_ENV_JSON = "VERYFRONT_TASK_ENV_JSON";
 
@@ -16,7 +16,7 @@ const RESERVED_TASK_ENV_KEYS = new Set([
   "VERYFRONT_BRANCH_REF",
   "VERYFRONT_API_USER",
   "VERYFRONT_API_PASS",
-  "VERYFRONT_JOB_RESULT_PATH",
+  "VERYFRONT_RUN_RESULT_PATH",
   INJECTED_TASK_ENV_JSON,
 ]);
 

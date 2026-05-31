@@ -10,6 +10,18 @@ function assertVeryfrontError(error: unknown): VeryfrontError {
   return error as VeryfrontError;
 }
 
+function requestMethod(init: unknown): string | undefined {
+  if (!init || typeof init !== "object" || !("method" in init)) return undefined;
+  const method = (init as { method?: unknown }).method;
+  return typeof method === "string" ? method : undefined;
+}
+
+function requestJsonBody(init: unknown): Record<string, unknown> | null {
+  if (!init || typeof init !== "object" || !("body" in init)) return null;
+  const body = (init as { body?: unknown }).body;
+  return typeof body === "string" ? JSON.parse(body) as Record<string, unknown> : null;
+}
+
 describe("VeryfrontApiClient", () => {
   const mockConfig = {
     apiBaseUrl: "https://api.test.com",
@@ -337,7 +349,7 @@ describe("VeryfrontApiClient", () => {
           const urlStr = typeof url === "string" ? url : url.toString();
 
           if (urlStr.includes("/projects/test-project/style-artifacts/current?")) {
-            assertEquals(init?.method ?? "GET", "GET");
+            assertEquals(requestMethod(init) ?? "GET", "GET");
             assertEquals(urlStr.includes("style_profile_hash=profile-1"), true);
             assertEquals(urlStr.includes("branch=main"), true);
             return Promise.resolve(
@@ -386,8 +398,8 @@ describe("VeryfrontApiClient", () => {
           const urlStr = typeof url === "string" ? url : url.toString();
 
           if (urlStr.endsWith("/projects/test-project/style-artifacts/current")) {
-            assertEquals(init?.method, "PUT");
-            const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+            assertEquals(requestMethod(init), "PUT");
+            const body = requestJsonBody(init);
             assertEquals(body?.style_profile_hash, "profile-2");
             assertEquals(body?.environment_name, "Preview");
             assertEquals(body?.artifact_hash, "hash-2");
@@ -427,12 +439,12 @@ describe("VeryfrontApiClient", () => {
           const urlStr = typeof url === "string" ? url : url.toString();
 
           if (urlStr.includes("/projects/test-project/style-artifacts/current?")) {
-            assertEquals(init?.method ?? "GET", "GET");
+            assertEquals(requestMethod(init) ?? "GET", "GET");
             return Promise.resolve(
               new Response(
                 JSON.stringify({
                   status: "building",
-                  build_job_id: "11111111-1111-4111-a111-111111111111",
+                  build_run_execution_id: "11111111-1111-4111-a111-111111111111",
                   updated_at: "2026-03-22T00:00:00.000Z",
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
@@ -451,7 +463,7 @@ describe("VeryfrontApiClient", () => {
           });
 
           assertEquals(result.status, "building");
-          assertEquals(result.buildJobId, "11111111-1111-4111-a111-111111111111");
+          assertEquals(result.buildRunExecutionId, "11111111-1111-4111-a111-111111111111");
         },
       );
     });
@@ -462,8 +474,8 @@ describe("VeryfrontApiClient", () => {
           const urlStr = typeof url === "string" ? url : url.toString();
 
           if (urlStr.endsWith("/projects/test-project/style-artifacts/current/builds")) {
-            assertEquals(init?.method, "POST");
-            const body = typeof init?.body === "string" ? JSON.parse(init.body) : null;
+            assertEquals(requestMethod(init), "POST");
+            const body = requestJsonBody(init);
             assertEquals(body?.style_profile_hash, "profile-4");
             assertEquals(body?.environment_name, "Production");
             assertEquals(body?.force, false);
@@ -472,7 +484,7 @@ describe("VeryfrontApiClient", () => {
               new Response(
                 JSON.stringify({
                   status: "building",
-                  build_job_id: "22222222-2222-4222-a222-222222222222",
+                  build_run_execution_id: "22222222-2222-4222-a222-222222222222",
                   updated_at: "2026-03-22T00:00:00.000Z",
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
@@ -491,7 +503,7 @@ describe("VeryfrontApiClient", () => {
           });
 
           assertEquals(result.status, "building");
-          assertEquals(result.buildJobId, "22222222-2222-4222-a222-222222222222");
+          assertEquals(result.buildRunExecutionId, "22222222-2222-4222-a222-222222222222");
         },
       );
     });

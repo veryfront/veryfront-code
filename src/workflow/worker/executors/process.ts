@@ -1,22 +1,27 @@
 /**
- * Process job executor
+ * Process run executor
  *
- * Executes job-backed workflow runs as child processes.
+ * Executes workflow runs as child processes.
  * Useful for local development and testing without containerization.
  *
  * Each workflow runs in a separate Deno subprocess with its own environment.
  */
 
-import { WORKFLOW_JOB_PERMISSIONS } from "#veryfront/security/deno-permissions.ts";
+import { WORKFLOW_RUN_PERMISSIONS } from "#veryfront/security/deno-permissions.ts";
 import { logger as baseLogger } from "#veryfront/utils";
-import type { JobConfig, JobExecutor, JobInfo, JobStatus } from "./types.ts";
+import type {
+  RunExecutionConfig,
+  RunExecutionInfo,
+  RunExecutionStatus,
+  RunExecutor,
+} from "./types.ts";
 
-const logger = baseLogger.component("process-job-executor");
+const logger = baseLogger.component("process-run-executor");
 
 /**
- * Process Job Executor configuration
+ * Process run executor configuration
  */
-export interface ProcessJobExecutorConfig {
+export interface ProcessRunExecutorConfig {
   /** Command to run (default: "deno") */
   command?: string;
 
@@ -37,14 +42,14 @@ export interface ProcessJobExecutorConfig {
 }
 
 /**
- * Internal job tracking
+ * Internal execution tracking
  */
-interface TrackedJob {
-  jobId: string;
+interface TrackedExecution {
+  executionId: string;
   runId: string;
   managerId: string;
   process: Deno.ChildProcess;
-  status: JobStatus;
+  status: RunExecutionStatus;
   createdAt: Date;
   startedAt?: Date;
   completedAt?: Date;
@@ -53,14 +58,14 @@ interface TrackedJob {
 }
 
 /**
- * Process job executor
+ * Process run executor
  *
- * Spawns child processes for each job-backed workflow run.
+ * Spawns child processes for each workflow run.
  * Provides isolation at the process level (separate memory space).
  *
  * @example
  * ```typescript
- * const executor = new ProcessJobExecutor({
+ * const executor = new ProcessRunExecutor({
  *   entrypointPath: "./src/workflow-run-entrypoint.ts",
  *   env: {
  *     REDIS_URL: "redis://localhost:6379",
@@ -73,32 +78,32 @@ interface TrackedJob {
  * });
  * ```
  */
-export class ProcessJobExecutor implements JobExecutor {
-  private config: Required<Omit<ProcessJobExecutorConfig, "cwd" | "env">> & {
+export class ProcessRunExecutor implements RunExecutor {
+  private config: Required<Omit<ProcessRunExecutorConfig, "cwd" | "env">> & {
     cwd?: string;
     env?: Record<string, string>;
   };
-  private activeJobs = new Map<string, TrackedJob>();
+  private activeExecutions = new Map<string, TrackedExecution>();
 
-  constructor(config: ProcessJobExecutorConfig) {
+  constructor(config: ProcessRunExecutorConfig) {
     this.config = {
       command: "deno",
-      args: ["run", ...WORKFLOW_JOB_PERMISSIONS],
+      args: ["run", ...WORKFLOW_RUN_PERMISSIONS],
       debug: false,
       ...config,
     };
   }
 
-  createJob(jobConfig: JobConfig): Promise<string> {
-    const { jobId, run, managerId, timeout, env, debug } = jobConfig;
+  createRunExecution(executionConfig: RunExecutionConfig): Promise<string> {
+    const { executionId, run, managerId, timeout, env, debug } = executionConfig;
 
     // Build environment variables
     const processEnv: Record<string, string> = {
       ...this.config.env,
       ...env,
-      MODE: "job",
+      MODE: "run",
       WORKFLOW_RUN_ID: run.id,
-      JOB_ID: jobId,
+      RUN_EXECUTION_ID: executionId,
     };
 
     // Add tenant context
@@ -129,8 +134,8 @@ export class ProcessJobExecutor implements JobExecutor {
 
     const process = command.spawn();
 
-    const job: TrackedJob = {
-      jobId,
+    const execution: TrackedExecution = {
+      executionId,
       runId: run.id,
       managerId,
       process,
@@ -139,59 +144,59 @@ export class ProcessJobExecutor implements JobExecutor {
       startedAt: new Date(),
     };
 
-    this.activeJobs.set(jobId, job);
+    this.activeExecutions.set(executionId, execution);
 
     if (debug || this.config.debug) {
-      logger.info(`Spawned process for job ${jobId}, run ${run.id}`);
+      logger.info(`Spawned process for run execution ${executionId}, run ${run.id}`);
     }
 
     // Monitor the process in background
-    this.monitorProcess(job, timeout);
+    this.monitorProcess(execution, timeout);
 
-    return Promise.resolve(jobId);
+    return Promise.resolve(executionId);
   }
 
-  getJobStatus(jobId: string): Promise<JobInfo | null> {
-    const job = this.activeJobs.get(jobId);
-    if (!job) {
+  getRunExecutionStatus(executionId: string): Promise<RunExecutionInfo | null> {
+    const execution = this.activeExecutions.get(executionId);
+    if (!execution) {
       return Promise.resolve(null);
     }
 
-    return Promise.resolve(this.toJobInfo(job));
+    return Promise.resolve(this.toRunExecutionInfo(execution));
   }
 
-  listJobs(managerId: string): Promise<JobInfo[]> {
-    const jobs: JobInfo[] = [];
+  listRunExecutions(managerId: string): Promise<RunExecutionInfo[]> {
+    const executions: RunExecutionInfo[] = [];
 
-    for (const job of this.activeJobs.values()) {
-      if (job.managerId === managerId) {
-        jobs.push(this.toJobInfo(job));
+    for (const execution of this.activeExecutions.values()) {
+      if (execution.managerId === managerId) {
+        executions.push(this.toRunExecutionInfo(execution));
       }
     }
 
-    return Promise.resolve(jobs);
+    return Promise.resolve(executions);
   }
 
-  deleteJob(jobId: string): Promise<void> {
-    const job = this.activeJobs.get(jobId);
-    if (!job) {
+  deleteRunExecution(executionId: string): Promise<void> {
+    const execution = this.activeExecutions.get(executionId);
+    if (!execution) {
       return Promise.resolve();
     }
 
     // Kill the process if still running
-    if (job.status === "running" || job.status === "pending") {
+    if (execution.status === "running" || execution.status === "pending") {
       try {
-        job.process.kill("SIGTERM");
+        execution.process.kill("SIGTERM");
       } catch (_) {
         /* expected: process may already be dead */
       }
     }
 
-    if (job.timeoutId) clearTimeout(job.timeoutId);
-    this.activeJobs.delete(jobId);
+    if (execution.timeoutId) clearTimeout(execution.timeoutId);
+    this.activeExecutions.delete(executionId);
 
     if (this.config.debug) {
-      logger.info(`Deleted job ${jobId}`);
+      logger.info(`Deleted run execution ${executionId}`);
     }
 
     return Promise.resolve();
@@ -199,18 +204,18 @@ export class ProcessJobExecutor implements JobExecutor {
 
   destroy(): Promise<void> {
     // Kill all active processes and clear their timers
-    for (const job of this.activeJobs.values()) {
-      if (job.timeoutId) clearTimeout(job.timeoutId);
-      if (job.status === "running" || job.status === "pending") {
+    for (const execution of this.activeExecutions.values()) {
+      if (execution.timeoutId) clearTimeout(execution.timeoutId);
+      if (execution.status === "running" || execution.status === "pending") {
         try {
-          job.process.kill("SIGTERM");
+          execution.process.kill("SIGTERM");
         } catch (_) {
           /* expected: process may already be dead */
         }
       }
     }
 
-    this.activeJobs.clear();
+    this.activeExecutions.clear();
 
     return Promise.resolve();
   }
@@ -218,18 +223,18 @@ export class ProcessJobExecutor implements JobExecutor {
   /**
    * Monitor a process and update its status when it exits
    */
-  private monitorProcess(job: TrackedJob, timeout: number): void {
+  private monitorProcess(execution: TrackedExecution, timeout: number): void {
     // Set up timeout
-    job.timeoutId = setTimeout(() => {
-      job.timeoutId = undefined;
-      if (job.status === "running") {
+    execution.timeoutId = setTimeout(() => {
+      execution.timeoutId = undefined;
+      if (execution.status === "running") {
         try {
-          job.process.kill("SIGTERM");
-          job.status = "failed";
-          job.error = `Job timed out after ${timeout}ms`;
-          job.completedAt = new Date();
+          execution.process.kill("SIGTERM");
+          execution.status = "failed";
+          execution.error = `Run execution timed out after ${timeout}ms`;
+          execution.completedAt = new Date();
 
-          logger.warn(`Job ${job.jobId} timed out`);
+          logger.warn(`Run execution ${execution.executionId} timed out`);
         } catch (_) {
           /* expected: process may already be dead */
         }
@@ -239,61 +244,61 @@ export class ProcessJobExecutor implements JobExecutor {
     // Wait for process to complete (fire-and-forget with error handling)
     void (async () => {
       try {
-        const status = await job.process.status;
-        clearTimeout(job.timeoutId);
-        job.timeoutId = undefined;
+        const status = await execution.process.status;
+        clearTimeout(execution.timeoutId);
+        execution.timeoutId = undefined;
 
-        job.completedAt = new Date();
+        execution.completedAt = new Date();
 
-        if (job.status === "failed") {
+        if (execution.status === "failed") {
           // Already marked as failed (e.g. timeout) — don't overwrite
           return;
         }
 
         if (status.success) {
-          job.status = "succeeded";
+          execution.status = "succeeded";
 
           if (this.config.debug) {
-            logger.info(`Job ${job.jobId} succeeded`);
+            logger.info(`Run execution ${execution.executionId} succeeded`);
           }
         } else {
-          job.status = "failed";
-          job.error = `Process exited with code ${status.code}`;
+          execution.status = "failed";
+          execution.error = `Process exited with code ${status.code}`;
 
-          logger.error(`Job ${job.jobId} failed with code ${status.code}`);
+          logger.error(`Run execution ${execution.executionId} failed with code ${status.code}`);
         }
       } catch (error) {
-        clearTimeout(job.timeoutId);
-        job.timeoutId = undefined;
+        clearTimeout(execution.timeoutId);
+        execution.timeoutId = undefined;
 
-        job.status = "failed";
-        job.error = error instanceof Error ? error.message : String(error);
-        job.completedAt = new Date();
+        execution.status = "failed";
+        execution.error = error instanceof Error ? error.message : String(error);
+        execution.completedAt = new Date();
 
-        logger.error(`Job ${job.jobId} error:`, error);
+        logger.error(`Run execution ${execution.executionId} error:`, error);
       }
     })();
 
     // Log stdout/stderr in debug mode
     if (this.config.debug) {
-      this.streamOutput(job);
+      this.streamOutput(execution);
     }
   }
 
   /**
    * Stream process output to logs
    */
-  private streamOutput(job: TrackedJob): void {
+  private streamOutput(execution: TrackedExecution): void {
     const decoder = new TextDecoder();
 
     // Stream stdout
-    const stdout = job.process.stdout;
+    const stdout = execution.process.stdout;
     if (stdout) {
       (async () => {
         for await (const chunk of stdout) {
           const text = decoder.decode(chunk).trim();
           if (text) {
-            logger.debug(`[Job ${job.jobId}] ${text}`);
+            logger.debug(`[RunExecution ${execution.executionId}] ${text}`);
           }
         }
       })().catch(() => {
@@ -302,13 +307,13 @@ export class ProcessJobExecutor implements JobExecutor {
     }
 
     // Stream stderr
-    const stderr = job.process.stderr;
+    const stderr = execution.process.stderr;
     if (stderr) {
       (async () => {
         for await (const chunk of stderr) {
           const text = decoder.decode(chunk).trim();
           if (text) {
-            logger.error(`[Job ${job.jobId}] ${text}`);
+            logger.error(`[RunExecution ${execution.executionId}] ${text}`);
           }
         }
       })().catch(() => {
@@ -318,19 +323,19 @@ export class ProcessJobExecutor implements JobExecutor {
   }
 
   /**
-   * Convert tracked job to JobInfo
+   * Convert tracked execution to RunExecutionInfo
    */
-  private toJobInfo(job: TrackedJob): JobInfo {
+  private toRunExecutionInfo(execution: TrackedExecution): RunExecutionInfo {
     return {
-      jobId: job.jobId,
-      runId: job.runId,
-      status: job.status,
-      createdAt: job.createdAt,
-      startedAt: job.startedAt,
-      completedAt: job.completedAt,
-      error: job.error,
+      executionId: execution.executionId,
+      runId: execution.runId,
+      status: execution.status,
+      createdAt: execution.createdAt,
+      startedAt: execution.startedAt,
+      completedAt: execution.completedAt,
+      error: execution.error,
       metadata: {
-        pid: job.process.pid,
+        pid: execution.process.pid,
         command: this.config.command,
       },
     };

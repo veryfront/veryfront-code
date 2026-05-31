@@ -9,15 +9,15 @@ A workflow is a file in `workflows/` that declares ordered steps. Each step runs
 Use workflows for multi-step work that needs ordering, branching, parallelism, retries, timeouts, or approvals.
 
 Workflow files are definitions. Starting a workflow creates a workflow run. On
-the Veryfront platform, that workflow run is backed by a job so it can be
-queued, retried, canceled, logged, and observed in the Jobs panel.
+the Veryfront platform, that workflow run is backed by a runtime adapter so it can be
+queued, retried, canceled, logged, and observed in the Runs panel.
 
-| Concept      | Meaning                                                                                  |
-| ------------ | ---------------------------------------------------------------------------------------- |
-| Workflow     | The definition stored in `workflows/`.                                                   |
-| Workflow run | The canonical public execution record for a started workflow.                            |
-| Job          | The durable backing execution record that queues and dispatches the workflow run.        |
-| Cron job     | A schedule that creates workflow runs over time when its target starts with `workflow:`. |
+| Concept         | Meaning                                                                                                  |
+| --------------- | -------------------------------------------------------------------------------------------------------- |
+| Workflow        | The definition stored in `workflows/`.                                                                   |
+| Workflow run    | The canonical public execution record for a started workflow.                                            |
+| Runtime adapter | The implementation detail that dispatches the workflow run to a runtime target or infrastructure worker. |
+| Schedule        | A trigger definition that creates workflow runs over time when its target starts with `workflow:`.       |
 
 ## Prerequisites
 
@@ -52,12 +52,12 @@ Steps run in order. Each step's output is available to the next step via the wor
 
 Define workflows in `workflows/`, then start them from the surface that owns the user or system event.
 
-| Start point | Use when |
-| ----------- | -------- |
-| API route | A user action or webhook starts the run. |
-| Agent tool | An agent decides whether to start the run. |
-| Task | Background work starts the run. |
-| Client UI | The UI calls an API route that starts the run. |
+| Start point | Use when                                       |
+| ----------- | ---------------------------------------------- |
+| API route   | A user action or webhook starts the run.       |
+| Agent tool  | An agent decides whether to start the run.     |
+| Task        | Background work starts the run.                |
+| Client UI   | The UI calls an API route that starts the run. |
 
 Use `createWorkflowClient()` to register and start a workflow from server code:
 
@@ -147,9 +147,9 @@ Use `handle.result()` only when the caller should wait for completion. Return th
 
 ## Schedule a workflow
 
-Use a cron job with a `workflow:<workflow-id>` target when a workflow must run on a schedule. See [Jobs and cron jobs](./jobs.md) for the scheduling API and event monitoring.
+Use a schedule with a `workflow:<workflow-id>` target when a workflow must run on a schedule. See [Runs](./runs.md) for run creation and event monitoring.
 
-Each scheduled trigger creates a workflow run backed by a job.
+Each scheduled trigger creates a workflow run backed by the selected runtime adapter.
 
 ## Steps
 

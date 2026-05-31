@@ -162,7 +162,7 @@ Each pod runs both HTTP server and workflow worker. Redis handles coordination:
 
 ### Veryfront Cloud (Multi-Tenant)
 
-For multi-tenant SaaS with untrusted user code, we use K8s Job isolation:
+For multi-tenant SaaS with untrusted user code, Veryfront Cloud uses isolated run execution:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -179,21 +179,21 @@ For multi-tenant SaaS with untrusted user code, we use K8s Job isolation:
 │                              ▼                                  │
 │                    ┌──────────────────┐                         │
 │                    │      Redis       │                         │
-│                    │  (Job Queue)     │                         │
+│                    │  (Run Queue)     │                         │
 │                    └──────────────────┘                         │
 │                              │                                  │
 │                              ▼                                  │
 │  ┌─────────────────────────────────────────────────────────┐   │
 │  │              Workflow Run Manager Pod                    │   │
 │  │  • Polls Redis for pending workflows                     │   │
-│  │  • Creates K8s Job per workflow                          │   │
+│  │  • Creates one isolated execution per workflow            │   │
 │  │  • Never executes user code                              │   │
 │  └─────────────────────────────────────────────────────────┘   │
 │                              │                                  │
 │              ┌───────────────┼───────────────┐                  │
 │              ▼               ▼               ▼                  │
 │       ┌───────────┐   ┌───────────┐   ┌───────────┐            │
-│       │  Job Pod  │   │  Job Pod  │   │  Job Pod  │            │
+│       │ Run Pod   │   │ Run Pod   │   │ Run Pod   │            │
 │       │ tenant-a  │   │ tenant-b  │   │ tenant-c  │            │
 │       │ ephemeral │   │ ephemeral │   │ ephemeral │            │
 │       └───────────┘   └───────────┘   └───────────┘            │
@@ -204,7 +204,7 @@ For multi-tenant SaaS with untrusted user code, we use K8s Job isolation:
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-**Why K8s Jobs for multi-tenant?**
+**Why isolated runs for multi-tenant?**
 
 Workflows execute **user-defined code** (tools, agents, custom logic). In a multi-tenant environment:
 
@@ -241,9 +241,9 @@ WORKER_CONCURRENCY=3                 # Max concurrent workflow resumes
 
 # Workflow run manager mode (multi-tenant)
 MODE=workflow-run-manager            # Run as workflow run manager only
-JOB_NAMESPACE=workflows              # K8s namespace for jobs
-JOB_IMAGE=veryfront-renderer:latest  # Image for job pods
-JOB_TIMEOUT=1800000                  # 30 minute timeout
+RUN_EXECUTION_NAMESPACE=workflows    # Runtime namespace for run executions
+RUN_EXECUTION_IMAGE=veryfront-renderer:latest
+RUN_EXECUTION_TIMEOUT=1800000        # 30 minute timeout
 ```
 
 ### Programmatic Configuration
@@ -271,22 +271,22 @@ const worker = new WorkflowWorker({
 worker.start();
 ```
 
-### Job Executors (Pluggable Runtimes)
+### Run Executors (Pluggable Runtimes)
 
-The `WorkflowRunManager` uses a pluggable `JobExecutor` interface, allowing workflows to run on different runtimes:
+The `WorkflowRunManager` uses a pluggable `RunExecutor` interface, allowing workflows to run on different runtimes:
 
 ```typescript
 import {
-  K8sJobExecutor,
-  ProcessJobExecutor,
+  K8sRunExecutor,
+  ProcessRunExecutor,
   RedisBackend,
   WorkflowRunManager,
 } from "veryfront/workflow";
 
 const backend = new RedisBackend({ url: process.env.REDIS_URL });
 
-// Production: Kubernetes Jobs
-const k8sExecutor = new K8sJobExecutor({
+// Production: Kubernetes-backed run executions
+const k8sExecutor = new K8sRunExecutor({
   image: "my-app:latest",
   namespace: "workflows",
   resources: {
@@ -296,8 +296,8 @@ const k8sExecutor = new K8sJobExecutor({
 }, k8sClient);
 
 // Local development: Child processes
-const processExecutor = new ProcessJobExecutor({
-  entrypointPath: "./job-entrypoint.ts",
+const processExecutor = new ProcessRunExecutor({
+  entrypointPath: "./run-entrypoint.ts",
   env: { REDIS_URL: process.env.REDIS_URL },
 });
 
@@ -305,8 +305,8 @@ const processExecutor = new ProcessJobExecutor({
 const manager = new WorkflowRunManager({
   backend,
   executor: process.env.NODE_ENV === "production" ? k8sExecutor : processExecutor,
-  maxConcurrentJobs: 10,
-  jobTimeout: 30 * 60 * 1000, // 30 minutes
+  maxConcurrentExecutions: 10,
+  executionTimeout: 30 * 60 * 1000, // 30 minutes
 });
 
 await manager.start();
@@ -316,28 +316,28 @@ await manager.start();
 
 | Executor             | Use Case                | Isolation                |
 | -------------------- | ----------------------- | ------------------------ |
-| `K8sJobExecutor`     | Production multi-tenant | Full container isolation |
-| `ProcessJobExecutor` | Local development       | Process-level isolation  |
+| `K8sRunExecutor`     | Production multi-tenant | Full container isolation |
+| `ProcessRunExecutor` | Local development       | Process-level isolation  |
 
 **Creating a Custom Executor:**
 
 ```typescript
-import type { JobConfig, JobExecutor, JobInfo } from "veryfront/workflow";
+import type { RunExecutionConfig, RunExecutor, RunExecutionInfo } from "veryfront/workflow";
 
-class DockerJobExecutor implements JobExecutor {
-  async createJob(config: JobConfig): Promise<string> {
+class DockerRunExecutor implements RunExecutor {
+  async createRunExecution(config: RunExecutionConfig): Promise<string> {
     // Spawn a Docker container
   }
 
-  async getJobStatus(jobId: string): Promise<JobInfo | null> {
+  async getRunExecutionStatus(executionId: string): Promise<RunExecutionInfo | null> {
     // Check container status
   }
 
-  async listJobs(managerId: string): Promise<JobInfo[]> {
+  async listRunExecutions(managerId: string): Promise<RunExecutionInfo[]> {
     // List containers with manager label
   }
 
-  async deleteJob(jobId: string): Promise<void> {
+  async deleteRunExecution(executionId: string): Promise<void> {
     // Remove container
   }
 }
@@ -371,18 +371,18 @@ This works across:
 
 - Crash recovery (context restored from checkpoint)
 - Different pods (context in Redis)
-- Job pods (context passed via environment)
+- Run execution pods (context passed via environment)
 
 ## Deployment Modes Summary
 
 | Mode             | Use Case                 | Code Trust | Isolation              | Executor                      |
 | ---------------- | ------------------------ | ---------- | ---------------------- | ----------------------------- |
 | **Dev (simple)** | Local development        | Your code  | None needed            | In-process (`WorkflowWorker`) |
-| **Dev (jobs)**   | Local with job isolation | Your code  | Process per workflow   | `ProcessJobExecutor`          |
+| **Dev (runs)**   | Local with run isolation | Your code  | Process per workflow   | `ProcessRunExecutor`          |
 | **Self-hosted**  | Single-tenant prod       | Your code  | Shared process OK      | In-process (`WorkflowWorker`) |
-| **Cloud**        | Multi-tenant SaaS        | User code  | Container per workflow | `K8sJobExecutor`              |
+| **Cloud**        | Multi-tenant SaaS        | User code  | Container per workflow | `K8sRunExecutor`              |
 
-**Key decision:** If workflows execute untrusted user-defined code, use `K8sJobExecutor` for container isolation. For local development that mirrors production behavior, use `ProcessJobExecutor`.
+**Key decision:** If workflows execute untrusted user-defined code, use `K8sRunExecutor` for container isolation. For local development that mirrors production behavior, use `ProcessRunExecutor`.
 
 ## Architecture Deep Dive
 
