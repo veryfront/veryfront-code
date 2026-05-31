@@ -2,7 +2,7 @@
   "name": "harvest",
   "displayName": "Harvest",
   "icon": "harvest.svg",
-  "description": "Track time, manage projects, and control invoices with Harvest — trusted by 70,000+ businesses",
+  "description": "Track time, manage projects, and control invoices with Harvest \u2014 trusted by 70,000+ businesses",
   "auth": {
     "type": "oauth2",
     "provider": "harvest",
@@ -56,9 +56,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/users/me",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           }
@@ -74,9 +75,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/users",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -118,9 +120,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/time_entries",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -196,9 +199,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/time_entries/{timeEntryId}",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -220,9 +224,10 @@
         "method": "POST",
         "url": "https://api.harvestapp.com/v2/time_entries",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           }
@@ -279,9 +284,10 @@
         "method": "PATCH",
         "url": "https://api.harvestapp.com/v2/time_entries/{timeEntryId}",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -337,9 +343,10 @@
         "method": "DELETE",
         "url": "https://api.harvestapp.com/v2/time_entries/{timeEntryId}",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -361,9 +368,10 @@
         "method": "PATCH",
         "url": "https://api.harvestapp.com/v2/time_entries/{timeEntryId}/stop",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -385,9 +393,10 @@
         "method": "PATCH",
         "url": "https://api.harvestapp.com/v2/time_entries/{timeEntryId}/restart",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -409,9 +418,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/projects",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -457,9 +467,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/projects/{projectId}",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -481,9 +492,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/tasks",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -524,9 +536,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/projects/{projectId}/task_assignments",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -573,9 +586,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/clients",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -616,9 +630,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/clients/{clientId}",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -640,9 +655,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/invoices",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -703,9 +719,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/invoices/{invoiceId}",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -727,9 +744,10 @@
         "method": "POST",
         "url": "https://api.harvestapp.com/v2/invoices",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           }
@@ -780,9 +798,10 @@
         "method": "PATCH",
         "url": "https://api.harvestapp.com/v2/invoices/{invoiceId}",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -826,9 +845,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/invoices/{invoiceId}/payments",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -870,9 +890,10 @@
         "method": "POST",
         "url": "https://api.harvestapp.com/v2/invoices/{invoiceId}/payments",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -918,9 +939,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/reports/time/projects",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -983,9 +1005,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/reports/time/team",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -1043,9 +1066,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/reports/time/clients",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -1103,9 +1127,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/reports/time/tasks",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },
@@ -1163,9 +1188,10 @@
         "method": "GET",
         "url": "https://api.harvestapp.com/v2/reports/invoices/invoiced",
         "params": {
-          "Harvest-Account-Id": {
+          "account_id": {
             "type": "string",
             "in": "header",
+            "headerName": "Harvest-Account-Id",
             "description": "Harvest Account ID (get it from list_accounts)",
             "required": true
           },

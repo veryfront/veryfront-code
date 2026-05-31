@@ -121,6 +121,9 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // For header params only: the HTTP header name to send when it differs from
+    // the agent-facing parameter key (e.g. input account_id → header Harvest-Account-Id).
+    headerName: v.string().optional(),
   })
 );
 export const IntegrationEndpointParamSchema = lazySchema(getIntegrationEndpointParamSchema);
