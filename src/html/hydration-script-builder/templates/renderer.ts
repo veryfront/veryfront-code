@@ -83,7 +83,7 @@ export const getRendererScript = () => `
         const pageProps = { ...(data.props || {}), params: data.params || {} };
         let tree = React.createElement(PageComponent, pageProps);
 
-        const layouts = shouldRenderRscClientPage ? [] : data.layouts;
+        const layouts = data.layouts;
         if (layouts?.length) {
           for (let i = layouts.length - 1; i >= 0; i--) {
             const LayoutComponent = await loadComponent(layouts[i].path);

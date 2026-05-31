@@ -66,7 +66,7 @@ describe("hydration-script-builder/templates/renderer", () => {
 
     it("should wrap with layouts from innermost to outermost", () => {
       const result = getRendererScript();
-      assertIncludes(result, "const layouts = shouldRenderRscClientPage ? [] : data.layouts");
+      assertIncludes(result, "const layouts = data.layouts");
       assertIncludes(result, "layouts.length - 1; i >= 0; i--");
     });
 

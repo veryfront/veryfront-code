@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { buildAppRoutes, buildPagesRoutes } from "./static-generation.ts";
+import { clearCSSCache, getCSSByHash } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { VeryfrontRenderer } from "#veryfront/rendering/orchestrator/ssr.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
@@ -106,10 +107,8 @@ describe(
         assertEquals(stats.pages, 1);
         const html = adapter.fs.files.get("/tmp/output/index.html") ?? "";
         assertStringIncludes(html, '<link rel="stylesheet" href="/_vf/css/');
-        assertStringIncludes(
-          html,
-          '<script type="module" src="/_veryfront/rsc/client.js"></script>',
-        );
+        assertEquals(html.includes("/_veryfront/rsc/client.js"), false);
+        assertEquals(html.includes("/_veryfront/hydration-runtime.js"), false);
         assertEquals(html.includes("/_veryfront/app.js"), false);
         assertEquals(html.includes("/_vf_styles/styles.css"), false);
         const cssPath = [...adapter.fs.files.keys()].find((path) =>
@@ -117,6 +116,82 @@ describe(
         );
         assertEquals(typeof cssPath, "string");
         assertStringIncludes(adapter.fs.files.get(cssPath!) ?? "", ".h-screen");
+      });
+
+      it("caches generated App Router CSS by hash for runtime CSS handler lookups", async () => {
+        clearCSSCache();
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set("/tmp/project/globals.css", '@import "tailwindcss";');
+        adapter.fs.files.set(
+          "/tmp/project/app/page.tsx",
+          `export default function Page() {
+          return <main className="mx-auto px-4">Hello</main>;
+        }`,
+        );
+
+        try {
+          await buildAppRoutes(
+            [{
+              path: "/",
+              pageFile: "/tmp/project/app/page.tsx",
+              segments: [],
+              segmentDirs: ["/tmp/project/app"],
+            }],
+            {
+              adapter,
+              projectDir: "/tmp/project",
+              outputDir: "/tmp/output",
+              renderer: createMockRenderer(),
+              config: createMockConfig(),
+              enablePrefetch: false,
+              chunkManifest: null,
+            },
+          );
+
+          const html = adapter.fs.files.get("/tmp/output/index.html") ?? "";
+          const hash = html.match(/\/_vf\/css\/([a-z0-9-]+)\.css/)?.[1];
+          assertEquals(typeof hash, "string");
+          const cached = getCSSByHash(hash!);
+          assertEquals(typeof cached, "string");
+          assertStringIncludes(cached!, ".mx-auto");
+        } finally {
+          clearCSSCache();
+        }
+      });
+
+      it("includes framework component candidates in generated App Router CSS", async () => {
+        const adapter = createMemoryAdapter();
+        adapter.fs.files.set("/tmp/project/globals.css", '@import "tailwindcss";');
+        adapter.fs.files.set(
+          "/tmp/project/app/page.tsx",
+          `export default function Page() {
+          return <main className="px-4">Hello</main>;
+        }`,
+        );
+
+        await buildAppRoutes(
+          [{
+            path: "/",
+            pageFile: "/tmp/project/app/page.tsx",
+            segments: [],
+            segmentDirs: ["/tmp/project/app"],
+          }],
+          {
+            adapter,
+            projectDir: "/tmp/project",
+            outputDir: "/tmp/output",
+            renderer: createMockRenderer(),
+            config: createMockConfig(),
+            enablePrefetch: false,
+            chunkManifest: null,
+          },
+        );
+
+        const cssPath = [...adapter.fs.files.keys()].find((path) =>
+          path.startsWith("/tmp/output/_vf/css/") && path.endsWith(".css")
+        );
+        assertEquals(typeof cssPath, "string");
+        assertStringIncludes(adapter.fs.files.get(cssPath!) ?? "", ".animate-spin");
       });
     });
 

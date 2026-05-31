@@ -14,10 +14,13 @@ import type { AppRouteInfo, RouteInfo } from "#veryfront/server/build-types.ts";
 import { loadClientStyles } from "./asset-generation.ts";
 import { generateImportMap } from "./client-runtime.ts";
 import {
+  cacheCSSAsync,
   extractCandidatesFromFiles,
   generateTailwindCSS,
   hashCSS,
 } from "#veryfront/html/styles-builder/index.ts";
+import { DEFAULT_STYLESHEET } from "#veryfront/html/styles-builder/css-hash-cache.ts";
+import { FRAMEWORK_CANDIDATES } from "#veryfront/server/handlers/dev/framework-candidates.generated.ts";
 
 export interface PageRenderResult {
   html: string;
@@ -140,6 +143,7 @@ async function prepareAppRouteStylesheet(
   const candidates = extractCandidatesFromFiles(sourceFiles, {
     projectDir: options.projectDir,
   });
+  for (const candidate of FRAMEWORK_CANDIDATES) candidates.add(candidate);
 
   const generated = await generateTailwindCSS(stylesheet, candidates, {
     minify: true,
@@ -154,6 +158,11 @@ async function prepareAppRouteStylesheet(
 
   const hash = hashCSS(generated.css);
   if (!hash) return undefined;
+
+  await cacheCSSAsync(generated.css, hash, {
+    candidates,
+    stylesheet: stylesheet ?? DEFAULT_STYLESHEET,
+  });
 
   if (!options.dryRun) {
     const cssPath = join(options.outputDir, "_vf/css", `${hash}.css`);

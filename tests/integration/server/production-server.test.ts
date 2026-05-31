@@ -179,7 +179,9 @@ describe(
             await mkdir(join(context.projectDir, "app"), { recursive: true });
             await writeTextFile(
               join(context.projectDir, "app", "page.tsx"),
-              `export default function HomePage() {
+              `"use client";
+
+              export default function HomePage() {
                 return <h1>Nonce-safe App Router</h1>;
               }`,
             );
@@ -207,8 +209,11 @@ describe(
               "Static App Router importmap should use the response nonce",
             );
             assert(
-              html.includes(`<script type="module" nonce="${nonce}">`),
-              "Static App Router bootstrap module should use the response nonce",
+              new RegExp(
+                `<script\\b(?=[^>]*\\btype="module")(?=[^>]*\\bnonce="${nonce}")[^>]*>`,
+                "u",
+              ).test(html),
+              "Hydratable App Router bootstrap module should use the response nonce",
             );
           });
         });
