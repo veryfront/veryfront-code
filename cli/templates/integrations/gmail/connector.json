@@ -274,7 +274,26 @@
         "method": "GET",
         "url": "https://gmail.googleapis.com/gmail/v1/users/me/labels",
         "response": {
-          "transform": "labels"
+          "transform": "labels",
+          "historicalSummary": {
+            "collectionKeys": [
+              "labels",
+              "data"
+            ],
+            "collectionName": "labels",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "type"
+              }
+            ],
+            "omitted": "label counters and provider-specific payload fields"
+          }
         }
       }
     },
@@ -564,7 +583,35 @@
           }
         },
         "response": {
-          "transform": "threads"
+          "transform": "threads",
+          "historicalSummary": {
+            "collectionKeys": [
+              "threads",
+              "data"
+            ],
+            "collectionName": "threads",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "snippet",
+                "maxLength": 300
+              },
+              {
+                "name": "historyId"
+              }
+            ],
+            "omitted": "large thread payloads and provider-specific fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "resultSizeEstimate"
+              }
+            ]
+          }
         }
       }
     },
@@ -718,7 +765,32 @@
           }
         },
         "response": {
-          "transform": "drafts"
+          "transform": "drafts",
+          "historicalSummary": {
+            "collectionKeys": [
+              "drafts",
+              "data"
+            ],
+            "collectionName": "drafts",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "message",
+                "kind": "object"
+              }
+            ],
+            "omitted": "draft message bodies and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "resultSizeEstimate"
+              }
+            ]
+          }
         }
       }
     },
@@ -877,7 +949,42 @@
             "description": "History event types"
           }
         }
-      }
+      ,
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "history",
+              "data"
+            ],
+            "collectionName": "history",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "messages",
+                "kind": "object"
+              },
+              {
+                "name": "messagesAdded",
+                "kind": "object"
+              },
+              {
+                "name": "messagesDeleted",
+                "kind": "object"
+              }
+            ],
+            "omitted": "history details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "historyId"
+              }
+            ]
+          }
+        }}
     }
   ],
   "prompts": [

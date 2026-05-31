@@ -19,7 +19,8 @@ function createRuntimeStream(parts: unknown[]) {
 }
 
 function extractSystemPrompt(options: unknown): string {
-  const prompt = (options as { prompt?: Array<{ role?: string; content?: unknown }> }).prompt;
+  const prompt = (options as { prompt?: Array<{ role?: string; content?: unknown }> })
+    .prompt;
   if (!Array.isArray(prompt)) {
     return "";
   }
@@ -28,6 +29,13 @@ function extractSystemPrompt(options: unknown): string {
     .filter((entry) => entry?.role === "system" && typeof entry.content === "string")
     .map((entry) => entry.content as string)
     .join("\n");
+}
+
+function stripCurrentRunToolStateSystemPrompt(systemPrompt: string): string {
+  return systemPrompt.replace(
+    /\n\n<tool_state current_run="true">\n[\s\S]*?\n<\/tool_state>$/u,
+    "",
+  );
 }
 
 describe("agent runtime refresh hooks", () => {
@@ -49,7 +57,12 @@ describe("agent runtime refresh hooks", () => {
         };
       },
       async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+        return {
+          stream: createRuntimeStream([{
+            type: "finish",
+            finishReason: "stop",
+          }]),
+        };
       },
     };
 
@@ -127,7 +140,11 @@ describe("agent runtime refresh hooks", () => {
         return {
           stream: createRuntimeStream([
             { type: "text-delta", text: "stream complete" },
-            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
           ]),
         };
       },
@@ -182,7 +199,9 @@ describe("agent runtime refresh hooks", () => {
       modelId: "hosted/runtime-refresh-generate",
       async doGenerate(options: unknown) {
         callCount++;
-        observedSystems.push(extractSystemPrompt(options));
+        observedSystems.push(
+          stripCurrentRunToolStateSystemPrompt(extractSystemPrompt(options)),
+        );
 
         if (callCount === 1) {
           return {
@@ -217,7 +236,12 @@ describe("agent runtime refresh hooks", () => {
         };
       },
       async doStream() {
-        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+        return {
+          stream: createRuntimeStream([{
+            type: "finish",
+            finishReason: "stop",
+          }]),
+        };
       },
     };
 
@@ -316,7 +340,9 @@ describe("agent runtime refresh hooks", () => {
       },
       async doStream(options: unknown) {
         callCount++;
-        observedSystems.push(extractSystemPrompt(options));
+        observedSystems.push(
+          stripCurrentRunToolStateSystemPrompt(extractSystemPrompt(options)),
+        );
 
         if (callCount === 1) {
           return {
@@ -339,7 +365,11 @@ describe("agent runtime refresh hooks", () => {
         return {
           stream: createRuntimeStream([
             { type: "text-delta", text: "stream done" },
-            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+            {
+              type: "finish",
+              finishReason: "stop",
+              usage: { inputTokens: 1, outputTokens: 1 },
+            },
           ]),
         };
       },
