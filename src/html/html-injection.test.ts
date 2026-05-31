@@ -108,7 +108,7 @@ describe("html/html-injection", () => {
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
     });
 
-    it("uses the page renderer hydration runtime for production client pages", () => {
+    it("keeps production client-page injection on the RSC client boot script", () => {
       const html = injectHTMLContent(
         baseTemplate,
         "<p>content</p>",
@@ -121,8 +121,8 @@ describe("html/html-injection", () => {
         },
       );
 
-      assertEquals(html.includes("/_veryfront/hydration-runtime.js"), true);
-      assertEquals(html.includes("/_veryfront/rsc/client.js"), false);
+      assertEquals(html.includes("/_veryfront/rsc/client.js"), true);
+      assertEquals(html.includes("/_veryfront/hydration-runtime.js"), false);
     });
 
     it("adds the provided nonce to client-page hydration data", () => {

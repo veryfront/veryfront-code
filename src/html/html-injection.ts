@@ -12,10 +12,9 @@ import {
   getDevScripts,
   getDevStyles,
   getPreviewStylesheetLink,
-  getProdScripts as getLegacyProdScripts,
+  getProdScripts,
   getStudioScripts,
 } from "./dev-scripts.ts";
-import { getProdScripts as getPageRendererProdScripts } from "./hydration-script-builder/prod-scripts.ts";
 
 export interface InjectHTMLContentOptions {
   mode: string;
@@ -149,9 +148,7 @@ export function injectHTMLContent(
     html = html.replace(/{{\s*devScripts\s*}}/gi, "");
     html = html.replace(/{{\s*devStyles\s*}}/gi, "");
 
-    const prodScripts = options.pagePath && options.isClientPage
-      ? getPageRendererProdScripts(options.slug, undefined, undefined, options.nonce)
-      : getLegacyProdScripts(options.slug, options.nonce);
+    const prodScripts = getProdScripts(options.slug, options.nonce);
     const hasProdScriptsPlaceholder = /{{\s*prodScripts\s*}}/i.test(html);
 
     if (hasProdScriptsPlaceholder) {
