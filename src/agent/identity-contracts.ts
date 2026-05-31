@@ -1,42 +1,13 @@
-export const AGENT_CATALOG_SOURCE_TYPES = [
-  "project_agent",
-  "catalog_entry",
+export const AGENT_CATALOG_KINDS = [
+  "template_agent",
+  "installable_agent",
 ] as const;
 
-export type AgentCatalogSourceType = (typeof AGENT_CATALOG_SOURCE_TYPES)[number];
-
-export type ProjectAgentCatalogSource = {
-  type: "project_agent";
-  project_reference: string;
-  source_path: string | null;
-};
-
-export type CatalogEntryAgentCatalogSource = {
-  type: "catalog_entry";
-  catalog_entry_id: string;
-  project_reference: string | null;
-};
-
-export type AgentCatalogSource =
-  | ProjectAgentCatalogSource
-  | CatalogEntryAgentCatalogSource;
-
-export const AGENT_INSTALL_TARGETS = ["project", "account"] as const;
-
-export type AgentInstallTarget = (typeof AGENT_INSTALL_TARGETS)[number];
-
-export const AGENT_CUSTOMIZATION_MODES = [
-  "none",
-  "configure",
-  "fork_to_project",
-] as const;
-
-export type AgentCustomizationMode = (typeof AGENT_CUSTOMIZATION_MODES)[number];
+export type AgentCatalogKind = (typeof AGENT_CATALOG_KINDS)[number];
 
 export const AGENT_CATALOG_ACTIONS = [
-  "install_to_project",
-  "install_to_account",
-  "fork_to_project",
+  "fork",
+  "install",
 ] as const;
 
 export type AgentCatalogAction = (typeof AGENT_CATALOG_ACTIONS)[number];
@@ -90,24 +61,8 @@ export type ProjectAgentRunSnapshot =
   | SourceProjectAgentRunSnapshot
   | InstalledProjectAgentRunSnapshot;
 
-export function isAgentCatalogSourceType(
-  value: string,
-): value is AgentCatalogSourceType {
-  return AGENT_CATALOG_SOURCE_TYPES.includes(
-    value as AgentCatalogSourceType,
-  );
-}
-
-export function isAgentInstallTarget(
-  value: string,
-): value is AgentInstallTarget {
-  return AGENT_INSTALL_TARGETS.includes(value as AgentInstallTarget);
-}
-
-export function isAgentCustomizationMode(
-  value: string,
-): value is AgentCustomizationMode {
-  return AGENT_CUSTOMIZATION_MODES.includes(value as AgentCustomizationMode);
+export function isAgentCatalogKind(value: string): value is AgentCatalogKind {
+  return AGENT_CATALOG_KINDS.includes(value as AgentCatalogKind);
 }
 
 export function isAgentCatalogAction(
