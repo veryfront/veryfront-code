@@ -8,6 +8,7 @@
     "provider": "harvest",
     "authorizationUrl": "https://id.getharvest.com/oauth2/authorize",
     "tokenUrl": "https://id.getharvest.com/api/v2/oauth2/token",
+    "scopes": [],
     "callbackPath": "/api/auth/harvest/callback",
     "requiredApis": [
       {
