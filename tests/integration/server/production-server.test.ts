@@ -21,6 +21,10 @@ import { TestDataFactory } from "../../fixtures/test-data-factory.ts";
 import { withTestContext } from "../../_helpers/context.ts";
 import { cleanupBundler } from "../../../src/rendering/cleanup.ts";
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 describe(
   "ProductionServer",
   {
@@ -210,7 +214,9 @@ describe(
             );
             assert(
               new RegExp(
-                `<script\\b(?=[^>]*\\btype="module")(?=[^>]*\\bnonce="${nonce}")[^>]*>`,
+                `<script\\b(?=[^>]*\\btype="module")(?=[^>]*\\bnonce="${
+                  escapeRegExp(nonce)
+                }")[^>]*>`,
                 "u",
               ).test(html),
               "Hydratable App Router bootstrap module should use the response nonce",
