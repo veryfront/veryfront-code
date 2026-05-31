@@ -1001,6 +1001,27 @@ export {
   getAgentRuntimeToolResultPart,
 } from "./runtime/message-adapter.ts";
 export {
+  AGENT_CATALOG_ACTIONS,
+  AGENT_CATALOG_KINDS,
+  type AgentCatalogAction,
+  type AgentCatalogKind,
+  type InstalledProjectAgentExecutionIdentity,
+  type InstalledProjectAgentRunSnapshot,
+  isAgentCatalogAction,
+  isAgentCatalogKind,
+  isInstalledProjectAgentKind,
+  isProjectAgentExecutionKind,
+  isProjectAgentKind,
+  PROJECT_AGENT_EXECUTION_KINDS,
+  PROJECT_AGENT_KINDS,
+  type ProjectAgentExecutionIdentity,
+  type ProjectAgentExecutionKind,
+  type ProjectAgentKind,
+  type ProjectAgentRunSnapshot,
+  type SourceProjectAgentExecutionIdentity,
+  type SourceProjectAgentRunSnapshot,
+} from "./identity-contracts.ts";
+export {
   resolveRuntimeMessageFileUrls,
   type RuntimeFileUrlResolver,
   type RuntimeFileUrlResolverInput,

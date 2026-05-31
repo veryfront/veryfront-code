@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.615",
+  "version": "0.1.616",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -46,6 +46,7 @@
     "./markdown": "./src/markdown/index.ts",
     "./mdx": "./src/mdx/index.ts",
     "./agent": "./src/agent/index.ts",
+    "./agent/identity": "./src/agent/identity-contracts.ts",
     "./agent/testing": "./src/agent/testing/index.ts",
     "./agent/conversation-bootstrap": "./src/agent/conversation/bootstrap.ts",
     "./agent/durable": "./src/agent/conversation/durable.ts",
@@ -122,6 +123,7 @@
     "veryfront/sandbox": "./src/sandbox/index.ts",
     "veryfront/embedding": "./src/embedding/index.ts",
     "veryfront/jobs": "./src/jobs/index.ts",
+    "veryfront/agent/identity": "./src/agent/identity-contracts.ts",
     "veryfront/agent/react": "./src/agent/react/index.ts",
     "veryfront/agent/testing": "./src/agent/testing/index.ts",
     "veryfront/agent/middleware": "./src/agent/middleware/index.ts",
@@ -185,6 +187,7 @@
     "veryfront/extensions/observability": "./src/extensions/observability/index.ts",
     "#veryfront": "./src/index.ts",
     "#veryfront/agent": "./src/agent/index.ts",
+    "#veryfront/agent/identity": "./src/agent/identity-contracts.ts",
     "#veryfront/agent/react": "./src/agent/react/index.ts",
     "#veryfront/chat/protocol": "./src/chat/protocol.ts",
     "#veryfront/build": "./src/build/index.ts",

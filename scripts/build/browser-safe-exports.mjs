@@ -13,6 +13,7 @@ export const BROWSER_SAFE_EXPORTS = [
   "./chat/provider-errors",
   "./markdown",
   "./mdx",
+  "./agent/identity",
 ];
 
 export const BROWSER_SAFE_DNT_TIMER_MODULES = [

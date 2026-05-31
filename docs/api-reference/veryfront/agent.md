@@ -1734,6 +1734,46 @@ import { appendConversationRunEvents, createConversationAgentRun, createConversa
 | `getConversationRunTargetsSchema` | Zod schema for get conversation run targets. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/conversation/durable.ts#L34) |
 | `getCreateConversationRunAcceptedSchema` | Zod schema for get create conversation run accepted. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/conversation/durable.ts#L238) |
 
+### `veryfront/agent/identity`
+
+```ts
+import { isAgentCatalogKind, isProjectAgentKind } from "veryfront/agent/identity";
+```
+
+#### Components
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `AGENT_CATALOG_ACTIONS` | Public catalog action wire values: `fork` and `install`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L8) |
+| `AGENT_CATALOG_KINDS` | Public catalog discovery wire values: `template_agent` and `installable_agent`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L1) |
+| `PROJECT_AGENT_EXECUTION_KINDS` | Runtime identity wire values used by execution snapshots: `source` and `installed`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L19) |
+| `PROJECT_AGENT_KINDS` | Runnable project-agent card wire values: `source_project_agent` and `installed_project_agent`. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L12) |
+
+#### Functions
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `isAgentCatalogAction` | Type guard for public catalog action wire values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L65) |
+| `isAgentCatalogKind` | Type guard for public catalog discovery kind wire values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L61) |
+| `isInstalledProjectAgentKind` | Type guard for installed runnable project-agent cards. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L75) |
+| `isProjectAgentExecutionKind` | Type guard for runtime execution identity wire values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L81) |
+| `isProjectAgentKind` | Type guard for runnable project-agent card wire values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L71) |
+
+#### Types
+
+| Name | Description | Source |
+|------|-------------|--------|
+| `AgentCatalogAction` | Union of public catalog action wire values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L10) |
+| `AgentCatalogKind` | Union of public catalog discovery kind wire values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L6) |
+| `InstalledProjectAgentExecutionIdentity` | Runtime identity for an installed project agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L29) |
+| `InstalledProjectAgentRunSnapshot` | Snake-case run snapshot for an installed project agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L48) |
+| `ProjectAgentExecutionIdentity` | Runtime identity union for source and installed project agents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L38) |
+| `ProjectAgentExecutionKind` | Union of runtime execution identity wire values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L21) |
+| `ProjectAgentKind` | Union of runnable project-agent card wire values. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L17) |
+| `ProjectAgentRunSnapshot` | Snake-case run snapshot union for source and installed project agents. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L57) |
+| `SourceProjectAgentExecutionIdentity` | Runtime identity for a source project agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L23) |
+| `SourceProjectAgentRunSnapshot` | Snake-case run snapshot for a source project agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/identity-contracts.ts#L42) |
+
 ### `veryfront/agent/invoke-agent-child-runs`
 
 ```ts
