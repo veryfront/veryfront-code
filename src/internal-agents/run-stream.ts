@@ -120,6 +120,7 @@ function buildMergedTools(
   availableForwardedToolNames?: string[],
   availableLocalTools?: Record<string, Tool | boolean>,
 ) {
+  const serverResolvedProjectToolNames = getServerResolvedProjectToolNames(input.forwardedProps);
   const concreteSourceToolNames = agent.config.tools && agent.config.tools !== true
     ? new Set(
       Object.entries(agent.config.tools)
@@ -129,7 +130,10 @@ function buildMergedTools(
     : new Set<string>();
   const injectedTools = Object.fromEntries(
     input.tools
-      .filter((tool) => !concreteSourceToolNames.has(tool.name))
+      .filter((tool) =>
+        !concreteSourceToolNames.has(tool.name) &&
+        !serverResolvedProjectToolNames.has(tool.name)
+      )
       .map((tool) => [
         tool.name,
         createInjectedStudioTool(
@@ -169,6 +173,7 @@ function buildMergedTools(
         toolRegistry.get(toolName) ||
         availableLocalTools?.[toolName] ||
         availableForwardedToolNames?.includes(toolName) ||
+        serverResolvedProjectToolNames.has(toolName) ||
         sourceAllowedRemoteToolNames.includes(toolName)
       ) {
         merged[toolName] = availableLocalTools?.[toolName] ?? true;
@@ -291,6 +296,22 @@ function getAllowedRemoteToolNames(
     return [];
   }
   return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
+}
+
+function getServerResolvedProjectToolNames(
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): Set<string> {
+  const runtimeOverrides = isRecord(forwardedProps?.runtimeOverrides)
+    ? forwardedProps.runtimeOverrides
+    : null;
+  if (!runtimeOverrides) return new Set();
+  const toolNames = runtimeOverrides.serverResolvedProjectTools;
+  if (!Array.isArray(toolNames)) return new Set();
+  return new Set(
+    toolNames.filter((toolName): toolName is string =>
+      typeof toolName === "string" && toolName.length > 0
+    ),
+  );
 }
 
 interface ForwardedToolDef {
