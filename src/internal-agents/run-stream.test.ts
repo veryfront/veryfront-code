@@ -446,7 +446,7 @@ describe("internal-agents/run-stream", () => {
       toolRegistry.delete("number-generator");
     }
 
-    assertEquals(capturedToolEntry, true);
+    assertEquals(capturedToolEntry, projectTool);
   });
 
   it("emits comment heartbeats while the runtime stream is idle", async () => {
