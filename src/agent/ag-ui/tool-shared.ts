@@ -55,11 +55,16 @@ export function buildMergedAgUiTools(
   tools: AgUiInjectedToolLike[],
   sessionManager: RunResumeSessionManager<AgUiResumeValue>,
 ): Agent["config"]["tools"] {
+  const sourceToolNames = agent.config.tools && agent.config.tools !== true
+    ? new Set(Object.keys(agent.config.tools))
+    : new Set<string>();
   const injectedTools = Object.fromEntries(
-    tools.map((tool) => [
-      tool.name,
-      createInjectedAgUiTool(runId, tool, sessionManager),
-    ]),
+    tools
+      .filter((tool) => !sourceToolNames.has(tool.name))
+      .map((tool) => [
+        tool.name,
+        createInjectedAgUiTool(runId, tool, sessionManager),
+      ]),
   );
 
   if (!agent.config.tools) {
