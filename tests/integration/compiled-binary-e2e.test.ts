@@ -1540,6 +1540,7 @@ export default function ClientPage() {
           expectedStrategy: "rsc-module",
           expectedPagePath: "app/page.tsx",
           expectedModulePath: "/_veryfront/rsc/module",
+          expectedCounterCount: 1,
         });
 
         assertNoBrowserHydrationErrors(diagnostics, "Unexpected hydration errors");

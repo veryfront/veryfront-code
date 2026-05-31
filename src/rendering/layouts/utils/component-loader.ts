@@ -9,6 +9,7 @@ import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { preloadImportMap, transformImportsWithMap } from "#veryfront/modules/import-map/index.ts";
 import { mdxRenderer } from "#veryfront/transforms/mdx/index.ts";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/component-loader.ts";
+import { resolveRelativePath } from "#veryfront/modules/react-loader/path-resolver.ts";
 import { getProjectReact } from "#veryfront/react";
 import { ensureValidChild } from "./ensure-valid-child.ts";
 import { buildLayoutComponentCacheKey, CacheKeyPrefix } from "#veryfront/cache/keys.ts";
@@ -16,6 +17,10 @@ import { buildLayoutComponentCacheKey, CacheKeyPrefix } from "#veryfront/cache/k
 const loadMdxLayoutLog = logger.component("load-mdx-layout");
 const applyTsxLayoutLog = logger.component("apply-tsx-layout");
 const applyMdxLayoutLog = logger.component("apply-mdx-layout");
+
+type AppRouterDocumentLayoutFunction = (
+  props: { children?: BundledReact.ReactNode },
+) => BundledReact.ReactNode;
 
 export interface LayoutComponentCache {
   get(key: string): BundledReact.ComponentType | undefined;
@@ -76,6 +81,36 @@ export function createLayoutComponentCache(
   maxEntries = TSX_LAYOUT_MAX_ENTRIES,
 ): LayoutComponentCache {
   return new InMemoryLayoutComponentCache(maxEntries);
+}
+
+export function shouldUnwrapAppRouterDocumentLayout(
+  componentPath: string | undefined,
+  projectDir: string,
+): boolean {
+  if (!componentPath) return false;
+
+  const relativePath = resolveRelativePath(componentPath.replace(/\\/g, "/"), projectDir)
+    .replace(/^\/+/, "");
+  return relativePath === "app/layout.tsx";
+}
+
+export function unwrapAppRouterDocumentLayout(
+  React: typeof BundledReact,
+  LayoutComponent: AppRouterDocumentLayoutFunction,
+): BundledReact.FunctionComponent<{ children?: BundledReact.ReactNode }> {
+  return function AppRouterDocumentLayout(props: { children?: BundledReact.ReactNode }) {
+    const element = LayoutComponent(props);
+    if (!React.isValidElement(element) || element.type !== "html") {
+      return element;
+    }
+
+    const elementProps = element.props as { children?: BundledReact.ReactNode };
+    const body = React.Children.toArray(elementProps.children).find((child) =>
+      React.isValidElement(child) && child.type === "body"
+    ) as BundledReact.ReactElement<{ children?: BundledReact.ReactNode }> | undefined;
+
+    return body?.props?.children ?? props.children ?? null;
+  };
 }
 
 export async function loadTSXComponent(

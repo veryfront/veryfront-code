@@ -109,8 +109,8 @@ See [Project structure](./project-structure.md) for `skills/` conventions and
 For skill-aware agents, the flow is:
 
 1. Call `load-skill({ skillId })` to load the skill instructions and policy.
-2. Optionally call `load-skill-reference(...)` to read files from `references/`
-   or `assets/`.
+2. Optionally call `load-skill-reference(...)` to read files from
+   `references/`, `resources/`, or `assets/`.
 3. Optionally call `execute-skill-script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls under the active skill policy.
 
@@ -135,7 +135,8 @@ subprocesses.
 
 - `allowed-tools` in `SKILL.md` is enforced at planning time and execution time
   (fail-closed).
-- Skill file reads are restricted to the skill root and allowed subdirectories.
+- Skill file reads are restricted to the skill root and allowed subdirectories:
+  `references/`, `resources/`, `assets/`, and `scripts/`.
 - Symlinked paths are rejected for skill file access.
 - Script execution timeout defaults to `60000` ms and is capped at `300000` ms.
 

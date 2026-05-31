@@ -292,5 +292,42 @@ describe("server/services/static/static-file.service", () => {
         assertEquals(result.contentType.includes("html"), true);
       }
     });
+
+    it("does not serve stale dist HTML for local dev projects", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("<html>stale build</html>");
+      const files = new Map<string, Uint8Array>([
+        ["/project/dist/index.html", fileData],
+      ]);
+      const repo = createMockFsRepo(files);
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isLocalProject: true, isPreviewMode: false });
+
+      const result = await service.resolveFile("/", options);
+      assertEquals(result, null);
+    });
+
+    it("still serves dist HTML outside local dev", async () => {
+      __injectDepsForTests({
+        manifestCache: new Map(),
+        manifestLoading: new Map(),
+      });
+
+      const fileData = new TextEncoder().encode("<html>built app</html>");
+      const files = new Map<string, Uint8Array>([
+        ["/project/dist/index.html", fileData],
+      ]);
+      const repo = createMockFsRepo(files);
+      const service = new StaticFileService(repo);
+      const options = makeOptions({ isLocalProject: false, isPreviewMode: false });
+
+      const result = await service.resolveFile("/", options);
+      assertEquals(result?.source, "dist");
+      assertEquals(result?.data, fileData);
+    });
   });
 });

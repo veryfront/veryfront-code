@@ -96,8 +96,11 @@ interface PageRendererWindow {
 export function shouldUsePageRendererHydration(
   win: PageRendererWindow | undefined,
   hydrationData: ClientRuntimeHydrationData | null,
+  doc: RSCBootDocument = document,
 ): boolean {
-  return !!hydrationData?.pagePath && typeof win?.__veryfrontRenderPage === "function";
+  return !!hydrationData?.pagePath &&
+    typeof win?.__veryfrontRenderPage === "function" &&
+    !!doc.getElementById("root");
 }
 
 export function shouldAttemptRSCTransport(
@@ -114,6 +117,10 @@ export function shouldHydrateOnly(importUrl: string = import.meta.url): boolean 
   } catch (_) {
     return false;
   }
+}
+
+export function shouldRenderPageComponent(strategy: ClientModuleStrategy): boolean {
+  return strategy === "rsc-module";
 }
 
 async function tryStream(q: string): Promise<boolean> {
@@ -168,10 +175,14 @@ async function hydratePageComponent(
       : root;
     const component = React.createElement(Component, {});
 
-    ReactDOM.hydrateRoot(hydrationRoot, component, {
-      identifierPrefix: "vf",
-      onRecoverableError: () => {},
-    });
+    if (shouldRenderPageComponent(strategy)) {
+      ReactDOM.createRoot(hydrationRoot).render(component);
+    } else {
+      ReactDOM.hydrateRoot(hydrationRoot, component, {
+        identifierPrefix: "vf",
+        onRecoverableError: () => {},
+      });
+    }
 
     console.debug?.("[RSC] Page component hydrated successfully");
     return true;
@@ -215,7 +226,13 @@ export async function boot(): Promise<void> {
     const pagePath = hydrationData?.pagePath;
     const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
     if (pagePath) {
-      if (shouldUsePageRendererHydration(globalThis.window as PageRendererWindow, hydrationData)) {
+      if (
+        shouldUsePageRendererHydration(
+          globalThis.window as PageRendererWindow,
+          hydrationData,
+          document,
+        )
+      ) {
         console.debug?.("[RSC] Page renderer owns hydration");
         return;
       }

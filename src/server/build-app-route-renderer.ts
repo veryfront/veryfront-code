@@ -8,9 +8,18 @@ import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { getProjectReact, renderToStringAdapter } from "#veryfront/react";
 import { loadComponentFromSource } from "#veryfront/modules/react-loader/index.ts";
 import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
-import { DEFAULT_REACT_VERSION, getReactUrls } from "#veryfront/transforms/esm/package-registry.ts";
+import { generateHydrationData, getProdScripts } from "#veryfront/html";
+import { buildImportMapJson } from "#veryfront/html/utils.ts";
+import { getPreviewStylesheetLink } from "#veryfront/html/dev-scripts.ts";
+import {
+  shouldUnwrapAppRouterDocumentLayout,
+  unwrapAppRouterDocumentLayout,
+} from "#veryfront/rendering/layouts/utils/component-loader.ts";
 
 type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
+type ReactLayoutFunction = (
+  props: { children?: import("react").ReactNode },
+) => import("react").ReactNode;
 
 async function fileExists(adapter: RuntimeAdapter, filePath: string): Promise<boolean> {
   try {
@@ -52,6 +61,14 @@ function getLayoutsForRoute(appRoot: string, routePath: string): string[] {
   return layouts;
 }
 
+function routePathToSlug(routePath: string): string {
+  return routePath === "/" ? "" : routePath.replace(/^\/+/, "");
+}
+
+function hasUseClientDirective(source: string): boolean {
+  return /^\s*['"]use client['"];?\s*$/m.test(source);
+}
+
 /**
  * Render an App Router route to HTML
  */
@@ -62,8 +79,18 @@ export async function renderAppRouteToHTML(args: {
   pageFile: string;
   contentSourceId: string;
   reactVersion?: string;
+  stylesheetHref?: string;
+  includePreviewStylesheet?: boolean;
 }): Promise<string> {
-  const { adapter, projectDir, routePath, pageFile, contentSourceId, reactVersion } = args;
+  const {
+    adapter,
+    projectDir,
+    routePath,
+    pageFile,
+    contentSourceId,
+    stylesheetHref,
+    includePreviewStylesheet,
+  } = args;
 
   const appRoot = join(projectDir, "app");
   const layoutCandidates = getLayoutsForRoute(appRoot, routePath);
@@ -76,7 +103,13 @@ export async function renderAppRouteToHTML(args: {
   // Get React from the project's node_modules to ensure element symbols match
   const React = await getProjectReact();
 
-  const Page = await loadComponent(adapter, pageFile, projectDir, contentSourceId);
+  const pageSource = await adapter.fs.readFile(pageFile);
+  const Page = await loadComponentFromSource(pageSource, pageFile, projectDir, adapter, {
+    projectId: projectDir,
+    dev: false,
+    moduleServerUrl: "",
+    contentSourceId,
+  });
   if (typeof Page !== "function") {
     throw COMPILATION_ERROR.create({
       detail: "Invalid page component",
@@ -94,7 +127,11 @@ export async function renderAppRouteToHTML(args: {
       const Layout = await loadComponent(adapter, layoutPath, projectDir, contentSourceId);
       if (typeof Layout !== "function") continue;
 
-      element = React.createElement(Layout as ReactComponentLike, { children: element });
+      const LayoutToApply = shouldUnwrapAppRouterDocumentLayout(layoutPath, projectDir)
+        ? unwrapAppRouterDocumentLayout(React, Layout as ReactLayoutFunction)
+        : Layout as ReactComponentLike;
+
+      element = React.createElement(LayoutToApply, { children: element });
     } catch (error) {
       logger.debug(
         "[BuildAppRouteRenderer] Layout loading failed, continuing without layout",
@@ -105,6 +142,36 @@ export async function renderAppRouteToHTML(args: {
 
   const htmlInner = await renderToStringAdapter(element);
   const title = "Veryfront App";
+  const slug = routePathToSlug(routePath);
+  const importMapJson = await buildImportMapJson({ projectDir });
+  const hydrationData = hasUseClientDirective(pageSource)
+    ? generateHydrationData(
+      slug,
+      {},
+      {},
+      {
+        mode: "production",
+        environment: "production",
+        projectDir,
+        pagePath: pageFile,
+        pageType: "tsx",
+        isLocalProject: false,
+        forceProductionScripts: true,
+        nestedLayouts: layouts.map((layoutPath) => ({ kind: "tsx", path: layoutPath })),
+      },
+      { pretty: false },
+    )
+    : null;
+  const hydrationDataScript = hydrationData
+    ? `
+  <script id="veryfront-hydration-data" type="application/json">${hydrationData}</script>`
+    : "";
+  const shouldIncludePreviewStylesheet = includePreviewStylesheet ?? !stylesheetHref;
+  const stylesheetLink = stylesheetHref
+    ? `<link rel="stylesheet" href="${stylesheetHref}">`
+    : shouldIncludePreviewStylesheet
+    ? getPreviewStylesheetLink()
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -115,34 +182,15 @@ export async function renderAppRouteToHTML(args: {
 
   <!-- Import map for React dependencies -->
   <script type="importmap">
-  ${JSON.stringify({ imports: getReactUrls(reactVersion ?? DEFAULT_REACT_VERSION) }, null, 4)}
+  ${importMapJson}
   </script>
 
+  ${stylesheetLink}
 </head>
 <body>
   <div id="root">${htmlInner}</div>
-
-  <!-- Veryfront Runtime -->
-  <script type="module">
-    // Basic app initialization for App Router pages
-    async function initializeApp() {
-      try {
-        // Import the app module if it exists
-        const appModule = await import('/_veryfront/app.js').catch(() => null);
-        if (appModule) {
-          console.log('App module loaded');
-        }
-      } catch (error) {
-        console.error('Failed to initialize app:', error);
-      }
-    }
-
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initializeApp, { once: true });
-    } else {
-      initializeApp();
-    }
-  </script>
+${hydrationDataScript}
+${hydrationData ? getProdScripts(slug) : ""}
 </body>
 </html>`;
 }

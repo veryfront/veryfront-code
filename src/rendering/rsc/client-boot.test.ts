@@ -5,6 +5,7 @@ import {
   selectHydrationRoot,
   shouldAttemptRSCTransport,
   shouldHydrateOnly,
+  shouldRenderPageComponent,
   shouldUsePageRendererHydration,
   shouldWrapPageHydrationRoot,
 } from "./client-boot.ts";
@@ -31,6 +32,16 @@ function toCandidate(element: MockElement) {
 }
 
 describe("rendering/rsc/client-boot", () => {
+  describe("shouldRenderPageComponent", () => {
+    it("client-renders proxy modules that cannot hydrate server-owned markup", () => {
+      assertEquals(shouldRenderPageComponent("rsc-module"), true);
+    });
+
+    it("hydrates local filesystem modules against their server markup", () => {
+      assertEquals(shouldRenderPageComponent("fs"), false);
+    });
+  });
+
   describe("shouldAttemptRSCTransport", () => {
     function makeDocument(ids: string[] = []) {
       const elements = new Set(ids);
@@ -64,19 +75,40 @@ describe("rendering/rsc/client-boot", () => {
   });
 
   describe("shouldUsePageRendererHydration", () => {
+    function makeDocument(ids: string[] = []) {
+      const elements = new Set(ids);
+      return {
+        getElementById(id: string): Element | null {
+          return elements.has(id) ? ({} as Element) : null;
+        },
+      };
+    }
+
     it("lets the production page renderer own client-page hydration when present", () => {
       const shouldUseRenderer = shouldUsePageRendererHydration(
         { __veryfrontRenderPage: () => {} },
         { pagePath: "app/page.tsx", clientModuleStrategy: "rsc-module" },
+        makeDocument(["root"]),
       );
 
       assertEquals(shouldUseRenderer, true);
+    });
+
+    it("keeps RSC boot ownership when the page renderer has no root container", () => {
+      const shouldUseRenderer = shouldUsePageRendererHydration(
+        { __veryfrontRenderPage: () => {} },
+        { pagePath: "app/page.tsx", clientModuleStrategy: "rsc-module" },
+        makeDocument(),
+      );
+
+      assertEquals(shouldUseRenderer, false);
     });
 
     it("keeps RSC boot ownership when the page renderer is absent", () => {
       const shouldUseRenderer = shouldUsePageRendererHydration(
         {},
         { pagePath: "app/page.tsx", clientModuleStrategy: "rsc-module" },
+        makeDocument(["root"]),
       );
 
       assertEquals(shouldUseRenderer, false);

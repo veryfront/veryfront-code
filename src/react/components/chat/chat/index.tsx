@@ -229,6 +229,7 @@ export interface ChatProps {
   showSources?: boolean;
   onSourceClick?: (source: Source, index: number) => void;
   onAttach?: (files: FileList) => void;
+  onSelectAttachment?: () => void;
   onDrop?: (files: FileList) => void;
   attachAccept?: string;
   attachments?: AttachmentInfo[];
@@ -295,6 +296,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
     showSources = false,
     onSourceClick,
     onAttach,
+    onSelectAttachment,
     onDrop,
     attachAccept,
     attachments,
@@ -485,6 +487,7 @@ export const Chat = React.forwardRef<HTMLDivElement, ChatProps>(function Chat(
           model={model}
           onModelChange={onModelChange}
           onAttach={onAttach}
+          onSelectAttachment={onSelectAttachment}
           attachAccept={attachAccept}
           attachments={attachments}
           onRemoveAttachment={onRemoveAttachment}

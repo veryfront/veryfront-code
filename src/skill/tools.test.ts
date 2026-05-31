@@ -57,6 +57,24 @@ Do work.`,
     assertEquals(result.scripts, ["scripts/run.sh"]);
   });
 
+  it("load-skill should list resources as loadable references via fsAdapter", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/SKILL.md": `---
+name: my-skill
+description: Skill from adapter
+---
+# Instructions
+Review the resource files.`,
+      "/project/skills/my-skill/resources/article-30.md": "Article 30",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const tool = createLoadSkillTool();
+    const result = await tool.execute({ skillId: "my-skill" });
+
+    assertEquals(result.references, ["resources/article-30.md"]);
+  });
+
   it("load-skill should note when no references or scripts are available", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
@@ -146,6 +164,22 @@ Do work.`,
 
     assertEquals(result.content, "Asset text");
     assertEquals(result.path, "assets/checklist.txt");
+  });
+
+  it("load-skill-reference should read resource files via fsAdapter", async () => {
+    const fsAdapter = createSkillTestAdapter({
+      "/project/skills/my-skill/resources/article-30.md": "Article 30 text",
+    });
+    registerSkill("my-skill", createTestSkill(fsAdapter));
+
+    const tool = createLoadSkillReferenceTool();
+    const result = await tool.execute({
+      skillId: "my-skill",
+      reference: "resources/article-30.md",
+    });
+
+    assertEquals(result.content, "Article 30 text");
+    assertEquals(result.path, "resources/article-30.md");
   });
 
   it("execute-skill-script should run a local script from the skill directory", async () => {

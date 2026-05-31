@@ -152,7 +152,7 @@ export const defaultChatTheme: ChatTheme = {
   input:
     "w-full bg-transparent border-none focus:outline-none focus:ring-0 text-[var(--foreground)] placeholder:text-[var(--input-placeholder)] text-[15px] leading-normal",
   button:
-    "size-9 shrink-0 flex items-center justify-center rounded-full transition-all bg-[var(--foreground)] text-[var(--background)] hover:opacity-90 active:scale-95 disabled:opacity-40",
+    "size-9 shrink-0 flex items-center justify-center rounded-full transition-all bg-[var(--foreground)] text-[var(--background)] hover:bg-[var(--card)] hover:text-[var(--foreground)] active:scale-95 disabled:opacity-100",
   loading: "size-2 bg-[var(--border)] rounded-full animate-pulse",
 };
 

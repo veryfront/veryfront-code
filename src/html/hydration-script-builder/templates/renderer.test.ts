@@ -66,14 +66,30 @@ describe("hydration-script-builder/templates/renderer", () => {
 
     it("should wrap with layouts from innermost to outermost", () => {
       const result = getRendererScript();
-      assertIncludes(result, "const layouts = shouldRenderRscClientPage ? [] : data.layouts");
+      assertIncludes(result, "const layouts = data.layouts");
       assertIncludes(result, "layouts.length - 1; i >= 0; i--");
+    });
+
+    it("should load App Router RSC layouts through the RSC module endpoint", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "loadHydrationComponent");
+      assertIncludes(result, "layouts[i].path");
+      assertIncludes(result, "shouldRenderRscClientPage");
+      assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(path)");
+    });
+
+    it("should unwrap App Router document layouts before mounting into the root container", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "function unwrapAppRouterDocumentLayout");
+      assertIncludes(result, "element.type !== 'html'");
+      assertIncludes(result, "child.type === 'body'");
+      assertIncludes(result, "layouts[i].path === 'app/layout.tsx'");
     });
 
     it("should wrap with App component when appPath is provided", () => {
       const result = getRendererScript();
       assertIncludes(result, "data.appPath");
-      assertIncludes(result, "loadComponent(data.appPath)");
+      assertIncludes(result, "loadHydrationComponent(data.appPath, shouldRenderRscClientPage)");
     });
 
     it("should build page context with slug, path, params, query, frontmatter, and headings", () => {

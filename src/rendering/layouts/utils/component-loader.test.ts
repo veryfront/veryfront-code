@@ -1,7 +1,12 @@
 import "#veryfront/schemas/_test-setup.ts";
+import * as React from "react";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { createLayoutComponentCache } from "./component-loader.ts";
+import {
+  createLayoutComponentCache,
+  shouldUnwrapAppRouterDocumentLayout,
+  unwrapAppRouterDocumentLayout,
+} from "./component-loader.ts";
 
 describe("rendering/layouts/utils/component-loader", () => {
   describe("createLayoutComponentCache", () => {
@@ -127,6 +132,38 @@ describe("rendering/layouts/utils/component-loader", () => {
 
       assertEquals(cache.get("k1"), undefined);
       assertEquals(cache.get("k2"), C2);
+    });
+  });
+
+  describe("App Router document layout unwrapping", () => {
+    it("should detect the App Router root layout path", () => {
+      assertEquals(
+        shouldUnwrapAppRouterDocumentLayout("/project/app/layout.tsx", "/project"),
+        true,
+      );
+      assertEquals(
+        shouldUnwrapAppRouterDocumentLayout("/project/app/dashboard/layout.tsx", "/project"),
+        false,
+      );
+    });
+
+    it("should preserve body children without mounting html and body inside the root", () => {
+      function RootLayout({ children }: { children: React.ReactNode }) {
+        return React.createElement(
+          "html",
+          null,
+          React.createElement("body", null, React.createElement("main", null, children)),
+        );
+      }
+
+      const WrappedLayout = unwrapAppRouterDocumentLayout(React, RootLayout);
+      const result = WrappedLayout({
+        children: React.createElement("button", { id: "counter" }, "Count: 0"),
+      }) as React.ReactElement;
+
+      assertEquals(result.type, "main");
+      const child = React.Children.only(result.props.children) as React.ReactElement;
+      assertEquals(child.type, "button");
     });
   });
 });

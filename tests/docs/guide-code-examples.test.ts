@@ -91,7 +91,6 @@ const THIS_GUIDE_EXAMPLE_SUITE = [
   "skills.md",
   "tasks.md",
   "workflows-advanced.md",
-  "examples/dora-compliance-agent.md",
 ] as const;
 
 const GUIDE_CODE_EXAMPLE_COVERAGE = new Set<string>([

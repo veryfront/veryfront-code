@@ -155,7 +155,11 @@ export class StaticFileService {
     const manifestPath = await this.resolveManifestAsset(normalizedPath, options, fs);
     if (manifestPath) addCandidate(manifestPath, "manifest");
 
-    for (const dir of ["dist", "public"] as const) {
+    const dirs = options.isLocalProject && !options.isPreviewMode
+      ? ["public"] as const
+      : ["dist", "public"] as const;
+
+    for (const dir of dirs) {
       const root = joinPath(options.projectDir, dir);
       const absPath = normalizePath(joinPath(root, normalizedPath));
       if (isWithinDirectory(root, absPath)) addCandidate(absPath, dir);

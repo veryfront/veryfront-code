@@ -41,6 +41,32 @@ export const getRendererScript = () => `
         const shouldRenderRscClientPage =
           data.clientModuleStrategy === 'rsc-module' && normalizedPagePath.startsWith('app/');
 
+        async function loadHydrationComponent(path, preferRscModule) {
+          const normalizedPath = typeof path === 'string' ? path.replace(/^\\/+/, '') : '';
+          if (preferRscModule && normalizedPath.startsWith('app/')) {
+            const moduleUrl = '/_veryfront/rsc/module?rel=' + encodeURIComponent(path);
+            log('Loading App Router component from RSC module:', moduleUrl);
+            const module = await import(moduleUrl);
+            return module.default || module;
+          }
+
+          return loadComponent(path);
+        }
+
+        function unwrapAppRouterDocumentLayout(LayoutComponent) {
+          return function AppRouterDocumentLayout(props) {
+            const element = LayoutComponent(props);
+            if (!React.isValidElement(element) || element.type !== 'html') {
+              return element;
+            }
+
+            const body = React.Children.toArray(element.props?.children).find((child) =>
+              React.isValidElement(child) && child.type === 'body'
+            );
+            return body?.props?.children ?? props.children;
+          };
+        }
+
         if (data.pagePath) {
           const moduleUrl = shouldRenderRscClientPage
             ? '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)
@@ -83,18 +109,25 @@ export const getRendererScript = () => `
         const pageProps = { ...(data.props || {}), params: data.params || {} };
         let tree = React.createElement(PageComponent, pageProps);
 
-        const layouts = shouldRenderRscClientPage ? [] : data.layouts;
+        const layouts = data.layouts;
         if (layouts?.length) {
           for (let i = layouts.length - 1; i >= 0; i--) {
-            const LayoutComponent = await loadComponent(layouts[i].path);
+            const LayoutComponent = await loadHydrationComponent(
+              layouts[i].path,
+              shouldRenderRscClientPage,
+            );
             if (LayoutComponent) {
-              tree = React.createElement(LayoutComponent, { children: tree });
+              const WrappedLayoutComponent =
+                shouldRenderRscClientPage && layouts[i].path === 'app/layout.tsx'
+                  ? unwrapAppRouterDocumentLayout(LayoutComponent)
+                  : LayoutComponent;
+              tree = React.createElement(WrappedLayoutComponent, { children: tree });
             }
           }
         }
 
         if (data.appPath) {
-          const AppComponent = await loadComponent(data.appPath);
+          const AppComponent = await loadHydrationComponent(data.appPath, shouldRenderRscClientPage);
           if (AppComponent) {
             tree = React.createElement(AppComponent, { children: tree });
           }
