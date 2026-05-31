@@ -20,6 +20,48 @@ export interface ExtensionContractAuditIssue {
   message: string;
 }
 
+type Importer = (moduleUrl: string) => Promise<Record<string, unknown>>;
+
+interface ImportWithRetryOptions {
+  retries?: number;
+  delay?: (ms: number) => Promise<void>;
+  importModule?: Importer;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientRemoteImportFailure(error: unknown): boolean {
+  if (!(error instanceof TypeError)) return false;
+  const message = error.message;
+  if (!/Import ['"]https?:\/\//.test(message)) return false;
+  return /\b(408|425|429|5\d\d)\b/.test(message) ||
+    /network|connection|timeout|temporar/i.test(message);
+}
+
+export async function importWithRetry(
+  moduleUrl: string,
+  options: ImportWithRetryOptions = {},
+): Promise<Record<string, unknown>> {
+  const retries = options.retries ?? 2;
+  const delay = options.delay ?? sleep;
+  const importModule = options.importModule ?? ((url) => import(url));
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await importModule(moduleUrl);
+    } catch (error) {
+      if (attempt >= retries || !isTransientRemoteImportFailure(error)) {
+        throw error;
+      }
+      await delay(250 * (attempt + 1));
+    }
+  }
+
+  throw new Error(`Unable to import ${moduleUrl}`);
+}
+
 function uniqueSorted(values: string[]): string[] {
   return [...new Set(values)].filter((value) => value.length > 0).sort();
 }
@@ -130,7 +172,7 @@ async function loadAuditInput(
   const moduleUrl = toFileUrl(
     join(root, manifestPath.replace(/deno\.json$/, "src/index.ts")),
   ).href;
-  const mod = await import(moduleUrl);
+  const mod = await importWithRetry(moduleUrl);
   if (typeof mod.default !== "function") {
     throw new Error(`${manifestPath} default export is not an extension factory`);
   }
