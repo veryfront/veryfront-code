@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import { RunResumeSessionManager } from "../index.ts";
 import { createAgUiRuntimeHandler } from "./runtime-handler.ts";
 import { AgentRuntime } from "../runtime/index.ts";
@@ -553,6 +554,138 @@ describe("agent/ag-ui-runtime-handler", () => {
       assertStringIncludes(body, "event: ToolCallStart");
       assertEquals(seenToolCallId, "tool-call-1");
       assertEquals(finishedRunId, "run_runtime_4");
+    } finally {
+      AgentRuntime.prototype.stream = originalStream;
+    }
+  });
+
+  it("does not prepare browser resume waits for source project tools", async () => {
+    class TrackingSessionManager extends RunResumeSessionManager<{
+      result: unknown;
+      isError: boolean;
+    }> {
+      prepareCalls: Array<{ runId: string; waitKey: string }> = [];
+
+      override prepareForSignal(runId: string, waitKey: string): void {
+        this.prepareCalls.push({ runId, waitKey });
+        super.prepareForSignal(runId, waitKey);
+      }
+    }
+
+    const sessionManager = new TrackingSessionManager();
+    const originalStream = AgentRuntime.prototype.stream;
+    const agent = createTestAgent().agent;
+    let sourceToolCalled = false;
+
+    agent.config = {
+      ...agent.config,
+      tools: {
+        "number-generator": {
+          id: "number-generator",
+          description: "Generate a number.",
+          inputSchema: defineSchema((v) =>
+            v.object({
+              min: v.number(),
+              max: v.number(),
+            })
+          )(),
+          execute: () => {
+            sourceToolCalled = true;
+            return { randomNumber: 42 };
+          },
+        },
+      },
+    } as Agent["config"];
+
+    AgentRuntime.prototype.stream = async function (): Promise<ReadableStream<Uint8Array>> {
+      const runtimeConfig = this as unknown as {
+        config: {
+          tools?: Record<string, {
+            execute: (
+              input: Record<string, unknown>,
+              context?: { toolCallId?: string },
+            ) => Promise<unknown> | unknown;
+          }>;
+        };
+      };
+
+      const sourceTool = runtimeConfig.config.tools?.["number-generator"];
+      if (!sourceTool) {
+        throw new Error("Expected source project tool to be preserved in the runtime config");
+      }
+
+      return new ReadableStream<Uint8Array>({
+        start(controller) {
+          void (async () => {
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "message-start",
+                messageId: "assistant-msg-1",
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-start",
+                toolCallId: "tool-call-source-1",
+                toolName: "number-generator",
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-delta",
+                toolCallId: "tool-call-source-1",
+                inputTextDelta: '{"min":1,"max":100}',
+              }),
+            );
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-input-available",
+                toolCallId: "tool-call-source-1",
+              }),
+            );
+
+            const result = await sourceTool.execute(
+              { min: 1, max: 100 },
+              { toolCallId: "tool-call-source-1" },
+            );
+
+            controller.enqueue(
+              encodeDataStreamEvent({
+                type: "tool-output-available",
+                toolCallId: "tool-call-source-1",
+                output: result,
+              }),
+            );
+            controller.close();
+          })();
+        },
+      });
+    };
+
+    try {
+      const handler = createAgUiRuntimeHandler({
+        agent,
+        sessionManager,
+      });
+
+      const response = await handler(
+        new Request("http://localhost/api/ag-ui", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            threadId: crypto.randomUUID(),
+            runId: "run_runtime_source_tool_1",
+            messages: [{ id: "msg-1", role: "user", content: "generate" }],
+            tools: [{ name: "number-generator" }],
+          }),
+        }),
+      );
+
+      const body = await response.text();
+      assertStringIncludes(body, "event: ToolCallResult");
+      assertStringIncludes(body, '"randomNumber":42');
+      assertEquals(sourceToolCalled, true);
+      assertEquals(sessionManager.prepareCalls, []);
     } finally {
       AgentRuntime.prototype.stream = originalStream;
     }

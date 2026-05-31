@@ -304,7 +304,6 @@ async function createAgUiRuntimeInjectedToolsStreamResponse(
       void lifecycle?.onError?.(error);
     },
     onToolCallSeen: (toolCallId) => {
-      sessionManager.prepareForSignal(request.runId, toolCallId);
       void lifecycle?.onToolCallSeen?.(toolCallId);
     },
   });
