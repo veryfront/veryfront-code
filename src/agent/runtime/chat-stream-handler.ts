@@ -23,6 +23,7 @@ import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 
 const logger = serverLogger.component("agent");
+const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
 
 export interface StreamingToolCall {
   id: string;
@@ -200,6 +201,26 @@ async function readNextStreamPart(
   }
 }
 
+async function readNextStreamPartWithTimeout(
+  iterator: AsyncIterator<unknown>,
+  state: ChatStreamState,
+  timeoutMs: number,
+): Promise<IteratorResult<unknown> | "timeout"> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      readNextStreamPart(iterator, state),
+      new Promise<"timeout">((resolve) => {
+        timeoutId = setTimeout(() => resolve("timeout"), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 export function createStreamState(): ChatStreamState {
   return {
     accumulatedText: "",
@@ -233,6 +254,7 @@ export function processStream(
     let eventCount = 0;
     let textOpen = false;
     let activeReasoningId: string | null = null;
+    let shouldStopForCommittedLocalToolCall = false;
 
     const normalizeReasoningId = (part: { id?: string }) =>
       typeof part.id === "string" && part.id.length > 0 ? part.id : "reasoning";
@@ -366,7 +388,17 @@ export function processStream(
 
     const streamIterator = result.fullStream[Symbol.asyncIterator]();
     while (true) {
-      const next = await readNextStreamPart(streamIterator, state);
+      const next = shouldStopForCommittedLocalToolCall
+        ? await readNextStreamPartWithTimeout(
+          streamIterator,
+          state,
+          LOCAL_TOOL_COMMIT_GRACE_MS,
+        )
+        : await readNextStreamPart(streamIterator, state);
+      if (next === "timeout") {
+        await streamIterator.return?.();
+        break;
+      }
       if (next.done) {
         break;
       }
@@ -496,6 +528,9 @@ export function processStream(
               : {}),
             ...(dynamic ? { dynamic: true } : {}),
           });
+          if (typedPart.providerExecuted !== true) {
+            shouldStopForCommittedLocalToolCall = true;
+          }
           break;
         }
 

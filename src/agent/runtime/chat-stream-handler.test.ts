@@ -69,12 +69,14 @@ describe("chat-stream-handler", () => {
           toolCallId: "tc-form",
           toolName: "form_input",
           input: { title: "Need more detail" },
+          providerExecuted: true,
         },
         {
           type: "tool-result",
           toolCallId: "tc-form",
           toolName: "form_input",
           output: { submitted: false },
+          providerExecuted: true,
         },
         { type: "text-delta", text: " After tool." },
         { type: "finish", finishReason: "stop", totalUsage: null },
@@ -92,15 +94,90 @@ describe("chat-stream-handler", () => {
           toolCallId: "tc-form",
           toolName: "form_input",
           input: { title: "Need more detail" },
+          providerExecuted: true,
         },
         {
           type: "tool-output-available",
           toolCallId: "tc-form",
           output: { submitted: false },
+          providerExecuted: true,
         },
         { type: "text-start", id: "text-1" },
         { type: "text-delta", id: "text-1", delta: " After tool." },
         { type: "text-end", id: "text-1" },
+      ]);
+    });
+
+    it("stops reading after a committed local tool-call so the runtime can execute it", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let returned = false;
+      let index = 0;
+      let resolvePendingNext: ((value: IteratorResult<unknown>) => void) | undefined;
+      const parts = [
+        { type: "tool-input-start", id: "tc-local", toolName: "number-generator" },
+        { type: "tool-input-delta", id: "tc-local", delta: '{"min":3' },
+        { type: "tool-input-delta", id: "tc-local", delta: ',"max":9}' },
+        {
+          type: "tool-call",
+          toolCallId: "tc-local",
+          toolName: "number-generator",
+          input: { min: 3, max: 9 },
+        },
+      ];
+
+      const result = {
+        fullStream: {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                if (index < parts.length) {
+                  return { done: false, value: parts[index++] };
+                }
+                return await new Promise<IteratorResult<unknown>>((resolve) => {
+                  resolvePendingNext = resolve;
+                });
+              },
+              async return() {
+                resolvePendingNext?.({ done: true, value: undefined });
+                resolvePendingNext = undefined;
+                returned = true;
+                return { done: true, value: undefined };
+              },
+            };
+          },
+        },
+        textStream: {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                return { done: true, value: undefined };
+              },
+            };
+          },
+        },
+      };
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(returned, true);
+      assertEquals(state.finishReason, null);
+      const toolCall = state.toolCalls.get("tc-local");
+      assertEquals(toolCall?.id, "tc-local");
+      assertEquals(toolCall?.name, "number-generator");
+      assertEquals(toolCall?.arguments, '{"min":3,"max":9}');
+      assertEquals(toolCall?.inputAvailable, true);
+      assertEquals(toolCall?.providerExecuted, undefined);
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-local", toolName: "number-generator" },
+        { type: "tool-input-delta", toolCallId: "tc-local", inputTextDelta: '{"min":3' },
+        { type: "tool-input-delta", toolCallId: "tc-local", inputTextDelta: ',"max":9}' },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-local",
+          toolName: "number-generator",
+          input: { min: 3, max: 9 },
+        },
       ]);
     });
 
