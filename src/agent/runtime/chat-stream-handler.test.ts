@@ -181,6 +181,57 @@ describe("chat-stream-handler", () => {
       ]);
     });
 
+    it("does not wait for provider stream cancellation after a committed local tool-call", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      let returnCalled = false;
+      let index = 0;
+      const parts = [
+        { type: "tool-input-start", id: "tc-local", toolName: "number-generator" },
+        { type: "tool-input-delta", id: "tc-local", delta: '{"min":3,"max":9}' },
+        {
+          type: "tool-call",
+          toolCallId: "tc-local",
+          toolName: "number-generator",
+          input: { min: 3, max: 9 },
+        },
+      ];
+
+      const result = {
+        fullStream: {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                if (index < parts.length) {
+                  return { done: false, value: parts[index++] };
+                }
+                return await new Promise<IteratorResult<unknown>>(() => {});
+              },
+              async return() {
+                returnCalled = true;
+                return await new Promise<IteratorResult<unknown>>(() => {});
+              },
+            };
+          },
+        },
+        textStream: {
+          [Symbol.asyncIterator]() {
+            return {
+              async next() {
+                return { done: true, value: undefined };
+              },
+            };
+          },
+        },
+      };
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(returnCalled, true);
+      assertEquals(state.finishReason, "tool-calls");
+      assertEquals(state.toolCalls.get("tc-local")?.inputAvailable, true);
+    });
+
     it("calls onChunk callback for each text delta", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
