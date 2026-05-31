@@ -14,6 +14,10 @@ import { ensureValidChild } from "./ensure-valid-child.ts";
 
 const logger = rendererLogger.component("apply-layouts-esm");
 
+type AppRouterDocumentLayoutFunction = (
+  props: { children?: BundledReact.ReactNode },
+) => BundledReact.ReactNode;
+
 export function applyLayoutsESM(
   pageElement: BundledReact.ReactElement,
   layoutBundle: MdxBundle | undefined,

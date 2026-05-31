@@ -254,8 +254,15 @@ export async function applyTSXLayout(
       duration: `${(performance.now() - loadStart).toFixed(2)}ms`,
     });
 
+    const LayoutToApply = shouldUnwrapAppRouterDocumentLayout(item.componentPath, projectDir)
+      ? unwrapAppRouterDocumentLayout(
+        React,
+        LayoutComponent as AppRouterDocumentLayoutFunction,
+      )
+      : LayoutComponent;
+
     const result = React.createElement(
-      LayoutComponent,
+      LayoutToApply,
       props ?? {},
       element,
     ) as BundledReact.ReactElement;
