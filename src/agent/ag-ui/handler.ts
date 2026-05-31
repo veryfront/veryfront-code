@@ -297,9 +297,6 @@ async function createAgUiInjectedToolsStreamResponse(
     onError: () => {
       sessionManager.failRun(runId);
     },
-    onToolCallSeen: (toolCallId) => {
-      sessionManager.prepareForSignal(runId, toolCallId);
-    },
   });
 }
 
