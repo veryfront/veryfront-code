@@ -169,14 +169,17 @@ function buildMergedTools(
   const merged: Record<string, Tool | boolean> = {};
   for (const [toolName, entry] of Object.entries(agent.config.tools)) {
     if (entry === true) {
+      const serverResolvedProjectTool = serverResolvedProjectToolNames.has(toolName)
+        ? toolRegistry.get(toolName)
+        : undefined;
       if (
+        serverResolvedProjectTool ||
         toolRegistry.get(toolName) ||
         availableLocalTools?.[toolName] ||
         availableForwardedToolNames?.includes(toolName) ||
-        serverResolvedProjectToolNames.has(toolName) ||
         sourceAllowedRemoteToolNames.includes(toolName)
       ) {
-        merged[toolName] = availableLocalTools?.[toolName] ?? true;
+        merged[toolName] = availableLocalTools?.[toolName] ?? serverResolvedProjectTool ?? true;
       }
       continue;
     }
