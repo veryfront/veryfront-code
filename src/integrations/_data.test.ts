@@ -968,4 +968,41 @@ describe("integration endpoint specs", () => {
     );
     assertEquals(historicalToolSummaries["custom__search_emails"], undefined);
   });
+
+  it("publishes current-run summary coverage for priority collection tools", () => {
+    const priorityConnectors = [
+      "gmail",
+      "outlook",
+      "harvest",
+      "github",
+      "slack",
+      "asana",
+      "jira",
+      "linear",
+    ];
+    const collectionToolPattern = /^(list|search|query|report|time_report|invoice_report)_?/;
+
+    for (const connectorName of priorityConnectors) {
+      const connector = getConnector(connectorName);
+      for (const tool of connector.tools) {
+        if (
+          tool.requiresWrite !== false ||
+          !tool.endpoint ||
+          !tool.id ||
+          !collectionToolPattern.test(tool.id)
+        ) {
+          continue;
+        }
+
+        assertExists(
+          tool.endpoint.response?.historicalSummary,
+          `Expected ${connectorName}__${tool.id} to declare historicalSummary`,
+        );
+        assertEquals(
+          historicalToolSummaries[`${connectorName}__${tool.id}`],
+          tool.endpoint.response?.historicalSummary,
+        );
+      }
+    }
+  });
 });

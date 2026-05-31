@@ -63,7 +63,51 @@
           }
         },
         "response": {
-          "transform": "searchIssues"
+          "transform": "searchIssues",
+          "historicalSummary": {
+            "collectionKeys": [
+              "searchIssues",
+              "issues",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "issues",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "identifier"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "state",
+                "kind": "object"
+              },
+              {
+                "name": "assignee",
+                "kind": "contact"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              }
+            ],
+            "omitted": "issue descriptions, comments, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "pageInfo",
+                "kind": "object"
+              }
+            ]
+          }
         }
       }
     },
@@ -215,7 +259,112 @@
           }
         },
         "response": {
-          "transform": "projects"
+          "transform": "projects",
+          "historicalSummary": {
+            "collectionKeys": [
+              "projects",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "projects",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "gid"
+              },
+              {
+                "name": "key"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "summary"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "created_by",
+                "kind": "contact"
+              },
+              {
+                "name": "assignee",
+                "kind": "contact"
+              },
+              {
+                "name": "owner",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "projects details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -238,7 +387,112 @@
           }
         },
         "response": {
-          "transform": "teams"
+          "transform": "teams",
+          "historicalSummary": {
+            "collectionKeys": [
+              "teams",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "teams",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "gid"
+              },
+              {
+                "name": "key"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "summary"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "created_by",
+                "kind": "contact"
+              },
+              {
+                "name": "assignee",
+                "kind": "contact"
+              },
+              {
+                "name": "owner",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "teams details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -261,7 +515,112 @@
           }
         },
         "response": {
-          "transform": "team.states"
+          "transform": "team.states",
+          "historicalSummary": {
+            "collectionKeys": [
+              "states",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "workflowStates",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "gid"
+              },
+              {
+                "name": "key"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "summary"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "created_by",
+                "kind": "contact"
+              },
+              {
+                "name": "assignee",
+                "kind": "contact"
+              },
+              {
+                "name": "owner",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "workflowStates details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -284,7 +643,39 @@
           }
         },
         "response": {
-          "transform": "users"
+          "transform": "users",
+          "historicalSummary": {
+            "collectionKeys": [
+              "users",
+              "nodes",
+              "data"
+            ],
+            "collectionName": "users",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "email"
+              },
+              {
+                "name": "active"
+              },
+              {
+                "name": "displayName"
+              }
+            ],
+            "omitted": "user avatars and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "pageInfo",
+                "kind": "object"
+              }
+            ]
+          }
         }
       }
     },
