@@ -96,8 +96,11 @@ interface PageRendererWindow {
 export function shouldUsePageRendererHydration(
   win: PageRendererWindow | undefined,
   hydrationData: ClientRuntimeHydrationData | null,
+  doc: RSCBootDocument = document,
 ): boolean {
-  return !!hydrationData?.pagePath && typeof win?.__veryfrontRenderPage === "function";
+  return !!hydrationData?.pagePath &&
+    typeof win?.__veryfrontRenderPage === "function" &&
+    !!doc.getElementById("root");
 }
 
 export function shouldAttemptRSCTransport(
@@ -223,7 +226,13 @@ export async function boot(): Promise<void> {
     const pagePath = hydrationData?.pagePath;
     const clientModuleStrategy = resolveClientModuleStrategy(hydrationData);
     if (pagePath) {
-      if (shouldUsePageRendererHydration(globalThis.window as PageRendererWindow, hydrationData)) {
+      if (
+        shouldUsePageRendererHydration(
+          globalThis.window as PageRendererWindow,
+          hydrationData,
+          document,
+        )
+      ) {
         console.debug?.("[RSC] Page renderer owns hydration");
         return;
       }
