@@ -1,8 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { applyLayoutsESM } from "./applicator.ts";
+import { applyLayoutsESM, applyLayoutsFunctionBody } from "./applicator.ts";
 import * as React from "react";
+import { renderToStringAdapter } from "#veryfront/react";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import type { LayoutItem } from "#veryfront/types";
 import { createLayoutComponentCache } from "./component-loader.ts";
@@ -20,79 +21,117 @@ function createMockAdapter(): RuntimeAdapter {
   } as unknown as RuntimeAdapter;
 }
 
-describe("rendering/layouts/utils/applicator", () => {
-  describe("applyLayoutsESM", () => {
-    it("should return page element unchanged when no layouts and no bundle", async () => {
-      const adapter = createMockAdapter();
-      const pageElement = React.createElement("div", null, "test") as React.ReactElement;
-      const cache = createLayoutComponentCache();
+describe(
+  "rendering/layouts/utils/applicator",
+  { sanitizeOps: false, sanitizeResources: false },
+  () => {
+    describe("applyLayoutsESM", () => {
+      it("should return page element unchanged when no layouts and no bundle", async () => {
+        const adapter = createMockAdapter();
+        const pageElement = React.createElement("div", null, "test") as React.ReactElement;
+        const cache = createLayoutComponentCache();
 
-      const result = await applyLayoutsESM(
-        pageElement,
-        undefined, // no layoutBundle
-        [], // no nested layouts
-        "/project",
-        {}, // merged components
-        cache,
-        adapter,
-        undefined, // layoutDataMap
-        "project-id",
-        "project-slug",
-        "content-source-id",
-      );
+        const result = await applyLayoutsESM(
+          pageElement,
+          undefined, // no layoutBundle
+          [], // no nested layouts
+          "/project",
+          {}, // merged components
+          cache,
+          adapter,
+          undefined, // layoutDataMap
+          "project-id",
+          "project-slug",
+          "content-source-id",
+        );
 
-      assertEquals(React.isValidElement(result), true);
-      assertEquals(result, pageElement);
+        assertEquals(React.isValidElement(result), true);
+        assertEquals(result, pageElement);
+      });
+
+      it("should skip null items in nested layouts", async () => {
+        const adapter = createMockAdapter();
+        const pageElement = React.createElement("div", null, "test") as React.ReactElement;
+        const cache = createLayoutComponentCache();
+
+        const nestedLayouts = [null, undefined] as unknown as LayoutItem[];
+
+        const result = await applyLayoutsESM(
+          pageElement,
+          undefined,
+          nestedLayouts,
+          "/project",
+          {},
+          cache,
+          adapter,
+          undefined,
+          "project-id",
+          "project-slug",
+          "content-source-id",
+        );
+
+        assertEquals(React.isValidElement(result), true);
+      });
+
+      it("should skip layouts that are not mdx or tsx", async () => {
+        const adapter = createMockAdapter();
+        const pageElement = React.createElement("div", null, "test") as React.ReactElement;
+        const cache = createLayoutComponentCache();
+
+        const nestedLayouts: LayoutItem[] = [
+          { kind: "unknown" } as unknown as LayoutItem,
+        ];
+
+        const result = await applyLayoutsESM(
+          pageElement,
+          undefined,
+          nestedLayouts,
+          "/project",
+          {},
+          cache,
+          adapter,
+          undefined,
+          "project-id",
+          "project-slug",
+          "content-source-id",
+        );
+
+        assertEquals(React.isValidElement(result), true);
+      });
     });
 
-    it("should skip null items in nested layouts", async () => {
-      const adapter = createMockAdapter();
-      const pageElement = React.createElement("div", null, "test") as React.ReactElement;
-      const cache = createLayoutComponentCache();
+    describe("applyLayoutsFunctionBody", () => {
+      it("should unwrap App Router document layouts before rendering inside the root", async () => {
+        const adapter = createMockAdapter();
+        const pageElement = React.createElement("button", { id: "counter" }, "Count: 0");
+        const cache = createLayoutComponentCache();
 
-      const nestedLayouts = [null, undefined] as unknown as LayoutItem[];
+        adapter.fs.readFile = async () =>
+          `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html><body><main data-testid="document-layout">{children}</main></body></html>;
+}
+`;
 
-      const result = await applyLayoutsESM(
-        pageElement,
-        undefined,
-        nestedLayouts,
-        "/project",
-        {},
-        cache,
-        adapter,
-        undefined,
-        "project-id",
-        "project-slug",
-        "content-source-id",
-      );
+        const result = await applyLayoutsFunctionBody(
+          pageElement,
+          undefined,
+          [{ kind: "tsx", componentPath: "/project/app/layout.tsx" } as LayoutItem],
+          {},
+          cache,
+          "/project",
+          adapter,
+          undefined,
+          "project-id",
+          "project-slug",
+          "content-source-id",
+        );
 
-      assertEquals(React.isValidElement(result), true);
+        const html = await renderToStringAdapter(result);
+        assertEquals(html.includes("<html"), false);
+        assertEquals(html.includes("<body"), false);
+        assertEquals(html.includes('data-testid="document-layout"'), true);
+        assertEquals(html.includes('id="counter"'), true);
+      });
     });
-
-    it("should skip layouts that are not mdx or tsx", async () => {
-      const adapter = createMockAdapter();
-      const pageElement = React.createElement("div", null, "test") as React.ReactElement;
-      const cache = createLayoutComponentCache();
-
-      const nestedLayouts: LayoutItem[] = [
-        { kind: "unknown" } as unknown as LayoutItem,
-      ];
-
-      const result = await applyLayoutsESM(
-        pageElement,
-        undefined,
-        nestedLayouts,
-        "/project",
-        {},
-        cache,
-        adapter,
-        undefined,
-        "project-id",
-        "project-slug",
-        "content-source-id",
-      );
-
-      assertEquals(React.isValidElement(result), true);
-    });
-  });
-});
+  },
+);

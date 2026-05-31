@@ -78,6 +78,14 @@ describe("hydration-script-builder/templates/renderer", () => {
       assertIncludes(result, "'/_veryfront/rsc/module?rel=' + encodeURIComponent(path)");
     });
 
+    it("should unwrap App Router document layouts before mounting into the root container", () => {
+      const result = getRendererScript();
+      assertIncludes(result, "function unwrapAppRouterDocumentLayout");
+      assertIncludes(result, "element.type !== 'html'");
+      assertIncludes(result, "child.type === 'body'");
+      assertIncludes(result, "layouts[i].path === 'app/layout.tsx'");
+    });
+
     it("should wrap with App component when appPath is provided", () => {
       const result = getRendererScript();
       assertIncludes(result, "data.appPath");

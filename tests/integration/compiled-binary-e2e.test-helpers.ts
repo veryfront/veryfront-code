@@ -384,14 +384,45 @@ export async function assertCounterHydration(
     expectedStrategy?: string;
     expectedPagePath?: string;
     expectedModulePath?: string;
+    expectedCounterCount?: number;
     assertBeforeClick?: () => Promise<void>;
     assertAfterClick?: () => Promise<void>;
   } = {},
 ): Promise<void> {
-  await page.waitForSelector('#counter[data-hydrated="yes"]');
+  try {
+    await page.waitForSelector('#counter[data-hydrated="yes"]', { timeout: 15_000 });
+  } catch (error) {
+    const diagnostics = await page.evaluate(() => {
+      const hydrationData = document.getElementById("veryfront-hydration-data")?.textContent ?? "";
+      const counters = Array.from(document.querySelectorAll("#counter")).map((element) => ({
+        html: element.outerHTML,
+        text: element.textContent?.trim() ?? "",
+        hydrated: element.getAttribute("data-hydrated"),
+      }));
+      const scripts = Array.from(document.scripts).map((script) => script.src || script.id || "");
+      const resources = performance.getEntriesByType("resource").map((entry) => entry.name);
+
+      return {
+        body: document.body.innerHTML.slice(0, 2000),
+        counters,
+        hydrationData,
+        resources,
+        scripts,
+      };
+    });
+
+    throw new Error(
+      `Counter did not hydrate.\n${JSON.stringify(diagnostics, null, 2)}\n${String(error)}`,
+    );
+  }
 
   const initialText = await page.textContent("#counter");
   assertEquals(initialText?.trim(), "Count: 0");
+
+  if (options.expectedCounterCount !== undefined) {
+    const counterCount = await page.$$eval("#counter", (elements) => elements.length);
+    assertEquals(counterCount, options.expectedCounterCount);
+  }
 
   if (options.expectedStrategy || options.expectedPagePath) {
     const hydrationData = JSON.parse(
@@ -410,9 +441,26 @@ export async function assertCounterHydration(
   await options.assertBeforeClick?.();
 
   await page.click("#counter");
-  await page.waitForFunction(
-    () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
-  );
+  try {
+    await page.waitForFunction(
+      () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
+    );
+  } catch (error) {
+    const diagnostics = await page.evaluate(() => ({
+      body: document.body.innerHTML.slice(0, 2000),
+      counters: Array.from(document.querySelectorAll("#counter")).map((element) => ({
+        html: element.outerHTML,
+        text: element.textContent?.trim() ?? "",
+        hydrated: element.getAttribute("data-hydrated"),
+      })),
+    }));
+
+    throw new Error(
+      `Counter did not respond after hydration.\n${JSON.stringify(diagnostics, null, 2)}\n${
+        String(error)
+      }`,
+    );
+  }
 
   const hydratedText = await page.textContent("#counter");
   assertEquals(hydratedText?.trim(), "Count: 1");

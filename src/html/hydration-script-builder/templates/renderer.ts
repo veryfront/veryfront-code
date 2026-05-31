@@ -53,6 +53,20 @@ export const getRendererScript = () => `
           return loadComponent(path);
         }
 
+        function unwrapAppRouterDocumentLayout(LayoutComponent) {
+          return function AppRouterDocumentLayout(props) {
+            const element = LayoutComponent(props);
+            if (!React.isValidElement(element) || element.type !== 'html') {
+              return element;
+            }
+
+            const body = React.Children.toArray(element.props?.children).find((child) =>
+              React.isValidElement(child) && child.type === 'body'
+            );
+            return body?.props?.children ?? props.children;
+          };
+        }
+
         if (data.pagePath) {
           const moduleUrl = shouldRenderRscClientPage
             ? '/_veryfront/rsc/module?rel=' + encodeURIComponent(data.pagePath)
@@ -103,7 +117,11 @@ export const getRendererScript = () => `
               shouldRenderRscClientPage,
             );
             if (LayoutComponent) {
-              tree = React.createElement(LayoutComponent, { children: tree });
+              const WrappedLayoutComponent =
+                shouldRenderRscClientPage && layouts[i].path === 'app/layout.tsx'
+                  ? unwrapAppRouterDocumentLayout(LayoutComponent)
+                  : LayoutComponent;
+              tree = React.createElement(WrappedLayoutComponent, { children: tree });
             }
           }
         }

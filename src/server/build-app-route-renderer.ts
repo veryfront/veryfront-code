@@ -11,8 +11,15 @@ import { COMPILATION_ERROR } from "#veryfront/errors/index.ts";
 import { generateHydrationData, getProdScripts } from "#veryfront/html";
 import { buildImportMapJson } from "#veryfront/html/utils.ts";
 import { getPreviewStylesheetLink } from "#veryfront/html/dev-scripts.ts";
+import {
+  shouldUnwrapAppRouterDocumentLayout,
+  unwrapAppRouterDocumentLayout,
+} from "#veryfront/rendering/layouts/utils/component-loader.ts";
 
 type ReactComponentLike = import("react").ComponentType<{ children?: import("react").ReactNode }>;
+type ReactLayoutFunction = (
+  props: { children?: import("react").ReactNode },
+) => import("react").ReactNode;
 
 async function fileExists(adapter: RuntimeAdapter, filePath: string): Promise<boolean> {
   try {
@@ -120,7 +127,11 @@ export async function renderAppRouteToHTML(args: {
       const Layout = await loadComponent(adapter, layoutPath, projectDir, contentSourceId);
       if (typeof Layout !== "function") continue;
 
-      element = React.createElement(Layout as ReactComponentLike, { children: element });
+      const LayoutToApply = shouldUnwrapAppRouterDocumentLayout(layoutPath, projectDir)
+        ? unwrapAppRouterDocumentLayout(React, Layout as ReactLayoutFunction)
+        : Layout as ReactComponentLike;
+
+      element = React.createElement(LayoutToApply, { children: element });
     } catch (error) {
       logger.debug(
         "[BuildAppRouteRenderer] Layout loading failed, continuing without layout",

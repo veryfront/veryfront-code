@@ -30,6 +30,32 @@ export default function Page() {
   return { projectDir, pageFile };
 }
 
+async function makeDocumentLayoutProject(): Promise<{ projectDir: string; pageFile: string }> {
+  const projectDir = await Deno.makeTempDir({ prefix: "vf-app-route-document-layout-" });
+
+  const appDir = join(projectDir, "app");
+  await Deno.mkdir(appDir, { recursive: true });
+  await Deno.writeTextFile(
+    join(appDir, "layout.tsx"),
+    `export default function Layout({ children }: { children: React.ReactNode }) {
+  return <html><body><main data-testid="document-layout">{children}</main></body></html>;
+}
+`,
+  );
+  const pageFile = join(appDir, "page.tsx");
+  await Deno.writeTextFile(
+    pageFile,
+    `"use client";
+
+export default function Page() {
+  return <button id="counter" type="button">Count: 0</button>;
+}
+`,
+  );
+
+  return { projectDir, pageFile };
+}
+
 function extractHydrationData(html: string): Record<string, unknown> {
   const match = html.match(
     /<script id="veryfront-hydration-data" type="application\/json"[^>]*>([\s\S]*?)<\/script>/i,
@@ -67,6 +93,34 @@ Deno.test({
       assertEquals(hydrationData.slug, "");
       assertEquals(hydrationData.clientModuleStrategy, "rsc-module");
       assertEquals(hydrationData.layouts, [{ kind: "tsx", path: "app/layout.tsx" }]);
+    } finally {
+      await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
+    }
+  },
+});
+
+Deno.test({
+  name:
+    "server/build-app-route-renderer unwraps App Router document layouts before writing the root",
+  sanitizeOps: false,
+  sanitizeResources: false,
+  async fn() {
+    const { projectDir, pageFile } = await makeDocumentLayoutProject();
+
+    try {
+      const html = await renderAppRouteToHTML({
+        adapter: denoAdapter,
+        projectDir,
+        routePath: "/",
+        pageFile,
+        contentSourceId: "test-content-source",
+      });
+
+      assertStringIncludes(html, 'id="root"');
+      assertStringIncludes(html, 'data-testid="document-layout"');
+      assertStringIncludes(html, 'id="counter"');
+      assertEquals(html.includes('<div id="root"><html>'), false);
+      assertEquals(html.includes("<body><html>"), false);
     } finally {
       await Deno.remove(projectDir, { recursive: true }).catch(() => undefined);
     }
