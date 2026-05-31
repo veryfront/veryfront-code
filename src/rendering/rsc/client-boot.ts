@@ -116,6 +116,10 @@ export function shouldHydrateOnly(importUrl: string = import.meta.url): boolean 
   }
 }
 
+export function shouldRenderPageComponent(strategy: ClientModuleStrategy): boolean {
+  return strategy === "rsc-module";
+}
+
 async function tryStream(q: string): Promise<boolean> {
   try {
     const res = await fetch(RSC_PATH_PREFIX + "stream" + q);
@@ -168,10 +172,14 @@ async function hydratePageComponent(
       : root;
     const component = React.createElement(Component, {});
 
-    ReactDOM.hydrateRoot(hydrationRoot, component, {
-      identifierPrefix: "vf",
-      onRecoverableError: () => {},
-    });
+    if (shouldRenderPageComponent(strategy)) {
+      ReactDOM.createRoot(hydrationRoot).render(component);
+    } else {
+      ReactDOM.hydrateRoot(hydrationRoot, component, {
+        identifierPrefix: "vf",
+        onRecoverableError: () => {},
+      });
+    }
 
     console.debug?.("[RSC] Page component hydrated successfully");
     return true;

@@ -5,6 +5,7 @@ import {
   selectHydrationRoot,
   shouldAttemptRSCTransport,
   shouldHydrateOnly,
+  shouldRenderPageComponent,
   shouldUsePageRendererHydration,
   shouldWrapPageHydrationRoot,
 } from "./client-boot.ts";
@@ -31,6 +32,16 @@ function toCandidate(element: MockElement) {
 }
 
 describe("rendering/rsc/client-boot", () => {
+  describe("shouldRenderPageComponent", () => {
+    it("client-renders proxy modules that cannot hydrate server-owned markup", () => {
+      assertEquals(shouldRenderPageComponent("rsc-module"), true);
+    });
+
+    it("hydrates local filesystem modules against their server markup", () => {
+      assertEquals(shouldRenderPageComponent("fs"), false);
+    });
+  });
+
   describe("shouldAttemptRSCTransport", () => {
     function makeDocument(ids: string[] = []) {
       const elements = new Set(ids);
