@@ -76,6 +76,41 @@ describe("tool factory", () => {
       assertEquals(t.inputSchemaJson?.required?.includes("age"), true);
     });
 
+    it("should preserve raw JSON input and output schemas", async () => {
+      const inputSchema = {
+        type: "object",
+        properties: {
+          min: { type: "number" },
+          max: { type: "number" },
+        },
+        required: ["min", "max"],
+        additionalProperties: false,
+      } as const;
+      const outputSchema = {
+        type: "object",
+        properties: {
+          randomNumber: { type: "number" },
+        },
+        required: ["randomNumber"],
+        additionalProperties: false,
+      } as const;
+
+      const t = tool({
+        id: "number-generator",
+        description: "Generates a random number within a specified range.",
+        inputSchema,
+        outputSchema,
+        execute: async (input) => {
+          const args = input as { min: number; max: number };
+          return { randomNumber: args.min + args.max };
+        },
+      });
+
+      assertEquals(t.inputSchemaJson, inputSchema);
+      assertEquals(t.outputSchemaJson, outputSchema);
+      assertEquals(await t.execute({ min: 3, max: 9 }), { randomNumber: 12 });
+    });
+
     it("should preserve an output schema and converted JSON schema", () => {
       const t = tool({
         id: "output-schema-test",

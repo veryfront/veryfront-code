@@ -1,7 +1,7 @@
 ---
 title: "veryfront/prompt"
 description: "Declare and register prompts exposable over MCP."
-order: 19
+order: 18
 ---
 
 ## Import
@@ -41,17 +41,17 @@ Create a typed prompt definition.
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `prompt` | Create a typed prompt definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L10) |
+| `prompt` | Create a typed prompt definition. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/factory.ts#L9) |
 
 ### Types
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `Prompt` | Public API contract for prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L4) |
-| `PromptConfig` | Configuration used by prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L16) |
+| `Prompt` | Public API contract for prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/types.ts#L3) |
+| `PromptConfig` | Configuration used by prompt. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/schemas/prompt.schema.ts#L15) |
 
 ### Constants
 
 | Name | Description | Source |
 |------|-------------|--------|
-| `promptRegistry` | Shared prompt registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L30) |
+| `promptRegistry` | Shared prompt registry value. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/prompt/registry.ts#L29) |

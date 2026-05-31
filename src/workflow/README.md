@@ -322,7 +322,7 @@ await manager.start();
 **Creating a Custom Executor:**
 
 ```typescript
-import type { RunExecutionConfig, RunExecutor, RunExecutionInfo } from "veryfront/workflow";
+import type { RunExecutionConfig, RunExecutionInfo, RunExecutor } from "veryfront/workflow";
 
 class DockerRunExecutor implements RunExecutor {
   async createRunExecution(config: RunExecutionConfig): Promise<string> {
