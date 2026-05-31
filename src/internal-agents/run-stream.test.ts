@@ -8,6 +8,7 @@ import type {
   AgentServiceSandboxToolsResult,
   CreateSandboxBashTool,
 } from "#veryfront/sandbox";
+import type { Tool } from "#veryfront/tool";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import { createRuntimeAgentStreamResponse } from "./run-stream.ts";
 
@@ -305,6 +306,72 @@ describe("internal-agents/run-stream", () => {
     assertEquals(sandboxToolCalls, 0);
   });
 
+  it("keeps concrete project source tools executable when forwarded metadata has the same name", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    const projectTool = {
+      id: "number-generator",
+      type: "function",
+      description: "Generate a number",
+      inputSchema: {} as never,
+      inputSchemaJson: { type: "object", properties: {} },
+      execute: () => ({ randomNumber: 7 }),
+    };
+    let capturedToolResult: unknown;
+
+    const agent = {
+      id: "random",
+      config: {
+        id: "random",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          "number-generator": projectTool,
+        },
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "random",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [
+        {
+          name: "number-generator",
+          description: "Generates a random number within a specified range.",
+          parameters: { type: "object", properties: {} },
+        },
+      ],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (_agent, mergedTools) => {
+          if (mergedTools && mergedTools !== true) {
+            const tool = mergedTools["number-generator"];
+            if (tool && tool !== true) {
+              capturedToolResult = (tool as Tool).execute?.({});
+            }
+          }
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedToolResult, { randomNumber: 7 });
+  });
+
   it("emits comment heartbeats while the runtime stream is idle", async () => {
     using time = new FakeTime();
     const sessionManager = new AgentRunSessionManager();
@@ -325,7 +392,7 @@ describe("internal-agents/run-stream", () => {
       tools: [],
       context: [],
     } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
-    let runtimeController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    const runtimeControllers: ReadableStreamDefaultController<Uint8Array>[] = [];
 
     const response = await createRuntimeAgentStreamResponse(
       input,
@@ -336,7 +403,7 @@ describe("internal-agents/run-stream", () => {
           stream: async () =>
             new ReadableStream<Uint8Array>({
               start(controller) {
-                runtimeController = controller;
+                runtimeControllers.push(controller);
                 // Keep the stream idle so the control-plane response must stay alive.
               },
             }),
@@ -361,7 +428,7 @@ describe("internal-agents/run-stream", () => {
       ": internal-agent-runtime-heartbeat\n\n",
     );
 
-    runtimeController?.close();
+    runtimeControllers[0]?.close();
     await reader.cancel();
   });
 });

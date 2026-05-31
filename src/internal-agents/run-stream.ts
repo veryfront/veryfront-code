@@ -120,17 +120,26 @@ function buildMergedTools(
   availableForwardedToolNames?: string[],
   availableLocalTools?: Record<string, Tool | boolean>,
 ) {
+  const concreteSourceToolNames = agent.config.tools && agent.config.tools !== true
+    ? new Set(
+      Object.entries(agent.config.tools)
+        .filter(([, entry]) => entry && typeof entry === "object")
+        .map(([toolName]) => toolName),
+    )
+    : new Set<string>();
   const injectedTools = Object.fromEntries(
-    input.tools.map((tool) => [
-      tool.name,
-      createInjectedStudioTool(
-        input.runId,
+    input.tools
+      .filter((tool) => !concreteSourceToolNames.has(tool.name))
+      .map((tool) => [
         tool.name,
-        tool.description,
-        tool.inputSchema ?? tool.parameters,
-        sessionManager,
-      ),
-    ]),
+        createInjectedStudioTool(
+          input.runId,
+          tool.name,
+          tool.description,
+          tool.inputSchema ?? tool.parameters,
+          sessionManager,
+        ),
+      ]),
   );
 
   if (!agent.config.tools) {
