@@ -157,7 +157,7 @@ describe("integration endpoint specs", () => {
     assertEquals(tool.requiresWrite, false);
     assertEquals(tool.endpoint?.method, "GET");
     assertEquals(tool.endpoint?.url, "https://api.github.com/users/{username}");
-    assertEquals(tool.endpoint?.params?.username.required, true);
+    assertEquals(tool.endpoint?.params?.username?.required, true);
   });
 
   it("requests the Figma current user scope needed by get_me", () => {
