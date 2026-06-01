@@ -309,7 +309,7 @@ jobs:
 
   prerelease:
     if: needs.version-check.outputs.is_stable == 'false'
-    needs: [ci, tests, tests-binary-e2e, build-binaries, version-check]
+    needs: [ci, tests, coverage, tests-binary-e2e, build-binaries, version-check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -419,7 +419,7 @@ jobs:
 
   release:
     if: needs.version-check.outputs.is_stable == 'true'
-    needs: [ci, tests, tests-binary-e2e, build-binaries, version-check]
+    needs: [ci, tests, coverage, tests-binary-e2e, build-binaries, version-check]
     runs-on: ubuntu-latest
     environment: production
     permissions:
