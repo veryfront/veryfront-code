@@ -48,9 +48,18 @@ function nodeRequestToReadableStream(
 ): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      req.on("data", (chunk) => controller.enqueue(chunk));
+      req.on("data", (chunk) => {
+        controller.enqueue(chunk);
+        // Apply backpressure: once the stream's internal queue is full, pause
+        // the Node request so it stops buffering the whole body in memory.
+        if ((controller.desiredSize ?? 1) <= 0) req.pause?.();
+      });
       req.on("end", () => controller.close());
       req.on("error", (error) => controller.error(error));
+    },
+    pull() {
+      // The consumer asked for more — resume flowing mode.
+      req.resume?.();
     },
   });
 }
