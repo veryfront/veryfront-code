@@ -10,12 +10,13 @@ import {
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
+import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { type DiscoveredTask, findTaskById } from "#veryfront/task/discovery.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
 import type { Logger } from "#veryfront/utils";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
-import { createWorkflowClient } from "#veryfront/workflow";
+import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -23,6 +24,8 @@ import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
 const EXECUTE_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/execute$/;
 const DEFAULT_WORKFLOW_STATUS_POLL_INTERVAL_MS = 100;
 const DEFAULT_WORKFLOW_STATUS_TIMEOUT_MS = 15 * 60 * 1_000;
+const WORKFLOW_PERSISTENCE_REQUIRED_ERROR =
+  "Workflow paused but runtime workflow persistence is not configured";
 
 export interface ProjectRunExecuteRequest {
   runId: string;
@@ -49,6 +52,7 @@ interface WorkflowRunView {
 }
 
 interface WorkflowClientView {
+  readonly statePersistence?: "durable" | "ephemeral";
   register(workflow: unknown): void;
   start(
     workflowId: string,
@@ -79,7 +83,9 @@ export interface ProjectRunExecuteHandlerDeps {
       debug?: boolean;
     },
   ): Promise<DiscoveredWorkflow | null>;
-  createWorkflowClient(config?: { debug?: boolean }): WorkflowClientView;
+  createWorkflowClient(
+    config?: { debug?: boolean },
+  ): WorkflowClientView | Promise<WorkflowClientView>;
   executeKnowledgeIngest(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
@@ -146,6 +152,26 @@ function createExecutionFailure(error: unknown, durationMs: number): ProjectRunE
     logs: null,
     duration_ms: durationMs,
   };
+}
+
+async function createRuntimeWorkflowClient(
+  config?: { debug?: boolean },
+): Promise<WorkflowClientView> {
+  const redisUrl = getHostEnv("REDIS_URL")?.trim();
+  if (!redisUrl) {
+    return Object.assign(createWorkflowClient(config), {
+      statePersistence: "ephemeral" as const,
+    });
+  }
+
+  const backend = new RedisBackend({ url: redisUrl, debug: config?.debug });
+  if (backend.initialize) {
+    await backend.initialize();
+  }
+
+  return Object.assign(createWorkflowClient({ backend, debug: config?.debug }), {
+    statePersistence: "durable" as const,
+  });
 }
 
 async function executeTaskRun(
@@ -241,14 +267,32 @@ async function executeWorkflowRun(
     };
   }
 
-  const client = deps.createWorkflowClient({ debug: ctx.debug });
+  const client = await deps.createWorkflowClient({ debug: ctx.debug });
   try {
     client.register(workflow.definition);
     const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
     const run = await waitForWorkflowResult(client, handle.runId, deps);
     const durationMs = Math.max(0, deps.now() - startedAt);
 
-    if (run.status === "completed" || run.status === "waiting") {
+    if (run.status === "waiting") {
+      if (client.statePersistence !== "durable") {
+        return {
+          success: false,
+          error: WORKFLOW_PERSISTENCE_REQUIRED_ERROR,
+          logs: null,
+          duration_ms: durationMs,
+        };
+      }
+
+      return {
+        success: true,
+        result: run.output,
+        logs: null,
+        duration_ms: durationMs,
+      };
+    }
+
+    if (run.status === "completed") {
       return {
         success: true,
         result: run.output,
@@ -523,7 +567,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   findTaskById,
   runTask,
   findWorkflowById,
-  createWorkflowClient: (config) => createWorkflowClient(config) as unknown as WorkflowClientView,
+  createWorkflowClient: createRuntimeWorkflowClient,
   executeKnowledgeIngest: executeKnowledgeIngestRun,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
