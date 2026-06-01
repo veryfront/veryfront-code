@@ -204,6 +204,92 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
+  it("treats waiting workflow runs as successful pause boundaries", async () => {
+    let destroyed = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "durable",
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "waiting",
+          output: { approvalId: "approval-1" },
+        }),
+        destroy: async () => {
+          destroyed = true;
+        },
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_waiting_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "v1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_waiting_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { approvalId: "approval-1" },
+      duration_ms: 0,
+      logs: null,
+    });
+    assertEquals(destroyed, true);
+  });
+
+  it("does not report waiting workflow runs as successful without durable workflow state", async () => {
+    let destroyed = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        statePersistence: "ephemeral",
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "waiting",
+          output: { approvalId: "approval-1" },
+        }),
+        destroy: async () => {
+          destroyed = true;
+        },
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_waiting_ephemeral_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "v1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_waiting_ephemeral_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: false,
+      error: "Workflow paused but runtime workflow persistence is not configured",
+      duration_ms: 0,
+      logs: null,
+    });
+    assertEquals(destroyed, true);
+  });
+
   it("rejects unsigned execute requests", async () => {
     const handler = new ProjectRunExecuteHandler(createDeps());
 
