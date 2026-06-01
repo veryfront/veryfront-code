@@ -359,6 +359,22 @@ export const SERVICE_OVERLOADED = defineError({
   suggestion: "Reduce load or scale up resources",
 });
 
+export const SEMAPHORE_TIMEOUT = defineError({
+  slug: "semaphore-timeout",
+  category: "SERVER",
+  status: 503,
+  title: "Semaphore acquire timeout",
+  suggestion: "Reduce concurrency or increase the semaphore acquire timeout",
+});
+
+export const CIRCUIT_BREAKER_OPEN = defineError({
+  slug: "circuit-breaker-open",
+  category: "SERVER",
+  status: 503,
+  title: "Circuit breaker is open",
+  suggestion: "Wait for the breaker reset timeout before retrying",
+});
+
 export const CACHE_PATH_MISMATCH = defineError({
   slug: "cache-path-mismatch",
   category: "SERVER",
@@ -750,6 +766,8 @@ export const ERROR_REGISTRY = {
   "file-watch-error": FILE_WATCH_ERROR,
   "request-error": REQUEST_ERROR,
   "service-overloaded": SERVICE_OVERLOADED,
+  "semaphore-timeout": SEMAPHORE_TIMEOUT,
+  "circuit-breaker-open": CIRCUIT_BREAKER_OPEN,
   "cache-path-mismatch": CACHE_PATH_MISMATCH,
   "network-error": NETWORK_ERROR,
   "api-client-error": API_CLIENT_ERROR,

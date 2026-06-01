@@ -6,9 +6,26 @@
  * @module utils/semaphore
  */
 
-export class SemaphoreTimeoutError extends Error {
+import { SEMAPHORE_TIMEOUT } from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
+
+/**
+ * Thrown when a semaphore acquire exceeds its configured timeout.
+ *
+ * Extends {@link VeryfrontError} so it carries registry slug/status/category
+ * and RFC-9457 fields, while remaining `instanceof SemaphoreTimeoutError` for
+ * existing catch sites.
+ */
+export class SemaphoreTimeoutError extends VeryfrontError {
   constructor(name: string, timeoutMs: number) {
-    super(`Semaphore '${name}' acquire timeout after ${timeoutMs}ms`);
+    super(`Semaphore '${name}' acquire timeout after ${timeoutMs}ms`, {
+      slug: SEMAPHORE_TIMEOUT.slug,
+      category: SEMAPHORE_TIMEOUT.category,
+      status: SEMAPHORE_TIMEOUT.status,
+      title: SEMAPHORE_TIMEOUT.title,
+      suggestion: SEMAPHORE_TIMEOUT.suggestion,
+      context: { name, timeoutMs },
+    });
     this.name = "SemaphoreTimeoutError";
   }
 }

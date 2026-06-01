@@ -8,6 +8,19 @@ import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
+
+/**
+ * Bounded cache for project paths discovered dynamically at request time
+ * (slug → absolute path). Previously these were written into the per-handler
+ * `localProjects` config map, which grew without bound. Using a registered
+ * LRU keeps the working set capped and exposes it to cache monitoring, while
+ * the static `config.localProjects` map continues to reflect *configured*
+ * projects for the public `ProxyHandler.localProjects` surface.
+ */
+const discoveredLocalProjects = new LRUCache<string, string>({ maxEntries: 100 });
+registerLRUCache("proxy-discovered-local-projects", discoveredLocalProjects);
 
 /**
  * Cache the resolved AuthProvider at module scope so the proxy does not pay
@@ -329,6 +342,15 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
     const projectDirs = ["projects", "data/projects", "examples"];
     const basePath = cwd();
+    // Key the discovery cache by the filesystem root as well as the slug: the
+    // cache is process-wide, so the same slug can resolve to different paths
+    // across handlers/workspaces or after a cwd change. Keying by basePath
+    // prevents a stale entry from one root being proxied for another.
+    const cacheKey = `${basePath} ${slug}`;
+
+    const cached = discoveredLocalProjects.get(cacheKey);
+    if (cached) return cached;
+
     const candidatePaths = projectDirs.map((dir) => join(basePath, dir, slug));
 
     const existingPaths = await Promise.all(
@@ -354,7 +376,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         if (!hasApp && !hasPages && !hasComponents) continue;
 
-        localProjects[slug] = projectPath;
+        discoveredLocalProjects.set(cacheKey, projectPath);
         logger?.debug("Dynamically discovered local project", { slug, projectPath });
         return projectPath;
       } catch (_) {

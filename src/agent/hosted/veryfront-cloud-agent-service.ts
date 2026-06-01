@@ -8,6 +8,7 @@ import { dirname, resolve } from "#veryfront/platform/compat/path/index.ts";
 import { cwd, env } from "#veryfront/platform/compat/process.ts";
 import type { AuthProvider } from "#veryfront/extensions/auth/index.ts";
 import type { SchemaValidator } from "#veryfront/extensions/schema/index.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   type NodeTelemetryProvider,
   NodeTelemetryProviderName,
@@ -277,7 +278,23 @@ function resolveProjectDir(
   return candidates.find(hasDiscoveryRoot) ?? baseDir;
 }
 
+/**
+ * Schema for the subset of a project manifest (package.json / deno.json) we
+ * read. Only `name` is consumed; extra fields are tolerated via passthrough so
+ * arbitrary manifests validate. Defined lazily via `defineSchema` so the zod
+ * extension is resolved at call time — the cloud-agent options resolver calls
+ * `ensureDefaultSchemaValidator()` before reaching service-name resolution, so
+ * a validator is registered by the time this runs.
+ */
+const getProjectManifestSchema = defineSchema((v) =>
+  v.object({
+    name: v.string().optional(),
+  }).passthrough()
+);
+
 function readProjectManifestName(projectDir: string): string | null {
+  const manifestSchema = getProjectManifestSchema();
+
   for (const fileName of ["package.json", "deno.json"]) {
     const filePath = resolve(projectDir, fileName);
     if (!existsSync(filePath)) {
@@ -285,9 +302,9 @@ function readProjectManifestName(projectDir: string): string | null {
     }
 
     try {
-      const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
-      const name = (parsed as { name?: unknown }).name;
+      const result = manifestSchema.safeParse(JSON.parse(readFileSync(filePath, "utf8")));
+      if (!result.success) continue;
+      const name = result.data.name;
       if (typeof name !== "string") continue;
       const trimmedName = name.trim();
       if (trimmedName) return trimmedName;
