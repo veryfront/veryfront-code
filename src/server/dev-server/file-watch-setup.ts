@@ -29,7 +29,27 @@ const IGNORED_PATH_PATTERNS = [
   ".git\\",
   ".veryfront/",
   ".veryfront\\",
+  // Tool output directories that live inside the project root. Tools such as
+  // the Playwright MCP server write per-step artifacts here continuously,
+  // which would otherwise drive an open-ended HMR refresh loop.
+  ".playwright-mcp/",
+  ".playwright-mcp\\",
+  "dist/",
+  "dist\\",
 ];
+
+/**
+ * Generated-artifact file extensions that are never source and must never
+ * trigger an HMR update — even when written outside an ignored directory
+ * (e.g. a tool that drops a `.log` into the project root). This is the
+ * defensive guarantee against future tools writing to as-yet-unknown paths.
+ *
+ * Deliberately narrow: only extensions that are unambiguously machine output.
+ * veryfront hot-reloads more than JS (`.css`, `.mdx`/`.md`, and arbitrary
+ * primitive-directory resources), so an allowlist of "source" extensions
+ * would wrongly suppress legitimate updates.
+ */
+const IGNORED_ARTIFACT_EXTENSIONS = new Set([".log", ".tmp"]);
 
 /**
  * Project-root directory names that contain runtime data (not source code)
@@ -38,11 +58,24 @@ const IGNORED_PATH_PATTERNS = [
  */
 const IGNORED_RUNTIME_DIRS = new Set(["data"]);
 
+/** Whether a path ends in a generated-artifact extension (case-insensitive). */
+function hasIgnoredArtifactExtension(path: string): boolean {
+  const lower = path.toLowerCase();
+  for (const ext of IGNORED_ARTIFACT_EXTENSIONS) {
+    if (lower.endsWith(ext)) return true;
+  }
+  return false;
+}
+
 /**
- * Check if a path should be ignored for HMR purposes.
+ * Check if a path should be ignored for HMR purposes — either because it lives
+ * in a generated/output directory or because it is a generated-artifact file.
+ *
+ * Exported for unit testing.
  */
-function shouldIgnorePath(path: string): boolean {
-  return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern));
+export function shouldIgnorePath(path: string): boolean {
+  return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern)) ||
+    hasIgnoredArtifactExtension(path);
 }
 
 export class FileWatchSetup {
