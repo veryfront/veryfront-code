@@ -6,6 +6,7 @@ import {
   collectFinalStreamToolResults,
   collectGeneratedToolResults,
   collectPersistedToolResults,
+  isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
@@ -347,6 +348,59 @@ describe("agent runtime streamed tool result collection", () => {
       isStreamedToolCallIncomplete({ inputAvailable: true }),
       false,
     );
+  });
+
+  it("classifies a non-finalized empty-object placeholder as recoverable", () => {
+    assertEquals(
+      isRecoverablePlaceholderToolCall({ inputAvailable: false, arguments: "{}" }),
+      true,
+    );
+    assertEquals(
+      isRecoverablePlaceholderToolCall({ inputAvailable: false, arguments: "" }),
+      true,
+    );
+    assertEquals(
+      isRecoverablePlaceholderToolCall({ inputAvailable: undefined, arguments: "{}{}" }),
+      true,
+    );
+  });
+
+  it("does not classify truncated partial JSON as a recoverable placeholder", () => {
+    assertEquals(
+      isRecoverablePlaceholderToolCall({
+        inputAvailable: false,
+        arguments: '{"skillId":"dora"',
+      }),
+      false,
+    );
+  });
+
+  it("does not classify a finalized tool call as a recoverable placeholder", () => {
+    assertEquals(
+      isRecoverablePlaceholderToolCall({ inputAvailable: true, arguments: "{}" }),
+      false,
+    );
+  });
+
+  it("recovers a provisional empty-object placeholder by continuing the loop", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_placeholder_1",
+          {
+            id: "toolu_placeholder_1",
+            name: "review",
+            arguments: "{}",
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, true);
   });
 
   it("materializes a complete streamed tool call into a ready-to-execute part", () => {

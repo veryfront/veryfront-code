@@ -45,6 +45,7 @@ import {
   type StreamingToolResult,
 } from "./chat-stream-handler.ts";
 import { repairToolCall } from "./repair-tool-call.ts";
+import { stripLeadingEmptyObjectPlaceholder } from "../streaming/data-stream.ts";
 import { MiddlewareChain } from "../middleware/chain.ts";
 import { AGENT_DEFAULTS } from "./defaults.ts";
 import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
@@ -259,8 +260,28 @@ export function shouldContinueAfterStreamStep(
   const hasFinalizedClientToolCall = streamedToolCalls.some((toolCall) =>
     toolCall.inputAvailable === true && toolCall.providerExecuted !== true
   );
+  // A non-finalized call whose only accumulated arguments are a bare
+  // empty-object placeholder is provisional streamed input the model never
+  // committed. We can recover by re-calling the model, so it must not block
+  // continuation (unlike a truncated/dead partial-JSON call).
+  const hasIncompleteDeadToolCall = streamedToolCalls.some(
+    (toolCall) =>
+      isStreamedToolCallIncomplete(toolCall) &&
+      !isRecoverablePlaceholderToolCall(toolCall),
+  );
+  const hasRecoverablePlaceholderToolCall = streamedToolCalls.some(
+    isRecoverablePlaceholderToolCall,
+  );
 
   if (state.finishReason === "tool-calls") {
+    if (hasIncompleteDeadToolCall) {
+      return false;
+    }
+    // Recover provisional placeholders by re-calling the model even when no
+    // client tool call finalized in this step.
+    if (hasRecoverablePlaceholderToolCall && !hasFinalizedClientToolCall) {
+      return true;
+    }
     return !hasIncompleteToolCall && hasFinalizedClientToolCall;
   }
 
@@ -326,6 +347,30 @@ export function isStreamedToolCallIncomplete(
   toolCall: Pick<StreamingToolCall, "inputAvailable">,
 ): boolean {
   return toolCall.inputAvailable !== true;
+}
+
+/**
+ * A non-finalized streamed tool call is a "recoverable placeholder" when its
+ * accumulated `arguments` are empty or only the transient empty-object
+ * placeholder `"{}"` (after stripping leading placeholders). This happens when
+ * a provider emits `tool-input-start` + a `"{}"` `tool-input-delta` and then
+ * finishes the step WITHOUT ever sending the finalizing `tool-call` /
+ * `tool-input-end` event — the model never actually committed any arguments.
+ *
+ * Unlike an incomplete-dead tool call (which carries real truncated partial
+ * JSON and must stop the loop to avoid retry storms), a recoverable
+ * placeholder carries no committed intent, so the runtime can safely re-call
+ * the model to recover the real tool call. Such placeholders must NOT be
+ * executed and must NOT surface a stream-termination error.
+ */
+export function isRecoverablePlaceholderToolCall(
+  toolCall: Pick<StreamingToolCall, "inputAvailable" | "arguments">,
+): boolean {
+  if (!isStreamedToolCallIncomplete(toolCall)) {
+    return false;
+  }
+  const stripped = stripLeadingEmptyObjectPlaceholder(toolCall.arguments);
+  return stripped === "" || stripped === "{}";
 }
 
 /**
@@ -1228,6 +1273,14 @@ export class AgentRuntime {
         const materialized = materializeStreamedToolCall(tc);
         streamParts.push(materialized.part);
 
+        if (materialized.kind === "incomplete" && isRecoverablePlaceholderToolCall(tc)) {
+          // Provisional empty-object placeholder that never finalized. The
+          // model never committed arguments; the loop will recover by
+          // re-calling the model. Persist the (empty) part for transparent
+          // history but surface no termination warning or error.
+          continue;
+        }
+
         if (materialized.kind === "incomplete") {
           // Stream terminated before the provider emitted the finalizing
           // `tool-call` event for this block. The model never committed this
@@ -1317,6 +1370,13 @@ export class AgentRuntime {
 
       for (const tc of streamedToolCalls) {
         throwIfAborted(abortSignal);
+        if (isRecoverablePlaceholderToolCall(tc)) {
+          // Provisional empty-object placeholder that never finalized. The
+          // model never committed arguments, so we neither execute it nor
+          // surface a stream-termination error — the loop continues and the
+          // next model call recovers the real tool call.
+          continue;
+        }
         if (isStreamedToolCallIncomplete(tc)) {
           // Stream ended before the provider finalized this tool call. We
           // cannot execute it — record a distinct stream-termination error

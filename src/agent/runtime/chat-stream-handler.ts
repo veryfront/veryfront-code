@@ -350,6 +350,16 @@ export function processStream(
         if (tc.inputAvailable === true || tc.providerExecuted === true) {
           continue;
         }
+        // A bare empty-object placeholder (`""` or `"{}"` after stripping
+        // transient prefixes) is provisional streamed input that never
+        // finalized into a real `tool-call`/`tool-input-end`. Committing it
+        // would mark `inputAvailable: true` and execute the tool with empty
+        // args. Leave it provisional so the runtime can recover by re-calling
+        // the model instead of executing a placeholder.
+        const stripped = stripLeadingEmptyObjectPlaceholder(tc.arguments);
+        if (stripped === "" || stripped === "{}") {
+          continue;
+        }
         const parsedInput = tryParseToolInputObject(tc.arguments);
         if (!parsedInput) {
           continue;
