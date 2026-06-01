@@ -384,6 +384,10 @@ function handleDataPart(
   onUpdate: StreamingCallbacks["onUpdate"],
   getBuildParts: () => ChatMessagePart[],
 ): void {
+  if (!isRenderableDataPartType(parsed.type)) {
+    return;
+  }
+
   if (!state.messageId) {
     state.messageId = generateClientId("msg");
   }
@@ -397,6 +401,12 @@ function handleDataPart(
   });
 
   onUpdate?.(getBuildParts(), state.messageId);
+}
+
+function isRenderableDataPartType(type: string): boolean {
+  return type !== "data-state-snapshot" &&
+    type !== "data-state-delta" &&
+    type !== "data-messages-snapshot";
 }
 
 function handleToolInputStart(

@@ -110,4 +110,51 @@ describe("use-chat internal state helpers", () => {
       { type: "text", text: "Done", state: "done" },
     ]);
   });
+
+  it("does not store AG-UI snapshot events as assistant message parts", async () => {
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: StateSnapshot",
+          'data: {"snapshot":{"context":"private"}}',
+          "",
+          "event: MessagesSnapshot",
+          'data: {"messages":[{"id":"u1","role":"user","content":"Question"}]}',
+          "",
+          "event: TextMessageStart",
+          'data: {"messageId":"msg-1","role":"assistant"}',
+          "",
+          "event: TextMessageContent",
+          'data: {"messageId":"msg-1","delta":"Done"}',
+          "",
+          "event: TextMessageEnd",
+          'data: {"messageId":"msg-1"}',
+          "",
+          "event: RunFinished",
+          'data: {"threadId":"thread-1","runId":"run-1"}',
+          "",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    });
+    const messages: ChatMessage[] = [];
+    const dataEvents: unknown[] = [];
+
+    await handleAgUiStreamingResponse(body, {
+      onData: (data) => dataEvents.push(data),
+      onMessage: (message) => messages.push(message),
+    });
+
+    const message = messages[0];
+    assertExists(message);
+    assertEquals(message.parts, [
+      { type: "text", text: "Done", state: "done" },
+    ]);
+    assertEquals(dataEvents, [
+      { context: "private" },
+      [{ id: "u1", role: "user", content: "Question" }],
+    ]);
+  });
 });
