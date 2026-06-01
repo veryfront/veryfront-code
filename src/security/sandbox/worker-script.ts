@@ -90,7 +90,7 @@ async function serializeResponse(response: Response): Promise<SerializedResponse
   };
 }
 
-function serializeError(error: unknown): SerializedError {
+export function serializeError(error: unknown): SerializedError {
   if (error instanceof Error) {
     const serialized: SerializedError = {
       message: error.message,
@@ -113,7 +113,7 @@ function serializeError(error: unknown): SerializedError {
 
 const moduleCache = new Map<string, Record<string, unknown>>();
 
-async function loadModule(modulePath: string): Promise<Record<string, unknown>> {
+export async function loadModule(modulePath: string): Promise<Record<string, unknown>> {
   const cached = moduleCache.get(modulePath);
   if (cached) return cached;
 
@@ -122,7 +122,7 @@ async function loadModule(modulePath: string): Promise<Record<string, unknown>> 
   return mod;
 }
 
-function clearModuleCache(): void {
+export function clearModuleCache(): void {
   moduleCache.clear();
 }
 
