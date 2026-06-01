@@ -27,7 +27,7 @@ import type {
 } from "#veryfront/agent/react";
 import { cn } from "../../theme.ts";
 import { Markdown } from "../../markdown.tsx";
-import { MessageItem } from "../../../../primitives/index.ts";
+import { MessageItem } from "#veryfront/react/primitives/index.ts";
 import { MessageContextProvider, useMessageContext } from "../contexts/message-context.tsx";
 import type { MessageContextValue } from "../contexts/message-context.tsx";
 import { useChatContextOptional } from "../contexts/chat-context.tsx";

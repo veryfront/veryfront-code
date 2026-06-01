@@ -5,7 +5,7 @@
  */
 
 import * as React from "react";
-import { InputBox, SubmitButton } from "../../../../primitives/index.ts";
+import { InputBox, SubmitButton } from "#veryfront/react/primitives/index.ts";
 import { cn } from "../../theme.ts";
 import { PlusIcon } from "../../icons/index.ts";
 import { type ModelOption, ModelSelector } from "../../model-selector.tsx";

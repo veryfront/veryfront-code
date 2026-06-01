@@ -8,7 +8,7 @@
  */
 
 import * as React from "react";
-import { MessageItem, MessageList } from "../../../../primitives/index.ts";
+import { MessageItem, MessageList } from "#veryfront/react/primitives/index.ts";
 import type {
   BranchInfo,
   BrowserInferenceStatus,
