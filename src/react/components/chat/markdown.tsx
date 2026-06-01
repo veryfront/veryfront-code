@@ -42,23 +42,52 @@ type MermaidModule = {
   };
 };
 
+/**
+ * Opaque remark/rehype plugin handle. The plugin internals are not used
+ * directly; they are only passed through to react-markdown.
+ */
+type MarkdownPlugin = unknown;
+
+/** Props passed by react-markdown to a custom `code` renderer. */
+interface CodeRendererProps {
+  className?: string;
+  children?: React.ReactNode;
+  node?: { position?: { start?: { line?: number } } };
+}
+
+/** Props passed by react-markdown to a custom `a` (anchor) renderer. */
+interface AnchorRendererProps {
+  href?: string;
+  children?: React.ReactNode;
+}
+
+/** Props passed by react-markdown to block-level renderers (table, blockquote). */
+interface BlockRendererProps {
+  children?: React.ReactNode;
+}
+
+/** Minimal shape of the react-markdown default export used here. */
+interface ReactMarkdownProps {
+  remarkPlugins?: MarkdownPlugin[];
+  rehypePlugins?: MarkdownPlugin[];
+  components?: Record<string, (props: never) => React.ReactNode>;
+  children?: string;
+}
+
+type ReactMarkdownComponent = (props: ReactMarkdownProps) => React.ReactElement;
+
 async function importFromUrl<T>(url: string): Promise<T> {
   return await import(/* @vite-ignore */ url) as T;
 }
 
-// deno-lint-ignore no-explicit-any
-let ReactMarkdown: any = null;
-// deno-lint-ignore no-explicit-any
-let remarkGfm: any = null;
-// deno-lint-ignore no-explicit-any
-let rehypeHighlight: any = null;
+let ReactMarkdown: ReactMarkdownComponent | null = null;
+let remarkGfm: MarkdownPlugin | null = null;
+let rehypeHighlight: MarkdownPlugin | null = null;
 
-// deno-lint-ignore no-explicit-any
 let mermaidPromise: Promise<MermaidModule> | null = null;
-// deno-lint-ignore no-explicit-any
-let mermaidModule: any = null;
+let mermaidModule: MermaidModule | null = null;
 
-async function loadMermaid(): Promise<any | null> {
+async function loadMermaid(): Promise<MermaidModule | null> {
   if (!isBrowserEnvironment()) return null;
   if (mermaidModule) return mermaidModule;
 
@@ -203,7 +232,7 @@ export function Markdown({
           importFromUrl<DefaultModule<unknown>>(ESM_REHYPE_HIGHLIGHT),
         ]);
 
-        ReactMarkdown = rmModule.default;
+        ReactMarkdown = rmModule.default as ReactMarkdownComponent;
         remarkGfm = gfmModule.default;
         rehypeHighlight = highlightModule.default;
       }
@@ -229,8 +258,7 @@ export function Markdown({
         remarkPlugins={remarkGfm ? [remarkGfm] : []}
         rehypePlugins={rehypeHighlight ? [rehypeHighlight] : []}
         components={{
-          // deno-lint-ignore no-explicit-any
-          code(props: any) {
+          code(props: CodeRendererProps) {
             const { className: codeClassName, children: codeChildren, node } = props;
             const match = /language-(\w+)/.exec(codeClassName || "");
             const language = match ? match[1] : undefined;
@@ -247,8 +275,7 @@ export function Markdown({
               />
             );
           },
-          // deno-lint-ignore no-explicit-any
-          table(props: any) {
+          table(props: BlockRendererProps) {
             return (
               <div className="my-4 overflow-auto">
                 <table className="min-w-full divide-y divide-[var(--border)]">
@@ -257,8 +284,7 @@ export function Markdown({
               </div>
             );
           },
-          // deno-lint-ignore no-explicit-any
-          a(props: any) {
+          a(props: AnchorRendererProps) {
             return (
               <a
                 href={props.href}
@@ -270,15 +296,14 @@ export function Markdown({
               </a>
             );
           },
-          // deno-lint-ignore no-explicit-any
-          blockquote(props: any) {
+          blockquote(props: BlockRendererProps) {
             return (
               <blockquote className="border-l-4 border-[var(--border)] pl-4 my-4 text-[var(--card-foreground)] italic">
                 {props.children}
               </blockquote>
             );
           },
-        }}
+        } as ReactMarkdownProps["components"]}
       >
         {children}
       </ReactMarkdown>

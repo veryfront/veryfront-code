@@ -44,6 +44,40 @@ export type BundleHash = Brand<string, "BundleHash">;
 export type NormalizedUrl = Brand<string, "NormalizedUrl">;
 
 /**
+ * Apply a branded-type marker to a raw value.
+ *
+ * Centralizes the (otherwise unsafe) widening cast used to attach a
+ * compile-time brand. Use this instead of scattering `as unknown as Branded`
+ * across the codebase so the single point of unsoundness is auditable.
+ *
+ * The brand string is inferred from the requested branded type, so callers
+ * write `brand<PortableModuleCode>(str)` and get full checking on the base.
+ *
+ * @param value - The underlying (unbranded) value
+ * @returns The same value, typed as the requested branded type
+ */
+export function brand<TBranded extends Brand<string, string>>(
+  value: string,
+): TBranded {
+  // Single, centralized unsound widening: attaching a phantom brand to a
+  // runtime value. This is the only place this cast should occur.
+  return value as unknown as TBranded;
+}
+
+/**
+ * Strip the branded-type marker from a value, recovering the underlying type.
+ *
+ * Fully type-safe: it only forgets the brand. Accepts the raw underlying type
+ * as well so callers can pass `Branded | Raw` unions (e.g. `BundleHash | string`).
+ *
+ * @param value - The branded (or already-raw) value
+ * @returns The value typed as its underlying (unbranded) type
+ */
+export function unbrand<TBase>(value: Brand<TBase, string> | TBase): TBase {
+  return value as TBase;
+}
+
+/**
  * Result of attempting to decode potentially gzip-compressed code.
  */
 export interface DecodeResult {

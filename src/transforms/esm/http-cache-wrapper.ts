@@ -18,12 +18,14 @@ import { getCacheBaseDir } from "#veryfront/utils/cache-dir.ts";
 import { CacheBackends, createDistributedCacheAccessor } from "#veryfront/cache/backend.ts";
 import type { CacheBackend } from "#veryfront/cache/types.ts";
 import { HTTP_MODULE_DISTRIBUTED_TTL_SEC } from "#veryfront/utils/constants/cache.ts";
-import type {
-  BundleHash,
-  DecodeResult,
-  LocalModuleCode,
-  NormalizedUrl,
-  PortableModuleCode,
+import {
+  brand,
+  type BundleHash,
+  type DecodeResult,
+  type LocalModuleCode,
+  type NormalizedUrl,
+  type PortableModuleCode,
+  unbrand,
 } from "./http-cache-types.ts";
 import {
   asBundleHash,
@@ -70,7 +72,7 @@ export async function initializeHttpModuleDistributedCache(): Promise<boolean> {
  * Format: {VERSION}:{prefix}:{hash}
  */
 function distributedKey(prefix: string, hash: string | BundleHash): string {
-  const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
+  const hashStr = typeof hash === "string" ? hash : unbrand(hash);
   return `${VERSION}:${prefix}:${hashStr}`;
 }
 
@@ -84,7 +86,7 @@ function distributedKey(prefix: string, hash: string | BundleHash): string {
 function tokenize(code: LocalModuleCode): PortableModuleCode {
   const cacheDir = getCacheBaseDir();
   const normalized = cacheDir.endsWith("/") ? cacheDir.slice(0, -1) : cacheDir;
-  let codeStr = code as unknown as string;
+  let codeStr: string = unbrand(code);
 
   // First, tokenize current environment's paths (fast path)
   codeStr = codeStr.replaceAll(`file://${normalized}`, `file://${CACHE_DIR_TOKEN}`);
@@ -100,7 +102,7 @@ function tokenize(code: LocalModuleCode): PortableModuleCode {
     `file://${CACHE_DIR_TOKEN}/veryfront-mdx-esm/`,
   );
 
-  return codeStr as unknown as PortableModuleCode;
+  return brand<PortableModuleCode>(codeStr);
 }
 
 /**
@@ -110,9 +112,9 @@ function tokenize(code: LocalModuleCode): PortableModuleCode {
 function detokenize(code: PortableModuleCode | string): LocalModuleCode {
   const cacheDir = getCacheBaseDir();
   const normalized = cacheDir.endsWith("/") ? cacheDir.slice(0, -1) : cacheDir;
-  const codeStr = typeof code === "string" ? code : (code as unknown as string);
+  const codeStr = typeof code === "string" ? code : unbrand(code);
   const result = codeStr.replaceAll(`file://${CACHE_DIR_TOKEN}`, `file://${normalized}`);
-  return result as unknown as LocalModuleCode;
+  return brand<LocalModuleCode>(result);
 }
 
 /**
@@ -184,7 +186,7 @@ class HttpBundleCache {
       return { code: null, wasGzipped: false, failReason: "not_found" };
     }
 
-    const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
+    const hashStr = typeof hash === "string" ? hash : unbrand(hash);
 
     try {
       const rawCode = await distributed.get(distributedKey("code", hashStr));
@@ -240,7 +242,7 @@ class HttpBundleCache {
       return { code: null, wasGzipped: false, failReason: "not_found" };
     }
 
-    const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
+    const hashStr = typeof hash === "string" ? hash : unbrand(hash);
 
     try {
       const rawCode = await distributed.get(distributedKey("url", hashStr));
@@ -289,8 +291,8 @@ class HttpBundleCache {
     const distributed = await resolveDistributedCache();
     if (!distributed) return;
 
-    const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
-    const urlStr = typeof url === "string" ? url : (url as unknown as string);
+    const hashStr = typeof hash === "string" ? hash : unbrand(hash);
+    const urlStr = typeof url === "string" ? url : unbrand(url);
 
     try {
       // CRITICAL: Always tokenize before storing
@@ -299,7 +301,7 @@ class HttpBundleCache {
       // Validate invariant
       assertPortable(portableCode);
 
-      const portableStr = portableCode as unknown as string;
+      const portableStr = unbrand(portableCode);
 
       await Promise.all([
         distributed.set(distributedKey("url", hashStr), portableStr, ttl),
@@ -330,7 +332,7 @@ class HttpBundleCache {
     if (!distributed) return new Map();
 
     const results = new Map<string, LocalModuleCode>();
-    const hashStrs = hashes.map((h) => (typeof h === "string" ? h : (h as unknown as string)));
+    const hashStrs = hashes.map((h) => (typeof h === "string" ? h : unbrand(h)));
 
     const codeKeys = hashStrs.map((h) => distributedKey("code", h));
     const keyToHash = new Map(hashStrs.map((h, i) => [codeKeys[i], h]));
@@ -381,7 +383,7 @@ class HttpBundleCache {
     const distributed = await resolveDistributedCache();
     if (!distributed) return null;
 
-    const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
+    const hashStr = typeof hash === "string" ? hash : unbrand(hash);
 
     try {
       return await distributed.get(distributedKey("hash", hashStr));
@@ -402,7 +404,7 @@ class HttpBundleCache {
     const distributed = await resolveDistributedCache();
     if (!distributed) return false;
 
-    const hashStr = typeof hash === "string" ? hash : (hash as unknown as string);
+    const hashStr = typeof hash === "string" ? hash : unbrand(hash);
 
     try {
       // Delete all keys associated with this hash

@@ -22,6 +22,32 @@ interface PermissionDescriptor {
   path?: string;
 }
 
+/**
+ * Narrow view of the subset of the Deno permissions API this module uses.
+ *
+ * Typed locally (rather than via lib.deno.d.ts) so this permission-sensitive
+ * module stays free of broad ambient globals and avoids importing anything
+ * that reads the environment at module load.
+ */
+interface DenoPermissions {
+  request(descriptor: PermissionDescriptor): Promise<{ state: PermissionResult["state"] }>;
+}
+
+interface DenoLike {
+  permissions?: Partial<DenoPermissions>;
+}
+
+/**
+ * Access the Deno permissions API through a narrow, typed view.
+ * Returns null when not running under Deno or the API is unavailable.
+ */
+function getDenoPermissions(): DenoPermissions | null {
+  const denoGlobal = (globalThis as { Deno?: DenoLike }).Deno;
+  const permissions = denoGlobal?.permissions;
+  if (!permissions || typeof permissions.request !== "function") return null;
+  return permissions as DenoPermissions;
+}
+
 function createPermissionDescriptor(
   request: PermissionRequest,
 ): PermissionDescriptor | null {
@@ -48,19 +74,16 @@ function requestDenoPermission(
   return withSpan(
     "security.permissions.requestDeno",
     async () => {
-      // @ts-ignore - Deno permissions API
-      const canRequest = typeof Deno?.permissions?.request === "function";
-      if (!isDeno || !canRequest) return { state: "denied" };
+      const permissions = getDenoPermissions();
+      if (!isDeno || !permissions) return { state: "denied" };
 
       if (request.name === "fs") {
         const path = request.path;
 
-        // @ts-ignore - Deno permissions API
-        const readStatus = await Deno.permissions.request({ name: "read", path });
+        const readStatus = await permissions.request({ name: "read", path });
         if (readStatus.state !== "granted") return { state: readStatus.state };
 
-        // @ts-ignore - Deno permissions API
-        const writeStatus = await Deno.permissions.request({ name: "write", path });
+        const writeStatus = await permissions.request({ name: "write", path });
         return { state: writeStatus.state };
       }
 
@@ -70,8 +93,7 @@ function requestDenoPermission(
         return { state: "denied" };
       }
 
-      // @ts-ignore - Deno permissions API
-      const status = await Deno.permissions.request(descriptor);
+      const status = await permissions.request(descriptor);
       return { state: status.state };
     },
     { "permission.name": request.name },
