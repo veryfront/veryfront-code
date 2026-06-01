@@ -27,6 +27,7 @@ export {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   loadVeryfrontExportsMap,
+  resolveEsmUserDependencies,
   resolveNodePackageToFileUrl,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
