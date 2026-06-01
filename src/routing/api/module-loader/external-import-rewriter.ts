@@ -3,6 +3,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { resolveExportEntry, toCjsDestructureBindings } from "./loader-helpers.ts";
 
 const logger = serverLogger.component("api");
@@ -192,8 +193,8 @@ export async function resolveNodePackageToFileUrl(
 export interface EsmDependencyLocation {
   /** file:// URL of the package's ESM entry point. */
   entryUrl: string;
-  /** file:// URL of the package's root directory (for subpath imports). */
-  packageDirUrl: string;
+  /** Absolute path of the package's root directory (used to contain subpath imports). */
+  packageDir: string;
 }
 
 /**
@@ -244,18 +245,30 @@ export async function resolveEsmUserDependencies(
   const esmDeps = new Map<string, EsmDependencyLocation>();
 
   for (const name of userDeps.keys()) {
-    const packagePath = pathHelper.join(projectDir, "node_modules", name);
+    const packageDir = pathHelper.resolve(pathHelper.join(projectDir, "node_modules", name));
     try {
       const pkgJson = JSON.parse(
-        await fs.readTextFile(pathHelper.join(packagePath, "package.json")),
+        await fs.readTextFile(pathHelper.join(packageDir, "package.json")),
       ) as Record<string, unknown>;
 
       const entry = resolveEsmEntry(pkgJson);
       if (!entry || !isEsmPackage(pkgJson, entry)) continue;
 
+      // The entry path comes from the dependency's own package.json, which is
+      // attacker-influenceable (a malicious/compromised package could set
+      // "main": "../../../etc/passwd"). Reject entries that resolve outside the
+      // package directory so a crafted package.json cannot turn into a file://
+      // import that escapes node_modules. This mirrors the containment guard the
+      // CJS loader shim enforces via __vf_assertContained.
+      const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
+      if (!isWithinDirectory(packageDir, entryPath)) {
+        logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory (${entry})`);
+        continue;
+      }
+
       esmDeps.set(name, {
-        entryUrl: pathHelper.toFileUrl(pathHelper.join(packagePath, entry)).href,
-        packageDirUrl: pathHelper.toFileUrl(packagePath).href,
+        entryUrl: pathHelper.toFileUrl(entryPath).href,
+        packageDir,
       });
     } catch (_) {
       /* expected: package.json missing/invalid → treat as CJS */
@@ -403,9 +416,25 @@ export function rewriteCompiledBinaryUserDependencyImports(
     // CommonJS and evaluated via the `new Function` shim (see __vf_loadCjs).
     const esm = esmDeps.get(name);
     if (esm) {
+      // Resolve a subpath import to a contained file:// URL. The subpath comes
+      // from the handler source; reject any that escape the package directory
+      // (e.g. "pkg/../../secret") by leaving the import untouched so it fails to
+      // resolve rather than reading outside node_modules.
+      const subpathUrl = (subpath: string, original: string): string | null => {
+        const target = pathHelper.resolve(pathHelper.join(esm.packageDir, subpath));
+        if (!isWithinDirectory(esm.packageDir, target)) {
+          logger.warn(`Skipping ESM subpath import that escapes package directory: ${original}`);
+          return null;
+        }
+        return pathHelper.toFileUrl(target).href;
+      };
+
       transformed = transformed.replace(
         new RegExp(`from\\s+["']${escaped}(/[^"']+)["']`, "g"),
-        (_, subpath) => `from "${esm.packageDirUrl}${subpath}"`,
+        (match, subpath) => {
+          const url = subpathUrl(subpath, match);
+          return url ? `from "${url}"` : match;
+        },
       );
       transformed = transformed.replace(
         new RegExp(`from\\s+["']${escaped}["']`, "g"),
@@ -413,7 +442,10 @@ export function rewriteCompiledBinaryUserDependencyImports(
       );
       transformed = transformed.replace(
         new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']+)["']\\s*\\)`, "g"),
-        (_, subpath) => `import("${esm.packageDirUrl}${subpath}")`,
+        (match, subpath) => {
+          const url = subpathUrl(subpath, match);
+          return url ? `import("${url}")` : match;
+        },
       );
       transformed = transformed.replace(
         new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),

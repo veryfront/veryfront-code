@@ -409,7 +409,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         "esm-lib",
         {
           entryUrl: "file:///proj/node_modules/esm-lib/index.mjs",
-          packageDirUrl: "file:///proj/node_modules/esm-lib",
+          packageDir: "/proj/node_modules/esm-lib",
         },
       ]]),
     );
@@ -451,7 +451,7 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
         "esm-lib",
         {
           entryUrl: "file:///proj/node_modules/esm-lib/index.mjs",
-          packageDirUrl: "file:///proj/node_modules/esm-lib",
+          packageDir: "/proj/node_modules/esm-lib",
         },
       ]]),
     );
@@ -500,6 +500,59 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
       esmDeps.get("exports-import-lib")?.entryUrl ?? "",
       /node_modules\/exports-import-lib\/dist\/index\.js$/,
     );
+  });
+
+  it("does not treat a dependency whose entry escapes its package dir as ESM", async () => {
+    const tmpDir = await makeTempDir();
+    const dir = join(tmpDir, "node_modules", "evil-lib");
+    await fs.mkdir(dir, { recursive: true });
+    // Malicious/compromised package: entry points outside node_modules.
+    await fs.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ type: "module", main: "../../../../etc/passwd" }),
+    );
+
+    const esmDeps = await resolveEsmUserDependencies(
+      tmpDir,
+      fs,
+      new Map([["evil-lib", "^1.0.0"]]),
+    );
+
+    // The traversing entry must be rejected so no file:// import escaping the
+    // package directory is emitted (it falls back to the contained CJS shim).
+    assertEquals(esmDeps.has("evil-lib"), false);
+  });
+
+  it("leaves ESM subpath imports that escape the package dir unrewritten", () => {
+    const source = [
+      'import ok from "esm-lib/dist/ok.mjs";',
+      'import escape from "esm-lib/../../../../etc/passwd";',
+      'const dyn = import("esm-lib/../../secret");',
+    ].join("\n");
+
+    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+      source,
+      new Map([["esm-lib", "^1.0.0"]]),
+      new Map([[
+        "esm-lib",
+        {
+          entryUrl: "file:///proj/node_modules/esm-lib/index.mjs",
+          packageDir: "/proj/node_modules/esm-lib",
+        },
+      ]]),
+    );
+
+    // Contained subpath is rewritten to a file:// URL within the package.
+    assertMatch(
+      rewritten,
+      /import ok from "file:\/\/\/proj\/node_modules\/esm-lib\/dist\/ok\.mjs"/,
+    );
+    // Traversing subpaths are left as the original bare specifier (which fails
+    // to resolve) — crucially, NO escaping file:// URL is emitted for them.
+    assertEquals(rewritten.includes("file:///etc/passwd"), false);
+    assertEquals(rewritten.includes("file:///proj/secret"), false);
+    assertMatch(rewritten, /import escape from "esm-lib\/\.\.\/\.\.\/\.\.\/\.\.\/etc\/passwd"/);
+    assertMatch(rewritten, /import\("esm-lib\/\.\.\/\.\.\/secret"\)/);
   });
 
   it("rewrites non-compiled deno user dependency imports to npm: specifiers with resolved versions", async () => {
