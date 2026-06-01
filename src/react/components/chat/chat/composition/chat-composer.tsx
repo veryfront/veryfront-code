@@ -19,7 +19,7 @@ import type { ChatMessage } from "#veryfront/agent/react";
 export interface ChatComposerProps {
   input: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => void;
-  onSubmit?: (e: React.FormEvent) => void;
+  onSubmit?: (e?: React.FormEvent) => void;
   isLoading?: boolean;
   placeholder?: string;
   theme?: ChatTheme;
@@ -195,6 +195,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                 <InputBox
                   value={isListening ? transcript || input : input}
                   onChange={onChange}
+                  onSubmit={() => onSubmit?.()}
                   placeholder={isListening ? "Listening..." : placeholder}
                   disabled={isLoading || isListening}
                   multiline

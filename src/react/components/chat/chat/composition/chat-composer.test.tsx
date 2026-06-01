@@ -15,6 +15,7 @@ function installDomGlobals(dom: JSDOM): () => void {
     Node: globalThis.Node,
     Element: globalThis.Element,
     HTMLElement: globalThis.HTMLElement,
+    KeyboardEvent: globalThis.KeyboardEvent,
     MouseEvent: globalThis.MouseEvent,
   };
 
@@ -26,6 +27,7 @@ function installDomGlobals(dom: JSDOM): () => void {
     Node: window.Node,
     Element: window.Element,
     HTMLElement: window.HTMLElement,
+    KeyboardEvent: window.KeyboardEvent,
     MouseEvent: window.MouseEvent,
   });
 
@@ -91,6 +93,70 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       });
 
       assertEquals(selectCalls, 1);
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
+
+  it("submits multiline input on Enter and keeps Shift+Enter for newlines", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+    let submitCalls = 0;
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatComposer
+            input="Review Article 30"
+            onChange={() => {}}
+            onSubmit={() => {
+              submitCalls += 1;
+            }}
+          />,
+        );
+      });
+
+      const textarea = document.querySelector("textarea");
+      assert(textarea, "Expected multiline composer input to render");
+      const reactPropsKey = Object.keys(textarea).find((key) => key.startsWith("__reactProps$"));
+      assert(reactPropsKey, "Expected React props to be attached");
+      const reactProps = (textarea as unknown as Record<string, unknown>)[
+        reactPropsKey
+      ] as {
+        onKeyDown?: (
+          event: { key: string; shiftKey?: boolean; preventDefault: () => void },
+        ) => void;
+      };
+      assert(reactProps.onKeyDown, "Expected input keydown handler to exist");
+      let preventDefaultCalls = 0;
+
+      reactProps.onKeyDown({
+        key: "Enter",
+        shiftKey: true,
+        preventDefault: () => {
+          preventDefaultCalls += 1;
+        },
+      });
+      assertEquals(submitCalls, 0);
+      assertEquals(preventDefaultCalls, 0);
+
+      reactProps.onKeyDown({
+        key: "Enter",
+        preventDefault: () => {
+          preventDefaultCalls += 1;
+        },
+      });
+
+      assertEquals(submitCalls, 1);
+      assertEquals(preventDefaultCalls, 1);
       root.unmount();
     } finally {
       restore();
