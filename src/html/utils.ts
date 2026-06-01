@@ -1,4 +1,5 @@
 import { escapeHTML } from "./html-escape.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { VERYFRONT_VERSION } from "#veryfront/utils/constants/cdn.ts";
 import {
@@ -43,7 +44,23 @@ const DEFAULT_VERSIONS: DetectedVersions = {
   veryfront: VERYFRONT_VERSION,
 };
 
-const importMapJsonCache = new Map<string, CachedImportMapEntry>();
+/**
+ * Import map JSON is deterministic per cache key, so entries are safe to evict
+ * and recompute. Bound the cache so distinct key combinations (project dir ×
+ * mode × provider × versions × custom imports) cannot grow memory without
+ * limit. Override the cap via the `IMPORT_MAP_CACHE_MAX_ENTRIES` env var.
+ */
+const IMPORT_MAP_CACHE_MAX_ENTRIES = (() => {
+  const raw = (globalThis as {
+    Deno?: { env?: { get?: (k: string) => string | undefined } };
+  }).Deno?.env?.get?.("IMPORT_MAP_CACHE_MAX_ENTRIES");
+  const parsed = raw == null ? NaN : Number.parseInt(raw, 10);
+  return Number.isNaN(parsed) ? 256 : parsed;
+})();
+
+const importMapJsonCache = new LRUCache<string, CachedImportMapEntry>({
+  maxEntries: IMPORT_MAP_CACHE_MAX_ENTRIES,
+});
 
 type CdnProvider = "esm.sh" | "unpkg" | "jsdelivr";
 

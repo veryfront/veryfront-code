@@ -11,6 +11,7 @@
 import { serverLogger } from "#veryfront/utils";
 import { type ModelInfo, resolveLocalEmbeddingModel } from "./model-catalog.ts";
 import { getTransformers } from "./local-engine.ts";
+import { createPipelineCache } from "./pipeline-cache.ts";
 
 const logger = serverLogger.component("local-embedding");
 
@@ -22,55 +23,37 @@ interface Pipeline {
   (texts: string[], options: { pooling: string; normalize: boolean }): Promise<EmbeddingOutput>;
 }
 
-/** Cached pipeline instances keyed by HuggingFace model ID */
-const pipelineCache = new Map<string, Pipeline>();
+/**
+ * Bounded, dedup-aware cache of feature-extraction pipelines keyed by
+ * HuggingFace model id. Only loads a model on a cold cache miss; concurrent
+ * loads of the same model share a single promise.
+ */
+const embeddingPipelines = createPipelineCache<Pipeline, ModelInfo>(async (modelInfo) => {
+  const transformers = await getTransformers();
 
-/** Whether a model is currently being loaded (prevents concurrent loads) */
-const loadingLocks = new Map<string, Promise<Pipeline>>();
+  logger.info(
+    `Loading local embedding model: ${modelInfo.hfId} (${modelInfo.dtype}, ~${modelInfo.sizeMB}MB)...`,
+  );
+
+  const pipe = (await transformers.pipeline(
+    "feature-extraction",
+    modelInfo.hfId,
+    {
+      dtype: modelInfo.dtype,
+      device: "cpu",
+    },
+  )) as Pipeline;
+
+  logger.info(`Embedding model loaded: ${modelInfo.hfId}`);
+  return pipe;
+});
 
 /**
  * Load a feature-extraction pipeline for the given model.
  * Returns a cached pipeline if already loaded.
  */
-async function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
-  const cacheKey = modelInfo.hfId;
-
-  const cached = pipelineCache.get(cacheKey);
-  if (cached) return cached;
-
-  const existingLock = loadingLocks.get(cacheKey);
-  if (existingLock) return existingLock;
-
-  const loadPromise = (async () => {
-    const transformers = await getTransformers();
-
-    logger.info(
-      `Loading local embedding model: ${modelInfo.hfId} (${modelInfo.dtype}, ~${modelInfo.sizeMB}MB)...`,
-    );
-
-    const pipe = (await transformers.pipeline(
-      "feature-extraction",
-      modelInfo.hfId,
-      {
-        dtype: modelInfo.dtype,
-        device: "cpu",
-      },
-    )) as Pipeline;
-
-    logger.info(`Embedding model loaded: ${modelInfo.hfId}`);
-    pipelineCache.set(cacheKey, pipe);
-    loadingLocks.delete(cacheKey);
-    return pipe;
-  })();
-
-  loadingLocks.set(cacheKey, loadPromise);
-
-  try {
-    return await loadPromise;
-  } catch (error) {
-    loadingLocks.delete(cacheKey);
-    throw error;
-  }
+function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
+  return embeddingPipelines.load(modelInfo.hfId, modelInfo);
 }
 
 /**

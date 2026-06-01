@@ -12,6 +12,7 @@ import { rendererLogger as logger } from "#veryfront/utils";
 import { IMPORT_RESOLUTION_ERROR } from "#veryfront/errors";
 import { replaceSpecifiers } from "../../../esm/lexer.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 import { getHttpBundleCacheDir, getMdxEsmCacheDir } from "#veryfront/utils/cache-dir.ts";
 import { cacheHttpImportsToLocal } from "../../../esm/http-cache.ts";
 import { loadImportMap } from "#veryfront/modules/import-map/index.ts";
@@ -93,7 +94,19 @@ export async function cacheTransformedCode(
 // React, HTTP imports all rewritten). The fallback still reads
 // `frameworkFileCache` first, so when the main path has already produced
 // a high-quality entry the fallback prefers it.
-const fallbackTransformCache = new Map<string, string>();
+// Bounded so the fallback's per-path output cannot grow memory without limit
+// in a long-running dev server. Entries are deterministic per resolved path and
+// safe to evict/recompute. Override the cap via `FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES`.
+const FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES = (() => {
+  const raw = (globalThis as {
+    Deno?: { env?: { get?: (k: string) => string | undefined } };
+  }).Deno?.env?.get?.("FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES");
+  const parsed = raw == null ? NaN : Number.parseInt(raw, 10);
+  return Number.isNaN(parsed) ? 2000 : parsed;
+})();
+const fallbackTransformCache = new LRUCache<string, string>({
+  maxEntries: FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES,
+});
 
 /**
  * Resolve a bare `react` / `react-dom` (or subpath) specifier to its esm.sh
