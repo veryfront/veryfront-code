@@ -3,12 +3,14 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import {
+  defaultDiscoveryCache,
   findLocalProjectPath,
-  localAdapterCache,
-  localProjectCache,
   ProjectDiscoveryCache,
   standardProjectDirs,
 } from "./local-project-discovery.ts";
+
+const localProjectCache = defaultDiscoveryCache.projects;
+const localAdapterCache = defaultDiscoveryCache.adapters;
 
 describe("local-project-discovery", () => {
   // Clear caches after each test to prevent state leakage
@@ -24,16 +26,16 @@ describe("local-project-discovery", () => {
   });
 
   describe("cache exports", () => {
-    it("exports localAdapterCache with Map-like interface", () => {
-      assertEquals(typeof localAdapterCache.get, "function");
-      assertEquals(typeof localAdapterCache.set, "function");
-      assertEquals(typeof localAdapterCache.clear, "function");
+    it("exports defaultDiscoveryCache.adapters with Map-like interface", () => {
+      assertEquals(typeof defaultDiscoveryCache.adapters.get, "function");
+      assertEquals(typeof defaultDiscoveryCache.adapters.set, "function");
+      assertEquals(typeof defaultDiscoveryCache.adapters.clear, "function");
     });
 
-    it("exports localProjectCache with Map-like interface", () => {
-      assertEquals(typeof localProjectCache.get, "function");
-      assertEquals(typeof localProjectCache.set, "function");
-      assertEquals(typeof localProjectCache.clear, "function");
+    it("exports defaultDiscoveryCache.projects with Map-like interface", () => {
+      assertEquals(typeof defaultDiscoveryCache.projects.get, "function");
+      assertEquals(typeof defaultDiscoveryCache.projects.set, "function");
+      assertEquals(typeof defaultDiscoveryCache.projects.clear, "function");
     });
   });
 
