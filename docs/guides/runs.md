@@ -12,6 +12,9 @@ definitions. A run is what executes one of those definitions.
 - A **target** names the capability being executed, for example
   `task:knowledge-ingest` or `workflow:content-pipeline`.
 - **events** are the canonical user-visible output stream.
+- The run record stores the terminal execution shape directly: `target`,
+  `input`, `config`, `output`, `error`, `logs`, `artifacts`, `duration_ms`,
+  and `exit_code`.
 - Runtime adapters such as process execution are implementation details.
 
 ## Prerequisites
@@ -79,6 +82,7 @@ Read the current run summary:
 ```ts
 const run = await runs.get(accepted.run.run_id);
 console.log(run.status);
+console.log(run.output);
 ```
 
 Cancel a non-terminal run:

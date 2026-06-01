@@ -46,10 +46,12 @@ export {
   type RunEvent,
   RunEventListSchema,
   RunEventSchema,
+  type RunExecutionError,
   type RunKind,
   type RunList,
   RunListSchema,
   type RunOwner,
   RunSchema,
   type RunStatus,
+  type RunTriggerKind,
 } from "./schemas.ts";
