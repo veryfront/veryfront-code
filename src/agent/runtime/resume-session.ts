@@ -65,8 +65,8 @@ type RunSession<T> = {
   waitingState: WaitingState<T> | null;
   preparedWaitKeys: Set<string>;
   submittedValues: Map<string, SubmittedValue<T>>;
-  waitingTimeoutId: number | null;
-  sessionTimeoutId: number | null;
+  waitingTimeoutId: ReturnType<typeof setTimeout> | null;
+  sessionTimeoutId: ReturnType<typeof setTimeout> | null;
 };
 
 const DEFAULT_WAITING_TTL_MS = 5 * 60 * 1000;
@@ -136,14 +136,14 @@ export class RunResumeSessionManager<T> {
     this.clearSessionTimeout(session);
     session.sessionTimeoutId = this.setTimeoutFn(() => {
       this.cancelRun(session.runId);
-    }, this.sessionTtlMs) as unknown as number;
+    }, this.sessionTtlMs);
   }
 
   private scheduleWaitingTimeout(session: RunSession<T>): void {
     this.clearWaitingTimeout(session);
     session.waitingTimeoutId = this.setTimeoutFn(() => {
       this.cancelRun(session.runId);
-    }, this.waitingTtlMs) as unknown as number;
+    }, this.waitingTtlMs);
   }
 
   private touchSession(session: RunSession<T>): void {

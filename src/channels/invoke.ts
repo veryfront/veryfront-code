@@ -33,7 +33,7 @@ const getChannelAttachmentSchema = defineSchema((v) =>
 const getChannelInvokeHistoryMessageSchema = defineSchema((v) =>
   v.object({
     id: v.string(),
-    role: v.enum(["user", "assistant", "system", "tool"]),
+    role: v.enum(["user", "assistant", "system", "tool"] as const),
     parts: v.array(getRawHistoryPartSchema()),
     metadata: v.record(v.string(), v.unknown()).optional(),
     createdAt: v.string().optional(),
@@ -259,7 +259,7 @@ function normalizeConversationPart(
 export function normalizeConversationHistoryForRuntime(
   messages: ChannelInvokeRequest["conversationHistory"],
 ): Message[] {
-  return messages.map((message) => ({
+  return messages.map((message): Message => ({
     id: message.id,
     role: message.role,
     parts: message.parts
@@ -267,7 +267,7 @@ export function normalizeConversationHistoryForRuntime(
       .filter((part): part is NonNullable<typeof part> => part !== null),
     ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
     ...(message.metadata ? { metadata: message.metadata } : {}),
-  })) as any;
+  }));
 }
 
 /** Resolves channel invoke agent. */
