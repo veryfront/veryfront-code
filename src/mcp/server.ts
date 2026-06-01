@@ -323,8 +323,11 @@ export class MCPServer {
     if (this.integrationLoader && !this.integrationsLoaded) {
       try {
         this.integrationsLoaded = await this.loadRemoteIntegrationTools(this.integrationLoader);
-      } catch (_) {
+      } catch (error) {
         // Config sync failed — non-fatal, integration tools from API won't reflect config
+        logger.debug("Failed to sync integration config to API during tools/list", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 
@@ -773,8 +776,11 @@ export class MCPServer {
     await syncIntegrationConfig(apiBaseUrl, apiToken, integrationConfigs);
     try {
       this.notifyToolsChanged();
-    } catch (_) {
+    } catch (error) {
       // Notification delivery failure is non-fatal — sync already succeeded
+      logger.debug("Failed to notify clients of tools/list_changed after integration sync", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
     return true;
   }

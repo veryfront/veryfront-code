@@ -23,10 +23,11 @@ const getCompactJwsHeaderSchema = defineSchema((v) =>
 );
 const compactJwsHeaderSchema = lazySchema(getCompactJwsHeaderSchema);
 
+/** Allowed control-plane surfaces — source of truth for the schema and {@link ControlPlaneSurface}. */
+export const CONTROL_PLANE_SURFACES = ["studio", "channels", "a2a", "mcp"] as const;
+
 /** Zod schema for get control plane surface. */
-export const getControlPlaneSurfaceSchema = defineSchema((v) =>
-  v.enum(["studio", "channels", "a2a", "mcp"])
-);
+export const getControlPlaneSurfaceSchema = defineSchema((v) => v.enum(CONTROL_PLANE_SURFACES));
 /** Zod schema for control plane surface. */
 export const ControlPlaneSurfaceSchema = lazySchema(getControlPlaneSurfaceSchema);
 
@@ -141,8 +142,8 @@ const getControlPlaneClaimsSchema = defineSchema((v) =>
 );
 const controlPlaneClaimsSchema = lazySchema(getControlPlaneClaimsSchema);
 
-/** Public API contract for control plane surface. */
-export type ControlPlaneSurface = InferSchema<ReturnType<typeof getControlPlaneSurfaceSchema>>;
+/** Public API contract for control plane surface (literal union, not widened to `string`). */
+export type ControlPlaneSurface = (typeof CONTROL_PLANE_SURFACES)[number];
 /** Request payload for control plane agents list. */
 export type ControlPlaneAgentsListRequest = InferSchema<
   ReturnType<typeof getControlPlaneAgentsListRequestSchema>

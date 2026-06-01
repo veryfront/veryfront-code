@@ -480,8 +480,9 @@ export class ProxyFSAdapterManager {
           // Unref so the timer doesn't keep processes/tests alive
           try {
             Deno.unrefTimer(timer);
-          } catch {
+          } catch (error) {
             // Not available in all runtimes
+            logger.debug("unrefTimer unavailable (ignored)", { cacheKey, error });
           }
           this.negativeCacheEntries.set(cacheKey, { fallbackBranch, timer });
 

@@ -197,7 +197,7 @@ export const getStyleArtifactResolveResponseSchema = defineSchema((v) =>
     asset_path: v.string().optional(),
     etag: v.string().optional(),
     content_type: v.string().optional(),
-    build_run_execution_id: v.string().uuid().optional(),
+    build_run_id: v.string().optional(),
     failure_reason: v.string().optional(),
     updated_at: v.string().optional(),
   })

@@ -267,7 +267,12 @@ export class MultiTierCache<T = string> {
 
     if (backfillPromises.length > 0) {
       if (this.config.asyncBackfill) {
-        void Promise.all(backfillPromises).catch(() => {});
+        void Promise.all(backfillPromises).catch((error) => {
+          logger.debug(`[${this.config.name}] async batch backfill failed (best-effort)`, {
+            promiseCount: backfillPromises.length,
+            error,
+          });
+        });
       } else {
         await Promise.all(backfillPromises);
       }
@@ -353,7 +358,11 @@ export class MultiTierCache<T = string> {
 
   private async maybeAwaitBackfill(promise: Promise<void>): Promise<void> {
     if (this.config.asyncBackfill) {
-      void promise.catch(() => {});
+      void promise.catch((error) => {
+        logger.debug(`[${this.config.name}] async backfill failed (best-effort)`, {
+          error,
+        });
+      });
       return;
     }
     await promise;

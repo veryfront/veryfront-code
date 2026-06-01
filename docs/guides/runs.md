@@ -12,8 +12,7 @@ definitions. A run is what executes one of those definitions.
 - A **target** names the capability being executed, for example
   `task:knowledge-ingest` or `workflow:content-pipeline`.
 - **events** are the canonical user-visible output stream.
-- Runtime adapters such as process execution or Kubernetes Jobs are
-  implementation details.
+- Runtime adapters such as process execution are implementation details.
 
 ## Prerequisites
 

@@ -271,40 +271,23 @@ const worker = new WorkflowWorker({
 worker.start();
 ```
 
-### Run Executors (Pluggable Runtimes)
+### Run Executors
 
-The `WorkflowRunManager` uses a pluggable `RunExecutor` interface, allowing workflows to run on different runtimes:
+The `WorkflowRunManager` uses a `RunExecutor` interface for isolated local process execution. In Veryfront Cloud, task and workflow runs execute through the project runtime target via the canonical Runs API.
 
 ```typescript
-import {
-  K8sRunExecutor,
-  ProcessRunExecutor,
-  RedisBackend,
-  WorkflowRunManager,
-} from "veryfront/workflow";
+import { ProcessRunExecutor, RedisBackend, WorkflowRunManager } from "veryfront/workflow";
 
 const backend = new RedisBackend({ url: process.env.REDIS_URL });
 
-// Production: Kubernetes-backed run executions
-const k8sExecutor = new K8sRunExecutor({
-  image: "my-app:latest",
-  namespace: "workflows",
-  resources: {
-    requests: { cpu: "100m", memory: "256Mi" },
-    limits: { cpu: "1", memory: "1Gi" },
-  },
-}, k8sClient);
-
-// Local development: Child processes
 const processExecutor = new ProcessRunExecutor({
   entrypointPath: "./run-entrypoint.ts",
   env: { REDIS_URL: process.env.REDIS_URL },
 });
 
-// Same manager interface for both
 const manager = new WorkflowRunManager({
   backend,
-  executor: process.env.NODE_ENV === "production" ? k8sExecutor : processExecutor,
+  executor: processExecutor,
   maxConcurrentExecutions: 10,
   executionTimeout: 30 * 60 * 1000, // 30 minutes
 });
@@ -314,10 +297,9 @@ await manager.start();
 
 **Available Executors:**
 
-| Executor             | Use Case                | Isolation                |
-| -------------------- | ----------------------- | ------------------------ |
-| `K8sRunExecutor`     | Production multi-tenant | Full container isolation |
-| `ProcessRunExecutor` | Local development       | Process-level isolation  |
+| Executor             | Use Case                         | Isolation               |
+| -------------------- | -------------------------------- | ----------------------- |
+| `ProcessRunExecutor` | Local development, trusted hosts | Process-level isolation |
 
 **Creating a Custom Executor:**
 
@@ -371,18 +353,18 @@ This works across:
 
 - Crash recovery (context restored from checkpoint)
 - Different pods (context in Redis)
-- Run execution pods (context passed via environment)
+- Process run executors (context passed via environment)
 
 ## Deployment Modes Summary
 
-| Mode             | Use Case                 | Code Trust | Isolation              | Executor                      |
-| ---------------- | ------------------------ | ---------- | ---------------------- | ----------------------------- |
-| **Dev (simple)** | Local development        | Your code  | None needed            | In-process (`WorkflowWorker`) |
-| **Dev (runs)**   | Local with run isolation | Your code  | Process per workflow   | `ProcessRunExecutor`          |
-| **Self-hosted**  | Single-tenant prod       | Your code  | Shared process OK      | In-process (`WorkflowWorker`) |
-| **Cloud**        | Multi-tenant SaaS        | User code  | Container per workflow | `K8sRunExecutor`              |
+| Mode             | Use Case                 | Code Trust | Isolation            | Executor                      |
+| ---------------- | ------------------------ | ---------- | -------------------- | ----------------------------- |
+| **Dev (simple)** | Local development        | Your code  | None needed          | In-process (`WorkflowWorker`) |
+| **Dev (runs)**   | Local with run isolation | Your code  | Process per workflow | `ProcessRunExecutor`          |
+| **Self-hosted**  | Single-tenant prod       | Your code  | Shared process OK    | In-process (`WorkflowWorker`) |
+| **Cloud**        | Multi-tenant SaaS        | User code  | Runtime target       | Canonical Runs API            |
 
-**Key decision:** If workflows execute untrusted user-defined code, use `K8sRunExecutor` for container isolation. For local development that mirrors production behavior, use `ProcessRunExecutor`.
+**Key decision:** Veryfront Cloud executes task and workflow runs on the selected project runtime target. Kubernetes scheduling, when present, is an infrastructure detail and is not part of the client execution model.
 
 ## Architecture Deep Dive
 

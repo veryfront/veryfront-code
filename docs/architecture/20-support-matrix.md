@@ -39,7 +39,7 @@ on a backing API or cloud bootstrap.
 | Internal AG-UI transport                                              | Open-core runtime surface                         | Separate from the app MCP contract.                                                   |
 | Direct provider integrations (`openai`, `anthropic`, `google`, local) | Open-core with provider credentials/runtime setup | Depends on the selected provider configuration.                                       |
 | Extension contracts (auth, bundler, CSS, parser, observability, etc.) | Open-core                                         | First-party `@veryfront/ext-*` packages provide implementations.                      |
-| Workflow engine (in-memory and Redis backends)                        | Open-core                                         | K8sRunExecutor requires Kubernetes; in-memory/Redis work standalone.                  |
+| Workflow engine (in-memory and Redis backends)                        | Open-core                                         | In-memory, Redis, and process run execution work without Kubernetes.                  |
 | Discovery (tools, agents, workflows, prompts, resources, skills)      | Open-core                                         | Convention-based file-system discovery at server startup.                             |
 | Veryfront Cloud model routing                                         | Requires Veryfront Cloud bootstrap                | Depends on project/auth context and cloud gateway configuration.                      |
 | Veryfront Cloud blob storage                                          | Requires Veryfront Cloud bootstrap                | Uses project-scoped cloud upload APIs.                                                |
@@ -76,13 +76,13 @@ core bootstrap; optional packages must be configured by the project.
 
 Veryfront tracks third-party dependency ownership by boundary.
 
-| Boundary  | Source                                                          | SBOM output                                 | Notes                                                                                                    |
-| --------- | --------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Core      | Root [`deno.json`](../../deno.json) and [`src/`](../../src/)    | `core.json`                                 | The root framework boundary. [`src/`](../../src/) is not renamed to `core`; `core` is a reporting label. |
-| CLI       | [`cli/deno.json`](../../cli/deno.json)                          | `cli.json`                                  | Command-line runtime boundary.                                                                           |
-| React     | Root React import aliases and esm.sh deps                       | `react.json`                                | Tracks React and React DOM separately from core until React has a dedicated package split.               |
-| Extension | `extensions/ext-*/deno.json`                                    | One file per extension package              | Each extension owns its npm and supported esm.sh dependencies.                                           |
-| Aggregate | Boundary-specific manifests and resolved dependency graph       | `all.json`, `dependencies-by-manifest.json` | Use this view for full supply-chain inventory.                                                           |
+| Boundary  | Source                                                       | SBOM output                                 | Notes                                                                                                    |
+| --------- | ------------------------------------------------------------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Core      | Root [`deno.json`](../../deno.json) and [`src/`](../../src/) | `core.json`                                 | The root framework boundary. [`src/`](../../src/) is not renamed to `core`; `core` is a reporting label. |
+| CLI       | [`cli/deno.json`](../../cli/deno.json)                       | `cli.json`                                  | Command-line runtime boundary.                                                                           |
+| React     | Root React import aliases and esm.sh deps                    | `react.json`                                | Tracks React and React DOM separately from core until React has a dedicated package split.               |
+| Extension | `extensions/ext-*/deno.json`                                 | One file per extension package              | Each extension owns its npm and supported esm.sh dependencies.                                           |
+| Aggregate | Boundary-specific manifests and resolved dependency graph    | `all.json`, `dependencies-by-manifest.json` | Use this view for full supply-chain inventory.                                                           |
 
 ## Documentation rule
 
