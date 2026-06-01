@@ -7,7 +7,7 @@
  * @module
  */
 
-import type { Agent } from "../types.ts";
+import type { Agent, AgentResponse } from "../types.ts";
 import type { Tool } from "#veryfront/tool";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { ScopedRegistryFacade } from "#veryfront/registry/scoped-registry-facade.ts";
@@ -15,6 +15,24 @@ import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped
 import { getAgentToolInputSchema } from "../schemas/index.ts";
 
 /** Agent as tool helper. */
+async function runAgentAsStreamingTool(agent: Agent, input: string): Promise<AgentResponse> {
+  let finalResponse: AgentResponse | undefined;
+  const stream = await agent.stream({
+    input,
+    onFinish: (response) => {
+      finalResponse = response;
+    },
+  });
+
+  await stream.toDataStreamResponse().arrayBuffer();
+
+  if (!finalResponse) {
+    throw new Error(`Agent "${agent.id}" stream completed without a final response.`);
+  }
+
+  return finalResponse;
+}
+
 export function agentAsTool(agent: Agent, description: string): Tool {
   return {
     id: `agent_${agent.id}`,
@@ -25,7 +43,7 @@ export function agentAsTool(agent: Agent, description: string): Tool {
       return withSpan(
         "agent.composition.agentAsTool.execute",
         async () => {
-          const response = await agent.generate({ input });
+          const response = await runAgentAsStreamingTool(agent, input);
 
           setActiveSpanAttributes({
             "agent.tool_calls": response.toolCalls.length,

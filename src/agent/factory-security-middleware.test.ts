@@ -1,7 +1,9 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ModelRuntime } from "#veryfront/provider";
 import { agent, resolveSecurityMiddleware } from "./factory.ts";
+import { agentAsTool } from "./composition/composition.ts";
 import { AgentRuntime } from "./runtime/index.ts";
 import type { AgentContext, AgentMiddleware, AgentResponse } from "./types.ts";
 
@@ -27,6 +29,15 @@ function createAgentResponse(input: { text: string }): AgentResponse {
       totalTokens: 0,
     },
   };
+}
+
+function createTextStream(parts: Array<{ type: "text-delta"; text: string } | { type: "finish" }>) {
+  return new ReadableStream<unknown>({
+    start(controller) {
+      for (const part of parts) controller.enqueue(part);
+      controller.close();
+    },
+  });
 }
 
 describe("resolveSecurityMiddleware", () => {
@@ -136,6 +147,43 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(result.text.includes("[EMAIL]"), true);
     assertEquals(result.text.includes("123-45-6789"), false);
     assertEquals(result.text.includes("[SSN]"), true);
+  });
+
+  it("applies child agent middleware when the agent is called as a streaming tool", async () => {
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/middleware-stream-tool",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        return {
+          stream: createTextStream([
+            { type: "text-delta", text: "User email is john@example.com." },
+            { type: "finish" },
+          ]),
+        };
+      },
+    };
+
+    const childAgent = agent({
+      model: "hosted/middleware-stream-tool",
+      system: "Return a test response.",
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const tool = agentAsTool(childAgent, "Run child agent");
+    const result = await tool.execute({ input: "Run the child agent" });
+
+    assertEquals(result, {
+      text: "User email is [EMAIL].",
+      toolCalls: 0,
+      status: "completed",
+    });
   });
 
   it("forwards abortSignal and onFinish through agent.stream", async () => {
