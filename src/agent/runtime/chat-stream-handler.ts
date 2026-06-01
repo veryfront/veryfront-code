@@ -29,6 +29,8 @@ export interface StreamingToolCall {
   id: string;
   name: string;
   arguments: string;
+  inputDeltas?: string[];
+  inputAnnounced?: boolean;
   inputAvailable?: boolean;
   providerExecuted?: boolean;
   dynamic?: boolean;
@@ -327,6 +329,30 @@ export function processStream(
       activeReasoningId = null;
     };
 
+    const announceToolInputStart = (toolCall: StreamingToolCall) => {
+      if (toolCall.inputAnnounced === true) {
+        return;
+      }
+
+      const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
+      sendSSE(controller, encoder, {
+        type: "tool-input-start",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        ...(dynamic ? { dynamic: true } : {}),
+      });
+
+      for (const delta of toolCall.inputDeltas ?? []) {
+        sendSSE(controller, encoder, {
+          type: "tool-input-delta",
+          toolCallId: toolCall.id,
+          inputTextDelta: delta,
+        });
+      }
+
+      toolCall.inputAnnounced = true;
+    };
+
     const ensureToolLifecycle = (part: {
       toolCallId: string;
       toolName: string;
@@ -348,6 +374,7 @@ export function processStream(
             ? { providerExecuted: part.providerExecuted }
             : {}),
           ...(dynamic ? { dynamic: true } : {}),
+          inputAnnounced: true,
         });
         sendSSE(controller, encoder, {
           type: "tool-input-start",
@@ -385,6 +412,7 @@ export function processStream(
         existing.dynamic = true;
       }
 
+      announceToolInputStart(existing);
       sendSSE(controller, encoder, {
         type: "tool-input-available",
         toolCallId: part.toolCallId,
@@ -486,14 +514,8 @@ export function processStream(
             inputAvailable: false,
             providerExecuted: typedPart.providerExecuted,
             dynamic: typedPart.dynamic,
-          });
-
-          const dynamic = isDynamicTool(typedPart.toolName);
-          sendSSE(controller, encoder, {
-            type: "tool-input-start",
-            toolCallId: toolId,
-            toolName: typedPart.toolName,
-            ...(dynamic ? { dynamic: true } : {}),
+            inputDeltas: [],
+            inputAnnounced: false,
           });
           break;
         }
@@ -505,11 +527,8 @@ export function processStream(
           if (!tc) break;
 
           tc.arguments = mergeToolInputDelta(tc.arguments, typedPart.delta);
-          sendSSE(controller, encoder, {
-            type: "tool-input-delta",
-            toolCallId: toolId,
-            inputTextDelta: typedPart.delta,
-          });
+          tc.inputDeltas ??= [];
+          tc.inputDeltas.push(typedPart.delta);
           break;
         }
 
@@ -519,19 +538,24 @@ export function processStream(
           // tool-call fires when the full tool call is available
           const toolId = typedPart.toolCallId;
           const inputStr = normalizeToolInputString(typedPart.input);
-          const previousArguments = state.toolCalls.get(toolId)?.arguments ?? "";
+          const previous = state.toolCalls.get(toolId);
+          const previousArguments = previous?.arguments ?? "";
           const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
-          state.toolCalls.set(toolId, {
+          const toolCall: StreamingToolCall = {
             id: toolId,
             name: typedPart.toolName,
             arguments: resolvedArguments,
+            inputDeltas: previous?.inputDeltas ?? [],
+            inputAnnounced: previous?.inputAnnounced ?? false,
             inputAvailable: true,
             providerExecuted: typedPart.providerExecuted,
             dynamic: typedPart.dynamic,
-          });
+          };
+          state.toolCalls.set(toolId, toolCall);
 
           const dynamic = isDynamicTool(typedPart.toolName);
           const inputObj = parseToolInputObject(typedPart.input);
+          announceToolInputStart(toolCall);
           sendSSE(controller, encoder, {
             type: "tool-input-available",
             toolCallId: toolId,
