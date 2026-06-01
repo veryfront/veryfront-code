@@ -277,7 +277,12 @@ export async function doLoadModuleESM(
 
           // Clean up orphaned module file if path changed
           if (refreshedPath !== originalFilePath) {
-            getLocalFs().remove(originalFilePath).catch(() => {});
+            getLocalFs().remove(originalFilePath).catch((error) =>
+              logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
+                originalFilePath,
+                error,
+              })
+            );
           }
 
           // Verify bundles exist after re-fetch
@@ -352,7 +357,12 @@ export async function doLoadModuleESM(
 
         // Clean up orphaned module file if path changed
         if (refreshedPath !== originalFilePath) {
-          getLocalFs().remove(originalFilePath).catch(() => {});
+          getLocalFs().remove(originalFilePath).catch((error) =>
+            logger.debug(`${LOG_PREFIX_MDX_LOADER} orphaned module file cleanup failed`, {
+              originalFilePath,
+              error,
+            })
+          );
         }
 
         // Verify bundles now exist

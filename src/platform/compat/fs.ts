@@ -173,7 +173,9 @@ class NodeFileSystem implements FileSystem {
     try {
       await this.getFs().chmod(path, mode);
     } catch {
-      // Ignore errors on Windows where chmod is not fully supported
+      // Ignore errors on Windows where chmod is not fully supported.
+      // Intentionally not logged: this low-level compat module must stay
+      // importable without `--allow-env` (the logger reads env at import).
     }
   }
 }
