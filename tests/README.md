@@ -74,6 +74,21 @@ describe("ComponentName", () => {
 });
 ```
 
+**Never commit a focused test:** `it.only` / `describe.only` — and the option
+form `it({ only: true }, fn)` that our BDD wrapper also honors — silently skip
+every sibling test in the file. `deno task lint:ban-test-only` fails CI if any
+focused test reaches a committed `*.test.ts(x)` under `src/`, `cli/`, `tests/`,
+`react/`, `extensions/`, or `scripts/`. Use focus locally, then remove it before
+committing.
+
+**Don't pile up skipped tests:** `it.skip` / `it.ignore` (and `skip: true` /
+`ignore: true`) leave dead coverage that looks present but never runs. They're
+allowed when genuinely blocked, but `deno task lint:skipped-tests` ratchets the
+total against a baseline in `scripts/lint/check-skipped-tests-baseline.ts` — CI
+fails if it grows. Prefer fixing and re-enabling, or deleting the test and
+recording why in the commit/issue. When you reduce the count, the task prints
+the new total to lock into the baseline.
+
 ### Test Naming Conventions
 
 **Write self-documenting test names:**
@@ -181,6 +196,13 @@ Deno.test({
 2. Always document why sanitizers are disabled
 3. Place the flags at the describe block level, not individual tests
 4. Still use TestContext for proper cleanup even with disabled sanitizers
+
+**Enforced by a ratchet:** `deno task lint:sanitizer-baseline` counts every
+`sanitizeResources/Ops/Exit: false` across `src/`, `cli/`, `tests/`, `react/`,
+`extensions/`, and `scripts/` and fails CI if the total grows beyond the
+baseline in `scripts/lint/check-sanitizer-baseline.ts`. New tests must not add
+opt-outs — fix the leak instead. When you remove opt-outs, the task prints the
+new total; lower `SANITIZER_OPT_OUT_BASELINE` to that number to lock in the win.
 
 ## Assertions
 
