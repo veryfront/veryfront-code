@@ -14,6 +14,22 @@ export const getRunOwnerSchema = defineSchema((v) =>
   })
 );
 
+export const getRunRuntimeTargetKindSchema = defineSchema((v) =>
+  v.enum(["main_branch", "environment", "preview_branch"] as const)
+);
+
+export const getRunTriggerKindSchema = defineSchema((v) =>
+  v.enum(["manual", "schedule", "webhook", "api"] as const)
+);
+
+export const getRunExecutionErrorSchema = defineSchema((v) =>
+  v.object({
+    message: v.string(),
+    code: v.string().optional(),
+    detail: v.unknown().optional(),
+  })
+);
+
 export const getRunSchema = defineSchema((v) =>
   v.object({
     run_id: v.string(),
@@ -24,6 +40,28 @@ export const getRunSchema = defineSchema((v) =>
     root_run_id: v.string(),
     waiting_reason: v.string().nullable(),
     metadata: v.unknown().nullable(),
+    target: v.string().nullable(),
+    workflow_id: v.string().nullable(),
+    schedule_id: v.string().nullable(),
+    batch_id: v.string().nullable(),
+    runtime_target_kind: getRunRuntimeTargetKindSchema().nullable(),
+    runtime_target_environment_id: v.string().nullable(),
+    runtime_target_branch_id: v.string().nullable(),
+    input: v.unknown().nullable(),
+    config: v.unknown().nullable(),
+    output: v.unknown().nullable(),
+    error: getRunExecutionErrorSchema().nullable(),
+    logs: v.string().nullable(),
+    artifacts: v.array(v.unknown()),
+    duration_ms: v.number().int().nullable(),
+    exit_code: v.number().int().nullable(),
+    start_mode: v.string().nullable(),
+    timeout_seconds: v.number().int().nullable(),
+    backoff_limit: v.number().int().nullable(),
+    trigger_kind: getRunTriggerKindSchema().nullable(),
+    trigger_id: v.string().nullable(),
+    created_by: v.string().nullable(),
+    updated_at: v.string(),
     created_at: v.string(),
     started_at: v.string().nullable(),
     completed_at: v.string().nullable(),
@@ -96,6 +134,12 @@ export type RunKind = InferSchema<ReturnType<typeof getRunKindSchema>>;
 export type RunStatus = InferSchema<ReturnType<typeof getRunStatusSchema>>;
 /** Canonical durable run owner. */
 export type RunOwner = InferSchema<ReturnType<typeof getRunOwnerSchema>>;
+/** Runtime target kind recorded on task and workflow runs. */
+export type RunRuntimeTargetKind = InferSchema<ReturnType<typeof getRunRuntimeTargetKindSchema>>;
+/** Trigger kind recorded on scheduled or externally-started runs. */
+export type RunTriggerKind = InferSchema<ReturnType<typeof getRunTriggerKindSchema>>;
+/** Error payload recorded for failed task and workflow runs. */
+export type RunExecutionError = InferSchema<ReturnType<typeof getRunExecutionErrorSchema>>;
 /** Canonical durable run. */
 export type Run = InferSchema<ReturnType<typeof getRunSchema>>;
 /** Response returned when a run is accepted. */

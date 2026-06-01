@@ -15,7 +15,8 @@ failed, or cancelled.
 
 - Status describes where the execution is in its lifecycle.
 - Events describe what happened during the run.
-- Results record the final output.
+- Results record the final output on the run itself as `output`, alongside
+  `error`, `logs`, artifacts, duration, and exit code.
 - Target metadata points back to the task, workflow, or supported target that
   ran.
 

@@ -72,6 +72,28 @@ function makeRun(overrides: Record<string, unknown> = {}) {
     root_run_id: "run_11111111-1111-4111-8111-111111111111",
     waiting_reason: null,
     metadata: null,
+    target: "task:sync-data",
+    workflow_id: null,
+    schedule_id: null,
+    batch_id: null,
+    runtime_target_kind: null,
+    runtime_target_environment_id: null,
+    runtime_target_branch_id: null,
+    input: null,
+    config: null,
+    output: null,
+    error: null,
+    logs: null,
+    artifacts: [],
+    duration_ms: null,
+    exit_code: null,
+    start_mode: null,
+    timeout_seconds: null,
+    backoff_limit: null,
+    trigger_kind: null,
+    trigger_id: null,
+    created_by: null,
+    updated_at: "2026-03-20T12:00:00.000Z",
     created_at: "2026-03-20T12:00:00.000Z",
     started_at: null,
     completed_at: null,
@@ -261,6 +283,8 @@ describe("VeryfrontRunsClient", () => {
     const events = await client.events(run.run_id, { afterEventId: 1, limit: 10 });
     const cancelled = await client.cancel(run.run_id);
 
+    assertEquals(run.output, null);
+    assertEquals(run.artifacts, []);
     assertEquals(events.data[0]?.event_type, "RUN_STARTED");
     assertEquals(cancelled.cancelled, true);
     assertStringIncludes(call(0).url, "/runs/run_11111111-1111-4111-8111-111111111111");
