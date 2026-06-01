@@ -248,7 +248,7 @@ async function executeWorkflowRun(
     const run = await waitForWorkflowResult(client, handle.runId, deps);
     const durationMs = Math.max(0, deps.now() - startedAt);
 
-    if (run.status === "completed") {
+    if (run.status === "completed" || run.status === "waiting") {
       return {
         success: true,
         result: run.output,

@@ -204,6 +204,44 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     });
   });
 
+  it("treats waiting workflow runs as successful pause boundaries", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createWorkflowClient: () => ({
+        register: () => {},
+        start: async (_workflowId: string, _input: unknown, options?: { runId?: string }) => ({
+          runId: options?.runId ?? "workflow-run",
+        }),
+        getRun: async () => ({
+          status: "waiting",
+          output: { approvalId: "approval-1" },
+        }),
+        destroy: async () => {},
+      }),
+    }));
+    const body = {
+      runId: "run_workflow_waiting_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "v1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_waiting_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { approvalId: "approval-1" },
+      duration_ms: 0,
+      logs: null,
+    });
+  });
+
   it("rejects unsigned execute requests", async () => {
     const handler = new ProjectRunExecuteHandler(createDeps());
 
