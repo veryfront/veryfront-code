@@ -1,9 +1,6 @@
 import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
-import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
-
-const logger = baseLogger.component("platform-compat-fs");
 
 /** Public API contract for file system. */
 export interface FileSystem {
@@ -175,9 +172,10 @@ class NodeFileSystem implements FileSystem {
     await this.ensureInitialized();
     try {
       await this.getFs().chmod(path, mode);
-    } catch (error) {
-      // Ignore errors on Windows where chmod is not fully supported
-      logger.debug("chmod failed (ignored)", { path, mode, error });
+    } catch {
+      // Ignore errors on Windows where chmod is not fully supported.
+      // Intentionally not logged: this low-level compat module must stay
+      // importable without `--allow-env` (the logger reads env at import).
     }
   }
 }

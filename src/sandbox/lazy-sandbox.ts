@@ -1,6 +1,5 @@
 import { REQUEST_ERROR } from "#veryfront/errors/error-registry.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
-import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { resolveSandboxApiUrl, resolveSandboxAuthToken } from "./config.ts";
 import {
   type BackgroundCommand,
@@ -11,8 +10,6 @@ import {
   type ExecStreamEvent,
   type SandboxOptions,
 } from "./types.ts";
-
-const logger = baseLogger.component("lazy-sandbox");
 
 /** Options accepted by lazy sandbox. */
 export interface LazySandboxOptions extends SandboxOptions {
@@ -421,9 +418,8 @@ export class LazySandbox {
         if (this.ensurePromise) {
           try {
             await this.ensurePromise.promise;
-          } catch (error) {
+          } catch {
             // startup failure already handled by the caller path
-            logger.debug("ensure() failed during close (ignored)", { error });
           }
         }
 
