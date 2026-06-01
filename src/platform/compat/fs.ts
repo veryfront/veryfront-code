@@ -2,6 +2,18 @@ import type { FileInfo } from "#veryfront/platform/adapters/base.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { isBun, isDeno, isNode } from "./runtime.ts";
 
+/**
+ * Typed accessor for the Deno global.
+ *
+ * This is pure typing only — it reads no environment variables and performs no
+ * side effects, so this module stays importable without `--allow-env`. It
+ * exists to retire the `@ts-ignore` comments that were previously required to
+ * access `Deno.*` APIs from runtime-agnostic compat code.
+ */
+function denoGlobal(): typeof Deno {
+  return (globalThis as { Deno: typeof Deno }).Deno;
+}
+
 /** Public API contract for file system. */
 export interface FileSystem {
   readTextFile(path: string): Promise<string>;
@@ -182,40 +194,33 @@ class NodeFileSystem implements FileSystem {
 
 class DenoFileSystem implements FileSystem {
   readTextFile(path: string): Promise<string> {
-    // @ts-ignore - Deno global
-    return Deno.readTextFile(path);
+    return denoGlobal().readTextFile(path);
   }
 
   readFile(path: string): Promise<Uint8Array> {
-    // @ts-ignore - Deno global
-    return Deno.readFile(path);
+    return denoGlobal().readFile(path);
   }
 
   async writeTextFile(path: string, data: string): Promise<void> {
-    // @ts-ignore - Deno global
-    await Deno.writeTextFile(path, data);
+    await denoGlobal().writeTextFile(path, data);
   }
 
   async writeFile(path: string, data: Uint8Array): Promise<void> {
-    // @ts-ignore - Deno global
-    await Deno.writeFile(path, data);
+    await denoGlobal().writeFile(path, data);
   }
 
   async exists(path: string): Promise<boolean> {
     try {
-      // @ts-ignore - Deno global
-      await Deno.stat(path);
+      await denoGlobal().stat(path);
       return true;
     } catch (error: unknown) {
-      // @ts-ignore - Deno global
-      if (error instanceof Deno.errors.NotFound) return false;
+      if (error instanceof denoGlobal().errors.NotFound) return false;
       throw error;
     }
   }
 
   async stat(path: string): Promise<FileInfo> {
-    // @ts-ignore - Deno global
-    const stat = await Deno.stat(path);
+    const stat = await denoGlobal().stat(path);
     return {
       isFile: stat.isFile,
       isDirectory: stat.isDirectory,
@@ -226,33 +231,28 @@ class DenoFileSystem implements FileSystem {
   }
 
   async mkdir(path: string, options?: { recursive?: boolean }): Promise<void> {
-    // @ts-ignore - Deno global
-    await Deno.mkdir(path, { recursive: options?.recursive ?? false });
+    await denoGlobal().mkdir(path, { recursive: options?.recursive ?? false });
   }
 
   async *readDir(
     path: string,
   ): AsyncIterable<{ name: string; isFile: boolean; isDirectory: boolean }> {
-    // @ts-ignore - Deno global
-    for await (const entry of Deno.readDir(path)) {
+    for await (const entry of denoGlobal().readDir(path)) {
       yield { name: entry.name, isFile: entry.isFile, isDirectory: entry.isDirectory };
     }
   }
 
   async remove(path: string, options?: { recursive?: boolean }): Promise<void> {
-    // @ts-ignore - Deno global
-    await Deno.remove(path, { recursive: options?.recursive ?? false });
+    await denoGlobal().remove(path, { recursive: options?.recursive ?? false });
   }
 
   makeTempDir(options?: { prefix?: string }): Promise<string> {
-    // @ts-ignore - Deno global
-    return Deno.makeTempDir({ prefix: options?.prefix });
+    return denoGlobal().makeTempDir({ prefix: options?.prefix });
   }
 
   async chmod(path: string, mode: number): Promise<void> {
     try {
-      // @ts-ignore - Deno global
-      await Deno.chmod(path, mode);
+      await denoGlobal().chmod(path, mode);
     } catch (_) {
       /* expected: chmod is not fully supported on Windows */
     }
@@ -330,8 +330,7 @@ export function chmod(path: string, mode: number): Promise<void> {
 
 export async function symlink(target: string, path: string): Promise<void> {
   if (isDeno) {
-    // @ts-ignore - Deno global
-    await Deno.symlink(target, path);
+    await denoGlobal().symlink(target, path);
     return;
   }
 

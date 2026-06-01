@@ -1,4 +1,4 @@
-import { serverLogger } from "../../../logger/logger.ts";
+import { serverLogger } from "#veryfront/utils/logger/logger.ts";
 import type { CacheAdapter, LRUCacheOptions, LRUCacheStats, LRUEntry } from "./types.ts";
 import { LRUNode } from "./lru-node.ts";
 import { LRUListManager } from "./lru-list-manager.ts";

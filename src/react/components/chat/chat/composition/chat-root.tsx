@@ -8,7 +8,7 @@
  */
 
 import * as React from "react";
-import { ChatContainer } from "../../../../primitives/index.ts";
+import { ChatContainer } from "#veryfront/react/primitives/index.ts";
 import type { ChatMessage } from "#veryfront/agent/react";
 import type { ChatTheme } from "../../theme.ts";
 import { getDocumentNonce } from "../../csp-nonce.ts";
