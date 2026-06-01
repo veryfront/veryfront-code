@@ -95,7 +95,7 @@ import {
   startIsolatedRequest,
 } from "./isolation.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
-import { localProjectCache } from "./local-project-discovery.ts";
+import { defaultDiscoveryCache } from "./local-project-discovery.ts";
 import { resolveEnvironment } from "./environment-resolution.ts";
 import { buildHandlerContext, buildMinimalContext } from "./handler-context-builder.ts";
 import { handleProjectsRequest, shouldHandleProjectsUI } from "./projects-handler.ts";
@@ -295,7 +295,7 @@ export function createVeryfrontHandler(
   // Seed local project cache from explicit mappings (for tests and capability injection)
   if (opts.localProjects) {
     for (const [slug, path] of Object.entries(opts.localProjects)) {
-      localProjectCache.set(slug, path);
+      defaultDiscoveryCache.projects.set(slug, path);
     }
     logDebug("[runtime-handler] Seeded local project cache", {
       projects: Object.keys(opts.localProjects),

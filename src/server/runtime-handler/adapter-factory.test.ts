@@ -4,11 +4,10 @@ import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import { resolveAdapter } from "./adapter-factory.ts";
-import {
-  localAdapterCache,
-  localProjectCache,
-  ProjectDiscoveryCache,
-} from "./local-project-discovery.ts";
+import { defaultDiscoveryCache, ProjectDiscoveryCache } from "./local-project-discovery.ts";
+
+const localProjectCache = defaultDiscoveryCache.projects;
+const localAdapterCache = defaultDiscoveryCache.adapters;
 
 const encoder = new TextEncoder();
 

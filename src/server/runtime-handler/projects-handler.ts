@@ -11,7 +11,7 @@ import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import { cwd } from "#veryfront/platform/compat/process.ts";
 import { serverLogger } from "#veryfront/utils";
 import type { HandlerContext } from "../handlers/types.ts";
-import { localProjectCache, standardProjectDirs } from "./local-project-discovery.ts";
+import { defaultDiscoveryCache, standardProjectDirs } from "./local-project-discovery.ts";
 import type { ParsedDomain } from "../utils/domain-parser.ts";
 
 const logger = serverLogger.component("projects-handler");
@@ -102,7 +102,7 @@ async function handleLocalProjectsDiscovery(): Promise<Response> {
           ]);
 
           if (hasApp || hasPages || hasComponents) {
-            localProjectCache.set(entry.name, projectPath);
+            defaultDiscoveryCache.projects.set(entry.name, projectPath);
           }
         } catch (error) {
           logger.warn("Failed to stat project directory entry", {
@@ -119,7 +119,9 @@ async function handleLocalProjectsDiscovery(): Promise<Response> {
     }
   }
 
-  const localProjects = Array.from(localProjectCache.entries()).map(([slug, path]) => ({
+  const localProjects = Array.from(defaultDiscoveryCache.projects.entries()).map((
+    [slug, path],
+  ) => ({
     id: slug,
     name: slug,
     slug,

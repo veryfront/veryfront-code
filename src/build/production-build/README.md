@@ -64,9 +64,9 @@ server/build/
 
 ```typescript
 import { buildProduction } from "#server/build/build";
-import { getAdapter } from "../../adapters/index.ts";
+import { runtime } from "#veryfront/platform/adapters/registry.ts";
 
-const adapter = await getAdapter();
+const adapter = await runtime.get();
 
 const stats = await buildProduction({
   projectDir: "./my-app",

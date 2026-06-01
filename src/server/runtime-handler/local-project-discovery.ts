@@ -53,18 +53,6 @@ export const defaultDiscoveryCache = new ProjectDiscoveryCache();
 registerLRUCache("local-project-cache", defaultDiscoveryCache.projects);
 registerLRUCache("local-adapter-cache", defaultDiscoveryCache.adapters);
 
-/**
- * @deprecated Use `defaultDiscoveryCache.adapters` instead.
- * Kept for backward compatibility with existing consumers.
- */
-export const localAdapterCache = defaultDiscoveryCache.adapters;
-
-/**
- * @deprecated Use `defaultDiscoveryCache.projects` instead.
- * Kept for backward compatibility with existing consumers.
- */
-export const localProjectCache = defaultDiscoveryCache.projects;
-
 /** Standard directories to search for local projects */
 export const standardProjectDirs = ["data/projects", "projects"];
 

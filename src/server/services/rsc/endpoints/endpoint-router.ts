@@ -44,7 +44,11 @@ export async function handleRSCEndpoint(
   }
 
   // Always return 410 Gone for deprecated flight_page endpoint
-  // regardless of RSC being enabled
+  // regardless of RSC being enabled.
+  // NOTE: NOT dead. This branch is actively asserted by endpoint-router.test.ts
+  // and several integration tests (tests/integration/server/rsc/*, flight-smoke)
+  // that verify clients hitting /_veryfront/rsc/flight_page receive 410 Gone.
+  // Do not remove until those clients/tests stop exercising the endpoint.
   if (sub === "flight_page") {
     return new Response("Flight endpoint removed. Use custom RSC endpoints.", { status: 410 });
   }
