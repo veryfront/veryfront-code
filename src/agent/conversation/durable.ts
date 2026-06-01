@@ -1267,7 +1267,7 @@ export async function monitorConversationRunStatus(input: {
       await input.onTerminal(
         new ConversationRunTerminalStateError(
           run,
-          run.status as any,
+          run.status,
         ),
       );
     }

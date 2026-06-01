@@ -36,7 +36,7 @@ export class MapCacheStore implements CacheStore {
 
   constructor(
     name: string,
-    private readonly map: Map<string, unknown>,
+    private readonly map: CacheStatsSource,
   ) {
     this.name = name;
   }
@@ -62,6 +62,18 @@ interface LRULike {
   get(key: string): unknown;
   keys(): Iterable<string>;
   size: number;
+  delete(key: string): boolean;
+}
+
+/**
+ * Narrow view of a key/value store sufficient for cache stats + inspection.
+ * Both native `Map` and the LRU cache wrapper structurally satisfy this, so
+ * callers can register lightweight wrappers without unsound `Map` casts.
+ */
+export interface CacheStatsSource {
+  get(key: string): unknown;
+  keys(): Iterable<string>;
+  readonly size: number;
   delete(key: string): boolean;
 }
 
@@ -578,7 +590,7 @@ function isKeyForContentSource(
 
 export const cacheRegistry = new CacheRegistry();
 
-export function registerMapCache(name: string, map: Map<string, unknown>): void {
+export function registerMapCache(name: string, map: CacheStatsSource): void {
   cacheRegistry.register(new MapCacheStore(name, map));
 }
 

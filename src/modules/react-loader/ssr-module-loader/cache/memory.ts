@@ -15,6 +15,7 @@
 
 import { registerCache } from "#veryfront/utils/memory/index.ts";
 import { isKeyForProject, registerMapCache } from "#veryfront/cache/keys.ts";
+import type { CacheStatsSource } from "#veryfront/cache/registry.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
@@ -190,14 +191,15 @@ registerCache("ssr-transform-semaphore", () => {
 
 function createCacheRegistryWrapper<T>(
   cache: LRUCache<string, T>,
-): Map<string, unknown> {
+): CacheStatsSource {
   return {
+    get: (key: string) => cache.get(key),
     keys: () => cache.keys(),
     get size() {
       return cache.size;
     },
     delete: (key: string) => cache.delete(key),
-  } as unknown as Map<string, unknown>;
+  };
 }
 
 registerMapCache("ssr-module-cache", createCacheRegistryWrapper(globalModuleCache));

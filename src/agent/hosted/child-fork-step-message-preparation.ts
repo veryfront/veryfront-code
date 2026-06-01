@@ -83,9 +83,18 @@ export function prepareHostedChildForkRuntimeStepMessages(
   input: PrepareHostedChildForkRuntimeStepMessagesInput,
 ): HostedChildForkRuntimeStepMessages {
   const currentInstructions = input.buildInstructions();
+  // `convertAgentRuntimeMessagesToProviderMessages` reads each part defensively
+  // (via `"result" in part` / accessor helpers), so an AgentMessage is a valid
+  // runtime input. The only gap is a schema-inference nuance: the `tool-result`
+  // part's `result` is inferred optional from `v.unknown()`, while the
+  // converter's parameter type declares it required. Narrow to the converter's
+  // own parameter element type rather than `any` to keep the call type-checked.
+  type ConvertibleMessage = Parameters<
+    typeof convertAgentRuntimeMessagesToProviderMessages
+  >[0][number];
   const compactedMessages = compactForStep(
     convertAgentRuntimeMessagesToProviderMessages(
-      input.messages as any,
+      input.messages as readonly ConvertibleMessage[],
     ),
     estimateOverhead(currentInstructions, input.forkToolNames.length),
   );

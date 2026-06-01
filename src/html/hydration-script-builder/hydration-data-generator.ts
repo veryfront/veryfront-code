@@ -5,6 +5,11 @@ import { determineClientModuleStrategy } from "#veryfront/rendering/rsc/client-m
 import type { HTMLGenerationOptions } from "../types.ts";
 import type { HydrationDataStructure } from "./types.ts";
 
+type HydrationPageType = NonNullable<HydrationDataStructure["pageType"]>;
+type HydrationEnvironment = NonNullable<
+  Parameters<typeof determineClientModuleStrategy>[0]["environment"]
+>;
+
 function toProjectRelativePath(absolutePath: string, projectDir?: string): string {
   if (!absolutePath) return "";
 
@@ -61,10 +66,14 @@ export function generateHydrationData(
     pagePath: options.pagePath
       ? toProjectRelativePath(options.pagePath, options.projectDir)
       : undefined,
-    pageType: (options.pageType || inferPageType(options.pagePath)) as any,
+    // `options.pageType`/`options.environment` are validated against literal
+    // enum schemas (see html.schema.ts), but the schema inference widens them
+    // to `string`. Narrow back to the real literal unions rather than `any`.
+    pageType: (options.pageType as HydrationPageType | undefined) ||
+      inferPageType(options.pagePath),
     clientModuleStrategy: determineClientModuleStrategy({
       isLocalProject: options.isLocalProject,
-      environment: options.environment as any,
+      environment: options.environment as HydrationEnvironment | undefined,
     }),
     frontmatter: options.frontmatter,
     layoutProps: options.layoutProps,
