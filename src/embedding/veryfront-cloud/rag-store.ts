@@ -427,7 +427,10 @@ async function ingestDocument(
     );
   } catch (error) {
     await deleteFileChunks(context, filePath).catch((cleanupError) =>
-      serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", cleanupError)
+      serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", {
+        filePath,
+        error: cleanupError,
+      })
     );
     throw error;
   }
