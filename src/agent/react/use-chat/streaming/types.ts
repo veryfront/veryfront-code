@@ -39,3 +39,4 @@ export interface OrderedStep {
 
 export type OrderedToolCall = StreamingToolCall & { order: number };
 export type OrderedReasoning = StreamingReasoning & { order: number };
+export type OrderedMessagePart = { order: number; part: ChatMessagePart };

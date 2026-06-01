@@ -16,10 +16,15 @@ import {
 } from "#veryfront/internal-agents/ag-ui-sse.ts";
 import { streamDataStreamEvents } from "../streaming/data-stream.ts";
 import {
+  createToolExecutionDataEventBridgeStream,
+  type ToolExecutionDataEventPublisher,
+} from "../streaming/tool-execution-data-event-bridge.ts";
+import {
   type AgUiBeforeStream,
   applyBeforeStreamResult,
   extractLastUserText,
 } from "../service/before-stream.ts";
+import type { ToolExecutionDataEvent } from "#veryfront/tool/types.ts";
 import {
   type AgUiRequest,
   normalizeAgUiMessages,
@@ -47,6 +52,29 @@ type AgUiRuntimePart = Record<string, unknown> & { type: string };
 
 function generateRunId(): string {
   return `run_${crypto.randomUUID().replaceAll("-", "")}`;
+}
+
+function createToolDataEventBridge() {
+  const pendingEvents: ToolExecutionDataEvent[] = [];
+  let publishDataEvent: ToolExecutionDataEventPublisher = (event) => {
+    pendingEvents.push(event);
+  };
+
+  return {
+    publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
+    wrapStream(baseStream: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+      return createToolExecutionDataEventBridgeStream({
+        baseStream,
+        installPublisher(nextPublishDataEvent) {
+          publishDataEvent = nextPublishDataEvent;
+          while (pendingEvents.length > 0) {
+            const event = pendingEvents.shift();
+            if (event) publishDataEvent(event);
+          }
+        },
+      });
+    },
+  };
 }
 
 function buildStreamContext(
@@ -213,20 +241,25 @@ async function createAgUiDirectStreamResponse(
 
   await agent.clearMemory();
 
+  const toolDataEvents = createToolDataEventBridge();
   const result = await agent.stream({
     messages,
-    context: finalContext,
+    context: {
+      ...finalContext,
+      publishDataEvent: toolDataEvents.publishDataEvent,
+    },
     ...(request.model ? { model: request.model } : {}),
     ...(request.maxOutputTokens ? { maxOutputTokens: request.maxOutputTokens } : {}),
   });
 
   const upstream = result.toDataStreamResponse();
+  const upstreamBody = upstream.body ? toolDataEvents.wrapStream(upstream.body) : upstream.body;
   return await createAgUiStreamResponse({
     agentId: agent.id,
     request,
     runId,
     threadId,
-    upstreamBody: upstream.body,
+    upstreamBody,
     upstreamStatus: upstream.status,
     upstreamStatusText: upstream.statusText,
   });
@@ -271,14 +304,19 @@ async function createAgUiInjectedToolsStreamResponse(
   });
 
   let upstreamBody: ReadableStream<Uint8Array>;
+  const toolDataEvents = createToolDataEventBridge();
   try {
     upstreamBody = await runtime.stream(
       messages,
-      finalContext,
+      {
+        ...finalContext,
+        publishDataEvent: toolDataEvents.publishDataEvent,
+      },
       undefined,
       request.model,
       request.maxOutputTokens,
     );
+    upstreamBody = toolDataEvents.wrapStream(upstreamBody);
   } catch (error) {
     sessionManager.failRun(runId);
     throw error;

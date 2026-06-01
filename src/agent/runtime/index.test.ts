@@ -6,6 +6,7 @@ import {
   collectFinalStreamToolResults,
   collectGeneratedToolResults,
   collectPersistedToolResults,
+  isRecoverablePlaceholderToolCall,
   isStreamedToolCallIncomplete,
   materializeStreamedToolCall,
   shouldContinueAfterStreamStep,
@@ -132,6 +133,57 @@ describe("agent runtime streamed tool result collection", () => {
     });
 
     assertEquals(shouldContinue, true);
+  });
+
+  it("stops after an unfinalized streamed tool call to avoid retry loops", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_incomplete_1",
+          {
+            id: "toolu_incomplete_1",
+            name: "load-skill-reference",
+            arguments: '{"skillId":"dora"',
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, false);
+  });
+
+  it("stops instead of retrying when a step has both finalized and unfinalized tool calls", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_complete_1",
+          {
+            id: "toolu_complete_1",
+            name: "load-skill",
+            arguments: '{"skillId":"dora"}',
+            inputAvailable: true,
+          },
+        ],
+        [
+          "toolu_incomplete_1",
+          {
+            id: "toolu_incomplete_1",
+            name: "load-skill-reference",
+            arguments: '{"skillId":"dora"',
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, false);
   });
 
   it("continues finalized client-executed tool calls when the provider reports stop", () => {
@@ -296,6 +348,59 @@ describe("agent runtime streamed tool result collection", () => {
       isStreamedToolCallIncomplete({ inputAvailable: true }),
       false,
     );
+  });
+
+  it("classifies a non-finalized empty-object placeholder as recoverable", () => {
+    assertEquals(
+      isRecoverablePlaceholderToolCall({ inputAvailable: false, arguments: "{}" }),
+      true,
+    );
+    assertEquals(
+      isRecoverablePlaceholderToolCall({ inputAvailable: false, arguments: "" }),
+      true,
+    );
+    assertEquals(
+      isRecoverablePlaceholderToolCall({ inputAvailable: undefined, arguments: "{}{}" }),
+      true,
+    );
+  });
+
+  it("does not classify truncated partial JSON as a recoverable placeholder", () => {
+    assertEquals(
+      isRecoverablePlaceholderToolCall({
+        inputAvailable: false,
+        arguments: '{"skillId":"dora"',
+      }),
+      false,
+    );
+  });
+
+  it("does not classify a finalized tool call as a recoverable placeholder", () => {
+    assertEquals(
+      isRecoverablePlaceholderToolCall({ inputAvailable: true, arguments: "{}" }),
+      false,
+    );
+  });
+
+  it("recovers a provisional empty-object placeholder by continuing the loop", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_placeholder_1",
+          {
+            id: "toolu_placeholder_1",
+            name: "review",
+            arguments: "{}",
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, true);
   });
 
   it("materializes a complete streamed tool call into a ready-to-execute part", () => {

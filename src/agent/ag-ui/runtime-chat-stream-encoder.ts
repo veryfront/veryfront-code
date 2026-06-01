@@ -354,8 +354,16 @@ export function createAgUiRuntimeChatStreamEncoder(
           });
           return events;
         }
-        default:
+        default: {
+          if (!event.type.startsWith("data-")) {
+            return events;
+          }
+          events.push({
+            type: event.type as `data-${string}`,
+            data: event.data,
+          });
           return events;
+        }
       }
     },
   };
