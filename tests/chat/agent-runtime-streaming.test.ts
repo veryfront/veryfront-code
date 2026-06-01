@@ -5,7 +5,6 @@ import { deleteEnv, getEnv, setEnv } from "#veryfront/testing/deno-compat";
 import { tool } from "../../src/tool/factory.ts";
 import { type AgentConfig, type Message } from "../../src/agent/types.ts";
 import type { ModelRuntime } from "../../src/provider/types.ts";
-import { defineSchema } from "../../src/schemas/define.ts";
 
 function assert(condition: unknown, message?: string): void {
   if (!condition) throw new Error(message || "Assertion failed");
@@ -321,8 +320,13 @@ describe("AgentRuntime streaming", () => {
           "repeat-id": tool({
             id: "repeat-id",
             description: "Echoes the provided value",
-            inputSchema: defineSchema((v) => v.object({ value: v.number() }))(),
-            execute: async ({ value }) => {
+            inputSchema: {
+              type: "object",
+              properties: { value: { type: "number" } },
+              required: ["value"],
+              additionalProperties: false,
+            },
+            execute: async ({ value }: { value: number }) => {
               executedValues.push(value);
               return { seen: value };
             },
@@ -345,6 +349,144 @@ describe("AgentRuntime streaming", () => {
 
       assert(streamCallCount >= 3, "should request multiple model steps");
       assertEquals(executedValues, [1, 2]);
+
+      clearModelProviders();
+    } finally {
+      restoreEnv("LOG_LEVEL", originalLogLevel);
+      restoreEnv("NODE_ENV", originalNodeEnv);
+      restoreEnv("VF_DISABLE_LRU_INTERVAL", originalDisableLruInterval);
+    }
+  });
+
+  it("should not expose provisional streamed tool input as a failed activity", async () => {
+    const originalLogLevel = getEnv("LOG_LEVEL");
+    const originalNodeEnv = getEnv("NODE_ENV");
+    const originalDisableLruInterval = getEnv("VF_DISABLE_LRU_INTERVAL");
+
+    setEnv("LOG_LEVEL", "silent");
+    setEnv("NODE_ENV", "test");
+    setEnv("VF_DISABLE_LRU_INTERVAL", "1");
+
+    try {
+      const { AgentRuntime } = await import("../../src/agent/runtime/index.ts");
+      const { registerModelProvider, clearModelProviders } = await import(
+        "../../src/provider/model-registry.ts"
+      );
+      clearModelProviders();
+
+      let streamCallCount = 0;
+      const executedValues: number[] = [];
+
+      const mockModel = createMockStreamingModel(
+        "mock",
+        "mock-model",
+        async () => {
+          streamCallCount += 1;
+
+          if (streamCallCount === 1) {
+            return {
+              stream: ReadableStream.from([
+                { type: "tool-input-start", id: "tool-1", toolName: "review" },
+                { type: "tool-input-delta", id: "tool-1", delta: "{}" },
+                {
+                  type: "finish",
+                  finishReason: { unified: "tool-calls", raw: "tool_calls" },
+                },
+              ]),
+            };
+          }
+
+          if (streamCallCount === 2) {
+            return {
+              stream: ReadableStream.from([
+                { type: "tool-input-start", id: "tool-1", toolName: "review" },
+                { type: "tool-input-delta", id: "tool-1", delta: '{"value":1}' },
+                {
+                  type: "tool-call",
+                  toolCallId: "tool-1",
+                  toolName: "review",
+                  input: '{"value":1}',
+                },
+                {
+                  type: "finish",
+                  finishReason: { unified: "tool-calls", raw: "tool_calls" },
+                },
+              ]),
+            };
+          }
+
+          return {
+            stream: ReadableStream.from([
+              { type: "text-delta", delta: "done" },
+              {
+                type: "finish",
+                finishReason: { unified: "stop", raw: "stop" },
+                usage: {
+                  inputTokens: { total: 5 },
+                  outputTokens: { total: 1 },
+                },
+              },
+            ]),
+          };
+        },
+      );
+
+      registerModelProvider("mock", () => mockModel);
+
+      const runtime = new AgentRuntime("test", {
+        id: "test-agent",
+        model: "mock/mock-model",
+        system: "You are a tester",
+        memory: { type: "conversation", maxTokens: 4000 },
+        tools: {
+          review: tool({
+            id: "review",
+            description: "Reviews the provided value",
+            inputSchema: {
+              type: "object",
+              properties: { value: { type: "number" } },
+              required: ["value"],
+              additionalProperties: false,
+            },
+            execute: async ({ value }: { value: number }) => {
+              executedValues.push(value);
+              return { seen: value };
+            },
+          }),
+        },
+      });
+
+      const messages: Message[] = [{
+        id: "m1",
+        role: "user",
+        parts: [{ type: "text", text: "review" }],
+      }];
+
+      const stream = await runtime.stream(messages);
+      const reader = stream.getReader();
+      const decoder = new TextDecoder();
+      let output = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        output += decoder.decode(value, { stream: true });
+      }
+
+      assert(streamCallCount >= 3, "should recover with a committed tool call");
+      assertEquals(executedValues, [1]);
+      assert(
+        !output.includes("Stream terminated before tool-call event"),
+        "provisional tool input should not create a user-facing failure",
+      );
+      assert(
+        !output.includes('"type":"tool-input-error"'),
+        "provisional tool input should not emit tool-input-error",
+      );
+      assert(
+        !output.includes('"type":"tool-output-error"'),
+        "provisional tool input should not emit tool-output-error",
+      );
 
       clearModelProviders();
     } finally {

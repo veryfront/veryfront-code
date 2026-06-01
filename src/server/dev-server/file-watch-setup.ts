@@ -29,7 +29,25 @@ const IGNORED_PATH_PATTERNS = [
   ".git\\",
   ".veryfront/",
   ".veryfront\\",
+  // Tool output directories that live inside the project root. Tools such as
+  // the Playwright MCP server write per-step artifacts here continuously,
+  // which would otherwise drive an open-ended HMR refresh loop.
+  ".playwright-mcp/",
+  ".playwright-mcp\\",
 ];
+
+/**
+ * Generated-artifact file extensions that are never source and must never
+ * trigger an HMR update — even when written outside an ignored directory
+ * (e.g. a tool that drops a `.log` into the project root). This is the
+ * defensive guarantee against future tools writing to as-yet-unknown paths.
+ *
+ * Deliberately narrow: only extensions that are unambiguously machine output.
+ * veryfront hot-reloads more than JS (`.css`, `.mdx`/`.md`, and arbitrary
+ * primitive-directory resources), so an allowlist of "source" extensions
+ * would wrongly suppress legitimate updates.
+ */
+const IGNORED_ARTIFACT_EXTENSIONS = new Set([".log", ".tmp"]);
 
 /**
  * Project-root directory names that contain runtime data (not source code)
@@ -39,10 +57,50 @@ const IGNORED_PATH_PATTERNS = [
 const IGNORED_RUNTIME_DIRS = new Set(["data"]);
 
 /**
- * Check if a path should be ignored for HMR purposes.
+ * Generated build-output directory names. Matched as an exact path *segment*
+ * relative to projectDir (at any depth), so a real `dist/` inside the project
+ * is skipped while:
+ *   - an ancestor directory named `dist` (the project being checked out under
+ *     one, e.g. `/workspace/dist/my-app/`) does NOT suppress every source
+ *     change — the match is project-relative, and
+ *   - a source dir whose name merely ends in "dist" (e.g. `mydist/`,
+ *     `wishlist-dist/`) is NOT matched — segments are compared exactly.
  */
-function shouldIgnorePath(path: string): boolean {
-  return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern));
+const IGNORED_OUTPUT_DIRS = new Set(["dist"]);
+
+/** Whether a path ends in a generated-artifact extension (case-insensitive). */
+function hasIgnoredArtifactExtension(path: string): boolean {
+  const lower = path.toLowerCase();
+  for (const ext of IGNORED_ARTIFACT_EXTENSIONS) {
+    if (lower.endsWith(ext)) return true;
+  }
+  return false;
+}
+
+/**
+ * Check if a path should be ignored for HMR purposes — either because it lives
+ * in a generated/output directory or because it is a generated-artifact file.
+ *
+ * Exported for unit testing.
+ */
+export function shouldIgnorePath(path: string): boolean {
+  return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern)) ||
+    hasIgnoredArtifactExtension(path);
+}
+
+/**
+ * Whether a path lives inside a generated build-output directory, evaluated
+ * relative to `projectDir` so directories *above* the project (which the user
+ * cannot control, e.g. a checkout under `/some/dist/...`) are never matched.
+ *
+ * Exported for unit testing.
+ */
+export function isIgnoredOutputDir(projectDir: string, fullPath: string): boolean {
+  const rel = relative(projectDir, fullPath);
+  // A path outside the project root yields a `..`-prefixed relative path; such
+  // paths are not project output and are left to the absolute-pattern checks.
+  if (rel.startsWith("..")) return false;
+  return rel.split(sep).some((segment) => IGNORED_OUTPUT_DIRS.has(segment));
 }
 
 export class FileWatchSetup {
@@ -134,7 +192,8 @@ export class FileWatchSetup {
         try {
           // Filter out paths that shouldn't trigger HMR (cache, node_modules, runtime data, etc.)
           const relevantPaths = paths.filter((p) =>
-            !shouldIgnorePath(p) && !this.isRuntimeDataPath(p)
+            !shouldIgnorePath(p) && !this.isRuntimeDataPath(p) &&
+            !isIgnoredOutputDir(this.projectDir, p)
           );
           if (relevantPaths.length === 0) continue;
 
