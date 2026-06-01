@@ -114,6 +114,12 @@ import {
 import { resolveConfiguredAgentModel, resolveRuntimeModel } from "./model-resolution.ts";
 import type { RuntimeGenerateToolResult } from "./runtime-tool-types.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import {
+  appendCurrentRunToolStateToSystemPrompt,
+  createCurrentRunToolState,
+  type CurrentRunToolState,
+  recordCurrentRunToolResult,
+} from "./current-run-tool-state.ts";
 
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load-skill";
@@ -815,6 +821,7 @@ export class AgentRuntime {
 
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
+      const currentRunToolState = createCurrentRunToolState();
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       // Local models can't reliably do function calling — skip tools gracefully.
@@ -858,6 +865,11 @@ export class AgentRuntime {
           tools = filterToolsForSkill(tools, activeSkillPolicy);
         }
 
+        const modelSystemPrompt = appendCurrentRunToolStateToSystemPrompt(
+          currentSystemPrompt,
+          currentRunToolState,
+        );
+
         const response = await withSpan("agent.generate_text", async (span) => {
           setSpanAttributes(span, {
             "model.id": effectiveModel,
@@ -865,7 +877,7 @@ export class AgentRuntime {
           });
           return generateText({
             model: languageModel,
-            system: currentSystemPrompt,
+            system: modelSystemPrompt,
             messages: convertToTextGenerationRuntimeMessages(currentMessages),
             tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
@@ -914,6 +926,7 @@ export class AgentRuntime {
 
         const persistGeneratedToolResult = async (
           generatedToolResult: RuntimeGenerateToolResult,
+          input: unknown = {},
         ): Promise<void> => {
           const toolResultMessage = createToolResultMessage(
             generatedToolResult.toolCallId,
@@ -924,6 +937,14 @@ export class AgentRuntime {
           );
           currentMessages.push(toolResultMessage);
           await this.memory.add(toolResultMessage);
+          recordCurrentRunToolResult(currentRunToolState, {
+            toolCallId: generatedToolResult.toolCallId,
+            toolName: generatedToolResult.toolName,
+            input,
+            result: generatedToolResult.isError === true
+              ? { error: stringifyToolError(generatedToolResult.result) }
+              : generatedToolResult.result,
+          });
         };
 
         if (!response.toolCalls?.length) {
@@ -960,7 +981,7 @@ export class AgentRuntime {
             setSpanAttributes(toolSpan, { "tool.name": tc.toolName, "tool.id": tc.toolCallId });
 
             if (generatedToolResult) {
-              await persistGeneratedToolResult(generatedToolResult);
+              await persistGeneratedToolResult(generatedToolResult, toolCall.args);
               toolCall.status = generatedToolResult.isError === true ? "error" : "completed";
               toolCall.result = generatedToolResult.result;
               toolCall.error = generatedToolResult.isError === true
@@ -992,6 +1013,12 @@ export class AgentRuntime {
               };
               currentMessages.push(errorMessage);
               await this.memory.add(errorMessage);
+              recordCurrentRunToolResult(currentRunToolState, {
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                input: toolCall.args,
+                result: { error: policyCheck.error },
+              });
               toolCalls.push(toolCall);
               return;
             }
@@ -1021,6 +1048,12 @@ export class AgentRuntime {
                 input: toolCall.args,
                 result,
                 context: executionContext,
+              });
+              recordCurrentRunToolResult(currentRunToolState, {
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                input: toolCall.args,
+                result,
               });
 
               toolCall.status = "completed";
@@ -1052,6 +1085,12 @@ export class AgentRuntime {
               );
               currentMessages.push(errorMessage);
               await this.memory.add(errorMessage);
+              recordCurrentRunToolResult(currentRunToolState, {
+                toolCallId: tc.toolCallId,
+                toolName: tc.toolName,
+                input: toolCall.args,
+                result: { error: toolCall.error },
+              });
             }
 
             toolCalls.push(toolCall);
@@ -1106,6 +1145,7 @@ export class AgentRuntime {
 
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
+    const currentRunToolState = createCurrentRunToolState();
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     // Local models can't reliably do function calling — skip tools gracefully.
@@ -1152,9 +1192,14 @@ export class AgentRuntime {
         tools = filterToolsForSkill(tools, activeSkillPolicy);
       }
 
+      const modelSystemPrompt = appendCurrentRunToolStateToSystemPrompt(
+        currentSystemPrompt,
+        currentRunToolState,
+      );
+
       const result = streamText({
         model: languageModel,
-        system: currentSystemPrompt,
+        system: modelSystemPrompt,
         messages: convertToTextGenerationRuntimeMessages(currentMessages),
         tools: convertToolsToRuntimeTools(tools, {
           model: effectiveModel,
@@ -1195,14 +1240,16 @@ export class AgentRuntime {
             partialArgumentsLength: materialized.partialArgumentsLength,
             partialArgumentsPreview: materialized.partialArgumentsPreview,
           });
-          const dynamicIncomplete = isDynamicTool(tc.name);
-          sendSSE(controller, encoder, {
-            type: "tool-input-error",
-            toolCallId: tc.id,
-            errorText: `Stream terminated before tool-call event fired for "${tc.name}". ` +
-              `Received ${materialized.partialArgumentsLength} chars of partial tool-input deltas.`,
-            ...(dynamicIncomplete ? { dynamic: true } : {}),
-          });
+          if (tc.inputAnnounced === true) {
+            const dynamicIncomplete = isDynamicTool(tc.name);
+            sendSSE(controller, encoder, {
+              type: "tool-input-error",
+              toolCallId: tc.id,
+              errorText: `Stream terminated before tool-call event fired for "${tc.name}". ` +
+                `Received ${materialized.partialArgumentsLength} chars of partial tool-input deltas.`,
+              ...(dynamicIncomplete ? { dynamic: true } : {}),
+            });
+          }
         } else if (materialized.kind === "parse-error") {
           logger.warn("Failed to parse streamed tool arguments", {
             toolCallId: tc.id,
@@ -1241,6 +1288,17 @@ export class AgentRuntime {
           toolResult.toolCallId,
           toolResultMessage.parts[0] as ToolResultPart,
         );
+        const toolCallInput = state.toolCalls.get(toolResult.toolCallId);
+        recordCurrentRunToolResult(currentRunToolState, {
+          toolCallId: toolResult.toolCallId,
+          toolName: toolResult.toolName,
+          input: toolCallInput?.inputAvailable === true
+            ? captureStreamedToolCallInput(toolCallInput).args
+            : {},
+          result: toolResult.error === undefined
+            ? toolResult.output
+            : { error: stringifyToolError(toolResult.error) },
+        });
       };
 
       if (!shouldContinueAfterStreamStep(state)) {
@@ -1280,6 +1338,8 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
+            currentRunToolState,
+            { emitSse: tc.inputAnnounced === true },
           );
           continue;
         }
@@ -1335,6 +1395,7 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
+            currentRunToolState,
           );
           continue;
         }
@@ -1348,6 +1409,7 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
+            currentRunToolState,
           );
           continue;
         }
@@ -1378,6 +1440,12 @@ export class AgentRuntime {
             input: toolCall.args,
             result,
             context: executionContext,
+          });
+          recordCurrentRunToolResult(currentRunToolState, {
+            toolCallId: tc.id,
+            toolName: tc.name,
+            input: toolCall.args,
+            result,
           });
 
           toolCall.status = "completed";
@@ -1414,6 +1482,7 @@ export class AgentRuntime {
             encoder,
             currentMessages,
             toolCalls,
+            currentRunToolState,
           );
         }
       }
@@ -1447,18 +1516,22 @@ export class AgentRuntime {
     encoder: TextEncoder,
     currentMessages: Message[],
     toolCalls: ToolCall[],
+    currentRunToolState?: CurrentRunToolState,
+    options: { emitSse?: boolean } = {},
   ): Promise<void> {
     toolCall.status = "error";
     toolCall.error = errorStr;
     toolCalls.push(toolCall);
 
-    const dynamic = isDynamicTool(toolCall.name);
-    sendSSE(controller, encoder, {
-      type: "tool-output-error",
-      toolCallId: toolCall.id,
-      errorText: errorStr,
-      ...(dynamic ? { dynamic: true } : {}),
-    });
+    if (options.emitSse !== false) {
+      const dynamic = isDynamicTool(toolCall.name);
+      sendSSE(controller, encoder, {
+        type: "tool-output-error",
+        toolCallId: toolCall.id,
+        errorText: errorStr,
+        ...(dynamic ? { dynamic: true } : {}),
+      });
+    }
 
     const errorMessage = createToolErrorMessage(
       toolCall.id,
@@ -1467,6 +1540,14 @@ export class AgentRuntime {
     );
     currentMessages.push(errorMessage);
     await this.memory.add(errorMessage);
+    if (currentRunToolState) {
+      recordCurrentRunToolResult(currentRunToolState, {
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        input: toolCall.args,
+        result: { error: errorStr },
+      });
+    }
   }
 
   /**

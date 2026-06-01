@@ -53,7 +53,112 @@
         "method": "GET",
         "url": "https://api.atlassian.com/oauth/token/accessible-resources",
         "response": {
-          "transform": ""
+          "transform": "",
+          "historicalSummary": {
+            "collectionKeys": [
+              "values",
+              "sites",
+              "data"
+            ],
+            "collectionName": "sites",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "gid"
+              },
+              {
+                "name": "key"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "summary"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "created_by",
+                "kind": "contact"
+              },
+              {
+                "name": "assignee",
+                "kind": "contact"
+              },
+              {
+                "name": "owner",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "sites details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -91,7 +196,112 @@
           }
         },
         "response": {
-          "transform": "values"
+          "transform": "values",
+          "historicalSummary": {
+            "collectionKeys": [
+              "values",
+              "projects",
+              "data"
+            ],
+            "collectionName": "projects",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "gid"
+              },
+              {
+                "name": "key"
+              },
+              {
+                "name": "node_id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "title"
+              },
+              {
+                "name": "summary"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "status"
+              },
+              {
+                "name": "url"
+              },
+              {
+                "name": "html_url"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              },
+              {
+                "name": "createdAt"
+              },
+              {
+                "name": "updatedAt"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "created_by",
+                "kind": "contact"
+              },
+              {
+                "name": "assignee",
+                "kind": "contact"
+              },
+              {
+                "name": "owner",
+                "kind": "contact"
+              }
+            ],
+            "omitted": "projects details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -158,7 +368,51 @@
           }
         },
         "response": {
-          "transform": "issues"
+          "transform": "issues",
+          "historicalSummary": {
+            "collectionKeys": [
+              "issues",
+              "data"
+            ],
+            "collectionName": "issues",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "key"
+              },
+              {
+                "name": "summary"
+              },
+              {
+                "name": "status",
+                "kind": "object"
+              },
+              {
+                "name": "assignee",
+                "kind": "contact"
+              },
+              {
+                "name": "created"
+              },
+              {
+                "name": "updated"
+              }
+            ],
+            "omitted": "issue descriptions, comments, changelog, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "total"
+              },
+              {
+                "name": "startAt"
+              },
+              {
+                "name": "maxResults"
+              }
+            ]
+          }
         }
       }
     },
@@ -284,7 +538,47 @@
             "default": 50
           }
         }
-      }
+      ,
+        "response": {
+          "historicalSummary": {
+            "collectionKeys": [
+              "comments",
+              "data"
+            ],
+            "collectionName": "comments",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "body",
+                "kind": "object"
+              },
+              {
+                "name": "author",
+                "kind": "contact"
+              },
+              {
+                "name": "created"
+              },
+              {
+                "name": "updated"
+              }
+            ],
+            "omitted": "full comment payloads and provider-specific fields",
+            "outputFields": [
+              {
+                "name": "total"
+              },
+              {
+                "name": "startAt"
+              },
+              {
+                "name": "maxResults"
+              }
+            ]
+          }
+        }}
     },
     {
       "id": "add_comment",

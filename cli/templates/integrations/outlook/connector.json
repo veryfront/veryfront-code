@@ -226,7 +226,44 @@
           }
         },
         "response": {
-          "transform": "value"
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "folders",
+              "data"
+            ],
+            "collectionName": "folders",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "displayName"
+              },
+              {
+                "name": "parentFolderId"
+              },
+              {
+                "name": "childFolderCount"
+              },
+              {
+                "name": "unreadItemCount"
+              },
+              {
+                "name": "totalItemCount"
+              }
+            ],
+            "omitted": "folder provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ]
+          }
         }
       }
     }

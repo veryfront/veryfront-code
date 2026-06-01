@@ -52,7 +52,49 @@
           "exclude_archived": { "type": "boolean", "description": "Exclude archived channels", "default": true },
           "types": { "type": "string", "description": "Channel types: public_channel, private_channel, mpim, im", "default": "public_channel" }
         },
-        "response": { "transform": "channels" }
+        "response": {
+          "transform": "channels",
+          "historicalSummary": {
+            "collectionKeys": [
+              "channels",
+              "data"
+            ],
+            "collectionName": "channels",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "is_channel"
+              },
+              {
+                "name": "is_group"
+              },
+              {
+                "name": "is_im"
+              },
+              {
+                "name": "is_private"
+              },
+              {
+                "name": "is_archived"
+              },
+              {
+                "name": "num_members"
+              }
+            ],
+            "omitted": "channel topics, purposes, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "response_metadata",
+                "kind": "object"
+              }
+            ]
+          }
+        }
       }
     },
     {
@@ -114,7 +156,44 @@
         "body": {
           "limit": { "type": "number", "description": "Max users (1-1000)", "default": 100 }
         },
-        "response": { "transform": "members" }
+        "response": {
+          "transform": "members",
+          "historicalSummary": {
+            "collectionKeys": [
+              "members",
+              "users",
+              "data"
+            ],
+            "collectionName": "users",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "real_name"
+              },
+              {
+                "name": "team_id"
+              },
+              {
+                "name": "is_bot"
+              },
+              {
+                "name": "deleted"
+              }
+            ],
+            "omitted": "user profiles, avatars, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "response_metadata",
+                "kind": "object"
+              }
+            ]
+          }
+        }
       }
     }
   ],

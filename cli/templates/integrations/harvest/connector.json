@@ -43,7 +43,26 @@
         "method": "GET",
         "url": "https://id.getharvest.com/api/v2/accounts",
         "response": {
-          "transform": "accounts"
+          "transform": "accounts",
+          "historicalSummary": {
+            "collectionKeys": [
+              "accounts",
+              "data"
+            ],
+            "collectionName": "accounts",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "product"
+              }
+            ],
+            "omitted": "account auth policy and provider-specific fields"
+          }
         }
       }
     },
@@ -107,7 +126,58 @@
           }
         },
         "response": {
-          "transform": "users"
+          "transform": "users",
+          "historicalSummary": {
+            "collectionKeys": [
+              "users",
+              "data"
+            ],
+            "collectionName": "users",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "email"
+              },
+              {
+                "name": "first_name"
+              },
+              {
+                "name": "last_name"
+              },
+              {
+                "name": "is_active"
+              },
+              {
+                "name": "timezone"
+              }
+            ],
+            "omitted": "user rates, avatars, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -186,7 +256,68 @@
           }
         },
         "response": {
-          "transform": "time_entries"
+          "transform": "time_entries",
+          "historicalSummary": {
+            "collectionKeys": [
+              "time_entries",
+              "data"
+            ],
+            "collectionName": "timeEntries",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "spent_date"
+              },
+              {
+                "name": "hours"
+              },
+              {
+                "name": "billable"
+              },
+              {
+                "name": "user",
+                "kind": "contact"
+              },
+              {
+                "name": "client",
+                "kind": "object"
+              },
+              {
+                "name": "project",
+                "kind": "object"
+              },
+              {
+                "name": "task",
+                "kind": "object"
+              }
+            ],
+            "omitted": "notes, rates, invoice details, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -454,7 +585,59 @@
           }
         },
         "response": {
-          "transform": "projects"
+          "transform": "projects",
+          "historicalSummary": {
+            "collectionKeys": [
+              "projects",
+              "data"
+            ],
+            "collectionName": "projects",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "code"
+              },
+              {
+                "name": "is_active"
+              },
+              {
+                "name": "client",
+                "kind": "object"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "project budgets, notes, rates, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -523,7 +706,55 @@
           }
         },
         "response": {
-          "transform": "tasks"
+          "transform": "tasks",
+          "historicalSummary": {
+            "collectionKeys": [
+              "tasks",
+              "data"
+            ],
+            "collectionName": "tasks",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "is_active"
+              },
+              {
+                "name": "is_default"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "task rates and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -573,7 +804,57 @@
           }
         },
         "response": {
-          "transform": "task_assignments"
+          "transform": "task_assignments",
+          "historicalSummary": {
+            "collectionKeys": [
+              "task_assignments",
+              "data"
+            ],
+            "collectionName": "taskAssignments",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "task",
+                "kind": "object"
+              },
+              {
+                "name": "project",
+                "kind": "object"
+              },
+              {
+                "name": "is_active"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "task assignment rates and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -617,7 +898,55 @@
           }
         },
         "response": {
-          "transform": "clients"
+          "transform": "clients",
+          "historicalSummary": {
+            "collectionKeys": [
+              "clients",
+              "data"
+            ],
+            "collectionName": "clients",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "currency"
+              },
+              {
+                "name": "is_active"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "client addresses, statement keys, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -706,7 +1035,62 @@
           }
         },
         "response": {
-          "transform": "invoices"
+          "transform": "invoices",
+          "historicalSummary": {
+            "collectionKeys": [
+              "invoices",
+              "data"
+            ],
+            "collectionName": "invoices",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "number"
+              },
+              {
+                "name": "state"
+              },
+              {
+                "name": "amount"
+              },
+              {
+                "name": "due_date"
+              },
+              {
+                "name": "client",
+                "kind": "object"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "invoice notes, line items, and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -877,7 +1261,55 @@
           }
         },
         "response": {
-          "transform": "invoice_payments"
+          "transform": "invoice_payments",
+          "historicalSummary": {
+            "collectionKeys": [
+              "invoice_payments",
+              "data"
+            ],
+            "collectionName": "invoicePayments",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "amount"
+              },
+              {
+                "name": "paid_at"
+              },
+              {
+                "name": "created_at"
+              },
+              {
+                "name": "updated_at"
+              }
+            ],
+            "omitted": "payment notes and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -992,7 +1424,64 @@
           }
         },
         "response": {
-          "transform": "results"
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": [
+              "results",
+              "data"
+            ],
+            "collectionName": "projectTimeReports",
+            "itemFields": [
+              {
+                "name": "project_id"
+              },
+              {
+                "name": "project_name"
+              },
+              {
+                "name": "client_id"
+              },
+              {
+                "name": "client_name"
+              },
+              {
+                "name": "total_hours"
+              },
+              {
+                "name": "billable_hours"
+              },
+              {
+                "name": "billable_amount"
+              },
+              {
+                "name": "currency"
+              }
+            ],
+            "omitted": "report breakdown details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -1053,7 +1542,58 @@
           }
         },
         "response": {
-          "transform": "results"
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": [
+              "results",
+              "data"
+            ],
+            "collectionName": "teamTimeReports",
+            "itemFields": [
+              {
+                "name": "user_id"
+              },
+              {
+                "name": "user_name"
+              },
+              {
+                "name": "total_hours"
+              },
+              {
+                "name": "billable_hours"
+              },
+              {
+                "name": "billable_amount"
+              },
+              {
+                "name": "currency"
+              }
+            ],
+            "omitted": "team report details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -1114,7 +1654,58 @@
           }
         },
         "response": {
-          "transform": "results"
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": [
+              "results",
+              "data"
+            ],
+            "collectionName": "clientTimeReports",
+            "itemFields": [
+              {
+                "name": "client_id"
+              },
+              {
+                "name": "client_name"
+              },
+              {
+                "name": "total_hours"
+              },
+              {
+                "name": "billable_hours"
+              },
+              {
+                "name": "billable_amount"
+              },
+              {
+                "name": "currency"
+              }
+            ],
+            "omitted": "client report details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -1175,7 +1766,58 @@
           }
         },
         "response": {
-          "transform": "results"
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": [
+              "results",
+              "data"
+            ],
+            "collectionName": "taskTimeReports",
+            "itemFields": [
+              {
+                "name": "task_id"
+              },
+              {
+                "name": "task_name"
+              },
+              {
+                "name": "total_hours"
+              },
+              {
+                "name": "billable_hours"
+              },
+              {
+                "name": "billable_amount"
+              },
+              {
+                "name": "currency"
+              }
+            ],
+            "omitted": "task report details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     },
@@ -1221,7 +1863,58 @@
           }
         },
         "response": {
-          "transform": "results"
+          "transform": "results",
+          "historicalSummary": {
+            "collectionKeys": [
+              "results",
+              "data"
+            ],
+            "collectionName": "invoiceReports",
+            "itemFields": [
+              {
+                "name": "client_id"
+              },
+              {
+                "name": "client_name"
+              },
+              {
+                "name": "invoice_id"
+              },
+              {
+                "name": "invoice_number"
+              },
+              {
+                "name": "amount"
+              },
+              {
+                "name": "currency"
+              }
+            ],
+            "omitted": "invoice report details and provider-specific payload fields",
+            "outputFields": [
+              {
+                "name": "nextPageToken"
+              },
+              {
+                "name": "next_page"
+              },
+              {
+                "name": "next"
+              },
+              {
+                "name": "offset"
+              },
+              {
+                "name": "total"
+              },
+              {
+                "name": "per_page"
+              },
+              {
+                "name": "page"
+              }
+            ]
+          }
         }
       }
     }

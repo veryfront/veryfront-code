@@ -290,13 +290,15 @@ class DenoEnvironmentAdapter implements EnvironmentAdapter {
 
 class DenoServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
-    const deno = globalThis.Deno;
-    if (typeof deno?.upgradeWebSocket !== "function") {
+    // Access native Deno via `self` to bypass dnt shim transform.
+    // dnt rewrites `globalThis.Deno` to @deno/shim-deno, which lacks upgradeWebSocket.
+    const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"];
+    if (typeof nativeDeno?.upgradeWebSocket !== "function") {
       throw NOT_SUPPORTED.create({
         detail: "DenoServerAdapter.upgradeWebSocket() can only be used in Deno runtime",
       });
     }
-    const { socket, response } = deno.upgradeWebSocket(request);
+    const { socket, response } = nativeDeno.upgradeWebSocket(request);
     return { socket, response };
   }
 }

@@ -658,7 +658,7 @@ describe("chat-stream-handler", () => {
       ]);
     });
 
-    it("processes tool-input-start and tool-input-delta", async () => {
+    it("commits buffered tool-input-start and tool-input-delta when the tool call finishes", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
 
@@ -675,18 +675,18 @@ describe("chat-stream-handler", () => {
       const tc = state.toolCalls.get("tc-1")!;
       assertEquals(tc.name, "search");
       assertEquals(tc.arguments, '{"query":"test"}');
-
-      assertEquals(events[0], { type: "tool-input-start", toolCallId: "tc-1", toolName: "search" });
-      assertEquals(events[1], {
-        type: "tool-input-delta",
-        toolCallId: "tc-1",
-        inputTextDelta: '{"query":',
-      });
-      assertEquals(events[2], {
-        type: "tool-input-delta",
-        toolCallId: "tc-1",
-        inputTextDelta: '"test"}',
-      });
+      assertEquals(tc.inputAvailable, true);
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-1", toolName: "search" },
+        { type: "tool-input-delta", toolCallId: "tc-1", inputTextDelta: '{"query":' },
+        { type: "tool-input-delta", toolCallId: "tc-1", inputTextDelta: '"test"}' },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-1",
+          toolName: "search",
+          input: { query: "test" },
+        },
+      ]);
     });
 
     it("replaces a transient empty-object placeholder when real streamed tool JSON begins", async () => {
@@ -705,22 +705,18 @@ describe("chat-stream-handler", () => {
 
       const tc = state.toolCalls.get("tc-placeholder")!;
       assertEquals(tc.arguments, '{"skillId":"plan"}');
-
-      assertEquals(events[1], {
-        type: "tool-input-delta",
-        toolCallId: "tc-placeholder",
-        inputTextDelta: "{}",
-      });
-      assertEquals(events[2], {
-        type: "tool-input-delta",
-        toolCallId: "tc-placeholder",
-        inputTextDelta: '{"skillId":"',
-      });
-      assertEquals(events[3], {
-        type: "tool-input-delta",
-        toolCallId: "tc-placeholder",
-        inputTextDelta: 'plan"}',
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-placeholder", toolName: "load_skill" },
+        { type: "tool-input-delta", toolCallId: "tc-placeholder", inputTextDelta: "{}" },
+        { type: "tool-input-delta", toolCallId: "tc-placeholder", inputTextDelta: '{"skillId":"' },
+        { type: "tool-input-delta", toolCallId: "tc-placeholder", inputTextDelta: 'plan"}' },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-placeholder",
+          toolName: "load_skill",
+          input: { skillId: "plan" },
+        },
+      ]);
     });
 
     it("dedupes cumulative streamed tool argument buffers instead of corrupting the JSON payload", async () => {
@@ -749,17 +745,28 @@ describe("chat-stream-handler", () => {
         tc.arguments,
         '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
       );
-
-      assertEquals(events[1], {
-        type: "tool-input-delta",
-        toolCallId: "tc-cumulative",
-        inputTextDelta: '{"path":"plans/report.md","content":"# Report',
-      });
-      assertEquals(events[2], {
-        type: "tool-input-delta",
-        toolCallId: "tc-cumulative",
-        inputTextDelta: '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-cumulative", toolName: "create_file" },
+        {
+          type: "tool-input-delta",
+          toolCallId: "tc-cumulative",
+          inputTextDelta: '{"path":"plans/report.md","content":"# Report',
+        },
+        {
+          type: "tool-input-delta",
+          toolCallId: "tc-cumulative",
+          inputTextDelta: '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-cumulative",
+          toolName: "create_file",
+          input: {
+            path: "plans/report.md",
+            content: "# Report\n\nExecutive summary",
+          },
+        },
+      ]);
     });
 
     it("dedupes repeated placeholder-style cumulative tool deltas without swallowing parse errors", async () => {
@@ -793,22 +800,29 @@ describe("chat-stream-handler", () => {
         tc.arguments,
         '{"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
       );
-
-      assertEquals(events[1], {
-        type: "tool-input-delta",
-        toolCallId: "tc-repeat-placeholder",
-        inputTextDelta: "{}",
-      });
-      assertEquals(events[2], {
-        type: "tool-input-delta",
-        toolCallId: "tc-repeat-placeholder",
-        inputTextDelta: '"path":"plans/report.md","content":"# Report',
-      });
-      assertEquals(events[3], {
-        type: "tool-input-delta",
-        toolCallId: "tc-repeat-placeholder",
-        inputTextDelta: '"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
-      });
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-repeat-placeholder", toolName: "create_file" },
+        { type: "tool-input-delta", toolCallId: "tc-repeat-placeholder", inputTextDelta: "{}" },
+        {
+          type: "tool-input-delta",
+          toolCallId: "tc-repeat-placeholder",
+          inputTextDelta: '"path":"plans/report.md","content":"# Report',
+        },
+        {
+          type: "tool-input-delta",
+          toolCallId: "tc-repeat-placeholder",
+          inputTextDelta: '"path":"plans/report.md","content":"# Report\\n\\nExecutive summary"}',
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-repeat-placeholder",
+          toolName: "create_file",
+          input: {
+            path: "plans/report.md",
+            content: "# Report\n\nExecutive summary",
+          },
+        },
+      ]);
     });
 
     it("handles tool-call with full input object", async () => {
@@ -832,12 +846,16 @@ describe("chat-stream-handler", () => {
       assertEquals(tc.name, "weather");
       assertEquals(tc.arguments, '{"city":"Tokyo"}');
 
-      assertEquals(events[0], {
+      assertEquals(events, [{
+        type: "tool-input-start",
+        toolCallId: "tc-2",
+        toolName: "weather",
+      }, {
         type: "tool-input-available",
         toolCallId: "tc-2",
         toolName: "weather",
         input: { city: "Tokyo" },
-      });
+      }]);
     });
 
     it("normalizes quote-prefixed first tool-input deltas before a fallback empty tool-call payload arrives", async () => {
@@ -901,12 +919,16 @@ describe("chat-stream-handler", () => {
       const tc = state.toolCalls.get("tc-quoted")!;
       assertEquals(tc.arguments, '{"query":"Veryfront","maxUses":1}');
 
-      assertEquals(events[0], {
+      assertEquals(events, [{
+        type: "tool-input-start",
+        toolCallId: "tc-quoted",
+        toolName: "web_search",
+      }, {
         type: "tool-input-available",
         toolCallId: "tc-quoted",
         toolName: "web_search",
         input: { query: "Veryfront", maxUses: 1 },
-      });
+      }]);
     });
 
     it("keeps streamed tool JSON when the later tool-call payload is only an empty-object placeholder", async () => {
@@ -949,13 +971,17 @@ describe("chat-stream-handler", () => {
 
       const tc = state.toolCalls.get("tc-provider")!;
       assertEquals(tc.providerExecuted, true);
-      assertEquals(events[0], {
+      assertEquals(events, [{
+        type: "tool-input-start",
+        toolCallId: "tc-provider",
+        toolName: "web_search",
+      }, {
         type: "tool-input-available",
         toolCallId: "tc-provider",
         toolName: "web_search",
         input: { query: "Veryfront" },
         providerExecuted: true,
-      });
+      }]);
     });
 
     it("handles multiple tool calls in a single stream", async () => {
@@ -974,7 +1000,7 @@ describe("chat-stream-handler", () => {
       assertEquals(state.toolCalls.get("tc-a")!.name, "search");
       assertEquals(state.toolCalls.get("tc-b")!.name, "fetch");
       assertEquals(state.finishReason, "tool-calls");
-      assertEquals(events.length, 2);
+      assertEquals(events.length, 4);
     });
 
     it("forwards tool results as tool-output-available SSE events", async () => {

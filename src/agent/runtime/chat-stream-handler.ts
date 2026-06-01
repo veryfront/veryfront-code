@@ -33,6 +33,8 @@ export interface StreamingToolCall {
   id: string;
   name: string;
   arguments: string;
+  inputDeltas?: string[];
+  inputAnnounced?: boolean;
   inputAvailable?: boolean;
   providerExecuted?: boolean;
   dynamic?: boolean;
@@ -357,6 +359,7 @@ export function processStream(
         if (dynamic) {
           tc.dynamic = true;
         }
+        announceToolInputStart(tc);
         sendSSE(controller, encoder, {
           type: "tool-input-available",
           toolCallId: tc.id,
@@ -367,6 +370,30 @@ export function processStream(
         });
         shouldStopForCommittedLocalToolCall = true;
       }
+    };
+
+    const announceToolInputStart = (toolCall: StreamingToolCall) => {
+      if (toolCall.inputAnnounced === true) {
+        return;
+      }
+
+      const dynamic = toolCall.dynamic ?? isDynamicTool(toolCall.name);
+      sendSSE(controller, encoder, {
+        type: "tool-input-start",
+        toolCallId: toolCall.id,
+        toolName: toolCall.name,
+        ...(dynamic ? { dynamic: true } : {}),
+      });
+
+      for (const delta of toolCall.inputDeltas ?? []) {
+        sendSSE(controller, encoder, {
+          type: "tool-input-delta",
+          toolCallId: toolCall.id,
+          inputTextDelta: delta,
+        });
+      }
+
+      toolCall.inputAnnounced = true;
     };
 
     const ensureToolLifecycle = (part: {
@@ -390,6 +417,7 @@ export function processStream(
             ? { providerExecuted: part.providerExecuted }
             : {}),
           ...(dynamic ? { dynamic: true } : {}),
+          inputAnnounced: true,
         });
         sendSSE(controller, encoder, {
           type: "tool-input-start",
@@ -427,6 +455,7 @@ export function processStream(
         existing.dynamic = true;
       }
 
+      announceToolInputStart(existing);
       sendSSE(controller, encoder, {
         type: "tool-input-available",
         toolCallId: part.toolCallId,
@@ -554,14 +583,8 @@ export function processStream(
             inputAvailable: false,
             providerExecuted: typedPart.providerExecuted,
             dynamic: typedPart.dynamic,
-          });
-
-          const dynamic = isDynamicTool(typedPart.toolName);
-          sendSSE(controller, encoder, {
-            type: "tool-input-start",
-            toolCallId: toolId,
-            toolName: typedPart.toolName,
-            ...(dynamic ? { dynamic: true } : {}),
+            inputDeltas: [],
+            inputAnnounced: false,
           });
           break;
         }
@@ -573,11 +596,8 @@ export function processStream(
           if (!tc) break;
 
           tc.arguments = mergeToolInputDelta(tc.arguments, typedPart.delta);
-          sendSSE(controller, encoder, {
-            type: "tool-input-delta",
-            toolCallId: toolId,
-            inputTextDelta: typedPart.delta,
-          });
+          tc.inputDeltas ??= [];
+          tc.inputDeltas.push(typedPart.delta);
           break;
         }
 
@@ -594,6 +614,7 @@ export function processStream(
           if (dynamic) {
             tc.dynamic = true;
           }
+          announceToolInputStart(tc);
           sendSSE(controller, encoder, {
             type: "tool-input-available",
             toolCallId: toolId,
@@ -660,18 +681,22 @@ export function processStream(
           const previousArguments = previous?.arguments ?? "";
           const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
           const wasInputAvailable = previous?.inputAvailable === true;
-          state.toolCalls.set(toolId, {
+          const toolCall: StreamingToolCall = {
             id: toolId,
             name: typedPart.toolName,
             arguments: resolvedArguments,
+            inputDeltas: previous?.inputDeltas ?? [],
+            inputAnnounced: previous?.inputAnnounced ?? false,
             inputAvailable: true,
             providerExecuted: typedPart.providerExecuted,
             dynamic: typedPart.dynamic,
-          });
+          };
+          state.toolCalls.set(toolId, toolCall);
 
+          const dynamic = isDynamicTool(typedPart.toolName);
+          const inputObj = parseToolInputObject(typedPart.input);
+          announceToolInputStart(toolCall);
           if (!wasInputAvailable) {
-            const dynamic = isDynamicTool(typedPart.toolName);
-            const inputObj = parseToolInputObject(typedPart.input);
             sendSSE(controller, encoder, {
               type: "tool-input-available",
               toolCallId: toolId,

@@ -3,6 +3,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
+import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { resolveExportEntry, toCjsDestructureBindings } from "./loader-helpers.ts";
 
 const logger = serverLogger.component("api");
@@ -188,6 +189,95 @@ export async function resolveNodePackageToFileUrl(
   }
 }
 
+/** Location of an ESM-only user dependency, used to rewrite imports to real ES module URLs. */
+export interface EsmDependencyLocation {
+  /** file:// URL of the package's ESM entry point. */
+  entryUrl: string;
+  /** Absolute path of the package's root directory (used to contain subpath imports). */
+  packageDir: string;
+}
+
+/**
+ * Decide whether an installed package must be loaded as a real ES module.
+ *
+ * ESM-only packages (e.g. `"type": "module"` packages that use `import.meta` or
+ * top-level await) cannot be evaluated as CommonJS via the compiled-binary
+ * `new Function` shim. We treat a package as ESM when its package.json declares
+ * `"type": "module"` or its resolved entry point is a `.mjs` file.
+ */
+function isEsmPackage(pkgJson: Record<string, unknown>, entry: string): boolean {
+  if (pkgJson.type === "module") return true;
+  return entry.endsWith(".mjs");
+}
+
+/**
+ * Resolve a package's ESM entry point, preferring the conditional `import`
+ * export, then the `module` field, then `main`.
+ */
+function resolveEsmEntry(pkgJson: Record<string, unknown>): string | undefined {
+  const exportsField = pkgJson.exports;
+  if (exportsField && typeof exportsField === "object") {
+    const dot = (exportsField as Record<string, unknown>)["."];
+    const fromExports = resolveExportEntry(dot ?? exportsField);
+    if (fromExports) return fromExports;
+  } else if (typeof exportsField === "string") {
+    return exportsField;
+  }
+
+  const moduleField = pkgJson.module;
+  if (typeof moduleField === "string") return moduleField;
+  const mainField = pkgJson.main;
+  if (typeof mainField === "string") return mainField;
+  return "index.js";
+}
+
+/**
+ * Identify the subset of user dependencies that are ESM-only and resolve each
+ * to file:// URLs so the compiled-binary loader can import them as real ES
+ * modules instead of transpiling them to CommonJS. CJS dependencies are omitted
+ * and continue to load through the `createRequire`-based shim.
+ */
+export async function resolveEsmUserDependencies(
+  projectDir: string,
+  fs: FileSystem,
+  userDeps: Map<string, string>,
+): Promise<Map<string, EsmDependencyLocation>> {
+  const esmDeps = new Map<string, EsmDependencyLocation>();
+
+  for (const name of userDeps.keys()) {
+    const packageDir = pathHelper.resolve(pathHelper.join(projectDir, "node_modules", name));
+    try {
+      const pkgJson = JSON.parse(
+        await fs.readTextFile(pathHelper.join(packageDir, "package.json")),
+      ) as Record<string, unknown>;
+
+      const entry = resolveEsmEntry(pkgJson);
+      if (!entry || !isEsmPackage(pkgJson, entry)) continue;
+
+      // The entry path comes from the dependency's own package.json, which is
+      // attacker-influenceable (a malicious/compromised package could set
+      // "main": "../../../etc/passwd"). Reject entries that resolve outside the
+      // package directory so a crafted package.json cannot turn into a file://
+      // import that escapes node_modules. This mirrors the containment guard the
+      // CJS loader shim enforces via __vf_assertContained.
+      const entryPath = pathHelper.resolve(pathHelper.join(packageDir, entry));
+      if (!isWithinDirectory(packageDir, entryPath)) {
+        logger.warn(`Skipping ESM dependency ${name}: entry escapes package directory (${entry})`);
+        continue;
+      }
+
+      esmDeps.set(name, {
+        entryUrl: pathHelper.toFileUrl(entryPath).href,
+        packageDir,
+      });
+    } catch (_) {
+      /* expected: package.json missing/invalid → treat as CJS */
+    }
+  }
+
+  return esmDeps;
+}
+
 export async function loadVeryfrontExportsMap(
   projectDir: string,
   fs: FileSystem,
@@ -314,11 +404,56 @@ export function rewriteCompiledBinaryVeryfrontImports(code: string): string {
 export function rewriteCompiledBinaryUserDependencyImports(
   code: string,
   userDeps: Map<string, string>,
+  esmDeps: Map<string, EsmDependencyLocation> = new Map(),
 ): string {
   let transformed = code;
 
   for (const name of userDeps.keys()) {
     const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    // ESM-only dependencies are rewritten to real ES module file:// URLs so that
+    // import.meta, top-level await, etc. work. They must NOT be transpiled to
+    // CommonJS and evaluated via the `new Function` shim (see __vf_loadCjs).
+    const esm = esmDeps.get(name);
+    if (esm) {
+      // Resolve a subpath import to a contained file:// URL. The subpath comes
+      // from the handler source; reject any that escape the package directory
+      // (e.g. "pkg/../../secret") by leaving the import untouched so it fails to
+      // resolve rather than reading outside node_modules.
+      const subpathUrl = (subpath: string, original: string): string | null => {
+        const target = pathHelper.resolve(pathHelper.join(esm.packageDir, subpath));
+        if (!isWithinDirectory(esm.packageDir, target)) {
+          logger.warn(`Skipping ESM subpath import that escapes package directory: ${original}`);
+          return null;
+        }
+        return pathHelper.toFileUrl(target).href;
+      };
+
+      transformed = transformed.replace(
+        new RegExp(`from\\s+["']${escaped}(/[^"']+)["']`, "g"),
+        (match, subpath) => {
+          const url = subpathUrl(subpath, match);
+          return url ? `from "${url}"` : match;
+        },
+      );
+      transformed = transformed.replace(
+        new RegExp(`from\\s+["']${escaped}["']`, "g"),
+        () => `from "${esm.entryUrl}"`,
+      );
+      transformed = transformed.replace(
+        new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']+)["']\\s*\\)`, "g"),
+        (match, subpath) => {
+          const url = subpathUrl(subpath, match);
+          return url ? `import("${url}")` : match;
+        },
+      );
+      transformed = transformed.replace(
+        new RegExp(`import\\s*\\(\\s*["']${escaped}["']\\s*\\)`, "g"),
+        () => `import("${esm.entryUrl}")`,
+      );
+      continue;
+    }
+
     transformed = transformed.replace(
       new RegExp(`import\\s+(\\w+)\\s+from\\s+["']${escaped}["']`, "g"),
       (_, localName) => `const ${localName} = __vf_interopDefault(require("${name}"))`,
@@ -445,7 +580,8 @@ export async function rewriteExternalImports(
     // injected by the esbuild banner) to load CJS packages from node_modules,
     // since npm: specifiers only work for packages embedded at compile time.
     if (isCompiledBinary()) {
-      transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps);
+      const esmDeps = await resolveEsmUserDependencies(projectDir, fs, userDeps);
+      transformed = rewriteCompiledBinaryUserDependencyImports(transformed, userDeps, esmDeps);
     } else {
       transformed = await rewriteDenoNpmDependencyImports(transformed, projectDir, fs, userDeps);
     }
