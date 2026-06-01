@@ -34,11 +34,6 @@ const IGNORED_PATH_PATTERNS = [
   // which would otherwise drive an open-ended HMR refresh loop.
   ".playwright-mcp/",
   ".playwright-mcp\\",
-  // Build output. Separator-anchored so it matches a real `dist` directory at
-  // any depth (watcher paths are absolute) without false-positiving on source
-  // directories whose names merely end in "dist" (e.g. `mydist/`, `wishlist-dist/`).
-  "/dist/",
-  "\\dist\\",
 ];
 
 /**
@@ -61,6 +56,18 @@ const IGNORED_ARTIFACT_EXTENSIONS = new Set([".log", ".tmp"]);
  */
 const IGNORED_RUNTIME_DIRS = new Set(["data"]);
 
+/**
+ * Generated build-output directory names. Matched as an exact path *segment*
+ * relative to projectDir (at any depth), so a real `dist/` inside the project
+ * is skipped while:
+ *   - an ancestor directory named `dist` (the project being checked out under
+ *     one, e.g. `/workspace/dist/my-app/`) does NOT suppress every source
+ *     change — the match is project-relative, and
+ *   - a source dir whose name merely ends in "dist" (e.g. `mydist/`,
+ *     `wishlist-dist/`) is NOT matched — segments are compared exactly.
+ */
+const IGNORED_OUTPUT_DIRS = new Set(["dist"]);
+
 /** Whether a path ends in a generated-artifact extension (case-insensitive). */
 function hasIgnoredArtifactExtension(path: string): boolean {
   const lower = path.toLowerCase();
@@ -79,6 +86,21 @@ function hasIgnoredArtifactExtension(path: string): boolean {
 export function shouldIgnorePath(path: string): boolean {
   return IGNORED_PATH_PATTERNS.some((pattern) => path.includes(pattern)) ||
     hasIgnoredArtifactExtension(path);
+}
+
+/**
+ * Whether a path lives inside a generated build-output directory, evaluated
+ * relative to `projectDir` so directories *above* the project (which the user
+ * cannot control, e.g. a checkout under `/some/dist/...`) are never matched.
+ *
+ * Exported for unit testing.
+ */
+export function isIgnoredOutputDir(projectDir: string, fullPath: string): boolean {
+  const rel = relative(projectDir, fullPath);
+  // A path outside the project root yields a `..`-prefixed relative path; such
+  // paths are not project output and are left to the absolute-pattern checks.
+  if (rel.startsWith("..")) return false;
+  return rel.split(sep).some((segment) => IGNORED_OUTPUT_DIRS.has(segment));
 }
 
 export class FileWatchSetup {
@@ -170,7 +192,8 @@ export class FileWatchSetup {
         try {
           // Filter out paths that shouldn't trigger HMR (cache, node_modules, runtime data, etc.)
           const relevantPaths = paths.filter((p) =>
-            !shouldIgnorePath(p) && !this.isRuntimeDataPath(p)
+            !shouldIgnorePath(p) && !this.isRuntimeDataPath(p) &&
+            !isIgnoredOutputDir(this.projectDir, p)
           );
           if (relevantPaths.length === 0) continue;
 
