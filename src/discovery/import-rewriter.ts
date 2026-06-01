@@ -8,6 +8,7 @@
 import { isDenoCompiled } from "#veryfront/platform/compat/runtime.ts";
 import { createFileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 export const DISCOVERY_GLOBAL_VERYFRONT_MODULES = [
   "veryfront/agent",
@@ -181,7 +182,13 @@ export function rewriteForDeno(
 // Most projects re-resolve the same handful of packages (react, zod,
 // pdf-parse, …) across every discovered tool/agent file — without this
 // cache, each discovery pass re-reads the same package.json files.
-const resolvedSpecifierCache = new Map<string, string | null>();
+// Bounded so the per-project specifier map cannot grow without limit in a
+// long-running server. Only positive resolutions are stored (see below), so
+// entries are deterministic and safe to evict/recompute.
+const RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES = 1000;
+const resolvedSpecifierCache = new LRUCache<string, string>({
+  maxEntries: RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES,
+});
 
 // Split `react/jsx-runtime` → { name: "react", subpath: "./jsx-runtime" } and
 // `@scope/pkg/sub/path` → { name: "@scope/pkg", subpath: "./sub/path" }.

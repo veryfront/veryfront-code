@@ -16,6 +16,7 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { importTransformers } from "#veryfront/compat/opaque-deps.ts";
 import { DEFAULT_LOCAL_MODEL, type ModelInfo, resolveLocalModel } from "./model-catalog.ts";
 import { throwIfLocalAIDisabled } from "./env.ts";
+import { createPipelineCache } from "./pipeline-cache.ts";
 
 const logger = serverLogger.component("local-llm");
 
@@ -186,12 +187,6 @@ interface Pipeline {
   ): Promise<void>;
 }
 
-/** Cached pipeline instances keyed by HuggingFace model ID */
-const pipelineCache = new Map<string, Pipeline>();
-
-/** Whether a model is currently being loaded (prevents concurrent loads) */
-const loadingLocks = new Map<string, Promise<Pipeline>>();
-
 let transformersModule: TransformersModule | null = null;
 
 /**
@@ -231,22 +226,12 @@ export async function getTransformers(): Promise<TransformersModule> {
 }
 
 /**
- * Load a text-generation pipeline for the given model.
- * Returns a cached pipeline if already loaded.
+ * Bounded, dedup-aware cache of text-generation pipelines keyed by HuggingFace
+ * model id. Only loads a model on a cold cache miss; concurrent loads of the
+ * same model share a single promise.
  */
-async function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
-  const cacheKey = modelInfo.hfId;
-
-  // Return cached pipeline
-  const cached = pipelineCache.get(cacheKey);
-  if (cached) return cached;
-
-  // Wait for existing load if in progress
-  const existingLock = loadingLocks.get(cacheKey);
-  if (existingLock) return existingLock;
-
-  // Start loading
-  const loadPromise = (async () => {
+const textGenerationPipelines = createPipelineCache<Pipeline, ModelInfo>(async (modelInfo) => {
+  try {
     const transformers = await getTransformers();
 
     logger.info(
@@ -263,18 +248,8 @@ async function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
     )) as Pipeline;
 
     logger.info(`Model loaded: ${modelInfo.hfId}`);
-    pipelineCache.set(cacheKey, pipe);
-    loadingLocks.delete(cacheKey);
     return pipe;
-  })();
-
-  loadingLocks.set(cacheKey, loadPromise);
-
-  try {
-    return await loadPromise;
   } catch (error) {
-    loadingLocks.delete(cacheKey);
-
     // Convert ONNX / native-addon errors to no_ai_available so they propagate
     // correctly through the chat handler (503) instead of being swallowed as
     // in-band SSE errors inside a 200 response stream.
@@ -297,6 +272,14 @@ async function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
     }
     throw error;
   }
+});
+
+/**
+ * Load a text-generation pipeline for the given model.
+ * Returns a cached pipeline if already loaded.
+ */
+function loadPipeline(modelInfo: ModelInfo): Promise<Pipeline> {
+  return textGenerationPipelines.load(modelInfo.hfId, modelInfo);
 }
 
 /**
@@ -418,5 +401,5 @@ export async function preloadModel(modelId: string): Promise<void> {
  */
 export function isModelLoaded(modelId: string): boolean {
   const modelInfo = resolveLocalModel(modelId);
-  return pipelineCache.has(modelInfo.hfId);
+  return textGenerationPipelines.has(modelInfo.hfId);
 }
