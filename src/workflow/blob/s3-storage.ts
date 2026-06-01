@@ -34,6 +34,19 @@ async function getS3Module(): Promise<typeof import("@aws-sdk/client-s3")> {
   }
 }
 
+/**
+ * Wrap a readable stream in a `Response` for body consumption.
+ *
+ * Centralizes the single, well-understood type mismatch between Deno's
+ * `ReadableStream` and the DOM `ReadableStream` that `Response` accepts. The
+ * AWS SDK returns a `ReadableStream` whose generic type does not line up with
+ * the lib that `Response` is typed against, but the runtime objects are
+ * interchangeable. We narrow to `BodyInit` here so callers stay type-safe.
+ */
+function streamToResponse(stream: ReadableStream): Response {
+  return new Response(stream as unknown as BodyInit);
+}
+
 export interface S3BlobStorageConfig {
   /** AWS Region */
   region: string;
@@ -200,15 +213,13 @@ export class S3BlobStorage implements BlobStorage {
   async getText(id: string): Promise<string | null> {
     const stream = await this.getStream(id);
     if (!stream) return null;
-    // @ts-ignore - Deno's ReadableStream vs Web ReadableStream type mismatch
-    return new Response(stream).text();
+    return streamToResponse(stream).text();
   }
 
   async getBytes(id: string): Promise<Uint8Array | null> {
     const stream = await this.getStream(id);
     if (!stream) return null;
-    // @ts-ignore - Deno's ReadableStream vs Web ReadableStream type mismatch
-    const buffer = await new Response(stream).arrayBuffer();
+    const buffer = await streamToResponse(stream).arrayBuffer();
     return new Uint8Array(buffer);
   }
 
