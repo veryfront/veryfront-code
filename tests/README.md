@@ -74,10 +74,12 @@ describe("ComponentName", () => {
 });
 ```
 
-**Never commit `.only`:** `it.only` / `describe.only` silently skip every
-sibling test in the file. `deno task lint:ban-test-only` fails CI if any
-focused test reaches a committed test file — use it locally to focus, then
-remove it before committing.
+**Never commit a focused test:** `it.only` / `describe.only` — and the option
+form `it({ only: true }, fn)` that our BDD wrapper also honors — silently skip
+every sibling test in the file. `deno task lint:ban-test-only` fails CI if any
+focused test reaches a committed `*.test.ts(x)` under `src/`, `cli/`, `tests/`,
+`react/`, `extensions/`, or `scripts/`. Use focus locally, then remove it before
+committing.
 
 ### Test Naming Conventions
 
@@ -188,11 +190,11 @@ Deno.test({
 4. Still use TestContext for proper cleanup even with disabled sanitizers
 
 **Enforced by a ratchet:** `deno task lint:sanitizer-baseline` counts every
-`sanitizeResources/Ops/Exit: false` across `src/`, `cli/`, and `tests/` and
-fails CI if the total grows beyond the baseline in
-`scripts/lint/check-sanitizer-baseline.ts`. New tests must not add opt-outs —
-fix the leak instead. When you remove opt-outs, the task prints the new total;
-lower `SANITIZER_OPT_OUT_BASELINE` to that number to lock in the win.
+`sanitizeResources/Ops/Exit: false` across `src/`, `cli/`, `tests/`, `react/`,
+`extensions/`, and `scripts/` and fails CI if the total grows beyond the
+baseline in `scripts/lint/check-sanitizer-baseline.ts`. New tests must not add
+opt-outs — fix the leak instead. When you remove opt-outs, the task prints the
+new total; lower `SANITIZER_OPT_OUT_BASELINE` to that number to lock in the win.
 
 ## Assertions
 

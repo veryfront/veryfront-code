@@ -4,15 +4,27 @@
  * test files.
  *
  * A focused test silently skips every sibling test in its file, so a stray
- * `.only` that lands on `main` quietly disables real coverage while CI stays
+ * focus that lands on `main` quietly disables real coverage while CI stays
  * green. This check fails the build if any focused test is found.
  *
- * Scans `*.test.ts` / `*.test.tsx` under src/, cli/, and tests/, skipping
- * vendored `node_modules`. The BDD wrapper that legitimately exposes `.only`
- * (src/testing/bdd.ts) is not a test file and is therefore not scanned.
+ * Two focusing forms are detected, because the project's BDD wrapper
+ * (src/testing/bdd.ts) honours both:
+ *   1. the method form  — `it.only(...)`, `describe.only(...)`, `Deno.test.only(...)`
+ *   2. the option form  — `it({ name, only: true }, fn)` / `describe({ only: true }, fn)`
+ *
+ * Scans `*.test.ts` / `*.test.tsx` under every root that can hold committed,
+ * test-suite-run files, skipping vendored `node_modules`. The BDD wrapper that
+ * legitimately exposes `.only` is not a test file and is therefore not scanned.
  */
 
-const SCAN_ROOTS = ["src", "cli", "tests"] as const;
+const SCAN_ROOTS = [
+  "src",
+  "cli",
+  "tests",
+  "react",
+  "extensions",
+  "scripts",
+] as const;
 
 /** Strip comments and string/template literals so they can't trigger false matches. */
 function stripCommentsAndStrings(text: string): string {
@@ -24,13 +36,20 @@ function stripCommentsAndStrings(text: string): string {
   return out;
 }
 
+// Method form: it.only( / describe.only( / test.only( / Deno.test.only(
+const METHOD_FORM = /\b(?:it|describe|test|Deno\.test)\.only\s*\(/;
+// Option form: a bare `only: true` key inside a test options object. `\bonly`
+// won't match `readOnly`/`commandOnly` (capital O), and `only: false` is ignored.
+// (Quoted keys like `"only": true` are not matched — they're stripped with other
+// string literals and nobody writes test options that way.)
+const OPTION_FORM = /\bonly\s*:\s*true\b/;
+
 /** Returns the 1-based line numbers of focused-test calls in `source`. */
 export function findFocusedTests(source: string): number[] {
   const stripped = stripCommentsAndStrings(source);
-  const pattern = /\b(?:it|describe|test|Deno\.test)\.only\s*\(/;
   const hits: number[] = [];
   stripped.split(/\r?\n/).forEach((line, i) => {
-    if (pattern.test(line)) hits.push(i + 1);
+    if (METHOD_FORM.test(line) || OPTION_FORM.test(line)) hits.push(i + 1);
   });
   return hits;
 }
@@ -74,14 +93,14 @@ async function main(): Promise<void> {
 
   if (violations.length > 0) {
     console.error(
-      `Found ${violations.length} focused test(s) (it.only/describe.only). ` +
-        `These silently skip sibling tests — remove the .only:\n` +
+      `Found ${violations.length} focused test(s) (.only(...) or only: true). ` +
+        `These silently skip sibling tests — remove the focus:\n` +
         violations.join("\n"),
     );
     Deno.exit(1);
   }
 
-  console.log("No focused tests (it.only/describe.only) found.");
+  console.log("No focused tests (.only(...) or only: true) found.");
 }
 
 if (import.meta.main) {

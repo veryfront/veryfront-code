@@ -30,9 +30,9 @@ describe("countSanitizerOptOuts", () => {
 
 describe("isWithinBaseline", () => {
   it("allows counts at or below the baseline and rejects growth", () => {
-    assertEquals(isWithinBaseline(408, 408), true);
-    assertEquals(isWithinBaseline(407, 408), true);
-    assertEquals(isWithinBaseline(409, 408), false);
+    assertEquals(isWithinBaseline(420, 420), true);
+    assertEquals(isWithinBaseline(419, 420), true);
+    assertEquals(isWithinBaseline(421, 420), false);
   });
 });
 

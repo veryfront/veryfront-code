@@ -13,12 +13,32 @@ describe("findFocusedTests", () => {
     assertEquals(findFocusedTests(source), [1, 2, 3, 4]);
   });
 
-  it("does not flag ordinary it/describe calls", () => {
+  it("flags the option form: it/describe with only: true", () => {
+    const source = [
+      'it({ name: "a", only: true }, () => {});',
+      'describe({ name: "b", only: true }, () => {});',
+    ].join("\n");
+    assertEquals(findFocusedTests(source), [1, 2]);
+  });
+
+  it("flags only: true on its own line in a multi-line options object", () => {
+    const source = [
+      "it({", // 1
+      '  name: "a",', // 2
+      "  only: true,", // 3
+      "}, () => {});", // 4
+    ].join("\n");
+    assertEquals(findFocusedTests(source), [3]);
+  });
+
+  it("does not flag ordinary it/describe calls or look-alikes", () => {
     const source = [
       'it("a", () => {});',
       'describe("b", () => {});',
       "const onlyThing = 1;",
-      "obj.only = true;",
+      "obj.only = true;", // assignment, not an options key
+      "const opts = { readOnly: true };", // different key
+      'it({ name: "c", only: false }, () => {});', // not focused
     ].join("\n");
     assertEquals(findFocusedTests(source), []);
   });
