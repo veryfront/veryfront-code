@@ -3,6 +3,7 @@ import {
   MEMORY_CACHE_MAX_SIZE_BYTES,
 } from "#veryfront/utils/constants/cache.ts";
 import type { CacheBackend } from "../types.ts";
+import { buildBatchResults } from "./batch-results.ts";
 
 const DEFAULT_TTL_SECONDS = 300;
 const MAX_REGEX_CACHE_SIZE = 100;
@@ -46,25 +47,20 @@ export class MemoryCacheBackend implements CacheBackend {
   }
 
   getBatch(keys: string[]): Promise<Map<string, string | null>> {
-    const results = new Map<string, string | null>();
     const now = Date.now();
 
-    for (const key of keys) {
+    const results = buildBatchResults(keys, (key) => {
       const entry = this.store.get(key);
-      if (!entry) {
-        results.set(key, null);
-        continue;
-      }
+      if (!entry) return null;
 
       if (now > entry.expiresAt) {
         this.currentSizeBytes -= entry.sizeBytes;
         this.store.delete(key);
-        results.set(key, null);
-        continue;
+        return null;
       }
 
-      results.set(key, entry.value);
-    }
+      return entry.value;
+    });
 
     return Promise.resolve(results);
   }

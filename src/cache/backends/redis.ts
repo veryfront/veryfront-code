@@ -8,6 +8,7 @@ import {
   type RedisClient,
 } from "#veryfront/utils/redis-client.ts";
 import type { CacheBackend } from "../types.ts";
+import { buildBatchResults } from "./batch-results.ts";
 
 const logger = baseLogger.component("redis-cache-backend");
 
@@ -59,24 +60,21 @@ export class RedisCacheBackend implements CacheBackend {
   }
 
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {
-    const results = new Map<string, string | null>();
-    if (keys.length === 0) return results;
+    if (keys.length === 0) return new Map<string, string | null>();
 
     if (!this.client) {
-      for (const key of keys) results.set(key, null);
-      return results;
+      return buildBatchResults(keys, () => null);
     }
 
     try {
       const fetched = await Promise.all(
         keys.map(async (key) => [key, await this.get(key)] as const),
       );
-      for (const [key, value] of fetched) results.set(key, value);
-      return results;
+      const values = new Map(fetched);
+      return buildBatchResults(keys, (key) => values.get(key) ?? null);
     } catch (error) {
       logger.debug("GetBatch failed", { keyCount: keys.length, error });
-      for (const key of keys) results.set(key, null);
-      return results;
+      return buildBatchResults(keys, () => null);
     }
   }
 

@@ -5,6 +5,7 @@ import { tryGetCacheKeyContext } from "../cache-key-builder.ts";
 import { CircuitBreakerOpen, getCircuitBreaker } from "#veryfront/utils/circuit-breaker.ts";
 import type { CacheBackend } from "../types.ts";
 import { getEnvValue } from "./helpers.ts";
+import { buildBatchResults } from "./batch-results.ts";
 import { REQUEST_ERROR } from "#veryfront/errors";
 
 const logger = baseLogger.component("api-cache-backend");
@@ -161,14 +162,13 @@ export class ApiCacheBackend implements CacheBackend {
   }
 
   async getBatch(keys: string[]): Promise<Map<string, string | null>> {
-    const results = new Map<string, string | null>();
-    if (keys.length === 0) return results;
+    if (keys.length === 0) return new Map<string, string | null>();
 
-    const prefixedKeys = keys.map((k) => this.prefixKey(k));
+    const prefixedByKey = new Map(keys.map((k) => [k, this.prefixKey(k)] as const));
     const response = await this.request<{ values: Record<string, string | null> }>(
       "POST",
       "/get-batch",
-      { keys: prefixedKeys },
+      { keys: keys.map((k) => prefixedByKey.get(k) as string) },
     );
 
     if (!response?.values) {
@@ -178,13 +178,10 @@ export class ApiCacheBackend implements CacheBackend {
       return this.getIndividually(keys);
     }
 
-    for (let i = 0; i < keys.length; i++) {
-      const originalKey = keys[i] as string;
-      const prefixedKey = prefixedKeys[i] as string;
-      results.set(originalKey, response.values[prefixedKey] ?? null);
-    }
-
-    return results;
+    return buildBatchResults(keys, (key) => {
+      const prefixedKey = prefixedByKey.get(key) as string;
+      return response.values[prefixedKey] ?? null;
+    });
   }
 
   private async getIndividually(keys: string[]): Promise<Map<string, string | null>> {

@@ -1,14 +1,6 @@
 import type { HandlerContext } from "../../types.ts";
 import { getEffectiveRequestHost } from "../../../utils/request-host.ts";
-
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-  "Cache-Control": "no-cache",
-};
-
-function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data, null, 2), { status, headers: JSON_HEADERS });
-}
+import { jsonResponse } from "../http-helpers.ts";
 
 export function handleProjectsAPI(req: Request, ctx: HandlerContext): Response | null {
   const { pathname } = new URL(req.url);
