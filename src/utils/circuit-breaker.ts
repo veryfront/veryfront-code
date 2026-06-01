@@ -8,6 +8,8 @@
  */
 
 import { logger as baseLogger } from "#veryfront/utils";
+import { CIRCUIT_BREAKER_OPEN } from "#veryfront/errors/error-registry.ts";
+import { VeryfrontError } from "#veryfront/errors/types.ts";
 
 const logger = baseLogger.component("circuit-breaker");
 
@@ -36,7 +38,14 @@ interface CircuitBreakerOptions {
   name?: string;
 }
 
-export class CircuitBreakerOpen extends Error {
+/**
+ * Thrown when an operation is attempted while the circuit breaker is open.
+ *
+ * Extends {@link VeryfrontError} so it carries registry slug/status/category
+ * and RFC-9457 fields, while remaining `instanceof CircuitBreakerOpen` for
+ * existing catch sites.
+ */
+export class CircuitBreakerOpen extends VeryfrontError {
   readonly breakerName: string;
   readonly nextAttemptMs: number;
 
@@ -44,7 +53,14 @@ export class CircuitBreakerOpen extends Error {
     breakerName: string,
     nextAttemptMs: number,
   ) {
-    super(`Circuit breaker '${breakerName}' is open. Retry after ${nextAttemptMs}ms`);
+    super(`Circuit breaker '${breakerName}' is open. Retry after ${nextAttemptMs}ms`, {
+      slug: CIRCUIT_BREAKER_OPEN.slug,
+      category: CIRCUIT_BREAKER_OPEN.category,
+      status: CIRCUIT_BREAKER_OPEN.status,
+      title: CIRCUIT_BREAKER_OPEN.title,
+      suggestion: CIRCUIT_BREAKER_OPEN.suggestion,
+      context: { breakerName, nextAttemptMs },
+    });
     this.name = "CircuitBreakerOpen";
     this.breakerName = breakerName;
     this.nextAttemptMs = nextAttemptMs;

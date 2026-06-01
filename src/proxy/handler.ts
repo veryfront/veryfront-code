@@ -8,6 +8,19 @@ import { injectContext, ProxySpanNames, withSpan } from "./tracing.ts";
 import { computeContentSourceId } from "#veryfront/cache/keys.ts";
 import { resolve as resolveContract } from "../extensions/contracts.ts";
 import type { AuthProvider } from "../extensions/auth/index.ts";
+import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
+import { registerLRUCache } from "#veryfront/cache";
+
+/**
+ * Bounded cache for project paths discovered dynamically at request time
+ * (slug → absolute path). Previously these were written into the per-handler
+ * `localProjects` config map, which grew without bound. Using a registered
+ * LRU keeps the working set capped and exposes it to cache monitoring, while
+ * the static `config.localProjects` map continues to reflect *configured*
+ * projects for the public `ProxyHandler.localProjects` surface.
+ */
+const discoveredLocalProjects = new LRUCache<string, string>({ maxEntries: 100 });
+registerLRUCache("proxy-discovered-local-projects", discoveredLocalProjects);
 
 /**
  * Cache the resolved AuthProvider at module scope so the proxy does not pay
@@ -327,6 +340,9 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const mapped = localProjects[slug];
     if (mapped) return mapped;
 
+    const cached = discoveredLocalProjects.get(slug);
+    if (cached) return cached;
+
     const projectDirs = ["projects", "data/projects", "examples"];
     const basePath = cwd();
     const candidatePaths = projectDirs.map((dir) => join(basePath, dir, slug));
@@ -354,7 +370,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         if (!hasApp && !hasPages && !hasComponents) continue;
 
-        localProjects[slug] = projectPath;
+        discoveredLocalProjects.set(slug, projectPath);
         logger?.debug("Dynamically discovered local project", { slug, projectPath });
         return projectPath;
       } catch (_) {
