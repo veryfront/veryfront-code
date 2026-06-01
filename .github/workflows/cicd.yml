@@ -434,6 +434,29 @@ jobs:
           echo "version=${{ needs.version-check.outputs.version }}" >> $GITHUB_OUTPUT
           echo "Publishing stable: ${{ needs.version-check.outputs.version }}"
 
+      - name: Ensure stable version is unpublished
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_VERYFRONT }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          TAG="v${VERSION}"
+          if npm view veryfront@"${VERSION}" version 2>/dev/null; then
+            echo "::error::v${VERSION} already exists on npm. Bump deno.json before releasing."
+            exit 1
+          fi
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "::error::Tag ${TAG} already exists on source repo. Bump deno.json before releasing."
+            exit 1
+          fi
+          if gh release view "${TAG}" --repo veryfront/veryfront &>/dev/null; then
+            echo "::error::Release ${TAG} already exists on veryfront/veryfront. Bump deno.json before releasing."
+            exit 1
+          fi
+          if gh release view "${TAG}" &>/dev/null; then
+            echo "::error::Release ${TAG} already exists on source repo. Bump deno.json before releasing."
+            exit 1
+          fi
+
       - uses: ./.github/actions/setup-deno
 
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6
@@ -446,12 +469,8 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if npm view veryfront@"${VERSION}" version 2>/dev/null; then
-            echo "::notice::v${VERSION} already published to npm — skipping publish"
-          else
-            deno task build:npm
-            cd npm && npm publish --access public
-          fi
+          deno task build:npm
+          cd npm && npm publish --access public
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8
         with:
@@ -467,13 +486,9 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           TAG="v${VERSION}"
-          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
-            echo "Tag ${TAG} already exists, skipping"
-          else
-            git tag "${TAG}"
-            git push origin "${TAG}"
-            echo "Created tag ${TAG}"
-          fi
+          git tag "${TAG}"
+          git push origin "${TAG}"
+          echo "Created tag ${TAG}"
 
       - name: Create GitHub releases
         env:
@@ -498,13 +513,10 @@ jobs:
             | xargs -I{} gh release delete {} --repo veryfront/veryfront --yes --cleanup-tag 2>/dev/null || true
 
           # Public repo release with binaries and install scripts
-          if gh release view "v${VERSION}" --repo veryfront/veryfront &>/dev/null; then
-            echo "::notice::Release v${VERSION} already exists on veryfront/veryfront — skipping"
-          else
-            gh release create "v${VERSION}" \
-              --repo veryfront/veryfront \
-              --title "v${VERSION}" \
-              --notes '## Install
+          gh release create "v${VERSION}" \
+            --repo veryfront/veryfront \
+            --title "v${VERSION}" \
+            --notes '## Install
 
           ```bash
           # macOS/Linux
@@ -513,25 +525,20 @@ jobs:
           # npm
           npm install -g veryfront
           ```' \
-              $BINARIES \
-              scripts/install.sh \
-              scripts/install.ps1 \
-              $SBOMS
-          fi
+            $BINARIES \
+            scripts/install.sh \
+            scripts/install.ps1 \
+            $SBOMS
 
       - name: Create source repo release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if gh release view "v${VERSION}" &>/dev/null; then
-            echo "::notice::Release v${VERSION} already exists on source repo — skipping"
-          else
-            gh release create "v${VERSION}" \
-              --title "v${VERSION}" \
-              --generate-notes \
-              --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
-          fi
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            --notes "Binaries available at: https://github.com/veryfront/veryfront/releases/tag/v${VERSION}"
 
       - name: Trigger server deploy
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697  # v4.0.1
