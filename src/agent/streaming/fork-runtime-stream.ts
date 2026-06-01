@@ -232,6 +232,7 @@ export type StartAgentRuntimeForkWithHostToolsInput<
     provider: string;
     forkModel: string;
     forkTools: HostToolSet;
+    forkToolNames?: readonly string[];
     traceTools?: TraceHostToolsOptions<TAttributes>;
   };
 
@@ -248,11 +249,13 @@ export function startAgentRuntimeForkWithHostTools<
     ? traceHostTools(input.forkTools, input.traceTools)
     : input.forkTools;
   const runtimeTools = createToolsFromHostDefinitions(forkTools);
-  const forkToolNames = getForkRuntimeAllowedToolNames({
-    provider: input.provider,
-    forkModel: input.forkModel,
-    forkTools: input.forkTools,
-  });
+  const forkToolNames = input.forkToolNames
+    ? [...input.forkToolNames]
+    : getForkRuntimeAllowedToolNames({
+      provider: input.provider,
+      forkModel: input.forkModel,
+      forkTools: input.forkTools,
+    });
 
   return {
     streamResult: startAgentRuntimeFork({

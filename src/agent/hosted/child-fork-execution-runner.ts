@@ -330,6 +330,7 @@ export async function executeHostedChildForkWithPreparedTools<
       maxContinuationSteps: input.maxContinuationSteps ?? 0,
       abortSignal: input.abortSignal,
       forkTools: input.toolAssembly.forkTools,
+      forkToolNames: input.toolAssembly.availableToolNames,
       providerOptions: input.providerOptions,
       buildInstructions,
       onBeforeStop: input.onBeforeStop ?? (() => null),

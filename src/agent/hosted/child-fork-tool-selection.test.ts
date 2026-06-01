@@ -61,6 +61,7 @@ Deno.test("selectHostedChildForkRuntimeTools accepts provider-native requested t
 
   assertEquals(result, {
     ok: true,
+    availableToolNames: ["web_search", "create_file"],
     forkTools: {
       create_file: createFileTool,
     },

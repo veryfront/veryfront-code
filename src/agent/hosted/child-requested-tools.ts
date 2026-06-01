@@ -9,7 +9,10 @@ import {
   type HostedChildSteeringMutationHandler,
   wrapHostedChildSteeringMutationTool,
 } from "./child-steering-tools.ts";
-import { getForkRuntimeAllowedToolNames } from "../runtime/provider-native-tool-inventory.ts";
+import {
+  getForkRuntimeAllowedToolNames,
+  getProviderNativeToolNames,
+} from "../runtime/provider-native-tool-inventory.ts";
 import {
   PROJECT_STEERING_FILE_MUTATION_TOOL_NAMES,
   type ProjectSteeringPaths,
@@ -154,6 +157,7 @@ export type HostedChildForkRuntimeToolSelectionResult =
   | {
     ok: true;
     forkTools: HostToolSet;
+    availableToolNames?: string[];
   }
   | {
     ok: false;
@@ -213,13 +217,20 @@ export function selectHostedChildForkRuntimeTools(input: {
     };
   }
 
-  const availableNames = new Set(
-    getForkRuntimeAllowedToolNames({
+  const providerNativeNames = new Set(
+    getProviderNativeToolNames({
+      provider: input.provider,
+      model: input.forkModel,
+    }),
+  );
+  const availableNames = new Set([
+    ...getForkRuntimeAllowedToolNames({
       provider: input.provider,
       forkModel: input.forkModel,
       forkTools: input.forkTools,
     }),
-  );
+    ...providerNativeNames,
+  ]);
   const unavailableRequested = input.requestedTools.filter((toolName) =>
     !availableNames.has(toolName)
   );
@@ -240,9 +251,15 @@ export function selectHostedChildForkRuntimeTools(input: {
     }
   }
 
+  const requestedAvailableToolNames = [...new Set(input.requestedTools)];
+  const includesProviderNativeTool = requestedAvailableToolNames.some((toolName) =>
+    providerNativeNames.has(toolName)
+  );
+
   return {
     ok: true,
     forkTools,
+    ...(includesProviderNativeTool ? { availableToolNames: requestedAvailableToolNames } : {}),
   };
 }
 
@@ -307,7 +324,7 @@ export function prepareDefaultHostedChildForkRuntimeTools(input: {
   }
 
   let forkTools = selectedTools.forkTools;
-  const availableToolNames = Object.keys(forkTools);
+  const availableToolNames = selectedTools.availableToolNames ?? Object.keys(forkTools);
   forkTools = withHostedChildRerunnableFileWriteFallbacks({
     tools: forkTools,
     logger: input.logger,

@@ -36,13 +36,13 @@ describe("provider-native-tool-inventory", () => {
     assertEquals(getProviderNativeToolNames({ model: "openai/gpt-4o-mini" }), []);
   });
 
-  it("expands a fork/runtime allowlist with provider-native tools", () => {
+  it("preserves a fork/runtime allowlist without adding undeclared provider-native tools", () => {
     assertEquals(
       expandAllowedRemoteToolNames({
         provider: "anthropic",
         toolNames: ["create_file", "web_search"],
       }),
-      ["create_file", "web_fetch", "web_search"],
+      ["create_file", "web_search"],
     );
   });
 
@@ -68,7 +68,7 @@ describe("provider-native-tool-inventory", () => {
         forkModel: "claude-sonnet-4-6",
         forkTools,
       }),
-      ["create_file", "web_fetch", "web_search"],
+      ["create_file", "web_search"],
     );
   });
 });

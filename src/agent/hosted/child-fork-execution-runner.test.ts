@@ -130,7 +130,7 @@ Deno.test("executeHostedChildForkWithPreparedTools executes a prepared child for
     },
     runStep: async (input) => {
       assertEquals(input.model, "anthropic/claude-sonnet-4");
-      assertEquals(input.forkToolNames, ["noop", "web_fetch", "web_search"]);
+      assertEquals(input.forkToolNames, ["noop"]);
       assertEquals(input.providerOptions, undefined);
       assertEquals(input.system.includes('project_reference: "project-1"'), true);
       assertEquals(input.system.includes("Available Skills"), true);

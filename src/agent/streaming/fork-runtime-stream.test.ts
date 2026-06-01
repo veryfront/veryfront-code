@@ -448,7 +448,7 @@ describe("agent/fork-runtime-stream", () => {
       parts.push(part);
     }
 
-    assertEquals(forkToolNames, ["create_file", "web_fetch", "web_search"]);
+    assertEquals(forkToolNames, ["create_file"]);
     assertEquals(capturedInputs[0]?.forkToolNames, forkToolNames);
     assertEquals(Object.keys(capturedInputs[0]?.runtimeTools ?? {}), ["create_file"]);
     assertEquals(traceCalls, ["tool.create_file"]);
