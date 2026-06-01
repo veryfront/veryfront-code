@@ -3,22 +3,16 @@
  *
  * Provides distributed workflow execution support.
  *
- * Three execution profiles are available:
+ * Two execution profiles are available:
  *
  * 1. **WorkflowWorker** - In-process polling worker
  *    - Polls for stalled workflows and resumes them
  *    - Good for trusted code or single-tenant deployments
  *    - Simple setup, lower overhead
  *
- * 2. **WorkflowRunManager + K8sRunExecutor** - Kubernetes-resource-backed execution
- *    - Each workflow runs in an ephemeral container
- *    - Complete tenant isolation (no shared state)
- *    - Required for multi-tenant untrusted code execution
- *
- * 3. **WorkflowRunManager + ProcessRunExecutor** - Local process execution
+ * 2. **WorkflowRunManager + ProcessRunExecutor** - Local process execution
  *    - Spawns child processes for each workflow
  *    - Good for local development without K8s/Docker
- *    - Mirrors production behavior
  *
  * A workflow run can be backed by a run executor without introducing another
  * user-visible execution type.
@@ -45,11 +39,6 @@ export {
 // Run executors (pluggable runtime backends)
 export {
   isRunExecutor,
-  type K8sClient,
-  type K8sRunExecutionSpec,
-  type K8sRunExecutionStatusResponse,
-  K8sRunExecutor,
-  type K8sRunExecutorConfig,
   ProcessRunExecutor,
   type ProcessRunExecutorConfig,
   type RunExecutionConfig,

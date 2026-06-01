@@ -3,7 +3,6 @@
  *
  * Abstraction layer for executing workflow runs in isolated environments.
  * Implementations can target different runtimes:
- * - Kubernetes Jobs
  * - Docker containers
  * - Local processes
  * - Cloud Run / Lambda / Fargate
@@ -74,27 +73,18 @@ export interface RunExecutionInfo {
  * Abstracts the runtime environment for executing workflow runs.
  * Each implementation handles the specifics of its target platform.
  *
- * @example K8s
- * ```typescript
- * const executor = new K8sRunExecutor({
- *   namespace: "workflows",
- *   image: "my-app:latest",
- * });
- * ```
- *
- * @example Docker
- * ```typescript
- * const executor = new DockerRunExecutor({
- *   image: "my-app:latest",
- *   network: "workflow-network",
- * });
- * ```
- *
  * @example Local Process
  * ```typescript
  * const executor = new ProcessRunExecutor({
  *   command: "deno",
  *   args: ["run", "run-entrypoint.ts"],
+ * });
+ * ```
+ *
+ * @example Custom runtime target
+ * ```typescript
+ * const executor = new RuntimeTargetExecutor({
+ *   invokeUrl: "https://project.example.com/api/control-plane/runs",
  * });
  * ```
  */

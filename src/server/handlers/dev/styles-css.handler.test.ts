@@ -276,7 +276,7 @@ describe("server/handlers/dev/styles-css.handler", () => {
         ensureCalls++;
         return {
           status: "building" as const,
-          buildRunExecutionId: "11111111-1111-4111-a111-111111111111",
+          buildRunId: "run_11111111-1111-4111-a111-111111111111",
         };
       },
       upsertStyleArtifact: async (input: { artifactHash?: string }) => {

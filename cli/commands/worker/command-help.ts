@@ -27,11 +27,6 @@ export const workerHelp: CommandHelp = {
       default: "60000",
     },
     {
-      flag: "-e, --executor <type>",
-      description: "Run executor type (process | k8s)",
-      default: "process",
-    },
-    {
       flag: "--entrypoint <path>",
       description: "Path to workflow run entrypoint script",
       default: "./workflow-run.ts",

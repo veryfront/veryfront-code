@@ -62,6 +62,7 @@ import { InternalAgentsListHandler } from "../handlers/request/internal-agents-l
 import { AgentStreamHandler } from "../handlers/request/agent-stream.handler.ts";
 import { AgentRunResumeHandler } from "../handlers/request/agent-run-resume.handler.ts";
 import { AgentRunCancelHandler } from "../handlers/request/agent-run-cancel.handler.ts";
+import { ProjectRunExecuteHandler } from "../handlers/request/project-run-execute.handler.ts";
 import { ChannelInvokeHandler } from "../handlers/request/channel-invoke.handler.ts";
 import { DevDashboardHandler } from "../handlers/dev/dashboard/index.ts";
 import { ProjectsHandler } from "../handlers/dev/projects/index.ts";
@@ -140,6 +141,7 @@ export const HANDLER_NAMES = [
   "AgentStreamHandler",
   "AgentRunResumeHandler",
   "AgentRunCancelHandler",
+  "ProjectRunExecuteHandler",
   "ChannelInvokeHandler",
   "DevDashboardHandler",
   "ProjectsHandler",
@@ -195,6 +197,7 @@ const handlerFactories: Record<
   AgentStreamHandler: () => new AgentStreamHandler(),
   AgentRunResumeHandler: () => new AgentRunResumeHandler(),
   AgentRunCancelHandler: () => new AgentRunCancelHandler(),
+  ProjectRunExecuteHandler: () => new ProjectRunExecuteHandler(),
   ChannelInvokeHandler: () => new ChannelInvokeHandler(),
   DevDashboardHandler: () => new DevDashboardHandler(),
   ProjectsHandler: () => new ProjectsHandler(),

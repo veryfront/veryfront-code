@@ -444,7 +444,7 @@ describe("VeryfrontApiClient", () => {
               new Response(
                 JSON.stringify({
                   status: "building",
-                  build_run_execution_id: "11111111-1111-4111-a111-111111111111",
+                  build_run_id: "run_11111111-1111-4111-a111-111111111111",
                   updated_at: "2026-03-22T00:00:00.000Z",
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
@@ -463,7 +463,7 @@ describe("VeryfrontApiClient", () => {
           });
 
           assertEquals(result.status, "building");
-          assertEquals(result.buildRunExecutionId, "11111111-1111-4111-a111-111111111111");
+          assertEquals(result.buildRunId, "run_11111111-1111-4111-a111-111111111111");
         },
       );
     });
@@ -484,7 +484,7 @@ describe("VeryfrontApiClient", () => {
               new Response(
                 JSON.stringify({
                   status: "building",
-                  build_run_execution_id: "22222222-2222-4222-a222-222222222222",
+                  build_run_id: "run_22222222-2222-4222-a222-222222222222",
                   updated_at: "2026-03-22T00:00:00.000Z",
                 }),
                 { status: 200, headers: { "Content-Type": "application/json" } },
@@ -503,7 +503,7 @@ describe("VeryfrontApiClient", () => {
           });
 
           assertEquals(result.status, "building");
-          assertEquals(result.buildRunExecutionId, "22222222-2222-4222-a222-222222222222");
+          assertEquals(result.buildRunId, "run_22222222-2222-4222-a222-222222222222");
         },
       );
     });
