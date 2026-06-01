@@ -1234,14 +1234,16 @@ export class AgentRuntime {
             partialArgumentsLength: materialized.partialArgumentsLength,
             partialArgumentsPreview: materialized.partialArgumentsPreview,
           });
-          const dynamicIncomplete = isDynamicTool(tc.name);
-          sendSSE(controller, encoder, {
-            type: "tool-input-error",
-            toolCallId: tc.id,
-            errorText: `Stream terminated before tool-call event fired for "${tc.name}". ` +
-              `Received ${materialized.partialArgumentsLength} chars of partial tool-input deltas.`,
-            ...(dynamicIncomplete ? { dynamic: true } : {}),
-          });
+          if (tc.inputAnnounced === true) {
+            const dynamicIncomplete = isDynamicTool(tc.name);
+            sendSSE(controller, encoder, {
+              type: "tool-input-error",
+              toolCallId: tc.id,
+              errorText: `Stream terminated before tool-call event fired for "${tc.name}". ` +
+                `Received ${materialized.partialArgumentsLength} chars of partial tool-input deltas.`,
+              ...(dynamicIncomplete ? { dynamic: true } : {}),
+            });
+          }
         } else if (materialized.kind === "parse-error") {
           logger.warn("Failed to parse streamed tool arguments", {
             toolCallId: tc.id,
@@ -1331,6 +1333,7 @@ export class AgentRuntime {
             currentMessages,
             toolCalls,
             currentRunToolState,
+            { emitSse: tc.inputAnnounced === true },
           );
           continue;
         }
@@ -1508,18 +1511,21 @@ export class AgentRuntime {
     currentMessages: Message[],
     toolCalls: ToolCall[],
     currentRunToolState?: CurrentRunToolState,
+    options: { emitSse?: boolean } = {},
   ): Promise<void> {
     toolCall.status = "error";
     toolCall.error = errorStr;
     toolCalls.push(toolCall);
 
-    const dynamic = isDynamicTool(toolCall.name);
-    sendSSE(controller, encoder, {
-      type: "tool-output-error",
-      toolCallId: toolCall.id,
-      errorText: errorStr,
-      ...(dynamic ? { dynamic: true } : {}),
-    });
+    if (options.emitSse !== false) {
+      const dynamic = isDynamicTool(toolCall.name);
+      sendSSE(controller, encoder, {
+        type: "tool-output-error",
+        toolCallId: toolCall.id,
+        errorText: errorStr,
+        ...(dynamic ? { dynamic: true } : {}),
+      });
+    }
 
     const errorMessage = createToolErrorMessage(
       toolCall.id,
