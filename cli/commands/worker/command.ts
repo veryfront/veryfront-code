@@ -47,15 +47,6 @@ export async function workerCommand(options: WorkerOptions): Promise<void> {
   // from the user's project, and executes the matching one.
   const entrypointPath = options.entrypoint ?? "./workflow-run.ts";
 
-  if (options.executor === "k8s") {
-    cliLogger.error(
-      "K8s executor requires custom configuration. Use --executor process for local dev, " +
-        "or configure K8sRunExecutor programmatically for production.",
-    );
-    exitProcess(1);
-    return;
-  }
-
   const executor = new ProcessRunExecutor({
     entrypointPath,
     env: {

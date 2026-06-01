@@ -244,6 +244,7 @@
     "#veryfront/platform/": "./src/platform/",
     "#veryfront/components": "./src/react/components/index.ts",
     "#veryfront/": "./src/",
+    "#cli/": "./cli/",
     "#deno-config": "./deno.json",
     "std/": "jsr:@std/",
     "#std/path": "jsr:@std/path",

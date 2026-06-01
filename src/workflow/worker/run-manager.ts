@@ -4,10 +4,8 @@
  * Orchestrates workflow run execution via isolated run executors.
  * Uses pluggable RunExecutor interface for runtime flexibility.
  *
- * Supported runtimes:
- * - K8sRunExecutor: Kubernetes Job adapter (production)
- * - ProcessRunExecutor: Child processes (local dev)
- * - DockerRunExecutor: Docker containers (future)
+ * Supported runtime:
+ * - ProcessRunExecutor: Child processes for local development and trusted hosts
  *
  * Key properties:
  * - Each workflow runs in isolation (no shared state)
@@ -43,7 +41,7 @@ export interface WorkflowRunManagerConfig {
   /** Backend for workflow persistence */
   backend: WorkflowBackend;
 
-  /** Run executor (Kubernetes, Docker, Process, etc.) */
+  /** Run executor used to start isolated workflow processes */
   executor: RunExecutor;
 
   /** Environment variables to inject into run executions */
@@ -107,21 +105,6 @@ type ResolvedConfig = Required<Omit<WorkflowRunManagerConfig, "env">> & {
  *
  * Orchestrates workflow execution via pluggable run executors.
  * Each workflow runs in complete isolation.
- *
- * @example K8s
- * ```typescript
- * const executor = new K8sRunExecutor({
- *   image: "my-app:latest",
- *   namespace: "workflows",
- * }, k8sClient);
- *
- * const manager = new WorkflowRunManager({
- *   backend: redisBackend,
- *   executor,
- * });
- *
- * manager.start();
- * ```
  *
  * @example Local Process
  * ```typescript

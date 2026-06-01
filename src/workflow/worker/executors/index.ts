@@ -14,15 +14,6 @@ export type {
 } from "./types.ts";
 export { isRunExecutor } from "./types.ts";
 
-// K8s Executor
-export { K8sRunExecutor } from "./k8s.ts";
-export type {
-  K8sClient,
-  K8sRunExecutionSpec,
-  K8sRunExecutionStatusResponse,
-  K8sRunExecutorConfig,
-} from "./k8s.ts";
-
 // Process Executor (local dev)
 export { ProcessRunExecutor } from "./process.ts";
 export type { ProcessRunExecutorConfig } from "./process.ts";

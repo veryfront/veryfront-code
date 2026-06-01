@@ -9,7 +9,7 @@ const getWorkerArgsSchema = defineSchema((v) =>
     concurrency: v.number().default(3),
     pollInterval: v.number().default(5000),
     stalledThreshold: v.number().default(60000),
-    executor: v.enum(["process", "k8s"]).default("process"),
+    executor: v.enum(["process"]).default("process"),
     entrypoint: v.string().optional(),
     debug: v.boolean().default(false),
   })
