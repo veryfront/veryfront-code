@@ -414,15 +414,15 @@ async function executeKnowledgeIngestRun(input: {
   try {
     const {
       buildKnowledgeIngestRunResult,
-    } = await import("#cli/commands/knowledge/result.ts");
+    } = await import("#cli/commands/knowledge/result");
     const {
       collectKnowledgeSources,
       ingestResolvedSources,
       resolveKnowledgeDownloadOutputDir,
       runKnowledgeParser,
-    } = await import("#cli/commands/knowledge/command.ts");
-    const { downloadUploadToFile } = await import("#cli/commands/uploads/command.ts");
-    const { putRemoteFileFromLocal } = await import("#cli/commands/files/command.ts");
+    } = await import("#cli/commands/knowledge/command");
+    const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
+    const { putRemoteFileFromLocal } = await import("#cli/commands/files/command");
 
     const uploadIds = getStringArrayConfig(config, ["upload_ids", "uploadIds"]);
     const paths = getStringArrayConfig(config, ["paths", "upload_paths", "uploadPaths"]);
