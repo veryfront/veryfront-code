@@ -48,15 +48,9 @@ const DEFAULT_VERSIONS: DetectedVersions = {
  * Import map JSON is deterministic per cache key, so entries are safe to evict
  * and recompute. Bound the cache so distinct key combinations (project dir ×
  * mode × provider × versions × custom imports) cannot grow memory without
- * limit. Override the cap via the `IMPORT_MAP_CACHE_MAX_ENTRIES` env var.
+ * limit.
  */
-const IMPORT_MAP_CACHE_MAX_ENTRIES = (() => {
-  const raw = (globalThis as {
-    Deno?: { env?: { get?: (k: string) => string | undefined } };
-  }).Deno?.env?.get?.("IMPORT_MAP_CACHE_MAX_ENTRIES");
-  const parsed = raw == null ? NaN : Number.parseInt(raw, 10);
-  return Number.isNaN(parsed) ? 256 : parsed;
-})();
+const IMPORT_MAP_CACHE_MAX_ENTRIES = 256;
 
 const importMapJsonCache = new LRUCache<string, CachedImportMapEntry>({
   maxEntries: IMPORT_MAP_CACHE_MAX_ENTRIES,

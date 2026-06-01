@@ -15,16 +15,9 @@ import { LRUCache } from "#veryfront/utils/lru-wrapper.ts";
 
 /**
  * Maximum number of loaded pipelines kept in memory at once. Loaded models are
- * large (hundreds of MB each), so the cap is intentionally small. Override via
- * the `LOCAL_PIPELINE_CACHE_MAX_ENTRIES` env var.
+ * large (hundreds of MB each), so the cap is intentionally small.
  */
-const PIPELINE_CACHE_MAX_ENTRIES = (() => {
-  const raw = (globalThis as {
-    Deno?: { env?: { get?: (k: string) => string | undefined } };
-  }).Deno?.env?.get?.("LOCAL_PIPELINE_CACHE_MAX_ENTRIES");
-  const parsed = raw == null ? NaN : Number.parseInt(raw, 10);
-  return Number.isNaN(parsed) ? 4 : parsed;
-})();
+const PIPELINE_CACHE_MAX_ENTRIES = 4;
 
 /** A loaded pipeline cache with concurrency-safe, deduplicated loading. */
 export interface PipelineCache<P, M> {

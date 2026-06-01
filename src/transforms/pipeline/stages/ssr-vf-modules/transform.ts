@@ -96,14 +96,8 @@ export async function cacheTransformedCode(
 // a high-quality entry the fallback prefers it.
 // Bounded so the fallback's per-path output cannot grow memory without limit
 // in a long-running dev server. Entries are deterministic per resolved path and
-// safe to evict/recompute. Override the cap via `FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES`.
-const FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES = (() => {
-  const raw = (globalThis as {
-    Deno?: { env?: { get?: (k: string) => string | undefined } };
-  }).Deno?.env?.get?.("FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES");
-  const parsed = raw == null ? NaN : Number.parseInt(raw, 10);
-  return Number.isNaN(parsed) ? 2000 : parsed;
-})();
+// safe to evict/recompute.
+const FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES = 2000;
 const fallbackTransformCache = new LRUCache<string, string>({
   maxEntries: FALLBACK_TRANSFORM_CACHE_MAX_ENTRIES,
 });

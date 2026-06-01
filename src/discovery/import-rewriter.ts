@@ -184,15 +184,8 @@ export function rewriteForDeno(
 // cache, each discovery pass re-reads the same package.json files.
 // Bounded so the per-project specifier map cannot grow without limit in a
 // long-running server. Only positive resolutions are stored (see below), so
-// entries are deterministic and safe to evict/recompute. Override the cap via
-// `RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES`.
-const RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES = (() => {
-  const raw = (globalThis as {
-    Deno?: { env?: { get?: (k: string) => string | undefined } };
-  }).Deno?.env?.get?.("RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES");
-  const parsed = raw == null ? NaN : Number.parseInt(raw, 10);
-  return Number.isNaN(parsed) ? 1000 : parsed;
-})();
+// entries are deterministic and safe to evict/recompute.
+const RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES = 1000;
 const resolvedSpecifierCache = new LRUCache<string, string>({
   maxEntries: RESOLVED_SPECIFIER_CACHE_MAX_ENTRIES,
 });
