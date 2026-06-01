@@ -52,16 +52,11 @@ export function getProviderNativeToolNames(
   }
 }
 
-/** Expand allowed remote tool names helper. */
+/** Normalize allowed remote tool names without adding undeclared provider-native tools. */
 export function expandAllowedRemoteToolNames(
   options: ExpandAllowedRemoteToolNamesOptions,
 ): string[] {
-  return [
-    ...new Set([
-      ...options.toolNames,
-      ...getProviderNativeToolNames(options),
-    ]),
-  ].sort();
+  return [...new Set(options.toolNames)].sort();
 }
 
 /** Return fork runtime allowed tool names. */
