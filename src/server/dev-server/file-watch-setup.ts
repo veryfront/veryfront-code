@@ -34,8 +34,11 @@ const IGNORED_PATH_PATTERNS = [
   // which would otherwise drive an open-ended HMR refresh loop.
   ".playwright-mcp/",
   ".playwright-mcp\\",
-  "dist/",
-  "dist\\",
+  // Build output. Separator-anchored so it matches a real `dist` directory at
+  // any depth (watcher paths are absolute) without false-positiving on source
+  // directories whose names merely end in "dist" (e.g. `mydist/`, `wishlist-dist/`).
+  "/dist/",
+  "\\dist\\",
 ];
 
 /**

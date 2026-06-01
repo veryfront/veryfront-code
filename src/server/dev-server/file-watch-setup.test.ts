@@ -10,6 +10,14 @@ describe("shouldIgnorePath", () => {
     expect(shouldIgnorePath("/proj/.cache/bundle.js")).toBe(true);
     expect(shouldIgnorePath("/proj/.veryfront/manifest.json")).toBe(true);
     expect(shouldIgnorePath("/proj/dist/app.js")).toBe(true);
+    // Nested build output is also matched (watcher paths are absolute).
+    expect(shouldIgnorePath("/proj/packages/ui/dist/index.js")).toBe(true);
+  });
+
+  it("does not false-positive on source dirs whose names end in 'dist'", () => {
+    // Regression for the `dist/` substring trap flagged in review of #1977.
+    expect(shouldIgnorePath("/proj/mydist/app.tsx")).toBe(false);
+    expect(shouldIgnorePath("/proj/pages/wishlist-dist/index.tsx")).toBe(false);
   });
 
   it("ignores the Playwright MCP output directory (regression for #1977)", () => {
