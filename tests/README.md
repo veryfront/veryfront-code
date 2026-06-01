@@ -81,6 +81,14 @@ focused test reaches a committed `*.test.ts(x)` under `src/`, `cli/`, `tests/`,
 `react/`, `extensions/`, or `scripts/`. Use focus locally, then remove it before
 committing.
 
+**Don't pile up skipped tests:** `it.skip` / `it.ignore` (and `skip: true` /
+`ignore: true`) leave dead coverage that looks present but never runs. They're
+allowed when genuinely blocked, but `deno task lint:skipped-tests` ratchets the
+total against a baseline in `scripts/lint/check-skipped-tests-baseline.ts` — CI
+fails if it grows. Prefer fixing and re-enabling, or deleting the test and
+recording why in the commit/issue. When you reduce the count, the task prints
+the new total to lock into the baseline.
+
 ### Test Naming Conventions
 
 **Write self-documenting test names:**
