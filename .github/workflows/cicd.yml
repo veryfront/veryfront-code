@@ -64,6 +64,26 @@ jobs:
               deno task test:unit --no-lock
             fi
 
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    name: coverage gate
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+      - uses: ./.github/actions/setup-deno
+        with:
+          warm-cache: "true"
+          warm-redis-cache: "true"
+      # Runs the unit suite with coverage instrumentation, then fails if line
+      # coverage of src/ regresses below the floor in `deno task coverage:gate`.
+      # Retried like the other test jobs to ride out infra/test flakiness.
+      - uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60  # v4.0.0
+        with:
+          timeout_minutes: 18
+          max_attempts: 2
+          retry_wait_seconds: 10
+          command: VF_DISABLE_LRU_INTERVAL=1 deno task coverage:ci
+
   tests-e2e-rsc-browser:
     runs-on: ubuntu-latest
     timeout-minutes: 25

@@ -313,6 +313,27 @@ it("should respond within 100ms for cached requests", async () => {
 });
 ```
 
+## Coverage
+
+Line coverage of `src/` is gated in CI. The `coverage gate` job runs the unit
+suite with coverage instrumentation (`deno task coverage:ci`) and fails if
+coverage drops below the floor enforced by `deno task coverage:gate`
+(`scripts/lint/check-coverage.ts <floor>`).
+
+- The floor is a **ratchet**, not the target: it sits a little under current
+  coverage so it blocks regressions without breaking the build. When you raise
+  coverage, bump the number in the `coverage:gate` task to lock the gain in.
+- `deno task coverage:report` checks against the higher aspirational target
+  (currently 80%) and is for local use, not the CI gate.
+- See per-file gaps locally with `deno task coverage:html` and open
+  `coverage/html/index.html`.
+
+Run the gate locally exactly as CI does:
+
+```bash
+deno task coverage:ci
+```
+
 ## Error Testing
 
 ### Test Error Scenarios
