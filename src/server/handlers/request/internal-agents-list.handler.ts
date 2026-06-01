@@ -4,6 +4,7 @@ import {
   CONTROL_PLANE_AGENTS_LIST_PATH,
   type ControlPlaneAgentsListRequest,
   ControlPlaneAgentsListRequestSchema,
+  type ControlPlaneSurface,
   listRuntimeAgents,
   type RuntimeAgentDiscoveryDeps,
 } from "../../../channels/control-plane.ts";
@@ -52,7 +53,8 @@ export class InternalAgentsListHandler extends BaseHandler {
         );
         const claims = await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: payload.requestId,
-          expectedSurface: payload.surface as any,
+          // Validated by `.parse()` above; narrow back to the union (object inference widens it to `string`).
+          expectedSurface: payload.surface as ControlPlaneSurface,
         });
 
         if (

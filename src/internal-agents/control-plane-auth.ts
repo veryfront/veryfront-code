@@ -1,4 +1,7 @@
-import { verifyControlPlaneJws } from "#veryfront/channels/control-plane.ts";
+import {
+  type ControlPlaneSurface,
+  verifyControlPlaneJws,
+} from "#veryfront/channels/control-plane.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { HandlerContext } from "#veryfront/types";
 import { serverLogger } from "#veryfront/utils";
@@ -39,7 +42,7 @@ export async function verifyControlPlaneRequest(
   rawBody: string,
   options: {
     expectedSubject?: string;
-    expectedSurface?: "studio" | "channels" | "a2a" | "mcp";
+    expectedSurface?: ControlPlaneSurface;
   } = {},
 ) {
   const publicKeyPem = getControlPlaneVerificationPublicKey(ctx);
