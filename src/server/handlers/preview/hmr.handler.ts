@@ -1,5 +1,6 @@
 import { HMR_MAX_MESSAGES_PER_MINUTE, serverLogger } from "#veryfront/utils";
 import { RateLimiter } from "#veryfront/modules/server/index.ts";
+import { VeryfrontError } from "#veryfront/errors";
 import { BaseHandler } from "../response/base.ts";
 import {
   type HandlerContext,
@@ -215,6 +216,11 @@ export class HMRHandler extends BaseHandler {
 
       return this.respond(response);
     } catch (error) {
+      if (error instanceof VeryfrontError && error.status === 501) {
+        logger.warn("WebSocket upgrade not supported by runtime", { error });
+        return this.respond(new Response("WebSocket not supported", { status: 501 }));
+      }
+
       logger.error("WebSocket upgrade failed", { error });
       return this.respond(new Response("WebSocket upgrade failed", { status: 500 }));
     }

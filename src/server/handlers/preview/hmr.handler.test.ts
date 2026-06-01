@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { NOT_SUPPORTED } from "#veryfront/errors";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import type { HandlerContext } from "../types.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
@@ -411,6 +412,25 @@ describe("server/handlers/preview/hmr.handler", () => {
       });
       const result = await handler.handle(req, ctx);
       assertEquals(result.response!.status, 500);
+    });
+
+    it("returns 501 when upgradeWebSocket is unsupported by the runtime", async () => {
+      const handler = new HMRHandler();
+      const req = new Request("http://localhost/_ws", {
+        headers: { upgrade: "websocket" },
+      });
+      const ctx = makeCtx({
+        isLocalProject: true,
+        adapter: createMockAdapter({
+          upgradeWebSocket: () => {
+            throw NOT_SUPPORTED.create({
+              detail: "Deno.upgradeWebSocket() is not available in this runtime.",
+            });
+          },
+        }),
+      });
+      const result = await handler.handle(req, ctx);
+      assertEquals(result.response!.status, 501);
     });
   });
 });

@@ -24,10 +24,19 @@ function upgradeWebSocketDeno(
   request: Request,
   options?: WebSocketUpgradeOptions,
 ): WebSocketUpgradeResult {
+  // Access native Deno via `self` to bypass dnt shim transform.
+  // dnt rewrites `globalThis.Deno` to @deno/shim-deno, which lacks upgradeWebSocket.
+  const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"];
+  if (typeof nativeDeno?.upgradeWebSocket !== "function") {
+    throw NOT_SUPPORTED.create({
+      detail: "Deno.upgradeWebSocket() is not available in this runtime.",
+    });
+  }
+
   const denoOptions: Deno.UpgradeWebSocketOptions | undefined = options?.protocol
     ? { protocol: options.protocol }
     : undefined;
 
-  const { socket, response } = Deno.upgradeWebSocket(request, denoOptions);
+  const { socket, response } = nativeDeno.upgradeWebSocket(request, denoOptions);
   return { socket, response };
 }
