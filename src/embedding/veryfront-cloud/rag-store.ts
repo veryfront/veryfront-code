@@ -426,7 +426,9 @@ async function ingestDocument(
       normalizeEmbeddingModelDescriptor(config.model, dimension),
     );
   } catch (error) {
-    await deleteFileChunks(context, filePath).catch(() => undefined);
+    await deleteFileChunks(context, filePath).catch((cleanupError) =>
+      serverLogger.debug("[rag-store/cloud] file chunk cleanup failed", cleanupError)
+    );
     throw error;
   }
 
