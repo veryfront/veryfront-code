@@ -727,6 +727,15 @@ export class AgentRuntime {
     // instead of swallowing it as an in-band SSE error in a 200 response.
     await ensureModelReady(languageModel);
 
+    const agentContext: AgentContext = {
+      agentId: this.id,
+      model: resolvedModelString,
+      input: messages,
+      data: context,
+      platform: detectPlatform(),
+    };
+    const chain = new MiddlewareChain(this.config.middleware);
+
     return new ReadableStream<Uint8Array>({
       start: async (controller) => {
         try {
@@ -748,21 +757,25 @@ export class AgentRuntime {
               model: effectiveModel,
             },
           });
-          const response = await this.executeAgentLoopStreaming(
-            systemPrompt,
-            memoryMessages,
-            controller,
-            encoder,
-            callbacks,
-            textPartId,
-            toolContext,
-            context,
-            resolvedModelString,
-            languageModel,
-            transport.headers,
-            transport.providerOptions,
-            maxOutputTokensOverride,
-            streamAbortSignal,
+          const response = await chain.execute(
+            agentContext,
+            () =>
+              this.executeAgentLoopStreaming(
+                systemPrompt,
+                memoryMessages,
+                controller,
+                encoder,
+                callbacks,
+                textPartId,
+                toolContext,
+                context,
+                resolvedModelString,
+                languageModel,
+                transport.headers,
+                transport.providerOptions,
+                maxOutputTokensOverride,
+                streamAbortSignal,
+              ),
           );
           throwIfAborted(streamAbortSignal);
           callbacks?.onFinish?.(response);
