@@ -766,6 +766,8 @@ export const ERROR_REGISTRY = {
   "file-watch-error": FILE_WATCH_ERROR,
   "request-error": REQUEST_ERROR,
   "service-overloaded": SERVICE_OVERLOADED,
+  "semaphore-timeout": SEMAPHORE_TIMEOUT,
+  "circuit-breaker-open": CIRCUIT_BREAKER_OPEN,
   "cache-path-mismatch": CACHE_PATH_MISMATCH,
   "network-error": NETWORK_ERROR,
   "api-client-error": API_CLIENT_ERROR,

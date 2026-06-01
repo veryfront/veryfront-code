@@ -340,11 +340,17 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
     const mapped = localProjects[slug];
     if (mapped) return mapped;
 
-    const cached = discoveredLocalProjects.get(slug);
-    if (cached) return cached;
-
     const projectDirs = ["projects", "data/projects", "examples"];
     const basePath = cwd();
+    // Key the discovery cache by the filesystem root as well as the slug: the
+    // cache is process-wide, so the same slug can resolve to different paths
+    // across handlers/workspaces or after a cwd change. Keying by basePath
+    // prevents a stale entry from one root being proxied for another.
+    const cacheKey = `${basePath} ${slug}`;
+
+    const cached = discoveredLocalProjects.get(cacheKey);
+    if (cached) return cached;
+
     const candidatePaths = projectDirs.map((dir) => join(basePath, dir, slug));
 
     const existingPaths = await Promise.all(
@@ -370,7 +376,7 @@ export function createProxyHandler(options: ProxyHandlerOptions) {
 
         if (!hasApp && !hasPages && !hasComponents) continue;
 
-        discoveredLocalProjects.set(slug, projectPath);
+        discoveredLocalProjects.set(cacheKey, projectPath);
         logger?.debug("Dynamically discovered local project", { slug, projectPath });
         return projectPath;
       } catch (_) {
