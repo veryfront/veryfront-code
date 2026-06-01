@@ -6,6 +6,7 @@ import {
   generateCompiledBinaryRequireShim,
   getNodeExternalPackagesToResolve,
   loadHandlerModule,
+  resolveEsmUserDependencies,
   rewriteCompiledBinaryUserDependencyImports,
   rewriteCompiledBinaryVeryfrontImports,
   rewriteDenoNodeBuiltinImports,
@@ -389,6 +390,169 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     );
     assertMatch(rewritten, /const widget = require\("my-lib\/subpath"\)/);
     assertMatch(rewritten, /Promise\.resolve\(require\("my-lib\/subpath"\)\)/);
+  });
+
+  it("rewrites ESM-only user dependency imports to real file:// module URLs", () => {
+    const source = [
+      'import thing from "esm-lib";',
+      'import { alpha } from "esm-lib";',
+      'import * as namespace from "esm-lib";',
+      'import widget from "esm-lib/subpath";',
+      'const loaded = import("esm-lib");',
+      'const sub = import("esm-lib/subpath");',
+    ].join("\n");
+
+    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+      source,
+      new Map([["esm-lib", "^1.0.0"]]),
+      new Map([[
+        "esm-lib",
+        {
+          entryUrl: "file:///proj/node_modules/esm-lib/index.mjs",
+          packageDir: "/proj/node_modules/esm-lib",
+        },
+      ]]),
+    );
+
+    // ESM deps keep native import syntax (no require / new Function path), so
+    // import.meta and top-level await inside the dependency stay valid.
+    assertMatch(
+      rewritten,
+      /import thing from "file:\/\/\/proj\/node_modules\/esm-lib\/index\.mjs"/,
+    );
+    assertMatch(
+      rewritten,
+      /import \{ alpha \} from "file:\/\/\/proj\/node_modules\/esm-lib\/index\.mjs"/,
+    );
+    assertMatch(
+      rewritten,
+      /import \* as namespace from "file:\/\/\/proj\/node_modules\/esm-lib\/index\.mjs"/,
+    );
+    assertMatch(
+      rewritten,
+      /import widget from "file:\/\/\/proj\/node_modules\/esm-lib\/subpath"/,
+    );
+    assertMatch(rewritten, /import\("file:\/\/\/proj\/node_modules\/esm-lib\/index\.mjs"\)/);
+    assertMatch(rewritten, /import\("file:\/\/\/proj\/node_modules\/esm-lib\/subpath"\)/);
+    // No CJS require shim should be emitted for the ESM dependency.
+    assertEquals(rewritten.includes('require("esm-lib")'), false);
+  });
+
+  it("keeps CJS deps on the require shim while ESM deps use file:// URLs", () => {
+    const source = [
+      'import esm from "esm-lib";',
+      'import cjs from "cjs-lib";',
+    ].join("\n");
+
+    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+      source,
+      new Map([["esm-lib", "^1.0.0"], ["cjs-lib", "^1.0.0"]]),
+      new Map([[
+        "esm-lib",
+        {
+          entryUrl: "file:///proj/node_modules/esm-lib/index.mjs",
+          packageDir: "/proj/node_modules/esm-lib",
+        },
+      ]]),
+    );
+
+    assertMatch(rewritten, /import esm from "file:\/\/\/proj\/node_modules\/esm-lib\/index\.mjs"/);
+    assertMatch(rewritten, /const cjs = __vf_interopDefault\(require\("cjs-lib"\)\)/);
+  });
+
+  it("detects ESM dependencies via type:module and .mjs entry points", async () => {
+    const tmpDir = await makeTempDir();
+
+    async function writePackage(name: string, pkg: Record<string, unknown>) {
+      const dir = join(tmpDir, "node_modules", name);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeTextFile(join(dir, "package.json"), JSON.stringify(pkg));
+    }
+
+    await writePackage("type-module-lib", { type: "module", main: "index.js" });
+    await writePackage("mjs-main-lib", { main: "index.mjs" });
+    await writePackage("exports-import-lib", {
+      type: "module",
+      exports: { ".": { import: "./dist/index.js", require: "./dist/index.cjs" } },
+    });
+    await writePackage("cjs-lib", { main: "index.js" });
+
+    const esmDeps = await resolveEsmUserDependencies(
+      tmpDir,
+      fs,
+      new Map([
+        ["type-module-lib", "^1.0.0"],
+        ["mjs-main-lib", "^1.0.0"],
+        ["exports-import-lib", "^1.0.0"],
+        ["cjs-lib", "^1.0.0"],
+        ["missing-lib", "^1.0.0"],
+      ]),
+    );
+
+    assertEquals(esmDeps.has("type-module-lib"), true);
+    assertEquals(esmDeps.has("mjs-main-lib"), true);
+    assertEquals(esmDeps.has("exports-import-lib"), true);
+    // CommonJS and uninstalled packages are not treated as ESM.
+    assertEquals(esmDeps.has("cjs-lib"), false);
+    assertEquals(esmDeps.has("missing-lib"), false);
+
+    assertMatch(
+      esmDeps.get("exports-import-lib")?.entryUrl ?? "",
+      /node_modules\/exports-import-lib\/dist\/index\.js$/,
+    );
+  });
+
+  it("does not treat a dependency whose entry escapes its package dir as ESM", async () => {
+    const tmpDir = await makeTempDir();
+    const dir = join(tmpDir, "node_modules", "evil-lib");
+    await fs.mkdir(dir, { recursive: true });
+    // Malicious/compromised package: entry points outside node_modules.
+    await fs.writeTextFile(
+      join(dir, "package.json"),
+      JSON.stringify({ type: "module", main: "../../../../etc/passwd" }),
+    );
+
+    const esmDeps = await resolveEsmUserDependencies(
+      tmpDir,
+      fs,
+      new Map([["evil-lib", "^1.0.0"]]),
+    );
+
+    // The traversing entry must be rejected so no file:// import escaping the
+    // package directory is emitted (it falls back to the contained CJS shim).
+    assertEquals(esmDeps.has("evil-lib"), false);
+  });
+
+  it("leaves ESM subpath imports that escape the package dir unrewritten", () => {
+    const source = [
+      'import ok from "esm-lib/dist/ok.mjs";',
+      'import escape from "esm-lib/../../../../etc/passwd";',
+      'const dyn = import("esm-lib/../../secret");',
+    ].join("\n");
+
+    const rewritten = rewriteCompiledBinaryUserDependencyImports(
+      source,
+      new Map([["esm-lib", "^1.0.0"]]),
+      new Map([[
+        "esm-lib",
+        {
+          entryUrl: "file:///proj/node_modules/esm-lib/index.mjs",
+          packageDir: "/proj/node_modules/esm-lib",
+        },
+      ]]),
+    );
+
+    // Contained subpath is rewritten to a file:// URL within the package.
+    assertMatch(
+      rewritten,
+      /import ok from "file:\/\/\/proj\/node_modules\/esm-lib\/dist\/ok\.mjs"/,
+    );
+    // Traversing subpaths are left as the original bare specifier (which fails
+    // to resolve) — crucially, NO escaping file:// URL is emitted for them.
+    assertEquals(rewritten.includes("file:///etc/passwd"), false);
+    assertEquals(rewritten.includes("file:///proj/secret"), false);
+    assertMatch(rewritten, /import escape from "esm-lib\/\.\.\/\.\.\/\.\.\/\.\.\/etc\/passwd"/);
+    assertMatch(rewritten, /import\("esm-lib\/\.\.\/\.\.\/secret"\)/);
   });
 
   it("rewrites non-compiled deno user dependency imports to npm: specifiers with resolved versions", async () => {
