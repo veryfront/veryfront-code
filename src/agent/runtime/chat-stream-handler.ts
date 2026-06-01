@@ -14,6 +14,7 @@ import {
   mergeToolCallInput,
   mergeToolInputDelta,
   parseToolInputObject,
+  stripLeadingEmptyObjectPlaceholder,
 } from "../streaming/data-stream.ts";
 import { isDynamicTool } from "./tool-helpers.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -24,6 +25,9 @@ import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
+const LOCAL_TOOL_INPUT_IDLE_MS = 15_000;
+const STREAM_START_IDLE_MS = 60_000;
+const STREAM_OUTPUT_IDLE_MS = 15_000;
 
 export interface StreamingToolCall {
   id: string;
@@ -59,6 +63,8 @@ export interface ChatStreamCallbacks {
     completionTokens?: number;
     totalTokens?: number;
   }) => void;
+  localToolInputIdleTimeoutMs?: number;
+  streamIdleTimeoutMs?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -71,6 +77,15 @@ function normalizeToolInputString(input: unknown): string {
   }
 
   return JSON.stringify(input ?? null) ?? "null";
+}
+
+function tryParseToolInputObject(input: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(stripLeadingEmptyObjectPlaceholder(input));
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function summarizeDebugValue(value: unknown): unknown {
@@ -268,6 +283,7 @@ export function processStream(
     let textOpen = false;
     let activeReasoningId: string | null = null;
     let shouldStopForCommittedLocalToolCall = false;
+    let hasActiveLocalToolInput = false;
 
     const normalizeReasoningId = (part: { id?: string }) =>
       typeof part.id === "string" && part.id.length > 0 ? part.id : "reasoning";
@@ -325,6 +341,32 @@ export function processStream(
         id: activeReasoningId,
       });
       activeReasoningId = null;
+    };
+
+    const commitParseablePendingToolInputs = () => {
+      for (const tc of state.toolCalls.values()) {
+        if (tc.inputAvailable === true || tc.providerExecuted === true) {
+          continue;
+        }
+        const parsedInput = tryParseToolInputObject(tc.arguments);
+        if (!parsedInput) {
+          continue;
+        }
+        tc.inputAvailable = true;
+        const dynamic = tc.dynamic ?? isDynamicTool(tc.name);
+        if (dynamic) {
+          tc.dynamic = true;
+        }
+        sendSSE(controller, encoder, {
+          type: "tool-input-available",
+          toolCallId: tc.id,
+          toolName: tc.name,
+          input: parsedInput,
+          ...(tc.providerExecuted !== undefined ? { providerExecuted: tc.providerExecuted } : {}),
+          ...(dynamic ? { dynamic: true } : {}),
+        });
+        shouldStopForCommittedLocalToolCall = true;
+      }
     };
 
     const ensureToolLifecycle = (part: {
@@ -401,15 +443,39 @@ export function processStream(
 
     const streamIterator = result.fullStream[Symbol.asyncIterator]();
     while (true) {
-      const next = shouldStopForCommittedLocalToolCall
+      const shouldStopForIdleOutput = !hasActiveLocalToolInput &&
+        !shouldStopForCommittedLocalToolCall && hasStreamOutput(state);
+      const shouldStopForIdleStart = !hasActiveLocalToolInput &&
+        !shouldStopForCommittedLocalToolCall && !hasStreamOutput(state);
+      const next = hasActiveLocalToolInput
+        ? await readNextStreamPartWithTimeout(
+          streamIterator,
+          state,
+          callbacks?.localToolInputIdleTimeoutMs ?? LOCAL_TOOL_INPUT_IDLE_MS,
+        )
+        : shouldStopForCommittedLocalToolCall
         ? await readNextStreamPartWithTimeout(
           streamIterator,
           state,
           LOCAL_TOOL_COMMIT_GRACE_MS,
         )
+        : shouldStopForIdleOutput
+        ? await readNextStreamPartWithTimeout(
+          streamIterator,
+          state,
+          callbacks?.streamIdleTimeoutMs ?? STREAM_OUTPUT_IDLE_MS,
+        )
+        : shouldStopForIdleStart
+        ? await readNextStreamPartWithTimeout(
+          streamIterator,
+          state,
+          callbacks?.streamIdleTimeoutMs ?? STREAM_START_IDLE_MS,
+        )
         : await readNextStreamPart(streamIterator, state);
       if (next === "timeout") {
-        state.finishReason ??= "tool-calls";
+        state.finishReason ??= shouldStopForIdleOutput || shouldStopForIdleStart
+          ? "stop"
+          : "tool-calls";
         requestStreamIteratorReturn(streamIterator);
         break;
       }
@@ -478,6 +544,8 @@ export function processStream(
         case "tool-input-start": {
           closeTextSegment();
           closeReasoningSegment();
+          shouldStopForCommittedLocalToolCall = false;
+          hasActiveLocalToolInput = true;
           const toolId = typedPart.id;
           state.toolCalls.set(toolId, {
             id: toolId,
@@ -513,14 +581,85 @@ export function processStream(
           break;
         }
 
+        case "tool-input-end": {
+          closeTextSegment();
+          closeReasoningSegment();
+          const toolId = typedPart.id;
+          const tc = state.toolCalls.get(toolId);
+          if (!tc) break;
+
+          tc.inputAvailable = true;
+          hasActiveLocalToolInput = false;
+          const dynamic = tc.dynamic ?? isDynamicTool(tc.name);
+          if (dynamic) {
+            tc.dynamic = true;
+          }
+          sendSSE(controller, encoder, {
+            type: "tool-input-available",
+            toolCallId: toolId,
+            toolName: tc.name,
+            input: parseToolInputObject(tc.arguments),
+            ...(tc.providerExecuted !== undefined ? { providerExecuted: tc.providerExecuted } : {}),
+            ...(dynamic ? { dynamic: true } : {}),
+          });
+          if (tc.providerExecuted !== true) {
+            shouldStopForCommittedLocalToolCall = true;
+          }
+          break;
+        }
+
+        case "tool-input-available": {
+          closeTextSegment();
+          closeReasoningSegment();
+          const toolId = typedPart.toolCallId ?? typedPart.id;
+          if (!toolId) {
+            break;
+          }
+          hasActiveLocalToolInput = false;
+          const inputStr = normalizeToolInputString(typedPart.input);
+          const previous = state.toolCalls.get(toolId);
+          const previousArguments = previous?.arguments ?? "";
+          const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
+          const wasInputAvailable = previous?.inputAvailable === true;
+          const dynamic = typedPart.dynamic ?? isDynamicTool(typedPart.toolName);
+          state.toolCalls.set(toolId, {
+            id: toolId,
+            name: typedPart.toolName,
+            arguments: resolvedArguments,
+            inputAvailable: true,
+            providerExecuted: typedPart.providerExecuted,
+            dynamic,
+          });
+
+          if (!wasInputAvailable) {
+            sendSSE(controller, encoder, {
+              type: "tool-input-available",
+              toolCallId: toolId,
+              toolName: typedPart.toolName,
+              input: parseToolInputObject(resolvedArguments),
+              ...(typedPart.providerExecuted !== undefined
+                ? { providerExecuted: typedPart.providerExecuted }
+                : {}),
+              ...(dynamic ? { dynamic: true } : {}),
+            });
+          }
+          if (typedPart.providerExecuted !== true) {
+            shouldStopForCommittedLocalToolCall = true;
+          }
+          break;
+        }
+
         case "tool-call": {
           closeTextSegment();
           closeReasoningSegment();
           // tool-call fires when the full tool call is available
           const toolId = typedPart.toolCallId;
+          hasActiveLocalToolInput = false;
           const inputStr = normalizeToolInputString(typedPart.input);
-          const previousArguments = state.toolCalls.get(toolId)?.arguments ?? "";
+          const previous = state.toolCalls.get(toolId);
+          const previousArguments = previous?.arguments ?? "";
           const resolvedArguments = mergeToolCallInput(previousArguments, inputStr);
+          const wasInputAvailable = previous?.inputAvailable === true;
           state.toolCalls.set(toolId, {
             id: toolId,
             name: typedPart.toolName,
@@ -530,18 +669,20 @@ export function processStream(
             dynamic: typedPart.dynamic,
           });
 
-          const dynamic = isDynamicTool(typedPart.toolName);
-          const inputObj = parseToolInputObject(typedPart.input);
-          sendSSE(controller, encoder, {
-            type: "tool-input-available",
-            toolCallId: toolId,
-            toolName: typedPart.toolName,
-            input: inputObj,
-            ...(typedPart.providerExecuted !== undefined
-              ? { providerExecuted: typedPart.providerExecuted }
-              : {}),
-            ...(dynamic ? { dynamic: true } : {}),
-          });
+          if (!wasInputAvailable) {
+            const dynamic = isDynamicTool(typedPart.toolName);
+            const inputObj = parseToolInputObject(typedPart.input);
+            sendSSE(controller, encoder, {
+              type: "tool-input-available",
+              toolCallId: toolId,
+              toolName: typedPart.toolName,
+              input: inputObj,
+              ...(typedPart.providerExecuted !== undefined
+                ? { providerExecuted: typedPart.providerExecuted }
+                : {}),
+              ...(dynamic ? { dynamic: true } : {}),
+            });
+          }
           if (typedPart.providerExecuted !== true) {
             shouldStopForCommittedLocalToolCall = true;
           }
@@ -657,6 +798,9 @@ export function processStream(
           closeTextSegment();
           closeReasoningSegment();
           state.finishReason = typedPart.finishReason ?? null;
+          if (state.finishReason === "tool-calls") {
+            commitParseablePendingToolInputs();
+          }
           if (typedPart.totalUsage) {
             const input = typedPart.totalUsage.inputTokens ?? 0;
             const output = typedPart.totalUsage.outputTokens ?? 0;

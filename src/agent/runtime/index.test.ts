@@ -134,6 +134,57 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, true);
   });
 
+  it("stops after an unfinalized streamed tool call to avoid retry loops", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_incomplete_1",
+          {
+            id: "toolu_incomplete_1",
+            name: "load-skill-reference",
+            arguments: '{"skillId":"dora"',
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, false);
+  });
+
+  it("stops instead of retrying when a step has both finalized and unfinalized tool calls", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_complete_1",
+          {
+            id: "toolu_complete_1",
+            name: "load-skill",
+            arguments: '{"skillId":"dora"}',
+            inputAvailable: true,
+          },
+        ],
+        [
+          "toolu_incomplete_1",
+          {
+            id: "toolu_incomplete_1",
+            name: "load-skill-reference",
+            arguments: '{"skillId":"dora"',
+            inputAvailable: false,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, false);
+  });
+
   it("continues finalized client-executed tool calls when the provider reports stop", () => {
     const shouldContinue = shouldContinueAfterStreamStep({
       accumulatedText: "",

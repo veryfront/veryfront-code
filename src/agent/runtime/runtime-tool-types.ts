@@ -74,6 +74,16 @@ export type RuntimeStreamPart =
     dynamic?: boolean;
   }
   | { type: "tool-input-delta"; id: string; delta: string }
+  | { type: "tool-input-end"; id: string }
+  | {
+    type: "tool-input-available";
+    toolCallId?: string;
+    id?: string;
+    toolName: string;
+    input: unknown;
+    providerExecuted?: boolean;
+    dynamic?: boolean;
+  }
   | {
     type: "tool-call";
     toolCallId: string;

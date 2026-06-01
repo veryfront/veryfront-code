@@ -248,8 +248,14 @@ export function shouldContinueAfterStreamStep(
     return false;
   }
 
+  const streamedToolCalls = Array.from(state.toolCalls.values());
+  const hasIncompleteToolCall = streamedToolCalls.some(isStreamedToolCallIncomplete);
+  const hasFinalizedClientToolCall = streamedToolCalls.some((toolCall) =>
+    toolCall.inputAvailable === true && toolCall.providerExecuted !== true
+  );
+
   if (state.finishReason === "tool-calls") {
-    return true;
+    return !hasIncompleteToolCall && hasFinalizedClientToolCall;
   }
 
   if (state.finishReason !== "stop") {

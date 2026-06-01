@@ -4,6 +4,31 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockResult, createSSECollector } from "./chat-stream-handler.test-helpers.ts";
 import { createStreamState, processStream } from "./chat-stream-handler.ts";
 
+function emptyAsyncIterable() {
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        async next() {
+          return { done: true as const, value: undefined };
+        },
+      };
+    },
+  };
+}
+
+function pendingAsyncIterable() {
+  return {
+    [Symbol.asyncIterator]() {
+      return {
+        async next(): Promise<IteratorResult<unknown>> {
+          await new Promise(() => {});
+          return { done: true, value: undefined };
+        },
+      };
+    },
+  };
+}
+
 describe("chat-stream-handler", () => {
   describe("createStreamState", () => {
     it("returns a clean initial state", () => {
@@ -181,6 +206,149 @@ describe("chat-stream-handler", () => {
       ]);
     });
 
+    it("finalizes streamed local tool input when the provider emits tool-input-end without a tool-call part", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "tool-input-start", id: "tc-local-end", toolName: "retrieveDocumentEvidence" },
+        { type: "tool-input-delta", id: "tc-local-end", delta: "{}" },
+        { type: "tool-input-end", id: "tc-local-end" },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const toolCall = state.toolCalls.get("tc-local-end");
+      assertEquals(toolCall?.id, "tc-local-end");
+      assertEquals(toolCall?.name, "retrieveDocumentEvidence");
+      assertEquals(toolCall?.arguments, "{}");
+      assertEquals(toolCall?.inputAvailable, true);
+      assertEquals(events, [
+        {
+          type: "tool-input-start",
+          toolCallId: "tc-local-end",
+          toolName: "retrieveDocumentEvidence",
+        },
+        {
+          type: "tool-input-delta",
+          toolCallId: "tc-local-end",
+          inputTextDelta: "{}",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-local-end",
+          toolName: "retrieveDocumentEvidence",
+          input: {},
+        },
+      ]);
+    });
+
+    it("finalizes parseable streamed local tool input when the provider finishes without a final tool-call part", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "tool-input-start", id: "tc-finish", toolName: "retrieveDocumentEvidence" },
+        { type: "tool-input-delta", id: "tc-finish", delta: '{"uploadId":"upload-1"}' },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const toolCall = state.toolCalls.get("tc-finish");
+      assertEquals(toolCall?.inputAvailable, true);
+      assertEquals(events, [
+        {
+          type: "tool-input-start",
+          toolCallId: "tc-finish",
+          toolName: "retrieveDocumentEvidence",
+        },
+        {
+          type: "tool-input-delta",
+          toolCallId: "tc-finish",
+          inputTextDelta: '{"uploadId":"upload-1"}',
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-finish",
+          toolName: "retrieveDocumentEvidence",
+          input: { uploadId: "upload-1" },
+        },
+      ]);
+    });
+
+    it("does not emit duplicate input-available when tool-input-end is followed by tool-call", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "tool-input-start", id: "tc-end-plus-call", toolName: "lookup" },
+        { type: "tool-input-delta", id: "tc-end-plus-call", delta: '{"query":"DORA"}' },
+        { type: "tool-input-end", id: "tc-end-plus-call" },
+        {
+          type: "tool-call",
+          toolCallId: "tc-end-plus-call",
+          toolName: "lookup",
+          input: { query: "DORA" },
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(
+        events.filter((event) => event.type === "tool-input-available"),
+        [
+          {
+            type: "tool-input-available",
+            toolCallId: "tc-end-plus-call",
+            toolName: "lookup",
+            input: { query: "DORA" },
+          },
+        ],
+      );
+      assertEquals(state.toolCalls.get("tc-end-plus-call")?.arguments, '{"query":"DORA"}');
+    });
+
+    it("treats provider tool-input-available as the committed local tool call", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-input-start",
+          id: "tc-provider-available",
+          toolName: "retrieveDocumentEvidence",
+        },
+        { type: "tool-input-delta", id: "tc-provider-available", delta: "{}" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-provider-available",
+          toolName: "retrieveDocumentEvidence",
+          input: { uploadId: "upload-1" },
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const toolCall = state.toolCalls.get("tc-provider-available");
+      assertEquals(toolCall?.inputAvailable, true);
+      assertEquals(toolCall?.arguments, '{"uploadId":"upload-1"}');
+      assertEquals(
+        events.filter((event) => event.type === "tool-input-available"),
+        [
+          {
+            type: "tool-input-available",
+            toolCallId: "tc-provider-available",
+            toolName: "retrieveDocumentEvidence",
+            input: { uploadId: "upload-1" },
+          },
+        ],
+      );
+    });
+
     it("does not wait for provider stream cancellation after a committed local tool-call", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -232,6 +400,135 @@ describe("chat-stream-handler", () => {
       assertEquals(state.toolCalls.get("tc-local")?.inputAvailable, true);
     });
 
+    it("allows a second local tool input to finish after a prior local tool was committed", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "tool-input-start", id: "tc-a", toolName: "load-skill" };
+            yield { type: "tool-input-delta", id: "tc-a", delta: '{"skillId":"dora"}' };
+            yield { type: "tool-input-end", id: "tc-a" };
+            yield {
+              type: "tool-input-start",
+              id: "tc-b",
+              toolName: "load-skill-reference",
+            };
+            await new Promise((resolve) => setTimeout(resolve, 300));
+            yield {
+              type: "tool-input-delta",
+              id: "tc-b",
+              delta: '{"skillId":"dora","reference":"references/article-17.md"}',
+            };
+            yield { type: "tool-input-end", id: "tc-b" };
+            yield { type: "finish", finishReason: "tool-calls", totalUsage: null };
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.toolCalls.get("tc-a")?.inputAvailable, true);
+      assertEquals(state.toolCalls.get("tc-b")?.inputAvailable, true);
+      assertEquals(
+        events.filter((event) => event.type === "tool-input-available"),
+        [
+          {
+            type: "tool-input-available",
+            toolCallId: "tc-a",
+            toolName: "load-skill",
+            input: { skillId: "dora" },
+          },
+          {
+            type: "tool-input-available",
+            toolCallId: "tc-b",
+            toolName: "load-skill-reference",
+            input: { skillId: "dora", reference: "references/article-17.md" },
+          },
+        ],
+      );
+    });
+
+    it("does not cut off a slow active local tool input before the provider finishes it", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield {
+              type: "tool-input-start",
+              id: "tc-slow",
+              toolName: "retrieveDocumentEvidence",
+            };
+            yield {
+              type: "tool-input-delta",
+              id: "tc-slow",
+              delta: '{"uploadId":"upload-1",',
+            };
+            await new Promise((resolve) => setTimeout(resolve, 2_100));
+            yield {
+              type: "tool-input-delta",
+              id: "tc-slow",
+              delta: '"name":"sample-ict-services-agreement.docx"}',
+            };
+            yield { type: "tool-input-end", id: "tc-slow" };
+            yield { type: "finish", finishReason: "tool-calls", totalUsage: null };
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.toolCalls.get("tc-slow")?.inputAvailable, true);
+      assertEquals(
+        events.filter((event) => event.type === "tool-input-available"),
+        [
+          {
+            type: "tool-input-available",
+            toolCallId: "tc-slow",
+            toolName: "retrieveDocumentEvidence",
+            input: {
+              uploadId: "upload-1",
+              name: "sample-ict-services-agreement.docx",
+            },
+          },
+        ],
+      );
+    });
+
+    it("times out an active local tool input instead of hanging the stream forever", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "tool-input-start", id: "tc-a", toolName: "load-skill" };
+            yield { type: "tool-input-delta", id: "tc-a", delta: '{"skillId":"dora"}' };
+            yield { type: "tool-input-end", id: "tc-a" };
+            yield {
+              type: "tool-input-start",
+              id: "tc-b",
+              toolName: "load-skill-reference",
+            };
+            await new Promise(() => {});
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+
+      const startedAt = Date.now();
+      await processStream(result, state, controller, encoder, "t", {
+        localToolInputIdleTimeoutMs: 10,
+      });
+
+      assertEquals(state.finishReason, "tool-calls");
+      assertEquals(state.toolCalls.get("tc-a")?.inputAvailable, true);
+      assertEquals(state.toolCalls.get("tc-b")?.inputAvailable, false);
+      assertEquals(Date.now() - startedAt >= 9, true);
+    });
+
     it("calls onChunk callback for each text delta", async () => {
       const { controller, encoder } = createSSECollector();
       const state = createStreamState();
@@ -248,6 +545,43 @@ describe("chat-stream-handler", () => {
       });
 
       assertEquals(chunks, ["a", "b"]);
+    });
+
+    it("times out an idle stream before any output starts", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const result = {
+        fullStream: pendingAsyncIterable(),
+        textStream: emptyAsyncIterable(),
+      };
+
+      await processStream(result, state, controller, encoder, "t", {
+        streamIdleTimeoutMs: 10,
+      });
+
+      assertEquals(state.finishReason, "stop");
+      assertEquals(events, []);
+    });
+
+    it("times out an idle output stream after assistant output starts", async () => {
+      const { controller, encoder } = createSSECollector();
+      const state = createStreamState();
+      const result = {
+        fullStream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "text-delta", text: "Ready." };
+            await new Promise(() => {});
+          },
+        },
+        textStream: emptyAsyncIterable(),
+      };
+
+      await processStream(result, state, controller, encoder, "t", {
+        streamIdleTimeoutMs: 10,
+      });
+
+      assertEquals(state.accumulatedText, "Ready.");
+      assertEquals(state.finishReason, "stop");
     });
 
     it("captures finish reason and usage", async () => {
@@ -301,9 +635,7 @@ describe("chat-stream-handler", () => {
             throw new Error("error reading a body from connection");
           },
         },
-        textStream: {
-          async *[Symbol.asyncIterator]() {},
-        },
+        textStream: emptyAsyncIterable(),
       };
 
       await processStream(result, state, controller, encoder, "t", undefined);
@@ -316,6 +648,12 @@ describe("chat-stream-handler", () => {
           type: "tool-input-delta",
           toolCallId: "tc-1",
           inputTextDelta: '{"id":"msg-1"}',
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-1",
+          toolName: "gmail__get_email",
+          input: { id: "msg-1" },
         },
       ]);
     });
