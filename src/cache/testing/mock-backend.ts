@@ -8,6 +8,7 @@
  */
 
 import type { CacheBackend } from "../backend.ts";
+import { buildBatchResults } from "../backends/batch-results.ts";
 
 /**
  * Recorded cache operation for inspection.
@@ -196,23 +197,18 @@ export class MockCacheBackend implements CacheBackend {
       timestamp: Date.now(),
     };
 
-    const results = new Map<string, string | null>();
     const now = Date.now();
 
-    for (const key of keys) {
-      if (this.shouldFail(key, "get")) {
-        results.set(key, null);
-        continue;
-      }
+    const results = buildBatchResults(keys, (key) => {
+      if (this.shouldFail(key, "get")) return null;
 
       const entry = this.store.get(key);
       if (!entry || now > entry.expiresAt) {
         if (entry) this.store.delete(key);
-        results.set(key, null);
-      } else {
-        results.set(key, entry.value);
+        return null;
       }
-    }
+      return entry.value;
+    });
 
     operation.result = results;
     this._operations.push(operation);

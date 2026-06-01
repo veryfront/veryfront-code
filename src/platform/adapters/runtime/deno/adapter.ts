@@ -28,6 +28,7 @@ import {
   enqueueWatchEvent,
 } from "../shared/watcher-queue.ts";
 import { stopManagedServer } from "../shared/server-lifecycle.ts";
+import { getNativeResponse, toNativeResponse } from "../../../compat/http/native-response.ts";
 
 const logger = serverLogger.component("deno");
 
@@ -412,8 +413,7 @@ export class DenoAdapter implements RuntimeAdapter {
     // Access native Response via `self` to bypass dnt shim transform.
     // In npm packages, dnt replaces Response with undici's polyfill,
     // but Deno.serve requires native Response instances.
-    const NativeResponse = (self as unknown as { Response: typeof Response })
-      .Response;
+    const NativeResponse = getNativeResponse();
 
     const server = nativeDeno.serve({
       port,
@@ -422,17 +422,7 @@ export class DenoAdapter implements RuntimeAdapter {
       handler: async (request) => {
         try {
           const response: Response = await wrappedHandler(request);
-          // If already native (compiled binary), return as-is
-          if (response instanceof NativeResponse) return response;
-          // Re-wrap polyfilled Response as native Response.
-          // dnt replaces Response with undici's polyfill which fails
-          // Deno.serve's native instanceof check.
-          const r = response as unknown as Response;
-          return new NativeResponse(r.body, {
-            status: r.status,
-            statusText: r.statusText,
-            headers: r.headers,
-          });
+          return toNativeResponse(response, NativeResponse);
         } catch (error) {
           serverLogger.error("Request handler error:", error);
           return new NativeResponse("Internal Server Error", { status: 500 });

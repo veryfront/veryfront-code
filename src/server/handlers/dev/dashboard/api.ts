@@ -26,6 +26,7 @@ import { getLogBuffer } from "#veryfront/observability/log-buffer.ts";
 import { validatePathSync } from "#veryfront/security";
 import { ReloadNotifier } from "../../../reload-notifier.ts";
 import type { HandlerContext } from "../../types.ts";
+import { errorResponse, jsonResponse } from "../http-helpers.ts";
 
 const WORKFLOW_EXECUTION_TIMEOUT_MS = 30_000;
 
@@ -50,11 +51,6 @@ function validateRelativePath(path: string, projectDir: string): string | null {
   return result.canonicalPath;
 }
 
-const JSON_HEADERS = {
-  "Content-Type": "application/json",
-  "Cache-Control": "no-cache",
-};
-
 const TEXT_EXTENSIONS = new Set([
   "ts",
   "tsx",
@@ -72,14 +68,6 @@ const TEXT_EXTENSIONS = new Set([
   "gitignore",
   "dockerignore",
 ]);
-
-function jsonResponse(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data, null, 2), { status, headers: JSON_HEADERS });
-}
-
-function errorResponse(message: string, status = 500): Response {
-  return jsonResponse({ error: message }, status);
-}
 
 export function handleDashboardAPI(
   req: Request,
