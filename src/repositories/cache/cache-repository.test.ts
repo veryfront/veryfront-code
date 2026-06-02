@@ -3,14 +3,17 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { MemoryCacheBackend } from "#veryfront/cache/backend.ts";
 import {
-  buildScopedKey,
-  createMemoryCacheRepository,
   createMultiTierCacheRepository,
   MemoryCacheRepository,
   MultiTierCacheRepository,
 } from "./cache-repository.ts";
 import type { RepositoryContext } from "../types.ts";
 
+// NOTE: basic MemoryCacheRepository behaviour (get/set, delete, deleteByPrefix,
+// stats/hitRate, has-expiry, buildScopedKey, memory factory) is already covered
+// by ../repositories.test.ts. This adjacent suite intentionally covers only the
+// gaps: MemoryCacheRepository TTL pruning + LRU eviction, and the entire
+// MultiTierCacheRepository (previously untested).
 const CTX: RepositoryContext = {
   projectId: "proj",
   environment: "production",
@@ -18,12 +21,6 @@ const CTX: RepositoryContext = {
 };
 
 describe("repositories/cache/cache-repository", () => {
-  describe("buildScopedKey", () => {
-    it("prefixes the key with project/environment/version", () => {
-      assertEquals(buildScopedKey(CTX, "page:home"), "proj:production:v1:page:home");
-    });
-  });
-
   describe("MemoryCacheRepository — TTL & eviction (untested paths)", () => {
     it("get() treats an expired entry as a miss and prunes it", async () => {
       const cache = new MemoryCacheRepository<string>({ context: CTX });
@@ -59,18 +56,6 @@ describe("repositories/cache/cache-repository", () => {
       assertEquals(cache.size, 2);
       assertEquals(await cache.get("a"), "1-updated");
       assertEquals(await cache.get("b"), "2");
-    });
-
-    it("computes hitRate from gets/hits", async () => {
-      const cache = new MemoryCacheRepository<string>({ context: CTX });
-      await cache.set("k", "v");
-      await cache.get("k"); // hit
-      await cache.get("missing"); // miss
-
-      const stats = cache.getStats();
-      assertEquals(stats.gets, 2);
-      assertEquals(stats.hits, 1);
-      assertEquals(stats.hitRate, 0.5);
     });
 
     it("clear() empties the repository", async () => {
@@ -122,9 +107,9 @@ describe("repositories/cache/cache-repository", () => {
 
     it("deleteByPrefix removes matching scoped keys via the backend pattern", async () => {
       const { backend, repo } = makeRepo();
-      // Seed the distributed (L3) backend directly: repo.set writes it
-      // fire-and-forget (asyncBackfill), so direct seeding keeps the test
-      // deterministic. deleteByPrefix targets the backend via delByPattern.
+      // deleteByPrefix operates on the L3 backend via delByPattern, so seed the
+      // backend directly and assert backend state — the cleanest unit of the
+      // method's contract.
       await backend.set("proj:production:v1:pages/a", "1");
       await backend.set("proj:production:v1:pages/b", "2");
       await backend.set("proj:production:v1:assets/c", "3");
@@ -164,24 +149,20 @@ describe("repositories/cache/cache-repository", () => {
     it("getStats surfaces multi-tier hit/miss accounting", async () => {
       const { repo } = makeRepo();
       await repo.set("k", "v");
-      await repo.get("k"); // hit
+      await repo.get("k"); // hit (from whichever tier; total still one hit)
       await repo.get("missing"); // miss
 
       const stats = repo.getStats();
-      assertEquals(stats.gets >= 2, true);
-      assertEquals(stats.hits >= 1, true);
-      assertEquals(stats.misses >= 1, true);
+      assertEquals(stats.sets, 1);
+      assertEquals(stats.gets, 2);
+      assertEquals(stats.hits, 1);
+      assertEquals(stats.misses, 1);
     });
   });
 
   describe("factory functions", () => {
-    it("createMemoryCacheRepository builds a MemoryCacheRepository", async () => {
-      const repo = createMemoryCacheRepository<string>(CTX, { maxEntries: 10 });
-      await repo.set("k", "v");
-      assertEquals(await repo.get("k"), "v");
-    });
-
-    it("createMultiTierCacheRepository builds a MultiTierCacheRepository", async () => {
+    // createMemoryCacheRepository is covered by ../repositories.test.ts.
+    it("createMultiTierCacheRepository builds a working MultiTierCacheRepository", async () => {
       const repo = createMultiTierCacheRepository(CTX, new MemoryCacheBackend());
       await repo.set("k", "v");
       assertEquals(await repo.get("k"), "v");
