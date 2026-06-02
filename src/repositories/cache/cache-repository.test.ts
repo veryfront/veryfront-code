@@ -158,6 +158,38 @@ describe("repositories/cache/cache-repository", () => {
       assertEquals(stats.hits, 1);
       assertEquals(stats.misses, 1);
     });
+
+    // Let fire-and-forget tier writes (asyncBackfill) settle before asserting.
+    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    it("deleteByPrefix invalidates the L1 tier — no stale reads (#1989)", async () => {
+      const { repo } = makeRepo();
+      await repo.set("pages/a", "1");
+      await repo.set("assets/b", "2");
+      await flush();
+      // Both are cached (served from L1).
+      assertEquals(await repo.get("pages/a"), "1");
+
+      await repo.deleteByPrefix("pages/");
+
+      // Before the fix this returned the stale L1 value "1"; the backend-only
+      // pattern delete left L1 untouched.
+      assertEquals(await repo.get("pages/a"), null);
+      // A non-matching key is unaffected.
+      assertEquals(await repo.get("assets/b"), "2");
+    });
+
+    it("clear invalidates the L1 tier — no stale reads (#1989)", async () => {
+      const { repo } = makeRepo();
+      await repo.set("k", "v");
+      await flush();
+      assertEquals(await repo.get("k"), "v");
+
+      await repo.clear();
+
+      // Before the fix this returned the stale L1 value "v".
+      assertEquals(await repo.get("k"), null);
+    });
   });
 
   describe("factory functions", () => {
