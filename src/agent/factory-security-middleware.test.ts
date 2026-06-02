@@ -187,6 +187,36 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(error?.message.includes("maximum length of 25000"), true);
   });
 
+  for (
+    const [label, value] of [
+      ["NaN", Number.NaN],
+      ["Infinity", Number.POSITIVE_INFINITY],
+      ["zero", 0],
+      ["negative", -1],
+    ] as const
+  ) {
+    it(`falls back to the default when inputMaxCharacterLimit is ${label}`, async () => {
+      const middleware = resolveSecurityMiddleware({ inputMaxCharacterLimit: value });
+      const securityFn = middleware[0]!;
+
+      const context: AgentContext = {
+        agentId: "test",
+        model: "test/model",
+        input: "x".repeat(100_001),
+        data: {},
+        platform: "deno",
+      };
+
+      let error: Error | undefined;
+      try {
+        await securityFn(context, async () => createAgentResponse({ text: "ok" }));
+      } catch (err) {
+        error = err as Error;
+      }
+      assertEquals(error?.message.includes("maximum length of 100000"), true);
+    });
+  }
+
   it("security middleware filters PII from output", async () => {
     const middleware = resolveSecurityMiddleware({});
     const securityFn = middleware[0]!;
