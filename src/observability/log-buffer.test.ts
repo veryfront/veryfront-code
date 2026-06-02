@@ -18,6 +18,22 @@ describe("observability/log-buffer", () => {
       assertEquals(a.id !== b.id, true);
     });
 
+    it("redacts credential-like keys from entry data (#1989)", () => {
+      const buf = new LogBuffer();
+      const seen: Record<string, unknown>[] = [];
+      buf.subscribe((entry) => {
+        if (entry.data) seen.push(entry.data);
+      });
+
+      const entry = buf.info("request", "server", { userId: "u-1", apiKey: "sk-secret" });
+
+      assertEquals(entry.data?.apiKey, "[REDACTED]");
+      assertEquals(entry.data?.userId, "u-1");
+      // Subscribers (incl. the file writer) only ever see the redacted copy.
+      assertEquals(seen[0].apiKey, "[REDACTED]");
+      assertEquals(JSON.stringify(entry).includes("sk-secret"), false);
+    });
+
     it("should support all log levels", () => {
       const buf = new LogBuffer();
       buf.debug("d");

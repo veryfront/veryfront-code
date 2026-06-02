@@ -75,6 +75,17 @@ describe("logging", () => {
         assertStringIncludes(output, "Component render failed");
       });
 
+      it("redacts credential-like context keys in the dev dump (#1989)", () => {
+        const error = RENDER_ERROR.create();
+
+        logError(error, { userId: "u-1", apiKey: "sk-secret" });
+
+        const output = consoleErrorOutput.join("\n");
+        assertStringIncludes(output, "[REDACTED]");
+        assertStringIncludes(output, "u-1");
+        assertEquals(output.includes("sk-secret"), false);
+      });
+
       it("should use error.context when no context provided", () => {
         const error = CONFIG_NOT_FOUND.create({
           context: { originalContext: true },
@@ -120,6 +131,17 @@ describe("logging", () => {
 
         const parsed = JSON.parse(consoleErrorOutput[0]);
         assertEquals(parsed.context.componentPath, "/app/page.tsx");
+      });
+
+      it("redacts credential-like context keys in JSON output (#1989)", () => {
+        const error = RENDER_ERROR.create();
+
+        logError(error, { userId: "u-1", token: "sk-secret" });
+
+        const parsed = JSON.parse(consoleErrorOutput[0]);
+        assertEquals(parsed.context.token, "[REDACTED]");
+        assertEquals(parsed.context.userId, "u-1");
+        assertEquals(consoleErrorOutput[0].includes("sk-secret"), false);
       });
 
       it("should merge error context with extra context and prefer extra values", () => {

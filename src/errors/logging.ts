@@ -55,6 +55,9 @@ export function logError(
   context?: Record<string, unknown>,
 ): void {
   const mergedContext = mergeContext(error.context, context);
+  // Redact once and reuse for both the production JSON entry and the dev-mode
+  // human-readable dump, so neither path can emit unredacted credentials.
+  const safeContext = redactSensitive(mergedContext);
   const entry: ErrorLogEntry = {
     level: "error",
     slug: error.slug,
@@ -65,7 +68,7 @@ export function logError(
     status: error.status,
     docs: error.getDocsUrl(),
     timestamp: new Date().toISOString(),
-    context: redactSensitive(mergedContext),
+    context: safeContext,
   };
 
   if (isProduction()) {
@@ -82,8 +85,8 @@ export function logError(
       serverLogger.error(`  💡 Suggestion: ${error.suggestion}`);
     }
     serverLogger.error(`  📚 Docs: ${entry.docs}`);
-    if (mergedContext) {
-      serverLogger.error(`  Context: ${JSON.stringify(mergedContext, null, 2)}`);
+    if (safeContext) {
+      serverLogger.error(`  Context: ${JSON.stringify(safeContext, null, 2)}`);
     }
   }
 }

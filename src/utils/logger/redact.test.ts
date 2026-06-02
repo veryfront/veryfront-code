@@ -10,12 +10,15 @@ describe("logger/redact", () => {
         const key of [
           "password",
           "passwd",
+          "pwd",
           "passphrase",
           "secret",
           "clientSecret",
           "token",
           "access_token",
           "refreshToken",
+          "jwt",
+          "jwtToken",
           "apiKey",
           "API-Key",
           "x-api-key",
@@ -26,6 +29,7 @@ describe("logger/redact", () => {
           "Authorization",
           "Cookie",
           "bearer",
+          "connectionString",
         ]
       ) {
         assertEquals(isSensitiveKey(key), true, `expected ${key} to be sensitive`);
@@ -33,13 +37,12 @@ describe("logger/redact", () => {
     });
 
     it("does not flag benign keys that merely look similar", () => {
+      // `author` must NOT match (the deny-list deliberately omits bare `auth`),
+      // and short tokens like `dsn`/`sas` are omitted to avoid masking e.g.
+      // `feedsNamespace`.
       for (
-        const key of ["author", "tokenizer_name", "count", "userId", "requestId", "url", "domain"]
+        const key of ["author", "count", "userId", "requestId", "url", "domain", "feedsNamespace"]
       ) {
-        // "tokenizer_name" intentionally documents an accepted over-match edge:
-        // it contains "token" and IS treated as sensitive. Keep it out of this
-        // list — assert only the truly-benign ones here.
-        if (key === "tokenizer_name") continue;
         assertEquals(isSensitiveKey(key), false, `expected ${key} to be non-sensitive`);
       }
     });
@@ -84,6 +87,19 @@ describe("logger/redact", () => {
       });
     });
 
+    it("traverses class instances so their secret fields cannot leak", () => {
+      class ApiConfig {
+        apiKey = "sk-secret";
+        name = "app";
+      }
+      const result = redactSensitive({ config: new ApiConfig() }) as Record<
+        string,
+        Record<string, unknown>
+      >;
+      assertEquals(result.config.apiKey, REDACTED);
+      assertEquals(result.config.name, "app");
+    });
+
     it("does not mutate the input object", () => {
       const input = { password: "hunter2", keep: "v" };
       const result = redactSensitive(input);
@@ -91,26 +107,49 @@ describe("logger/redact", () => {
       assertEquals((result as Record<string, unknown>).password, REDACTED);
     });
 
-    it("leaves non-plain values untouched", () => {
+    it("leaves primitives and scalar-serializing objects untouched", () => {
       const date = new Date(0);
-      const err = new Error("boom");
-      const result = redactSensitive({ when: date, err, n: 5, flag: true, nil: null }) as Record<
+      const result = redactSensitive({ when: date, n: 5, flag: true, nil: null }) as Record<
         string,
         unknown
       >;
+      // Date defines toJSON → serializes to a scalar → returned as-is.
       assertEquals(result.when, date);
-      assertEquals(result.err, err);
       assertEquals(result.n, 5);
       assertEquals(result.flag, true);
       assertEquals(result.nil, null);
     });
 
-    it("survives cyclic references without throwing", () => {
+    it("fails closed on cyclic references (no unredacted back-reference)", () => {
       const cyclic: Record<string, unknown> = { token: "t", keep: 1 };
       cyclic.self = cyclic;
       const result = redactSensitive(cyclic) as Record<string, unknown>;
       assertEquals(result.token, REDACTED);
       assertEquals(result.keep, 1);
+      // The back-reference is masked rather than re-emitting the raw object.
+      assertEquals(result.self, REDACTED);
+    });
+
+    it("fails closed on a throwing getter", () => {
+      const obj: Record<string, unknown> = { password: "x" };
+      Object.defineProperty(obj, "boom", {
+        enumerable: true,
+        get() {
+          throw new Error("nope");
+        },
+      });
+      // The whole object is masked rather than crashing the log call.
+      assertEquals(redactSensitive({ wrap: obj }) as Record<string, unknown>, {
+        wrap: REDACTED,
+      });
+    });
+
+    it("fails closed past the max traversal depth", () => {
+      // Build a structure deeper than MAX_DEPTH (16) with a secret at the bottom.
+      let node: Record<string, unknown> = { token: "deep-secret" };
+      for (let i = 0; i < 20; i++) node = { child: node };
+      const serialized = JSON.stringify(redactSensitive(node));
+      assertEquals(serialized.includes("deep-secret"), false);
     });
   });
 });

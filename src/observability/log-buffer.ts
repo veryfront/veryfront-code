@@ -1,3 +1,5 @@
+import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
+
 /** Public API contract for log level. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -40,6 +42,9 @@ export class LogBuffer {
   append(entry: Omit<LogEntry, "id" | "timestamp">): LogEntry {
     const fullEntry: LogEntry = {
       ...entry,
+      // Redact credential-like keys before the entry is buffered, surfaced to
+      // subscribers, or written to disk by the file subscriber (#1989).
+      data: entry.data ? redactSensitive(entry.data) : entry.data,
       id: this.generateId(),
       timestamp: Date.now(),
     };
