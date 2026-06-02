@@ -1,10 +1,5 @@
-import { initializeFileCacheBackend } from "#veryfront/platform/adapters/fs/cache/file-cache.ts";
-import { initializeSSRDistributedCache } from "#veryfront/modules/react-loader/ssr-module-loader/index.ts";
-import { initializeTransformCache } from "#veryfront/transforms/esm/transform-cache.ts";
-import { initializeHttpModuleDistributedCache } from "#veryfront/transforms/esm/http-cache-wrapper.ts";
 import { SpanNames } from "#veryfront/observability/tracing/span-names.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
-import { initializeProjectCSSCache } from "#veryfront/html/styles-builder/tailwind-compiler.ts";
 import { logger as baseLogger } from "#veryfront/utils/logger/logger.ts";
 import { isRedisConfigured } from "#veryfront/utils/redis-client.ts";
 import { isApiCacheAvailable, isDiskCacheConfigured } from "./backend.ts";
@@ -20,20 +15,21 @@ interface DistributedCacheStatus {
   httpModuleCache: boolean;
 }
 
-type DistributedCacheInitializers = {
+/**
+ * Per-cache initialization functions, injected by the composition root.
+ *
+ * The concrete initializers live in higher layers (`transforms`, `modules`,
+ * `html`, `platform`). They are passed in rather than imported here so that
+ * `src/cache` stays a low-level layer that does not depend on the rendering /
+ * transform / platform layers it would otherwise have to reach up into. See
+ * `src/server/distributed-cache-initializers.ts` for the default wiring.
+ */
+export type DistributedCacheInitializers = {
   transformCache: () => Promise<boolean>;
   ssrModuleCache: () => Promise<boolean>;
   fileCache: () => Promise<boolean>;
   projectCSSCache: () => Promise<boolean>;
   httpModuleCache: () => Promise<boolean>;
-};
-
-const defaultInitializers: DistributedCacheInitializers = {
-  transformCache: initializeTransformCache,
-  ssrModuleCache: initializeSSRDistributedCache,
-  fileCache: initializeFileCacheBackend,
-  projectCSSCache: initializeProjectCSSCache,
-  httpModuleCache: initializeHttpModuleDistributedCache,
 };
 
 function determineBackend(): DistributedCacheStatus["backend"] {
@@ -122,7 +118,9 @@ export function __runDistributedCacheInitializationForTests(
   return initializeDistributedCachesWithInitializers(backend, initializers);
 }
 
-export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
+export function initializeDistributedCaches(
+  initializers: DistributedCacheInitializers,
+): Promise<DistributedCacheStatus> {
   const backend = determineBackend();
 
   if (backend === "memory") {
@@ -138,7 +136,7 @@ export function initializeDistributedCaches(): Promise<DistributedCacheStatus> {
 
   return withSpan(
     SpanNames.CACHE_DISTRIBUTED_INIT,
-    () => initializeDistributedCachesWithInitializers(backend, defaultInitializers),
+    () => initializeDistributedCachesWithInitializers(backend, initializers),
     { "cache.backend": backend },
   );
 }

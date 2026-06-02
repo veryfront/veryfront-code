@@ -24,6 +24,7 @@ import {
 } from "#veryfront/rendering/ssr-globals.ts";
 import { setEnv } from "#veryfront/platform/compat/process.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
+import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { isDiskCacheConfigured } from "#veryfront/cache/backend.ts";
 import { clearTranspileCache, discoverAll } from "#veryfront/discovery";
 import type { DiscoveryConfig } from "#veryfront/discovery";
@@ -139,9 +140,11 @@ export class DevServer {
 
     // Initialize disk cache in dev mode when explicitly configured
     if (isDiskCacheConfigured()) {
-      void initializeDistributedCaches().catch((error: unknown) => {
-        logger.debug("[DevServer] Cache initialization failed, using memory fallback", { error });
-      });
+      void initializeDistributedCaches(defaultDistributedCacheInitializers).catch(
+        (error: unknown) => {
+          logger.debug("[DevServer] Cache initialization failed, using memory fallback", { error });
+        },
+      );
     }
 
     // Auto-discover runtime primitives (tools, agents, workflows, prompts, resources)
