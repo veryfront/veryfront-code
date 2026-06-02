@@ -70,6 +70,8 @@ export interface WorkflowExecutorConfig {
 export interface WorkflowHandle<TOutput = unknown> {
   /** Run ID */
   runId: string;
+  /** Wait for background workflow execution and cleanup to finish */
+  settled(): Promise<void>;
   /** Get current status */
   status(): Promise<WorkflowRun>;
   /** Wait for completion and get result */
@@ -216,11 +218,11 @@ export class WorkflowExecutor {
 
     await this.config.backend.createRun(run);
 
-    this.executeAsync(run.id).catch((error) => {
+    const settled = this.executeAsync(run.id).catch((error) => {
       logger.error("Workflow failed", { runId: run.id }, error);
     });
 
-    return this.createHandle<TOutput>(run.id);
+    return this.createHandle<TOutput>(run.id, settled);
   }
 
   /**
@@ -554,9 +556,10 @@ export class WorkflowExecutor {
   /**
    * Create a handle for a workflow run
    */
-  private createHandle<TOutput>(runId: string): WorkflowHandle<TOutput> {
+  private createHandle<TOutput>(runId: string, settled: Promise<void>): WorkflowHandle<TOutput> {
     return {
       runId,
+      settled: () => settled,
       status: () => this.config.backend.getRun(runId) as Promise<WorkflowRun>,
       result: () => this.waitForResult<TOutput>(runId),
       cancel: () => this.cancel(runId),

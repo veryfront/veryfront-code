@@ -51,6 +51,11 @@ interface WorkflowRunView {
   error?: { message?: string } | null;
 }
 
+interface WorkflowStartHandle {
+  runId: string;
+  settled?(): Promise<void>;
+}
+
 interface WorkflowClientView {
   readonly statePersistence?: "durable" | "ephemeral";
   register(workflow: unknown): void;
@@ -58,7 +63,7 @@ interface WorkflowClientView {
     workflowId: string,
     input: unknown,
     options?: { runId?: string },
-  ): Promise<{ runId: string }>;
+  ): Promise<WorkflowStartHandle>;
   getRun(runId: string): Promise<WorkflowRunView | null>;
   destroy(): Promise<void>;
 }
@@ -272,6 +277,7 @@ async function executeWorkflowRun(
     client.register(workflow.definition);
     const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
     const run = await waitForWorkflowResult(client, handle.runId, deps);
+    await handle.settled?.();
     const durationMs = Math.max(0, deps.now() - startedAt);
 
     if (run.status === "waiting") {
