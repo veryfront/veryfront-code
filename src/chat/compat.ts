@@ -26,13 +26,13 @@ import {
   getAgUiWireEventSchema,
 } from "./ag-ui.ts";
 import {
+  convertUiMessagesToProviderModelMessages,
   getApiConversationSchema,
   getApiMessageSchema,
   getConversationTypeSchema,
   getMessagePartSchema,
   getMessageStatusSchema,
 } from "./conversation.ts";
-import { convertUiMessagesToProviderModelMessages } from "./conversation.ts";
 import {
   prepareProviderModelMessagesFromUiMessages,
   sanitizeProviderModelMessages,
