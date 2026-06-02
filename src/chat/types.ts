@@ -6,7 +6,7 @@ import type {
   ChildRunAuditToolCall,
   ChildRunAuditToolResult,
 } from "./protocol.ts";
-import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
 const NATIVE_TEXT_ATTACHMENT_EXTENSIONS = [
@@ -282,12 +282,6 @@ export type ProviderModelMessage =
   | ChatAssistantMessage
   | ChatToolMessage;
 
-/**
- * @deprecated Use ProviderModelMessage for provider-facing model payloads.
- */
-/** Message shape for chat model. */
-export type ChatModelMessage = ProviderModelMessage;
-
 /** Public API contract for durable root run descriptor. */
 export interface DurableRootRunDescriptor {
   runId: string;
@@ -340,11 +334,6 @@ export const getChatRequestContextSchema = defineSchema((v) =>
     environmentContext: v.string().optional(),
   }).strict()
 );
-
-/** Schema for chat request context.
- * @deprecated Use getChatRequestContextSchema()
- */
-export const chatRequestContextSchema = lazySchema(getChatRequestContextSchema);
 
 /** Context for chat request. */
 export type ChatRequestContext = InferSchema<ReturnType<typeof getChatRequestContextSchema>>;
@@ -413,20 +402,10 @@ export const getMessageMetadataSchema = defineSchema((v) =>
   }).strict()
 );
 
-/** Schema for message metadata.
- * @deprecated Use getMessageMetadataSchema()
- */
-export const messageMetadataSchema = lazySchema(getMessageMetadataSchema);
-
 /** Zod schema for get chat UI message role. */
 export const getChatUiMessageRoleSchema = defineSchema((v) =>
   v.enum(["system", "user", "assistant", "tool"])
 );
-
-/** Schema for chat ui message role.
- * @deprecated Use getChatUiMessageRoleSchema()
- */
-export const chatUiMessageRoleSchema = lazySchema(getChatUiMessageRoleSchema);
 
 /** Zod schema for get chat tool part state. */
 export const getChatToolPartStateSchema = defineSchema((v) =>
@@ -443,11 +422,6 @@ export const getChatToolPartStateSchema = defineSchema((v) =>
     "completed",
   ])
 );
-
-/** Schema for chat tool part state.
- * @deprecated Use getChatToolPartStateSchema()
- */
-export const chatToolPartStateSchema = lazySchema(getChatToolPartStateSchema);
 
 const getToolApprovalSchema = defineSchema((v) =>
   v.object({
@@ -567,11 +541,6 @@ export const getChatUiMessagePartSchema = defineSchema((v) =>
   ])
 );
 
-/** Schema for chat ui message part.
- * @deprecated Use getChatUiMessagePartSchema()
- */
-export const chatUiMessagePartSchema = lazySchema(getChatUiMessagePartSchema);
-
 /** Zod schema for get chat UI message. */
 export const getChatUiMessageSchema = defineSchema((v) =>
   v.object({
@@ -582,18 +551,8 @@ export const getChatUiMessageSchema = defineSchema((v) =>
   }).strip()
 );
 
-/** Schema for chat ui message.
- * @deprecated Use getChatUiMessageSchema()
- */
-export const chatUiMessageSchema = lazySchema(getChatUiMessageSchema);
-
 /** Zod schema for get chat UI messages. */
 export const getChatUiMessagesSchema = defineSchema((v) => v.array(getChatUiMessageSchema()));
-
-/** Schema for chat ui messages.
- * @deprecated Use getChatUiMessagesSchema()
- */
-export const chatUiMessagesSchema = lazySchema(getChatUiMessagesSchema);
 
 function hasExtension(filename: string | undefined, extensions: readonly string[]) {
   const normalizedFilename = filename?.toLowerCase() ?? "";

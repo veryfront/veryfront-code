@@ -6,6 +6,10 @@ import {
   apiConversationSchema,
   apiMessageSchema,
   conversationTypeSchema,
+  messagePartSchema,
+  messageStatusSchema,
+} from "veryfront/chat/compat";
+import {
   convertUiMessagesToProviderModelMessages,
   extractTextFromMessage,
   extractUploadId,
@@ -15,8 +19,6 @@ import {
   mapToolState,
   markIncompleteToolPartsAsErrored,
   markIncompleteToolPartsAsStopped,
-  messagePartSchema,
-  messageStatusSchema,
   pushToolParts,
   stringifyUnknown,
   toConversationPartsFromUiMessage,

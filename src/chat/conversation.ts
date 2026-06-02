@@ -1,4 +1,4 @@
-import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type {
   ChatToolResultPart,
@@ -59,11 +59,6 @@ export const getMessagePartSchema = defineSchema((v) =>
   ])
 );
 
-/** Schema for message part.
- * @deprecated Use getMessagePartSchema()
- */
-export const messagePartSchema = lazySchema(getMessagePartSchema);
-
 /** Public API contract for message part. */
 export type MessagePart = InferSchema<ReturnType<typeof getMessagePartSchema>>;
 
@@ -71,10 +66,6 @@ export type MessagePart = InferSchema<ReturnType<typeof getMessagePartSchema>>;
 export const getConversationTypeSchema = defineSchema((v) =>
   v.enum(["chat", "agent_task", "support", "channel", "project_agent"])
 );
-/** Schema for conversation type.
- * @deprecated Use getConversationTypeSchema()
- */
-export const conversationTypeSchema = lazySchema(getConversationTypeSchema);
 /** Public API contract for conversation type. */
 export type ConversationType = InferSchema<ReturnType<typeof getConversationTypeSchema>>;
 
@@ -82,10 +73,6 @@ export type ConversationType = InferSchema<ReturnType<typeof getConversationType
 export const getMessageStatusSchema = defineSchema((v) =>
   v.enum(["pending", "streaming", "completed", "error", "failed", "cancelled", "stopped"])
 );
-/** Schema for message status.
- * @deprecated Use getMessageStatusSchema()
- */
-export const messageStatusSchema = lazySchema(getMessageStatusSchema);
 /** Public API contract for message status. */
 export type MessageStatus = InferSchema<ReturnType<typeof getMessageStatusSchema>>;
 
@@ -108,10 +95,6 @@ export const getApiConversationSchema = defineSchema((v) =>
     updatedAt: v.string(),
   })
 );
-/** Schema for API conversation.
- * @deprecated Use getApiConversationSchema()
- */
-export const apiConversationSchema = lazySchema(getApiConversationSchema);
 
 /** Public API contract for API conversation. */
 export type ApiConversation = InferSchema<ReturnType<typeof getApiConversationSchema>>;
@@ -138,10 +121,6 @@ export const getApiMessageSchema = defineSchema((v) =>
     updatedAt: v.string().nullable(),
   })
 );
-/** Schema for API message.
- * @deprecated Use getApiMessageSchema()
- */
-export const apiMessageSchema = lazySchema(getApiMessageSchema);
 
 /** Message shape for API. */
 export type ApiMessage = InferSchema<ReturnType<typeof getApiMessageSchema>>;
@@ -1036,9 +1015,3 @@ export function convertUiMessagesToProviderModelMessages(
 
   return providerMessages;
 }
-
-/**
- * @deprecated Use convertUiMessagesToProviderModelMessages for provider-facing model payloads.
- */
-/** Shared convert UI messages to model messages value. */
-export const convertUiMessagesToModelMessages = convertUiMessagesToProviderModelMessages;
