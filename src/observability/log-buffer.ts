@@ -198,7 +198,9 @@ export function interceptConsole(buffer: LogBuffer, source = "console"): () => v
         if (typeof a === "string") return a;
 
         try {
-          return JSON.stringify(a);
+          // Redact object args before they are folded into the message string,
+          // where the per-entry data redaction can no longer reach them (#1989).
+          return JSON.stringify(redactSensitive(a));
         } catch (_) {
           /* expected: circular references or non-serializable values */
           return String(a);
