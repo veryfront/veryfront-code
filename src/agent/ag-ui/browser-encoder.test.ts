@@ -435,6 +435,30 @@ describe("agent/ag-ui-browser-encoder", () => {
       }],
     );
   });
+
+  it("does not treat step lifecycle events as assistant-visible output", () => {
+    const state = createAgUiBrowserEncoderState();
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "step-start" }),
+      [{ event: "StepStarted", payload: { stepName: "step-1" } }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "step-end" }),
+      [{ event: "StepFinished", payload: { stepName: "step-1" } }],
+    );
+
+    assertEquals(
+      finalizeAgUiBrowserEvents(state, null),
+      [{
+        event: "RunError",
+        payload: {
+          code: "EMPTY_ASSISTANT_OUTPUT",
+          message: "Agent run produced no assistant-visible output",
+        },
+      }],
+    );
+  });
 });
 
 describe("buildAgUiBrowserFinalizeResponse", () => {

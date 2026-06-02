@@ -467,7 +467,6 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "step-start":
     case "start-step":
-      state.sawVisibleOutput = true;
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
@@ -476,7 +475,6 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "step-end":
     case "finish-step":
-      state.sawVisibleOutput = true;
       return [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
