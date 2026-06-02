@@ -325,6 +325,65 @@ describe("text-generation-runtime-message-converter", () => {
       ]);
     });
 
+    it("splits inline assistant tool results into provider-adjacent tool messages", () => {
+      const messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "search docs" }] },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [
+            { type: "text", text: "I'll search the docs." },
+            {
+              type: "tool_call",
+              id: "tc-search",
+              name: "web_search",
+              input: { query: "code framework components page syntax" },
+              state: "completed",
+            },
+            {
+              type: "tool_result",
+              tool_call_id: "tc-search",
+              output: { results: [{ title: "Components" }] },
+            },
+            { type: "text", text: "I found the relevant source." },
+          ],
+        },
+        { id: "u2", role: "user", parts: [{ type: "text", text: "list your tools" }] },
+      ] as unknown as Message[];
+
+      const result = convertToTextGenerationRuntimeMessages(messages);
+
+      assertEquals(result, [
+        { role: "user", content: "search docs" },
+        {
+          role: "assistant",
+          content: [
+            { type: "text", text: "I'll search the docs." },
+            {
+              type: "tool-call",
+              toolCallId: "tc-search",
+              toolName: "web_search",
+              input: { query: "code framework components page syntax" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "tc-search",
+            toolName: "web_search",
+            output: { type: "json", value: { results: [{ title: "Components" }] } },
+          }],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "I found the relevant source." }],
+        },
+        { role: "user", content: "list your tools" },
+      ]);
+    });
+
     it("keeps multiple tool results from one replay message together for parallel tool calls", () => {
       const messages: Message[] = [{
         id: "tool_batch",
