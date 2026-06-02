@@ -47,8 +47,10 @@ function splitRecursive(
     const candidate = current ? current + sep + part : part;
     if (candidate.length > maxChars && current) {
       chunks.push(current);
-      // Overlap: keep the tail of the current chunk
-      const tail = current.slice(-overlap);
+      // Overlap: keep the last `overlap` chars of the current chunk. Guard
+      // `overlap === 0` explicitly — `slice(-0)` is `slice(0)`, which returns
+      // the WHOLE chunk and would cascade it into every subsequent chunk.
+      const tail = overlap > 0 ? current.slice(-overlap) : "";
       current = tail ? tail + sep + part : part;
     } else {
       current = candidate;
