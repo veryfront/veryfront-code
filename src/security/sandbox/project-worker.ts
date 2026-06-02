@@ -23,9 +23,10 @@ import type {
 const logger = serverLogger.component("project-worker");
 const textEncoder = new TextEncoder();
 
-type ExtendedWorkerOptions = {
-  type: "module";
-  name?: string;
+// Intersection with the DOM `WorkerOptions` so the value is assignable to the
+// `Worker` constructor without suppression — Deno reads the extra `deno` field
+// at runtime even though the DOM lib type doesn't declare it.
+type ExtendedWorkerOptions = WorkerOptions & {
   deno?: { permissions: WorkerPermissions };
 };
 
@@ -103,7 +104,6 @@ export class ProjectWorker {
       deno: { permissions: this.permissions },
     };
 
-    // @ts-ignore - Deno Worker accepts extended options
     this.worker = new Worker(workerUrl, workerOptions);
     this._status = "idle";
 
