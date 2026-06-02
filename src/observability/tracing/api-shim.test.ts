@@ -3,6 +3,7 @@ import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { afterEach, describe, it } from "#veryfront/testing/bdd.ts";
 import {
   _resetShimForTests,
+  type Context,
   context,
   defaultTextMapGetter,
   defaultTextMapSetter,
@@ -116,19 +117,46 @@ describe("observability/tracing/api-shim", () => {
   });
 
   describe("context API", () => {
+    // A minimal, hand-rolled Context that is a NEW object reference distinct
+    // from the no-op `context.active()`. The no-op Context.setValue returns
+    // `this`, so deriving a "scoped" context via setValue would yield the same
+    // singleton — making any identity assertion tautological. Building a fresh
+    // object lets us prove `context.with` actually swaps and restores the
+    // active context.
+    function makeScopedContext(): Context {
+      const store = new Map<symbol, unknown>();
+      const ctx: Context = {
+        getValue: (key) => store.get(key),
+        setValue: (key, value) => {
+          store.set(key, value);
+          return ctx;
+        },
+        deleteValue: (key) => {
+          store.delete(key);
+          return ctx;
+        },
+      };
+      return ctx;
+    }
+
     it("context.with sets the active context for the duration of fn then restores it", () => {
       const base = context.active();
-      const scoped = base.setValue(Symbol("k"), "v");
+      const scoped = makeScopedContext();
+      // Sanity: the scoped context must be a distinct reference from base.
+      assertEquals(scoped === base, false);
 
       const inner = context.with(scoped, () => context.active());
-      assertEquals(inner, scoped);
+      // Inside the callback the active context is the scoped one.
+      assertEquals(inner === scoped, true);
       // Restored afterwards.
-      assertEquals(context.active(), base);
+      assertEquals(context.active() === base, true);
     });
 
     it("context.with restores the previous context even if fn throws", () => {
       const base = context.active();
-      const scoped = base.setValue(Symbol("k"), "v");
+      const scoped = makeScopedContext();
+      assertEquals(scoped === base, false);
+
       let threw = false;
       try {
         context.with(scoped, () => {
@@ -138,7 +166,8 @@ describe("observability/tracing/api-shim", () => {
         threw = true;
       }
       assertEquals(threw, true);
-      assertEquals(context.active(), base);
+      // The finally-restore must put the original context back.
+      assertEquals(context.active() === base, true);
     });
   });
 
