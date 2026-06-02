@@ -50,6 +50,17 @@ function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
   return Array.isArray(raw) && raw.every((toolName) => typeof toolName === "string") ? raw : [];
 }
 
+function mergeRemoteToolNames(source: string[], forwarded: string[]): string[] {
+  const merged = new Set<string>();
+  for (const toolName of source) {
+    merged.add(toolName);
+  }
+  for (const toolName of forwarded) {
+    merged.add(toolName);
+  }
+  return [...merged];
+}
+
 export interface RuntimeAgentStreamExecutionDeps {
   sessionManager: AgentRunSessionManager;
   projectAgentSandbox?: {
@@ -364,7 +375,14 @@ export async function createRuntimeAgentStreamResponse(
     threadId: input.threadId,
   });
 
-  const allowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
+  const forwardedAllowedRemoteToolNames = getAllowedRemoteToolNames(input.forwardedProps);
+  const sourceAllowedRemoteToolNames = getAgentAllowedRemoteToolNames(agent);
+  const allowedRemoteToolNames = forwardedAllowedRemoteToolNames === undefined
+    ? undefined
+    : mergeRemoteToolNames(
+      sourceAllowedRemoteToolNames,
+      forwardedAllowedRemoteToolNames,
+    );
   const forwardedIntegrationToolDefs = getForwardedIntegrationToolDefinitions(input.forwardedProps);
   const availableForwardedToolNames = forwardedIntegrationToolDefs?.map((tool) => tool.name);
   const sandboxTools = await buildProjectAgentSandboxTools({ agent, deps });

@@ -147,6 +147,81 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["get_file", "search_knowledge"]);
   });
 
+  it("preserves source remote tool allowlists when forwarded allowlists are present", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let capturedToolNames: string[] = [];
+
+    const agent = {
+      id: "support-agent",
+      config: {
+        id: "support-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+        tools: {
+          list_projects: true,
+          gmail__list_emails: true,
+        },
+        allowedRemoteTools: ["list_projects"],
+        remoteTools: [{
+          id: "veryfront-platform-mcp",
+          listTools: async () => [
+            {
+              name: "list_projects",
+              description: "List projects",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+          executeTool: async () => ({}),
+        }],
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "support-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [],
+      tools: [],
+      context: [],
+      forwardedProps: {
+        runtimeOverrides: {
+          allowedTools: ["gmail__list_emails"],
+          integrationToolDefinitions: [
+            {
+              name: "gmail__list_emails",
+              description: "List emails",
+              parameters: { type: "object", properties: {} },
+            },
+          ],
+        },
+      },
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: (runtimeAgent, mergedTools) => {
+          capturedAllowedRemoteTools = runtimeAgent.config.allowedRemoteTools;
+          capturedToolNames = Object.keys(mergedTools ?? {}).sort();
+          return {
+            stream: async () =>
+              new ReadableStream<Uint8Array>({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+          };
+        },
+      },
+    );
+
+    assertEquals(capturedAllowedRemoteTools, ["list_projects", "gmail__list_emails"]);
+    assertEquals(capturedToolNames, ["gmail__list_emails", "list_projects"]);
+  });
+
   it("materializes explicitly configured sandbox bash before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     const sandboxInputs: AgentServiceSandboxToolsOptions[] = [];
@@ -385,7 +460,7 @@ describe("internal-agents/run-stream", () => {
         additionalProperties: false,
       },
       execute: () => ({ randomNumber: 7 }),
-    } as Tool;
+    } as unknown as Tool;
     let capturedToolEntry: Tool | boolean | undefined;
 
     toolRegistry.register("number-generator", projectTool);

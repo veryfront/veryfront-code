@@ -1,5 +1,10 @@
 import type { Agent } from "#veryfront/agent";
-import { createRemoteMCPToolSource, type RemoteToolSource } from "#veryfront/tool";
+import {
+  createRemoteMCPToolSource,
+  type RemoteToolSource,
+  type ToolDefinition,
+  toolRegistry,
+} from "#veryfront/tool";
 import { defaultChannelInvokeDeps } from "#veryfront/channels/invoke.ts";
 import { type RuntimeAgentDiscoveryDeps } from "#veryfront/channels/control-plane.ts";
 import {
@@ -57,7 +62,7 @@ const defaultDeps: AgentStreamHandlerDeps = {
 const logger = serverLogger.component("agent-stream-handler");
 const RUN_STREAM_PATH_REGEX = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/;
 const VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID = "veryfront-platform-mcp";
-const VERYFRONT_PLATFORM_REMOTE_TOOL_NAMES = new Set(["search_knowledge", "get_file"]);
+const LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES = new Set(["bash"]);
 
 // Per-environment env var cache shared across all agent stream requests (60s TTL)
 const _agentEnvVarCache = new EnvironmentVariableCache(
@@ -96,15 +101,22 @@ async function _resolveProductionEnvironmentId(
   }
 }
 
-function getRequestedVeryfrontPlatformToolNames(agent: Agent): string[] {
-  const tools = agent.config.tools;
+function getRequestedUnresolvedBooleanToolNames(input: {
+  agent: Agent;
+  availableToolNames?: string[];
+}): string[] {
+  const availableToolNames = new Set(input.availableToolNames ?? []);
+  const tools = input.agent.config.tools;
   if (!tools || tools === true) {
     return [];
   }
 
   return Object.entries(tools)
     .filter(([toolName, entry]) =>
-      entry === true && VERYFRONT_PLATFORM_REMOTE_TOOL_NAMES.has(toolName)
+      entry === true &&
+      !toolRegistry.get(toolName) &&
+      !availableToolNames.has(toolName) &&
+      !LOCAL_RUNTIME_BOOLEAN_TOOL_NAMES.has(toolName)
     )
     .map(([toolName]) => toolName)
     .sort();
@@ -132,23 +144,64 @@ function hasVeryfrontPlatformRemoteToolSource(
     false;
 }
 
-function withVeryfrontPlatformRemoteTools(input: {
+function createStaticRemoteToolSource(
+  source: RemoteToolSource,
+  toolDefinitions: ToolDefinition[],
+): RemoteToolSource {
+  return {
+    id: source.id,
+    listTools: async () => toolDefinitions,
+    executeTool: (toolName, args, context) => source.executeTool(toolName, args, context),
+  };
+}
+
+async function withVeryfrontPlatformRemoteTools(input: {
   agent: Agent;
   token?: string | null;
-}): Agent {
-  const requestedToolNames = getRequestedVeryfrontPlatformToolNames(input.agent);
+  projectId?: string | null;
+  availableToolNames?: string[];
+}): Promise<Agent> {
+  const requestedToolNames = getRequestedUnresolvedBooleanToolNames({
+    agent: input.agent,
+    availableToolNames: input.availableToolNames,
+  });
   if (requestedToolNames.length === 0 || !input.token) {
     return input.agent;
   }
 
   const apiUrl = getHostEnv("VERYFRONT_API_URL") ?? "https://api.veryfront.com";
+  const platformRemoteToolSource = createRemoteMCPToolSource({
+    id: VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID,
+    endpoint: `${apiUrl}/mcp`,
+    headers: { Authorization: `Bearer ${input.token}` },
+  });
+  let platformToolDefinitions: ToolDefinition[] | null = null;
+  try {
+    platformToolDefinitions = await platformRemoteToolSource.listTools({
+      ...(input.projectId ? { projectId: input.projectId } : {}),
+    });
+  } catch (error) {
+    logger.warn("Unable to discover Veryfront platform MCP tools", {
+      projectId: input.projectId ?? undefined,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  const platformToolNames = platformToolDefinitions
+    ? new Set(platformToolDefinitions.map((tool) => tool.name))
+    : null;
+  const requestedPlatformToolNames = platformToolNames
+    ? requestedToolNames.filter((toolName) => platformToolNames.has(toolName))
+    : requestedToolNames;
+  if (requestedPlatformToolNames.length === 0) {
+    return input.agent;
+  }
+
   const remoteTools = input.agent.config.remoteTools ?? [];
-  const platformRemoteToolSource = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
-    createRemoteMCPToolSource({
-      id: VERYFRONT_PLATFORM_REMOTE_TOOL_SOURCE_ID,
-      endpoint: `${apiUrl}/mcp`,
-      headers: { Authorization: `Bearer ${input.token}` },
-    }),
+  const platformRemoteToolSources = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
+    platformToolDefinitions
+      ? createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions)
+      : platformRemoteToolSource,
   ];
 
   return {
@@ -157,9 +210,9 @@ function withVeryfrontPlatformRemoteTools(input: {
       ...input.agent.config,
       allowedRemoteTools: mergeAllowedRemoteTools(
         input.agent.config.allowedRemoteTools,
-        requestedToolNames,
+        requestedPlatformToolNames,
       ),
-      remoteTools: [...remoteTools, ...platformRemoteToolSource],
+      remoteTools: [...remoteTools, ...platformRemoteToolSources],
     },
   };
 }
@@ -354,9 +407,11 @@ export class AgentStreamHandler extends BaseHandler {
             }
 
             const runtimeInput = toRuntimeRunAgentInput(payload);
-            const runtimeAgent = withVeryfrontPlatformRemoteTools({
+            const runtimeAgent = await withVeryfrontPlatformRemoteTools({
               agent: agent as Agent,
               token: ctx.proxyToken || getHostEnv("VERYFRONT_API_TOKEN") || null,
+              projectId: ctx.projectId ?? null,
+              availableToolNames: runtimeInput.tools.map((tool) => tool.name),
             });
 
             // Load project env vars so source-defined MCP tool headers resolve
