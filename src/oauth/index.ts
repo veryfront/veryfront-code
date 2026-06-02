@@ -72,6 +72,7 @@ export {
 } from "./providers/index.ts";
 
 export { MemoryTokenStore } from "./token-store/index.ts";
+export type { MemoryTokenStoreOptions } from "./token-store/index.ts";
 
 export {
   createOAuthCallbackHandler,
