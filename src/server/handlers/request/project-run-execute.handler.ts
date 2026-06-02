@@ -15,8 +15,12 @@ import type { VeryfrontConfig } from "#veryfront/config";
 import { type DiscoveredTask, findTaskById } from "#veryfront/task/discovery.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
 import type { Logger } from "#veryfront/utils";
+import { agentRegistry } from "#veryfront/agent/composition/index.ts";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
 import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
+import type { WorkflowClientConfig } from "#veryfront/workflow";
+import { toolRegistry } from "#veryfront/tool/registry.ts";
+import { ensureProjectDiscovery } from "./api/project-discovery.ts";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -89,8 +93,9 @@ export interface ProjectRunExecuteHandlerDeps {
     },
   ): Promise<DiscoveredWorkflow | null>;
   createWorkflowClient(
-    config?: { debug?: boolean },
+    config?: WorkflowClientConfig,
   ): WorkflowClientView | Promise<WorkflowClientView>;
+  ensureProjectDiscovery(ctx: HandlerContext): Promise<void>;
   executeKnowledgeIngest(input: {
     request: ProjectRunExecuteRequest;
     ctx: HandlerContext;
@@ -160,11 +165,12 @@ function createExecutionFailure(error: unknown, durationMs: number): ProjectRunE
 }
 
 async function createRuntimeWorkflowClient(
-  config?: { debug?: boolean },
+  config?: WorkflowClientConfig,
 ): Promise<WorkflowClientView> {
+  const clientConfig = withRuntimeStepRegistries(config);
   const redisUrl = getHostEnv("REDIS_URL")?.trim();
   if (!redisUrl) {
-    return Object.assign(createWorkflowClient(config), {
+    return Object.assign(createWorkflowClient(clientConfig), {
       statePersistence: "ephemeral" as const,
     });
   }
@@ -174,9 +180,23 @@ async function createRuntimeWorkflowClient(
     await backend.initialize();
   }
 
-  return Object.assign(createWorkflowClient({ backend, debug: config?.debug }), {
+  return Object.assign(createWorkflowClient({ ...clientConfig, backend, debug: config?.debug }), {
     statePersistence: "durable" as const,
   });
+}
+
+function withRuntimeStepRegistries(config?: WorkflowClientConfig): WorkflowClientConfig {
+  return {
+    ...config,
+    executor: {
+      ...config?.executor,
+      stepExecutor: {
+        ...config?.executor?.stepExecutor,
+        agentRegistry: config?.executor?.stepExecutor?.agentRegistry ?? agentRegistry,
+        toolRegistry: config?.executor?.stepExecutor?.toolRegistry ?? toolRegistry,
+      },
+    },
+  };
 }
 
 async function executeTaskRun(
@@ -256,6 +276,7 @@ async function executeWorkflowRun(
 ): Promise<ProjectRunExecuteResponse> {
   const startedAt = deps.now();
   const workflowId = stripTargetPrefix(request.target, "workflow:");
+  await deps.ensureProjectDiscovery(ctx);
   const workflow = await deps.findWorkflowById(workflowId, {
     projectDir: ctx.projectDir,
     adapter: ctx.adapter,
@@ -272,7 +293,7 @@ async function executeWorkflowRun(
     };
   }
 
-  const client = await deps.createWorkflowClient({ debug: ctx.debug });
+  const client = await deps.createWorkflowClient(withRuntimeStepRegistries({ debug: ctx.debug }));
   try {
     client.register(workflow.definition);
     const handle = await client.start(workflow.id, request.input ?? {}, { runId: request.runId });
@@ -574,6 +595,7 @@ const defaultDeps: ProjectRunExecuteHandlerDeps = {
   runTask,
   findWorkflowById,
   createWorkflowClient: createRuntimeWorkflowClient,
+  ensureProjectDiscovery,
   executeKnowledgeIngest: executeKnowledgeIngestRun,
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),

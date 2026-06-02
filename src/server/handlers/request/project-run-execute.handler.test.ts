@@ -52,6 +52,7 @@ function createDeps(
       logs: "knowledge ingest completed",
       duration_ms: 51,
     }),
+    ensureProjectDiscovery: async () => {},
     sleep: async () => {},
     now: () => 0,
     ...overrides,
@@ -202,6 +203,65 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       input: { release: "v1" },
       options: { runId: "run_workflow_1" },
     });
+  });
+
+  it("discovers project agents and tools before starting workflow agent steps", async () => {
+    const order: string[] = [];
+    let hasAgentRegistry = false;
+    let hasToolRegistry = false;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      ensureProjectDiscovery: async () => {
+        order.push("discover");
+      },
+      createWorkflowClient: (config) => {
+        hasAgentRegistry = typeof config?.executor?.stepExecutor?.agentRegistry?.get ===
+          "function";
+        hasToolRegistry = typeof config?.executor?.stepExecutor?.toolRegistry?.get ===
+          "function";
+        order.push("create-client");
+        return {
+          register: () => {},
+          start: async (
+            _workflowId: string,
+            _input: unknown,
+            options?: { runId?: string },
+          ) => {
+            order.push("start");
+            return { runId: options?.runId ?? "workflow-run" };
+          },
+          getRun: async () => ({
+            status: "completed",
+            output: { agent: "ok" },
+          }),
+          destroy: async () => {},
+        };
+      },
+    }));
+    const body = {
+      runId: "run_workflow_agent_1",
+      kind: "workflow",
+      target: "workflow:publish",
+      projectId: "proj-1",
+      input: { release: "v1" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_workflow_agent_1/execute",
+      body,
+    );
+
+    const result = await handler.handle(request, createCtx(publicKeyPem));
+
+    assertExists(result.response);
+    assertEquals(result.response.status, 200);
+    assertEquals(await result.response.json(), {
+      success: true,
+      result: { agent: "ok" },
+      duration_ms: 0,
+      logs: null,
+    });
+    assertEquals(hasAgentRegistry, true);
+    assertEquals(hasToolRegistry, true);
+    assertEquals(order, ["discover", "create-client", "start"]);
   });
 
   it("waits for async workflow finalization before destroying the workflow client", async () => {
