@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { isSensitiveKey, REDACTED, redactSensitive } from "./redact.ts";
+import {
+  isSensitiveKey,
+  REDACTED,
+  redactSensitive,
+  sanitizeSerializedError,
+  sanitizeUrlCredentials,
+} from "./redact.ts";
 
 describe("logger/redact", () => {
   describe("isSensitiveKey", () => {
@@ -30,6 +36,15 @@ describe("logger/redact", () => {
           "Cookie",
           "bearer",
           "connectionString",
+          // Extended deny-list (#1989).
+          "signature",
+          "x-csrf-token",
+          "xsrfToken",
+          "sessionId",
+          "otp",
+          "mfaCode",
+          "pin",
+          "salt",
         ]
       ) {
         assertEquals(isSensitiveKey(key), true, `expected ${key} to be sensitive`);
@@ -150,6 +165,74 @@ describe("logger/redact", () => {
       for (let i = 0; i < 20; i++) node = { child: node };
       const serialized = JSON.stringify(redactSensitive(node));
       assertEquals(serialized.includes("deep-secret"), false);
+    });
+
+    it("redacts secrets smuggled through a toJSON method (CODEX P2)", () => {
+      // `JSON.stringify` invokes toJSON, so a key-based pass over the object's
+      // own properties would miss the credential the serializer actually emits.
+      const config = { toJSON: () => ({ apiKey: "sk-secret", name: "app" }) };
+      const result = redactSensitive({ config });
+      const serialized = JSON.stringify(result);
+      assertEquals(serialized.includes("sk-secret"), false);
+      // Non-sensitive sibling from the toJSON output survives.
+      assertEquals(serialized.includes("app"), true);
+    });
+
+    it("redacts a nested toJSON returning an array of credential bags", () => {
+      const obj = { toJSON: () => [{ token: "t-1" }, { keep: 2 }] };
+      const serialized = JSON.stringify(redactSensitive({ obj }));
+      assertEquals(serialized.includes("t-1"), false);
+      assertEquals(serialized.includes("2"), true);
+    });
+  });
+
+  describe("sanitizeUrlCredentials", () => {
+    it("masks URL userinfo passwords", () => {
+      assertEquals(
+        sanitizeUrlCredentials("postgres://user:s3cret@db.host:5432/app"),
+        `postgres://user:${REDACTED}@db.host:5432/app`,
+      );
+    });
+
+    it("masks bare-token userinfo (no colon)", () => {
+      assertEquals(
+        sanitizeUrlCredentials("https://t0ken@api.example.com/path"),
+        `https://${REDACTED}@api.example.com/path`,
+      );
+    });
+
+    it("masks sensitive query params and keeps benign ones", () => {
+      const out = sanitizeUrlCredentials(
+        "https://api.example.com/cb?code=abc123&access_token=xyz&page=2",
+      );
+      assertEquals(out.includes("abc123"), false);
+      assertEquals(out.includes("xyz"), false);
+      assertEquals(out.includes("page=2"), true);
+      assertEquals(
+        out,
+        `https://api.example.com/cb?code=${REDACTED}&access_token=${REDACTED}&page=2`,
+      );
+    });
+
+    it("leaves non-URL strings untouched", () => {
+      assertEquals(sanitizeUrlCredentials("just a plain message"), "just a plain message");
+    });
+  });
+
+  describe("sanitizeSerializedError", () => {
+    it("scrubs credentials from message and stack", () => {
+      const sanitized = sanitizeSerializedError({
+        name: "Error",
+        message: "connect failed: postgres://u:p4ss@db/app",
+        stack: "Error: token leak https://x.io?api_key=SECRET\n  at f",
+      });
+      assertEquals(sanitized.message.includes("p4ss"), false);
+      assertEquals(sanitized.stack?.includes("SECRET"), false);
+      assertEquals(sanitized.name, "Error");
+    });
+
+    it("returns undefined unchanged", () => {
+      assertEquals(sanitizeSerializedError(undefined), undefined);
     });
   });
 });

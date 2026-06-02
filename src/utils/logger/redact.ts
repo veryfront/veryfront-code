@@ -38,6 +38,7 @@ const SENSITIVE_KEY_PATTERNS = [
   "pwd",
   "passphrase",
   "secret",
+  "clientsecret",
   "token",
   "apikey",
   "accesskey",
@@ -48,6 +49,15 @@ const SENSITIVE_KEY_PATTERNS = [
   "bearer",
   "jwt",
   "connectionstring",
+  "signature",
+  "sessionid",
+  "sid",
+  "otp",
+  "mfa",
+  "pin",
+  "salt",
+  "xsrf",
+  "csrf",
 ] as const;
 
 /** Stop traversing past this depth to keep the pass cheap and stack-safe. */
@@ -67,14 +77,16 @@ export function isSensitiveKey(key: string): boolean {
 }
 
 /**
- * A value whose own enumerable keys we can safely rewrite. {@link isRecord}
- * covers any non-null, non-array object — including class instances, whose
- * enumerable fields `JSON.stringify` *would* serialize, so we must traverse
- * them to catch secrets. Objects that define their own `toJSON` (Date, URL,
- * …) serialize to a scalar and are left intact.
+ * A non-null, non-array object. {@link isRecord} covers class instances too,
+ * whose enumerable fields `JSON.stringify` *would* serialize, so we must
+ * traverse them to catch secrets.
  */
 function isTraversableRecord(value: unknown): value is Record<string, unknown> {
-  return isRecord(value) && typeof (value as { toJSON?: unknown }).toJSON !== "function";
+  return isRecord(value);
+}
+
+function hasToJson(value: object): value is { toJSON: () => unknown } {
+  return typeof (value as { toJSON?: unknown }).toJSON === "function";
 }
 
 function redactValue(value: unknown, depth: number, seen: Set<object>): unknown {
@@ -83,6 +95,34 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
     seen.add(value);
     try {
       return value.map((item) => redactValue(item, depth + 1, seen));
+    } finally {
+      seen.delete(value);
+    }
+  }
+
+  // Objects defining `toJSON` (Date, URL, custom serializers) are serialized
+  // by `JSON.stringify` via the *return value* of `toJSON`, not their own
+  // enumerable keys. A key-based pass over the object's own properties would
+  // therefore miss credentials smuggled through `toJSON`, e.g.
+  // `{ toJSON: () => ({ apiKey: "sk-..." }) }` (CODEX P2). When `toJSON`
+  // returns a non-scalar (an object/array that could carry credential keys),
+  // redact *that* — the thing actually emitted. When it returns a scalar
+  // (Date/URL → ISO string), the original object is left intact, preserving
+  // prior behavior and identity.
+  if (isRecord(value) && hasToJson(value)) {
+    if (depth >= MAX_DEPTH || seen.has(value)) return REDACTED;
+    seen.add(value);
+    try {
+      const serialized = value.toJSON();
+      if (isRecord(serialized) || Array.isArray(serialized)) {
+        return redactValue(serialized, depth + 1, seen);
+      }
+      // Scalar result (string/number/…): the object serializes safely as-is.
+      return value;
+    } catch {
+      // A throwing toJSON must never let the raw object (whose own keys we
+      // skipped) through: fail closed.
+      return REDACTED;
     } finally {
       seen.delete(value);
     }
@@ -120,4 +160,90 @@ function redactValue(value: unknown, depth: number, seen: Set<object>): unknown 
  */
 export function redactSensitive<T>(context: T): T {
   return redactValue(context, 0, new Set<object>()) as T;
+}
+
+/**
+ * Query-string parameter names that commonly carry credentials in URLs.
+ * Matched case-insensitively against the parameter name.
+ */
+const SENSITIVE_URL_PARAMS = [
+  "access_token",
+  "accesstoken",
+  "refresh_token",
+  "api_key",
+  "apikey",
+  "code",
+  "token",
+  "secret",
+  "client_secret",
+  "password",
+  "passwd",
+  "pwd",
+  "state",
+  "sig",
+  "signature",
+  "auth",
+] as const;
+
+const URL_USERINFO_RE = /(\b[a-z][a-z0-9+.-]*:\/\/)([^/?#@\s]+)@/gi;
+
+/**
+ * Strip credentials from URL-shaped strings so they can be safely emitted in
+ * free-form text (error messages, stacks, lifted `request_url` fields). Unlike
+ * {@link redactSensitive}, which is key-based, this scrubs secrets embedded in
+ * the *value* itself:
+ *
+ * - URL userinfo: `http://user:pass@host` → `http://user:[REDACTED]@host`
+ * - sensitive query params: `?access_token=abc` → `?access_token=[REDACTED]`
+ *
+ * It is intentionally tolerant: it operates on any string (a DSN, a Mongo URI,
+ * an axios error message containing a URL) via regex rather than requiring a
+ * parseable URL, so malformed or partial URLs in error text are still scrubbed.
+ * Non-URL strings pass through unchanged.
+ */
+export function sanitizeUrlCredentials(input: string): string {
+  if (typeof input !== "string" || input.length === 0) return input;
+
+  // 1) userinfo: scheme://user:pass@  → mask the password (and any bare creds).
+  let out = input.replace(URL_USERINFO_RE, (_match, scheme: string, userinfo: string) => {
+    const colon = userinfo.indexOf(":");
+    if (colon === -1) {
+      // `scheme://token@host` — the whole userinfo is credential-like.
+      return `${scheme}${REDACTED}@`;
+    }
+    const user = userinfo.slice(0, colon);
+    return `${scheme}${user}:${REDACTED}@`;
+  });
+
+  // 2) sensitive query/fragment params: `key=value` → `key=[REDACTED]`.
+  // Match `?key=`, `&key=`, `;key=` separators and stop at the next delimiter.
+  out = out.replace(
+    /([?&;])([a-z0-9_.\-]+)=([^&#;\s]*)/gi,
+    (match, sep: string, key: string, _val: string) => {
+      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const sensitive = SENSITIVE_URL_PARAMS.some((p) =>
+        normalized === p.replace(/[^a-z0-9]/g, "")
+      );
+      return sensitive ? `${sep}${key}=${REDACTED}` : match;
+    },
+  );
+
+  return out;
+}
+
+/**
+ * Apply {@link sanitizeUrlCredentials} to the `message` and `stack` of a
+ * serialized-error-shaped object, returning a new object. Used by the logger's
+ * JSON and text paths so errors carrying DSNs, Mongo URIs, or
+ * `?access_token=`-bearing URLs do not leak credentials (the serialized error
+ * bypasses the key-based redactor). Returns the input unchanged when falsy.
+ */
+export function sanitizeSerializedError<
+  T extends { message?: unknown; stack?: unknown } | undefined,
+>(error: T): T {
+  if (!error) return error;
+  const out: { message?: unknown; stack?: unknown } = { ...error };
+  if (typeof out.message === "string") out.message = sanitizeUrlCredentials(out.message);
+  if (typeof out.stack === "string") out.stack = sanitizeUrlCredentials(out.stack);
+  return out as T;
 }

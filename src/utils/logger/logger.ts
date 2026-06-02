@@ -12,7 +12,7 @@ import {
   type SerializedError,
   serializeError,
 } from "./core.ts";
-import { redactSensitive } from "./redact.ts";
+import { redactSensitive, sanitizeSerializedError, sanitizeUrlCredentials } from "./redact.ts";
 
 export enum LogLevel {
   DEBUG = 0,
@@ -314,8 +314,16 @@ class ConsoleLogger implements Logger {
     extractToEntryField(entry, mergedContext, "trace_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "span_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "project_slug", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "request_url", (v) => String(v));
-    extractToEntryField(entry, mergedContext, "domain", (v) => String(v));
+    // request_url / domain are URL-shaped and lifted out of mergedContext
+    // *before* redactSensitive runs, so they bypass the key-based redactor.
+    // Scrub embedded credentials (userinfo, ?access_token=, …) here (#1989).
+    extractToEntryField(
+      entry,
+      mergedContext,
+      "request_url",
+      (v) => sanitizeUrlCredentials(String(v)),
+    );
+    extractToEntryField(entry, mergedContext, "domain", (v) => sanitizeUrlCredentials(String(v)));
     extractToEntryField(entry, mergedContext, "project_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "release_id", (v) => String(v));
     extractToEntryField(entry, mergedContext, "branch_id", (v) => String(v));
@@ -349,7 +357,10 @@ class ConsoleLogger implements Logger {
     // serialization (the deliberate top-level fields above are already
     // extracted out of mergedContext, so they are unaffected).
     if (Object.keys(mergedContext).length > 0) entry.context = redactSensitive(mergedContext);
-    if (error) entry.error = error;
+    // The serialized error (name/message/stack) bypasses the key-based
+    // redactor; scrub credentials embedded in its message/stack (DSNs, Mongo
+    // URIs, ?access_token= URLs, userinfo) before emission (#1989).
+    if (error) entry.error = sanitizeSerializedError(error);
 
     return JSON.stringify(entry);
   }
@@ -365,7 +376,11 @@ class ConsoleLogger implements Logger {
     const componentTag = this.componentName
       ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
       : "";
-    const contextText = formatContextText(redactSensitive(mergedContext), error, enableColor);
+    const contextText = formatContextText(
+      redactSensitive(mergedContext),
+      sanitizeSerializedError(error),
+      enableColor,
+    );
 
     return `${timestamp}  ${tag} ${glyph}${componentTag} ${message}${contextText}`;
   }
