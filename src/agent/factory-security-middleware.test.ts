@@ -126,6 +126,104 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(result.text, "It is sunny.");
   });
 
+  it("enforces the default 100k input character limit", async () => {
+    const middleware = resolveSecurityMiddleware({});
+    const securityFn = middleware[0]!;
+
+    const context: AgentContext = {
+      agentId: "test",
+      model: "test/model",
+      input: "x".repeat(100_001),
+      data: {},
+      platform: "deno",
+    };
+
+    let error: Error | undefined;
+    try {
+      await securityFn(context, async () => createAgentResponse({ text: "ok" }));
+    } catch (err) {
+      error = err as Error;
+    }
+    assertEquals(error?.message.includes("maximum length of 100000"), true);
+  });
+
+  it("honours per-agent inputMaxCharacterLimit override", async () => {
+    const middleware = resolveSecurityMiddleware({ inputMaxCharacterLimit: 200_000 });
+    const securityFn = middleware[0]!;
+
+    const context: AgentContext = {
+      agentId: "test",
+      model: "test/model",
+      input: "x".repeat(150_000),
+      data: {},
+      platform: "deno",
+    };
+
+    const result = await securityFn(
+      context,
+      async () => createAgentResponse({ text: "ok" }),
+    );
+    assertEquals(result.text, "ok");
+  });
+
+  it("honours global security.agent.inputMaxCharacterLimit from runtime config", async () => {
+    const globalAny = globalThis as Record<string, unknown>;
+    const original = globalAny.__vfGetRuntimeConfig;
+    globalAny.__vfGetRuntimeConfig = () => ({
+      security: { agent: { inputMaxCharacterLimit: 25_000 } },
+    });
+    try {
+      const middleware = resolveSecurityMiddleware({});
+      const securityFn = middleware[0]!;
+
+      const context: AgentContext = {
+        agentId: "test",
+        model: "test/model",
+        input: "x".repeat(25_001),
+        data: {},
+        platform: "deno",
+      };
+
+      let error: Error | undefined;
+      try {
+        await securityFn(context, async () => createAgentResponse({ text: "ok" }));
+      } catch (err) {
+        error = err as Error;
+      }
+      assertEquals(error?.message.includes("maximum length of 25000"), true);
+    } finally {
+      globalAny.__vfGetRuntimeConfig = original;
+    }
+  });
+
+  it("per-agent inputMaxCharacterLimit wins over the global config value", async () => {
+    const globalAny = globalThis as Record<string, unknown>;
+    const original = globalAny.__vfGetRuntimeConfig;
+    globalAny.__vfGetRuntimeConfig = () => ({
+      security: { agent: { inputMaxCharacterLimit: 25_000 } },
+    });
+    try {
+      const middleware = resolveSecurityMiddleware({ inputMaxCharacterLimit: 150_000 });
+      const securityFn = middleware[0]!;
+
+      const context: AgentContext = {
+        agentId: "test",
+        model: "test/model",
+        input: "x".repeat(100_000),
+        data: {},
+        platform: "deno",
+      };
+
+      const result = await securityFn(
+        context,
+        async () => createAgentResponse({ text: "ok" }),
+      );
+      assertEquals(result.text, "ok");
+    } finally {
+      globalAny.__vfGetRuntimeConfig = original;
+    }
+  });
+
   it("security middleware filters PII from output", async () => {
     const middleware = resolveSecurityMiddleware({});
     const securityFn = middleware[0]!;

@@ -275,17 +275,40 @@ if (!("__vfAgentFactory" in globalThis)) {
 }
 
 /**
+ * Default maximum agent input character length used by the built-in
+ * security middleware when nothing more specific is configured.
+ *
+ * Override priority (highest first):
+ *   1. Per-agent `inputMaxCharacterLimit`
+ *   2. Global `security.agent.inputMaxCharacterLimit` in veryfront.config.ts
+ *   3. This default
+ */
+export const DEFAULT_AGENT_INPUT_MAX_CHARACTER_LIMIT = 100_000;
+
+function resolveInputMaxCharacterLimit(
+  config: Pick<AgentConfig, "inputMaxCharacterLimit">,
+): number {
+  if (config.inputMaxCharacterLimit != null) return config.inputMaxCharacterLimit;
+  const getter = (globalThis as Record<string, unknown>).__vfGetRuntimeConfig as
+    | (() => { security?: { agent?: { inputMaxCharacterLimit?: number } } })
+    | undefined;
+  const configured = getter?.()?.security?.agent?.inputMaxCharacterLimit;
+  if (configured != null) return configured;
+  return DEFAULT_AGENT_INPUT_MAX_CHARACTER_LIMIT;
+}
+
+/**
  * Resolve the middleware array for an agent, prepending security middleware
  * unless explicitly opted out with `security: false`.
  */
 export function resolveSecurityMiddleware(
-  config: Pick<AgentConfig, "security" | "middleware">,
+  config: Pick<AgentConfig, "security" | "middleware" | "inputMaxCharacterLimit">,
 ): AgentMiddleware[] {
   if (config.security === false) return config.middleware ?? [];
   return [
     securityMiddleware({
       input: {
-        maxLength: 50_000,
+        maxLength: resolveInputMaxCharacterLimit(config),
         blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection,
       },
       output: {
