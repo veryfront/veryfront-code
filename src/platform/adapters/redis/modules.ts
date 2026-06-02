@@ -19,25 +19,17 @@ export function getRedisModule(): Promise<{
     async () => {
       try {
         if (isDeno) {
-          const denoRedisUrl = "https://deno.land/x/redis@v0.32.1/mod.ts";
-          // @ts-ignore - Deno global
-          DenoRedis = await import(denoRedisUrl);
+          NodeRedis = (await import("npm:redis@5.11.0")) as unknown as NodeRedisModule;
         } else {
           NodeRedis = (await import("redis")) as unknown as NodeRedisModule;
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-
-        if (isDeno) {
-          throw INITIALIZATION_ERROR.create({
-            detail: `Failed to load Deno Redis module. Error: ${message}`,
-            cause: error instanceof Error ? error : undefined,
-          });
-        }
+        const packageName = isDeno ? "npm:redis@5.11.0" : "redis";
 
         throw INITIALIZATION_ERROR.create({
           detail:
-            `Failed to load 'redis' package. Please install it with: npm install redis\nError: ${message}`,
+            `Failed to load '${packageName}' package. Please install it with: npm install redis\nError: ${message}`,
           cause: error instanceof Error ? error : undefined,
         });
       }

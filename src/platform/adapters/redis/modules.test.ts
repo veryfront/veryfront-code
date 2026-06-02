@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { clearModuleCache, getRedisModule } from "./modules.ts";
 
 describe("platform/adapters/redis/modules", () => {
@@ -41,6 +42,17 @@ describe("platform/adapters/redis/modules", () => {
       // Exactly one should be loaded: DenoRedis on Deno, NodeRedis on Node/Bun
       const hasExactlyOne = (result.DenoRedis !== null) !== (result.NodeRedis !== null);
       assertEquals(hasExactlyOne, true);
+    });
+
+    it("should use the pinned npm Redis client in Deno", async () => {
+      if (!isDeno) return;
+
+      clearModuleCache();
+      const result = await getRedisModule();
+
+      assertEquals(result.DenoRedis, null);
+      assertExists(result.NodeRedis);
+      assertEquals(typeof result.NodeRedis.createClient, "function");
     });
   });
 
