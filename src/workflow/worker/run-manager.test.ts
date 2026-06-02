@@ -104,7 +104,8 @@ describe("workflow/worker/run-manager", () => {
   });
 
   it("start() throws if already running", async () => {
-    const { manager } = makeManager();
+    const executor = new FakeRunExecutor();
+    const { manager } = makeManager(executor);
     track(manager);
     await manager.start();
 
@@ -115,13 +116,15 @@ describe("workflow/worker/run-manager", () => {
       threw = true;
     }
     assertEquals(threw, true);
-    // Executor still initialized exactly once.
     assertEquals(manager.getStats().status, "running");
+    // The rejected second start() must not re-initialize the executor.
+    assertEquals(executor.initializeCalls, 1);
   });
 
   it("stop() transitions running → stopped and destroys the executor", async () => {
     const executor = new FakeRunExecutor();
     const { manager } = makeManager(executor);
+    track(manager);
     await manager.start();
     await manager.stop();
 
