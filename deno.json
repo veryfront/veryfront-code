@@ -41,6 +41,7 @@
     "./fonts": "./src/react/fonts/index.ts",
     "./chat": "./src/chat/index.ts",
     "./chat/ag-ui": "./src/chat/ag-ui.ts",
+    "./chat/compat": "./src/chat/compat.ts",
     "./chat/protocol": "./src/chat/protocol.ts",
     "./chat/types": "./src/chat/types.ts",
     "./markdown": "./src/markdown/index.ts",

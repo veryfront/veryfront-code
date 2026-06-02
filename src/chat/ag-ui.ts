@@ -15,7 +15,7 @@ import {
 import type { ChatStreamEvent } from "./protocol.ts";
 import type { ChatUiMessage, ChatUiMessagePart } from "./types.ts";
 import { tryResolve } from "#veryfront/extensions/contracts.ts";
-import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 
 type JsonPatchOperation = {
@@ -141,11 +141,6 @@ export const getAgUiRunFinishedMetadataSchema = defineSchema((v) =>
   })
 );
 
-/** Schema for AG-UI run finished metadata.
- * @deprecated Use getAgUiRunFinishedMetadataSchema()
- */
-export const AgUiRunFinishedMetadataSchema = lazySchema(getAgUiRunFinishedMetadataSchema);
-
 /** Zod schema for get AG-UI snapshot tool call. */
 export const getAgUiSnapshotToolCallSchema = defineSchema((v) =>
   v.object({
@@ -158,11 +153,6 @@ export const getAgUiSnapshotToolCallSchema = defineSchema((v) =>
     encryptedValue: v.string().optional(),
   })
 );
-
-/** Schema for AG-UI snapshot tool call.
- * @deprecated Use getAgUiSnapshotToolCallSchema()
- */
-export const AgUiSnapshotToolCallSchema = lazySchema(getAgUiSnapshotToolCallSchema);
 
 const getAgUiUserInputContentSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
@@ -217,18 +207,8 @@ export const getAgUiSnapshotMessageSchema = defineSchema((v) =>
   ])
 );
 
-/** Schema for AG-UI snapshot message.
- * @deprecated Use getAgUiSnapshotMessageSchema()
- */
-export const AgUiSnapshotMessageSchema = lazySchema(getAgUiSnapshotMessageSchema);
-
 /** Zod schema for get AG-UI wire event name. */
 export const getAgUiWireEventNameSchema = defineSchema((v) => v.enum(AG_UI_WIRE_EVENT_NAMES));
-
-/** Schema for AG-UI wire event name.
- * @deprecated Use getAgUiWireEventNameSchema()
- */
-export const AgUiWireEventNameSchema = lazySchema(getAgUiWireEventNameSchema);
 
 function parseRuntimeToolInput(rawArguments: string): unknown {
   try {
@@ -543,11 +523,6 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
     }),
   ])
 );
-
-/** Schema for AG-UI wire event.
- * @deprecated Use getAgUiWireEventSchema()
- */
-export const AgUiWireEventSchema = lazySchema(getAgUiWireEventSchema);
 
 /** Public API contract for AG-UI run finished metadata. */
 export type AgUiRunFinishedMetadata = InferSchema<

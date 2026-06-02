@@ -468,12 +468,6 @@ export function sanitizeProviderModelMessages(
   return result;
 }
 
-/**
- * @deprecated Use sanitizeProviderModelMessages for provider-facing model payloads.
- */
-/** Shared sanitize model messages value. */
-export const sanitizeModelMessages = sanitizeProviderModelMessages;
-
 function filterValidMessages(messages: ProviderModelMessage[]): ProviderModelMessage[] {
   return messages.filter((message) => {
     const content = message.content;
@@ -1101,9 +1095,3 @@ export function enforceTokenBudget(
 
   return enforceTokenBudgetWithTurnCompression(messages, budget, overhead);
 }
-
-/**
- * @deprecated Use prepareProviderModelMessagesFromUiMessages for provider-facing model payloads.
- */
-/** Shared prepare model messages from UI messages value. */
-export const prepareModelMessagesFromUiMessages = prepareProviderModelMessagesFromUiMessages;
