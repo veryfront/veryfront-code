@@ -145,13 +145,19 @@ describe("workflow/worker/run-manager", () => {
     assertEquals(manager.getActiveExecutions(), []);
   });
 
-  it("getStats returns a snapshot (not a live reference)", () => {
+  it("getStats returns a defensive snapshot, not a live reference", () => {
     const { manager } = makeManager();
     track(manager);
     const a = manager.getStats();
     const b = manager.getStats();
     assertEquals(a === b, false);
     assertEquals(a, b);
+    // Mutating a returned snapshot must not corrupt the manager's internal state.
+    a.pollCount = 999;
+    a.status = "stopped";
+    const fresh = manager.getStats();
+    assertEquals(fresh.pollCount, 0);
+    assertEquals(fresh.status, "idle");
   });
 
   it("createWorkflowRunManager builds a WorkflowRunManager", () => {
