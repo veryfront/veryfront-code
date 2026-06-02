@@ -275,17 +275,44 @@ if (!("__vfAgentFactory" in globalThis)) {
 }
 
 /**
+ * Default maximum agent input character length used by the built-in
+ * security middleware when the agent does not set `inputMaxCharacterLimit`.
+ */
+export const DEFAULT_AGENT_INPUT_MAX_CHARACTER_LIMIT = 100_000;
+
+/**
+ * Resolve `inputMaxCharacterLimit` to a usable positive integer. Guards
+ * against `NaN`, `Infinity`, and non-positive values that would otherwise
+ * silently disable the input length check inside `InputValidator`
+ * (it compares with `input.length > maxLength`, which is always false for
+ * `NaN`/`Infinity`). Invalid overrides fall back to the default and emit a
+ * warning so misconfiguration is visible.
+ */
+function resolveInputMaxCharacterLimit(override: number | undefined): number {
+  if (override == null) return DEFAULT_AGENT_INPUT_MAX_CHARACTER_LIMIT;
+  if (!Number.isFinite(override) || override <= 0) {
+    agentLogger.warn(
+      `Ignoring invalid inputMaxCharacterLimit=${String(override)}; ` +
+        `falling back to default ${DEFAULT_AGENT_INPUT_MAX_CHARACTER_LIMIT}. ` +
+        `Expected a finite positive number.`,
+    );
+    return DEFAULT_AGENT_INPUT_MAX_CHARACTER_LIMIT;
+  }
+  return override;
+}
+
+/**
  * Resolve the middleware array for an agent, prepending security middleware
  * unless explicitly opted out with `security: false`.
  */
 export function resolveSecurityMiddleware(
-  config: Pick<AgentConfig, "security" | "middleware">,
+  config: Pick<AgentConfig, "security" | "middleware" | "inputMaxCharacterLimit">,
 ): AgentMiddleware[] {
   if (config.security === false) return config.middleware ?? [];
   return [
     securityMiddleware({
       input: {
-        maxLength: 50_000,
+        maxLength: resolveInputMaxCharacterLimit(config.inputMaxCharacterLimit),
         blockedPatterns: COMMON_BLOCKED_PATTERNS.promptInjection,
       },
       output: {
