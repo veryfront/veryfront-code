@@ -10,13 +10,12 @@ import {
   readInternalAgentRequestBody,
 } from "#veryfront/internal-agents/request-body.ts";
 import type { RuntimeAdapter } from "#veryfront/platform";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { type DiscoveredTask, findTaskById } from "#veryfront/task/discovery.ts";
 import { runTask, type RunTaskOptions, type TaskRunResult } from "#veryfront/task/runner.ts";
 import type { Logger } from "#veryfront/utils";
 import { type DiscoveredWorkflow, findWorkflowById } from "#veryfront/workflow/discovery";
-import { createWorkflowClient, RedisBackend } from "#veryfront/workflow";
+import { createWorkflowClient } from "#veryfront/workflow";
 import type { HandlerContext, HandlerMetadata, HandlerPriority, HandlerResult } from "../types.ts";
 import { BaseHandler } from "../response/base.ts";
 import { PRIORITY_MEDIUM_API } from "#veryfront/utils/constants/index.ts";
@@ -52,7 +51,7 @@ interface WorkflowRunView {
 }
 
 interface WorkflowClientView {
-  readonly statePersistence?: "durable" | "ephemeral";
+  readonly statePersistence?: "control-plane" | "durable" | "ephemeral";
   register(workflow: unknown): void;
   start(
     workflowId: string,
@@ -154,23 +153,11 @@ function createExecutionFailure(error: unknown, durationMs: number): ProjectRunE
   };
 }
 
-async function createRuntimeWorkflowClient(
+export async function createRuntimeWorkflowClient(
   config?: { debug?: boolean },
 ): Promise<WorkflowClientView> {
-  const redisUrl = getHostEnv("REDIS_URL")?.trim();
-  if (!redisUrl) {
-    return Object.assign(createWorkflowClient(config), {
-      statePersistence: "ephemeral" as const,
-    });
-  }
-
-  const backend = new RedisBackend({ url: redisUrl, debug: config?.debug });
-  if (backend.initialize) {
-    await backend.initialize();
-  }
-
-  return Object.assign(createWorkflowClient({ backend, debug: config?.debug }), {
-    statePersistence: "durable" as const,
+  return Object.assign(createWorkflowClient(config), {
+    statePersistence: "control-plane" as const,
   });
 }
 
@@ -275,7 +262,10 @@ async function executeWorkflowRun(
     const durationMs = Math.max(0, deps.now() - startedAt);
 
     if (run.status === "waiting") {
-      if (client.statePersistence !== "durable") {
+      if (
+        client.statePersistence !== "durable" &&
+        client.statePersistence !== "control-plane"
+      ) {
         return {
           success: false,
           error: WORKFLOW_PERSISTENCE_REQUIRED_ERROR,

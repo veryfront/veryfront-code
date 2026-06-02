@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
+  createRuntimeWorkflowClient,
   ProjectRunExecuteHandler,
   type ProjectRunExecuteHandlerDeps,
 } from "./project-run-execute.handler.ts";
@@ -82,6 +83,25 @@ async function signedRequest(
 }
 
 describe("server/handlers/request/project-run-execute.handler", () => {
+  it("creates control-plane workflow clients without connecting to Redis", async () => {
+    const previousRedisUrl = Deno.env.get("REDIS_URL");
+    Deno.env.set("REDIS_URL", "redis://127.0.0.1:1");
+    try {
+      const client = await createRuntimeWorkflowClient({ debug: false });
+      try {
+        assertEquals(client.statePersistence, "control-plane");
+      } finally {
+        await client.destroy();
+      }
+    } finally {
+      if (previousRedisUrl === undefined) {
+        Deno.env.delete("REDIS_URL");
+      } else {
+        Deno.env.set("REDIS_URL", previousRedisUrl);
+      }
+    }
+  });
+
   it("runs a discovered task and returns canonical runtime execution output", async () => {
     let receivedConfig: Record<string, unknown> | undefined;
     const handler = new ProjectRunExecuteHandler(createDeps({
