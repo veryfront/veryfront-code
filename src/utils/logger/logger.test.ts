@@ -258,6 +258,37 @@ describe("logger", () => {
       }
     });
 
+    it("redacts credential-like context keys before serialization (#1989)", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Authenticating", {
+            userId: "u-1",
+            password: "hunter2",
+            authorization: "Bearer abc",
+            headers: { cookie: "session=xyz", accept: "json" },
+          });
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          const context = entry.context as Record<string, unknown>;
+          assertEquals(context.password, "[REDACTED]");
+          assertEquals(context.authorization, "[REDACTED]");
+          assertEquals((context.headers as Record<string, unknown>).cookie, "[REDACTED]");
+          // Non-sensitive fields survive.
+          assertEquals((context.headers as Record<string, unknown>).accept, "json");
+          // userId is a deliberate extracted field, not a secret.
+          assertEquals(entry.userId, "u-1");
+          // The raw secret must not appear anywhere in the serialized line.
+          assertEquals(line.includes("hunter2"), false);
+          assertEquals(line.includes("session=xyz"), false);
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("should surface run user log routing fields as top-level JSON fields", () => {
       const { getOutput, restore } = captureConsoleLog();
 
@@ -315,6 +346,45 @@ describe("logger", () => {
         restore();
       }
     });
+
+    it("scrubs credentials embedded in error message/stack (#1989)", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          const err = new Error("db connect failed: postgres://admin:s3cret@db.host/app");
+          serverLogger.info("DB error", err);
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          assertEquals(line.includes("s3cret"), false);
+          assertEquals(entry.error?.message?.includes("[REDACTED]"), true);
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("scrubs credentials from lifted request_url (#1989)", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Incoming request", {
+            request_url: "https://api.example.com/cb?code=abc123&access_token=xyz&page=2",
+          });
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          assertEquals(line.includes("abc123"), false);
+          assertEquals(line.includes("xyz"), false);
+          assertEquals(entry.request_url?.includes("page=2"), true);
+          assertEquals(entry.request_url?.includes("[REDACTED]"), true);
+        });
+      } finally {
+        restore();
+      }
+    });
   });
 
   describe("text output format", () => {
@@ -336,6 +406,29 @@ describe("logger", () => {
         assertEquals(output.includes("path=/tmp/file.ts"), true);
         assertEquals(output.includes("err=Error: boom"), true);
         assertEquals(output.includes("error={}"), false);
+      } finally {
+        restore();
+        Deno.env.delete("LOG_FORMAT");
+        Deno.env.delete("NO_COLOR");
+        __resetLoggerConfigForTests();
+      }
+    });
+
+    it("scrubs credentials from rendered error message (#1989)", () => {
+      Deno.env.set("LOG_FORMAT", "text");
+      Deno.env.set("NO_COLOR", "1");
+      __resetLoggerConfigForTests();
+
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        serverLogger.info("DB error", {
+          error: new Error("connect failed: mongodb://root:p4ss@cluster/db"),
+        });
+
+        const output = getOutput();
+        assertEquals(output.includes("p4ss"), false);
+        assertEquals(output.includes("[REDACTED]"), true);
       } finally {
         restore();
         Deno.env.delete("LOG_FORMAT");

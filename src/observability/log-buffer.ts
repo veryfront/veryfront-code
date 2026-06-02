@@ -1,3 +1,5 @@
+import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
+
 /** Public API contract for log level. */
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -40,6 +42,9 @@ export class LogBuffer {
   append(entry: Omit<LogEntry, "id" | "timestamp">): LogEntry {
     const fullEntry: LogEntry = {
       ...entry,
+      // Redact credential-like keys before the entry is buffered, surfaced to
+      // subscribers, or written to disk by the file subscriber (#1989).
+      data: entry.data ? redactSensitive(entry.data) : entry.data,
       id: this.generateId(),
       timestamp: Date.now(),
     };
@@ -193,7 +198,9 @@ export function interceptConsole(buffer: LogBuffer, source = "console"): () => v
         if (typeof a === "string") return a;
 
         try {
-          return JSON.stringify(a);
+          // Redact object args before they are folded into the message string,
+          // where the per-entry data redaction can no longer reach them (#1989).
+          return JSON.stringify(redactSensitive(a));
         } catch (_) {
           /* expected: circular references or non-serializable values */
           return String(a);

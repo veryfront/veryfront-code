@@ -1,7 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { LogBuffer } from "./log-buffer.ts";
+import { interceptConsole, LogBuffer } from "./log-buffer.ts";
 
 describe("observability/log-buffer", () => {
   describe("LogBuffer", () => {
@@ -16,6 +16,37 @@ describe("observability/log-buffer", () => {
       const a = buf.info("a");
       const b = buf.info("b");
       assertEquals(a.id !== b.id, true);
+    });
+
+    it("redacts credential-like keys from entry data (#1989)", () => {
+      const buf = new LogBuffer();
+      const seen: Record<string, unknown>[] = [];
+      buf.subscribe((entry) => {
+        if (entry.data) seen.push(entry.data);
+      });
+
+      const entry = buf.info("request", "server", { userId: "u-1", apiKey: "sk-secret" });
+
+      assertEquals(entry.data?.apiKey, "[REDACTED]");
+      assertEquals(entry.data?.userId, "u-1");
+      // Subscribers (incl. the file writer) only ever see the redacted copy.
+      assertEquals(seen[0].apiKey, "[REDACTED]");
+      assertEquals(JSON.stringify(entry).includes("sk-secret"), false);
+    });
+
+    it("redacts object args captured via interceptConsole (#1989)", () => {
+      const buf = new LogBuffer();
+      const restore = interceptConsole(buf);
+      try {
+        console.error("auth attempt", { apiKey: "sk-secret", userId: "u-1" });
+      } finally {
+        restore();
+      }
+
+      const message = buf.tail(1)[0].message;
+      assertEquals(message.includes("sk-secret"), false);
+      assertEquals(message.includes("[REDACTED]"), true);
+      assertEquals(message.includes("u-1"), true);
     });
 
     it("should support all log levels", () => {
