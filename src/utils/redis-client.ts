@@ -28,6 +28,18 @@ export interface RedisClientOptions {
   username?: string;
 }
 
+/**
+ * Minimal subset of `@redis/client`'s `createClient` options that we actually
+ * pass. Declared locally so we don't depend on the untyped npm surface (the
+ * module is loaded via a dynamic `import()` and is otherwise `any`).
+ */
+interface RedisClientFactoryOptions {
+  url?: string;
+  socket?: { tls?: boolean };
+  password?: string;
+  username?: string;
+}
+
 let sharedClient: RedisClient | null = null;
 let connectionPromise: Promise<RedisClient> | null = null;
 let isConnecting = false;
@@ -67,14 +79,12 @@ export async function getRedisClient(options: RedisClientOptions = {}): Promise<
 }
 
 async function createClient(options: RedisClientOptions): Promise<RedisClient> {
-  // deno-lint-ignore no-explicit-any
-  let createClientFn: ((opts: Record<string, any>) => RedisClient) | undefined;
+  let createClientFn: ((opts: RedisClientFactoryOptions) => RedisClient) | undefined;
 
   try {
     const redisClientModule = "npm:@redis/client@1.5.8";
     const mod = await import(redisClientModule);
-    // deno-lint-ignore no-explicit-any
-    createClientFn = mod.createClient as (opts: Record<string, any>) => RedisClient;
+    createClientFn = mod.createClient as (opts: RedisClientFactoryOptions) => RedisClient;
   } catch (error) {
     logger.debug("Failed to load @redis/client module", { error });
     throw DEPENDENCY_MISSING.create({
@@ -92,8 +102,7 @@ async function createClient(options: RedisClientOptions): Promise<RedisClient> {
     );
   }
 
-  // deno-lint-ignore no-explicit-any
-  const clientOpts: Record<string, any> = { url };
+  const clientOpts: RedisClientFactoryOptions = { url };
   if (useTls) {
     clientOpts.socket = { tls: true };
   }
