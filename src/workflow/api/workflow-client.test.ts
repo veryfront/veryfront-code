@@ -2,11 +2,24 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { VeryfrontError } from "#veryfront/errors";
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
+import type { Tool } from "#veryfront/tool";
 import { createWorkflowClient, WorkflowClient } from "./workflow-client.ts";
 import { MemoryBackend } from "../backends/memory.ts";
 import { workflow } from "../dsl/workflow.ts";
 import { step } from "../dsl/step.ts";
 import { waitForApproval } from "../dsl/wait.ts";
+
+function createMockTool(name: string, output: unknown): Tool {
+  return {
+    id: name,
+    type: "function",
+    description: `Mock tool: ${name}`,
+    inputSchema: defineSchema((v) => v.object({}).passthrough())(),
+    execute: () => Promise.resolve(output),
+  };
+}
 
 describe("WorkflowClient", () => {
   let client: WorkflowClient;
@@ -134,6 +147,40 @@ describe("WorkflowClient", () => {
           Deno.env.set("VERYFRONT_PROJECT_API_URL", originalProjectApiUrl);
         }
       }
+    });
+
+    it("does not expose captured tenant metadata in completed output or context", async () => {
+      const tenantWorkflow = workflow({
+        id: "tenant-output-workflow",
+        steps: [
+          step("tenant-step", {
+            tool: createMockTool("tenant-tool", { result: "ok" }),
+          }),
+        ],
+      });
+
+      client.register(tenantWorkflow);
+
+      const handle = await runWithRequestContext(
+        {
+          projectSlug: "tests-1d0745b0",
+          projectId: "project-1",
+          token: "internal-runtime-token",
+          productionMode: false,
+          branch: "main",
+        },
+        () => client.start("tenant-output-workflow", { topic: "test" }),
+      );
+
+      const output = await handle.result();
+      const run = await backend.getRun(handle.runId);
+
+      assertExists(run);
+      assertEquals(run._tenant?.token, "internal-runtime-token");
+      assertEquals((output as Record<string, unknown>)["_tenant"], undefined);
+      assertEquals((run.output as Record<string, unknown>)["_tenant"], undefined);
+      assertEquals((run.context as Record<string, unknown>)["_tenant"], undefined);
+      assertEquals(run.output, { "tenant-step": { result: "ok" } });
     });
   });
 

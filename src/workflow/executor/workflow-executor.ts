@@ -494,12 +494,13 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<WorkflowRun> {
-    const output = this.determineOutput(context);
+    const publicContext = this.toPublicContext(context);
+    const output = this.determineOutput(publicContext);
 
     await this.config.backend.updateRun(runId, {
       status: "completed",
       output,
-      context,
+      context: publicContext,
       nodeStates,
       completedAt: new Date(),
     });
@@ -516,9 +517,11 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<void> {
+    const publicContext = this.toPublicContext(context);
+
     await this.config.backend.updateRun(runId, {
       status: "failed",
-      context,
+      context: publicContext,
       nodeStates,
       error: {
         message: error.message,
@@ -537,19 +540,29 @@ export class WorkflowExecutor {
     context: WorkflowContext,
     nodeStates: Record<string, NodeState>,
   ): Promise<void> {
+    const publicContext = this.toPublicContext(context);
+
     await this.config.backend.updateRun(runId, {
       status: "waiting",
       currentNodes: [waitingNode],
-      context,
+      context: publicContext,
       nodeStates,
     });
+  }
+
+  /**
+   * Remove execution-only metadata before exposing or persisting workflow context.
+   */
+  private toPublicContext(context: WorkflowContext): WorkflowContext {
+    const { _tenant: _tenant, ...publicContext } = context;
+    return publicContext;
   }
 
   /**
    * Determine workflow output from context
    */
   private determineOutput(context: WorkflowContext): unknown {
-    const { input: _input, ...rest } = context;
+    const { input: _input, _tenant: _tenant, ...rest } = context;
     return rest;
   }
 
