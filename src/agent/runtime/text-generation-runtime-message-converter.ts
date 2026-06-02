@@ -14,6 +14,7 @@ import type {
   TextGenerationRuntimeTextPart,
   TextGenerationRuntimeToolCallPart,
   TextGenerationRuntimeToolMessage,
+  TextGenerationRuntimeToolResultPart,
 } from "./text-generation-runtime-message-types.ts";
 import { buildDataFileAnnotation } from "#veryfront/chat/types.ts";
 import {
@@ -29,6 +30,93 @@ function getStringPartField(part: unknown, key: string): string | undefined {
 
   const value = (part as Record<string, unknown>)[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function getRecordPartField(part: unknown, key: string): Record<string, unknown> | undefined {
+  if (!isRecord(part)) return undefined;
+
+  const value = part[key];
+  return isRecord(value) ? value : undefined;
+}
+
+function hasOwnField(part: Record<string, unknown>, key: string): boolean {
+  return Object.hasOwn(part, key);
+}
+
+function getToolInputRecord(part: Record<string, unknown>): Record<string, unknown> {
+  return getRecordPartField(part, "args") ?? getRecordPartField(part, "input") ?? {};
+}
+
+function getTextGenerationToolCallPart(
+  part: unknown,
+): TextGenerationRuntimeToolCallPart | null {
+  if (!isRecord(part) || typeof part.type !== "string") {
+    return null;
+  }
+
+  if (
+    part.type !== "tool_call" &&
+    part.type !== "tool-call" &&
+    !(part.type.startsWith("tool-") && part.type !== "tool-result")
+  ) {
+    return null;
+  }
+
+  const toolCallId = getStringPartField(part, "toolCallId") ??
+    getStringPartField(part, "tool_call_id") ??
+    getStringPartField(part, "id");
+  const toolName = getStringPartField(part, "toolName") ??
+    getStringPartField(part, "tool_name") ??
+    getStringPartField(part, "name") ??
+    (part.type.startsWith("tool-") && part.type !== "tool-call"
+      ? part.type.replace(/^tool-/, "")
+      : undefined);
+
+  if (!toolCallId || !toolName) {
+    return null;
+  }
+
+  return {
+    type: "tool-call",
+    toolCallId,
+    toolName,
+    input: getToolInputRecord(part),
+  };
+}
+
+function getTextGenerationToolResultPart(
+  part: unknown,
+  toolNamesById: ReadonlyMap<string, string>,
+): TextGenerationRuntimeToolResultPart | null {
+  if (!isRecord(part) || part.type !== "tool-result" && part.type !== "tool_result") {
+    return null;
+  }
+
+  const toolCallId = getStringPartField(part, "toolCallId") ??
+    getStringPartField(part, "tool_call_id");
+  if (!toolCallId) {
+    return null;
+  }
+
+  const value = hasOwnField(part, "result")
+    ? part.result
+    : hasOwnField(part, "output")
+    ? part.output
+    : null;
+
+  return {
+    type: "tool-result",
+    toolCallId,
+    toolName: getStringPartField(part, "toolName") ??
+      getStringPartField(part, "tool_name") ??
+      toolNamesById.get(toolCallId) ??
+      "unknown",
+    output: { type: "json", value },
+  };
 }
 
 function buildAttachmentContextFromParts(parts: Message["parts"]): string {
@@ -138,17 +226,15 @@ export function convertToTextGenerationRuntimeMessage(msg: Message): TextGenerat
           continue;
         }
 
-        // Tool call parts (tool-${name} or tool-call format)
-        if (
-          part.type === "tool-call" ||
-          (part.type.startsWith("tool-") && part.type !== "tool-result")
-        ) {
-          const toolPart = part as ToolCallPart;
+        const toolPart = getTextGenerationToolCallPart(part);
+        if (toolPart) {
           content.push({
             type: "tool-call",
             toolCallId: toolPart.toolCallId,
             toolName: toolPart.toolName,
-            input: getToolArguments(toolPart),
+            input: part.type === "tool_call"
+              ? toolPart.input
+              : getToolArguments(part as ToolCallPart),
           });
         }
       }
@@ -201,9 +287,100 @@ function hasProviderSendableAssistantContent(message: Message): boolean {
         (part as { text: string }).text.length > 0;
     }
 
-    return part.type === "tool-call" ||
-      (part.type.startsWith("tool-") && part.type !== "tool-result");
+    return getTextGenerationToolCallPart(part) !== null;
   });
+}
+
+function convertAssistantMessageToTextGenerationRuntimeMessages(
+  message: Message,
+): TextGenerationRuntimeMessage[] {
+  const assistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
+  const deferredAssistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
+  const toolResults: TextGenerationRuntimeToolMessage["content"] = [];
+  const pendingToolCallIds = new Set<string>();
+  const toolNamesById = new Map<string, string>();
+  const messages: TextGenerationRuntimeMessage[] = [];
+
+  const flushAssistantMessage = (content: TextGenerationRuntimeAssistantMessage["content"]) => {
+    if (content.length === 0) {
+      return;
+    }
+
+    messages.push({ role: "assistant", content: [...content] });
+    content.length = 0;
+  };
+
+  const flushToolMessage = () => {
+    if (toolResults.length === 0) {
+      return;
+    }
+
+    messages.push({ role: "tool", content: [...toolResults] });
+    toolResults.length = 0;
+  };
+
+  const pushAssistantPart = (
+    part: TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart,
+  ) => {
+    if (part.type === "tool-call") {
+      if (deferredAssistantContent.length > 0) {
+        flushAssistantMessage(assistantContent);
+        flushToolMessage();
+        flushAssistantMessage(deferredAssistantContent);
+      }
+
+      assistantContent.push(part);
+      pendingToolCallIds.add(part.toolCallId);
+      toolNamesById.set(part.toolCallId, part.toolName);
+      return;
+    }
+
+    if (pendingToolCallIds.size > 0) {
+      deferredAssistantContent.push(part);
+      return;
+    }
+
+    if (toolResults.length > 0) {
+      flushAssistantMessage(assistantContent);
+      flushToolMessage();
+      flushAssistantMessage(deferredAssistantContent);
+    }
+
+    assistantContent.push(part);
+  };
+
+  const pushToolResult = (part: TextGenerationRuntimeToolResultPart) => {
+    if (!pendingToolCallIds.has(part.toolCallId)) {
+      return;
+    }
+
+    toolResults.push(part);
+    pendingToolCallIds.delete(part.toolCallId);
+  };
+
+  for (const part of message.parts) {
+    if (part.type === "text" && "text" in part) {
+      pushAssistantPart({ type: "text", text: (part as { text: string }).text });
+      continue;
+    }
+
+    const toolCallPart = getTextGenerationToolCallPart(part);
+    if (toolCallPart) {
+      pushAssistantPart(toolCallPart);
+      continue;
+    }
+
+    const toolResultPart = getTextGenerationToolResultPart(part, toolNamesById);
+    if (toolResultPart) {
+      pushToolResult(toolResultPart);
+    }
+  }
+
+  flushAssistantMessage(assistantContent);
+  flushToolMessage();
+  flushAssistantMessage(deferredAssistantContent);
+
+  return messages;
 }
 
 /**
@@ -219,15 +396,20 @@ export function convertToTextGenerationRuntimeMessages(
       continue;
     }
 
-    const convertedMessage = convertToTextGenerationRuntimeMessage(message);
-    const previousMessage = textGenerationRuntimeMessages.at(-1);
+    const convertedMessages = message.role === "assistant"
+      ? convertAssistantMessageToTextGenerationRuntimeMessages(message)
+      : [convertToTextGenerationRuntimeMessage(message)];
 
-    if (previousMessage?.role === "tool" && convertedMessage.role === "tool") {
-      previousMessage.content.push(...convertedMessage.content);
-      continue;
+    for (const convertedMessage of convertedMessages) {
+      const previousMessage = textGenerationRuntimeMessages.at(-1);
+
+      if (previousMessage?.role === "tool" && convertedMessage.role === "tool") {
+        previousMessage.content.push(...convertedMessage.content);
+        continue;
+      }
+
+      textGenerationRuntimeMessages.push(convertedMessage);
     }
-
-    textGenerationRuntimeMessages.push(convertedMessage);
   }
 
   return textGenerationRuntimeMessages;
