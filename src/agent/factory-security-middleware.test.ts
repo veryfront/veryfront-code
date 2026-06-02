@@ -166,62 +166,25 @@ describe("resolveSecurityMiddleware", () => {
     assertEquals(result.text, "ok");
   });
 
-  it("honours global security.agent.inputMaxCharacterLimit from runtime config", async () => {
-    const globalAny = globalThis as Record<string, unknown>;
-    const original = globalAny.__vfGetRuntimeConfig;
-    globalAny.__vfGetRuntimeConfig = () => ({
-      security: { agent: { inputMaxCharacterLimit: 25_000 } },
-    });
+  it("rejects input above per-agent inputMaxCharacterLimit", async () => {
+    const middleware = resolveSecurityMiddleware({ inputMaxCharacterLimit: 25_000 });
+    const securityFn = middleware[0]!;
+
+    const context: AgentContext = {
+      agentId: "test",
+      model: "test/model",
+      input: "x".repeat(25_001),
+      data: {},
+      platform: "deno",
+    };
+
+    let error: Error | undefined;
     try {
-      const middleware = resolveSecurityMiddleware({});
-      const securityFn = middleware[0]!;
-
-      const context: AgentContext = {
-        agentId: "test",
-        model: "test/model",
-        input: "x".repeat(25_001),
-        data: {},
-        platform: "deno",
-      };
-
-      let error: Error | undefined;
-      try {
-        await securityFn(context, async () => createAgentResponse({ text: "ok" }));
-      } catch (err) {
-        error = err as Error;
-      }
-      assertEquals(error?.message.includes("maximum length of 25000"), true);
-    } finally {
-      globalAny.__vfGetRuntimeConfig = original;
+      await securityFn(context, async () => createAgentResponse({ text: "ok" }));
+    } catch (err) {
+      error = err as Error;
     }
-  });
-
-  it("per-agent inputMaxCharacterLimit wins over the global config value", async () => {
-    const globalAny = globalThis as Record<string, unknown>;
-    const original = globalAny.__vfGetRuntimeConfig;
-    globalAny.__vfGetRuntimeConfig = () => ({
-      security: { agent: { inputMaxCharacterLimit: 25_000 } },
-    });
-    try {
-      const middleware = resolveSecurityMiddleware({ inputMaxCharacterLimit: 150_000 });
-      const securityFn = middleware[0]!;
-
-      const context: AgentContext = {
-        agentId: "test",
-        model: "test/model",
-        input: "x".repeat(100_000),
-        data: {},
-        platform: "deno",
-      };
-
-      const result = await securityFn(
-        context,
-        async () => createAgentResponse({ text: "ok" }),
-      );
-      assertEquals(result.text, "ok");
-    } finally {
-      globalAny.__vfGetRuntimeConfig = original;
-    }
+    assertEquals(error?.message.includes("maximum length of 25000"), true);
   });
 
   it("security middleware filters PII from output", async () => {

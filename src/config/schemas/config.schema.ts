@@ -201,24 +201,6 @@ export const getVeryfrontConfigSchema = defineSchema((v) =>
            * @example ["app", "pages", "components", "lib", "src", "utils"]
            */
           allowedImportDirs: v.array(v.string()).optional(),
-          /**
-           * Defaults applied by the agent security middleware.
-           * Per-agent overrides on the agent config take precedence over
-           * values set here.
-           */
-          agent: v
-            .object({
-              /**
-               * Maximum input character length the agent security middleware
-               * accepts. The middleware JSON-stringifies the agent input
-               * (latest user message, plus any conversation history and
-               * structured tool results carried with it) and rejects
-               * anything longer. Defaults to 100_000.
-               */
-              inputMaxCharacterLimit: v.number().int().positive().optional(),
-            })
-            .partial()
-            .optional(),
         })
         .partial()
         .optional(),

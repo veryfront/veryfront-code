@@ -157,10 +157,7 @@ export interface AgentConfig {
    * user message plus any conversation history and structured tool
    * results carried with it) and rejects anything longer.
    *
-   * Resolution order: this field → `security.agent.inputMaxCharacterLimit`
-   * in veryfront.config.ts → built-in default of 100_000.
-   *
-   * Ignored when `security: false`.
+   * Defaults to 100_000. Ignored when `security: false`.
    */
   inputMaxCharacterLimit?: number;
 }
