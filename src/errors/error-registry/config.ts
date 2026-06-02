@@ -1,0 +1,79 @@
+import { defineError } from "../types.ts";
+
+export const CONFIG_NOT_FOUND = defineError({
+  slug: "config-not-found",
+  category: "CONFIG",
+  status: 404,
+  title: "Configuration file not found",
+  suggestion: "Run 'vf init' to create a configuration file",
+});
+
+export const CONFIG_INVALID = defineError({
+  slug: "config-invalid",
+  category: "CONFIG",
+  status: 400,
+  title: "Invalid configuration format",
+  suggestion: "Check your veryfront.config.ts for syntax errors",
+});
+
+export const CONFIG_PARSE_ERROR = defineError({
+  slug: "config-parse-error",
+  category: "CONFIG",
+  status: 400,
+  title: "Failed to parse configuration",
+  suggestion: "Ensure your configuration file is valid TypeScript/JSON",
+});
+
+/** Schema-level config validation (e.g. Zod schema mismatch at runtime) */
+export const CONFIG_VALIDATION_ERROR = defineError({
+  slug: "config-validation-error",
+  category: "CONFIG",
+  status: 422,
+  title: "Configuration validation failed",
+  suggestion: "Check the configuration against the schema requirements",
+});
+
+export const CONFIG_TYPE_ERROR = defineError({
+  slug: "config-type-error",
+  category: "CONFIG",
+  status: 400,
+  title: "Configuration type mismatch",
+  suggestion: "Ensure configuration values match expected types",
+});
+
+export const IMPORT_MAP_INVALID = defineError({
+  slug: "import-map-invalid",
+  category: "CONFIG",
+  status: 400,
+  title: "Invalid import map configuration",
+  suggestion: "Check your import map syntax and paths",
+});
+
+export const CORS_CONFIG_INVALID = defineError({
+  slug: "cors-config-invalid",
+  category: "CONFIG",
+  status: 400,
+  title: "Invalid CORS configuration",
+  suggestion: "Review CORS settings in your configuration",
+});
+
+/** Config file validation failures (replaces ConfigValidationError) */
+export const CONFIG_VALIDATION_FAILED = defineError({
+  slug: "config-validation-failed",
+  category: "CONFIG",
+  status: 400,
+  title: "Configuration validation failed",
+  suggestion: "Check configuration values against requirements",
+});
+
+/** Registry fragment for CONFIG errors (slug → definition). */
+export const CONFIG_REGISTRY = {
+  "config-not-found": CONFIG_NOT_FOUND,
+  "config-invalid": CONFIG_INVALID,
+  "config-parse-error": CONFIG_PARSE_ERROR,
+  "config-validation-error": CONFIG_VALIDATION_ERROR,
+  "config-type-error": CONFIG_TYPE_ERROR,
+  "import-map-invalid": IMPORT_MAP_INVALID,
+  "cors-config-invalid": CORS_CONFIG_INVALID,
+  "config-validation-failed": CONFIG_VALIDATION_FAILED,
+} as const;
