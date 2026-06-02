@@ -258,6 +258,37 @@ describe("logger", () => {
       }
     });
 
+    it("redacts credential-like context keys before serialization (#1989)", () => {
+      const { getOutput, restore } = captureConsoleLog();
+
+      try {
+        withJsonLogFormat(() => {
+          serverLogger.info("Authenticating", {
+            userId: "u-1",
+            password: "hunter2",
+            authorization: "Bearer abc",
+            headers: { cookie: "session=xyz", accept: "json" },
+          });
+
+          const line = getOutput();
+          const entry = JSON.parse(line) as LogEntry;
+          const context = entry.context as Record<string, unknown>;
+          assertEquals(context.password, "[REDACTED]");
+          assertEquals(context.authorization, "[REDACTED]");
+          assertEquals((context.headers as Record<string, unknown>).cookie, "[REDACTED]");
+          // Non-sensitive fields survive.
+          assertEquals((context.headers as Record<string, unknown>).accept, "json");
+          // userId is a deliberate extracted field, not a secret.
+          assertEquals(entry.userId, "u-1");
+          // The raw secret must not appear anywhere in the serialized line.
+          assertEquals(line.includes("hunter2"), false);
+          assertEquals(line.includes("session=xyz"), false);
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("should surface run user log routing fields as top-level JSON fields", () => {
       const { getOutput, restore } = captureConsoleLog();
 

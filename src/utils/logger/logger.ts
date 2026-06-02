@@ -12,6 +12,7 @@ import {
   type SerializedError,
   serializeError,
 } from "./core.ts";
+import { redactSensitive } from "./redact.ts";
 
 export enum LogLevel {
   DEBUG = 0,
@@ -344,7 +345,10 @@ class ConsoleLogger implements Logger {
       entry.conversation_id = entry.conversationId;
     }
 
-    if (Object.keys(mergedContext).length > 0) entry.context = mergedContext;
+    // Redact credential-like keys from the free-form context bag before
+    // serialization (the deliberate top-level fields above are already
+    // extracted out of mergedContext, so they are unaffected).
+    if (Object.keys(mergedContext).length > 0) entry.context = redactSensitive(mergedContext);
     if (error) entry.error = error;
 
     return JSON.stringify(entry);
@@ -361,7 +365,7 @@ class ConsoleLogger implements Logger {
     const componentTag = this.componentName
       ? ` ${colorize(`[${this.componentName}]`, ANSI.dim, enableColor)}`
       : "";
-    const contextText = formatContextText(mergedContext, error, enableColor);
+    const contextText = formatContextText(redactSensitive(mergedContext), error, enableColor);
 
     return `${timestamp}  ${tag} ${glyph}${componentTag} ${message}${contextText}`;
   }

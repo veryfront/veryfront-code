@@ -7,6 +7,7 @@
 
 import { isProduction } from "#veryfront/platform/environment.ts";
 import { serverLogger } from "#veryfront/utils/logger/logger.ts";
+import { redactSensitive } from "#veryfront/utils/logger/redact.ts";
 import { VeryfrontError } from "./types.ts";
 
 export interface ErrorLogEntry {
@@ -64,7 +65,7 @@ export function logError(
     status: error.status,
     docs: error.getDocsUrl(),
     timestamp: new Date().toISOString(),
-    context: mergedContext,
+    context: redactSensitive(mergedContext),
   };
 
   if (isProduction()) {
