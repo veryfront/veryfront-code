@@ -59,9 +59,12 @@ async function runProductionServer(options: ServeOptions): Promise<void> {
   const { initializeDistributedCaches } = await import(
     "veryfront/cache"
   );
+  const { defaultDistributedCacheInitializers } = await import(
+    "veryfront/server"
+  );
   await Promise.allSettled([
     initializeOTLPWithApis(),
-    initializeDistributedCaches(),
+    initializeDistributedCaches(defaultDistributedCacheInitializers),
   ]);
 
   const projectDir = cwd();
