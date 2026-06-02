@@ -16,6 +16,7 @@ import {
   stopMemoryMonitoring,
 } from "#veryfront/utils/memory/index.ts";
 import { initializeDistributedCaches } from "#veryfront/cache/distributed-cache-init.ts";
+import { defaultDistributedCacheInitializers } from "#veryfront/server/distributed-cache-initializers.ts";
 import { getConfig } from "#veryfront/config";
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import {
@@ -350,7 +351,7 @@ if (import.meta.main) {
     // Backend: API (production) > Redis (local dev) > Memory (fallback)
     const [otlpResult, cacheResult] = await Promise.allSettled([
       initializeOTLPWithApis(),
-      initializeDistributedCaches(),
+      initializeDistributedCaches(defaultDistributedCacheInitializers),
     ]);
 
     if (otlpResult.status === "rejected") {
