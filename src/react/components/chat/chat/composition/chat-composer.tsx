@@ -87,7 +87,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
         ref={ref}
         className={cn("flex-shrink-0 pb-6 pt-2", className)}
       >
-        <div className="max-w-2xl mx-auto px-4">
+        <div className="mx-auto w-full max-w-3xl px-4">
           {children && (
             <div className="flex flex-wrap items-center gap-1.5 pb-3">
               {children}
@@ -110,10 +110,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
               onSubmit?.(e);
             }}
           >
-            <div
-              className="relative bg-[var(--card)] px-3 py-1.5 shadow-sm transition-all"
-              style={{ borderRadius: 24 }}
-            >
+            <div className="relative rounded-full border border-[var(--input-border)] bg-[var(--card)] px-3 py-1.5 shadow-sm transition-[border-color,box-shadow] focus-within:border-[var(--foreground)] focus-within:shadow-md">
               <div className="flex min-h-[42px] items-end gap-2">
                 {(onAttach || onSelectAttachment) && (
                   <div className="relative flex shrink-0 items-center">
@@ -200,7 +197,7 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                   disabled={isLoading || isListening}
                   multiline
                   className={cn(
-                    "min-h-9 flex-1 py-2",
+                    "min-h-9 min-w-0 flex-1 py-2 text-[15px] leading-normal text-[var(--foreground)] placeholder:text-[var(--input-placeholder)]",
                     theme?.input,
                   )}
                 />
@@ -242,7 +239,10 @@ export const ChatComposer = React.forwardRef<HTMLDivElement, ChatComposerProps>(
                     onStop={isListening ? undefined : stop}
                     onVoice={onVoice}
                     disabled={!input.trim()}
-                    className={theme?.button}
+                    className={cn(
+                      "size-9 shrink-0 rounded-full bg-[var(--foreground)] text-[var(--background)] transition-[background-color,color,box-shadow] hover:bg-[var(--card)] hover:text-[var(--foreground)] hover:shadow-[inset_0_0_0_1px_var(--foreground)] disabled:opacity-100",
+                      theme?.button,
+                    )}
                   />
                 </div>
               </div>

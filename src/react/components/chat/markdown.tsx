@@ -28,6 +28,8 @@ const ESM_REACT_MARKDOWN =
 const ESM_REMARK_GFM = "https://esm.sh/remark-gfm@4.0.1?target=es2022&pin=v135";
 const ESM_REHYPE_HIGHLIGHT = "https://esm.sh/rehype-highlight@7.0.2?target=es2022&pin=v135";
 const ESM_MERMAID = "https://esm.sh/mermaid@11.4.1?pin=v135";
+const MARKDOWN_CONTAINER_CLASS =
+  "prose prose-sm max-w-none min-w-0 overflow-hidden break-words [overflow-wrap:anywhere] [&_*]:max-w-full";
 
 type DefaultModule<T> = { default: T };
 
@@ -206,7 +208,7 @@ function FallbackMarkdown({
   className,
 }: Pick<MarkdownProps, "children" | "className">): React.ReactElement {
   return (
-    <div className={cn("prose prose-sm max-w-none", className)}>
+    <div className={cn(MARKDOWN_CONTAINER_CLASS, className)}>
       <p className="whitespace-pre-wrap">{children}</p>
     </div>
   );
@@ -253,7 +255,7 @@ export function Markdown({
   }
 
   return (
-    <div className={cn("prose prose-sm max-w-none", className)}>
+    <div className={cn(MARKDOWN_CONTAINER_CLASS, className)}>
       <ReactMarkdown
         remarkPlugins={remarkGfm ? [remarkGfm] : []}
         rehypePlugins={rehypeHighlight ? [rehypeHighlight] : []}
@@ -277,8 +279,8 @@ export function Markdown({
           },
           table(props: BlockRendererProps) {
             return (
-              <div className="my-4 overflow-auto">
-                <table className="min-w-full divide-y divide-[var(--border)]">
+              <div className="my-4 max-w-full overflow-x-auto rounded-md border border-[var(--border)]">
+                <table className="w-full divide-y divide-[var(--border)]">
                   {props.children}
                 </table>
               </div>
@@ -288,7 +290,7 @@ export function Markdown({
             return (
               <a
                 href={props.href}
-                className="text-blue-600 hover:underline"
+                className="break-words text-blue-600 hover:underline [overflow-wrap:anywhere]"
                 target="_blank"
                 rel="noopener noreferrer"
               >
