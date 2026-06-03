@@ -151,15 +151,6 @@ export interface AgentConfig {
   suggestions?: Suggestions;
   /** Set to false to disable the default security middleware */
   security?: false;
-  /**
-   * Maximum input character length enforced by the default security
-   * middleware. The middleware JSON-stringifies the agent input (latest
-   * user message plus any conversation history and structured tool
-   * results carried with it) and rejects anything longer.
-   *
-   * Defaults to 100_000. Ignored when `security: false`.
-   */
-  inputMaxCharacterLimit?: number;
 }
 
 /** Configuration used by resolved agent. */

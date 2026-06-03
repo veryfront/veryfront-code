@@ -153,7 +153,6 @@ Agent helper.
 | `skills?` | `true \| string[]` | Enable skills for this agent. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L150) |
 | `suggestions?` | `Suggestions` |  | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L151) |
 | `security?` | `false` | Set to false to disable the default security middleware | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L153) |
-| `inputMaxCharacterLimit?` | `number` | Maximum input character length enforced by the default security middleware. The middleware JSON-stringifies the agent input (latest user message plus any conversation history and structured tool results carried with it) and rejects anything longer. | [source](https://github.com/veryfront/veryfront-code/blob/main/src/agent/types.ts#L162) |
 
 **Returns:** `Agent`
 
