@@ -5,6 +5,7 @@ import { join } from "#veryfront/compat/path";
 import {
   clearModulePathCache,
   getModulePathCache,
+  invalidateMdxEsmModule,
   invalidateModulePaths,
   lookupMdxEsmCache,
   saveModulePathCache,
@@ -261,6 +262,200 @@ describe("lookupMdxEsmCache", () => {
         "18.3.1",
       );
       assertEquals(react18Result, { status: "hit", path: cachedPath });
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+});
+
+describe("lookupMdxEsmCache — stale verified artifact (#2077)", () => {
+  it("re-validates a verified module and returns miss when the artifact was evicted", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-stale-verified-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-stale-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("page7b82"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await writeTextFile(cachedPath, `export default 1;`);
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+      // First lookup: full validation path → hit, and marks the entry verified.
+      const first = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+      assertEquals(first, { status: "hit", path: cachedPath });
+      assertEquals(
+        verifiedModuleDeps.get(`${cachedPath}:${key}`),
+        true,
+        "precondition: lookup marked the artifact verified",
+      );
+
+      // Artifact is evicted/rebuilt under a different hash out from under us,
+      // WITHOUT going through invalidateModulePaths (so the verified marker stays).
+      await remove(cachedPath);
+
+      // Second lookup: the verified fast-path must still confirm existence and,
+      // finding the file gone, report a miss so the caller rebuilds — instead of
+      // returning a dead path that import() would hard-fail on.
+      const second = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+      assertEquals(second, { status: "miss" });
+      assertEquals(
+        verifiedModuleDeps.get(`${cachedPath}:${key}`),
+        undefined,
+        "stale verified marker must be cleared",
+      );
+      assertEquals(
+        (await getModulePathCache(cacheDir)).get(key),
+        undefined,
+        "stale path-cache entry must be cleared",
+      );
+
+      // The eviction must also be persisted to _index.json so the dead pointer
+      // does not resurrect on restart — an SSR-only caller never re-registers it.
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      const reloaded = await getModulePathCache(cacheDir);
+      assertEquals(
+        reloaded.get(key),
+        undefined,
+        "stale entry must not resurrect from _index.json after a verified-miss eviction",
+      );
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+});
+
+describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
+  it("clears the path-cache entry and verified marker for a single source file", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-selfheal-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-selfheal-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("selfheal"));
+    const verifyKey = `${cachedPath}:${key}`;
+
+    try {
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+      const cache = await getModulePathCache(cacheDir);
+      verifiedModuleDeps.set(verifyKey, true);
+
+      invalidateMdxEsmModule(cacheDir, filePath, projectDir, "19.1.1");
+
+      assertEquals(cache.get(key), undefined, "path-cache entry must be removed");
+      assertEquals(
+        verifiedModuleDeps.get(verifyKey),
+        undefined,
+        "verified marker must be removed",
+      );
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("is a safe no-op when the file is not cached", () => {
+    clearModulePathCache();
+    invalidateMdxEsmModule("/cache/dir", "/project/app/page.tsx", "/project", "19.1.1");
+  });
+
+  it("only touches the failing cache dir, not other tenants sharing the same key", async () => {
+    clearModulePathCache();
+
+    // Two tenants whose projects both contain app/page.tsx → identical path key
+    // (the key is scoped only by react version + relative path, not by project).
+    const cacheDirA = await makeTempDir({ prefix: "vf-mdx-tenant-a-" });
+    const cacheDirB = await makeTempDir({ prefix: "vf-mdx-tenant-b-" });
+    const projectDirA = await makeTempDir({ prefix: "vf-mdx-tenant-a-project-" });
+    const projectDirB = await makeTempDir({ prefix: "vf-mdx-tenant-b-project-" });
+    const filePathA = join(projectDirA, "app/page.tsx");
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const cachedA = join(cacheDirA, buildMdxEsmModuleFileName("tenantA"));
+    const cachedB = join(cacheDirB, buildMdxEsmModuleFileName("tenantB"));
+
+    try {
+      await writeTextFile(join(cacheDirA, "_index.json"), JSON.stringify({ [key]: cachedA }));
+      await writeTextFile(join(cacheDirB, "_index.json"), JSON.stringify({ [key]: cachedB }));
+      const cacheA = await getModulePathCache(cacheDirA);
+      const cacheB = await getModulePathCache(cacheDirB);
+
+      // Tenant A's artifact went missing — invalidate scoped to A's cache dir.
+      invalidateMdxEsmModule(cacheDirA, filePathA, projectDirA, "19.1.1");
+      await waitForDiskCleanup();
+
+      assertEquals(cacheA.get(key), undefined, "tenant A entry must be removed");
+      assertEquals(cacheB.get(key), cachedB, "tenant B's valid entry must be untouched");
+
+      // And tenant B's _index.json must be unchanged on disk.
+      clearModulePathCache();
+      assertEquals(
+        (await getModulePathCache(cacheDirB)).get(key),
+        cachedB,
+        "tenant B entry must survive reload (no cross-tenant persistence)",
+      );
+    } finally {
+      await Promise.all([
+        remove(cacheDirA, { recursive: true }).catch(() => {}),
+        remove(cacheDirB, { recursive: true }).catch(() => {}),
+        remove(projectDirA, { recursive: true }).catch(() => {}),
+        remove(projectDirB, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("persists the deletion to _index.json so the stale entry does not survive reload", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-selfheal-persist-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-selfheal-persist-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("persist"));
+
+    try {
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+      await getModulePathCache(cacheDir);
+
+      invalidateMdxEsmModule(cacheDir, filePath, projectDir, "19.1.1");
+      await waitForDiskCleanup();
+
+      // Simulate a process restart: drop in-memory state and reload from disk.
+      clearModulePathCache();
+      const reloaded = await getModulePathCache(cacheDir);
+      assertEquals(
+        reloaded.get(key),
+        undefined,
+        "stale entry must not resurrect from _index.json after self-heal",
+      );
     } finally {
       await Promise.all([
         remove(cacheDir, { recursive: true }).catch(() => {}),
