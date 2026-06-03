@@ -98,7 +98,9 @@ supports.
 ## Connect MCP servers
 
 Use `mcpServers` for remote MCP-compatible tool servers. Put visibility policy
-on the server that owns the tools.
+on the server that owns the tools. When `tools` is an explicit object, include
+the remote MCP tool name in `tools` and authorize it with the server
+`toolPolicy`.
 
 ```ts
 // agents/docs.ts
@@ -274,7 +276,6 @@ export default agent({
 | `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                           |
 | `middleware`          | `AgentMiddleware[]`                                                                                    | Execution middleware                                                         |
 | `allowedModels`       | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings           |
-| `skills`              | `true \| string[]`                                                                                     | Enable all skills (`true`) or only specific skill IDs                        |
 
 ## Verify it worked
 
