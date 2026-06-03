@@ -375,6 +375,39 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
     clearModulePathCache();
     invalidateMdxEsmModule("/project/app/page.tsx", "/project", "19.1.1");
   });
+
+  it("persists the deletion to _index.json so the stale entry does not survive reload", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-selfheal-persist-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-selfheal-persist-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("persist"));
+
+    try {
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+      await getModulePathCache(cacheDir);
+
+      invalidateMdxEsmModule(filePath, projectDir, "19.1.1");
+      await waitForDiskCleanup();
+
+      // Simulate a process restart: drop in-memory state and reload from disk.
+      clearModulePathCache();
+      const reloaded = await getModulePathCache(cacheDir);
+      assertEquals(
+        reloaded.get(key),
+        undefined,
+        "stale entry must not resurrect from _index.json after self-heal",
+      );
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
 });
 
 describe("invalidateModulePaths — edge cases", () => {

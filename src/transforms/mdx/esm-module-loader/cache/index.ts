@@ -301,6 +301,10 @@ export function invalidateModulePaths(changedPaths: string[]): void {
  * still point at the stale path. Clearing both forces the next
  * {@link lookupMdxEsmCache} to report a miss so the module is rebuilt instead of
  * handing back a path whose `import()` fails with ERR_MODULE_NOT_FOUND (#2077).
+ *
+ * The deletion is also persisted to `_index.json` (fire-and-forget, chained onto
+ * the shared disk-cleanup queue like {@link invalidateModulePaths}) so the stale
+ * pointer does not resurrect from disk on the next process start.
  */
 export function invalidateMdxEsmModule(
   filePath: string,
@@ -308,19 +312,34 @@ export function invalidateMdxEsmModule(
   reactVersion = REACT_DEFAULT_VERSION,
 ): void {
   const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
+  const affectedCacheDirs: string[] = [];
 
   // Scan every cache dir: a multi-project pod keeps one cache per project, and
   // the same source file can be cached under more than one of them.
-  for (const cache of modulePathCaches.values()) {
+  for (const [cacheDir, cache] of modulePathCaches.entries()) {
     const cachedPath = cache.get(cacheKey);
     if (cachedPath === undefined) continue;
     cache.delete(cacheKey);
     verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
+    affectedCacheDirs.push(cacheDir);
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
       filePath,
       cachedPath,
     });
   }
+
+  if (affectedCacheDirs.length === 0) return;
+
+  const cleanup = async () => {
+    for (const cacheDir of affectedCacheDirs) {
+      await saveModulePathCache(cacheDir);
+    }
+  };
+  _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup).catch((error) => {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to persist _index.json after self-heal`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
 }
 
 function extractNormalizedCachedModulePath(cachedKey: string): string {
