@@ -107,6 +107,22 @@ function summarizeDebugValue(value: unknown): unknown {
   return value;
 }
 
+function resolveToolResultOutput(part: RuntimeStreamPart): unknown {
+  if (!isRecord(part) || part.type !== "tool-result") {
+    return undefined;
+  }
+
+  if ("output" in part) {
+    return part.output;
+  }
+
+  if ("result" in part) {
+    return part.result;
+  }
+
+  return undefined;
+}
+
 function logProviderToolPart(
   partType: "tool-result" | "tool-error",
   part: {
@@ -748,13 +764,14 @@ export function processStream(
             providerExecuted,
             dynamic: typedPart.dynamic,
           });
+          const toolResultOutput = resolveToolResultOutput(typedPart);
           const isError = typedPart.isError === true;
           logProviderToolPart("tool-result", {
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
             providerExecuted,
             dynamic: typedPart.dynamic,
-            output: typedPart.output,
+            output: toolResultOutput,
             input: typedPart.input,
             preliminary: typedPart.preliminary,
             isError,
@@ -763,14 +780,14 @@ export function processStream(
             state.toolResults.push({
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,
-              error: typedPart.output,
+              error: toolResultOutput,
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(typedPart.dynamic ? { dynamic: true } : {}),
             });
             sendSSE(controller, encoder, {
               type: "tool-output-error",
               toolCallId: typedPart.toolCallId,
-              errorText: stringifyToolError(typedPart.output),
+              errorText: stringifyToolError(toolResultOutput),
               ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(typedPart.dynamic ? { dynamic: true } : {}),
             });
@@ -780,7 +797,7 @@ export function processStream(
           state.toolResults.push({
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
-            output: typedPart.output,
+            output: toolResultOutput,
             ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             ...(typedPart.dynamic ? { dynamic: true } : {}),
             ...(typedPart.preliminary !== undefined ? { preliminary: typedPart.preliminary } : {}),
@@ -788,7 +805,7 @@ export function processStream(
           sendSSE(controller, encoder, {
             type: "tool-output-available",
             toolCallId: typedPart.toolCallId,
-            output: typedPart.output,
+            output: toolResultOutput,
             ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             ...(typedPart.dynamic ? { dynamic: true } : {}),
             ...(typedPart.preliminary !== undefined ? { preliminary: typedPart.preliminary } : {}),

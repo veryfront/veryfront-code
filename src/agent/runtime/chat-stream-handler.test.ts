@@ -1151,6 +1151,52 @@ describe("chat-stream-handler", () => {
       ]);
     });
 
+    it("accepts provider-native tool-result.result payloads as tool output", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const providerResult = {
+        type: "web_search_result",
+        results: [{ title: "Pasta", url: "https://example.test/pasta" }],
+      };
+      const result = createMockResult([
+        {
+          type: "tool-result",
+          toolCallId: "tc-provider-search",
+          toolName: "web_search",
+          input: { query: "pasta" },
+          result: providerResult,
+          providerExecuted: true,
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      assertEquals(state.toolResults, [{
+        toolCallId: "tc-provider-search",
+        toolName: "web_search",
+        output: providerResult,
+        providerExecuted: true,
+      }]);
+      assertEquals(events, [
+        { type: "tool-input-start", toolCallId: "tc-provider-search", toolName: "web_search" },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-provider-search",
+          toolName: "web_search",
+          input: { query: "pasta" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tc-provider-search",
+          output: providerResult,
+          providerExecuted: true,
+        },
+      ]);
+    });
+
     it("forwards errored tool results as tool-output-error SSE events", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
