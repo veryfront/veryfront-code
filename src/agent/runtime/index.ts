@@ -126,6 +126,11 @@ import {
   type CurrentRunToolState,
   recordCurrentRunToolResult,
 } from "./current-run-tool-state.ts";
+import {
+  applySkillDelegationOverridesToToolInput,
+  extractSkillDelegationOverrides,
+  type SkillDelegationOverrides,
+} from "./skill-delegation-overrides.ts";
 
 const logger = serverLogger.component("agent");
 const LOAD_SKILL_TOOL_ID = "load_skill";
@@ -926,6 +931,7 @@ export class AgentRuntime {
 
       // Request-scoped skill policy (not class-level mutable state)
       let activeSkillPolicy: string[] | undefined;
+      let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
       const providerTools = getRuntimeProviderTools(this.config);
       const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
@@ -1125,6 +1131,11 @@ export class AgentRuntime {
               const startTime = Date.now();
 
               const cacheCtx = tryGetCacheKeyContext();
+              toolCall.args = applySkillDelegationOverridesToToolInput(
+                tc.toolName,
+                toolCall.args,
+                activeSkillDelegationOverrides,
+              );
               const executionContext = {
                 toolCallId: tc.toolCallId,
                 ...toolContext,
@@ -1160,6 +1171,7 @@ export class AgentRuntime {
               // Track skill policy from load_skill results
               if (tc.toolName === LOAD_SKILL_TOOL_ID) {
                 activeSkillPolicy = extractSkillPolicy(result);
+                activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
                 mustLoadSkillFirst = false;
               }
 
@@ -1253,6 +1265,7 @@ export class AgentRuntime {
 
     // Request-scoped skill policy (not class-level mutable state)
     let activeSkillPolicy: string[] | undefined;
+    let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
@@ -1541,6 +1554,11 @@ export class AgentRuntime {
         try {
           toolCall.status = "executing";
           const startTime = Date.now();
+          toolCall.args = applySkillDelegationOverridesToToolInput(
+            tc.name,
+            toolCall.args,
+            activeSkillDelegationOverrides,
+          );
 
           callbacks?.onToolCall?.(toolCall);
 
@@ -1580,6 +1598,7 @@ export class AgentRuntime {
           // Track skill policy from load_skill results
           if (tc.name === LOAD_SKILL_TOOL_ID) {
             activeSkillPolicy = extractSkillPolicy(result);
+            activeSkillDelegationOverrides = extractSkillDelegationOverrides(result);
             mustLoadSkillFirst = false;
           }
 
