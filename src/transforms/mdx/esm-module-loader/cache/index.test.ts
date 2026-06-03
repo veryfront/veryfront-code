@@ -328,6 +328,17 @@ describe("lookupMdxEsmCache — stale verified artifact (#2077)", () => {
         undefined,
         "stale path-cache entry must be cleared",
       );
+
+      // The eviction must also be persisted to _index.json so the dead pointer
+      // does not resurrect on restart — an SSR-only caller never re-registers it.
+      await waitForDiskCleanup();
+      clearModulePathCache();
+      const reloaded = await getModulePathCache(cacheDir);
+      assertEquals(
+        reloaded.get(key),
+        undefined,
+        "stale entry must not resurrect from _index.json after a verified-miss eviction",
+      );
     } finally {
       await Promise.all([
         remove(cacheDir, { recursive: true }).catch(() => {}),

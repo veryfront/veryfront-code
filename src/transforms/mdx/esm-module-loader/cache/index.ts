@@ -214,6 +214,27 @@ export function waitForDiskCleanup(): Promise<void> {
   return _pendingDiskCleanup;
 }
 
+/**
+ * Persist the given cache dirs' `_index.json` fire-and-forget, chained onto the
+ * shared disk-cleanup queue so concurrent invalidations don't clobber each
+ * other. Used after an in-memory eviction so the stale pointer does not
+ * resurrect from disk on the next process start — callers that drop an entry
+ * (e.g. an SSR-only path) may never re-register and re-save it themselves.
+ */
+function queueIndexPersist(cacheDirs: string[]): void {
+  if (cacheDirs.length === 0) return;
+  const cleanup = async () => {
+    for (const cacheDir of cacheDirs) {
+      await saveModulePathCache(cacheDir);
+    }
+  };
+  _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup).catch((error) => {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to persist _index.json`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
 export function invalidateModulePaths(changedPaths: string[]): void {
   if (modulePathCaches.size === 0) return;
 
@@ -328,18 +349,7 @@ export function invalidateMdxEsmModule(
     });
   }
 
-  if (affectedCacheDirs.length === 0) return;
-
-  const cleanup = async () => {
-    for (const cacheDir of affectedCacheDirs) {
-      await saveModulePathCache(cacheDir);
-    }
-  };
-  _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup).catch((error) => {
-    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to persist _index.json after self-heal`, {
-      error: error instanceof Error ? error.message : String(error),
-    });
-  });
+  queueIndexPersist(affectedCacheDirs);
 }
 
 function extractNormalizedCachedModulePath(cachedKey: string): string {
@@ -443,13 +453,16 @@ export async function lookupMdxEsmCache(
       /* expected: verified artifact was evicted/rebuilt; fall through to invalidate */
     }
 
-    // Artifact is gone — drop the stale markers so the caller rebuilds it.
+    // Artifact is gone — drop the stale markers so the caller rebuilds it, and
+    // persist the deletion so it can't resurrect from _index.json on restart
+    // (an SSR-only caller may never re-register and re-save this entry itself).
     logger.debug(
       `${LOG_PREFIX_MDX_LOADER} Verified MDX-ESM artifact missing on disk, invalidating`,
       { filePath, cachedPath },
     );
     verifiedModuleDeps.delete(verifyKey);
     cache.delete(cacheKey);
+    queueIndexPersist([cacheDir]);
     return { status: "miss" };
   }
 
