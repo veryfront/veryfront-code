@@ -28,11 +28,16 @@ import { agent } from "veryfront/agent";
 
 export default agent({
   id: "researcher",
+  model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
   system: "Research topics thoroughly using web search.",
-  tools: { webSearch: true },
+  allowedRemoteTools: ["web_search"],
   maxSteps: 5,
 });
 ```
+
+Provider-native web search uses the `web_search` tool name and requires a
+provider/model that supports it. Use `allowedRemoteTools` for provider-native
+tools. Use `tools` for local tools that your app defines.
 
 ```ts
 // agents/writer.ts

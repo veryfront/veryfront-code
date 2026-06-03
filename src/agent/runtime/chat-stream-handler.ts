@@ -65,6 +65,7 @@ export interface ChatStreamCallbacks {
     completionTokens?: number;
     totalTokens?: number;
   }) => void;
+  providerExecutedToolNames?: readonly string[];
   localToolInputIdleTimeoutMs?: number;
   streamIdleTimeoutMs?: number;
 }
@@ -286,6 +287,10 @@ export function processStream(
     let activeReasoningId: string | null = null;
     let shouldStopForCommittedLocalToolCall = false;
     let hasActiveLocalToolInput = false;
+    const providerExecutedToolNames = new Set(callbacks?.providerExecutedToolNames ?? []);
+
+    const resolveProviderExecuted = (toolName: string, providerExecuted?: boolean) =>
+      providerExecuted ?? (providerExecutedToolNames.has(toolName) ? true : undefined);
 
     const normalizeReasoningId = (part: { id?: string }) =>
       typeof part.id === "string" && part.id.length > 0 ? part.id : "reasoning";
@@ -414,6 +419,7 @@ export function processStream(
       dynamic?: boolean;
     }) => {
       const dynamic = part.dynamic ?? isDynamicTool(part.toolName);
+      const providerExecuted = resolveProviderExecuted(part.toolName, part.providerExecuted);
       const existing = state.toolCalls.get(part.toolCallId);
 
       if (!existing) {
@@ -423,9 +429,7 @@ export function processStream(
           name: part.toolName,
           arguments: normalizeToolInputString(part.input),
           inputAvailable: true,
-          ...(part.providerExecuted !== undefined
-            ? { providerExecuted: part.providerExecuted }
-            : {}),
+          ...(providerExecuted !== undefined ? { providerExecuted } : {}),
           ...(dynamic ? { dynamic: true } : {}),
           inputAnnounced: true,
         });
@@ -440,9 +444,7 @@ export function processStream(
           toolCallId: part.toolCallId,
           toolName: part.toolName,
           input: normalizedInput,
-          ...(part.providerExecuted !== undefined
-            ? { providerExecuted: part.providerExecuted }
-            : {}),
+          ...(providerExecuted !== undefined ? { providerExecuted } : {}),
           ...(dynamic ? { dynamic: true } : {}),
         });
         return;
@@ -458,8 +460,8 @@ export function processStream(
       const resolvedInput = parseToolInputObject(resolvedArguments);
       existing.arguments = resolvedArguments;
       existing.inputAvailable = true;
-      if (part.providerExecuted !== undefined) {
-        existing.providerExecuted = part.providerExecuted;
+      if (providerExecuted !== undefined) {
+        existing.providerExecuted = providerExecuted;
       }
       if (dynamic) {
         existing.dynamic = true;
@@ -584,14 +586,18 @@ export function processStream(
           closeTextSegment();
           closeReasoningSegment();
           shouldStopForCommittedLocalToolCall = false;
-          hasActiveLocalToolInput = true;
           const toolId = typedPart.id;
+          const providerExecuted = resolveProviderExecuted(
+            typedPart.toolName,
+            typedPart.providerExecuted,
+          );
+          hasActiveLocalToolInput = providerExecuted !== true;
           state.toolCalls.set(toolId, {
             id: toolId,
             name: typedPart.toolName,
             arguments: "",
             inputAvailable: false,
-            providerExecuted: typedPart.providerExecuted,
+            providerExecuted,
             dynamic: typedPart.dynamic,
             inputDeltas: [],
             inputAnnounced: false,
@@ -646,6 +652,10 @@ export function processStream(
           if (!toolId) {
             break;
           }
+          const providerExecuted = resolveProviderExecuted(
+            typedPart.toolName,
+            typedPart.providerExecuted,
+          );
           hasActiveLocalToolInput = false;
           const inputStr = normalizeToolInputString(typedPart.input);
           const previous = state.toolCalls.get(toolId);
@@ -658,7 +668,7 @@ export function processStream(
             name: typedPart.toolName,
             arguments: resolvedArguments,
             inputAvailable: true,
-            providerExecuted: typedPart.providerExecuted,
+            providerExecuted,
             dynamic,
           });
 
@@ -668,13 +678,11 @@ export function processStream(
               toolCallId: toolId,
               toolName: typedPart.toolName,
               input: parseToolInputObject(resolvedArguments),
-              ...(typedPart.providerExecuted !== undefined
-                ? { providerExecuted: typedPart.providerExecuted }
-                : {}),
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(dynamic ? { dynamic: true } : {}),
             });
           }
-          if (typedPart.providerExecuted !== true) {
+          if (providerExecuted !== true) {
             shouldStopForCommittedLocalToolCall = true;
           }
           break;
@@ -685,6 +693,10 @@ export function processStream(
           closeReasoningSegment();
           // tool-call fires when the full tool call is available
           const toolId = typedPart.toolCallId;
+          const providerExecuted = resolveProviderExecuted(
+            typedPart.toolName,
+            typedPart.providerExecuted,
+          );
           hasActiveLocalToolInput = false;
           const inputStr = normalizeToolInputString(typedPart.input);
           const previous = state.toolCalls.get(toolId);
@@ -698,7 +710,7 @@ export function processStream(
             inputDeltas: previous?.inputDeltas ?? [],
             inputAnnounced: previous?.inputAnnounced ?? false,
             inputAvailable: true,
-            providerExecuted: typedPart.providerExecuted,
+            providerExecuted,
             dynamic: typedPart.dynamic,
           };
           state.toolCalls.set(toolId, toolCall);
@@ -712,13 +724,11 @@ export function processStream(
               toolCallId: toolId,
               toolName: typedPart.toolName,
               input: inputObj,
-              ...(typedPart.providerExecuted !== undefined
-                ? { providerExecuted: typedPart.providerExecuted }
-                : {}),
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(dynamic ? { dynamic: true } : {}),
             });
           }
-          if (typedPart.providerExecuted !== true) {
+          if (providerExecuted !== true) {
             shouldStopForCommittedLocalToolCall = true;
           }
           break;
@@ -727,18 +737,22 @@ export function processStream(
         case "tool-result": {
           closeTextSegment();
           closeReasoningSegment();
+          const providerExecuted = resolveProviderExecuted(
+            typedPart.toolName,
+            typedPart.providerExecuted,
+          );
           ensureToolLifecycle({
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
             input: typedPart.input,
-            providerExecuted: typedPart.providerExecuted,
+            providerExecuted,
             dynamic: typedPart.dynamic,
           });
           const isError = typedPart.isError === true;
           logProviderToolPart("tool-result", {
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
-            providerExecuted: typedPart.providerExecuted,
+            providerExecuted,
             dynamic: typedPart.dynamic,
             output: typedPart.output,
             input: typedPart.input,
@@ -750,18 +764,14 @@ export function processStream(
               toolCallId: typedPart.toolCallId,
               toolName: typedPart.toolName,
               error: typedPart.output,
-              ...(typedPart.providerExecuted !== undefined
-                ? { providerExecuted: typedPart.providerExecuted }
-                : {}),
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(typedPart.dynamic ? { dynamic: true } : {}),
             });
             sendSSE(controller, encoder, {
               type: "tool-output-error",
               toolCallId: typedPart.toolCallId,
               errorText: stringifyToolError(typedPart.output),
-              ...(typedPart.providerExecuted !== undefined
-                ? { providerExecuted: typedPart.providerExecuted }
-                : {}),
+              ...(providerExecuted !== undefined ? { providerExecuted } : {}),
               ...(typedPart.dynamic ? { dynamic: true } : {}),
             });
             break;
@@ -771,9 +781,7 @@ export function processStream(
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
             output: typedPart.output,
-            ...(typedPart.providerExecuted !== undefined
-              ? { providerExecuted: typedPart.providerExecuted }
-              : {}),
+            ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             ...(typedPart.dynamic ? { dynamic: true } : {}),
             ...(typedPart.preliminary !== undefined ? { preliminary: typedPart.preliminary } : {}),
           });
@@ -781,9 +789,7 @@ export function processStream(
             type: "tool-output-available",
             toolCallId: typedPart.toolCallId,
             output: typedPart.output,
-            ...(typedPart.providerExecuted !== undefined
-              ? { providerExecuted: typedPart.providerExecuted }
-              : {}),
+            ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             ...(typedPart.dynamic ? { dynamic: true } : {}),
             ...(typedPart.preliminary !== undefined ? { preliminary: typedPart.preliminary } : {}),
           });
@@ -793,17 +799,21 @@ export function processStream(
         case "tool-error": {
           closeTextSegment();
           closeReasoningSegment();
+          const providerExecuted = resolveProviderExecuted(
+            typedPart.toolName,
+            typedPart.providerExecuted,
+          );
           ensureToolLifecycle({
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
             input: typedPart.input,
-            providerExecuted: typedPart.providerExecuted,
+            providerExecuted,
             dynamic: typedPart.dynamic,
           });
           logProviderToolPart("tool-error", {
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
-            providerExecuted: typedPart.providerExecuted,
+            providerExecuted,
             dynamic: typedPart.dynamic,
             error: typedPart.error,
             input: typedPart.input,
@@ -812,18 +822,14 @@ export function processStream(
             toolCallId: typedPart.toolCallId,
             toolName: typedPart.toolName,
             error: typedPart.error,
-            ...(typedPart.providerExecuted !== undefined
-              ? { providerExecuted: typedPart.providerExecuted }
-              : {}),
+            ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             ...(typedPart.dynamic ? { dynamic: true } : {}),
           });
           sendSSE(controller, encoder, {
             type: "tool-output-error",
             toolCallId: typedPart.toolCallId,
             errorText: stringifyToolError(typedPart.error),
-            ...(typedPart.providerExecuted !== undefined
-              ? { providerExecuted: typedPart.providerExecuted }
-              : {}),
+            ...(providerExecuted !== undefined ? { providerExecuted } : {}),
             ...(typedPart.dynamic ? { dynamic: true } : {}),
           });
           break;
