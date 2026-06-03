@@ -21,6 +21,11 @@ import type { IntegrationEndpointHistoricalSummary } from "../integrations/schem
 
 const CHARS_PER_TOKEN = 4;
 
+/** Options accepted by prepare provider model messages from UI messages. */
+export interface PrepareProviderModelMessagesFromUiMessagesOptions {
+  providerOwnedToolNames?: readonly string[];
+}
+
 /** Estimate tokens. */
 export function estimateTokens(value: unknown): number {
   return Math.ceil(JSON.stringify(value ?? "").length / CHARS_PER_TOKEN);
@@ -478,15 +483,84 @@ function filterValidMessages(messages: ProviderModelMessage[]): ProviderModelMes
   });
 }
 
+function getMessagePartToolCallId(part: unknown): string | undefined {
+  if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
+
+  return getStringField(part, "toolCallId", "") ||
+    getStringField(part, "tool_call_id", "") ||
+    getStringField(part, "id", "") ||
+    undefined;
+}
+
+function getMessagePartToolName(part: unknown): string | undefined {
+  if (!part || typeof part !== "object" || Array.isArray(part)) return undefined;
+
+  const record = part as Record<string, unknown>;
+  const explicitToolName = getStringField(part, "toolName", "") ||
+    getStringField(part, "tool_name", "") ||
+    getStringField(part, "name", "") ||
+    undefined;
+  if (explicitToolName) return explicitToolName;
+
+  const type = typeof record.type === "string" ? record.type : undefined;
+  return type?.startsWith("tool-") && type !== "tool-call" && type !== "tool-result"
+    ? type.replace(/^tool-/, "")
+    : undefined;
+}
+
+function stripProviderOwnedToolParts(
+  messages: ChatUiMessage[],
+  providerOwnedToolNames: readonly string[] | undefined,
+): ChatUiMessage[] {
+  if (!providerOwnedToolNames || providerOwnedToolNames.length === 0) {
+    return messages;
+  }
+
+  const providerOwnedNames = new Set(providerOwnedToolNames);
+  const providerOwnedToolCallIds = new Set<string>();
+
+  return messages.map((message) => {
+    if (message.role === "user" || message.role === "system") {
+      providerOwnedToolCallIds.clear();
+      return message;
+    }
+
+    let mutated = false;
+    const parts = message.parts.filter((part) => {
+      const toolName = getMessagePartToolName(part);
+      const toolCallId = getMessagePartToolCallId(part);
+      const ownedByName = toolName ? providerOwnedNames.has(toolName) : false;
+      const ownedByCallId = toolCallId ? providerOwnedToolCallIds.has(toolCallId) : false;
+
+      if (!ownedByName && !ownedByCallId) {
+        return true;
+      }
+
+      if (toolCallId) {
+        providerOwnedToolCallIds.add(toolCallId);
+      }
+      mutated = true;
+      return false;
+    });
+
+    return mutated ? { ...message, parts } : message;
+  });
+}
+
 /** Prepare provider model messages from UI messages. */
 export function prepareProviderModelMessagesFromUiMessages(
   messages: ChatUiMessage[],
+  options: PrepareProviderModelMessagesFromUiMessagesOptions = {},
 ): ProviderModelMessage[] {
   const validMessages = messages.filter((message) =>
     message && typeof message === "object" && "role" in message
   );
   const normalizedMessages = normalizeMessageFilePartMediaTypes(validMessages);
-  const strippedPendingToolMessages = stripPendingToolParts(normalizedMessages);
+  const strippedProviderOwnedToolMessages = stripProviderOwnedToolParts(
+    normalizedMessages,
+    options.providerOwnedToolNames,
+  );
+  const strippedPendingToolMessages = stripPendingToolParts(strippedProviderOwnedToolMessages);
   const strippedSupersededToolMessages = stripSupersededToolErrorParts(strippedPendingToolMessages);
   const rewrittenMessages = rewriteUnsupportedFilePartsAsAnnotations(
     strippedSupersededToolMessages,
