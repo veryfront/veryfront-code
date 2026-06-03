@@ -42,6 +42,7 @@ export const getToolCallPartWithArgsSchema = defineSchema((v) =>
     toolName: v.string(),
     args: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
+    providerExecuted: v.boolean().optional(),
   })
 );
 
@@ -52,6 +53,7 @@ export const getToolCallPartWithInputSchema = defineSchema((v) =>
     toolName: v.string(),
     input: v.record(v.string(), v.unknown()),
     inputText: v.string().optional(),
+    providerExecuted: v.boolean().optional(),
   })
 );
 
@@ -68,6 +70,7 @@ export const getToolResultPartSchema = defineSchema((v) =>
     toolCallId: v.string(),
     toolName: v.string(),
     result: v.unknown(),
+    providerExecuted: v.boolean().optional(),
   })
 );
 

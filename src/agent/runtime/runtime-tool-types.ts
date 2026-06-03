@@ -20,6 +20,7 @@ export interface RuntimeGenerateToolResult {
   toolName: string;
   result: unknown;
   isError?: boolean;
+  providerExecuted?: boolean;
 }
 
 export interface RuntimeGenerateUsage {

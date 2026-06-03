@@ -372,6 +372,137 @@ describe("text-generation-runtime-message-converter", () => {
       ]);
     });
 
+    it("omits provider-executed tool result messages from replay", () => {
+      const messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "search tax guidance" }] },
+        {
+          id: "t1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "toolu_search",
+            toolName: "web_search",
+            result: { results: [{ title: "Skatteverket" }] },
+            providerExecuted: true,
+          }],
+        },
+        { id: "u2", role: "user", parts: [{ type: "text", text: "try again" }] },
+      ] as unknown as Message[];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [
+        { role: "user", content: "search tax guidance" },
+        { role: "user", content: "try again" },
+      ]);
+    });
+
+    it("omits provider-executed tool call and result history before a follow-up", () => {
+      const messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "search tax guidance" }] },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-web_search",
+              toolCallId: "toolu_search",
+              toolName: "web_search",
+              args: { query: "site:skatteverket.se tax residency" },
+              providerExecuted: true,
+            },
+            { type: "text", text: "Skatteverket explains unlimited tax liability." },
+          ],
+        },
+        {
+          id: "t1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "toolu_search",
+            toolName: "web_search",
+            result: { results: [{ title: "Skatteverket" }] },
+          }],
+        },
+        { id: "u2", role: "user", parts: [{ type: "text", text: "cite the source" }] },
+      ] as unknown as Message[];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [
+        { role: "user", content: "search tax guidance" },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Skatteverket explains unlimited tax liability." }],
+        },
+        { role: "user", content: "cite the source" },
+      ]);
+    });
+
+    it("keeps a later local tool result when its id matches an earlier provider tool call", () => {
+      const messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "search tax guidance" }] },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [
+            {
+              type: "tool-web_search",
+              toolCallId: "toolu_reused",
+              toolName: "web_search",
+              args: { query: "site:skatteverket.se tax residency" },
+              providerExecuted: true,
+            },
+            { type: "text", text: "Skatteverket explains unlimited tax liability." },
+          ],
+        },
+        { id: "u2", role: "user", parts: [{ type: "text", text: "search local docs" }] },
+        {
+          id: "a2",
+          role: "assistant",
+          parts: [{
+            type: "tool-call",
+            toolCallId: "toolu_reused",
+            toolName: "searchDocs",
+            args: { query: "local source" },
+          }],
+        },
+        {
+          id: "t1",
+          role: "tool",
+          parts: [{
+            type: "tool-result",
+            toolCallId: "toolu_reused",
+            toolName: "searchDocs",
+            result: { results: [{ title: "Local source" }] },
+          }],
+        },
+      ] as unknown as Message[];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [
+        { role: "user", content: "search tax guidance" },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Skatteverket explains unlimited tax liability." }],
+        },
+        { role: "user", content: "search local docs" },
+        {
+          role: "assistant",
+          content: [{
+            type: "tool-call",
+            toolCallId: "toolu_reused",
+            toolName: "searchDocs",
+            input: { query: "local source" },
+          }],
+        },
+        {
+          role: "tool",
+          content: [{
+            type: "tool-result",
+            toolCallId: "toolu_reused",
+            toolName: "searchDocs",
+            output: { type: "json", value: { results: [{ title: "Local source" }] } },
+          }],
+        },
+      ]);
+    });
+
     it("splits inline assistant tool results into provider-adjacent tool messages", () => {
       const messages = [
         { id: "u1", role: "user", parts: [{ type: "text", text: "search docs" }] },
