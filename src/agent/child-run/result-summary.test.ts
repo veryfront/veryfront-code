@@ -44,6 +44,17 @@ describe("child-run-result-summary", () => {
         },
       );
     });
+
+    it("removes malformed function transcript wrappers while preserving function result content", () => {
+      assertEquals(
+        buildChildRunResultSummary(
+          '```\nbash\n```\n\n<function_calls>\n<invoke name="run_bash">\n<parameter name="command">curl -s "https://mckinsey.github.io/agents-at-scale-ark/" 2>&1 | head -5</parameter>\n</invoke>\n</function_calls>\n<function_result>\nAgents at Scale: ARK\nOverview\nArchitecture\n</parameter>\n</invoke>\n</function_calls>',
+        ),
+        {
+          text: "Agents at Scale: ARK\nOverview\nArchitecture",
+        },
+      );
+    });
   });
 
   describe("buildRootOwnedChildRunResultText", () => {

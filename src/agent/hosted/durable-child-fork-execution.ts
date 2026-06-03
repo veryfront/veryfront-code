@@ -169,14 +169,15 @@ export function buildHostedDurableChildInvokeSuccessResult<
 >(input: HostedDurableChildSuccess<TLocalResult>): HostedDurableChildInvokeResult {
   const summaryText = input.snapshot.fullResultText ??
     (input.result.success ? input.result.summary.text : input.result.error);
+  const summary = summaryText ? buildChildRunResultSummary(summaryText) : null;
 
   return {
     ok: input.snapshot.success,
     status: input.snapshot.success ? "completed" : "failed",
-    ...(summaryText
+    ...(summary
       ? {
-        text: summaryText,
-        summary: buildChildRunResultSummary(summaryText),
+        text: summary.text,
+        summary,
       }
       : {}),
     ...(input.snapshot.success ? {} : { error: input.snapshot.error ?? "invoke_agent failed" }),
