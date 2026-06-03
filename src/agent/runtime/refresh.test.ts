@@ -188,6 +188,194 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(toolResults[0]?.context?.projectId, "project-stream");
   });
 
+  it("applies loaded skill maxSteps overrides to generate() invoke_agent calls", async () => {
+    const toolResults: ToolExecutionResultRequest[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/skill-invoke-generate",
+      async doGenerate() {
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "load-build-1",
+              toolName: "load_skill",
+              input: '{"skillId":"build"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        if (callCount === 2) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "invoke-1",
+              toolName: "invoke_agent",
+              input:
+                '{"description":"Research reference system","prompt":"Research reference docs","max_steps":10}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const loadSkill = tool({
+      id: "load_skill",
+      description: "Load a skill",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: () => ({ skillId: "build", maxSteps: 160 }),
+    });
+    const invokeAgent = tool({
+      id: "invoke_agent",
+      description: "Invoke an agent",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          description: v.string(),
+          prompt: v.string(),
+          max_steps: v.number().optional(),
+        })
+      )(),
+      execute: ({ max_steps }) => ({ ok: true, max_steps }),
+    });
+    const assistant = agent({
+      model: "hosted/skill-invoke-generate",
+      system: "Skill override generate test",
+      tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      onToolResult: (request) => {
+        toolResults.push(request);
+      },
+    });
+
+    await assistant.generate({ input: "Build a report" });
+
+    const invokeResult = toolResults.find((result) => result.toolName === "invoke_agent");
+    assertEquals(invokeResult?.input, {
+      description: "Research reference system",
+      prompt: "Research reference docs",
+      max_steps: 160,
+    });
+    assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
+  });
+
+  it("applies loaded skill maxSteps overrides to stream() invoke_agent calls", async () => {
+    const toolResults: ToolExecutionResultRequest[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/skill-invoke-stream",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "load-build-stream-1",
+                toolName: "load_skill",
+                input: '{"skillId":"build"}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        if (callCount === 2) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "invoke-stream-1",
+                toolName: "invoke_agent",
+                input:
+                  '{"description":"Research reference system","prompt":"Research reference docs","max_steps":10}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "done" },
+            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+          ]),
+        };
+      },
+    };
+    const loadSkill = tool({
+      id: "load_skill",
+      description: "Load a skill",
+      inputSchema: defineSchema((v) => v.object({ skillId: v.string() }))(),
+      execute: () => ({ skillId: "build", maxSteps: 160 }),
+    });
+    const invokeAgent = tool({
+      id: "invoke_agent",
+      description: "Invoke an agent",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          description: v.string(),
+          prompt: v.string(),
+          max_steps: v.number().optional(),
+        })
+      )(),
+      execute: ({ max_steps }) => ({ ok: true, max_steps }),
+    });
+    const assistant = agent({
+      model: "hosted/skill-invoke-stream",
+      system: "Skill override stream test",
+      tools: { load_skill: loadSkill, invoke_agent: invokeAgent },
+      maxSteps: 3,
+      resolveModelTransport: async () => ({ model }),
+      onToolResult: (request) => {
+        toolResults.push(request);
+      },
+    });
+
+    const response = (await assistant.stream({ input: "Build a report" })).toDataStreamResponse();
+    await response.text();
+
+    const invokeResult = toolResults.find((result) => result.toolName === "invoke_agent");
+    assertEquals(invokeResult?.input, {
+      description: "Research reference system",
+      prompt: "Research reference docs",
+      max_steps: 160,
+    });
+    assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
+  });
+
   it("refreshes system and context at step boundaries for generate()", async () => {
     const runtimeRequests: RuntimeStateRequest[] = [];
     const observedSystems: string[] = [];
