@@ -102,6 +102,7 @@ Deno.test("DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES excludes UI-only tools", () 
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("studio_panel_control"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("studio_suggestions"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("form_input"), true);
+  assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("invoke_agent"), true);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("bash"), false);
   assertEquals(DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES.has("create_file"), false);
 });
@@ -113,6 +114,15 @@ Deno.test("sanitizeDefaultHostedChildRequestedTools applies default exclusions a
   });
 
   assertEquals(result, ["bash", "create_file", "update_file"]);
+});
+
+Deno.test("sanitizeDefaultHostedChildRequestedTools removes parent-only delegation tools", () => {
+  const result = sanitizeDefaultHostedChildRequestedTools({
+    prompt: "Research the docs",
+    requestedTools: ["invoke_agent"],
+  });
+
+  assertEquals(result, []);
 });
 
 Deno.test("sanitizeDefaultHostedChildRequestedTools adds reverse file-writing companions", () => {
@@ -164,6 +174,26 @@ Deno.test("selectDefaultHostedChildForkRuntimeTools filters requested tools afte
       create_file: forkTools.create_file,
       update_file: forkTools.update_file,
     },
+  });
+});
+
+Deno.test("selectDefaultHostedChildForkRuntimeTools ignores parent-only delegation tool requests", () => {
+  const forkTools = {
+    web_fetch: { description: "Fetch a URL" },
+    web_search: { description: "Search the web" },
+  };
+
+  const result = selectDefaultHostedChildForkRuntimeTools({
+    provider: "anthropic",
+    forkModel: "claude-sonnet-4-5-20250929",
+    forkTools,
+    effectivePrompt: "Research the docs",
+    requestedTools: ["invoke_agent"],
+  });
+
+  assertEquals(result, {
+    ok: true,
+    forkTools,
   });
 });
 

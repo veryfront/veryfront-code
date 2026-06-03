@@ -38,6 +38,7 @@ export const DEFAULT_HOSTED_CHILD_EXCLUDED_TOOL_NAMES: ReadonlySet<string> = new
   "studio_panel_control",
   "studio_suggestions",
   "form_input",
+  "invoke_agent",
 ]);
 
 /** Default value for hosted child requested tool companions. */
