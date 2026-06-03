@@ -76,6 +76,10 @@ describe("repositories/cache/cache-repository", () => {
       return { backend, repo };
     }
 
+    // set() backfills tiers fire-and-forget (asyncBackfill); let the L1 write
+    // settle before asserting on it.
+    const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
     it("set writes through to the backend under the scoped key, get reads it back", async () => {
       const { backend, repo } = makeRepo();
       await repo.set("page", "html");
@@ -122,8 +126,9 @@ describe("repositories/cache/cache-repository", () => {
       assertEquals(await backend.get("proj:production:v1:assets/c"), "3");
     });
 
-    it("deleteByPrefix returns 0 when the backend has no delByPattern support", async () => {
+    it("deleteByPrefix returns 0 but still wipes L1 when backend has no delByPattern", async () => {
       // Backend without delByPattern (the method is optional on CacheBackend).
+      // get always returns null, so any post-delete hit can only come from L1.
       const backend = {
         type: "memory" as const,
         get: () => Promise.resolve(null),
@@ -131,7 +136,67 @@ describe("repositories/cache/cache-repository", () => {
         del: () => Promise.resolve(),
       };
       const repo = new MultiTierCacheRepository({ context: CTX, backend });
+      await repo.set("pages/a", "1");
+      await flush();
+      assertEquals(await repo.get("pages/a"), "1"); // served from L1
+
+      // L3 can't pattern-delete (returns 0), but L1 must still be invalidated.
       assertEquals(await repo.deleteByPrefix("pages/"), 0);
+      assertEquals(await repo.get("pages/a"), null);
+    });
+
+    it("deleteByPrefix invalidates L1 so a deleted key is not served stale", async () => {
+      const { repo } = makeRepo();
+      await repo.set("pages/a", "1");
+      await repo.set("assets/b", "2");
+      await flush();
+      assertEquals(await repo.get("pages/a"), "1");
+
+      await repo.deleteByPrefix("pages/");
+      assertEquals(await repo.get("pages/a"), null); // gone from both tiers
+      assertEquals(await repo.get("assets/b"), "2"); // non-matching key kept
+    });
+
+    it("clear invalidates L1 so cleared keys are not served stale", async () => {
+      const { repo } = makeRepo();
+      await repo.set("k", "v");
+      await flush();
+      assertEquals(await repo.get("k"), "v");
+
+      await repo.clear();
+      assertEquals(await repo.get("k"), null);
+    });
+
+    it("deleteByPrefix wipes L1 AFTER L3 so a racing backfill cannot re-poison it", async () => {
+      // Wrap the backend so delByPattern blocks on a deferred. While it is
+      // in flight we fire a concurrent get() that would (pre-fix) backfill the
+      // still-present L3 value into L1. The post-delete L1 wipe must remove it.
+      const inner = new MemoryCacheBackend();
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      const backend = {
+        type: "memory" as const,
+        get: (k: string) => inner.get(k),
+        set: (k: string, v: string, ttl?: number) => inner.set(k, v, ttl),
+        del: (k: string) => inner.del(k),
+        delByPattern: async (pattern: string) => {
+          await gate; // hold the L3 delete open
+          return inner.delByPattern(pattern);
+        },
+      };
+      const repo = new MultiTierCacheRepository({ context: CTX, backend });
+      await repo.set("pages/a", "1");
+      await flush();
+
+      const deletePromise = repo.deleteByPrefix("pages/"); // wipes L1, then awaits L3
+      // Concurrent read during the L3-delete window: L1 was wiped, L3 still has
+      // the value, so this backfills "1" into L1.
+      assertEquals(await repo.get("pages/a"), "1");
+      release(); // let L3 delete complete; repo then wipes L1 again
+      await deletePromise;
+
+      // The racing backfill must have been cleared by the post-L3 L1 wipe.
+      assertEquals(await repo.get("pages/a"), null);
     });
 
     it("clear removes only this scope's keys from the backend", async () => {
