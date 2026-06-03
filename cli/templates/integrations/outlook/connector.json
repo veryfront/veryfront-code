@@ -2,7 +2,7 @@
   "name": "outlook",
   "displayName": "Microsoft Outlook",
   "icon": "outlook.svg",
-  "description": "Read, send, and manage Outlook emails",
+  "description": "Read, send, schedule, and manage Outlook mail and calendars",
   "auth": {
     "type": "oauth2",
     "provider": "microsoft",
@@ -12,6 +12,8 @@
       "Mail.Read",
       "Mail.Send",
       "Mail.ReadWrite",
+      "Calendars.Read",
+      "Calendars.ReadWrite",
       "offline_access"
     ],
     "callbackPath": "/api/auth/outlook/callback",
@@ -52,7 +54,7 @@
           "folderId": {
             "type": "string",
             "in": "path",
-            "description": "Mail folder ID or well-known name",
+            "description": "Mail folder ID or well-known folder name",
             "required": true,
             "default": "inbox"
           },
@@ -65,7 +67,8 @@
           "$select": {
             "type": "string",
             "in": "query",
-            "description": "Comma-separated message fields to return"
+            "description": "Comma-separated message fields to return",
+            "default": "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag"
           },
           "$orderby": {
             "type": "string",
@@ -82,24 +85,80 @@
         "response": {
           "transform": "value",
           "historicalSummary": {
-            "collectionKeys": ["value", "data", "messages"],
+            "collectionKeys": [
+              "value",
+              "data",
+              "messages"
+            ],
             "collectionName": "messages",
             "itemFields": [
-              { "name": "id" },
-              { "name": "conversationId" },
-              { "name": "from", "kind": "contact" },
-              { "name": "sender", "kind": "contact" },
-              { "name": "toRecipients", "kind": "contact-array" },
-              { "name": "subject" },
-              { "name": "receivedDateTime" },
-              { "name": "sentDateTime" },
-              { "name": "bodyPreview", "maxLength": 300 },
-              { "name": "categories", "kind": "string-array" },
-              { "name": "isRead" },
-              { "name": "importance" },
-              { "name": "hasAttachments" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "conversationId"
+              },
+              {
+                "name": "internetMessageId"
+              },
+              {
+                "name": "from",
+                "kind": "contact"
+              },
+              {
+                "name": "sender",
+                "kind": "contact"
+              },
+              {
+                "name": "toRecipients",
+                "kind": "contact-array"
+              },
+              {
+                "name": "ccRecipients",
+                "kind": "contact-array"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "receivedDateTime"
+              },
+              {
+                "name": "sentDateTime"
+              },
+              {
+                "name": "bodyPreview",
+                "maxLength": 300
+              },
+              {
+                "name": "categories",
+                "kind": "string-array"
+              },
+              {
+                "name": "isRead"
+              },
+              {
+                "name": "importance"
+              },
+              {
+                "name": "hasAttachments"
+              },
+              {
+                "name": "webLink"
+              },
+              {
+                "name": "flag",
+                "kind": "object"
+              }
             ],
-            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
             "omitted": "large email bodies and provider-specific message fields"
           }
         }
@@ -123,7 +182,8 @@
           "$select": {
             "type": "string",
             "in": "query",
-            "description": "Comma-separated message fields to return"
+            "description": "Comma-separated message fields to return",
+            "default": "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag"
           }
         }
       }
@@ -139,7 +199,7 @@
         "body": {
           "message": {
             "type": "object",
-            "description": "Microsoft Graph message object with subject, body, toRecipients, etc.",
+            "description": "Microsoft Graph message object with subject, body, toRecipients, and optional fields",
             "required": true
           },
           "saveToSentItems": {
@@ -162,7 +222,7 @@
           "$search": {
             "type": "string",
             "in": "query",
-            "description": "Search query, e.g. \"subject:roadmap\"",
+            "description": "Microsoft Graph search query, for example \"subject:roadmap\"",
             "required": true
           },
           "$top": {
@@ -174,30 +234,87 @@
           "$select": {
             "type": "string",
             "in": "query",
-            "description": "Comma-separated message fields to return"
+            "description": "Comma-separated message fields to return",
+            "default": "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag"
           }
         },
         "response": {
           "transform": "value",
           "historicalSummary": {
-            "collectionKeys": ["value", "data", "messages"],
+            "collectionKeys": [
+              "value",
+              "data",
+              "messages"
+            ],
             "collectionName": "messages",
             "itemFields": [
-              { "name": "id" },
-              { "name": "conversationId" },
-              { "name": "from", "kind": "contact" },
-              { "name": "sender", "kind": "contact" },
-              { "name": "toRecipients", "kind": "contact-array" },
-              { "name": "subject" },
-              { "name": "receivedDateTime" },
-              { "name": "sentDateTime" },
-              { "name": "bodyPreview", "maxLength": 300 },
-              { "name": "categories", "kind": "string-array" },
-              { "name": "isRead" },
-              { "name": "importance" },
-              { "name": "hasAttachments" }
+              {
+                "name": "id"
+              },
+              {
+                "name": "conversationId"
+              },
+              {
+                "name": "internetMessageId"
+              },
+              {
+                "name": "from",
+                "kind": "contact"
+              },
+              {
+                "name": "sender",
+                "kind": "contact"
+              },
+              {
+                "name": "toRecipients",
+                "kind": "contact-array"
+              },
+              {
+                "name": "ccRecipients",
+                "kind": "contact-array"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "receivedDateTime"
+              },
+              {
+                "name": "sentDateTime"
+              },
+              {
+                "name": "bodyPreview",
+                "maxLength": 300
+              },
+              {
+                "name": "categories",
+                "kind": "string-array"
+              },
+              {
+                "name": "isRead"
+              },
+              {
+                "name": "importance"
+              },
+              {
+                "name": "hasAttachments"
+              },
+              {
+                "name": "webLink"
+              },
+              {
+                "name": "flag",
+                "kind": "object"
+              }
             ],
-            "outputFields": [{ "name": "@odata.nextLink" }, { "name": "@odata.count" }],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
             "omitted": "large email bodies and provider-specific message fields"
           }
         }
@@ -254,7 +371,6 @@
                 "name": "totalItemCount"
               }
             ],
-            "omitted": "folder provider-specific payload fields",
             "outputFields": [
               {
                 "name": "@odata.nextLink"
@@ -262,7 +378,2005 @@
               {
                 "name": "@odata.count"
               }
-            ]
+            ],
+            "omitted": "folder provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_folder",
+      "name": "Get Folder",
+      "description": "Get metadata for a mail folder",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/{folderId}",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mail folder ID or well-known folder name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_folder",
+      "name": "Create Folder",
+      "description": "Create a mail folder",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders",
+        "body": {
+          "displayName": {
+            "type": "string",
+            "description": "Folder display name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_folder",
+      "name": "Update Folder",
+      "description": "Rename a mail folder",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/{folderId}",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mail folder ID",
+            "required": true
+          }
+        },
+        "body": {
+          "displayName": {
+            "type": "string",
+            "description": "Folder display name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_folder",
+      "name": "Delete Folder",
+      "description": "Delete a mail folder",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/{folderId}",
+        "params": {
+          "folderId": {
+            "type": "string",
+            "in": "path",
+            "description": "Mail folder ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "mark_email_read",
+      "name": "Mark Email Read",
+      "description": "Mark an email as read",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "isRead": {
+            "type": "boolean",
+            "description": "Read state",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "mark_email_unread",
+      "name": "Mark Email Unread",
+      "description": "Mark an email as unread",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "isRead": {
+            "type": "boolean",
+            "description": "Read state",
+            "default": false
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_email",
+      "name": "Delete Email",
+      "description": "Delete an email message",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "move_email",
+      "name": "Move Email",
+      "description": "Move an email to another folder",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/move",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "destinationId": {
+            "type": "string",
+            "description": "Destination folder ID or well-known folder name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "archive_email",
+      "name": "Archive Email",
+      "description": "Move an email to the archive folder",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/move",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "destinationId": {
+            "type": "string",
+            "description": "Destination folder ID or well-known folder name",
+            "default": "archive"
+          }
+        }
+      }
+    },
+    {
+      "id": "flag_email",
+      "name": "Flag Email",
+      "description": "Set a follow-up flag on an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "flag": {
+            "type": "object",
+            "description": "Microsoft Graph followupFlag object",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "clear_email_flag",
+      "name": "Clear Email Flag",
+      "description": "Clear the follow-up flag on an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "flag": {
+            "type": "object",
+            "description": "Microsoft Graph followupFlag object",
+            "default": {
+              "flagStatus": "notFlagged"
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "categorize_email",
+      "name": "Categorize Email",
+      "description": "Replace the categories on an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "categories": {
+            "type": "array",
+            "description": "Outlook category display names",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_categories",
+      "name": "List Categories",
+      "description": "List Outlook master categories",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/outlook/masterCategories",
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "categories",
+              "data"
+            ],
+            "collectionName": "categories",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "displayName"
+              },
+              {
+                "name": "color"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "category provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_category",
+      "name": "Create Category",
+      "description": "Create an Outlook master category",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/outlook/masterCategories",
+        "body": {
+          "displayName": {
+            "type": "string",
+            "description": "Category display name",
+            "required": true
+          },
+          "color": {
+            "type": "string",
+            "description": "Preset category color"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_category",
+      "name": "Update Category",
+      "description": "Update an Outlook master category color",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/outlook/masterCategories/{categoryId}",
+        "params": {
+          "categoryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Category ID",
+            "required": true
+          }
+        },
+        "body": {
+          "color": {
+            "type": "string",
+            "description": "Preset category color",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_category",
+      "name": "Delete Category",
+      "description": "Delete an Outlook master category",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://graph.microsoft.com/v1.0/me/outlook/masterCategories/{categoryId}",
+        "params": {
+          "categoryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Category ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_draft",
+      "name": "Create Draft",
+      "description": "Create a draft email message",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages",
+        "body": {
+          "subject": {
+            "type": "string",
+            "description": "Message subject",
+            "required": true
+          },
+          "body": {
+            "type": "object",
+            "description": "Microsoft Graph itemBody object, for example { contentType, content }",
+            "required": true
+          },
+          "toRecipients": {
+            "type": "array",
+            "description": "Microsoft Graph recipient array",
+            "required": true
+          },
+          "ccRecipients": {
+            "type": "array",
+            "description": "CC recipient array"
+          },
+          "bccRecipients": {
+            "type": "array",
+            "description": "BCC recipient array"
+          },
+          "replyTo": {
+            "type": "array",
+            "description": "Reply-to recipient array"
+          },
+          "importance": {
+            "type": "string",
+            "description": "Message importance: low, normal, or high"
+          },
+          "categories": {
+            "type": "array",
+            "description": "Outlook category names"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_drafts",
+      "name": "List Drafts",
+      "description": "List draft email messages",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/mailFolders/drafts/messages",
+        "params": {
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum drafts to return",
+            "default": 25
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default": "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag"
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort expression",
+            "default": "lastModifiedDateTime desc"
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "data",
+              "messages"
+            ],
+            "collectionName": "messages",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "conversationId"
+              },
+              {
+                "name": "internetMessageId"
+              },
+              {
+                "name": "from",
+                "kind": "contact"
+              },
+              {
+                "name": "sender",
+                "kind": "contact"
+              },
+              {
+                "name": "toRecipients",
+                "kind": "contact-array"
+              },
+              {
+                "name": "ccRecipients",
+                "kind": "contact-array"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "receivedDateTime"
+              },
+              {
+                "name": "sentDateTime"
+              },
+              {
+                "name": "bodyPreview",
+                "maxLength": 300
+              },
+              {
+                "name": "categories",
+                "kind": "string-array"
+              },
+              {
+                "name": "isRead"
+              },
+              {
+                "name": "importance"
+              },
+              {
+                "name": "hasAttachments"
+              },
+              {
+                "name": "webLink"
+              },
+              {
+                "name": "flag",
+                "kind": "object"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "large email bodies and provider-specific message fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_draft",
+      "name": "Get Draft",
+      "description": "Get a draft message",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Draft message ID",
+            "required": true
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default": "id,conversationId,internetMessageId,subject,body,bodyPreview,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,receivedDateTime,sentDateTime,categories,isRead,importance,hasAttachments,webLink,flag"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_draft",
+      "name": "Update Draft",
+      "description": "Update a draft email message",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Draft message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "subject": {
+            "type": "string",
+            "description": "Message subject"
+          },
+          "body": {
+            "type": "object",
+            "description": "Microsoft Graph itemBody object, for example { contentType, content }"
+          },
+          "toRecipients": {
+            "type": "array",
+            "description": "Microsoft Graph recipient array"
+          },
+          "ccRecipients": {
+            "type": "array",
+            "description": "CC recipient array"
+          },
+          "bccRecipients": {
+            "type": "array",
+            "description": "BCC recipient array"
+          },
+          "replyTo": {
+            "type": "array",
+            "description": "Reply-to recipient array"
+          },
+          "importance": {
+            "type": "string",
+            "description": "Message importance: low, normal, or high"
+          },
+          "categories": {
+            "type": "array",
+            "description": "Outlook category names"
+          }
+        }
+      }
+    },
+    {
+      "id": "send_draft",
+      "name": "Send Draft",
+      "description": "Send a draft email message",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/send",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Draft message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_draft",
+      "name": "Delete Draft",
+      "description": "Delete a draft email message",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Draft message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "reply_email",
+      "name": "Reply Email",
+      "description": "Reply to an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/reply",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "comment": {
+            "type": "string",
+            "description": "Reply comment",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "reply_all_email",
+      "name": "Reply All Email",
+      "description": "Reply all to an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/replyAll",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "comment": {
+            "type": "string",
+            "description": "Reply-all comment",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "forward_email",
+      "name": "Forward Email",
+      "description": "Forward an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/forward",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "comment": {
+            "type": "string",
+            "description": "Forward comment"
+          },
+          "toRecipients": {
+            "type": "array",
+            "description": "Recipients to forward to",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_reply_draft",
+      "name": "Create Reply Draft",
+      "description": "Create a reply draft for an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/createReply",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_reply_all_draft",
+      "name": "Create Reply All Draft",
+      "description": "Create a reply-all draft for an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/createReplyAll",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_forward_draft",
+      "name": "Create Forward Draft",
+      "description": "Create a forward draft for an email",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/createForward",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_attachments",
+      "name": "List Attachments",
+      "description": "List attachments for an email message",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/attachments",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "attachments",
+              "data"
+            ],
+            "collectionName": "attachments",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "contentType"
+              },
+              {
+                "name": "size"
+              },
+              {
+                "name": "isInline"
+              },
+              {
+                "name": "lastModifiedDateTime"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "attachment binary content and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_attachment",
+      "name": "Get Attachment",
+      "description": "Get metadata and content for an email attachment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/attachments/{attachmentId}",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Message ID",
+            "required": true
+          },
+          "attachmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attachment ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "add_attachment_to_message",
+      "name": "Add Attachment To Message",
+      "description": "Add a small attachment to a draft message",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/messages/{messageId}/attachments",
+        "params": {
+          "messageId": {
+            "type": "string",
+            "in": "path",
+            "description": "Draft message ID",
+            "required": true
+          }
+        },
+        "body": {
+          "attachment": {
+            "type": "object",
+            "description": "Microsoft Graph attachment object",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_conversation_messages",
+      "name": "List Conversation Messages",
+      "description": "List messages in an Outlook conversation",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/messages?$filter=conversationId eq '{conversationId}'",
+        "params": {
+          "conversationId": {
+            "type": "string",
+            "in": "path",
+            "description": "Conversation ID",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum messages to return",
+            "default": 25
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated message fields to return",
+            "default": "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag"
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort expression",
+            "default": "receivedDateTime desc"
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "data",
+              "messages"
+            ],
+            "collectionName": "messages",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "conversationId"
+              },
+              {
+                "name": "internetMessageId"
+              },
+              {
+                "name": "from",
+                "kind": "contact"
+              },
+              {
+                "name": "sender",
+                "kind": "contact"
+              },
+              {
+                "name": "toRecipients",
+                "kind": "contact-array"
+              },
+              {
+                "name": "ccRecipients",
+                "kind": "contact-array"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "receivedDateTime"
+              },
+              {
+                "name": "sentDateTime"
+              },
+              {
+                "name": "bodyPreview",
+                "maxLength": 300
+              },
+              {
+                "name": "categories",
+                "kind": "string-array"
+              },
+              {
+                "name": "isRead"
+              },
+              {
+                "name": "importance"
+              },
+              {
+                "name": "hasAttachments"
+              },
+              {
+                "name": "webLink"
+              },
+              {
+                "name": "flag",
+                "kind": "object"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "large email bodies and provider-specific message fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_calendars",
+      "name": "List Calendars",
+      "description": "List Outlook calendars",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/calendars",
+        "params": {
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum calendars to return",
+            "default": 100
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "calendars",
+              "data"
+            ],
+            "collectionName": "calendars",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "color"
+              },
+              {
+                "name": "isDefaultCalendar"
+              },
+              {
+                "name": "canEdit"
+              },
+              {
+                "name": "canShare"
+              },
+              {
+                "name": "owner",
+                "kind": "object"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "calendar provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_calendar",
+      "name": "Get Calendar",
+      "description": "Get metadata for an Outlook calendar",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/calendars/{calendarId}",
+        "params": {
+          "calendarId": {
+            "type": "string",
+            "in": "path",
+            "description": "Calendar ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "create_calendar",
+      "name": "Create Calendar",
+      "description": "Create an Outlook calendar",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/calendars",
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Calendar name",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "update_calendar",
+      "name": "Update Calendar",
+      "description": "Update an Outlook calendar",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/calendars/{calendarId}",
+        "params": {
+          "calendarId": {
+            "type": "string",
+            "in": "path",
+            "description": "Calendar ID",
+            "required": true
+          }
+        },
+        "body": {
+          "name": {
+            "type": "string",
+            "description": "Calendar name"
+          },
+          "color": {
+            "type": "string",
+            "description": "Calendar color"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_calendar",
+      "name": "Delete Calendar",
+      "description": "Delete an Outlook calendar",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://graph.microsoft.com/v1.0/me/calendars/{calendarId}",
+        "params": {
+          "calendarId": {
+            "type": "string",
+            "in": "path",
+            "description": "Calendar ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "list_events",
+      "name": "List Events",
+      "description": "List events from a specific Outlook calendar",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/calendars/{calendarId}/events",
+        "params": {
+          "calendarId": {
+            "type": "string",
+            "in": "path",
+            "description": "Calendar ID",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum events to return",
+            "default": 25
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated event fields to return",
+            "default": "id,subject,bodyPreview,organizer,attendees,start,end,location,locations,isOnlineMeeting,onlineMeetingProvider,webLink,showAs,responseStatus,categories,importance,hasAttachments,recurrence"
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort expression",
+            "default": "start/dateTime"
+          },
+          "$filter": {
+            "type": "string",
+            "in": "query",
+            "description": "OData filter expression"
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "events",
+              "data"
+            ],
+            "collectionName": "events",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "organizer",
+                "kind": "contact"
+              },
+              {
+                "name": "attendees",
+                "kind": "contact-array"
+              },
+              {
+                "name": "start",
+                "kind": "object"
+              },
+              {
+                "name": "end",
+                "kind": "object"
+              },
+              {
+                "name": "location",
+                "kind": "object"
+              },
+              {
+                "name": "showAs"
+              },
+              {
+                "name": "responseStatus",
+                "kind": "object"
+              },
+              {
+                "name": "isOnlineMeeting"
+              },
+              {
+                "name": "webLink"
+              },
+              {
+                "name": "bodyPreview",
+                "maxLength": 300
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "full event bodies and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_calendar_view",
+      "name": "List Calendar View",
+      "description": "List occurrences in a calendar time window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/calendarView",
+        "params": {
+          "startDateTime": {
+            "type": "string",
+            "in": "query",
+            "description": "Window start ISO date/time",
+            "required": true
+          },
+          "endDateTime": {
+            "type": "string",
+            "in": "query",
+            "description": "Window end ISO date/time",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum events to return",
+            "default": 50
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated event fields to return",
+            "default": "id,subject,bodyPreview,organizer,attendees,start,end,location,locations,isOnlineMeeting,onlineMeetingProvider,webLink,showAs,responseStatus,categories,importance,hasAttachments,recurrence"
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "Sort expression",
+            "default": "start/dateTime"
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "events",
+              "data"
+            ],
+            "collectionName": "events",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "organizer",
+                "kind": "contact"
+              },
+              {
+                "name": "attendees",
+                "kind": "contact-array"
+              },
+              {
+                "name": "start",
+                "kind": "object"
+              },
+              {
+                "name": "end",
+                "kind": "object"
+              },
+              {
+                "name": "location",
+                "kind": "object"
+              },
+              {
+                "name": "showAs"
+              },
+              {
+                "name": "responseStatus",
+                "kind": "object"
+              },
+              {
+                "name": "isOnlineMeeting"
+              },
+              {
+                "name": "webLink"
+              },
+              {
+                "name": "bodyPreview",
+                "maxLength": 300
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "full event bodies and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_event",
+      "name": "Get Event",
+      "description": "Get details for an Outlook event",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/events/{eventId}",
+        "params": {
+          "eventId": {
+            "type": "string",
+            "in": "path",
+            "description": "Event ID",
+            "required": true
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated event fields to return",
+            "default": "id,subject,bodyPreview,organizer,attendees,start,end,location,locations,isOnlineMeeting,onlineMeetingProvider,webLink,showAs,responseStatus,categories,importance,hasAttachments,recurrence"
+          }
+        }
+      }
+    },
+    {
+      "id": "create_event",
+      "name": "Create Event",
+      "description": "Create an Outlook calendar event",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/events",
+        "body": {
+          "subject": {
+            "type": "string",
+            "description": "Event subject",
+            "required": true
+          },
+          "body": {
+            "type": "object",
+            "description": "Microsoft Graph itemBody object, for example { contentType, content }"
+          },
+          "start": {
+            "type": "object",
+            "description": "Start date/time object with dateTime and timeZone",
+            "required": true
+          },
+          "end": {
+            "type": "object",
+            "description": "End date/time object with dateTime and timeZone",
+            "required": true
+          },
+          "attendees": {
+            "type": "array",
+            "description": "Attendee array"
+          },
+          "location": {
+            "type": "object",
+            "description": "Primary event location"
+          },
+          "locations": {
+            "type": "array",
+            "description": "Additional event locations"
+          },
+          "categories": {
+            "type": "array",
+            "description": "Outlook category names"
+          },
+          "importance": {
+            "type": "string",
+            "description": "Event importance: low, normal, or high"
+          },
+          "showAs": {
+            "type": "string",
+            "description": "Free/busy status such as free, busy, tentative, or oof"
+          },
+          "isOnlineMeeting": {
+            "type": "boolean",
+            "description": "Whether to create an online meeting"
+          },
+          "onlineMeetingProvider": {
+            "type": "string",
+            "description": "Online meeting provider such as teamsForBusiness"
+          },
+          "recurrence": {
+            "type": "object",
+            "description": "Microsoft Graph patternedRecurrence object"
+          }
+        }
+      }
+    },
+    {
+      "id": "update_event",
+      "name": "Update Event",
+      "description": "Update an Outlook calendar event",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://graph.microsoft.com/v1.0/me/events/{eventId}",
+        "params": {
+          "eventId": {
+            "type": "string",
+            "in": "path",
+            "description": "Event ID",
+            "required": true
+          }
+        },
+        "body": {
+          "subject": {
+            "type": "string",
+            "description": "Event subject"
+          },
+          "body": {
+            "type": "object",
+            "description": "Microsoft Graph itemBody object, for example { contentType, content }"
+          },
+          "start": {
+            "type": "object",
+            "description": "Start date/time object with dateTime and timeZone"
+          },
+          "end": {
+            "type": "object",
+            "description": "End date/time object with dateTime and timeZone"
+          },
+          "attendees": {
+            "type": "array",
+            "description": "Attendee array"
+          },
+          "location": {
+            "type": "object",
+            "description": "Primary event location"
+          },
+          "locations": {
+            "type": "array",
+            "description": "Additional event locations"
+          },
+          "categories": {
+            "type": "array",
+            "description": "Outlook category names"
+          },
+          "importance": {
+            "type": "string",
+            "description": "Event importance: low, normal, or high"
+          },
+          "showAs": {
+            "type": "string",
+            "description": "Free/busy status such as free, busy, tentative, or oof"
+          },
+          "isOnlineMeeting": {
+            "type": "boolean",
+            "description": "Whether to create an online meeting"
+          },
+          "onlineMeetingProvider": {
+            "type": "string",
+            "description": "Online meeting provider such as teamsForBusiness"
+          },
+          "recurrence": {
+            "type": "object",
+            "description": "Microsoft Graph patternedRecurrence object"
+          }
+        }
+      }
+    },
+    {
+      "id": "delete_event",
+      "name": "Delete Event",
+      "description": "Delete an Outlook calendar event",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url": "https://graph.microsoft.com/v1.0/me/events/{eventId}",
+        "params": {
+          "eventId": {
+            "type": "string",
+            "in": "path",
+            "description": "Event ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "respond_to_event",
+      "name": "Respond To Event",
+      "description": "Accept, tentatively accept, or decline an event invitation",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/events/{eventId}/{responseAction}",
+        "params": {
+          "eventId": {
+            "type": "string",
+            "in": "path",
+            "description": "Event ID",
+            "required": true
+          },
+          "responseAction": {
+            "type": "string",
+            "in": "path",
+            "description": "Response action: accept, tentativelyAccept, or decline",
+            "required": true
+          }
+        },
+        "body": {
+          "comment": {
+            "type": "string",
+            "description": "Response comment"
+          },
+          "sendResponse": {
+            "type": "boolean",
+            "description": "Send a response to the organizer",
+            "default": true
+          }
+        }
+      }
+    },
+    {
+      "id": "get_event_instances",
+      "name": "Get Event Instances",
+      "description": "List instances of a recurring event in a time window",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/events/{eventId}/instances",
+        "params": {
+          "eventId": {
+            "type": "string",
+            "in": "path",
+            "description": "Recurring event ID",
+            "required": true
+          },
+          "startDateTime": {
+            "type": "string",
+            "in": "query",
+            "description": "Window start ISO date/time",
+            "required": true
+          },
+          "endDateTime": {
+            "type": "string",
+            "in": "query",
+            "description": "Window end ISO date/time",
+            "required": true
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum instances to return",
+            "default": 50
+          },
+          "$select": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated event fields to return",
+            "default": "id,subject,bodyPreview,organizer,attendees,start,end,location,locations,isOnlineMeeting,onlineMeetingProvider,webLink,showAs,responseStatus,categories,importance,hasAttachments,recurrence"
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "events",
+              "data"
+            ],
+            "collectionName": "events",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "subject"
+              },
+              {
+                "name": "organizer",
+                "kind": "contact"
+              },
+              {
+                "name": "attendees",
+                "kind": "contact-array"
+              },
+              {
+                "name": "start",
+                "kind": "object"
+              },
+              {
+                "name": "end",
+                "kind": "object"
+              },
+              {
+                "name": "location",
+                "kind": "object"
+              },
+              {
+                "name": "showAs"
+              },
+              {
+                "name": "responseStatus",
+                "kind": "object"
+              },
+              {
+                "name": "isOnlineMeeting"
+              },
+              {
+                "name": "webLink"
+              },
+              {
+                "name": "bodyPreview",
+                "maxLength": 300
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "full event bodies and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "list_event_attachments",
+      "name": "List Event Attachments",
+      "description": "List attachments for an event",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/events/{eventId}/attachments",
+        "params": {
+          "eventId": {
+            "type": "string",
+            "in": "path",
+            "description": "Event ID",
+            "required": true
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "attachments",
+              "data"
+            ],
+            "collectionName": "attachments",
+            "itemFields": [
+              {
+                "name": "id"
+              },
+              {
+                "name": "name"
+              },
+              {
+                "name": "contentType"
+              },
+              {
+                "name": "size"
+              },
+              {
+                "name": "isInline"
+              },
+              {
+                "name": "lastModifiedDateTime"
+              }
+            ],
+            "outputFields": [
+              {
+                "name": "@odata.nextLink"
+              },
+              {
+                "name": "@odata.count"
+              }
+            ],
+            "omitted": "attachment binary content and provider-specific payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_event_attachment",
+      "name": "Get Event Attachment",
+      "description": "Get metadata and content for an event attachment",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://graph.microsoft.com/v1.0/me/events/{eventId}/attachments/{attachmentId}",
+        "params": {
+          "eventId": {
+            "type": "string",
+            "in": "path",
+            "description": "Event ID",
+            "required": true
+          },
+          "attachmentId": {
+            "type": "string",
+            "in": "path",
+            "description": "Attachment ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "add_event_attachment",
+      "name": "Add Event Attachment",
+      "description": "Add a small attachment to an event",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/events/{eventId}/attachments",
+        "params": {
+          "eventId": {
+            "type": "string",
+            "in": "path",
+            "description": "Event ID",
+            "required": true
+          }
+        },
+        "body": {
+          "attachment": {
+            "type": "object",
+            "description": "Microsoft Graph attachment object",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "find_free_time",
+      "name": "Find Free Time",
+      "description": "Return free/busy schedule information for users or resources",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/calendar/getSchedule",
+        "body": {
+          "schedules": {
+            "type": "array",
+            "description": "Email addresses or schedule IDs to query",
+            "required": true
+          },
+          "startTime": {
+            "type": "object",
+            "description": "Window start dateTimeTimeZone object",
+            "required": true
+          },
+          "endTime": {
+            "type": "object",
+            "description": "Window end dateTimeTimeZone object",
+            "required": true
+          },
+          "availabilityViewInterval": {
+            "type": "number",
+            "description": "Availability view interval in minutes",
+            "default": 30
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "schedules",
+              "data"
+            ],
+            "collectionName": "schedules",
+            "itemFields": [
+              {
+                "name": "scheduleId"
+              },
+              {
+                "name": "availabilityView"
+              },
+              {
+                "name": "scheduleItems",
+                "kind": "object"
+              },
+              {
+                "name": "workingHours",
+                "kind": "object"
+              },
+              {
+                "name": "error",
+                "kind": "object"
+              }
+            ],
+            "omitted": "provider-specific schedule diagnostics and expanded free/busy payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_schedule",
+      "name": "Get Schedule",
+      "description": "Get detailed free/busy schedule information",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/calendar/getSchedule",
+        "body": {
+          "schedules": {
+            "type": "array",
+            "description": "Email addresses or schedule IDs to query",
+            "required": true
+          },
+          "startTime": {
+            "type": "object",
+            "description": "Window start dateTimeTimeZone object",
+            "required": true
+          },
+          "endTime": {
+            "type": "object",
+            "description": "Window end dateTimeTimeZone object",
+            "required": true
+          },
+          "availabilityViewInterval": {
+            "type": "number",
+            "description": "Availability view interval in minutes",
+            "default": 30
+          }
+        },
+        "response": {
+          "transform": "value",
+          "historicalSummary": {
+            "collectionKeys": [
+              "value",
+              "schedules",
+              "data"
+            ],
+            "collectionName": "schedules",
+            "itemFields": [
+              {
+                "name": "scheduleId"
+              },
+              {
+                "name": "availabilityView"
+              },
+              {
+                "name": "scheduleItems",
+                "kind": "object"
+              },
+              {
+                "name": "workingHours",
+                "kind": "object"
+              },
+              {
+                "name": "error",
+                "kind": "object"
+              }
+            ],
+            "omitted": "provider-specific schedule diagnostics and expanded free/busy payload fields"
+          }
+        }
+      }
+    },
+    {
+      "id": "find_meeting_times",
+      "name": "Find Meeting Times",
+      "description": "Find meeting time suggestions from attendees and constraints",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://graph.microsoft.com/v1.0/me/findMeetingTimes",
+        "body": {
+          "attendees": {
+            "type": "array",
+            "description": "Attendee array",
+            "required": true
+          },
+          "timeConstraint": {
+            "type": "object",
+            "description": "Meeting time constraint object",
+            "required": true
+          },
+          "meetingDuration": {
+            "type": "string",
+            "description": "ISO 8601 meeting duration, for example PT1H"
+          },
+          "maxCandidates": {
+            "type": "number",
+            "description": "Maximum meeting suggestions to return",
+            "default": 10
+          },
+          "isOrganizerOptional": {
+            "type": "boolean",
+            "description": "Whether organizer attendance is optional"
+          },
+          "returnSuggestionReasons": {
+            "type": "boolean",
+            "description": "Return suggestion reason text",
+            "default": true
+          },
+          "minimumAttendeePercentage": {
+            "type": "number",
+            "description": "Minimum attendee availability percentage"
+          }
+        },
+        "response": {
+          "transform": "meetingTimeSuggestions",
+          "historicalSummary": {
+            "collectionKeys": [
+              "meetingTimeSuggestions",
+              "value",
+              "data"
+            ],
+            "collectionName": "meetingTimeSuggestions",
+            "itemFields": [
+              {
+                "name": "confidence"
+              },
+              {
+                "name": "organizerAvailability"
+              },
+              {
+                "name": "attendeeAvailability",
+                "kind": "object"
+              },
+              {
+                "name": "meetingTimeSlot",
+                "kind": "object"
+              },
+              {
+                "name": "locations",
+                "kind": "object"
+              },
+              {
+                "name": "suggestionReason",
+                "maxLength": 300
+              }
+            ],
+            "omitted": "provider-specific meeting suggestion diagnostics"
           }
         }
       }

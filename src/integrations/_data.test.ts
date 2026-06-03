@@ -195,7 +195,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 11],
       ["confluence", 6],
-      ["outlook", 5],
+      ["outlook", 56],
       ["teams", 6],
     ]);
 
@@ -930,6 +930,90 @@ describe("integration endpoint specs", () => {
     );
   });
 
+  it("publishes the practical Outlook mail and calendar tool surface", () => {
+    const outlook = getConnector("outlook");
+    assertEquals(outlook.auth.scopes, [
+      "Mail.Read",
+      "Mail.Send",
+      "Mail.ReadWrite",
+      "Calendars.Read",
+      "Calendars.ReadWrite",
+      "offline_access",
+    ]);
+
+    assertEquals(outlook.tools.map((tool) => tool.id), [
+      "list_emails",
+      "get_email",
+      "send_email",
+      "search_emails",
+      "list_folders",
+      "get_folder",
+      "create_folder",
+      "update_folder",
+      "delete_folder",
+      "mark_email_read",
+      "mark_email_unread",
+      "delete_email",
+      "move_email",
+      "archive_email",
+      "flag_email",
+      "clear_email_flag",
+      "categorize_email",
+      "list_categories",
+      "create_category",
+      "update_category",
+      "delete_category",
+      "create_draft",
+      "list_drafts",
+      "get_draft",
+      "update_draft",
+      "send_draft",
+      "delete_draft",
+      "reply_email",
+      "reply_all_email",
+      "forward_email",
+      "create_reply_draft",
+      "create_reply_all_draft",
+      "create_forward_draft",
+      "list_attachments",
+      "get_attachment",
+      "add_attachment_to_message",
+      "list_conversation_messages",
+      "list_calendars",
+      "get_calendar",
+      "create_calendar",
+      "update_calendar",
+      "delete_calendar",
+      "list_events",
+      "list_calendar_view",
+      "get_event",
+      "create_event",
+      "update_event",
+      "delete_event",
+      "respond_to_event",
+      "get_event_instances",
+      "list_event_attachments",
+      "get_event_attachment",
+      "add_event_attachment",
+      "find_free_time",
+      "get_schedule",
+      "find_meeting_times",
+    ]);
+
+    assertEquals(
+      getTool("outlook", "list_calendar_view").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/me/calendarView",
+    );
+    assertEquals(
+      getTool("outlook", "archive_email").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/me/messages/{messageId}/move",
+    );
+    assertEquals(
+      getTool("outlook", "find_meeting_times").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/me/findMeetingTimes",
+    );
+  });
+
   it("publishes provider-declared historical summary contracts for email list/search tools", () => {
     const gmailListEmails = getTool("gmail", "list_emails");
     const outlookListEmails = getTool("outlook", "list_emails");
@@ -980,7 +1064,8 @@ describe("integration endpoint specs", () => {
       "jira",
       "linear",
     ];
-    const collectionToolPattern = /^(list|search|query|report|time_report|invoice_report)_?/;
+    const collectionToolPattern =
+      /^(list|search|query|report|time_report|invoice_report|find_free_time|get_schedule|find_meeting_times)_?/;
 
     for (const connectorName of priorityConnectors) {
       const connector = getConnector(connectorName);
