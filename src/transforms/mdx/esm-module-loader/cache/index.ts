@@ -309,6 +309,8 @@ export function invalidateMdxEsmModule(
 ): void {
   const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
 
+  // Scan every cache dir: a multi-project pod keeps one cache per project, and
+  // the same source file can be cached under more than one of them.
   for (const cache of modulePathCaches.values()) {
     const cachedPath = cache.get(cacheKey);
     if (cachedPath === undefined) continue;
