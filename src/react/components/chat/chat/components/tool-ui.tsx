@@ -129,6 +129,10 @@ function renderOutputAsTable(output: unknown): React.ReactNode | null {
   );
 }
 
+function hasVisibleToolOutput(output: unknown): boolean {
+  return output !== undefined && output !== null;
+}
+
 /**
  * Tool call card component - renders tool invocations with parameters and results
  * Styled to match AI Elements (https://ai-sdk.dev/elements)
@@ -140,7 +144,8 @@ export function ToolCallCard({
 }): React.JSX.Element {
   const [isExpanded, setIsExpanded] = React.useState(true);
 
-  const tableOutput = tool.output === undefined ? null : renderOutputAsTable(tool.output);
+  const hasOutput = hasVisibleToolOutput(tool.output);
+  const tableOutput = hasOutput ? renderOutputAsTable(tool.output) : null;
 
   return (
     <div className="not-prose w-full rounded-xl border border-[var(--border)] bg-[var(--card)]">
@@ -175,18 +180,16 @@ export function ToolCallCard({
             </div>
           )}
 
-          {tool.output === undefined
-            ? null
-            : (
-              <div className="space-y-2 p-4 border-t border-[var(--border)]">
-                <h4 className="font-medium text-[var(--muted-foreground)] text-xs uppercase tracking-wide">
-                  Result
-                </h4>
-                <div className="overflow-x-auto rounded-lg bg-[var(--accent)] text-[var(--foreground)]">
-                  {tableOutput ?? <div className="p-3">{formatJsonWithHighlight(tool.output)}</div>}
-                </div>
+          {!hasOutput ? null : (
+            <div className="space-y-2 p-4 border-t border-[var(--border)]">
+              <h4 className="font-medium text-[var(--muted-foreground)] text-xs uppercase tracking-wide">
+                Result
+              </h4>
+              <div className="overflow-x-auto rounded-lg bg-[var(--accent)] text-[var(--foreground)]">
+                {tableOutput ?? <div className="p-3">{formatJsonWithHighlight(tool.output)}</div>}
               </div>
-            )}
+            </div>
+          )}
 
           {!tool.errorText ? null : (
             <div className="space-y-2 p-4 border-t border-[var(--border)]">
