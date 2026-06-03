@@ -86,6 +86,65 @@ When a user asks "What's the weather in Tokyo?", the agent:
 3. The tool returns `{ temperature: 22, conditions: "sunny" }`
 4. The model formats a natural language response
 
+## Tool surfaces in agent config
+
+Agent config separates tools by execution boundary:
+
+| Config field    | Use it for                                              | Executes in                         |
+| --------------- | ------------------------------------------------------- | ----------------------------------- |
+| `tools`         | Local project tools from `tools/` or inline `tool(...)` | Veryfront runtime                   |
+| `providerTools` | Provider-native tools such as `web_search`              | Selected model provider             |
+| `mcpServers`    | Remote MCP-compatible tool servers                      | Remote MCP server through Veryfront |
+| `skills`        | Reusable skill packs that can load skill instructions   | Veryfront runtime                   |
+
+Use `tools` for functions you define in the project. Do not add provider-native
+tools or skill loader tools to `tools`.
+
+Use `providerTools` for provider-executed capabilities:
+
+```ts
+// agents/researcher.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "researcher",
+  system: "Research current information before answering.",
+  providerTools: ["web_search"],
+});
+```
+
+Use `mcpServers` for remote MCP tools. Put remote visibility policy on the MCP
+server. When `tools` is an explicit object, also list the remote tool name in
+`tools` so the model can use it.
+
+```ts
+// agents/docs.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "docs",
+  system: "Use the docs server when the user asks about internal docs.",
+  tools: { search_docs: true },
+  mcpServers: [
+    {
+      id: "docs",
+      transport: {
+        type: "http",
+        url: "https://docs.example.com/mcp",
+      },
+      auth: {
+        type: "bearer",
+        token: () => process.env.DOCS_MCP_TOKEN ?? "",
+      },
+      toolPolicy: {
+        allow: ["search_docs"],
+        approval: "never",
+      },
+    },
+  ],
+});
+```
+
 ## Tool configuration
 
 | Property      | Type                           | Description                                |
@@ -153,14 +212,14 @@ export default tool({
 });
 ```
 
-| Context field | Type          | Description                                      |
-| ------------- | ------------- | ------------------------------------------------ |
-| `agentId`     | `string`      | ID of the agent that called the tool             |
-| `projectId`   | `string`      | Current project identifier                       |
-| `runId`       | `string`      | Current agent run identifier                     |
-| `toolCallId`  | `string`      | Current tool call identifier                     |
-| `blobStorage` | `BlobStorage` | Blob storage access (if configured in workflow)  |
-| custom fields | `unknown`     | Host-provided application metadata for the tool  |
+| Context field | Type          | Description                                     |
+| ------------- | ------------- | ----------------------------------------------- |
+| `agentId`     | `string`      | ID of the agent that called the tool            |
+| `projectId`   | `string`      | Current project identifier                      |
+| `runId`       | `string`      | Current agent run identifier                    |
+| `toolCallId`  | `string`      | Current tool call identifier                    |
+| `blobStorage` | `BlobStorage` | Blob storage access (if configured in workflow) |
+| custom fields | `unknown`     | Host-provided application metadata for the tool |
 
 Pass context from the API route:
 

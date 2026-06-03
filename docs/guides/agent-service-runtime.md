@@ -106,6 +106,9 @@ Use `mcpServers` when the service needs remote tools. Use
 Veryfront-owned control-plane MCP servers and normal MCP server config objects
 for third-party servers.
 
+This service startup config uses `endpoint` and `headers`. Per-agent config in
+`agent({ mcpServers })` uses `transport`, `auth`, and `toolPolicy`.
+
 ```ts
 import {
   startAgentService,
@@ -123,6 +126,10 @@ await startAgentService({
       endpoint: process.env.LINEAR_MCP_URL,
       headers: {
         Authorization: ["Bearer", "<TOKEN>"].join(" "),
+      },
+      toolPolicy: {
+        allow: ["search_issues", "create_issue"],
+        approval: "never",
       },
     },
   ],
