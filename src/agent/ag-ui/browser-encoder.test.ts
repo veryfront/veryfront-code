@@ -170,6 +170,49 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
   });
 
+  it("marks provider-executed tools complete when the provider owns execution", () => {
+    const state = createAgUiBrowserEncoderState();
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "tool-input-start",
+        toolCallId: "tool-provider",
+        toolName: "web_search",
+      }),
+      [{
+        event: "ToolCallStart",
+        payload: { toolCallId: "tool-provider", toolCallName: "web_search" },
+      }],
+    );
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "tool-input-available",
+        toolCallId: "tool-provider",
+        toolName: "web_search",
+        input: { query: "Swedish tax residency" },
+        providerExecuted: true,
+      }),
+      [
+        {
+          event: "ToolCallArgs",
+          payload: {
+            toolCallId: "tool-provider",
+            delta: '{"query":"Swedish tax residency"}',
+          },
+        },
+        {
+          event: "ToolCallEnd",
+          payload: { toolCallId: "tool-provider" },
+        },
+        {
+          event: "ToolCallResult",
+          payload: { toolCallId: "tool-provider", result: null },
+        },
+      ],
+    );
+  });
+
   it("closes open text before orphan tool-input-delta is forwarded", () => {
     const state = createAgUiBrowserEncoderState();
 

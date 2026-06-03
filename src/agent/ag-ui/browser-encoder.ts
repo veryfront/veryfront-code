@@ -414,11 +414,15 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "tool-input-available": {
       state.sawVisibleOutput = true;
-      return [
+      const events = [
         ...closeOpenTextEvent(state),
         ...closeOpenReasoningEvent(state),
         ...completeToolInput(state, event),
       ];
+      if (event.providerExecuted === true) {
+        events.push(createToolResultEvent(event.toolCallId, null));
+      }
+      return events;
     }
 
     case "tool-input-error": {
