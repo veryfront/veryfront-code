@@ -22,6 +22,23 @@ export function getNativeResponse(): typeof Response {
 }
 
 /**
+ * The native `Deno` namespace, accessed via `self` to bypass the dnt shim
+ * transform.
+ *
+ * In npm packages, dnt rewrites both `Deno.*` and `globalThis.Deno` to use
+ * `@deno/shim-deno`, which lacks native APIs such as `Deno.serve` and
+ * `Deno.upgradeWebSocket`. `self` is not shimmed by dnt and equals
+ * `globalThis` in Deno, so it yields the genuine native namespace.
+ *
+ * Returns `undefined` when no native `Deno` is present (e.g. Node without the
+ * shim), allowing callers to guard. Callers that have already established the
+ * Deno runtime can use a non-null assertion on the result.
+ */
+export function getNativeDeno(): typeof Deno | undefined {
+  return (self as unknown as Record<string, typeof Deno | undefined>)["Deno"];
+}
+
+/**
  * Re-wrap a (possibly polyfilled) `Response` as a native `Response` so it can be
  * returned from `Deno.serve`.
  *

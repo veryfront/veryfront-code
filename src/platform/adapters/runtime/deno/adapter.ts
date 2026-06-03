@@ -28,7 +28,11 @@ import {
   enqueueWatchEvent,
 } from "../shared/watcher-queue.ts";
 import { stopManagedServer } from "../shared/server-lifecycle.ts";
-import { getNativeResponse, toNativeResponse } from "../../../compat/http/native-response.ts";
+import {
+  getNativeDeno,
+  getNativeResponse,
+  toNativeResponse,
+} from "../../../compat/http/native-response.ts";
 
 const logger = serverLogger.component("deno");
 
@@ -293,7 +297,7 @@ class DenoServerAdapter implements ServerAdapter {
   upgradeWebSocket(request: Request): WebSocketUpgrade {
     // Access native Deno via `self` to bypass dnt shim transform.
     // dnt rewrites `globalThis.Deno` to @deno/shim-deno, which lacks upgradeWebSocket.
-    const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"];
+    const nativeDeno = getNativeDeno();
     if (typeof nativeDeno?.upgradeWebSocket !== "function") {
       throw NOT_SUPPORTED.create({
         detail: "DenoServerAdapter.upgradeWebSocket() can only be used in Deno runtime",
@@ -408,7 +412,7 @@ export class DenoAdapter implements RuntimeAdapter {
     // Access native Deno.serve via `self` to bypass dnt shim transform.
     // dnt rewrites both `Deno.*` and `globalThis.*` to use @deno/shim-deno which lacks .serve.
     // `self` is not shimmed by dnt and equals `globalThis` in Deno.
-    const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"]!;
+    const nativeDeno = getNativeDeno()!;
 
     // Access native Response via `self` to bypass dnt shim transform.
     // In npm packages, dnt replaces Response with undici's polyfill,

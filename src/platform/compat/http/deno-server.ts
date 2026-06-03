@@ -1,6 +1,6 @@
 import type { Handler, HttpServer, ServeOptions } from "./types.ts";
 import { LOCALHOST } from "../constants.ts";
-import { getNativeResponse, toNativeResponse } from "./native-response.ts";
+import { getNativeDeno, getNativeResponse, toNativeResponse } from "./native-response.ts";
 
 export class DenoHttpServer implements HttpServer {
   private abortController?: AbortController;
@@ -14,7 +14,7 @@ export class DenoHttpServer implements HttpServer {
     onListen?.({ hostname, port });
 
     // Access native Deno.serve via `self` to bypass dnt shim transform.
-    const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"]!;
+    const nativeDeno = getNativeDeno()!;
 
     // Access native Response via `self` to bypass dnt shim transform.
     // In npm packages, dnt replaces Response with undici's polyfill,
