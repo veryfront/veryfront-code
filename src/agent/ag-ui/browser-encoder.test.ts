@@ -207,7 +207,7 @@ describe("agent/ag-ui-browser-encoder", () => {
         },
         {
           event: "ToolCallResult",
-          payload: { toolCallId: "tool-provider", result: undefined },
+          payload: { toolCallId: "tool-provider", result: null },
         },
       ],
     );

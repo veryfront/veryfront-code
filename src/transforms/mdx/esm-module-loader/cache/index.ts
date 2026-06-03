@@ -214,6 +214,27 @@ export function waitForDiskCleanup(): Promise<void> {
   return _pendingDiskCleanup;
 }
 
+/**
+ * Persist the given cache dirs' `_index.json` fire-and-forget, chained onto the
+ * shared disk-cleanup queue so concurrent invalidations don't clobber each
+ * other. Used after an in-memory eviction so the stale pointer does not
+ * resurrect from disk on the next process start — callers that drop an entry
+ * (e.g. an SSR-only path) may never re-register and re-save it themselves.
+ */
+function queueIndexPersist(cacheDirs: string[]): void {
+  if (cacheDirs.length === 0) return;
+  const cleanup = async () => {
+    for (const cacheDir of cacheDirs) {
+      await saveModulePathCache(cacheDir);
+    }
+  };
+  _pendingDiskCleanup = _pendingDiskCleanup.then(cleanup, cleanup).catch((error) => {
+    logger.warn(`${LOG_PREFIX_MDX_LOADER} Failed to persist _index.json`, {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  });
+}
+
 export function invalidateModulePaths(changedPaths: string[]): void {
   if (modulePathCaches.size === 0) return;
 
@@ -288,6 +309,51 @@ export function invalidateModulePaths(changedPaths: string[]): void {
       error: error instanceof Error ? error.message : String(error),
     });
   });
+}
+
+/**
+ * Invalidate the cached module path for a single source file in a single cache dir.
+ *
+ * Unlike {@link invalidateModulePaths} (driven by the file watcher on source
+ * edits, which also deletes the stale `.mjs` from disk), this is a targeted,
+ * synchronous self-heal for the case where a cached module artifact has already
+ * gone missing on disk — evicted, or rebuilt under a different content hash by a
+ * racing write — while the in-memory path cache and its verified-deps fast-path
+ * still point at the stale path. Clearing both forces the next
+ * {@link lookupMdxEsmCache} to report a miss so the module is rebuilt instead of
+ * handing back a path whose `import()` fails with ERR_MODULE_NOT_FOUND (#2077).
+ *
+ * `cacheDir` MUST be the dir that produced the missing path. The path-cache key
+ * is scoped only by React version + relative module path (not project/source),
+ * so two tenants that both have e.g. `app/page.tsx` share the same key in their
+ * separate cache dirs — scanning every dir would evict another tenant's valid
+ * entry, so the invalidation is confined to the failing dir.
+ *
+ * The deletion is also persisted to `_index.json` (fire-and-forget, chained onto
+ * the shared disk-cleanup queue like {@link invalidateModulePaths}) so the stale
+ * pointer does not resurrect from disk on the next process start.
+ */
+export function invalidateMdxEsmModule(
+  cacheDir: string,
+  filePath: string,
+  projectDir?: string,
+  reactVersion = REACT_DEFAULT_VERSION,
+): void {
+  const cache = modulePathCaches.get(cacheDir);
+  if (!cache) return;
+
+  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
+  const cachedPath = cache.get(cacheKey);
+  if (cachedPath === undefined) return;
+
+  cache.delete(cacheKey);
+  verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
+    filePath,
+    cachedPath,
+  });
+
+  queueIndexPersist([cacheDir]);
 }
 
 function extractNormalizedCachedModulePath(cachedKey: string): string {
@@ -371,10 +437,37 @@ export async function lookupMdxEsmCache(
 
   const verifyKey = `${cachedPath}:${cacheKey}`;
   if (verifiedModuleDeps.get(verifyKey)) {
+    // Fast-path: skip the expensive read + content scans for already-verified
+    // modules, but still confirm the artifact is present on disk. A cached module
+    // can be evicted or rebuilt under a different content hash out from under us
+    // (disk-cache eviction, or a racing rebuild) without going through
+    // invalidateModulePaths — which is the only thing that clears this marker.
+    // Returning the stale path here makes the SSR loader import() a file that no
+    // longer exists and hard-fail the whole page render (#2077), so a single stat
+    // (far cheaper than the read + regex scans below) guards correctness.
+    try {
+      const stat = await getLocalFs().stat(cachedPath);
+      if (stat?.isFile) {
+        logger.debug(
+          `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified): ${filePath} -> ${cachedPath}`,
+        );
+        return { status: "hit", path: cachedPath };
+      }
+    } catch (_) {
+      /* expected: verified artifact was evicted/rebuilt; fall through to invalidate */
+    }
+
+    // Artifact is gone — drop the stale markers so the caller rebuilds it, and
+    // persist the deletion so it can't resurrect from _index.json on restart
+    // (an SSR-only caller may never re-register and re-save this entry itself).
     logger.debug(
-      `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified): ${filePath} -> ${cachedPath}`,
+      `${LOG_PREFIX_MDX_LOADER} Verified MDX-ESM artifact missing on disk, invalidating`,
+      { filePath, cachedPath },
     );
-    return { status: "hit", path: cachedPath };
+    verifiedModuleDeps.delete(verifyKey);
+    cache.delete(cacheKey);
+    queueIndexPersist([cacheDir]);
+    return { status: "miss" };
   }
 
   try {

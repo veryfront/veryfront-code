@@ -39,7 +39,7 @@ export type NormalizedHostedChatRequest = {
 export type PrepareHostedChatRuntimeMessagesOptions =
   & Pick<
     PrepareAgentRuntimeMessagesFromUiMessagesOptions,
-    "emptyConversationPrompt"
+    "emptyConversationPrompt" | "providerOwnedToolNames"
   >
   & {
     authToken?: string;
@@ -77,6 +77,7 @@ export type HostedChatRuntimeCreationPreparationInput<TRuntimeAgentDefinition> =
     model?: string;
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
+    allowedRemoteTools?: unknown;
   };
   projectId: string | null;
   authToken: string;
@@ -110,6 +111,14 @@ export type HostedChatRuntimeCreationPreparationResult<TRuntimeAgentDefinition> 
   runtimeConfig: ResolvedHostedRuntimeRequestConfig;
 };
 
+function getAllowedRemoteToolNames(agentConfig: { allowedRemoteTools?: unknown }): string[] {
+  return Array.isArray(agentConfig.allowedRemoteTools)
+    ? agentConfig.allowedRemoteTools.filter((toolName): toolName is string =>
+      typeof toolName === "string" && toolName.length > 0
+    )
+    : [];
+}
+
 /** Options accepted by hosted chat execution preparation root run. */
 export type HostedChatExecutionPreparationRootRunOptions = Pick<
   PrepareHostedConversationRootRunContextInput,
@@ -127,6 +136,7 @@ export type HostedChatExecutionPreparationInput<
     model?: string;
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
+    allowedRemoteTools?: unknown;
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 > = {
@@ -281,6 +291,7 @@ export async function prepareHostedChatExecution<
     model?: string;
     thinking?: RuntimeAgentThinkingConfig;
     maxSteps?: number;
+    allowedRemoteTools?: unknown;
   },
   TRuntimeResult extends HostedChatRuntimeCreationResult,
 >(
@@ -330,6 +341,7 @@ export async function prepareHostedChatExecution<
       authToken: input.request.authToken,
       apiUrl: input.apiUrl,
       projectId: input.request.projectId,
+      providerOwnedToolNames: getAllowedRemoteToolNames(input.agentConfig),
     },
   );
 
@@ -352,6 +364,7 @@ export async function prepareHostedChatRuntimeMessages(
     return await prepareAgentRuntimeMessagesFromUiMessages({
       messages,
       emptyConversationPrompt: options.emptyConversationPrompt,
+      providerOwnedToolNames: options.providerOwnedToolNames,
     });
   }
   const authToken = options.authToken;
@@ -360,6 +373,7 @@ export async function prepareHostedChatRuntimeMessages(
   return await prepareAgentRuntimeMessagesFromUiMessages({
     messages,
     emptyConversationPrompt: options.emptyConversationPrompt,
+    providerOwnedToolNames: options.providerOwnedToolNames,
     resolveFileUrl: ({ uploadId }) =>
       getRuntimeUploadUrl({
         apiUrl,

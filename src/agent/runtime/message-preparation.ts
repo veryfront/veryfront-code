@@ -17,6 +17,7 @@ export type PrepareAgentRuntimeMessagesFromUiMessagesOptions = {
   messages: readonly ChatUiMessage[];
   emptyConversationPrompt?: string;
   resolveFileUrl?: RuntimeFileUrlResolver;
+  providerOwnedToolNames?: readonly string[];
 };
 
 /** Prepare agent runtime messages from UI messages. */
@@ -37,7 +38,9 @@ export async function prepareAgentRuntimeMessagesFromUiMessages(
     : [...options.messages];
 
   return convertProviderMessagesToAgentRuntimeMessages(
-    prepareProviderModelMessagesFromUiMessages(refreshedMessages),
+    prepareProviderModelMessagesFromUiMessages(refreshedMessages, {
+      providerOwnedToolNames: options.providerOwnedToolNames,
+    }),
   );
 }
 

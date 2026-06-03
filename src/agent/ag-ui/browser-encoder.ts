@@ -420,7 +420,7 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
         ...completeToolInput(state, event),
       ];
       if (event.providerExecuted === true) {
-        events.push(createToolResultEvent(event.toolCallId, undefined));
+        events.push(createToolResultEvent(event.toolCallId, null));
       }
       return events;
     }
