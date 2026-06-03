@@ -379,7 +379,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     ...(input.providerOptions
       ? { resolveModelTransport: () => ({ providerOptions: input.providerOptions }) }
       : {}),
-    allowedRemoteTools: input.forkToolNames,
+    __vfAllowedRemoteTools: input.forkToolNames,
   };
   const runtime = new AgentRuntime("invoke-agent-child-runtime", runtimeConfig);
 

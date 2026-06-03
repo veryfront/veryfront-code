@@ -106,6 +106,10 @@ export type {
   Agent,
   AgentConfig,
   AgentContext,
+  AgentMcpHttpTransport,
+  AgentMcpServerAuth,
+  AgentMcpServerConfig,
+  AgentMcpToolPolicy,
   AgentMiddleware,
   AgentResponse,
   AgentStatus,
@@ -386,9 +390,9 @@ export {
   type NodeVeryfrontCloudAgentServiceProcessTarget,
   startAgentService,
   startNodeVeryfrontCloudAgentService,
+  veryfrontApiMcpServer,
   type VeryfrontCloudAgentServiceOptions,
-  veryfrontMcpServer,
-  type VeryfrontMcpServerKind,
+  veryfrontStudioMcpServer,
 } from "./hosted/veryfront-cloud-agent-service.ts";
 export {
   type AgentPushRuntimeServiceRest,

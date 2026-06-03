@@ -481,6 +481,51 @@ Deno.test("createHostedProjectRemoteToolSources builds explicit MCP server lists
   });
 });
 
+Deno.test("createHostedProjectRemoteToolSources applies custom MCP server tool policy", async () => {
+  const sources = createHostedProjectRemoteToolSources({
+    authToken: "token-1",
+    apiMcpUrl: "https://api.example/mcp",
+    mcpServers: [
+      {
+        id: "docs",
+        endpoint: "https://docs.example/mcp",
+        toolPolicy: { allow: ["search_docs"], deny: ["delete_docs"] },
+      },
+    ],
+    getProjectId: () => "project-1",
+    createRemoteToolSource: (config) =>
+      createRemoteSource({
+        id: config.id,
+        tools: [
+          simpleTool("search_docs"),
+          simpleTool("delete_docs"),
+          simpleTool("archive_docs"),
+        ],
+      }),
+  });
+
+  const source = sources[0];
+  if (!source) {
+    throw new Error("Expected hosted MCP source");
+  }
+
+  assertEquals(
+    (await source.listTools()).map((tool) => tool.name),
+    ["search_docs"],
+  );
+  assertEquals(await source.executeTool("search_docs", {}), { ok: true });
+  await assertRejects(
+    () => source.executeTool("delete_docs", {}),
+    Error,
+    'Tool "delete_docs" is not allowed for this MCP server',
+  );
+  await assertRejects(
+    () => source.executeTool("archive_docs", {}),
+    Error,
+    'Tool "archive_docs" is not allowed for this MCP server',
+  );
+});
+
 Deno.test("createHostedProjectRemoteToolSources applies project wrapper policy to created sources", async () => {
   const executed: Array<{ toolName: string; args: unknown; context?: ToolExecutionContext }> = [];
   const switchedProjects: string[] = [];

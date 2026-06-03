@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";

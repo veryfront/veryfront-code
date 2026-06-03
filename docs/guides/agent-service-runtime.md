@@ -102,21 +102,27 @@ The service name resolves from `VERYFRONT_AGENT_SERVICE_NAME`, then the nearest
 ## Add remote MCP tools
 
 Use `mcpServers` when the service needs remote tools. Use
-`veryfrontMcpServer()` for Veryfront-owned control-plane MCP servers and normal
-MCP server config objects for third-party servers.
+`veryfrontApiMcpServer()` and `veryfrontStudioMcpServer()` for
+Veryfront-owned control-plane MCP servers and normal MCP server config objects
+for third-party servers.
 
 ```ts
-import { startAgentService, veryfrontMcpServer } from "veryfront/agent";
+import {
+  startAgentService,
+  veryfrontApiMcpServer,
+  veryfrontStudioMcpServer,
+} from "veryfront/agent";
 
 await startAgentService({
   serviceName: "support-agent",
   mcpServers: [
-    veryfrontMcpServer(),
+    veryfrontApiMcpServer(),
+    veryfrontStudioMcpServer(),
     {
       id: "linear",
       endpoint: process.env.LINEAR_MCP_URL,
       headers: {
-        Authorization: "Bearer <TOKEN>",
+        Authorization: ["Bearer", "<TOKEN>"].join(" "),
       },
     },
   ],
@@ -124,8 +130,8 @@ await startAgentService({
 ```
 
 If `mcpServers` is omitted, the Veryfront Cloud preset includes
-`veryfrontMcpServer()` by default. Pass `mcpServers: []` to run without remote
-MCP tools.
+`veryfrontApiMcpServer()` by default. Pass `mcpServers: []` to run without
+remote MCP tools.
 
 ## Refresh runtime state
 

@@ -65,7 +65,7 @@ const GUIDE_CONTRACTS: Record<string, GuideContract> = {
   },
   "guides/agents.md": {
     references: ["../api-reference/veryfront/agent.md"],
-    snippets: ["createAgUiHandler", "load-skill-reference", "RunFinished"],
+    snippets: ["createAgUiHandler", "load_skill_reference", "RunFinished"],
   },
   "guides/build-a-rag-app.md": {
     references: [

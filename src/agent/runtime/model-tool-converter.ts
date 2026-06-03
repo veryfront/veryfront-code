@@ -25,7 +25,7 @@ import {
 
 export interface ConvertToolsToRuntimeToolsOptions {
   model?: string;
-  allowedToolNames?: string[];
+  providerTools?: string[];
 }
 
 function resolveProviderNativeTools(
@@ -40,7 +40,7 @@ function resolveProviderNativeTools(
   }
 
   const allowedProviderNativeToolNames =
-    options?.allowedToolNames?.filter((toolName) => providerNativeToolNames.has(toolName)) ?? [];
+    options?.providerTools?.filter((toolName) => providerNativeToolNames.has(toolName)) ?? [];
   if (allowedProviderNativeToolNames.length === 0) {
     return undefined;
   }

@@ -2,9 +2,9 @@
  * Skill Tools
  *
  * Three tools exposed to agents for interacting with skills:
- * - load-skill: Load a skill's full instructions
- * - load-skill-reference: Read a reference file from a skill
- * - execute-skill-script: Execute a script from a skill
+ * - load_skill: Load a skill's full instructions
+ * - load_skill_reference: Read a reference file from a skill
+ * - execute_skill_script: Execute a script from a skill
  *
  * @module
  */
@@ -77,24 +77,24 @@ async function readSkillFile(skill: Skill, path: string): Promise<string> {
 
 function buildSkillAvailabilityNote(references: string[], scripts: string[]): string | undefined {
   if (scripts.length === 0 && references.length === 0) {
-    return "This skill has no scripts or reference files. Do NOT call execute-skill-script or load-skill-reference.";
+    return "This skill has no scripts or reference files. Do NOT call execute_skill_script or load_skill_reference.";
   }
   if (scripts.length === 0) {
-    return "This skill has no scripts. Do NOT call execute-skill-script.";
+    return "This skill has no scripts. Do NOT call execute_skill_script.";
   }
   if (references.length === 0) {
-    return "This skill has no reference files. Do NOT call load-skill-reference.";
+    return "This skill has no reference files. Do NOT call load_skill_reference.";
   }
   return undefined;
 }
 
 /**
- * Create the load-skill tool.
+ * Create the load_skill tool.
  * Loads a skill's full instructions, available references, and scripts.
  */
 export function createLoadSkillTool(): Tool {
   return tool({
-    id: "load-skill",
+    id: "load_skill",
     description: "Load a skill's full instructions. Returns the skill's markdown instructions, " +
       "allowed tools policy, and lists of available reference files and scripts.",
     inputSchema: getLoadSkillInputSchema(),
@@ -117,7 +117,7 @@ export function createLoadSkillTool(): Tool {
       // Parse frontmatter to get instructions
       const parsed = await parseSkillFrontmatter(content);
 
-      // List available files the agent can load through load-skill-reference.
+      // List available files the agent can load through load_skill_reference.
       const [references, resources, scripts] = await Promise.all([
         listSkillSubdir(
           skill.rootPath,
@@ -150,12 +150,12 @@ export function createLoadSkillTool(): Tool {
 }
 
 /**
- * Create the load-skill-reference tool.
+ * Create the load_skill_reference tool.
  * Reads a reference file from a skill's references/, resources/, or assets/ directory.
  */
 export function createLoadSkillReferenceTool(): Tool {
   return tool({
-    id: "load-skill-reference",
+    id: "load_skill_reference",
     description: "Read a reference file from a skill. Only files in the skill's " +
       "references/, resources/, and assets/ directories are accessible.",
     inputSchema: getLoadSkillReferenceInputSchema(),
@@ -185,12 +185,12 @@ export function createLoadSkillReferenceTool(): Tool {
 }
 
 /**
- * Create the execute-skill-script tool.
+ * Create the execute_skill_script tool.
  * Executes a script from a skill's scripts/ directory.
  */
 export function createExecuteSkillScriptTool(): Tool {
   return tool({
-    id: "execute-skill-script",
+    id: "execute_skill_script",
     description:
       "Execute a script from a skill's scripts/ directory. Returns stdout, stderr, and exit code.",
     inputSchema: getExecuteSkillScriptInputSchema(),

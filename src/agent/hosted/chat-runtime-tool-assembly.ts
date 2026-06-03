@@ -27,6 +27,7 @@ import {
 } from "./project-remote-tool-source.ts";
 import { type RuntimeClientProfile } from "../runtime/client-profile.ts";
 import { selectProviderCompatibleToolNames } from "../runtime/provider-tool-compat.ts";
+import { getProviderNativeToolNames } from "../runtime/provider-native-tool-inventory.ts";
 import { flattenSystemInstructions, withRuntimeToolInventory } from "../runtime/tool-inventory.ts";
 
 /** Context for hosted chat runtime tool assembly. */
@@ -49,6 +50,7 @@ export type HostedChatRuntimeToolAssemblyResult = {
   remoteToolSources: RemoteToolSource[];
   localToolNames: string[];
   remoteToolNames: string[];
+  providerToolNames: string[];
   availableToolNames: string[];
   compatibleRemoteToolNames: string[];
   systemInstructions: string;
@@ -147,9 +149,12 @@ export async function prepareHostedChatRuntimeToolAssembly<
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
+  const providerToolNames = getProviderNativeToolNames({ model: input.taskContext.model }).filter(
+    (toolName) => allowedToolNames ? allowedToolNames.has(toolName) : false,
+  );
   const localToolNames = Object.keys(localHostTools);
   const availableToolNames = selectProviderCompatibleToolNames(
-    [...new Set([...localToolNames, ...remoteToolNames])].sort(),
+    [...new Set([...localToolNames, ...remoteToolNames, ...providerToolNames])].sort(),
     {
       model: input.taskContext.model,
       requiredToolNames: localToolNames,
@@ -183,6 +188,7 @@ export async function prepareHostedChatRuntimeToolAssembly<
     remoteToolSources,
     localToolNames,
     remoteToolNames,
+    providerToolNames,
     availableToolNames,
     compatibleRemoteToolNames,
     systemInstructions,

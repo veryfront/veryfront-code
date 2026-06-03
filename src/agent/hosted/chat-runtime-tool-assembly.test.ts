@@ -99,6 +99,7 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
 
   assertEquals(toolAssembly.localToolNames, ["sleep"]);
   assertEquals(toolAssembly.remoteToolNames, ["create_file", "studio_open_project"]);
+  assertEquals(toolAssembly.providerToolNames, []);
   assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file", "studio_open_project"]);
   assertEquals(taskContext.availableToolNames, ["create_file", "sleep", "studio_open_project"]);
   assertEquals(toolAssembly.systemInstructions.includes("Current run tool inventory:"), true);
@@ -107,6 +108,31 @@ Deno.test("prepareHostedChatRuntimeToolAssembly builds provider-compatible runti
   assertExists(runtimeSleepTool);
   await runtimeSleepTool.execute?.({});
   assertEquals(traceSpans, ["tool.sleep"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from remote MCP tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    allowedToolNames: ["create_file", "web_search"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.remoteToolNames, ["create_file"]);
+  assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file"]);
+  assertEquals(toolAssembly.providerToolNames, ["web_search"]);
+  assertEquals(taskContext.availableToolNames, ["create_file", "web_search"]);
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preloads default research artifacts", async () => {

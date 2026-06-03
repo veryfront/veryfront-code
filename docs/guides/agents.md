@@ -75,6 +75,59 @@ export default agent({
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
 
+## Enable provider tools
+
+Provider tools are executed by the selected model provider. They are not local
+tools and they are not MCP tools.
+
+```ts
+// agents/researcher.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "researcher",
+  model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
+  system: "Research current information before answering.",
+  providerTools: ["web_search"],
+});
+```
+
+The runtime only enables provider tools that the selected provider/model
+supports.
+
+## Connect MCP servers
+
+Use `mcpServers` for remote MCP-compatible tool servers. Put visibility policy
+on the server that owns the tools.
+
+```ts
+// agents/docs.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "docs",
+  system: "Use the docs server when the user asks about internal docs.",
+  tools: { search_docs: true },
+  mcpServers: [
+    {
+      id: "docs",
+      transport: {
+        type: "http",
+        url: "https://docs.example.com/mcp",
+      },
+      auth: {
+        type: "bearer",
+        token: () => process.env.DOCS_MCP_TOKEN ?? "",
+      },
+      toolPolicy: {
+        allow: ["search_docs"],
+        approval: "never",
+      },
+    },
+  ],
+});
+```
+
 ## Enable skills
 
 Skills are reusable instruction packs discovered from your project's `skills/`
@@ -97,9 +150,9 @@ export default agent({
 
 When `skills` is enabled, the runtime automatically registers these skill tools:
 
-- `load-skill`
-- `load-skill-reference`
-- `execute-skill-script`
+- `load_skill`
+- `load_skill_reference`
+- `execute_skill_script`
 
 See [Project structure](./project-structure.md) for `skills/` conventions and
 [Configuration](./configuration.md) for discovery paths.
@@ -108,14 +161,14 @@ See [Project structure](./project-structure.md) for `skills/` conventions and
 
 For skill-aware agents, the flow is:
 
-1. Call `load-skill({ skillId })` to load the skill instructions and policy.
-2. Optionally call `load-skill-reference(...)` to read files from
+1. Call `load_skill({ skillId })` to load the skill instructions and policy.
+2. Optionally call `load_skill_reference(...)` to read files from
    `references/`, `resources/`, or `assets/`.
-3. Optionally call `execute-skill-script(...)` to run scripts from `scripts/`.
+3. Optionally call `execute_skill_script(...)` to run scripts from `scripts/`.
 4. Continue with normal tool calls under the active skill policy.
 
 The runtime enforces that non-skill tools cannot run before a successful
-`load-skill` when both are emitted in the same step.
+`load_skill` when both are emitted in the same step.
 
 ## Skill script execution
 
@@ -213,6 +266,9 @@ export default agent({
 | `system`              | `string \| () => string \| Promise<string>`                                                            | System prompt                                                                |
 | `resolveRuntimeState` | `(request: RuntimeStateRequest) => ResolvedRuntimeState \| Promise<ResolvedRuntimeState \| undefined>` | Refresh system/context before later model steps in the same run              |
 | `tools`               | `Record<string, boolean \| Tool>`                                                                      | Tools the agent can use                                                      |
+| `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                 |
+| `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                           |
+| `skills`              | `true \| string[]`                                                                                     | Enable all skills (`true`) or selected skill IDs                             |
 | `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                         |
 | `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                 |
 | `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                           |

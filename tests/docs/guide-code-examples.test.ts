@@ -11,7 +11,8 @@ import {
   agent,
   createAgUiHandler,
   startAgentService,
-  veryfrontMcpServer,
+  veryfrontApiMcpServer,
+  veryfrontStudioMcpServer,
 } from "../../src/agent/index.ts";
 import {
   Chat,
@@ -163,8 +164,8 @@ describe("Guide: agent-service-runtime.md", () => {
   it("uses public agent service helpers that exist and produce documented MCP configs", () => {
     assertEquals(typeof startAgentService, "function");
     assertEquals(typeof createAgUiHandler, "function");
-    assertEquals(veryfrontMcpServer(), { kind: "veryfront-api" });
-    assertEquals(veryfrontMcpServer("studio"), { kind: "veryfront-studio" });
+    assertEquals(veryfrontApiMcpServer(), { kind: "veryfront-api" });
+    assertEquals(veryfrontStudioMcpServer(), { kind: "veryfront-studio" });
 
     const handler = createAgUiHandler("assistant");
     assertEquals(typeof handler, "function");
@@ -721,7 +722,7 @@ describe("Guide: skills.md", () => {
     assertStringIncludes(guide, "description: Review code changes");
     assertStringIncludes(
       guide,
-      "allowed_tools: load-skill load-skill-reference execute-skill-script",
+      "allowed_tools: load_skill load_skill_reference execute_skill_script",
     );
     assertStringIncludes(guide, "veryfront skills validate skills/my-skill");
   });

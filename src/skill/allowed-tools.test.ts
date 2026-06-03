@@ -48,7 +48,7 @@ describe("src/skill/allowed-tools", () => {
       { name: "Read", description: "Read", parameters: {} },
       { name: "Write", description: "Write", parameters: {} },
       { name: "api:list", description: "API", parameters: {} },
-      { name: "load-skill", description: "Load", parameters: {} },
+      { name: "load_skill", description: "Load", parameters: {} },
     ];
 
     it("should return all tools when allowedTools is undefined", () => {
@@ -59,23 +59,23 @@ describe("src/skill/allowed-tools", () => {
     it("should return only skill tools when allowedTools is empty", () => {
       const result = filterToolsForSkill(tools, []);
       assertEquals(result.length, 1);
-      assertEquals(result.map((t) => t.name), ["load-skill"]);
+      assertEquals(result.map((t) => t.name), ["load_skill"]);
     });
 
     it("should filter to only allowed tools + skill tools", () => {
       const result = filterToolsForSkill(tools, ["Read"]);
-      assertEquals(result.length, 2); // Read + load-skill
-      assertEquals(result.map((t) => t.name).sort(), ["Read", "load-skill"]);
+      assertEquals(result.length, 2); // Read + load_skill
+      assertEquals(result.map((t) => t.name).sort(), ["Read", "load_skill"]);
     });
 
     it("should support prefix wildcards", () => {
       const result = filterToolsForSkill(tools, ["api:*"]);
-      assertEquals(result.length, 2); // api:list + load-skill
+      assertEquals(result.length, 2); // api:list + load_skill
     });
 
     it("should always include skill tools", () => {
       const result = filterToolsForSkill(tools, ["Write"]);
-      assertEquals(result.some((t) => t.name === "load-skill"), true);
+      assertEquals(result.some((t) => t.name === "load_skill"), true);
     });
   });
 
@@ -89,9 +89,9 @@ describe("src/skill/allowed-tools", () => {
     });
 
     it("should allow skill tools when empty policy", () => {
-      assertEquals(isToolAllowedBySkill("load-skill", []), true);
-      assertEquals(isToolAllowedBySkill("load-skill-reference", []), true);
-      assertEquals(isToolAllowedBySkill("execute-skill-script", []), true);
+      assertEquals(isToolAllowedBySkill("load_skill", []), true);
+      assertEquals(isToolAllowedBySkill("load_skill_reference", []), true);
+      assertEquals(isToolAllowedBySkill("execute_skill_script", []), true);
     });
 
     it("should allow matching tool", () => {
@@ -103,9 +103,9 @@ describe("src/skill/allowed-tools", () => {
     });
 
     it("should always allow skill system tools", () => {
-      assertEquals(isToolAllowedBySkill("load-skill", ["Read"]), true);
-      assertEquals(isToolAllowedBySkill("load-skill-reference", ["Read"]), true);
-      assertEquals(isToolAllowedBySkill("execute-skill-script", ["Read"]), true);
+      assertEquals(isToolAllowedBySkill("load_skill", ["Read"]), true);
+      assertEquals(isToolAllowedBySkill("load_skill_reference", ["Read"]), true);
+      assertEquals(isToolAllowedBySkill("execute_skill_script", ["Read"]), true);
     });
   });
 

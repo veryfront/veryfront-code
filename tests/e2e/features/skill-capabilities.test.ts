@@ -255,13 +255,13 @@ export const POST = createAgUiHandler("researcher");
         };
       }>(server, "/_dev/api/execute-tool", {
         body: {
-          toolId: "load-skill",
+          toolId: "load_skill",
           args: { skillId: "writer-helper" },
         },
       });
       assertEquals(loadSkillResponse.status, 200);
       assertEquals(loadSkillJson.success, true);
-      assertEquals(loadSkillJson.toolId, "load-skill");
+      assertEquals(loadSkillJson.toolId, "load_skill");
       assertStringIncludes(loadSkillJson.result.instructions, "crisp final draft");
       assertEquals(loadSkillJson.result.allowedTools, ["Read", "api:*"]);
       assertEquals(loadSkillJson.result.references, ["references/style-guide.md"]);
@@ -278,7 +278,7 @@ export const POST = createAgUiHandler("researcher");
         }
       >(server, "/_dev/api/execute-tool", {
         body: {
-          toolId: "load-skill-reference",
+          toolId: "load_skill_reference",
           args: {
             skillId: "writer-helper",
             reference: "references/style-guide.md",
@@ -287,7 +287,7 @@ export const POST = createAgUiHandler("researcher");
       });
       assertEquals(loadSkillReferenceResponse.status, 200);
       assertEquals(loadSkillReferenceJson.success, true);
-      assertEquals(loadSkillReferenceJson.toolId, "load-skill-reference");
+      assertEquals(loadSkillReferenceJson.toolId, "load_skill_reference");
       assertEquals(loadSkillReferenceJson.result.path, "references/style-guide.md");
       assertStringIncludes(loadSkillReferenceJson.result.content, "Prefer active voice.");
 
@@ -300,7 +300,7 @@ export const POST = createAgUiHandler("researcher");
         };
       }>(server, "/_dev/api/execute-tool", {
         body: {
-          toolId: "load-skill-reference",
+          toolId: "load_skill_reference",
           args: {
             skillId: "writer-helper",
             reference: "assets/voice.txt",
@@ -317,7 +317,7 @@ export const POST = createAgUiHandler("researcher");
           error: string;
         }>(server, "/_dev/api/execute-tool", {
           body: {
-            toolId: "load-skill-reference",
+            toolId: "load_skill_reference",
             args: {
               skillId: "writer-helper",
               reference: "../SKILL.md",
@@ -339,7 +339,7 @@ export const POST = createAgUiHandler("researcher");
         }
       >(server, "/_dev/api/execute-tool", {
         body: {
-          toolId: "execute-skill-script",
+          toolId: "execute_skill_script",
           args: {
             skillId: "writer-helper",
             script: "scripts/echo-style.sh",
@@ -350,7 +350,7 @@ export const POST = createAgUiHandler("researcher");
       });
       assertEquals(executeSkillScriptResponse.status, 200);
       assertEquals(executeSkillScriptJson.success, true);
-      assertEquals(executeSkillScriptJson.toolId, "execute-skill-script");
+      assertEquals(executeSkillScriptJson.toolId, "execute_skill_script");
       assertEquals(executeSkillScriptJson.result.exitCode, 0);
       assertEquals(executeSkillScriptJson.result.stderr, "");
       assertStringIncludes(executeSkillScriptJson.result.stdout, "style=tight voice=active");
@@ -589,13 +589,13 @@ Use this skill when writing polished copy.
         result: { instructions: string };
       }>(server, "/_dev/api/execute-tool", {
         body: {
-          toolId: "load-skill",
+          toolId: "load_skill",
           args: { skillId: "writer-helper" },
         },
       });
       assertEquals(loadSkillResponse.status, 200);
       assertEquals(loadSkillJson.success, true);
-      assertEquals(loadSkillJson.toolId, "load-skill");
+      assertEquals(loadSkillJson.toolId, "load_skill");
       assertStringIncludes(loadSkillJson.result.instructions, "polished copy");
 
       const { response: chatResponse, json: chatJson } = await postJson<{

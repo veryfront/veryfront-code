@@ -38,9 +38,9 @@ describe("src/skill/prompt-augmentation", () => {
     it("should include tool usage instructions", () => {
       const skills = new Map([["test", createSkill("test", "desc")]]);
       const result = buildSkillManifestPrompt(skills);
-      assertStringIncludes(result, "load-skill");
-      assertStringIncludes(result, "load-skill-reference");
-      assertStringIncludes(result, "execute-skill-script");
+      assertStringIncludes(result, "load_skill");
+      assertStringIncludes(result, "load_skill_reference");
+      assertStringIncludes(result, "execute_skill_script");
     });
   });
 });

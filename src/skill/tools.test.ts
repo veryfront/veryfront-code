@@ -28,7 +28,13 @@ describe("src/skill/tools", () => {
     skillRegistry.clearAll();
   });
 
-  it("load-skill should list references and scripts via fsAdapter", async () => {
+  it("uses snake case runtime ids for skill platform tools", () => {
+    assertEquals(createLoadSkillTool().id, "load_skill");
+    assertEquals(createLoadSkillReferenceTool().id, "load_skill_reference");
+    assertEquals(createExecuteSkillScriptTool().id, "execute_skill_script");
+  });
+
+  it("load_skill should list references and scripts via fsAdapter", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill
@@ -57,7 +63,7 @@ Do work.`,
     assertEquals(result.scripts, ["scripts/run.sh"]);
   });
 
-  it("load-skill should list resources as loadable references via fsAdapter", async () => {
+  it("load_skill should list resources as loadable references via fsAdapter", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill
@@ -75,7 +81,7 @@ Review the resource files.`,
     assertEquals(result.references, ["resources/article-30.md"]);
   });
 
-  it("load-skill should note when no references or scripts are available", async () => {
+  it("load_skill should note when no references or scripts are available", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill
@@ -91,11 +97,11 @@ Do work.`,
 
     assertEquals(
       result.note,
-      "This skill has no scripts or reference files. Do NOT call execute-skill-script or load-skill-reference.",
+      "This skill has no scripts or reference files. Do NOT call execute_skill_script or load_skill_reference.",
     );
   });
 
-  it("load-skill should note when only references are available", async () => {
+  it("load_skill should note when only references are available", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill
@@ -110,10 +116,10 @@ Do work.`,
     const tool = createLoadSkillTool();
     const result = await tool.execute({ skillId: "my-skill" });
 
-    assertEquals(result.note, "This skill has no scripts. Do NOT call execute-skill-script.");
+    assertEquals(result.note, "This skill has no scripts. Do NOT call execute_skill_script.");
   });
 
-  it("load-skill should note when only scripts are available", async () => {
+  it("load_skill should note when only scripts are available", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/SKILL.md": `---
 name: my-skill
@@ -130,11 +136,11 @@ Do work.`,
 
     assertEquals(
       result.note,
-      "This skill has no reference files. Do NOT call load-skill-reference.",
+      "This skill has no reference files. Do NOT call load_skill_reference.",
     );
   });
 
-  it("load-skill-reference should read content via fsAdapter", async () => {
+  it("load_skill_reference should read content via fsAdapter", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/references/guide.md": "Reference text",
     });
@@ -150,7 +156,7 @@ Do work.`,
     assertEquals(result.path, "references/guide.md");
   });
 
-  it("load-skill-reference should read asset files via fsAdapter", async () => {
+  it("load_skill_reference should read asset files via fsAdapter", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/assets/checklist.txt": "Asset text",
     });
@@ -166,7 +172,7 @@ Do work.`,
     assertEquals(result.path, "assets/checklist.txt");
   });
 
-  it("load-skill-reference should read resource files via fsAdapter", async () => {
+  it("load_skill_reference should read resource files via fsAdapter", async () => {
     const fsAdapter = createSkillTestAdapter({
       "/project/skills/my-skill/resources/article-30.md": "Article 30 text",
     });
@@ -182,7 +188,7 @@ Do work.`,
     assertEquals(result.path, "resources/article-30.md");
   });
 
-  it("execute-skill-script should run a local script from the skill directory", async () => {
+  it("execute_skill_script should run a local script from the skill directory", async () => {
     const tempDir = await Deno.makeTempDir({ prefix: "vf-skill-script-" });
 
     try {

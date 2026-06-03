@@ -5,6 +5,7 @@ import {
   AgentRuntime,
 } from "#veryfront/agent";
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
+import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -42,11 +43,11 @@ const INTERNAL_AGENT_RUNTIME_HEARTBEAT_FRAME = new TextEncoder().encode(
 type RuntimeFilteredAgent = Agent & {
   config: Agent["config"] & {
     __vfForwardedIntegrationToolDefs?: ForwardedToolDef[];
-  };
+  } & RuntimeRemoteToolConfig;
 };
 
 function getAgentAllowedRemoteToolNames(agent: Agent): string[] {
-  const raw = agent.config.allowedRemoteTools;
+  const raw = (agent.config as Agent["config"] & RuntimeRemoteToolConfig).__vfAllowedRemoteTools;
   return Array.isArray(raw) && raw.every((toolName) => typeof toolName === "string") ? raw : [];
 }
 
@@ -399,7 +400,7 @@ export async function createRuntimeAgentStreamResponse(
       ...agent.config,
       tools: mergedTools,
       ...(allowedRemoteToolNames !== undefined
-        ? { allowedRemoteTools: allowedRemoteToolNames }
+        ? { __vfAllowedRemoteTools: allowedRemoteToolNames }
         : {}),
       ...(forwardedIntegrationToolDefs !== undefined
         ? { __vfForwardedIntegrationToolDefs: forwardedIntegrationToolDefs }

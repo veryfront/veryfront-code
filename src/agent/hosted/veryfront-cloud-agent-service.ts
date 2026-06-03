@@ -71,6 +71,7 @@ import {
 } from "./default-project-steering-refresh.ts";
 import { type HostedProjectSkillIdsContext } from "./project-steering-adapter.ts";
 import type { AgentServiceMcpServerConfig } from "../service/mcp-server-config.ts";
+import type { AgentVeryfrontMcpServerConfig } from "../types.ts";
 import type { RuntimeLoadSkillToolContext } from "../runtime/load-skill-tool.ts";
 import type { RuntimeProjectSteeringLookup } from "../runtime/project-skill-catalog.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
@@ -129,21 +130,21 @@ export type NodeVeryfrontCloudAgentServiceProcessTarget =
 
 export type NodeVeryfrontCloudAgentServiceAgentSource = ProjectAgentRuntimeAgentSource;
 
-/** Public API contract for veryfront MCP server kind. */
-export type VeryfrontMcpServerKind = "api" | "studio";
-
 /** Public API contract for node Veryfront Cloud agent service MCP server. */
 export type NodeVeryfrontCloudAgentServiceMcpServer = AgentServiceMcpServerConfig;
 
-/** Veryfront MCP server helper. */
-export function veryfrontMcpServer(
-  kind: VeryfrontMcpServerKind = "api",
-): AgentServiceMcpServerConfig {
-  if (kind === "studio") {
-    return { kind: "veryfront-studio" };
-  }
-
+/** Veryfront API MCP server helper. */
+export function veryfrontApiMcpServer():
+  & AgentServiceMcpServerConfig
+  & AgentVeryfrontMcpServerConfig {
   return { kind: "veryfront-api" };
+}
+
+/** Veryfront Studio MCP server helper. */
+export function veryfrontStudioMcpServer():
+  & AgentServiceMcpServerConfig
+  & AgentVeryfrontMcpServerConfig {
+  return { kind: "veryfront-studio" };
 }
 
 type AgentServicePathOption = string | URL;
@@ -345,7 +346,7 @@ function resolveDefaultProcessTarget(): NodeVeryfrontCloudAgentServiceProcessTar
 function resolveMcpServers(
   options: Pick<NodeVeryfrontCloudAgentServiceOptions, "mcpServers">,
 ): readonly NodeVeryfrontCloudAgentServiceMcpServer[] {
-  return options.mcpServers ?? [veryfrontMcpServer()];
+  return options.mcpServers ?? [veryfrontApiMcpServer()];
 }
 
 async function loadDefaultCreateBashTool(): Promise<

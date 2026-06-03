@@ -29,12 +29,12 @@ export function isToolPart(part: ChatMessagePart): part is ChatToolPart | ChatDy
 }
 
 const SKILL_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "load-skill",
-  "load-skill-reference",
-  "execute-skill-script",
+  "load_skill",
+  "load_skill_reference",
+  "execute_skill_script",
 ]);
 
-/** Check if a tool part is a skill-related tool (load-skill, load-skill-reference, execute-skill-script) */
+/** Check if a tool part is a skill-related tool. */
 export function isSkillToolPart(tool: ChatToolPart | ChatDynamicToolPart): boolean {
   return SKILL_TOOL_NAMES.has(tool.toolName);
 }

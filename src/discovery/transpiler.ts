@@ -238,7 +238,9 @@ export async function importModule(
   await localFs.writeTextFile(tempFile, transformedCode);
 
   try {
-    const module = await import(`file://${tempFile}?v=${Date.now()}`);
+    const moduleUrl = pathHelper.toFileUrl(tempFile);
+    moduleUrl.searchParams.set("v", String(Date.now()));
+    const module = await import(moduleUrl.href);
     transpileCache.set(file, module);
     return module;
   } finally {
