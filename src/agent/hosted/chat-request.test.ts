@@ -129,6 +129,48 @@ describe("agent/hosted-chat-request", () => {
       spawnedFromToolCallId: "tool_1",
     });
   });
+  it("carries Studio environment context from runtime context into hosted chat context", () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      context: [
+        {
+          type: "json",
+          title: "studio_context",
+          data: {
+            projectId,
+            branchId,
+            environmentContext: "<date_time>\nToday's date is 2026-06-03\n</date_time>",
+          },
+        },
+      ],
+    });
+
+    const request = buildHostedChatRequestFromRuntimeAgentInvocation(invocation);
+
+    assertEquals(
+      request.context.environmentContext,
+      "<date_time>\nToday's date is 2026-06-03\n</date_time>",
+    );
+  });
+
+  it("ignores non-Studio JSON context environment fields", () => {
+    const invocation = RuntimeAgentRunInvocationSchema.parse({
+      ...createRuntimeInvocation(),
+      context: [
+        {
+          type: "json",
+          title: "other_context",
+          data: {
+            environmentContext: "Unrelated context",
+          },
+        },
+      ],
+    });
+
+    const request = buildHostedChatRequestFromRuntimeAgentInvocation(invocation);
+
+    assertEquals(request.context.environmentContext, undefined);
+  });
 
   it("parses hosted chat requests with auth and project-access callbacks", async () => {
     const parsed = await parseHostedChatRequestFromRequest(

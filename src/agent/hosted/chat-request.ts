@@ -74,6 +74,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function getStudioRuntimeEnvironmentContext(input: RuntimeAgentRunInvocation): string | undefined {
+  for (const item of input.context) {
+    if (item.type !== "json" || item.title !== "studio_context") continue;
+
+    const environmentContext = item.data.environmentContext;
+    if (typeof environmentContext === "string" && environmentContext.trim().length > 0) {
+      return environmentContext;
+    }
+  }
+
+  return undefined;
+}
+
 /** Builds hosted chat request forwarded props from runtime agent invocation. */
 export function buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,
@@ -97,12 +110,15 @@ export function buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
 export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
   input: RuntimeAgentRunInvocation,
 ): HostedChatRequestInput {
+  const environmentContext = getStudioRuntimeEnvironmentContext(input);
+
   return {
     messages: input.messages,
     context: {
       conversationId: input.run.conversationId,
       projectId: input.run.project.projectId,
       branchId: input.run.project.runtimeTargetBranchId ?? null,
+      ...(environmentContext ? { environmentContext } : {}),
     },
     forwardedProps: buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(input),
     durableRootRun: {
