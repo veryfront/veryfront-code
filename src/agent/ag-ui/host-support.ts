@@ -126,6 +126,10 @@ export type AgUiContextItem = InferSchema<ReturnType<typeof getAgUiContextItemSc
 /** Request payload for AG-UI. */
 export type AgUiRequest = InferSchema<ReturnType<typeof getAgUiRequestSchema>>;
 
+export interface NormalizeAgUiMessagesOptions {
+  providerOwnedToolNames?: readonly string[];
+}
+
 function normalizeToolArgs(part: Record<string, unknown>): Record<string, unknown> {
   if (isRecord(part.args)) return part.args;
   if (isRecord(part.input)) return part.input;
@@ -157,6 +161,48 @@ function hasToolResultPart(
     (part.type === "tool-result" && part.toolCallId === toolCallId) ||
     (part.type === "tool_result" && part.tool_call_id === toolCallId)
   );
+}
+
+function getMessagePartToolCallId(part: Message["parts"][number]): string | undefined {
+  const record = part as Record<string, unknown>;
+  const value = record.toolCallId ?? record.tool_call_id ?? record.id;
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function getMessagePartToolName(part: Message["parts"][number]): string | undefined {
+  const record = part as Record<string, unknown>;
+  const explicitToolName = record.toolName ?? record.tool_name ?? record.name;
+  if (typeof explicitToolName === "string" && explicitToolName.length > 0) {
+    return explicitToolName;
+  }
+
+  return part.type.startsWith("tool-") && part.type !== "tool-call" && part.type !== "tool-result"
+    ? part.type.replace(/^tool-/, "")
+    : undefined;
+}
+
+function shouldKeepProviderVisibleToolPart(
+  part: Message["parts"][number],
+  providerOwnedToolNames: ReadonlySet<string>,
+  providerOwnedToolCallIds: Set<string>,
+): boolean {
+  if (providerOwnedToolNames.size === 0) {
+    return true;
+  }
+
+  const toolName = getMessagePartToolName(part);
+  const toolCallId = getMessagePartToolCallId(part);
+  const ownedByName = toolName ? providerOwnedToolNames.has(toolName) : false;
+  const ownedByCallId = toolCallId ? providerOwnedToolCallIds.has(toolCallId) : false;
+
+  if (!ownedByName && !ownedByCallId) {
+    return true;
+  }
+
+  if (toolCallId) {
+    providerOwnedToolCallIds.add(toolCallId);
+  }
+  return false;
 }
 
 function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][number] | null {
@@ -225,11 +271,21 @@ function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][n
   return null;
 }
 
-function extractAssistantToolOutputMessages(message: AgUiRequest["messages"][number]): Message[] {
+function extractAssistantToolOutputMessages(
+  message: AgUiRequest["messages"][number],
+  providerOwnedToolNames: ReadonlySet<string>,
+  providerOwnedToolCallIds: Set<string>,
+): Message[] {
   if (message.role !== "assistant") return [];
 
   return message.parts.flatMap((part) => {
     if (!isToolPartWithOutput(part) || hasToolResultPart(message.parts, part.toolCallId)) {
+      return [];
+    }
+    if (
+      providerOwnedToolNames.has(part.toolName) || providerOwnedToolCallIds.has(part.toolCallId)
+    ) {
+      providerOwnedToolCallIds.add(part.toolCallId);
       return [];
     }
 
@@ -262,21 +318,42 @@ export async function parseAgUiRequestOrError(
 }
 
 /** Normalizes AG-UI messages. */
-export function normalizeAgUiMessages(messages: AgUiRequest["messages"]): Message[] {
+export function normalizeAgUiMessages(
+  messages: AgUiRequest["messages"],
+  options: NormalizeAgUiMessagesOptions = {},
+): Message[] {
+  const providerOwnedToolNames = new Set(options.providerOwnedToolNames ?? []);
+  const providerOwnedToolCallIds = new Set<string>();
+
   return messages.flatMap((message) => {
+    if (message.role === "user" || message.role === "system") {
+      providerOwnedToolCallIds.clear();
+    }
+
     const normalizedMessage = {
       id: message.id,
       role: message.role,
       parts: message.parts
         .map((part) => normalizeMessagePart(part))
-        .filter((part): part is Message["parts"][number] => part !== null),
+        .filter((part): part is Message["parts"][number] => part !== null)
+        .filter((part) =>
+          shouldKeepProviderVisibleToolPart(
+            part,
+            providerOwnedToolNames,
+            providerOwnedToolCallIds,
+          )
+        ),
       ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
       ...(message.metadata ? { metadata: message.metadata } : {}),
     } as Message;
 
     return [
-      normalizedMessage,
-      ...extractAssistantToolOutputMessages(message),
+      ...(normalizedMessage.parts.length > 0 ? [normalizedMessage] : []),
+      ...extractAssistantToolOutputMessages(
+        message,
+        providerOwnedToolNames,
+        providerOwnedToolCallIds,
+      ),
     ];
   });
 }
