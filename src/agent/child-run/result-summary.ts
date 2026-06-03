@@ -1,6 +1,11 @@
 const CHILD_RUN_RESULT_TEXT_LIMIT = 4_000;
 const CHILD_RUN_VALUE_STRING_LIMIT = 500;
 const CHILD_RUN_VALUE_SUMMARY_MAX_DEPTH = 5;
+const MALFORMED_TOOL_RESPONSE_PATTERN = /<tool_response(?:\s[^>]*)?>([\s\S]*?)<\/tool_response>/gi;
+const MALFORMED_TOOL_CALL_PATTERN =
+  /<(tool_call|function_calls|invoke)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi;
+const MALFORMED_TOOL_TAG_PATTERN =
+  /<\/?(tool_call|tool_response|function_calls|invoke)(?:\s[^>]*)?>/gi;
 const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
   /^let me [^.?!]+[.?!]\s*/i,
   /^i(?:'|’)ll [^.?!]+[.?!]\s*/i,
@@ -13,16 +18,28 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function sanitizeMalformedToolTranscriptText(text: string): string {
+  return text
+    .replace(MALFORMED_TOOL_RESPONSE_PATTERN, "\n$1\n")
+    .replace(MALFORMED_TOOL_CALL_PATTERN, "\n")
+    .replace(MALFORMED_TOOL_TAG_PATTERN, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /** Summarize child run result text helper. */
 export function summarizeChildRunResultText(
   text: string,
   maxLength = CHILD_RUN_RESULT_TEXT_LIMIT,
 ): string {
-  if (text.length <= maxLength) {
-    return text;
+  const normalized = sanitizeMalformedToolTranscriptText(text);
+
+  if (normalized.length <= maxLength) {
+    return normalized;
   }
 
-  return `${text.slice(0, maxLength)}… [truncated ${text.length - maxLength} chars]`;
+  return `${normalized.slice(0, maxLength)}… [truncated ${normalized.length - maxLength} chars]`;
 }
 
 /** Builds child run result summary. */
