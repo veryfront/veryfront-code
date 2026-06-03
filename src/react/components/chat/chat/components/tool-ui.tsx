@@ -142,9 +142,10 @@ export function ToolCallCard({
 }: {
   tool: ChatToolPart | ChatDynamicToolPart;
 }): React.JSX.Element {
-  const [isExpanded, setIsExpanded] = React.useState(true);
-
   const hasOutput = hasVisibleToolOutput(tool.output);
+  const hasError = Boolean(tool.errorText);
+  const shouldExpandByDefault = tool.state !== "output-available" || hasOutput || hasError;
+  const [isExpanded, setIsExpanded] = React.useState(shouldExpandByDefault);
   const tableOutput = hasOutput ? renderOutputAsTable(tool.output) : null;
 
   return (

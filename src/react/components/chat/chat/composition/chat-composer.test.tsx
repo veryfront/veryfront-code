@@ -162,4 +162,43 @@ describe("react/components/chat/chat/composition/chat-composer", () => {
       restore();
     }
   });
+
+  it("uses the shared rounded prompt shell and non-scaling primary submit button", () => {
+    const dom = new JSDOM(
+      '<!doctype html><html><body><div id="root"></div></body></html>',
+      { url: "https://example.com/" },
+    );
+    const restore = installDomGlobals(dom);
+
+    try {
+      const rootElement = document.getElementById("root");
+      assert(rootElement, "Expected root element to exist");
+
+      const root = createRoot(rootElement);
+      flushSync(() => {
+        root.render(
+          <ChatComposer
+            input="Hej"
+            onChange={() => {}}
+            onSubmit={() => {}}
+          />,
+        );
+      });
+
+      const composer = document.querySelector("form > div");
+      const submitButton = document.querySelector<HTMLButtonElement>(
+        'button[data-submit-button=""]',
+      );
+      assert(composer, "Expected composer shell to render");
+      assert(submitButton, "Expected submit button to render");
+
+      assert((composer as HTMLElement).className.includes("rounded-full"));
+      assert((composer as HTMLElement).className.includes("focus-within:border"));
+      assert(submitButton.className.includes("hover:shadow"));
+      assertEquals(submitButton.className.includes("active:scale"), false);
+      root.unmount();
+    } finally {
+      restore();
+    }
+  });
 });

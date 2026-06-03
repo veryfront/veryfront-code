@@ -5,7 +5,7 @@ import type { ChatDynamicToolPart } from "#veryfront/agent/react";
 import { ToolCallCard } from "./tool-ui.tsx";
 
 describe("ToolCallCard", () => {
-  it("does not render an empty result panel when a completed tool has null output", () => {
+  it("renders a completed tool with null output as a compact status row", () => {
     const tool: ChatDynamicToolPart = {
       type: "dynamic-tool",
       toolCallId: "tool-web-search",
@@ -19,7 +19,7 @@ describe("ToolCallCard", () => {
 
     assertStringIncludes(html, "web_search");
     assertStringIncludes(html, "Completed");
-    assertStringIncludes(html, "Parameters");
+    assertEquals(html.includes("Parameters"), false);
     assertEquals(html.includes("Result"), false);
   });
 });
