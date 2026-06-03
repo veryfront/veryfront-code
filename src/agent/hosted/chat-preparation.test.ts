@@ -259,6 +259,40 @@ Deno.test("prepareHostedChatRuntimeCreationOptions preserves load_skill when too
   ]);
 });
 
+Deno.test("prepareHostedChatRuntimeCreationOptions preserves an explicit empty tool override for skill-enabled runs", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest({
+      runtimeOverrides: {
+        allowedTools: [],
+      },
+    }),
+    agentConfig: {
+      id: "judge-agent",
+      model: "anthropic/claude-opus-4-6",
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "",
+        skills: [
+          {
+            id: "daily-briefing",
+            name: "Daily Briefing",
+            description: "Start your day with a prioritized sales briefing.",
+            instructions: "Build a concise daily briefing.",
+            allowedTools: ["calendar__list_events"],
+          },
+        ],
+      }),
+    buildInstructions: () => "Instructions",
+  });
+
+  assertEquals(result.creationOptions.availableSkillIds, ["daily-briefing"]);
+  assertEquals(result.creationOptions.allowedTools, []);
+});
+
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {
   const result = await prepareHostedChatExecution({
     request: createParsedHostedChatRequest({

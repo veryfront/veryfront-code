@@ -209,7 +209,8 @@ function mergeSkillLoaderAllowedTools(input: {
   skills: RuntimeSkillDefinition[];
 }): string[] | undefined {
   if (
-    !input.allowedTools || input.skills.length === 0 || input.allowedTools.includes("load_skill")
+    !input.allowedTools || input.allowedTools.length === 0 || input.skills.length === 0 ||
+    input.allowedTools.includes("load_skill")
   ) {
     return input.allowedTools;
   }
