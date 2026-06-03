@@ -37,7 +37,7 @@ export async function createCache(options: CacheOptions): Promise<TokenCache> {
     async () => {
       if (options.type === "redis") {
         const tokenCache = tryResolve<TokenCacheStore>("TokenCacheStore");
-        if (tokenCache) return new TracingTokenCache(tokenCache as unknown as TokenCache);
+        if (tokenCache) return new TracingTokenCache(tokenCache);
         logger.info(MISSING_EXTENSION_INFO);
         return new MemoryCache(undefined);
       }
@@ -70,7 +70,7 @@ export async function createCacheFromEnv(): Promise<TokenCache> {
       // primary-cache attempt (mirrors the pre-extraction RedisCache which
       // had inner withSpan calls).
       logger.debug("[Cache] Using TokenCacheStore extension with memory fallback (ResilientCache)");
-      const traced = new TracingTokenCache(tokenCache as unknown as TokenCache);
+      const traced = new TracingTokenCache(tokenCache);
       return new ResilientCache(traced, new MemoryCache());
     },
     { "cache.type": cacheType },
