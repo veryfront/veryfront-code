@@ -640,3 +640,70 @@ Deno.test("prepareProviderModelMessagesFromUiMessages prefers completed tool out
     },
   ]);
 });
+
+Deno.test("prepareProviderModelMessagesFromUiMessages omits provider-owned tool history", () => {
+  const prepared = prepareProviderModelMessagesFromUiMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Explain Swedish tax residency." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "web_search",
+            toolCallId: "toolu_web_search",
+            input: { query: "site:skatteverket.se tax residency" },
+            state: "output-available",
+            providerExecuted: true,
+            output: null,
+          },
+          {
+            type: "text",
+            text: "Unlimited tax liability is based on Chapter 3 of the Income Tax Act.",
+          },
+        ],
+      },
+      {
+        id: "tool-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "toolu_web_search",
+            tool_name: "web_search",
+            output: null,
+          },
+        ],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Cite the official source." }],
+      },
+    ],
+    { providerOwnedToolNames: ["web_search"] },
+  );
+
+  assertEquals(prepared, [
+    {
+      role: "user",
+      content: [{ type: "text", text: "Explain Swedish tax residency." }],
+    },
+    {
+      role: "assistant",
+      content: [{
+        type: "text",
+        text: "Unlimited tax liability is based on Chapter 3 of the Income Tax Act.",
+      }],
+    },
+    {
+      role: "user",
+      content: [{ type: "text", text: "Cite the official source." }],
+    },
+  ]);
+});

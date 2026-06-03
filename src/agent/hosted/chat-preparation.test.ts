@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
@@ -335,4 +336,61 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool history", async () => {
+  const messages = await prepareHostedChatRuntimeMessages(
+    [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Explain Swedish tax residency." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "dynamic-tool",
+            toolName: "web_search",
+            toolCallId: "toolu_web_search",
+            input: { query: "site:skatteverket.se tax residency" },
+            state: "output-available",
+            providerExecuted: true,
+            output: null,
+          },
+          {
+            type: "text",
+            text: "Unlimited tax liability is based on Chapter 3 of the Income Tax Act.",
+          },
+        ],
+      },
+      {
+        id: "tool-1",
+        role: "tool",
+        parts: [
+          {
+            type: "tool_result",
+            tool_call_id: "toolu_web_search",
+            tool_name: "web_search",
+            output: null,
+          },
+        ],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Cite the official source." }],
+      },
+    ],
+    {
+      providerOwnedToolNames: ["web_search"],
+    },
+  );
+
+  assertEquals(messages.map((message) => message.role), ["user", "assistant", "user"]);
+  assertEquals(messages[1]?.parts, [{
+    type: "text",
+    text: "Unlimited tax liability is based on Chapter 3 of the Income Tax Act.",
+  }]);
 });
