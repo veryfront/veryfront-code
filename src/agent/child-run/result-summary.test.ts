@@ -32,6 +32,18 @@ describe("child-run-result-summary", () => {
     it("wraps text in a summary object", () => {
       assertEquals(buildChildRunResultSummary("done"), { text: "done" });
     });
+
+    it("removes malformed tool transcript wrappers while preserving result content", () => {
+      assertEquals(
+        buildChildRunResultSummary(
+          'I will fetch the docs.\n\n<tool_call>{"name":"web_fetch","parameters":{"url":"https://example.com"}}</tool_call><tool_response>Title: Example Content: Example Domain</tool_response>\n\nNow I can continue.',
+        ),
+        {
+          text:
+            "I will fetch the docs.\n\nTitle: Example Content: Example Domain\n\nNow I can continue.",
+        },
+      );
+    });
   });
 
   describe("buildRootOwnedChildRunResultText", () => {
