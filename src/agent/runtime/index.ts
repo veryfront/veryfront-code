@@ -52,6 +52,7 @@ import { tryGetCacheKeyContext } from "#veryfront/cache/cache-key-builder.ts";
 import type { ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { isLocalModelRuntime } from "#veryfront/provider/runtime-inspection.ts";
 import { generateText, streamText } from "#veryfront/runtime/runtime-bridge.ts";
+import type { RuntimeToolSet } from "./runtime-tool-types.ts";
 
 // Re-export from submodules
 export { closeSSEStream, generateMessageId, sendSSE } from "./sse-utils.ts";
@@ -196,6 +197,25 @@ function createToolErrorMessage(toolCallId: string, toolName: string, error: str
     ],
     timestamp: Date.now(),
   };
+}
+
+function getProviderExecutedToolNames(runtimeTools: RuntimeToolSet | undefined): string[] {
+  if (!runtimeTools) {
+    return [];
+  }
+
+  return Object.entries(runtimeTools).flatMap(([toolName, definition]) => {
+    if (
+      definition &&
+      typeof definition === "object" &&
+      "type" in definition &&
+      definition.type === "provider"
+    ) {
+      return [toolName];
+    }
+
+    return [];
+  });
 }
 
 export function collectFinalStreamToolResults(
@@ -1255,14 +1275,16 @@ export class AgentRuntime {
         currentRunToolState,
       );
 
+      const runtimeTools = convertToolsToRuntimeTools(tools, {
+        model: effectiveModel,
+        allowedToolNames: allowedRemoteToolNames,
+      });
+
       const result = streamText({
         model: languageModel,
         system: modelSystemPrompt,
         messages: convertToTextGenerationRuntimeMessages(currentMessages),
-        tools: convertToolsToRuntimeTools(tools, {
-          model: effectiveModel,
-          allowedToolNames: allowedRemoteToolNames,
-        }),
+        tools: runtimeTools,
         experimental_repairToolCall: repairToolCall,
         maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
         temperature: DEFAULT_TEMPERATURE,
@@ -1275,6 +1297,7 @@ export class AgentRuntime {
       await processStream(result, state, controller, encoder, textPartId, {
         onChunk: callbacks?.onChunk,
         onUsage: (usage) => accumulateUsage(totalUsage, usage),
+        providerExecutedToolNames: getProviderExecutedToolNames(runtimeTools),
       }, abortSignal);
       throwIfAborted(abortSignal);
       finalFinishReason = state.finishReason ?? finalFinishReason;
@@ -1443,6 +1466,12 @@ export class AgentRuntime {
           toolCall.status = persistedError === undefined ? "completed" : "error";
           toolCall.result = persistedResult.result;
           toolCall.error = persistedError;
+          toolCalls.push(toolCall);
+          continue;
+        }
+
+        if (tc.providerExecuted === true) {
+          toolCall.status = "completed";
           toolCalls.push(toolCall);
           continue;
         }

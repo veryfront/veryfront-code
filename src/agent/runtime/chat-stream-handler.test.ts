@@ -984,6 +984,116 @@ describe("chat-stream-handler", () => {
       }]);
     });
 
+    it("marks configured provider-native tool calls as provider-executed when the provider omits the flag", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "tc-provider-inferred",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", {
+        providerExecutedToolNames: ["web_search"],
+      });
+
+      const tc = state.toolCalls.get("tc-provider-inferred")!;
+      assertEquals(tc.providerExecuted, true);
+      assertEquals(events, [{
+        type: "tool-input-start",
+        toolCallId: "tc-provider-inferred",
+        toolName: "web_search",
+      }, {
+        type: "tool-input-available",
+        toolCallId: "tc-provider-inferred",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+        providerExecuted: true,
+      }]);
+    });
+
+    it("does not infer provider execution for same-name local tools without provider metadata", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-call",
+          toolCallId: "tc-local-web-search",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+        },
+        { type: "finish", finishReason: "tool-calls", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", undefined);
+
+      const tc = state.toolCalls.get("tc-local-web-search")!;
+      assertEquals(tc.providerExecuted, undefined);
+      assertEquals(events, [{
+        type: "tool-input-start",
+        toolCallId: "tc-local-web-search",
+        toolName: "web_search",
+      }, {
+        type: "tool-input-available",
+        toolCallId: "tc-local-web-search",
+        toolName: "web_search",
+        input: { query: "Veryfront" },
+      }]);
+    });
+
+    it("marks configured provider-native tool results as provider-executed when the provider omits the flag", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        {
+          type: "tool-result",
+          toolCallId: "tc-provider-result-inferred",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          output: { results: [{ title: "Veryfront" }] },
+        },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "t", {
+        providerExecutedToolNames: ["web_search"],
+      });
+
+      assertEquals(state.toolResults, [{
+        toolCallId: "tc-provider-result-inferred",
+        toolName: "web_search",
+        output: { results: [{ title: "Veryfront" }] },
+        providerExecuted: true,
+      }]);
+      assertEquals(events, [
+        {
+          type: "tool-input-start",
+          toolCallId: "tc-provider-result-inferred",
+          toolName: "web_search",
+        },
+        {
+          type: "tool-input-available",
+          toolCallId: "tc-provider-result-inferred",
+          toolName: "web_search",
+          input: { query: "Veryfront" },
+          providerExecuted: true,
+        },
+        {
+          type: "tool-output-available",
+          toolCallId: "tc-provider-result-inferred",
+          output: { results: [{ title: "Veryfront" }] },
+          providerExecuted: true,
+        },
+      ]);
+    });
+
     it("handles multiple tool calls in a single stream", async () => {
       const { events, controller, encoder } = createSSECollector();
       const state = createStreamState();
