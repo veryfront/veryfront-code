@@ -20,7 +20,10 @@ import {
   HOSTED_CHILD_STREAM_TIMEOUT_TOKEN,
   resolveHostedChildPromiseWithTimeout,
 } from "../hosted/child-stream-watchdog.ts";
-import { getForkRuntimeAllowedToolNames } from "../runtime/provider-native-tool-inventory.ts";
+import {
+  getForkRuntimeAllowedToolNames,
+  getProviderNativeToolNames,
+} from "../runtime/provider-native-tool-inventory.ts";
 import { AgentRuntime } from "../runtime/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
 
@@ -209,6 +212,7 @@ export type StartAgentRuntimeForkInput = {
   maxContinuationSteps?: number;
   abortSignal?: AbortSignal;
   forkToolNames: string[];
+  providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
   providerOptions?: Record<string, unknown>;
   buildInstructions: () => string;
@@ -256,6 +260,15 @@ export function startAgentRuntimeForkWithHostTools<
       forkModel: input.forkModel,
       forkTools: input.forkTools,
     });
+  const providerNativeToolNames = new Set(
+    getProviderNativeToolNames({
+      provider: input.provider,
+      model: input.forkModel,
+    }),
+  );
+  const providerToolNames = forkToolNames.filter((toolName) =>
+    providerNativeToolNames.has(toolName)
+  );
 
   return {
     streamResult: startAgentRuntimeFork({
@@ -268,6 +281,7 @@ export function startAgentRuntimeForkWithHostTools<
       maxContinuationSteps: input.maxContinuationSteps,
       abortSignal: input.abortSignal,
       forkToolNames,
+      providerToolNames,
       runtimeTools,
       providerOptions: input.providerOptions,
       buildInstructions: input.buildInstructions,
@@ -339,6 +353,7 @@ export type RunAgentRuntimeForkStepInput = {
   system: string;
   abortSignal?: AbortSignal;
   forkToolNames: string[];
+  providerToolNames?: string[];
   runtimeTools: Record<string, Tool | boolean>;
   providerOptions?: Record<string, unknown>;
 };
@@ -375,6 +390,7 @@ export async function runAgentRuntimeForkStep(input: RunAgentRuntimeForkStepInpu
     model: input.model,
     system: input.system,
     tools: input.runtimeTools,
+    providerTools: input.providerToolNames ?? [],
     maxSteps: 1,
     ...(input.providerOptions
       ? { resolveModelTransport: () => ({ providerOptions: input.providerOptions }) }
@@ -427,6 +443,7 @@ export function runFrameworkForkStep(input: RunFrameworkForkStepInput): Promise<
     system: input.system,
     ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
     forkToolNames: input.forkToolNames,
+    ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
     runtimeTools: input.frameworkTools,
     ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
   });
@@ -593,6 +610,7 @@ export function startAgentRuntimeFork(input: StartAgentRuntimeForkInput): ForkRu
             system: prepared.system,
             ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
             forkToolNames: input.forkToolNames,
+            ...(input.providerToolNames ? { providerToolNames: input.providerToolNames } : {}),
             runtimeTools: input.runtimeTools,
             ...(input.providerOptions ? { providerOptions: input.providerOptions } : {}),
           });

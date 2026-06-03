@@ -456,6 +456,58 @@ describe("agent/fork-runtime-stream", () => {
     assertEquals(parts, [{ type: "text-delta", text: "Done." }]);
   });
 
+  it("passes requested provider-native tools into child fork runtime steps", async () => {
+    const capturedInputs: RunAgentRuntimeForkStepInput[] = [];
+    const response: AgentResponse = {
+      text: "Done.",
+      messages: [
+        {
+          id: "assistant-1",
+          role: "assistant",
+          timestamp: 2,
+          parts: [{ type: "text", text: "Done." }],
+        },
+      ],
+      toolCalls: [],
+      status: "completed",
+      usage: {
+        promptTokens: 1,
+        completionTokens: 2,
+        totalTokens: 3,
+      },
+      metadata: { finishReason: "stop" },
+    };
+
+    const { streamResult, forkToolNames } = startAgentRuntimeForkWithHostTools({
+      apiUrl: "https://api.example.com",
+      authToken: "auth-token",
+      projectId: "project-1",
+      provider: "anthropic",
+      forkModel: "anthropic/claude-sonnet-4",
+      maxSteps: 1,
+      prompt: "Research with web tools.",
+      forkTools: {},
+      forkToolNames: ["web_fetch", "web_search"],
+      runStep: async (input) => {
+        capturedInputs.push(input);
+        return {
+          stream: createRuntimeEventStream([{ type: "text-delta", delta: "Done." }]),
+          responsePromise: Promise.resolve(response),
+        };
+      },
+      buildInstructions: () => "Base instructions.",
+    });
+
+    for await (const _part of streamResult.fullStream) {
+      // Consume stream.
+    }
+
+    assertEquals(forkToolNames, ["web_fetch", "web_search"]);
+    assertEquals(capturedInputs[0]?.forkToolNames, ["web_fetch", "web_search"]);
+    assertEquals(capturedInputs[0]?.providerToolNames, ["web_fetch", "web_search"]);
+    assertEquals(Object.keys(capturedInputs[0]?.runtimeTools ?? {}), []);
+  });
+
   it("preserves typed trace attributes for high-level host-tool forks", () => {
     type NarrowTraceAttributes = {
       toolName: string;
