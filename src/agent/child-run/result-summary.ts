@@ -2,10 +2,14 @@ const CHILD_RUN_RESULT_TEXT_LIMIT = 4_000;
 const CHILD_RUN_VALUE_STRING_LIMIT = 500;
 const CHILD_RUN_VALUE_SUMMARY_MAX_DEPTH = 5;
 const MALFORMED_TOOL_RESPONSE_PATTERN = /<tool_response(?:\s[^>]*)?>([\s\S]*?)<\/tool_response>/gi;
+const MALFORMED_TOOL_COMMAND_PREFIX_PATTERN =
+  /<(?:tool_call|function_calls|invoke)(?:\s[^>]*)?>[\s\S]*?(?=<(?:tool_response|function_result)(?:\s[^>]*)?>)/gi;
 const MALFORMED_TOOL_CALL_PATTERN =
   /<(tool_call|function_calls|invoke)(?:\s[^>]*)?>[\s\S]*?<\/\1>/gi;
 const MALFORMED_TOOL_TAG_PATTERN =
-  /<\/?(tool_call|tool_response|function_calls|invoke)(?:\s[^>]*)?>/gi;
+  /<\/?(tool_call|tool_response|function_calls|invoke|parameter|function_result)(?:\s[^>]*)?>/gi;
+const MALFORMED_TOOL_TRANSCRIPT_FENCE_PATTERN =
+  /```[ \t]*(?:\r?\n)?[ \t]*(?:bash|sh|shell|zsh)[ \t]*(?:\r?\n)?```(?=\s*<(?:tool_call|tool_response|function_calls|invoke|function_result)\b)/gi;
 const ROOT_RESPONSE_PROCESS_PREFIX_PATTERNS = [
   /^let me [^.?!]+[.?!]\s*/i,
   /^i(?:'|’)ll [^.?!]+[.?!]\s*/i,
@@ -20,7 +24,9 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function sanitizeMalformedToolTranscriptText(text: string): string {
   return text
+    .replace(MALFORMED_TOOL_TRANSCRIPT_FENCE_PATTERN, "")
     .replace(MALFORMED_TOOL_RESPONSE_PATTERN, "\n$1\n")
+    .replace(MALFORMED_TOOL_COMMAND_PREFIX_PATTERN, "\n")
     .replace(MALFORMED_TOOL_CALL_PATTERN, "\n")
     .replace(MALFORMED_TOOL_TAG_PATTERN, "")
     .replace(/[ \t]+\n/g, "\n")

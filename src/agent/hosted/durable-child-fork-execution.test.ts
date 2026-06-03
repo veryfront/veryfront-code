@@ -191,6 +191,55 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     );
   });
 
+  it("sanitizes malformed child transcript text in durable invoke success results", () => {
+    const identifiers = {
+      childConversationId: CHILD_CONVERSATION_ID,
+      childRunId: "run_child_1",
+      childMessageId: CHILD_MESSAGE_ID,
+      latestEventId: 7,
+      latestExternalEventSequence: 3,
+    };
+    const targets = {
+      sourceTargetKind: "preview_branch",
+      runtimeTargetKind: "preview_branch",
+      targetBranchId: BRANCH_ID,
+    } satisfies ConversationRunTargets;
+    const result: ChildRunExecutionResult = {
+      ...baseSuccessResult(),
+      summary: {
+        text:
+          '<function_calls><invoke name="run_bash"><parameter name="command">curl -s https://example.com</parameter></invoke></function_calls><function_result>Title: Example Content</parameter></invoke></function_calls>',
+      },
+    };
+
+    assertEquals(
+      buildHostedDurableChildInvokeSuccessResult({
+        result,
+        snapshot: buildChildRunExecutionSnapshot(result),
+        identifiers,
+        targets,
+      }),
+      {
+        ok: true,
+        status: "completed",
+        text: "Title: Example Content",
+        summary: { text: "Title: Example Content" },
+        steps: 2,
+        toolCalls: [],
+        toolResults: [],
+        usage: { inputTokens: 3, outputTokens: 4, totalTokens: 7 },
+        durationMs: 12,
+        childConversationId: CHILD_CONVERSATION_ID,
+        childRunId: "run_child_1",
+        childMessageId: CHILD_MESSAGE_ID,
+        sourceTargetKind: "preview_branch",
+        runtimeTargetKind: "preview_branch",
+        terminalErrorCode: null,
+        terminalErrorMessage: null,
+      },
+    );
+  });
+
   it("records standard hosted invoke trace attributes while building results", () => {
     const recordedAttributes: unknown[] = [];
     const identifiers = {
