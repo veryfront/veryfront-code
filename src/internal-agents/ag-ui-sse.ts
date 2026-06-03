@@ -10,7 +10,7 @@ import {
   finalizeAgUiBrowserEvents,
   mapRuntimeStreamEventToAgUiBrowserEvents,
 } from "../agent/ag-ui/browser-encoder.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+import { resolveSchemaValidator } from "#veryfront/schemas/define.ts";
 import type { Schema } from "#veryfront/extensions/schema/index.ts";
 
 const encoder = new TextEncoder();
@@ -24,8 +24,9 @@ export function createStreamTransformState(): StreamTransformState {
   return createAgUiBrowserEncoderState();
 }
 
-const getAgUiEventPayloadSchemas = defineSchema((v) => {
-  const schemas = {
+function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, unknown>>> {
+  const v = resolveSchemaValidator();
+  const schemas: Record<string, Schema<Record<string, unknown>>> = {
     RunStarted: v.object({
       runId: v.string().min(1),
       threadId: v.string().min(1),
@@ -70,20 +71,16 @@ const getAgUiEventPayloadSchemas = defineSchema((v) => {
       }),
     }),
   };
-  // Return a record schema that validates to any - we only use this for per-key lookups
-  return schemas as unknown as Schema<Record<string, unknown>>;
-});
+  return schemas;
+}
 
-// Eagerly resolve the schemas map so lookup works at runtime
+// Lazily build and memoize the per-event payload schema map. Built on first use
+// so the SchemaValidator extension is resolved only once it is needed.
 let _agUiEventPayloadSchemas: Record<string, Schema<Record<string, unknown>>> | null = null;
 
 function resolveAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, unknown>>> {
   if (!_agUiEventPayloadSchemas) {
-    // The defineSchema factory above returns the schemas record (cast); unwrap it.
-    _agUiEventPayloadSchemas = getAgUiEventPayloadSchemas() as unknown as Record<
-      string,
-      Schema<Record<string, unknown>>
-    >;
+    _agUiEventPayloadSchemas = buildAgUiEventPayloadSchemas();
   }
   return _agUiEventPayloadSchemas;
 }
