@@ -35,7 +35,7 @@ The `SKILL.md` file uses YAML frontmatter for metadata and Markdown for instruct
 ---
 name: code-review
 description: Review code changes for style, correctness, and security issues.
-allowed_tools: load-skill load-skill-reference execute-skill-script
+allowed_tools: load_skill load_skill_reference execute_skill_script
 ---
 
 # Code Review
@@ -93,9 +93,9 @@ When skills are available, agents get three built-in tools:
 
 | Tool                   | Description                                                |
 | ---------------------- | ---------------------------------------------------------- |
-| `load-skill`           | Load a skill's full instructions by ID                     |
-| `load-skill-reference` | Read a file from `references/`, `resources/`, or `assets/` |
-| `execute-skill-script` | Execute a script from a skill (5-minute timeout)           |
+| `load_skill`           | Load a skill's full instructions by ID                     |
+| `load_skill_reference` | Read a file from `references/`, `resources/`, or `assets/` |
+| `execute_skill_script` | Execute a script from a skill (5-minute timeout)           |
 
 Enable skills on an agent:
 
@@ -118,7 +118,7 @@ curl -N http://localhost:3000/api/ag-ui \
   -d '{"messages":[{"id":"1","role":"user","parts":[{"type":"text","text":"Use the code-review skill and summarize what you would check first."}]}]}'
 ```
 
-The agent should call `load-skill` before applying the skill instructions.
+The agent should call `load_skill` before applying the skill instructions.
 
 ## Tool restrictions
 
@@ -126,7 +126,7 @@ The `allowed_tools` field restricts which tools an agent can use while a skill i
 
 ```yaml
 # Exact tool IDs
-allowed_tools: load-skill load-skill-reference execute-skill-script
+allowed_tools: load_skill load_skill_reference execute_skill_script
 
 # Prefix wildcards
 allowed_tools: api:* database:read

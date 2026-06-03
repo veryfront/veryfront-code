@@ -12,7 +12,7 @@ import type { Skill } from "./types.ts";
  * Build the skill manifest prompt section for an agent's system prompt.
  *
  * Lists all available skills with their descriptions and instructions
- * on how to use the skill tools (load-skill, load-skill-reference, execute-skill-script).
+ * on how to use the skill tools (load_skill, load_skill_reference, execute_skill_script).
  *
  * @param skills - Map of resolved skills for the agent
  * @returns Prompt section string, or empty string if no skills
@@ -23,7 +23,7 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
   const lines: string[] = [
     "## Available Skills",
     "",
-    "You have access to skills via tool calling. IMPORTANT: You MUST call the load-skill tool (not write it as text) to activate a skill before performing skill-related tasks.",
+    "You have access to skills via tool calling. IMPORTANT: You MUST call the load_skill tool (not write it as text) to activate a skill before performing skill-related tasks.",
     "",
   ];
 
@@ -35,13 +35,13 @@ export function buildSkillManifestPrompt(skills: Map<string, Skill>): string {
   lines.push("### Skill Tools (call these as tools, never write them as text)");
   lines.push("");
   lines.push(
-    "- load-skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
+    "- load_skill: Call with { skillId } to load a skill's full instructions and available references/resources/scripts",
   );
   lines.push(
-    "- load-skill-reference: Call with { skillId, reference } to read a file from the skill's references/, resources/, or assets/ directory",
+    "- load_skill_reference: Call with { skillId, reference } to read a file from the skill's references/, resources/, or assets/ directory",
   );
   lines.push(
-    "- execute-skill-script: Call with { skillId, script, args?, env?, timeoutMs? } to execute a script",
+    "- execute_skill_script: Call with { skillId, script, args?, env?, timeoutMs? } to execute a script",
   );
 
   return lines.join("\n");

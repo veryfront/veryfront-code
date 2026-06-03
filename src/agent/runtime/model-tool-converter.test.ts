@@ -112,40 +112,40 @@ describe("model-tool-converter", () => {
     assertEquals("create_file" in result!, true);
   });
 
-  it("adds provider-native web_search for anthropic models when explicitly allowed", () => {
+  it("adds provider-native web_search for anthropic models when explicitly configured", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "anthropic/claude-sonnet-4-6",
-      allowedToolNames: ["web_search"],
+      providerTools: ["web_search"],
     });
 
     assertEquals(result !== undefined, true);
     assertEquals("web_search" in result!, true);
   });
 
-  it("adds provider-native web_search for veryfront-cloud anthropic models when explicitly allowed", () => {
+  it("adds provider-native web_search for veryfront-cloud anthropic models when explicitly configured", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
-      allowedToolNames: ["web_search"],
+      providerTools: ["web_search"],
     });
 
     assertEquals(result !== undefined, true);
     assertEquals("web_search" in result!, true);
   });
 
-  it("adds provider-native web_fetch for anthropic models when explicitly allowed", () => {
+  it("adds provider-native web_fetch for anthropic models when explicitly configured", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "anthropic/claude-sonnet-4-6",
-      allowedToolNames: ["web_fetch"],
+      providerTools: ["web_fetch"],
     });
 
     assertEquals(result !== undefined, true);
     assertEquals("web_fetch" in result!, true);
   });
 
-  it("adds provider-native web_fetch for veryfront-cloud anthropic models when explicitly allowed", () => {
+  it("adds provider-native web_fetch for veryfront-cloud anthropic models when explicitly configured", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "veryfront-cloud/anthropic/claude-sonnet-4-6",
-      allowedToolNames: ["web_fetch"],
+      providerTools: ["web_fetch"],
     });
 
     assertEquals(result !== undefined, true);
@@ -155,7 +155,7 @@ describe("model-tool-converter", () => {
   it("does not add provider-native web_search for non-anthropic models", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "openai/gpt-4o-mini",
-      allowedToolNames: ["web_search"],
+      providerTools: ["web_search"],
     });
 
     assertEquals(result, undefined);
@@ -164,7 +164,7 @@ describe("model-tool-converter", () => {
   it("does not add provider-native web_fetch for non-anthropic models", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "openai/gpt-4o-mini",
-      allowedToolNames: ["web_fetch"],
+      providerTools: ["web_fetch"],
     });
 
     assertEquals(result, undefined);
@@ -181,11 +181,22 @@ describe("model-tool-converter", () => {
 
     const result = convertToolsToRuntimeTools(tools, {
       model: "anthropic/claude-sonnet-4-6",
-      allowedToolNames: ["web_search"],
+      providerTools: ["web_search"],
     });
 
     assertEquals(result !== undefined, true);
     assertEquals(Object.keys(result!).filter((name) => name === "web_search").length, 1);
+  });
+
+  it("does not add provider-native web_search from remote tool allowlists", () => {
+    const result = convertToolsToRuntimeTools([], {
+      model: "anthropic/claude-sonnet-4-6",
+      // @ts-expect-error allowedToolNames was intentionally removed from the
+      // converter API so remote policies cannot enable provider-native tools.
+      allowedToolNames: ["web_search"],
+    });
+
+    assertEquals(result, undefined);
   });
 
   it("caps OpenAI-compatible runtime tools to the provider limit", () => {

@@ -1,5 +1,5 @@
 /**
- * Skill Badge — compact indicator for skill tool calls (load-skill, load-skill-reference, execute-skill-script).
+ * Skill Badge - compact indicator for skill tool calls (load_skill, load_skill_reference, execute_skill_script).
  * @module react/components/chat/components/skill-badge
  */
 
@@ -22,11 +22,11 @@ export function SkillBadge({ tool, className }: SkillBadgeProps): React.JSX.Elem
   const isError = tool.state === "output-error";
 
   let label: string;
-  if (tool.toolName === "load-skill") {
+  if (tool.toolName === "load_skill") {
     label = isComplete
       ? `Skill: ${skillId ?? "unknown"}`
       : `Loading skill${skillId ? `: ${skillId}` : ""}...`;
-  } else if (tool.toolName === "load-skill-reference") {
+  } else if (tool.toolName === "load_skill_reference") {
     const ref = input?.reference as string | undefined;
     label = isComplete ? `Reference: ${ref ?? "unknown"}` : `Reading${ref ? `: ${ref}` : ""}...`;
   } else {

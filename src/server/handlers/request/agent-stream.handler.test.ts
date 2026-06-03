@@ -1,5 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { AgentRunSessionManager } from "#veryfront/internal-agents/session-manager.ts";
+import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEFAULT_MAX_BODY_SIZE_BYTES } from "#veryfront/utils/constants/index.ts";
@@ -533,7 +534,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (agent) => {
-        capturedAllowedTools = agent.config.allowedRemoteTools;
+        capturedAllowedTools = (agent.config as typeof agent.config & RuntimeRemoteToolConfig)
+          .__vfAllowedRemoteTools;
 
         return {
           stream: async (_messages, _context, callbacks) => {
@@ -594,7 +596,8 @@ describe("server/handlers/request/agent-stream.handler", () => {
       getAllAgentIds: () => ["assistant-1"],
       sessionManager: new AgentRunSessionManager(),
       createRuntime: (agent) => {
-        capturedAllowedTools = agent.config.allowedRemoteTools;
+        capturedAllowedTools = (agent.config as typeof agent.config & RuntimeRemoteToolConfig)
+          .__vfAllowedRemoteTools;
 
         return {
           stream: async (_messages, _context, callbacks) => {
@@ -716,6 +719,121 @@ describe("server/handlers/request/agent-stream.handler", () => {
     }
   });
 
+  it("exposes Veryfront API MCP tools requested through mcpServers policy", async () => {
+    let capturedAllowedRemoteTools: string[] | undefined;
+    let capturedRemoteToolNames: string[] = [];
+    const originalFetch = globalThis.fetch;
+    const originalApiUrl = Deno.env.get("VERYFRONT_API_URL");
+
+    Deno.env.set("VERYFRONT_API_URL", "https://api.veryfront.org");
+    globalThis.fetch = ((url, init) => {
+      assertEquals(String(url), "https://api.veryfront.org/mcp");
+      assertEquals(new Headers(init?.headers).get("authorization"), "Bearer run-scoped-token");
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: "veryfront-platform-mcp:tools:list",
+            result: {
+              tools: [
+                {
+                  name: "list_uploads",
+                  description: "List uploads",
+                  inputSchema: { type: "object", properties: {} },
+                },
+                {
+                  name: "delete_upload",
+                  description: "Delete upload",
+                  inputSchema: { type: "object", properties: {} },
+                },
+              ],
+            },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+      );
+    }) as typeof fetch;
+
+    try {
+      const handler = new AgentStreamHandler({
+        ensureProjectDiscovery: async () => {},
+        getAgent: (id) =>
+          id === "assistant-1"
+            ? createAgentWithConfig("assistant-1", {
+              mcpServers: [{
+                kind: "veryfront-api",
+                toolPolicy: {
+                  allow: ["list_uploads"],
+                  deny: ["delete_upload"],
+                },
+              }],
+            })
+            : undefined,
+        getAllAgentIds: () => ["assistant-1"],
+        sessionManager: new AgentRunSessionManager(),
+        createRuntime: (runtimeAgent) => ({
+          stream: async (_messages, _context, callbacks) => {
+            const runtimeConfig = runtimeAgent.config as
+              & typeof runtimeAgent.config
+              & RuntimeRemoteToolConfig;
+            capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+            capturedRemoteToolNames = (await runtimeConfig.__vfRemoteToolSources?.[0]?.listTools({
+              projectId: "proj-1",
+            }))?.map((tool) => tool.name) ?? [];
+            callbacks?.onFinish?.({
+              text: "ok",
+              messages: [],
+              toolCalls: [],
+              status: "completed",
+              usage: {
+                promptTokens: 1,
+                completionTokens: 1,
+                totalTokens: 2,
+              },
+            });
+
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      });
+
+      const body = createAgentStreamRequestBody();
+      const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+        audience: "support-agent-fork",
+        requestId: "run_1",
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-veryfront-control-plane-jws": jws,
+          },
+          body,
+        }),
+        {
+          ...createCtx(publicKeyPem),
+          proxyToken: "run-scoped-token",
+          projectSlug: "support-agent-fork",
+        },
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(capturedAllowedRemoteTools, ["list_uploads"]);
+      assertEquals(capturedRemoteToolNames, ["list_uploads", "delete_upload"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalApiUrl === undefined) Deno.env.delete("VERYFRONT_API_URL");
+      else Deno.env.set("VERYFRONT_API_URL", originalApiUrl);
+    }
+  });
+
   it("exposes request-scoped Veryfront env vars to dynamic agent systems and MCP headers", async () => {
     let capturedEnv: Record<string, string | undefined> | null = null;
     let capturedSystem: string | null = null;
@@ -744,8 +862,11 @@ describe("server/handlers/request/agent-stream.handler", () => {
           capturedSystem = typeof runtimeAgent.config.system === "function"
             ? await runtimeAgent.config.system()
             : runtimeAgent.config.system;
-          capturedAllowedRemoteTools = runtimeAgent.config.allowedRemoteTools;
-          capturedRemoteToolNames = (await runtimeAgent.config.remoteTools?.[0]?.listTools({
+          const runtimeConfig = runtimeAgent.config as
+            & typeof runtimeAgent.config
+            & RuntimeRemoteToolConfig;
+          capturedAllowedRemoteTools = runtimeConfig.__vfAllowedRemoteTools;
+          capturedRemoteToolNames = (await runtimeConfig.__vfRemoteToolSources?.[0]?.listTools({
             projectId: "proj-1",
           }))?.map((tool) => tool.name) ?? [];
           callbacks?.onFinish?.({

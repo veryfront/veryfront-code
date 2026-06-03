@@ -11,6 +11,7 @@ import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
 } from "#veryfront/internal-agents/run-stream.ts";
+import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
 import {
   resolveRuntimeOwnerInvokeUrl,
   RUNTIME_OWNER_INVOKE_URL_HEADER,
@@ -123,7 +124,7 @@ function getRequestedUnresolvedBooleanToolNames(input: {
 }
 
 function mergeAllowedRemoteTools(
-  current: Agent["config"]["allowedRemoteTools"],
+  current: RuntimeRemoteToolConfig["__vfAllowedRemoteTools"],
   requestedToolNames: string[],
 ): string[] {
   const allowed = new Set(
@@ -135,6 +136,34 @@ function mergeAllowedRemoteTools(
     allowed.add(toolName);
   }
   return [...allowed].sort();
+}
+
+function getVeryfrontApiMcpPolicy(agent: Agent): {
+  allowAll: boolean;
+  requestedToolNames: string[];
+  deniedToolNames: Set<string>;
+} {
+  const requestedToolNames = new Set<string>();
+  const deniedToolNames = new Set<string>();
+  let allowAll = false;
+
+  for (const server of agent.config.mcpServers ?? []) {
+    if (!("kind" in server) || server.kind !== "veryfront-api") {
+      continue;
+    }
+    for (const toolName of server.toolPolicy?.deny ?? []) {
+      deniedToolNames.add(toolName);
+    }
+    if (server.toolPolicy?.allow) {
+      for (const toolName of server.toolPolicy.allow) {
+        requestedToolNames.add(toolName);
+      }
+    } else {
+      allowAll = true;
+    }
+  }
+
+  return { allowAll, requestedToolNames: [...requestedToolNames], deniedToolNames };
 }
 
 function hasVeryfrontPlatformRemoteToolSource(
@@ -161,11 +190,12 @@ async function withVeryfrontPlatformRemoteTools(input: {
   projectId?: string | null;
   availableToolNames?: string[];
 }): Promise<Agent> {
+  const veryfrontApiMcpPolicy = getVeryfrontApiMcpPolicy(input.agent);
   const requestedToolNames = getRequestedUnresolvedBooleanToolNames({
     agent: input.agent,
     availableToolNames: input.availableToolNames,
-  });
-  if (requestedToolNames.length === 0 || !input.token) {
+  }).concat(veryfrontApiMcpPolicy.requestedToolNames);
+  if ((!veryfrontApiMcpPolicy.allowAll && requestedToolNames.length === 0) || !input.token) {
     return input.agent;
   }
 
@@ -191,29 +221,34 @@ async function withVeryfrontPlatformRemoteTools(input: {
     ? new Set(platformToolDefinitions.map((tool) => tool.name))
     : null;
   const requestedPlatformToolNames = platformToolNames
-    ? requestedToolNames.filter((toolName) => platformToolNames.has(toolName))
-    : requestedToolNames;
+    ? (veryfrontApiMcpPolicy.allowAll ? [...platformToolNames] : requestedToolNames).filter((
+      toolName,
+    ) => platformToolNames.has(toolName) && !veryfrontApiMcpPolicy.deniedToolNames.has(toolName))
+    : requestedToolNames.filter((toolName) => !veryfrontApiMcpPolicy.deniedToolNames.has(toolName));
   if (requestedPlatformToolNames.length === 0) {
     return input.agent;
   }
 
-  const remoteTools = input.agent.config.remoteTools ?? [];
+  const runtimeRemoteToolConfig = input.agent.config as Agent["config"] & RuntimeRemoteToolConfig;
+  const remoteTools = runtimeRemoteToolConfig.__vfRemoteToolSources ?? [];
   const platformRemoteToolSources = hasVeryfrontPlatformRemoteToolSource(remoteTools) ? [] : [
     platformToolDefinitions
       ? createStaticRemoteToolSource(platformRemoteToolSource, platformToolDefinitions)
       : platformRemoteToolSource,
   ];
 
+  const runtimeConfig: Agent["config"] & RuntimeRemoteToolConfig = {
+    ...input.agent.config,
+    __vfAllowedRemoteTools: mergeAllowedRemoteTools(
+      runtimeRemoteToolConfig.__vfAllowedRemoteTools,
+      requestedPlatformToolNames,
+    ),
+    __vfRemoteToolSources: [...remoteTools, ...platformRemoteToolSources],
+  };
+
   return {
     ...input.agent,
-    config: {
-      ...input.agent.config,
-      allowedRemoteTools: mergeAllowedRemoteTools(
-        input.agent.config.allowedRemoteTools,
-        requestedPlatformToolNames,
-      ),
-      remoteTools: [...remoteTools, ...platformRemoteToolSources],
-    },
+    config: runtimeConfig,
   };
 }
 

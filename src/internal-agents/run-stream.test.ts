@@ -96,8 +96,8 @@ describe("internal-agents/run-stream", () => {
           get_file: true,
           unknown_local_tool: true,
         },
-        allowedRemoteTools: ["search_knowledge", "get_file"],
-        remoteTools: [{
+        __vfAllowedRemoteTools: ["search_knowledge", "get_file"],
+        __vfRemoteToolSources: [{
           id: "veryfront-mcp",
           listTools: async () => [
             {
@@ -162,8 +162,8 @@ describe("internal-agents/run-stream", () => {
           list_projects: true,
           gmail__list_emails: true,
         },
-        allowedRemoteTools: ["list_projects"],
-        remoteTools: [{
+        __vfAllowedRemoteTools: ["list_projects"],
+        __vfRemoteToolSources: [{
           id: "veryfront-platform-mcp",
           listTools: async () => [
             {
@@ -204,7 +204,7 @@ describe("internal-agents/run-stream", () => {
       {
         sessionManager,
         createRuntime: (runtimeAgent, mergedTools) => {
-          capturedAllowedRemoteTools = runtimeAgent.config.allowedRemoteTools;
+          capturedAllowedRemoteTools = runtimeAgent.config.__vfAllowedRemoteTools;
           capturedToolNames = Object.keys(mergedTools ?? {}).sort();
           return {
             stream: async () =>

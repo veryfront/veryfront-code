@@ -406,13 +406,13 @@ describe("chat-stream-handler", () => {
       const result = {
         fullStream: {
           async *[Symbol.asyncIterator]() {
-            yield { type: "tool-input-start", id: "tc-a", toolName: "load-skill" };
+            yield { type: "tool-input-start", id: "tc-a", toolName: "load_skill" };
             yield { type: "tool-input-delta", id: "tc-a", delta: '{"skillId":"dora"}' };
             yield { type: "tool-input-end", id: "tc-a" };
             yield {
               type: "tool-input-start",
               id: "tc-b",
-              toolName: "load-skill-reference",
+              toolName: "load_skill_reference",
             };
             await new Promise((resolve) => setTimeout(resolve, 300));
             yield {
@@ -437,13 +437,13 @@ describe("chat-stream-handler", () => {
           {
             type: "tool-input-available",
             toolCallId: "tc-a",
-            toolName: "load-skill",
+            toolName: "load_skill",
             input: { skillId: "dora" },
           },
           {
             type: "tool-input-available",
             toolCallId: "tc-b",
-            toolName: "load-skill-reference",
+            toolName: "load_skill_reference",
             input: { skillId: "dora", reference: "references/article-17.md" },
           },
         ],
@@ -504,13 +504,13 @@ describe("chat-stream-handler", () => {
       const result = {
         fullStream: {
           async *[Symbol.asyncIterator]() {
-            yield { type: "tool-input-start", id: "tc-a", toolName: "load-skill" };
+            yield { type: "tool-input-start", id: "tc-a", toolName: "load_skill" };
             yield { type: "tool-input-delta", id: "tc-a", delta: '{"skillId":"dora"}' };
             yield { type: "tool-input-end", id: "tc-a" };
             yield {
               type: "tool-input-start",
               id: "tc-b",
-              toolName: "load-skill-reference",
+              toolName: "load_skill_reference",
             };
             await new Promise(() => {});
           },

@@ -75,11 +75,11 @@ describe("src/agent/runtime skill policy helpers", () => {
     it("should reject non-skill tools when mustLoadSkillFirst is true", () => {
       const result = enforceSkillPolicy("Read", undefined, true);
       assertEquals(result.allowed, false);
-      assertEquals("error" in result && result.error.includes("load-skill"), true);
+      assertEquals("error" in result && result.error.includes("load_skill"), true);
     });
 
-    it("should allow load-skill even when mustLoadSkillFirst is true", () => {
-      const result = enforceSkillPolicy("load-skill", undefined, true);
+    it("should allow load_skill even when mustLoadSkillFirst is true", () => {
+      const result = enforceSkillPolicy("load_skill", undefined, true);
       assertEquals(result, { allowed: true });
     });
 
@@ -94,9 +94,13 @@ describe("src/agent/runtime skill policy helpers", () => {
     });
 
     it("should always allow skill system tools regardless of policy", () => {
-      assertEquals(enforceSkillPolicy("load-skill", ["Read"], false), { allowed: true });
-      assertEquals(enforceSkillPolicy("load-skill-reference", ["Read"], false), { allowed: true });
-      assertEquals(enforceSkillPolicy("execute-skill-script", ["Read"], false), { allowed: true });
+      assertEquals(enforceSkillPolicy("load_skill", ["Read"], false), { allowed: true });
+      assertEquals(enforceSkillPolicy("load_skill_reference", ["Read"], false), {
+        allowed: true,
+      });
+      assertEquals(enforceSkillPolicy("execute_skill_script", ["Read"], false), {
+        allowed: true,
+      });
     });
 
     it("should allow wildcard-matched tools", () => {

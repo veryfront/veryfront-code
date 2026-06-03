@@ -46,6 +46,7 @@ function createRefreshInput(
       remoteToolSources: [],
       localToolNames: ["load_skill", "sleep"],
       remoteToolNames: [],
+      providerToolNames: [],
       availableToolNames: [],
       compatibleRemoteToolNames: [],
       systemInstructions: "",

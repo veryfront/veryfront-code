@@ -1,15 +1,18 @@
 import type { RemoteMCPToolSourceConfig } from "#veryfront/tool";
+import type { AgentMcpToolPolicy } from "../types.ts";
 import { buildStudioMcpHeaders } from "../project/live-studio-mcp-tools.ts";
 import { clientAllowsStudioMcp, type RuntimeClientProfile } from "../runtime/client-profile.ts";
 
 export type AgentServiceVeryfrontApiMcpServerConfig = {
   kind: "veryfront-api";
   id?: string;
+  toolPolicy?: AgentMcpToolPolicy;
 };
 
 export type AgentServiceVeryfrontStudioMcpServerConfig = {
   kind: "veryfront-studio";
   id?: string;
+  toolPolicy?: AgentMcpToolPolicy;
 };
 
 export type AgentServiceGenericMcpServerConfig = {
@@ -20,6 +23,7 @@ export type AgentServiceGenericMcpServerConfig = {
   fetch?: RemoteMCPToolSourceConfig["fetch"];
   listMethod?: RemoteMCPToolSourceConfig["listMethod"];
   callMethod?: RemoteMCPToolSourceConfig["callMethod"];
+  toolPolicy?: AgentMcpToolPolicy;
 };
 
 export type AgentServiceMcpServerConfig =

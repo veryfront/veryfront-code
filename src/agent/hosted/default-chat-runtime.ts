@@ -40,6 +40,7 @@ import type {
   RuntimeAgentThinkingConfig,
 } from "../runtime/agent-definition.ts";
 import type { AgentConfig } from "../types.ts";
+import type { RuntimeRemoteToolConfig } from "../runtime/mcp-server-tool-sources.ts";
 
 /** Configuration used by default hosted chat runtime. */
 export type DefaultHostedChatRuntimeConfig = {
@@ -216,13 +217,14 @@ function createRuntimeAgentConfig(input: {
       })
     : undefined;
 
-  return {
+  const runtimeConfig: AgentConfig & RuntimeRemoteToolConfig = {
     id: "veryfront-hosted-runtime",
     model: input.modelId,
     system: input.toolAssembly.systemInstructions,
     tools: input.toolAssembly.runtimeTools,
-    remoteTools: input.toolAssembly.remoteToolSources,
-    allowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
+    providerTools: input.toolAssembly.providerToolNames,
+    __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
+    __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
       const providerOptions = resolveVeryfrontCloudThinkingProviderOptions(
@@ -240,6 +242,7 @@ function createRuntimeAgentConfig(input: {
       remoteToolSource: input.toolAssembly.remoteToolSources[0],
     }),
   };
+  return runtimeConfig;
 }
 
 function createCloudContext(input: {

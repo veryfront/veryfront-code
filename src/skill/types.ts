@@ -26,9 +26,9 @@ export const SKILL_MD_FILENAME = "SKILL.md";
 
 /** Tool IDs that belong to the skill system (single source of truth) */
 export const SKILL_TOOL_IDS = new Set([
-  "load-skill",
-  "load-skill-reference",
-  "execute-skill-script",
+  "load_skill",
+  "load_skill_reference",
+  "execute_skill_script",
 ]);
 
 /** Conventional subdirectory names */
@@ -55,7 +55,7 @@ export interface SkillMetadata {
   metadata?: Record<string, string>;
 }
 
-/** Full skill content returned by load-skill tool */
+/** Full skill content returned by load_skill tool */
 export interface SkillContent {
   /** Markdown instructions (body after frontmatter) */
   instructions: string;

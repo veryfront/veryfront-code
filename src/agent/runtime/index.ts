@@ -38,6 +38,10 @@ import { convertToTextGenerationRuntimeMessages } from "./text-generation-runtim
 import { convertToolsToRuntimeTools } from "./model-tool-converter.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
+  getRuntimeRemoteToolSources,
+  type RuntimeRemoteToolConfig,
+} from "./mcp-server-tool-sources.ts";
+import {
   type ChatStreamState,
   createStreamState,
   processStream,
@@ -124,14 +128,13 @@ import {
 } from "./current-run-tool-state.ts";
 
 const logger = serverLogger.component("agent");
-const LOAD_SKILL_TOOL_ID = "load-skill";
+const LOAD_SKILL_TOOL_ID = "load_skill";
 
 type RuntimeToolFilterConfig = AgentConfig & {
-  __vfAllowedRemoteTools?: string[];
   __vfForwardedIntegrationToolDefs?: Array<
     { name: string; description: string; parameters: Record<string, unknown> }
   >;
-};
+} & RuntimeRemoteToolConfig;
 
 function isAbortError(error: unknown, abortSignal?: AbortSignal): boolean {
   if (abortSignal?.aborted && error === abortSignal.reason) {
@@ -150,7 +153,7 @@ function getToolResultError(result: unknown): string | undefined {
 }
 
 function getSkillActivationRequiredError(toolName: string): string {
-  return `Tool "${toolName}" cannot run before load-skill succeeds in the same step. ` +
+  return `Tool "${toolName}" cannot run before load_skill succeeds in the same step. ` +
     `Call "${LOAD_SKILL_TOOL_ID}" first to establish the active skill context.`;
 }
 
@@ -485,7 +488,7 @@ function isToolResultPart(part: MessagePart): part is ToolResultPart {
 }
 
 /**
- * Extract and validate the skill policy from a load-skill tool result.
+ * Extract and validate the skill policy from a load_skill tool result.
  * Returns `[]` (no tools allowed) for invalid/missing policies instead of
  * `undefined` (no restrictions), preventing accidental policy bypass.
  */
@@ -503,7 +506,7 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
   if (!Array.isArray(raw) || !raw.every((v) => typeof v === "string")) {
     // Invalid shape — fail closed (empty policy = no tools allowed)
     logger.warn(
-      "load-skill returned invalid allowedTools; falling back to empty policy (no tools)",
+      "load_skill returned invalid allowedTools; falling back to empty policy (no tools)",
     );
     return [];
   }
@@ -513,7 +516,7 @@ export function extractSkillPolicy(result: unknown): string[] | undefined {
     return validateAllowedToolPatterns(raw);
   } catch (error) {
     logger.warn(
-      "load-skill returned invalid tool patterns; falling back to empty policy (no tools)",
+      "load_skill returned invalid tool patterns; falling back to empty policy (no tools)",
       { error },
     );
     return [];
@@ -553,19 +556,19 @@ export function enforceSkillPolicy(
 }
 
 function getRuntimeAllowedRemoteTools(config: AgentConfig): string[] | undefined {
-  if (Object.hasOwn(config, "allowedRemoteTools")) {
-    const raw = config.allowedRemoteTools;
-    if (!Array.isArray(raw)) {
-      return [];
-    }
-    return raw.every((toolName) => typeof toolName === "string") ? raw : [];
-  }
-
   const configWithRuntimeFilters = config as RuntimeToolFilterConfig;
   if (!Object.hasOwn(configWithRuntimeFilters, "__vfAllowedRemoteTools")) {
     return undefined;
   }
   const raw = configWithRuntimeFilters.__vfAllowedRemoteTools;
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  return raw.every((toolName) => typeof toolName === "string") ? raw : [];
+}
+
+function getRuntimeProviderTools(config: AgentConfig): string[] {
+  const raw = config.providerTools;
   if (!Array.isArray(raw)) {
     return [];
   }
@@ -924,7 +927,9 @@ export class AgentRuntime {
       // Request-scoped skill policy (not class-level mutable state)
       let activeSkillPolicy: string[] | undefined;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
+      const providerTools = getRuntimeProviderTools(this.config);
       const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
+      const remoteToolSources = getRuntimeRemoteToolSources(this.config);
       let currentSystemPrompt = systemPrompt;
       let currentRuntimeContext = runtimeContext;
 
@@ -947,7 +952,7 @@ export class AgentRuntime {
           includeSkillTools: Boolean(this.config.skills),
           allowedRemoteToolNames,
           forwardedRemoteToolDefinitions,
-          remoteToolSources: this.config.remoteTools,
+          remoteToolSources,
           remoteToolContext: toolContext,
         });
 
@@ -972,7 +977,7 @@ export class AgentRuntime {
             messages: convertToTextGenerationRuntimeMessages(currentMessages),
             tools: convertToolsToRuntimeTools(tools, {
               model: effectiveModel,
-              allowedToolNames: allowedRemoteToolNames,
+              providerTools,
             }),
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
@@ -1131,7 +1136,7 @@ export class AgentRuntime {
                 this.config.tools,
                 executionContext,
                 allowedRemoteToolNames,
-                this.config.remoteTools,
+                remoteToolSources,
               );
               await this.notifyToolResult({
                 mode: "generate",
@@ -1152,7 +1157,7 @@ export class AgentRuntime {
               toolCall.result = result;
               toolCall.executionTime = Date.now() - startTime;
 
-              // Track skill policy from load-skill results
+              // Track skill policy from load_skill results
               if (tc.toolName === LOAD_SKILL_TOOL_ID) {
                 activeSkillPolicy = extractSkillPolicy(result);
                 mustLoadSkillFirst = false;
@@ -1251,7 +1256,9 @@ export class AgentRuntime {
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
+    const providerTools = getRuntimeProviderTools(this.config);
     const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
+    const remoteToolSources = getRuntimeRemoteToolSources(this.config);
     let currentSystemPrompt = systemPrompt;
     let currentRuntimeContext = runtimeContext;
 
@@ -1275,7 +1282,7 @@ export class AgentRuntime {
         includeSkillTools: Boolean(this.config.skills),
         allowedRemoteToolNames,
         forwardedRemoteToolDefinitions,
-        remoteToolSources: this.config.remoteTools,
+        remoteToolSources,
         remoteToolContext: toolContext,
       });
 
@@ -1291,7 +1298,7 @@ export class AgentRuntime {
 
       const runtimeTools = convertToolsToRuntimeTools(tools, {
         model: effectiveModel,
-        allowedToolNames: allowedRemoteToolNames,
+        providerTools,
       });
 
       const result = streamText({
@@ -1547,7 +1554,7 @@ export class AgentRuntime {
             this.config.tools,
             executionContext,
             allowedRemoteToolNames,
-            this.config.remoteTools,
+            remoteToolSources,
           );
           throwIfAborted(abortSignal);
           await this.notifyToolResult({
@@ -1570,7 +1577,7 @@ export class AgentRuntime {
           toolCall.executionTime = Date.now() - startTime;
           toolCalls.push(toolCall);
 
-          // Track skill policy from load-skill results
+          // Track skill policy from load_skill results
           if (tc.name === LOAD_SKILL_TOOL_ID) {
             activeSkillPolicy = extractSkillPolicy(result);
             mustLoadSkillFirst = false;

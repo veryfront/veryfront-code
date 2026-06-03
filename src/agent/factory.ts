@@ -36,9 +36,9 @@ const STREAMING_HEADERS: Record<string, string> = {
 };
 
 const SKILL_TOOL_REGISTRATIONS = [
-  { id: "load-skill", create: createLoadSkillTool },
-  { id: "load-skill-reference", create: createLoadSkillReferenceTool },
-  { id: "execute-skill-script", create: createExecuteSkillScriptTool },
+  { id: "load_skill", create: createLoadSkillTool },
+  { id: "load_skill_reference", create: createLoadSkillReferenceTool },
+  { id: "execute_skill_script", create: createExecuteSkillScriptTool },
 ] as const;
 
 function createAgentStreamResult(stream: ReadableStream<Uint8Array>): AgentStreamResult {
@@ -85,7 +85,7 @@ export function agent(config: AgentConfig): Agent {
   let mergedToolsConfig = config.tools;
 
   if (config.skills) {
-    // Skill tools (load-skill, load-skill-reference, execute-skill-script) are
+    // Skill tools (load_skill, load_skill_reference, execute_skill_script) are
     // framework infrastructure — shared across all projects. Project tools and
     // skills themselves remain project-scoped. Using registerShared avoids
     // scope mismatch between module-load time and request-handling time.
@@ -99,9 +99,9 @@ export function agent(config: AgentConfig): Agent {
     if (config.tools !== true) {
       mergedToolsConfig = {
         ...(config.tools ?? {}),
-        "load-skill": true,
-        "load-skill-reference": true,
-        "execute-skill-script": true,
+        "load_skill": true,
+        "load_skill_reference": true,
+        "execute_skill_script": true,
       };
     }
   }

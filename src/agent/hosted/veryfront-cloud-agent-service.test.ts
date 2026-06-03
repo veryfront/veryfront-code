@@ -10,7 +10,8 @@ import { agentRegistry } from "../composition/index.ts";
 import {
   createNodeVeryfrontCloudAgentServiceRuntime,
   startNodeVeryfrontCloudAgentService,
-  veryfrontMcpServer,
+  veryfrontApiMcpServer,
+  veryfrontStudioMcpServer,
 } from "./veryfront-cloud-agent-service.ts";
 import { stop as stopEsbuild } from "veryfront/extensions/bundler";
 
@@ -406,9 +407,9 @@ Deno.test("startNodeVeryfrontCloudAgentService registers the service with the co
   });
 });
 
-Deno.test("veryfrontMcpServer creates explicit Veryfront MCP server configs", () => {
-  assertEquals(veryfrontMcpServer(), { kind: "veryfront-api" });
-  assertEquals(veryfrontMcpServer("studio"), { kind: "veryfront-studio" });
+Deno.test("Veryfront MCP server helpers create explicit server configs", () => {
+  assertEquals(veryfrontApiMcpServer(), { kind: "veryfront-api" });
+  assertEquals(veryfrontStudioMcpServer(), { kind: "veryfront-studio" });
 });
 
 Deno.test({

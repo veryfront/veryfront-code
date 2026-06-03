@@ -144,7 +144,7 @@ describe("agent runtime streamed tool result collection", () => {
           "toolu_incomplete_1",
           {
             id: "toolu_incomplete_1",
-            name: "load-skill-reference",
+            name: "load_skill_reference",
             arguments: '{"skillId":"dora"',
             inputAvailable: false,
           },
@@ -165,7 +165,7 @@ describe("agent runtime streamed tool result collection", () => {
           "toolu_complete_1",
           {
             id: "toolu_complete_1",
-            name: "load-skill",
+            name: "load_skill",
             arguments: '{"skillId":"dora"}',
             inputAvailable: true,
           },
@@ -174,7 +174,7 @@ describe("agent runtime streamed tool result collection", () => {
           "toolu_incomplete_1",
           {
             id: "toolu_incomplete_1",
-            name: "load-skill-reference",
+            name: "load_skill_reference",
             arguments: '{"skillId":"dora"',
             inputAvailable: false,
           },

@@ -3,7 +3,7 @@
  **************************/
 
 import type { ModelRuntime } from "#veryfront/provider/types.ts";
-import type { RemoteToolSource, Tool, ToolExecutionContext } from "#veryfront/tool";
+import type { Tool, ToolExecutionContext } from "#veryfront/tool";
 import { INVALID_ARGUMENT } from "#veryfront/errors/error-registry.ts";
 import type { Memory } from "./memory/memory-interface.ts";
 
@@ -77,6 +77,53 @@ export interface Suggestions {
   suggestions: Suggestion[];
 }
 
+/** Policy for tools exposed by one MCP server. */
+export interface AgentMcpToolPolicy {
+  allow?: string[];
+  deny?: string[];
+  approval?: "never";
+}
+
+/** HTTP transport configuration for one MCP server. */
+export interface AgentMcpHttpTransport {
+  type: "http";
+  url: string | ((context?: ToolExecutionContext) => string | Promise<string>);
+}
+
+/** Authentication configuration for one MCP server. */
+export type AgentMcpServerAuth =
+  | {
+    type: "bearer";
+    token: string | ((context?: ToolExecutionContext) => string | Promise<string>);
+  }
+  | {
+    type: "headers";
+    headers: HeadersInit | ((context?: ToolExecutionContext) => HeadersInit | Promise<HeadersInit>);
+  };
+
+/** Veryfront-owned MCP server kind. */
+export type AgentVeryfrontMcpServerKind = "veryfront-api" | "veryfront-studio";
+
+/** Veryfront-owned MCP server available to an agent. */
+export interface AgentVeryfrontMcpServerConfig {
+  kind: AgentVeryfrontMcpServerKind;
+  id?: string;
+  toolPolicy?: AgentMcpToolPolicy;
+}
+
+/** HTTP MCP server available to an agent. */
+export interface AgentHttpMcpServerConfig {
+  id: string;
+  kind?: "http";
+  transport: AgentMcpHttpTransport;
+  auth?: AgentMcpServerAuth;
+  toolPolicy?: AgentMcpToolPolicy;
+  fetch?: typeof fetch;
+}
+
+/** MCP server available to an agent. */
+export type AgentMcpServerConfig = AgentHttpMcpServerConfig | AgentVeryfrontMcpServerConfig;
+
 /** Configuration used by agent. */
 export interface AgentConfig {
   id?: string;
@@ -105,12 +152,13 @@ export interface AgentConfig {
     sessionId?: string;
     projectId?: string;
   };
-  remoteTools?: RemoteToolSource[];
   /**
-   * Optional remote tool name allowlist. When set, only matching tools from
-   * `remoteTools` are exposed to the model and executable at runtime.
+   * Provider-native tools executed by the selected model provider, such as
+   * Anthropic `web_search` and `web_fetch`.
    */
-  allowedRemoteTools?: string[];
+  providerTools?: string[];
+  /** Remote MCP servers available to this agent. */
+  mcpServers?: AgentMcpServerConfig[];
   maxSteps?: number;
   streaming?: boolean;
   memory?: MemoryConfig;
