@@ -1,5 +1,6 @@
 import { isDeno } from "../runtime.ts";
 import type { WebSocketUpgradeOptions, WebSocketUpgradeResult } from "./types.ts";
+import { getNativeDeno } from "./native-response.ts";
 import { NOT_SUPPORTED } from "#veryfront/errors";
 
 export function upgradeWebSocket(
@@ -26,7 +27,7 @@ function upgradeWebSocketDeno(
 ): WebSocketUpgradeResult {
   // Access native Deno via `self` to bypass dnt shim transform.
   // dnt rewrites `globalThis.Deno` to @deno/shim-deno, which lacks upgradeWebSocket.
-  const nativeDeno = (self as unknown as Record<string, typeof Deno>)["Deno"];
+  const nativeDeno = getNativeDeno();
   if (typeof nativeDeno?.upgradeWebSocket !== "function") {
     throw NOT_SUPPORTED.create({
       detail: "Deno.upgradeWebSocket() is not available in this runtime.",
