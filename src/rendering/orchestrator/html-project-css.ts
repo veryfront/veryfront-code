@@ -5,7 +5,10 @@ import { warmPreparedCSSArtifactFromFiles } from "#veryfront/html/styles-builder
 import { resolveStyleContentVersion } from "#veryfront/html/styles-builder/content-version.ts";
 import { createStyleScopeProfile } from "#veryfront/html/styles-builder/style-scope-profile.ts";
 import type { RuntimeAdapter } from "#veryfront/platform/adapters/base.ts";
-import type { ResolvedContentContext } from "#veryfront/platform/adapters/fs/veryfront/types.ts";
+import type {
+  FSAdapter,
+  ResolvedContentContext,
+} from "#veryfront/platform/adapters/fs/veryfront/types.ts";
 import { rendererLogger } from "#veryfront/utils";
 import { extractRelativePath } from "#veryfront/utils/route-path-utils.ts";
 import { getRouteCandidates } from "./css-candidate-manifest.ts";
@@ -35,10 +38,15 @@ interface ProjectCssDeps {
 
 type SourceFileEntry = { path: string; content?: string };
 
-function getUnderlyingFsAdapter(adapter: RuntimeAdapter): unknown {
-  const wrappedFs = adapter.fs as unknown as { getUnderlyingAdapter?: () => unknown };
-  if (typeof wrappedFs.getUnderlyingAdapter !== "function") return undefined;
-  return wrappedFs.getUnderlyingAdapter();
+type FsWithUnderlyingAdapter = { getUnderlyingAdapter: () => FSAdapter };
+
+function hasUnderlyingAdapter(fs: unknown): fs is FsWithUnderlyingAdapter {
+  return typeof (fs as Partial<FsWithUnderlyingAdapter>).getUnderlyingAdapter === "function";
+}
+
+function getUnderlyingFsAdapter(adapter: RuntimeAdapter): FSAdapter | undefined {
+  if (!hasUnderlyingAdapter(adapter.fs)) return undefined;
+  return adapter.fs.getUnderlyingAdapter();
 }
 
 export function buildRouteManifestKey(pagePath: string, projectDir: string): string {

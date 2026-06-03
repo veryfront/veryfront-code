@@ -152,8 +152,8 @@ function shouldAutoInitPrefetch(options: PrefetchOptions | null): options is Pre
   if (!options) return false;
   if (typeof window === "undefined" || typeof document === "undefined") return false;
 
-  const win = window as unknown as { __veryfrontSSRStub?: boolean };
-  const doc = document as unknown as { __veryfrontSSRStub?: boolean };
+  const win = window as Window & { __veryfrontSSRStub?: boolean };
+  const doc = document as Document & { __veryfrontSSRStub?: boolean };
   if (win.__veryfrontSSRStub || doc.__veryfrontSSRStub) return false;
 
   if (typeof IntersectionObserver === "undefined") return false;
