@@ -9,6 +9,8 @@ import {
   parseAgUiRequest,
   parseAgUiRequestOrError,
 } from "./host-support.ts";
+import { convertToTextGenerationRuntimeMessages } from "../runtime/text-generation-runtime-message-converter.ts";
+import type { Message } from "../types.ts";
 
 describe("agent/ag-ui-host-support", () => {
   it("parses a valid AG-UI request body through the public helper", async () => {
@@ -233,6 +235,97 @@ describe("agent/ag-ui-host-support", () => {
         id: "user-2",
         role: "user",
         parts: [{ type: "text", text: "Summarize that result" }],
+      },
+    ]);
+  });
+
+  it("pairs replayed assistant tool outputs before trailing assistant text", () => {
+    const normalized = normalizeAgUiMessages([
+      { id: "user-1", role: "user", parts: [{ type: "text", text: "Question one" }] },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-load-skill",
+            toolCallId: "tool-load",
+            toolName: "load-skill",
+            state: "output-available",
+            input: { skill: "tax" },
+            output: { ok: true },
+          },
+          {
+            type: "tool-search_docs",
+            toolCallId: "tool-search",
+            toolName: "search_docs",
+            state: "output-available",
+            input: { query: "residency" },
+            output: { matches: 2 },
+          },
+          { type: "text", text: "Here is the answer." },
+        ],
+      },
+      { id: "user-2", role: "user", parts: [{ type: "text", text: "Follow-up" }] },
+    ]);
+
+    assertEquals(normalized.map((message) => message.role), [
+      "user",
+      "assistant",
+      "tool",
+      "assistant",
+      "tool",
+      "assistant",
+      "user",
+    ]);
+
+    const wireMessages = convertToTextGenerationRuntimeMessages(normalized as Message[]);
+    for (let index = 0; index < wireMessages.length; index += 1) {
+      const message = wireMessages[index];
+      if (!message) continue;
+      if (message.role !== "tool") continue;
+
+      const previous = wireMessages[index - 1];
+      const previousToolCallIds = new Set<string>();
+      if (previous?.role === "assistant" && Array.isArray(previous.content)) {
+        for (const part of previous.content) {
+          if (part.type === "tool-call") previousToolCallIds.add(part.toolCallId);
+        }
+      }
+
+      if (Array.isArray(message.content)) {
+        for (const part of message.content) {
+          if (part.type === "tool-result") {
+            assertEquals(previousToolCallIds.has(part.toolCallId), true);
+          }
+        }
+      }
+    }
+  });
+
+  it("does not synthesize tool results for provider-owned assistant tool parts", () => {
+    const messages = normalizeAgUiMessages([
+      {
+        id: "assistant-search",
+        role: "assistant",
+        parts: [
+          { type: "text", text: "I checked the source." },
+          {
+            type: "tool-web_search",
+            toolCallId: "tool-search",
+            toolName: "web_search",
+            state: "output-available",
+            input: { query: "site:skatteverket.se tax residency" },
+            output: { results: [{ title: "Skatteverket" }] },
+          },
+        ],
+      },
+    ], { providerOwnedToolNames: ["web_search"] });
+
+    assertEquals(messages, [
+      {
+        id: "assistant-search",
+        role: "assistant",
+        parts: [{ type: "text", text: "I checked the source." }],
       },
     ]);
   });

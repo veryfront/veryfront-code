@@ -271,35 +271,72 @@ function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][n
   return null;
 }
 
-function extractAssistantToolOutputMessages(
-  message: AgUiRequest["messages"][number],
+type AgUiMessage = AgUiRequest["messages"][number];
+
+function buildMessageMetadataFields(message: AgUiMessage): Partial<Message> {
+  return {
+    ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
+    ...(message.metadata ? { metadata: message.metadata } : {}),
+  } as Partial<Message>;
+}
+
+function normalizeAssistantMessage(
+  message: AgUiMessage,
   providerOwnedToolNames: ReadonlySet<string>,
   providerOwnedToolCallIds: Set<string>,
 ): Message[] {
-  if (message.role !== "assistant") return [];
+  const messages: Message[] = [];
+  const metadataFields = buildMessageMetadataFields(message);
+  let segmentParts: Message["parts"] = [];
+  let segmentIndex = 0;
 
-  return message.parts.flatMap((part) => {
-    if (!isToolPartWithOutput(part) || hasToolResultPart(message.parts, part.toolCallId)) {
-      return [];
-    }
+  const flushAssistantSegment = () => {
+    if (segmentParts.length === 0) return;
+    messages.push({
+      id: segmentIndex === 0 ? message.id : `${message.id}-${segmentIndex}`,
+      role: "assistant",
+      parts: segmentParts,
+      ...metadataFields,
+    } as Message);
+    segmentParts = [];
+    segmentIndex += 1;
+  };
+
+  for (const part of message.parts) {
+    const normalizedPart = normalizeMessagePart(part);
+    if (!normalizedPart) continue;
+
     if (
-      providerOwnedToolNames.has(part.toolName) || providerOwnedToolCallIds.has(part.toolCallId)
+      !shouldKeepProviderVisibleToolPart(
+        normalizedPart,
+        providerOwnedToolNames,
+        providerOwnedToolCallIds,
+      )
     ) {
-      providerOwnedToolCallIds.add(part.toolCallId);
-      return [];
+      continue;
     }
 
-    return [{
-      id: `tool_${part.toolCallId}`,
-      role: "tool",
-      parts: [{
-        type: "tool-result",
-        toolCallId: part.toolCallId,
-        toolName: part.toolName,
-        result: part.output,
-      }],
-    }];
-  }) as Message[];
+    if (isToolPartWithOutput(part) && !hasToolResultPart(message.parts, part.toolCallId)) {
+      segmentParts.push(normalizedPart);
+      flushAssistantSegment();
+      messages.push({
+        id: `tool_${part.toolCallId}`,
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          result: part.output,
+        }],
+      } as Message);
+      continue;
+    }
+
+    segmentParts.push(normalizedPart);
+  }
+
+  flushAssistantSegment();
+  return messages;
 }
 
 /** Request payload for parse AG-UI. */
@@ -330,6 +367,14 @@ export function normalizeAgUiMessages(
       providerOwnedToolCallIds.clear();
     }
 
+    if (message.role === "assistant") {
+      return normalizeAssistantMessage(
+        message,
+        providerOwnedToolNames,
+        providerOwnedToolCallIds,
+      );
+    }
+
     const normalizedMessage = {
       id: message.id,
       role: message.role,
@@ -343,18 +388,10 @@ export function normalizeAgUiMessages(
             providerOwnedToolCallIds,
           )
         ),
-      ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
-      ...(message.metadata ? { metadata: message.metadata } : {}),
+      ...buildMessageMetadataFields(message),
     } as Message;
 
-    return [
-      ...(normalizedMessage.parts.length > 0 ? [normalizedMessage] : []),
-      ...extractAssistantToolOutputMessages(
-        message,
-        providerOwnedToolNames,
-        providerOwnedToolCallIds,
-      ),
-    ];
+    return normalizedMessage.parts.length > 0 ? [normalizedMessage] : [];
   });
 }
 
