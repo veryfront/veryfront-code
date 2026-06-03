@@ -290,6 +290,37 @@ export function invalidateModulePaths(changedPaths: string[]): void {
   });
 }
 
+/**
+ * Invalidate the cached module path for a single source file across every cache dir.
+ *
+ * Unlike {@link invalidateModulePaths} (driven by the file watcher on source
+ * edits, which also deletes the stale `.mjs` from disk), this is a targeted,
+ * synchronous self-heal for the case where a cached module artifact has already
+ * gone missing on disk — evicted, or rebuilt under a different content hash by a
+ * racing write — while the in-memory path cache and its verified-deps fast-path
+ * still point at the stale path. Clearing both forces the next
+ * {@link lookupMdxEsmCache} to report a miss so the module is rebuilt instead of
+ * handing back a path whose `import()` fails with ERR_MODULE_NOT_FOUND (#2077).
+ */
+export function invalidateMdxEsmModule(
+  filePath: string,
+  projectDir?: string,
+  reactVersion = REACT_DEFAULT_VERSION,
+): void {
+  const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
+
+  for (const cache of modulePathCaches.values()) {
+    const cachedPath = cache.get(cacheKey);
+    if (cachedPath === undefined) continue;
+    cache.delete(cacheKey);
+    verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
+    logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
+      filePath,
+      cachedPath,
+    });
+  }
+}
+
 function extractNormalizedCachedModulePath(cachedKey: string): string {
   const normalizedPath = cachedKey.match(/(?:^|:)(_vf_modules\/[^:]+)$/)?.[1] ?? cachedKey;
   return normalizedPath.replace(/^_vf_modules\//, "").replace(/\.js$/, "");
@@ -371,10 +402,34 @@ export async function lookupMdxEsmCache(
 
   const verifyKey = `${cachedPath}:${cacheKey}`;
   if (verifiedModuleDeps.get(verifyKey)) {
+    // Fast-path: skip the expensive read + content scans for already-verified
+    // modules, but still confirm the artifact is present on disk. A cached module
+    // can be evicted or rebuilt under a different content hash out from under us
+    // (disk-cache eviction, or a racing rebuild) without going through
+    // invalidateModulePaths — which is the only thing that clears this marker.
+    // Returning the stale path here makes the SSR loader import() a file that no
+    // longer exists and hard-fail the whole page render (#2077), so a single stat
+    // (far cheaper than the read + regex scans below) guards correctness.
+    try {
+      const stat = await getLocalFs().stat(cachedPath);
+      if (stat?.isFile) {
+        logger.debug(
+          `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified): ${filePath} -> ${cachedPath}`,
+        );
+        return { status: "hit", path: cachedPath };
+      }
+    } catch (_) {
+      /* expected: verified artifact was evicted/rebuilt; fall through to invalidate */
+    }
+
+    // Artifact is gone — drop the stale markers so the caller rebuilds it.
     logger.debug(
-      `${LOG_PREFIX_MDX_LOADER} SSR reusing MDX-ESM cache (verified): ${filePath} -> ${cachedPath}`,
+      `${LOG_PREFIX_MDX_LOADER} Verified MDX-ESM artifact missing on disk, invalidating`,
+      { filePath, cachedPath },
     );
-    return { status: "hit", path: cachedPath };
+    verifiedModuleDeps.delete(verifyKey);
+    cache.delete(cacheKey);
+    return { status: "miss" };
   }
 
   try {

@@ -5,6 +5,7 @@ import { join } from "#veryfront/compat/path";
 import {
   clearModulePathCache,
   getModulePathCache,
+  invalidateMdxEsmModule,
   invalidateModulePaths,
   lookupMdxEsmCache,
   saveModulePathCache,
@@ -268,6 +269,111 @@ describe("lookupMdxEsmCache", () => {
       ]);
       clearModulePathCache();
     }
+  });
+});
+
+describe("lookupMdxEsmCache — stale verified artifact (#2077)", () => {
+  it("re-validates a verified module and returns miss when the artifact was evicted", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-stale-verified-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-stale-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("page7b82"));
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+
+    try {
+      await writeTextFile(cachedPath, `export default 1;`);
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+
+      // First lookup: full validation path → hit, and marks the entry verified.
+      const first = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+      assertEquals(first, { status: "hit", path: cachedPath });
+      assertEquals(
+        verifiedModuleDeps.get(`${cachedPath}:${key}`),
+        true,
+        "precondition: lookup marked the artifact verified",
+      );
+
+      // Artifact is evicted/rebuilt under a different hash out from under us,
+      // WITHOUT going through invalidateModulePaths (so the verified marker stays).
+      await remove(cachedPath);
+
+      // Second lookup: the verified fast-path must still confirm existence and,
+      // finding the file gone, report a miss so the caller rebuilds — instead of
+      // returning a dead path that import() would hard-fail on.
+      const second = await lookupMdxEsmCache(
+        filePath,
+        cacheDir,
+        projectDir,
+        undefined,
+        undefined,
+        "19.1.1",
+      );
+      assertEquals(second, { status: "miss" });
+      assertEquals(
+        verifiedModuleDeps.get(`${cachedPath}:${key}`),
+        undefined,
+        "stale verified marker must be cleared",
+      );
+      assertEquals(
+        (await getModulePathCache(cacheDir)).get(key),
+        undefined,
+        "stale path-cache entry must be cleared",
+      );
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+});
+
+describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
+  it("clears the path-cache entry and verified marker for a single source file", async () => {
+    clearModulePathCache();
+
+    const cacheDir = await makeTempDir({ prefix: "vf-mdx-selfheal-" });
+    const projectDir = await makeTempDir({ prefix: "vf-mdx-selfheal-project-" });
+    const filePath = join(projectDir, "app/page.tsx");
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const cachedPath = join(cacheDir, buildMdxEsmModuleFileName("selfheal"));
+    const verifyKey = `${cachedPath}:${key}`;
+
+    try {
+      await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
+      const cache = await getModulePathCache(cacheDir);
+      verifiedModuleDeps.set(verifyKey, true);
+
+      invalidateMdxEsmModule(filePath, projectDir, "19.1.1");
+
+      assertEquals(cache.get(key), undefined, "path-cache entry must be removed");
+      assertEquals(
+        verifiedModuleDeps.get(verifyKey),
+        undefined,
+        "verified marker must be removed",
+      );
+    } finally {
+      await Promise.all([
+        remove(cacheDir, { recursive: true }).catch(() => {}),
+        remove(projectDir, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
+  });
+
+  it("is a safe no-op when the file is not cached", () => {
+    clearModulePathCache();
+    invalidateMdxEsmModule("/project/app/page.tsx", "/project", "19.1.1");
   });
 });
 

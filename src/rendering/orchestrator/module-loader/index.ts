@@ -27,6 +27,7 @@ import { dirname, join, normalize } from "#veryfront/compat/path/index.ts";
 import { hashCodeHex } from "#veryfront/utils/hash-utils.ts";
 import {
   getModulePathCache,
+  invalidateMdxEsmModule,
   lookupMdxEsmCache,
   saveModulePathCache,
 } from "#veryfront/transforms/mdx/esm-module-loader/cache/index.ts";
@@ -520,6 +521,18 @@ async function getModuleCacheDir(config: ModuleLoaderConfig): Promise<string> {
 }
 
 /**
+ * Detect a dynamic `import()` failure caused by a module file that is missing on
+ * disk (e.g. a stale/evicted cached page module). Matches Node/Deno's
+ * `ERR_MODULE_NOT_FOUND` as well as the "Cannot find module" / "Module not found"
+ * message variants the runtimes surface for a missing `import()` target.
+ */
+export function isMissingModuleError(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if ((error as { code?: string }).code === "ERR_MODULE_NOT_FOUND") return true;
+  return /cannot find module|module not found/i.test(error.message);
+}
+
+/**
  * Load a module by path, transforming it and its dependencies.
  *
  * @param filePath - Path to the module to load
@@ -557,6 +570,27 @@ export async function loadModule(
         logger.info("HTTP bundle recovered, retrying import", { hash });
         return await import(`file://${tempFilePath}?t=${Date.now()}&retry=1`);
       }
+    }
+
+    // Self-heal: the cached module artifact resolved to a path that no longer
+    // exists on disk (evicted, or rebuilt under a different content hash by a
+    // racing write). Rather than hard-failing the whole page render (#2077),
+    // treat it as a cache miss: drop the stale cache pointers so we don't get
+    // handed the same dead path, rebuild the module from source, and retry the
+    // import once. Skip HTTP-bundle misses, which have dedicated recovery above.
+    if (!bundleMatch && isMissingModuleError(error)) {
+      logger.warn("Cached module missing on disk, rebuilding and retrying import", {
+        filePath,
+        tempFilePath,
+      });
+
+      config.moduleCache.delete(
+        getModuleCacheKey(filePath, config.projectId, config.projectDir, config.contentSourceId),
+      );
+      invalidateMdxEsmModule(filePath, config.projectDir, config.reactVersion);
+
+      const rebuiltPath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
+      return await import(`file://${rebuiltPath}?t=${Date.now()}&rebuilt=1`);
     }
 
     logger.error("Failed to import module:", {
