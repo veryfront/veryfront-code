@@ -280,6 +280,9 @@ export function shouldContinueAfterStreamStep(
   const hasFinalizedClientToolCall = streamedToolCalls.some((toolCall) =>
     toolCall.inputAvailable === true && toolCall.providerExecuted !== true
   );
+  const hasProviderExecutedToolCall = streamedToolCalls.some((toolCall) =>
+    toolCall.providerExecuted === true
+  );
   // A non-finalized call whose only accumulated arguments are a bare
   // empty-object placeholder is provisional streamed input the model never
   // committed. We can recover by re-calling the model, so it must not block
@@ -295,6 +298,9 @@ export function shouldContinueAfterStreamStep(
 
   if (state.finishReason === "tool-calls") {
     if (hasIncompleteDeadToolCall) {
+      return false;
+    }
+    if (hasProviderExecutedToolCall && !hasFinalizedClientToolCall) {
       return false;
     }
     // Recover provisional placeholders by re-calling the model even when no
@@ -435,12 +441,16 @@ export type StreamedToolCallMaterialization =
 export function materializeStreamedToolCall(
   tc: StreamingToolCall,
 ): StreamedToolCallMaterialization {
-  const basePart: MessagePart = {
+  const providerExecutedPart: { providerExecuted?: true } = tc.providerExecuted === true
+    ? { providerExecuted: true }
+    : {};
+  const basePart: MessagePart & { providerExecuted?: true } = {
     type: `tool-${tc.name}`,
     toolCallId: tc.id,
     toolName: tc.name,
     args: {},
     ...(tc.arguments.length > 0 ? { inputText: tc.arguments } : {}),
+    ...providerExecutedPart,
   };
 
   if (isStreamedToolCallIncomplete(tc)) {
@@ -453,12 +463,13 @@ export function materializeStreamedToolCall(
   }
 
   const capturedInput = captureStreamedToolCallInput(tc);
-  const part: MessagePart = {
+  const part: MessagePart & { providerExecuted?: true } = {
     type: `tool-${tc.name}`,
     toolCallId: tc.id,
     toolName: tc.name,
     args: capturedInput.args,
     ...(capturedInput.inputText ? { inputText: capturedInput.inputText } : {}),
+    ...providerExecutedPart,
   };
 
   if (capturedInput.parseError) {

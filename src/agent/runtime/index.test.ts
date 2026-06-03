@@ -403,6 +403,28 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(shouldContinue, true);
   });
 
+  it("does not recover provider-executed placeholders by re-calling the model", () => {
+    const shouldContinue = shouldContinueAfterStreamStep({
+      accumulatedText: "",
+      finishReason: "tool-calls",
+      toolCalls: new Map([
+        [
+          "toolu_provider_placeholder",
+          {
+            id: "toolu_provider_placeholder",
+            name: "web_search",
+            arguments: "{}",
+            inputAvailable: false,
+            providerExecuted: true,
+          },
+        ],
+      ]),
+      toolResults: [],
+    });
+
+    assertEquals(shouldContinue, false);
+  });
+
   it("materializes a complete streamed tool call into a ready-to-execute part", () => {
     const materialized = materializeStreamedToolCall({
       id: "toolu_complete",
@@ -424,6 +446,22 @@ describe("agent runtime streamed tool result collection", () => {
     assertEquals(
       (materialized.part as { inputText?: string }).inputText,
       '{"path":"/plans/report.md","content":"# Summary"}',
+    );
+  });
+
+  it("marks provider-executed streamed tool calls as provider-owned history", () => {
+    const materialized = materializeStreamedToolCall({
+      id: "toolu_provider",
+      name: "web_search",
+      arguments: '{"query":"Swedish tax residency"}',
+      inputAvailable: true,
+      providerExecuted: true,
+    });
+
+    assertEquals(materialized.kind, "complete");
+    assertEquals(
+      (materialized.part as { providerExecuted?: boolean }).providerExecuted,
+      true,
     );
   });
 
