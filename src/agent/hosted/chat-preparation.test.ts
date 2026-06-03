@@ -259,7 +259,16 @@ Deno.test("prepareHostedChatRuntimeCreationOptions preserves load_skill when too
   ]);
 });
 
-Deno.test("prepareHostedChatRuntimeCreationOptions preserves an explicit empty tool override for skill-enabled runs", async () => {
+Deno.test("prepareHostedChatRuntimeCreationOptions suppresses skills for an explicit empty tool override", async () => {
+  const instructionSkillIds: string[][] = [];
+  const skill = {
+    id: "daily-briefing",
+    name: "Daily Briefing",
+    description: "Start your day with a prioritized sales briefing.",
+    instructions: "Build a concise daily briefing.",
+    allowedTools: ["calendar__list_events"],
+  };
+
   const result = await prepareHostedChatRuntimeCreationOptions({
     request: createParsedHostedChatRequest({
       runtimeOverrides: {
@@ -276,21 +285,23 @@ Deno.test("prepareHostedChatRuntimeCreationOptions preserves an explicit empty t
     fetchSteering: () =>
       Promise.resolve({
         instructions: "",
-        skills: [
-          {
-            id: "daily-briefing",
-            name: "Daily Briefing",
-            description: "Start your day with a prioritized sales briefing.",
-            instructions: "Build a concise daily briefing.",
-            allowedTools: ["calendar__list_events"],
-          },
-        ],
+        skills: [skill],
       }),
-    buildInstructions: () => "Instructions",
+    buildInstructions: (input) => {
+      instructionSkillIds.push(input.skills.map((entry) => entry.id));
+      return "Instructions";
+    },
   });
 
-  assertEquals(result.creationOptions.availableSkillIds, ["daily-briefing"]);
+  assertEquals(instructionSkillIds, [[]]);
+  assertEquals(result.creationOptions.availableSkillIds, []);
   assertEquals(result.creationOptions.allowedTools, []);
+  assertEquals(result.creationOptions.liveProjectSteering, {
+    agent: {
+      id: "judge-agent",
+      model: "anthropic/claude-opus-4-6",
+    },
+  });
 });
 
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {

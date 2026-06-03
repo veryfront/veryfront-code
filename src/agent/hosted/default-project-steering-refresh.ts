@@ -165,8 +165,12 @@ function filterVisibleSkills(input: {
   skills: RuntimeSkillDefinition[];
   allowedSkillIds?: string[];
 }): RuntimeSkillDefinition[] {
-  if (!input.allowedSkillIds || input.allowedSkillIds.length === 0) {
+  if (input.allowedSkillIds === undefined) {
     return input.skills;
+  }
+
+  if (input.allowedSkillIds.length === 0) {
+    return [];
   }
 
   return input.skills.filter((skill) => input.allowedSkillIds?.includes(skill.id));

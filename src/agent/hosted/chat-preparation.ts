@@ -218,6 +218,17 @@ function mergeSkillLoaderAllowedTools(input: {
   return [...input.allowedTools, "load_skill"];
 }
 
+function getVisibleSkillsForRuntime(input: {
+  runtimeConfig: ResolvedHostedRuntimeRequestConfig;
+  skills: RuntimeSkillDefinition[];
+}): RuntimeSkillDefinition[] {
+  if (input.runtimeConfig.effectiveRuntimeOverrides?.allowedTools?.length === 0) {
+    return [];
+  }
+
+  return input.skills;
+}
+
 /** Options accepted by prepare hosted chat runtime creation. */
 export async function prepareHostedChatRuntimeCreationOptions<
   TRuntimeAgentDefinition,
@@ -229,19 +240,23 @@ export async function prepareHostedChatRuntimeCreationOptions<
     authToken: input.authToken,
     branchId: input.branchId,
   });
+  const runtimeConfig = resolveHostedRuntimeRequestConfig({
+    request: input.request,
+    agentConfig: input.agentConfig,
+    resolveModelId: input.resolveModelId,
+    resolveModelThinking: input.resolveModelThinking,
+  });
+  const visibleSkills = getVisibleSkillsForRuntime({
+    runtimeConfig,
+    skills: steering.skills,
+  });
   const agentInstructions = input.buildInstructions({
     agentConfig: input.agentConfig,
     projectId: input.projectId,
     branchId: input.branchId,
     environmentContext: input.environmentContext,
     instructions: steering.instructions,
-    skills: steering.skills,
-  });
-  const runtimeConfig = resolveHostedRuntimeRequestConfig({
-    request: input.request,
-    agentConfig: input.agentConfig,
-    resolveModelId: input.resolveModelId,
-    resolveModelThinking: input.resolveModelThinking,
+    skills: visibleSkills,
   });
 
   return {
@@ -259,7 +274,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
         ? {
           allowedTools: mergeSkillLoaderAllowedTools({
             allowedTools: runtimeConfig.effectiveRuntimeOverrides.allowedTools,
-            skills: steering.skills,
+            skills: visibleSkills,
           }),
         }
         : {}),
@@ -273,7 +288,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
       ...(input.rootRunContext?.effectiveParentMessageId
         ? { parentMessageId: input.rootRunContext.effectiveParentMessageId }
         : {}),
-      availableSkillIds: steering.skills.map((skill) => skill.id),
+      availableSkillIds: visibleSkills.map((skill) => skill.id),
       ...(input.rootRunContext?.publishParentRunEvents
         ? { publishParentRunEvents: input.rootRunContext.publishParentRunEvents }
         : {}),
@@ -282,7 +297,7 @@ export async function prepareHostedChatRuntimeCreationOptions<
         agentConfig: input.agentConfig,
         environmentContext: input.environmentContext,
         instructions: steering.instructions,
-        skills: steering.skills,
+        skills: visibleSkills,
       }),
     },
     steering: {

@@ -148,6 +148,30 @@ describe("agent/default-hosted-project-steering-refresh", () => {
     assertEquals(system.includes("Current run tool inventory:"), true);
   });
 
+  it("suppresses visible skills when no skill ids are available for the run", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([createSkill("build")]),
+      buildInstructions: (input) =>
+        `${input.instructions}:${input.skills.map((skill) => skill.id).join(",")}`,
+    });
+
+    const system = await refresh(
+      createRefreshInput({
+        taskContext: {
+          authToken: "auth-token",
+          projectId: "project-1",
+          branchId: "branch-1",
+          model: "openai/gpt-test",
+          availableSkillIds: [],
+        },
+      }),
+    );
+
+    assertEquals(system.includes("Fresh instructions:"), true);
+    assertEquals(system.includes("Fresh instructions:build"), false);
+  });
+
   it("falls back to initial steering when refresh lookups fail", async () => {
     const errors: Array<{ message: string; metadata?: Record<string, unknown> }> = [];
     const refresh = createDefaultHostedProjectSteeringRefresh({
