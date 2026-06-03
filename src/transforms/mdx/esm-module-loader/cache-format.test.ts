@@ -103,16 +103,16 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
 
   describe("buildMdxJsxCacheFileName", () => {
     it("produces a jsx-<namespace>-<hash>.mjs filename", () => {
-      const name = buildMdxJsxCacheFileName("/tmp/project/Button.tsx");
+      const name = buildMdxJsxCacheFileName("fixtures/project/Button.tsx");
       assertEquals(name.startsWith(`jsx-${MDX_ESM_CACHE_NAMESPACE}-`), true);
       assertEquals(name.endsWith(".mjs"), true);
     });
 
     it("derives distinct names from distinct paths but is path-deterministic", () => {
-      const a = buildMdxJsxCacheFileName("/a/Button.tsx");
-      const b = buildMdxJsxCacheFileName("/b/Button.tsx");
+      const a = buildMdxJsxCacheFileName("fixtures/a/Button.tsx");
+      const b = buildMdxJsxCacheFileName("fixtures/b/Button.tsx");
       assertEquals(a !== b, true);
-      assertEquals(a, buildMdxJsxCacheFileName("/a/Button.tsx"));
+      assertEquals(a, buildMdxJsxCacheFileName("fixtures/a/Button.tsx"));
     });
   });
 
@@ -135,9 +135,9 @@ describe("transforms/mdx/esm-module-loader/cache-format", () => {
     it("matches file:// URLs and the mjs-only variant only matches .mjs", () => {
       const all = new RegExp(MDX_ESM_ALL_FILE_URL_PATTERN_SOURCE);
       const mjs = new RegExp(MDX_ESM_MJS_FILE_URL_PATTERN_SOURCE);
-      assertEquals(all.test("file:///tmp/a.css"), true);
-      assertEquals(mjs.test("file:///tmp/a.css"), false);
-      assertEquals(mjs.test("file:///tmp/a.mjs"), true);
+      assertEquals(all.test("file:///fixtures/a.css"), true);
+      assertEquals(mjs.test("file:///fixtures/a.css"), false);
+      assertEquals(mjs.test("file:///fixtures/a.mjs"), true);
     });
   });
 });
