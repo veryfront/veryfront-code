@@ -47,6 +47,10 @@ function hasOwnField(part: Record<string, unknown>, key: string): boolean {
   return Object.hasOwn(part, key);
 }
 
+function isProviderExecutedToolPart(part: Record<string, unknown>): boolean {
+  return part.providerExecuted === true;
+}
+
 function getToolInputRecord(part: Record<string, unknown>): Record<string, unknown> {
   return getRecordPartField(part, "args") ?? getRecordPartField(part, "input") ?? {};
 }
@@ -63,6 +67,9 @@ function getTextGenerationToolCallPart(
     part.type !== "tool-call" &&
     !(part.type.startsWith("tool-") && part.type !== "tool-result")
   ) {
+    return null;
+  }
+  if (isProviderExecutedToolPart(part)) {
     return null;
   }
 

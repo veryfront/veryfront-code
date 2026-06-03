@@ -286,6 +286,30 @@ describe("text-generation-runtime-message-converter", () => {
       const firstPart = content[0];
       assertEquals(firstPart?.type, "text");
     });
+
+    it("skips provider-executed tool-call parts in assistant messages", () => {
+      const msg = {
+        id: "a-provider-tool",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-web_search",
+            toolCallId: "toolu_search",
+            toolName: "web_search",
+            args: { query: "Swedish tax residency" },
+            providerExecuted: true,
+          },
+          { type: "text", text: "The answer cites Skatteverket." },
+        ],
+      } as unknown as Message;
+
+      const result = convertToTextGenerationRuntimeMessage(msg);
+
+      assertEquals(result.role, "assistant");
+      assertEquals((result as TextGenerationRuntimeAssistantMessage).content, [
+        { type: "text", text: "The answer cites Skatteverket." },
+      ]);
+    });
   });
 
   describe("convertToTextGenerationRuntimeMessages", () => {
@@ -321,6 +345,29 @@ describe("text-generation-runtime-message-converter", () => {
 
       assertEquals(convertToTextGenerationRuntimeMessages(messages), [
         { role: "user", content: "list my repos" },
+        { role: "user", content: "try again" },
+      ]);
+    });
+
+    it("omits provider-executed tool-only assistant messages from replay", () => {
+      const messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "search tax guidance" }] },
+        {
+          id: "a1",
+          role: "assistant",
+          parts: [{
+            type: "tool-web_search",
+            toolCallId: "toolu_search",
+            toolName: "web_search",
+            args: { query: "site:skatteverket.se tax residency" },
+            providerExecuted: true,
+          }],
+        },
+        { id: "u2", role: "user", parts: [{ type: "text", text: "try again" }] },
+      ] as unknown as Message[];
+
+      assertEquals(convertToTextGenerationRuntimeMessages(messages), [
+        { role: "user", content: "search tax guidance" },
         { role: "user", content: "try again" },
       ]);
     });
