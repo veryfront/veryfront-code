@@ -271,35 +271,90 @@ function normalizeMessagePart(part: Record<string, unknown>): Message["parts"][n
   return null;
 }
 
-function extractAssistantToolOutputMessages(
-  message: AgUiRequest["messages"][number],
+type AgUiMessage = AgUiRequest["messages"][number];
+
+function buildMessageMetadataFields(message: AgUiMessage): Partial<Message> {
+  return {
+    ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
+    ...(message.metadata ? { metadata: message.metadata } : {}),
+  } as Partial<Message>;
+}
+
+/**
+ * Expand an assistant message into an ordered, fully paired provider sequence.
+ *
+ * AG-UI dynamic `tool-*` parts carry both the call and its output on a single
+ * part, and one assistant turn may pack several sequential tool calls plus a
+ * trailing answer. Emitting one assistant message with every part followed by
+ * the tool results loses the pairing the model APIs require (each `tool_result`
+ * must be immediately preceded by the assistant message holding its
+ * `tool_use`). Instead, walk the parts in order and flush an
+ * `assistant`->`tool` pair as soon as a tool part with an inline output is
+ * seen, keeping any trailing text in its own assistant message after the
+ * results.
+ *
+ * Provider-owned tool parts (e.g. native `web_search`) are still stripped here
+ * so they are never replayed as local calls/results (see #2085); their call
+ * ids are remembered so a later standalone `tool` result for the same call is
+ * dropped too.
+ */
+function expandAssistantMessageWithToolOutputs(
+  message: AgUiMessage,
   providerOwnedToolNames: ReadonlySet<string>,
   providerOwnedToolCallIds: Set<string>,
 ): Message[] {
-  if (message.role !== "assistant") return [];
+  const metadataFields = buildMessageMetadataFields(message);
+  const messages: Message[] = [];
+  let segmentParts: Message["parts"] = [];
+  let segmentIndex = 0;
 
-  return message.parts.flatMap((part) => {
-    if (!isToolPartWithOutput(part) || hasToolResultPart(message.parts, part.toolCallId)) {
-      return [];
-    }
+  const flushAssistantSegment = () => {
+    if (segmentParts.length === 0) return;
+    messages.push({
+      id: segmentIndex === 0 ? message.id : `${message.id}-${segmentIndex}`,
+      role: "assistant",
+      parts: segmentParts,
+      ...metadataFields,
+    } as Message);
+    segmentParts = [];
+    segmentIndex += 1;
+  };
+
+  for (const part of message.parts) {
+    const normalizedPart = normalizeMessagePart(part);
+    if (!normalizedPart) continue;
+
     if (
-      providerOwnedToolNames.has(part.toolName) || providerOwnedToolCallIds.has(part.toolCallId)
+      !shouldKeepProviderVisibleToolPart(
+        normalizedPart,
+        providerOwnedToolNames,
+        providerOwnedToolCallIds,
+      )
     ) {
-      providerOwnedToolCallIds.add(part.toolCallId);
-      return [];
+      continue;
     }
 
-    return [{
-      id: `tool_${part.toolCallId}`,
-      role: "tool",
-      parts: [{
-        type: "tool-result",
-        toolCallId: part.toolCallId,
-        toolName: part.toolName,
-        result: part.output,
-      }],
-    }];
-  }) as Message[];
+    if (isToolPartWithOutput(part) && !hasToolResultPart(message.parts, part.toolCallId)) {
+      segmentParts.push(normalizedPart);
+      flushAssistantSegment();
+      messages.push({
+        id: `tool_${part.toolCallId}`,
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: part.toolCallId,
+          toolName: part.toolName,
+          result: part.output,
+        }],
+      } as Message);
+      continue;
+    }
+
+    segmentParts.push(normalizedPart);
+  }
+
+  flushAssistantSegment();
+  return messages;
 }
 
 /** Request payload for parse AG-UI. */
@@ -330,31 +385,33 @@ export function normalizeAgUiMessages(
       providerOwnedToolCallIds.clear();
     }
 
-    const normalizedMessage = {
-      id: message.id,
-      role: message.role,
-      parts: message.parts
-        .map((part) => normalizeMessagePart(part))
-        .filter((part): part is Message["parts"][number] => part !== null)
-        .filter((part) =>
-          shouldKeepProviderVisibleToolPart(
-            part,
-            providerOwnedToolNames,
-            providerOwnedToolCallIds,
-          )
-        ),
-      ...(message.createdAt ? { timestamp: Date.parse(message.createdAt) || undefined } : {}),
-      ...(message.metadata ? { metadata: message.metadata } : {}),
-    } as Message;
-
-    return [
-      ...(normalizedMessage.parts.length > 0 ? [normalizedMessage] : []),
-      ...extractAssistantToolOutputMessages(
+    if (message.role === "assistant") {
+      return expandAssistantMessageWithToolOutputs(
         message,
         providerOwnedToolNames,
         providerOwnedToolCallIds,
-      ),
-    ];
+      );
+    }
+
+    const parts = message.parts
+      .map((part) => normalizeMessagePart(part))
+      .filter((part): part is Message["parts"][number] => part !== null)
+      .filter((part) =>
+        shouldKeepProviderVisibleToolPart(
+          part,
+          providerOwnedToolNames,
+          providerOwnedToolCallIds,
+        )
+      );
+
+    return parts.length > 0
+      ? [{
+        id: message.id,
+        role: message.role,
+        parts,
+        ...buildMessageMetadataFields(message),
+      } as Message]
+      : [];
   });
 }
 
