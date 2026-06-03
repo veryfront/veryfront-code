@@ -172,6 +172,7 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
   readonly context: RepositoryContext;
   private readonly cache: MultiTierCache<string>;
   private readonly backend: CacheBackend;
+  private readonly l1: MemoryTier;
   private readonly name: string;
   private localStats: { deletes: number } = { deletes: 0 };
 
@@ -186,12 +187,12 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
     this.backend = options.backend;
     this.name = options.name ?? "multi-tier-cache";
 
-    const l1 = new MemoryTier(options.maxL1Entries ?? 500);
+    this.l1 = new MemoryTier(options.maxL1Entries ?? 500);
     const l3 = new BackendTierAdapter("l3-distributed", options.backend);
 
     this.cache = new MultiTierCache({
       name: this.name,
-      l1,
+      l1: this.l1,
       l3,
       defaultTtlSeconds: options.defaultTtlSeconds ?? 300,
       backfillOnHit: true,
@@ -219,12 +220,21 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
   async deleteByPrefix(prefix: string): Promise<number> {
     const scopedPrefix = this.getScopedKey(prefix);
 
+    // Wipe L1 up-front so concurrent reads during the (async) L3 delete miss
+    // L1 quickly. We wipe again after L3 resolves (below) to drop any entry a
+    // racing get() backfilled from a not-yet-deleted L3 value — otherwise that
+    // stale entry would survive in L1 until its TTL (the bug #1989 fixes).
+    this.l1.deleteByPrefix(scopedPrefix);
+
     if (!this.backend.delByPattern) {
       logger.debug(`[${this.name}] deleteByPrefix not supported by backend`, { prefix });
       return 0;
     }
 
     const deleted = await this.backend.delByPattern(`${scopedPrefix}*`);
+    // Second wipe: L3 is now gone, so anything re-backfilled into L1 during the
+    // await window is removed and cannot be repopulated from L3.
+    this.l1.deleteByPrefix(scopedPrefix);
     this.localStats.deletes += deleted;
     return deleted;
   }
@@ -236,7 +246,11 @@ export class MultiTierCacheRepository implements CacheRepository<string> {
   async clear(): Promise<void> {
     const prefix =
       `${this.context.projectId}:${this.context.environment}:${this.context.versionId}:`;
+    // Wipe L1 before and after the L3 delete (see deleteByPrefix) so racing
+    // backfills can't leave a stale entry in the in-memory tier.
+    this.l1.deleteByPrefix(prefix);
     await this.backend.delByPattern?.(`${prefix}*`);
+    this.l1.deleteByPrefix(prefix);
   }
 
   getStats(): CacheStats {
@@ -285,6 +299,14 @@ class MemoryTier implements CacheTier<string> {
 
   async delete(key: string): Promise<void> {
     this.store.delete(key);
+  }
+
+  /** Drop every entry whose key starts with `prefix` (tier-wide invalidation
+   * for the repository's deleteByPrefix/clear). */
+  deleteByPrefix(prefix: string): void {
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefix)) this.store.delete(key);
+    }
   }
 }
 
