@@ -365,7 +365,7 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
       const cache = await getModulePathCache(cacheDir);
       verifiedModuleDeps.set(verifyKey, true);
 
-      invalidateMdxEsmModule(filePath, projectDir, "19.1.1");
+      invalidateMdxEsmModule(cacheDir, filePath, projectDir, "19.1.1");
 
       assertEquals(cache.get(key), undefined, "path-cache entry must be removed");
       assertEquals(
@@ -384,7 +384,52 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
 
   it("is a safe no-op when the file is not cached", () => {
     clearModulePathCache();
-    invalidateMdxEsmModule("/project/app/page.tsx", "/project", "19.1.1");
+    invalidateMdxEsmModule("/cache/dir", "/project/app/page.tsx", "/project", "19.1.1");
+  });
+
+  it("only touches the failing cache dir, not other tenants sharing the same key", async () => {
+    clearModulePathCache();
+
+    // Two tenants whose projects both contain app/page.tsx → identical path key
+    // (the key is scoped only by react version + relative path, not by project).
+    const cacheDirA = await makeTempDir({ prefix: "vf-mdx-tenant-a-" });
+    const cacheDirB = await makeTempDir({ prefix: "vf-mdx-tenant-b-" });
+    const projectDirA = await makeTempDir({ prefix: "vf-mdx-tenant-a-project-" });
+    const projectDirB = await makeTempDir({ prefix: "vf-mdx-tenant-b-project-" });
+    const filePathA = join(projectDirA, "app/page.tsx");
+    const key = buildMdxEsmPathCacheKey("_vf_modules/app/page.js", "19.1.1");
+    const cachedA = join(cacheDirA, buildMdxEsmModuleFileName("tenantA"));
+    const cachedB = join(cacheDirB, buildMdxEsmModuleFileName("tenantB"));
+
+    try {
+      await writeTextFile(join(cacheDirA, "_index.json"), JSON.stringify({ [key]: cachedA }));
+      await writeTextFile(join(cacheDirB, "_index.json"), JSON.stringify({ [key]: cachedB }));
+      const cacheA = await getModulePathCache(cacheDirA);
+      const cacheB = await getModulePathCache(cacheDirB);
+
+      // Tenant A's artifact went missing — invalidate scoped to A's cache dir.
+      invalidateMdxEsmModule(cacheDirA, filePathA, projectDirA, "19.1.1");
+      await waitForDiskCleanup();
+
+      assertEquals(cacheA.get(key), undefined, "tenant A entry must be removed");
+      assertEquals(cacheB.get(key), cachedB, "tenant B's valid entry must be untouched");
+
+      // And tenant B's _index.json must be unchanged on disk.
+      clearModulePathCache();
+      assertEquals(
+        (await getModulePathCache(cacheDirB)).get(key),
+        cachedB,
+        "tenant B entry must survive reload (no cross-tenant persistence)",
+      );
+    } finally {
+      await Promise.all([
+        remove(cacheDirA, { recursive: true }).catch(() => {}),
+        remove(cacheDirB, { recursive: true }).catch(() => {}),
+        remove(projectDirA, { recursive: true }).catch(() => {}),
+        remove(projectDirB, { recursive: true }).catch(() => {}),
+      ]);
+      clearModulePathCache();
+    }
   });
 
   it("persists the deletion to _index.json so the stale entry does not survive reload", async () => {
@@ -400,7 +445,7 @@ describe("invalidateMdxEsmModule (#2077 self-heal)", () => {
       await writeTextFile(join(cacheDir, "_index.json"), JSON.stringify({ [key]: cachedPath }));
       await getModulePathCache(cacheDir);
 
-      invalidateMdxEsmModule(filePath, projectDir, "19.1.1");
+      invalidateMdxEsmModule(cacheDir, filePath, projectDir, "19.1.1");
       await waitForDiskCleanup();
 
       // Simulate a process restart: drop in-memory state and reload from disk.

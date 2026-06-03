@@ -587,7 +587,10 @@ export async function loadModule(
       config.moduleCache.delete(
         getModuleCacheKey(filePath, config.projectId, config.projectDir, config.contentSourceId),
       );
-      invalidateMdxEsmModule(filePath, config.projectDir, config.reactVersion);
+      // tmpDir is the exact cache dir this module was registered under, so the
+      // invalidation stays scoped to this tenant (the path-cache key is not
+      // project-scoped — see invalidateMdxEsmModule).
+      invalidateMdxEsmModule(tmpDir, filePath, config.projectDir, config.reactVersion);
 
       const rebuiltPath = await transformModuleWithDeps(filePath, tmpDir, localAdapter, config);
       return await import(`file://${rebuiltPath}?t=${Date.now()}&rebuilt=1`);

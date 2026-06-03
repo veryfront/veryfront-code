@@ -312,7 +312,7 @@ export function invalidateModulePaths(changedPaths: string[]): void {
 }
 
 /**
- * Invalidate the cached module path for a single source file across every cache dir.
+ * Invalidate the cached module path for a single source file in a single cache dir.
  *
  * Unlike {@link invalidateModulePaths} (driven by the file watcher on source
  * edits, which also deletes the stale `.mjs` from disk), this is a targeted,
@@ -323,33 +323,37 @@ export function invalidateModulePaths(changedPaths: string[]): void {
  * {@link lookupMdxEsmCache} to report a miss so the module is rebuilt instead of
  * handing back a path whose `import()` fails with ERR_MODULE_NOT_FOUND (#2077).
  *
+ * `cacheDir` MUST be the dir that produced the missing path. The path-cache key
+ * is scoped only by React version + relative module path (not project/source),
+ * so two tenants that both have e.g. `app/page.tsx` share the same key in their
+ * separate cache dirs — scanning every dir would evict another tenant's valid
+ * entry, so the invalidation is confined to the failing dir.
+ *
  * The deletion is also persisted to `_index.json` (fire-and-forget, chained onto
  * the shared disk-cleanup queue like {@link invalidateModulePaths}) so the stale
  * pointer does not resurrect from disk on the next process start.
  */
 export function invalidateMdxEsmModule(
+  cacheDir: string,
   filePath: string,
   projectDir?: string,
   reactVersion = REACT_DEFAULT_VERSION,
 ): void {
+  const cache = modulePathCaches.get(cacheDir);
+  if (!cache) return;
+
   const cacheKey = toMdxEsmCacheKey(filePath, projectDir, reactVersion);
-  const affectedCacheDirs: string[] = [];
+  const cachedPath = cache.get(cacheKey);
+  if (cachedPath === undefined) return;
 
-  // Scan every cache dir: a multi-project pod keeps one cache per project, and
-  // the same source file can be cached under more than one of them.
-  for (const [cacheDir, cache] of modulePathCaches.entries()) {
-    const cachedPath = cache.get(cacheKey);
-    if (cachedPath === undefined) continue;
-    cache.delete(cacheKey);
-    verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
-    affectedCacheDirs.push(cacheDir);
-    logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
-      filePath,
-      cachedPath,
-    });
-  }
+  cache.delete(cacheKey);
+  verifiedModuleDeps.delete(`${cachedPath}:${cacheKey}`);
+  logger.debug(`${LOG_PREFIX_MDX_LOADER} Self-heal invalidated missing module`, {
+    filePath,
+    cachedPath,
+  });
 
-  queueIndexPersist(affectedCacheDirs);
+  queueIndexPersist([cacheDir]);
 }
 
 function extractNormalizedCachedModulePath(cachedKey: string): string {
