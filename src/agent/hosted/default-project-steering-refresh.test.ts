@@ -12,6 +12,7 @@ function createAgent(): RuntimeAgentMarkdownDefinition {
   return {
     id: "agent-1",
     name: "Agent",
+    description: "Agent description",
     instructions: "Base instructions",
   };
 }
@@ -19,8 +20,10 @@ function createAgent(): RuntimeAgentMarkdownDefinition {
 function createSkill(id: string): RuntimeSkillDefinition {
   return {
     id,
-    title: id,
+    name: id,
     description: `${id} skill`,
+    instructions: `${id} instructions`,
+    allowedTools: [],
   };
 }
 

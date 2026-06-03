@@ -204,6 +204,19 @@ function buildHostedChatRuntimeProjectSteering<TRuntimeAgentDefinition>(input: {
   };
 }
 
+function mergeSkillLoaderAllowedTools(input: {
+  allowedTools: string[] | undefined;
+  skills: RuntimeSkillDefinition[];
+}): string[] | undefined {
+  if (
+    !input.allowedTools || input.skills.length === 0 || input.allowedTools.includes("load_skill")
+  ) {
+    return input.allowedTools;
+  }
+
+  return [...input.allowedTools, "load_skill"];
+}
+
 /** Options accepted by prepare hosted chat runtime creation. */
 export async function prepareHostedChatRuntimeCreationOptions<
   TRuntimeAgentDefinition,
@@ -242,7 +255,12 @@ export async function prepareHostedChatRuntimeCreationOptions<
         ? { maxSteps: runtimeConfig.requestedMaxSteps }
         : {}),
       ...(runtimeConfig.effectiveRuntimeOverrides?.allowedTools
-        ? { allowedTools: runtimeConfig.effectiveRuntimeOverrides.allowedTools }
+        ? {
+          allowedTools: mergeSkillLoaderAllowedTools({
+            allowedTools: runtimeConfig.effectiveRuntimeOverrides.allowedTools,
+            skills: steering.skills,
+          }),
+        }
         : {}),
       ...(input.request.allowDelegation !== undefined
         ? { allowDelegation: input.request.allowDelegation }

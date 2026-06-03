@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
@@ -24,6 +25,7 @@ function createParsedHostedChatRequest(
   overrides: Partial<ParsedHostedChatRequest> = {},
 ): ParsedHostedChatRequest {
   return {
+    agentId: undefined,
     userId: "user-1",
     authToken: "auth-token",
     messages: [userMessage],
@@ -219,6 +221,44 @@ Deno.test("prepareHostedChatRuntimeCreationOptions builds runtime options from r
   assertEquals(parentEvents, [{ type: "state_delta" }]);
 });
 
+Deno.test("prepareHostedChatRuntimeCreationOptions preserves load_skill when tool overrides narrow a skill-enabled run", async () => {
+  const result = await prepareHostedChatRuntimeCreationOptions({
+    request: createParsedHostedChatRequest({
+      runtimeOverrides: {
+        allowedTools: ["calendar__list_events", "web_search"],
+      },
+    }),
+    agentConfig: {
+      id: "sales-agent",
+      model: "anthropic/claude-opus-4-6",
+    },
+    projectId: "project-1",
+    authToken: "token-1",
+    resolveModelId: (modelId) => modelId,
+    fetchSteering: () =>
+      Promise.resolve({
+        instructions: "",
+        skills: [
+          {
+            id: "daily-briefing",
+            name: "Daily Briefing",
+            description: "Start your day with a prioritized sales briefing.",
+            instructions: "Build a concise daily briefing.",
+            allowedTools: ["calendar__list_events"],
+          },
+        ],
+      }),
+    buildInstructions: () => "Instructions",
+  });
+
+  assertEquals(result.creationOptions.availableSkillIds, ["daily-briefing"]);
+  assertEquals(result.creationOptions.allowedTools, [
+    "calendar__list_events",
+    "web_search",
+    "load_skill",
+  ]);
+});
+
 Deno.test("prepareHostedChatExecution prepares root run, runtime, and final messages", async () => {
   const result = await prepareHostedChatExecution({
     request: createParsedHostedChatRequest({
@@ -326,7 +366,7 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
     ]);
     assertEquals(
       messages[0]?.parts.some((part) =>
-        part.type === "file" &&
+        part.type === "file" && "url" in part &&
         part.url === "https://signed.example.com/notes.txt" &&
         part.mediaType === "text/plain"
       ),
