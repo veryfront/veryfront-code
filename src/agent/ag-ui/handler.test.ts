@@ -175,6 +175,130 @@ describe("agent/ag-ui-handler", () => {
     assertStringIncludes(body, '"delta":"hello from runtime"');
   });
 
+  it("omits provider-owned remote tool history before direct streaming", async () => {
+    const testAgent = createTestAgent();
+    testAgent.agent.config.providerTools = ["web_search"];
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            {
+              id: "user-1",
+              role: "user",
+              parts: [{ type: "text", text: "Explain Swedish tax residency." }],
+            },
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                { type: "text", text: "I searched official sources." },
+                {
+                  type: "tool-web_search",
+                  toolCallId: "toolu_search_1",
+                  toolName: "web_search",
+                  args: { query: "site:skatteverket.se tax residency" },
+                  output: { results: [{ title: "Skatteverket" }] },
+                },
+              ],
+            },
+            {
+              id: "user-2",
+              role: "user",
+              parts: [{ type: "text", text: "Cite the official source." }],
+            },
+          ],
+        }),
+      }),
+    );
+
+    await response.text();
+
+    assertEquals(testAgent.capturedMessages, [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Explain Swedish tax residency." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "I searched official sources." }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Cite the official source." }],
+      },
+    ]);
+  });
+
+  it("omits provider-owned remote tool-only messages before direct streaming", async () => {
+    const testAgent = createTestAgent();
+    testAgent.agent.config.providerTools = ["web_search"];
+    const handler = createAgUiHandler({ agent: testAgent.agent });
+
+    const response = await handler(
+      new Request("http://localhost/api/ag-ui", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [
+            {
+              id: "user-1",
+              role: "user",
+              parts: [{ type: "text", text: "Explain Swedish tax residency." }],
+            },
+            {
+              id: "assistant-search",
+              role: "assistant",
+              parts: [{
+                type: "tool-web_search",
+                toolCallId: "toolu_search_1",
+                toolName: "web_search",
+                args: { query: "site:skatteverket.se tax residency" },
+                output: { results: [{ title: "Skatteverket" }] },
+              }],
+            },
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [{ type: "text", text: "I found the official guidance." }],
+            },
+            {
+              id: "user-2",
+              role: "user",
+              parts: [{ type: "text", text: "Cite the official source." }],
+            },
+          ],
+        }),
+      }),
+    );
+
+    await response.text();
+
+    assertEquals(testAgent.capturedMessages, [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Explain Swedish tax residency." }],
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "I found the official guidance." }],
+      },
+      {
+        id: "user-2",
+        role: "user",
+        parts: [{ type: "text", text: "Cite the official source." }],
+      },
+    ]);
+  });
+
   it("bridges direct tool data events into the AG-UI stream", async () => {
     const testAgent = createTestAgent();
     testAgent.agent.stream = async (input) => {

@@ -54,6 +54,14 @@ function generateRunId(): string {
   return `run_${crypto.randomUUID().replaceAll("-", "")}`;
 }
 
+function getProviderToolNames(agent: Agent): string[] {
+  return Array.isArray(agent.config.providerTools)
+    ? agent.config.providerTools.filter((toolName): toolName is string =>
+      typeof toolName === "string" && toolName.length > 0
+    )
+    : [];
+}
+
 function createToolDataEventBridge() {
   const pendingEvents: ToolExecutionDataEvent[] = [];
   let publishDataEvent: ToolExecutionDataEventPublisher = (event) => {
@@ -226,7 +234,9 @@ async function createAgUiDirectStreamResponse(
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
   const context = buildStreamContext(request, baseContext, threadId, runId);
-  let messages = normalizeAgUiMessages(request.messages);
+  let messages = normalizeAgUiMessages(request.messages, {
+    providerOwnedToolNames: getProviderToolNames(agent),
+  });
 
   const beforeStreamResult = await beforeStream?.({
     request: rawRequest,
@@ -276,7 +286,9 @@ async function createAgUiInjectedToolsStreamResponse(
   const threadId = request.threadId ?? crypto.randomUUID();
   const runId = request.runId ?? generateRunId();
   const context = buildStreamContext(request, baseContext, threadId, runId);
-  let messages = normalizeAgUiMessages(request.messages);
+  let messages = normalizeAgUiMessages(request.messages, {
+    providerOwnedToolNames: getProviderToolNames(agent),
+  });
 
   const beforeStreamResult = await beforeStream?.({
     request: rawRequest,
