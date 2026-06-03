@@ -167,6 +167,7 @@ function createToolResultMessage(
   toolCallId: string,
   toolName: string,
   result: unknown,
+  providerExecuted = false,
 ): Message {
   return {
     id: `tool_${toolCallId}`,
@@ -177,6 +178,7 @@ function createToolResultMessage(
         toolCallId,
         toolName,
         result,
+        ...(providerExecuted ? { providerExecuted: true } : {}),
       },
     ],
     timestamp: Date.now(),
@@ -1023,6 +1025,7 @@ export class AgentRuntime {
             generatedToolResult.isError === true
               ? { error: stringifyToolError(generatedToolResult.result) }
               : generatedToolResult.result,
+            generatedToolResult.providerExecuted === true,
           );
           currentMessages.push(toolResultMessage);
           await this.memory.add(toolResultMessage);
@@ -1381,6 +1384,7 @@ export class AgentRuntime {
           toolResult.error === undefined
             ? toolResult.output
             : { error: stringifyToolError(toolResult.error) },
+          toolResult.providerExecuted === true,
         );
         currentMessages.push(toolResultMessage);
         await this.memory.add(toolResultMessage);

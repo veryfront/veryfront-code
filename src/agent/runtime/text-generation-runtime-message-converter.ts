@@ -51,6 +51,41 @@ function isProviderExecutedToolPart(part: Record<string, unknown>): boolean {
   return part.providerExecuted === true;
 }
 
+function getToolCallId(part: unknown): string | undefined {
+  return getStringPartField(part, "toolCallId") ??
+    getStringPartField(part, "tool_call_id") ??
+    getStringPartField(part, "id");
+}
+
+function getProviderExecutedToolCallId(part: unknown): string | undefined {
+  if (!isRecord(part) || !isProviderExecutedToolPart(part)) {
+    return undefined;
+  }
+
+  return getToolCallId(part);
+}
+
+function shouldSkipProviderExecutedToolResult(
+  part: unknown,
+  providerExecutedToolCallIds: Set<string>,
+): boolean {
+  if (!isRecord(part)) {
+    return false;
+  }
+
+  if (isProviderExecutedToolPart(part)) {
+    return true;
+  }
+
+  const toolCallId = getToolCallId(part);
+  if (!toolCallId || !providerExecutedToolCallIds.has(toolCallId)) {
+    return false;
+  }
+
+  providerExecutedToolCallIds.delete(toolCallId);
+  return true;
+}
+
 function getToolInputRecord(part: Record<string, unknown>): Record<string, unknown> {
   return getRecordPartField(part, "args") ?? getRecordPartField(part, "input") ?? {};
 }
@@ -73,9 +108,7 @@ function getTextGenerationToolCallPart(
     return null;
   }
 
-  const toolCallId = getStringPartField(part, "toolCallId") ??
-    getStringPartField(part, "tool_call_id") ??
-    getStringPartField(part, "id");
+  const toolCallId = getToolCallId(part);
   const toolName = getStringPartField(part, "toolName") ??
     getStringPartField(part, "tool_name") ??
     getStringPartField(part, "name") ??
@@ -103,8 +136,7 @@ function getTextGenerationToolResultPart(
     return null;
   }
 
-  const toolCallId = getStringPartField(part, "toolCallId") ??
-    getStringPartField(part, "tool_call_id");
+  const toolCallId = getToolCallId(part);
   if (!toolCallId) {
     return null;
   }
@@ -194,7 +226,12 @@ function getUserFileParts(parts: Message["parts"]): TextGenerationRuntimeFilePar
 /**
  * Convert a veryfront Message to the current text-generation runtime message format.
  */
-export function convertToTextGenerationRuntimeMessage(msg: Message): TextGenerationRuntimeMessage {
+export function convertToTextGenerationRuntimeMessage(
+  msg: Message,
+  options: { providerExecutedToolCallIds?: Set<string> } = {},
+): TextGenerationRuntimeMessage {
+  const providerExecutedToolCallIds = options.providerExecutedToolCallIds ?? new Set<string>();
+
   switch (msg.role) {
     case "system": {
       const text = getTextFromParts(msg.parts);
@@ -265,6 +302,11 @@ export function convertToTextGenerationRuntimeMessage(msg: Message): TextGenerat
         if (part.type !== "tool-result") continue;
 
         const resultPart = part as ToolResultPart;
+        if (
+          shouldSkipProviderExecutedToolResult(resultPart, providerExecutedToolCallIds)
+        ) {
+          continue;
+        }
         content.push({
           type: "tool-result",
           toolCallId: resultPart.toolCallId,
@@ -300,6 +342,7 @@ function hasProviderSendableAssistantContent(message: Message): boolean {
 
 function convertAssistantMessageToTextGenerationRuntimeMessages(
   message: Message,
+  providerExecutedToolCallIds: Set<string>,
 ): TextGenerationRuntimeMessage[] {
   const assistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
   const deferredAssistantContent: TextGenerationRuntimeAssistantMessage["content"] = [];
@@ -330,6 +373,8 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     part: TextGenerationRuntimeTextPart | TextGenerationRuntimeToolCallPart,
   ) => {
     if (part.type === "tool-call") {
+      providerExecutedToolCallIds.delete(part.toolCallId);
+
       if (deferredAssistantContent.length > 0) {
         flushAssistantMessage(assistantContent);
         flushToolMessage();
@@ -366,6 +411,11 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
   };
 
   for (const part of message.parts) {
+    const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+    if (providerExecutedToolCallId) {
+      providerExecutedToolCallIds.add(providerExecutedToolCallId);
+    }
+
     if (part.type === "text" && "text" in part) {
       pushAssistantPart({ type: "text", text: (part as { text: string }).text });
       continue;
@@ -374,6 +424,10 @@ function convertAssistantMessageToTextGenerationRuntimeMessages(
     const toolCallPart = getTextGenerationToolCallPart(part);
     if (toolCallPart) {
       pushAssistantPart(toolCallPart);
+      continue;
+    }
+
+    if (shouldSkipProviderExecutedToolResult(part, providerExecutedToolCallIds)) {
       continue;
     }
 
@@ -397,17 +451,33 @@ export function convertToTextGenerationRuntimeMessages(
   messages: Message[],
 ): TextGenerationRuntimeMessage[] {
   const textGenerationRuntimeMessages: TextGenerationRuntimeMessage[] = [];
+  const providerExecutedToolCallIds = new Set<string>();
 
   for (const message of messages) {
+    if (message.role === "user" || message.role === "system") {
+      providerExecutedToolCallIds.clear();
+    }
+
+    for (const part of message.parts) {
+      const providerExecutedToolCallId = getProviderExecutedToolCallId(part);
+      if (providerExecutedToolCallId) {
+        providerExecutedToolCallIds.add(providerExecutedToolCallId);
+      }
+    }
+
     if (!hasProviderSendableAssistantContent(message)) {
       continue;
     }
 
     const convertedMessages = message.role === "assistant"
-      ? convertAssistantMessageToTextGenerationRuntimeMessages(message)
-      : [convertToTextGenerationRuntimeMessage(message)];
+      ? convertAssistantMessageToTextGenerationRuntimeMessages(message, providerExecutedToolCallIds)
+      : [convertToTextGenerationRuntimeMessage(message, { providerExecutedToolCallIds })];
 
     for (const convertedMessage of convertedMessages) {
+      if (convertedMessage.role === "tool" && convertedMessage.content.length === 0) {
+        continue;
+      }
+
       const previousMessage = textGenerationRuntimeMessages.at(-1);
 
       if (previousMessage?.role === "tool" && convertedMessage.role === "tool") {
