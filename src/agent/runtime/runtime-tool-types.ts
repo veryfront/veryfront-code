@@ -97,7 +97,13 @@ export type RuntimeStreamPart =
     type: "tool-result";
     toolCallId: string;
     toolName: string;
+    /**
+     * Normalized tool result payload used by Veryfront-owned runtime code.
+     * Some provider SDK stream parts call the same payload `result`; callers
+     * should accept both names at stream boundaries.
+     */
     output?: unknown;
+    result?: unknown;
     error?: unknown;
     input?: unknown;
     providerExecuted?: boolean;
