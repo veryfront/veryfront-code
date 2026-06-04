@@ -222,6 +222,69 @@ describe("internal-agents/run-stream", () => {
     assertEquals(capturedToolNames, ["gmail__list_emails", "list_projects"]);
   });
 
+  it("compacts oversized internal runtime message history before streaming", async () => {
+    const sessionManager = new AgentRunSessionManager();
+    let capturedMessages: Message[] = [];
+
+    const agent = {
+      id: "research-agent",
+      config: {
+        id: "research-agent",
+        model: "anthropic/claude-opus-4-6",
+        system: "test",
+      },
+    } as unknown as Agent;
+
+    const input = {
+      agentId: "research-agent",
+      threadId: crypto.randomUUID(),
+      runId: "run_1",
+      messages: [
+        {
+          id: "old-user",
+          role: "user",
+          content: "Research the target architecture.",
+        },
+        {
+          id: "old-assistant",
+          role: "assistant",
+          content: "Large research artifact ".repeat(720_000),
+        },
+        {
+          id: "latest-user",
+          role: "user",
+          content: "Continue and finish the diagram.",
+        },
+      ],
+      tools: [],
+      context: [],
+    } as Parameters<typeof createRuntimeAgentStreamResponse>[0];
+
+    await createRuntimeAgentStreamResponse(
+      input,
+      agent,
+      {
+        sessionManager,
+        createRuntime: () => ({
+          stream: async (messages) => {
+            capturedMessages = messages;
+            return new ReadableStream<Uint8Array>({
+              start(controller) {
+                controller.close();
+              },
+            });
+          },
+        }),
+      },
+    );
+
+    assertEquals(capturedMessages.length, 3);
+    assertEquals(capturedMessages[0]?.role, "user");
+    const firstText = capturedMessages[0]?.parts.find((part) => part.type === "text");
+    assertStringIncludes(firstText && "text" in firstText ? firstText.text : "", "[Compressed:");
+    assertStringIncludes(JSON.stringify(capturedMessages), "Continue and finish the diagram.");
+  });
+
   it("materializes explicitly configured sandbox bash before constructing the runtime", async () => {
     const sessionManager = new AgentRunSessionManager();
     const sandboxInputs: AgentServiceSandboxToolsOptions[] = [];

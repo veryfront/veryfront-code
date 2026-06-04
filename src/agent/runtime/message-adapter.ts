@@ -42,7 +42,7 @@ type AgentRuntimeMessageLikePart =
     type: "tool-result";
     toolCallId: string;
     toolName: string;
-    result: unknown;
+    result?: unknown;
   }
   | {
     type: "tool-result";

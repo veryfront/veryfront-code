@@ -329,6 +329,30 @@ describe("agent runtime message adapter", () => {
     ]);
   });
 
+  it("normalizes stored dashed tool-result parts without output when replaying agent runtime messages", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      {
+        role: "tool",
+        parts: [
+          {
+            type: "tool-result",
+            toolCallId: TOOL_CALL_ID,
+            toolName: TOOL_NAME,
+          },
+        ],
+      },
+    ]);
+
+    assertEquals(providerMessages, [
+      {
+        role: "tool",
+        content: [
+          providerToolResultPart(jsonOutput(null)),
+        ],
+      },
+    ]);
+  });
+
   it("converts native image AgentRuntimeMessage part back to structured user content", () => {
     const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
       agentRuntimeMessage(

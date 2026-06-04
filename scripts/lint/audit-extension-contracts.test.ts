@@ -3,8 +3,8 @@ import { describe, it } from "#std/testing/bdd";
 import {
   auditExtensionContracts,
   type ExtensionContractAuditInput,
-  importWithRetry,
 } from "./audit-extension-contracts.ts";
+import { extractExtensionSourceMetadata } from "./extension-source-metadata.ts";
 
 function input(
   overrides: Partial<ExtensionContractAuditInput> = {},
@@ -77,42 +77,54 @@ describe("auditExtensionContracts", () => {
   });
 });
 
-describe("importWithRetry", () => {
-  it("retries transient remote import failures", async () => {
-    let attempts = 0;
-    const mod = await importWithRetry("file:///extension.ts", {
-      importModule: (url) => {
-        attempts += 1;
-        if (attempts === 1) {
-          throw new TypeError(
-            "Import 'https://esm.sh/tailwindcss@4.2.2' failed: 522 <unknown status code>",
-          );
-        }
-        return Promise.resolve({ default: () => ({}) });
-      },
-      delay: () => Promise.resolve(),
-      retries: 1,
-    });
+describe("extractExtensionSourceMetadata contracts", () => {
+  it("extracts factory contract metadata from source without importing the extension module", () => {
+    const metadata = extractExtensionSourceMetadata(`
+      import "https://esm.sh/transient-package";
+      const ext = () => ({
+        contracts: {
+          provides: ["CSSProcessor"],
+          requires: ["SchemaValidator"],
+        },
+        capabilities: [],
+      });
+    `);
 
-    assertEquals(attempts, 2);
-    assertEquals(typeof mod.default, "function");
+    assertEquals(metadata.contracts, {
+      provides: ["CSSProcessor"],
+      requires: ["SchemaValidator"],
+    });
   });
 
-  it("does not retry local import failures", async () => {
-    let attempts = 0;
-    const error = await importWithRetry("file:///extension.ts", {
-      importModule: () => {
-        attempts += 1;
-        throw new TypeError("Module not found: file:///extension.ts");
-      },
-      delay: () => Promise.resolve(),
-      retries: 2,
-    }).then(
-      () => undefined,
-      (caught) => caught,
-    );
+  it("extracts legacy provider object keys when the source has no contracts block", () => {
+    const metadata = extractExtensionSourceMetadata(`
+      const ext = () => ({
+        capabilities: [{ type: "net:outbound", hosts: ["*"] }],
+        provides: {
+          AuthProvider: provider,
+        },
+      });
+    `);
 
-    assertEquals(attempts, 1);
-    assertEquals(error instanceof TypeError, true);
+    assertEquals(metadata.legacyProvides, ["AuthProvider"]);
+  });
+
+  it("resolves known exported contract name constants in contract arrays", () => {
+    const metadata = extractExtensionSourceMetadata(`
+      import {
+        LLMProviderRegistryName,
+        SandboxShellToolsProviderName,
+      } from "veryfront/extensions/sandbox";
+      const ext = () => ({
+        contracts: {
+          provides: [SandboxShellToolsProviderName],
+          requires: [LLMProviderRegistryName],
+        },
+        capabilities: [],
+      });
+    `);
+
+    assertEquals(metadata.contracts?.provides, ["SandboxShellToolsProvider"]);
+    assertEquals(metadata.contracts?.requires, ["LLMProviderRegistry"]);
   });
 });

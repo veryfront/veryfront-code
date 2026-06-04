@@ -5,7 +5,12 @@ import {
   AgentRuntime,
 } from "#veryfront/agent";
 import { normalizeAgUiRuntimeMessages } from "#veryfront/agent/ag-ui/runtime-support.ts";
+import { compactForStep, estimateOverhead } from "#veryfront/chat/message-prep.ts";
 import type { RuntimeRemoteToolConfig } from "#veryfront/agent/runtime/mcp-server-tool-sources.ts";
+import {
+  convertAgentRuntimeMessagesToProviderMessages,
+  convertProviderMessagesToAgentRuntimeMessages,
+} from "#veryfront/agent/runtime/message-adapter.ts";
 import type {
   AgentServiceSandboxToolsOptions,
   AgentServiceSandboxToolsResult,
@@ -358,6 +363,19 @@ function getForwardedIntegrationToolDefinitions(
   }));
 }
 
+function compactRuntimeMessagesForStream(
+  messages: Message[],
+  mergedTools: Agent["config"]["tools"],
+): Message[] {
+  const toolCount = mergedTools && mergedTools !== true ? Object.keys(mergedTools).length : 0;
+  return convertProviderMessagesToAgentRuntimeMessages(
+    compactForStep(
+      convertAgentRuntimeMessagesToProviderMessages(messages),
+      estimateOverhead("", toolCount),
+    ),
+  ) as Message[];
+}
+
 export async function createRuntimeAgentStreamResponse(
   input: RuntimeRunAgentInput,
   agent: Agent,
@@ -411,7 +429,10 @@ export async function createRuntimeAgentStreamResponse(
     new AgentRuntime(runtimeAgent.id, runtimeAgent.config);
 
   let completedResponse: AgentResponse | null = null;
-  const runtimeMessages = normalizeAgUiRuntimeMessages(input.messages);
+  const runtimeMessages = compactRuntimeMessagesForStream(
+    normalizeAgUiRuntimeMessages(input.messages),
+    mergedTools,
+  );
   let runtimeStream: ReadableStream<Uint8Array>;
   let clientAttached = true;
   try {

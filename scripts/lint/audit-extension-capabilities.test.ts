@@ -4,6 +4,7 @@ import {
   auditExtensionCapabilities,
   type ExtensionCapabilityAuditInput,
 } from "./audit-extension-capabilities.ts";
+import { extractExtensionSourceMetadata } from "./extension-source-metadata.ts";
 
 function input(
   overrides: Partial<ExtensionCapabilityAuditInput> = {},
@@ -63,6 +64,37 @@ describe("auditExtensionCapabilities", () => {
 
     assertEquals(issues.map((issue) => issue.message), [
       'extensions/ext-cache-redis/deno.json sensitive extension "Redis token cache" is missing capability {"keys":["REDIS_PASSWORD","REDIS_PREFIX","REDIS_URL"],"type":"env:read"}',
+    ]);
+  });
+});
+
+describe("extractExtensionSourceMetadata capabilities", () => {
+  it("extracts literal factory capabilities from source without importing the extension module", () => {
+    const metadata = extractExtensionSourceMetadata(`
+      import "https://esm.sh/transient-package";
+      const ext = () => ({
+        capabilities: [
+          { type: "net:outbound", hosts: ["esm.sh"] },
+          {
+            type: "env:read",
+            keys: [
+              "OTEL_EXPORTER_OTLP_ENDPOINT",
+              "OTEL_TRACES_ENABLED",
+            ],
+          },
+        ],
+      });
+    `);
+
+    assertEquals(metadata.capabilities, [
+      { type: "net:outbound", hosts: ["esm.sh"] },
+      {
+        type: "env:read",
+        keys: [
+          "OTEL_EXPORTER_OTLP_ENDPOINT",
+          "OTEL_TRACES_ENABLED",
+        ],
+      },
     ]);
   });
 });

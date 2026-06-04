@@ -1,4 +1,5 @@
-import { fromFileUrl, join, toFileUrl } from "#std/path";
+import { fromFileUrl, join } from "#std/path";
+import { extractExtensionSourceMetadata } from "./extension-source-metadata.ts";
 
 export type Capability = { type: string; [key: string]: unknown };
 
@@ -19,53 +20,54 @@ interface SensitiveCapabilityPolicy {
   requiredCapabilities: Capability[];
 }
 
-export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES: SensitiveCapabilityPolicy[] = [
-  {
-    label: "sandbox execution",
-    manifestPath: "extensions/ext-sandbox-shell-tools/deno.json",
-    requiredCapabilities: [{ type: "sandbox:execute", tools: ["bash"] }],
-  },
-  {
-    label: "Redis token cache",
-    manifestPath: "extensions/ext-cache-redis/deno.json",
-    requiredCapabilities: [
-      { type: "net:outbound", hosts: ["*"] },
-      {
-        type: "env:read",
-        keys: ["REDIS_PASSWORD", "REDIS_PREFIX", "REDIS_URL"],
-      },
-    ],
-  },
-  {
-    label: "native SQLite storage",
-    manifestPath: "extensions/ext-db-sqlite/deno.json",
-    requiredCapabilities: [
-      { type: "fs:read" },
-      { type: "fs:write" },
-    ],
-  },
-  {
-    label: "document extraction",
-    manifestPath: "extensions/ext-document-kreuzberg/deno.json",
-    requiredCapabilities: [{ type: "fs:read" }],
-  },
-  {
-    label: "OpenTelemetry observability",
-    manifestPath: "extensions/ext-observability-opentelemetry/deno.json",
-    requiredCapabilities: [
-      { type: "net:outbound", hosts: ["*"] },
-      {
-        type: "env:read",
-        keys: [
-          "OTEL_EXPORTER_OTLP_ENDPOINT",
-          "OTEL_EXPORTER_OTLP_HEADERS",
-          "OTEL_SERVICE_NAME",
-          "OTEL_TRACES_ENABLED",
-        ],
-      },
-    ],
-  },
-];
+export const SENSITIVE_EXTENSION_CAPABILITY_POLICIES:
+  SensitiveCapabilityPolicy[] = [
+    {
+      label: "sandbox execution",
+      manifestPath: "extensions/ext-sandbox-shell-tools/deno.json",
+      requiredCapabilities: [{ type: "sandbox:execute", tools: ["bash"] }],
+    },
+    {
+      label: "Redis token cache",
+      manifestPath: "extensions/ext-cache-redis/deno.json",
+      requiredCapabilities: [
+        { type: "net:outbound", hosts: ["*"] },
+        {
+          type: "env:read",
+          keys: ["REDIS_PASSWORD", "REDIS_PREFIX", "REDIS_URL"],
+        },
+      ],
+    },
+    {
+      label: "native SQLite storage",
+      manifestPath: "extensions/ext-db-sqlite/deno.json",
+      requiredCapabilities: [
+        { type: "fs:read" },
+        { type: "fs:write" },
+      ],
+    },
+    {
+      label: "document extraction",
+      manifestPath: "extensions/ext-document-kreuzberg/deno.json",
+      requiredCapabilities: [{ type: "fs:read" }],
+    },
+    {
+      label: "OpenTelemetry observability",
+      manifestPath: "extensions/ext-observability-opentelemetry/deno.json",
+      requiredCapabilities: [
+        { type: "net:outbound", hosts: ["*"] },
+        {
+          type: "env:read",
+          keys: [
+            "OTEL_EXPORTER_OTLP_ENDPOINT",
+            "OTEL_EXPORTER_OTLP_HEADERS",
+            "OTEL_SERVICE_NAME",
+            "OTEL_TRACES_ENABLED",
+          ],
+        },
+      ],
+    },
+  ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -216,23 +218,21 @@ async function loadAuditInput(
     await Deno.readTextFile(join(root, manifestPath)),
   ) as Record<string, unknown>;
   const veryfront = (manifest.veryfront ?? {}) as Record<string, unknown>;
-  const moduleUrl = toFileUrl(
+  const source = await Deno.readTextFile(
     join(root, manifestPath.replace(/deno\.json$/, "src/index.ts")),
-  ).href;
-  const mod = await import(moduleUrl);
-  if (typeof mod.default !== "function") {
-    throw new Error(`${manifestPath} default export is not an extension factory`);
-  }
-  const extension = mod.default() as { capabilities?: unknown };
+  );
+  const sourceMetadata = extractExtensionSourceMetadata(source);
 
   return {
     manifestPath,
     manifestCapabilities: capabilityList(veryfront.capabilities),
-    factoryCapabilities: capabilityList(extension.capabilities),
+    factoryCapabilities: capabilityList(sourceMetadata.capabilities),
   };
 }
 
-async function auditWorkspace(root: string): Promise<ExtensionCapabilityAuditIssue[]> {
+async function auditWorkspace(
+  root: string,
+): Promise<ExtensionCapabilityAuditIssue[]> {
   const inputs = await Promise.all(
     (await extensionManifestPaths(root)).map((manifestPath) =>
       loadAuditInput(root, manifestPath)
