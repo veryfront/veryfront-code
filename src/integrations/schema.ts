@@ -121,6 +121,9 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     description: v.string(),
     required: v.boolean().optional(),
     default: v.unknown().optional(),
+    // For query params only: the HTTP query parameter name to send when it differs
+    // from the agent-facing parameter key (e.g. input query -> query param $search).
+    queryName: v.string().optional(),
     // For header params only: the HTTP header name to send when it differs from
     // the agent-facing parameter key (e.g. input account_id → header Harvest-Account-Id).
     headerName: v.string().optional(),
