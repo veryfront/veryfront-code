@@ -99,6 +99,31 @@ function requiresProjectReference(toolDefinition: ToolDefinition): boolean {
   return getRequiredToolProperties(toolDefinition).includes("project_reference");
 }
 
+function isMissingRequiredToolInput(value: unknown): boolean {
+  return value === undefined || value === null ||
+    (typeof value === "string" && value.trim().length === 0);
+}
+
+function validateRequiredToolInput(input: {
+  toolDefinition: ToolDefinition | undefined;
+  toolInput: Record<string, unknown>;
+}): void {
+  if (!input.toolDefinition) {
+    return;
+  }
+
+  const missingProperties = getRequiredToolProperties(input.toolDefinition).filter((property) =>
+    isMissingRequiredToolInput(input.toolInput[property])
+  );
+  if (missingProperties.length === 0) {
+    return;
+  }
+
+  throw new Error(
+    `Tool "${input.toolDefinition.name}" requires input: ${missingProperties.join(", ")}`,
+  );
+}
+
 /** Check whether a remote tool is project-navigation scoped. */
 export function isProjectNavigationRemoteTool(
   toolName: string,
@@ -272,6 +297,7 @@ export function createProjectScopedRemoteToolCatalog(
         activeProjectId,
         toolInput: executionInput.toolInput,
       });
+      validateRequiredToolInput({ toolDefinition, toolInput });
 
       return {
         activeProjectId,

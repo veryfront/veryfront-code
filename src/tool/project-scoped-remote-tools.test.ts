@@ -264,6 +264,28 @@ Deno.test("createProjectScopedRemoteToolCatalog rejects disallowed execution", a
   );
 });
 
+Deno.test("createProjectScopedRemoteToolCatalog rejects missing required remote tool input", async () => {
+  const source: RemoteToolSource = {
+    id: "api",
+    async listTools() {
+      return [toolDefinition({ name: "outlook__search_emails", required: ["$search"] })];
+    },
+    async executeTool() {
+      return { ok: true };
+    },
+  };
+  const catalog = createProjectScopedRemoteToolCatalog({ source });
+
+  await assertRejectsWithMessage(
+    () =>
+      catalog.prepareExecution({
+        toolName: "outlook__search_emails",
+        toolInput: {},
+      }),
+    'Tool "outlook__search_emails" requires input: $search',
+  );
+});
+
 Deno.test("listProjectScopedRemoteToolNames returns sorted unique visible names", async () => {
   const sourceA: RemoteToolSource = {
     id: "api",
