@@ -31,6 +31,15 @@ function parseErrorJson(value: string): unknown | null {
   return parsed.ok ? parsed.value : null;
 }
 
+function parseEmbeddedErrorJson(value: string): unknown | null {
+  const jsonStart = value.indexOf("{");
+  if (jsonStart < 0) {
+    return null;
+  }
+
+  return parseErrorJson(value.slice(jsonStart));
+}
+
 /** Parses known problem body. */
 export function parseKnownProblemBody(body: unknown): ParsedProviderError | null {
   if (!isErrorRecord(body)) {
@@ -191,6 +200,12 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
     const parsedMessageError = parseKnownProviderBody(parsedMessage);
     if (parsedMessageError) {
       return parsedMessageError;
+    }
+
+    const parsedEmbeddedMessage = parseEmbeddedErrorJson(message);
+    const parsedEmbeddedMessageError = parseKnownProviderBody(parsedEmbeddedMessage);
+    if (parsedEmbeddedMessageError) {
+      return parsedEmbeddedMessageError;
     }
 
     const normalizedMessage = message.toLowerCase();
