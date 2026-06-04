@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type {
   RemoteMCPToolSourceConfig,
   RemoteToolSource,
@@ -133,6 +133,34 @@ Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from re
   assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file"]);
   assertEquals(toolAssembly.providerToolNames, ["web_search"]);
   assertEquals(taskContext.availableToolNames, ["create_file", "web_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly includes source provider tools outside forwarded allowed tools", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {
+      sleep: localTool("Sleep"),
+    },
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    allowedToolNames: ["sleep"],
+    sourceProviderToolNames: ["web_search", "web_fetch"],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.localToolNames, ["sleep"]);
+  assertEquals(toolAssembly.providerToolNames, ["web_fetch", "web_search"]);
+  assertEquals(taskContext.availableToolNames, ["sleep", "web_fetch", "web_search"]);
+  assertStringIncludes(toolAssembly.systemInstructions, "- web_fetch");
+  assertStringIncludes(toolAssembly.systemInstructions, "- web_search");
 });
 
 Deno.test("prepareHostedChatRuntimeToolAssembly preloads default research artifacts", async () => {
