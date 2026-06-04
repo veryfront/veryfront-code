@@ -19,6 +19,7 @@ import {
   createAnthropicWebSearchToolSet,
 } from "./provider-native-tools.ts";
 import {
+  normalizeProviderToolInputSchema,
   sanitizeProviderToolSchema,
   selectProviderCompatibleTools,
 } from "./provider-tool-compat.ts";
@@ -78,7 +79,9 @@ export function convertToolsToRuntimeTools(
       createRuntimeTool({
         description: def.description,
         inputSchema: createRuntimeJsonSchema(
-          sanitizeProviderToolSchema(def.parameters, { model: options?.model }),
+          sanitizeProviderToolSchema(normalizeProviderToolInputSchema(def.parameters), {
+            model: options?.model,
+          }),
         ),
       }),
     );

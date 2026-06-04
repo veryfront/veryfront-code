@@ -23,6 +23,11 @@ export interface ProviderToolCompatOptions {
 }
 
 const OPENAI_MAX_TOOLS = 128;
+const PERMISSIVE_TOOL_INPUT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {},
+  additionalProperties: true,
+};
 const PROVIDER_TOOL_PROPERTY_KEY_PATTERN = /^[a-zA-Z0-9_.-]{1,64}$/;
 
 const GOOGLE_UNSUPPORTED_SCHEMA_KEYS = new Set([
@@ -291,6 +296,26 @@ function sanitizeGoogleSchemaValue(value: unknown): unknown {
   }
 
   return sanitized;
+}
+
+/**
+ * Normalize a provider tool input schema so every function tool has a
+ * provider-safe JSON Schema object at the root. Remote/MCP tools can omit the
+ * root `type`; Anthropic rejects those as `input_schema.type` missing.
+ */
+export function normalizeProviderToolInputSchema(schema: JsonSchema): JsonSchema {
+  if (!isPlainRecord(schema) || Object.keys(schema).length === 0) {
+    return { ...PERMISSIVE_TOOL_INPUT_SCHEMA };
+  }
+
+  if (Object.hasOwn(schema, "type")) {
+    return schema;
+  }
+
+  return {
+    type: "object",
+    ...schema,
+  } as JsonSchema;
 }
 
 /** Zod schema for sanitize provider tool. */
