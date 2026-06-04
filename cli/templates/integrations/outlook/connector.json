@@ -223,7 +223,8 @@
             "type": "string",
             "in": "query",
             "queryName": "$search",
-            "description": "Microsoft Graph search query, for example \"subject:roadmap\"",
+            "queryValueFormat": "microsoft-graph-search",
+            "description": "Microsoft Graph message search query. Gmail-style AQS terms such as from:marcus or subject:Finanzplan are accepted; the runtime quotes them for Graph $search.",
             "required": true
           },
           "$top": {

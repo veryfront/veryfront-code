@@ -10,6 +10,9 @@ export interface IntegrationEndpointParam {
   description: string;
   required?: boolean;
   default?: unknown;
+  queryName?: string;
+  queryValueFormat?: "microsoft-graph-search";
+  headerName?: string;
 }
 
 interface IntegrationEndpointBodyField {

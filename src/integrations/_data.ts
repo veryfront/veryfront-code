@@ -7073,9 +7073,11 @@ export const connectors: IntegrationConfig[] = [
           "query": {
             "type": "string",
             "in": "query",
-            "queryName": "$search",
-            "description": 'Microsoft Graph search query, for example "subject:roadmap"',
+            "description":
+              "Microsoft Graph message search query. Gmail-style AQS terms such as from:marcus or subject:Finanzplan are accepted; the runtime quotes them for Graph $search.",
             "required": true,
+            "queryName": "$search",
+            "queryValueFormat": "microsoft-graph-search",
           },
           "$top": {
             "type": "number",
