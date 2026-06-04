@@ -51,6 +51,23 @@ describe("chat/provider-errors", () => {
     });
   });
 
+  it("classifies invalid Veryfront schema errors as project code validation failures", () => {
+    const expected = {
+      code: "PROJECT_SCHEMA_ERROR",
+      message:
+        "Project code has an invalid Veryfront schema. Update the schema to use defineSchema(), then run the agent again.",
+    };
+
+    assertEquals(
+      parseProviderError(new Error("Invalid Veryfront schema: use defineSchema()")),
+      expected,
+    );
+    assertEquals(
+      parseProviderError({ responseBody: "Invalid Veryfront schema: use defineSchema()" }),
+      expected,
+    );
+  });
+
   it("walks nested lastError chains without stack overflows or cycles", () => {
     const errorA: Record<string, unknown> = { message: "outer", lastError: null };
     const errorB: Record<string, unknown> = { message: "inner", lastError: errorA };

@@ -10,6 +10,12 @@ const DEFAULT_EXTERNAL_SERVICE_ERROR = {
   message: "LLM provider service error",
 } as const;
 
+const PROJECT_SCHEMA_ERROR = {
+  code: "PROJECT_SCHEMA_ERROR",
+  message:
+    "Project code has an invalid Veryfront schema. Update the schema to use defineSchema(), then run the agent again.",
+} as const;
+
 function isErrorRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -172,6 +178,11 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
 
   const responseBody = extractResponseBody(error);
   if (responseBody) {
+    const normalizedResponseBody = responseBody.toLowerCase();
+    if (normalizedResponseBody.includes("invalid veryfront schema")) {
+      return PROJECT_SCHEMA_ERROR;
+    }
+
     const parsedBody = parseErrorJson(responseBody);
     const parsedError = parseKnownProviderBody(parsedBody);
     if (parsedError) {
@@ -231,6 +242,9 @@ function parseProviderErrorInner(error: unknown, seen: WeakSet<object>): ParsedP
       normalizedMessage.includes("too many tokens")
     ) {
       return { code: "CONTEXT_LENGTH_EXCEEDED", message: "Conversation is too long" };
+    }
+    if (normalizedMessage.includes("invalid veryfront schema")) {
+      return PROJECT_SCHEMA_ERROR;
     }
   }
 

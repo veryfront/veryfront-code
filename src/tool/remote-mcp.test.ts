@@ -148,6 +148,93 @@ describe("tool/remote-mcp", () => {
     });
   });
 
+  it("normalizes OAuth invalid_grant refresh failures into reconnect-required tool output", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://api.example.com/mcp",
+      headers: { Authorization: "Bearer remote-token" },
+    });
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:calendar__list_events",
+          result: {
+            isError: true,
+            content: [{
+              text: JSON.stringify({
+                error: "tool_error",
+                message:
+                  'Token refresh failed (400): { "error": "invalid_grant", "error_description": "Token has been expired or revoked." }',
+              }),
+            }],
+          },
+        }),
+      async () => await source.executeTool("calendar__list_events", {}, { projectId: "project-1" }),
+    );
+
+    assertEquals(result, {
+      error: "reconnect_required",
+      code: "OAUTH_TOKEN_EXPIRED",
+      integration: "calendar",
+      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      message: "Calendar needs to be reconnected before this tool can run.",
+    });
+  });
+
+  it("normalizes JSON-RPC invalid_grant errors into reconnect-required tool output", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://api.example.com/mcp",
+    });
+
+    const result = await withMockFetch(
+      async () =>
+        Response.json({
+          jsonrpc: "2.0",
+          id: "veryfront-mcp:tools:call:calendar__list_events",
+          error: {
+            code: -32603,
+            message: 'Token refresh failed (400): { "error": "invalid_grant" }',
+          },
+        }),
+      async () => await source.executeTool("calendar__list_events", {}, { projectId: "project-1" }),
+    );
+
+    assertEquals(result, {
+      error: "reconnect_required",
+      code: "OAUTH_TOKEN_EXPIRED",
+      integration: "calendar",
+      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      message: "Calendar needs to be reconnected before this tool can run.",
+    });
+  });
+
+  it("normalizes HTTP invalid_grant failures into reconnect-required tool output", async () => {
+    const source = createRemoteMCPToolSource({
+      id: "veryfront-mcp",
+      endpoint: "https://api.example.com/mcp",
+    });
+
+    const result = await withMockFetch(
+      async () =>
+        new Response('{ "error": "invalid_grant" }', {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }),
+      async () => await source.executeTool("calendar__list_events", {}, { projectId: "project-1" }),
+    );
+
+    assertEquals(result, {
+      error: "reconnect_required",
+      code: "OAUTH_TOKEN_EXPIRED",
+      integration: "calendar",
+      connectUrl: "https://api.example.com/oauth/connect/calendar?projectId=project-1",
+      message: "Calendar needs to be reconnected before this tool can run.",
+    });
+  });
+
   it("preserves caller accept types while adding the MCP-required media types", async () => {
     let acceptHeader = "";
 

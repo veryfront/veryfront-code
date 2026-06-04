@@ -147,7 +147,7 @@ Deno.test("createRuntimeLoadSkillTool loads project and builtin reference files"
   });
 });
 
-Deno.test("createRuntimeLoadSkillTool rejects unsafe inputs and reports known skills", async () => {
+Deno.test("createRuntimeLoadSkillTool rejects unsafe and unknown manifest skill inputs", async () => {
   const tool = createRuntimeLoadSkillTool({
     context: {
       ...PROJECT_CONTEXT,
@@ -162,11 +162,48 @@ Deno.test("createRuntimeLoadSkillTool rejects unsafe inputs and reports known sk
   assertEquals(await tool.execute({ skillId: "plan", file: "../secret.md" }), {
     error: "Invalid reference file path: ../secret.md",
   });
-  assertEquals(await tool.execute({ skillId: "missing" }), {
-    error: "Skill not found: missing. Available skills: build, plan, project-only",
-  });
+  await assertRejects(
+    () => tool.execute({ skillId: "missing" }),
+    Error,
+    "input validation failed",
+  );
   await assertRejects(
     () => tool.execute({ skillId: "bad/path" }),
+    Error,
+    "input validation failed",
+  );
+});
+
+Deno.test("createRuntimeLoadSkillTool advertises the runtime skill manifest instead of inviting invented skill IDs", () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: {
+      ...PROJECT_CONTEXT,
+      availableSkillIds: ["daily-briefing"],
+    },
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinSkillIds: [],
+    builtinStore: createBuiltinStore({}),
+  });
+
+  assertStringIncludes(tool.description, "Available skill IDs: daily-briefing.");
+  assertStringIncludes(tool.description, "Do not invent skill IDs");
+});
+
+Deno.test("createRuntimeLoadSkillTool rejects invented skill IDs before tool execution when manifest is known", async () => {
+  const tool = createRuntimeLoadSkillTool({
+    context: {
+      ...PROJECT_CONTEXT,
+      availableSkillIds: ["daily-briefing"],
+    },
+    skillsDir: "/skills",
+    projectSkillLoader: createProjectSkillLoader({}),
+    builtinSkillIds: [],
+    builtinStore: createBuiltinStore({}),
+  });
+
+  await assertRejects(
+    () => tool.execute({ skillId: "skill-sales-agent" }),
     Error,
     "input validation failed",
   );
