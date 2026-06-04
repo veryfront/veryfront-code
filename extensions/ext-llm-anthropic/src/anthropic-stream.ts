@@ -24,6 +24,15 @@ type AnthropicStreamReasoningState = {
   id: string;
 };
 
+function isEmptyRecord(value: unknown): value is Record<string, never> {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value).length === 0,
+  );
+}
+
 export function normalizeAnthropicFinishReason(
   raw: unknown,
 ): string | { unified: string; raw: string } | null {
@@ -165,7 +174,7 @@ export async function* streamAnthropicCompatibleParts(
           };
 
           const initialInput = contentBlock.input;
-          if (initialInput !== undefined) {
+          if (initialInput !== undefined && !isEmptyRecord(initialInput)) {
             const serializedInput = stringifyJsonValue(initialInput);
             current.input += serializedInput;
             yield {
