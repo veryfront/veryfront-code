@@ -134,6 +134,40 @@ describe("cli/templates", () => {
     );
   });
 
+  it("integration content tools do not impose fixed text caps", async () => {
+    const checkedFiles = [
+      "./integrations/github/files/tools/get-pr-diff.ts",
+      "./integrations/sharepoint/files/tools/get-file.ts",
+    ];
+    const forbidden = [
+      "50000",
+      "50_000",
+      "contentMaxLength",
+      "maxDiffLength",
+      "Content truncated",
+      "diff truncated",
+      "maximum content length",
+    ];
+    const offenders: string[] = [];
+
+    for (const filePath of checkedFiles) {
+      const source = await Deno.readTextFile(new URL(filePath, import.meta.url));
+      for (const needle of forbidden) {
+        if (source.includes(needle)) {
+          offenders.push(`${filePath}: ${needle}`);
+        }
+      }
+    }
+
+    assertEquals(
+      offenders,
+      [],
+      `Integration content tools must return full requested text by default. Offenders: ${
+        offenders.join(", ")
+      }`,
+    );
+  });
+
   it("base integration tools do not read legacy endUserId from tool context", async () => {
     const userIdTemplatePath = new URL(
       "./integrations/_base/files/lib/user-id.ts",
