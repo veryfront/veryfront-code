@@ -133,6 +133,53 @@ describe("model-tool-converter", () => {
     assertEquals("create_file" in result!, true);
   });
 
+  it("normalizes empty function tool schemas to provider-safe object schemas", () => {
+    const tools: ToolDefinition[] = [
+      {
+        name: "no_args",
+        description: "Tool without arguments",
+        parameters: {} as never,
+      },
+    ];
+
+    const result = convertToolsToRuntimeTools(tools, {
+      model: "veryfront-cloud/anthropic/claude-opus-4-6",
+    });
+
+    const schema = getRuntimeToolSchema(result?.no_args);
+
+    assertEquals(schema, {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    });
+  });
+
+  it("adds missing object root type when function tool schemas define properties only", () => {
+    const tools: ToolDefinition[] = [
+      {
+        name: "search",
+        description: "Search",
+        parameters: {
+          properties: { query: { type: "string" } },
+          required: ["query"],
+        } as never,
+      },
+    ];
+
+    const result = convertToolsToRuntimeTools(tools, {
+      model: "veryfront-cloud/anthropic/claude-opus-4-6",
+    });
+
+    const schema = getRuntimeToolSchema(result?.search);
+
+    assertEquals(schema, {
+      type: "object",
+      properties: { query: { type: "string" } },
+      required: ["query"],
+    });
+  });
+
   it("adds provider-native web_search for anthropic models when explicitly configured", () => {
     const result = convertToolsToRuntimeTools([], {
       model: "anthropic/claude-sonnet-4-6",
