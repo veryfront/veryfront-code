@@ -34,6 +34,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     thinking: getRuntimeAgentThinkingConfigSchema().optional(),
     model: v.string().min(1).optional(),
     maxSteps: v.number().optional(),
+    providerTools: v.array(v.string().min(1)).optional(),
   })
 );
 
@@ -94,6 +95,14 @@ function parseThinking(value: unknown): RuntimeAgentThinkingConfig | undefined {
   return undefined;
 }
 
+function parseProviderTools(value: unknown): unknown[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value;
+}
+
 /** Definition for parse runtime agent markdown. */
 export function parseRuntimeAgentMarkdownDefinition(
   input: ParseRuntimeAgentMarkdownDefinitionInput,
@@ -105,6 +114,7 @@ export function parseRuntimeAgentMarkdownDefinition(
   const model = typeof attrs.model === "string" && attrs.model.trim() ? attrs.model : undefined;
   const thinking = parseThinking(attrs.thinking);
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
+  const providerTools = parseProviderTools(attrs["provider-tools"]);
 
   return getRuntimeAgentMarkdownDefinitionSchema().parse({
     id: parsedInput.id,
@@ -114,6 +124,7 @@ export function parseRuntimeAgentMarkdownDefinition(
     ...(model ? { model } : {}),
     ...(thinking ? { thinking } : {}),
     ...(maxSteps === undefined ? {} : { maxSteps }),
+    ...(providerTools ? { providerTools } : {}),
   });
 }
 

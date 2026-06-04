@@ -14,6 +14,9 @@ description: Helps users resolve issues
 model: gpt-5.4
 thinking: 1200
 max-steps: 8
+provider-tools:
+  - web_search
+  - web_fetch
 ---
 
 Follow the support runbook.
@@ -27,6 +30,7 @@ Follow the support runbook.
     model: "gpt-5.4",
     thinking: { enabled: true, budgetTokens: 1200 },
     maxSteps: 8,
+    providerTools: ["web_search", "web_fetch"],
     instructions: "Follow the support runbook.",
   });
 });
