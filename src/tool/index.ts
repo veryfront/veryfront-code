@@ -6,14 +6,16 @@
  * @example Basic tool
  * ```ts
  * import { tool } from "veryfront/tool";
- * import { z } from "zod";
+ * import { defineSchema } from "veryfront/schemas";
  *
  * const convertLength = tool({
  *   id: "convert_length",
  *   description: "Convert meters to feet",
- *   inputSchema: z.object({
- *     meters: z.number().nonnegative().describe("Length in meters"),
- *   }),
+ *   inputSchema: defineSchema((v) =>
+ *     v.object({
+ *       meters: v.number().nonnegative().describe("Length in meters"),
+ *     })
+ *   )(),
  *   execute: ({ meters }) => {
  *     return { feet: meters * 3.28084 };
  *   },
@@ -24,14 +26,16 @@
  * ```ts
  * import { agent } from "veryfront/agent";
  * import { tool } from "veryfront/tool";
- * import { z } from "zod";
+ * import { defineSchema } from "veryfront/schemas";
  *
  * const convertLength = tool({
  *   id: "convert_length",
  *   description: "Convert meters to feet",
- *   inputSchema: z.object({
- *     meters: z.number().nonnegative().describe("Length in meters"),
- *   }),
+ *   inputSchema: defineSchema((v) =>
+ *     v.object({
+ *       meters: v.number().nonnegative().describe("Length in meters"),
+ *     })
+ *   )(),
  *   execute: ({ meters }) => {
  *     return { feet: meters * 3.28084 };
  *   },

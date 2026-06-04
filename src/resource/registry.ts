@@ -13,6 +13,10 @@ import { ProjectScopedRegistryManager } from "#veryfront/registry/project-scoped
 
 const resourceRegistryManager = new ProjectScopedRegistryManager<Resource>("resource");
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 class ResourceRegistry extends ScopedRegistryFacade<Resource> {
   findByPattern(uri: string): Resource | undefined {
     for (const resource of this.getAll().values()) {
@@ -22,7 +26,11 @@ class ResourceRegistry extends ScopedRegistryFacade<Resource> {
   }
 
   private patternToRegex(pattern: string): RegExp {
-    return new RegExp(`^${pattern.replace(/:(\w+)/g, "(?<$1>[^/]+)")}$`);
+    const escapedPattern = escapeRegExp(pattern).replace(
+      /:([A-Za-z_][A-Za-z0-9_]*)/g,
+      "(?<$1>[^/]+)",
+    );
+    return new RegExp(`^${escapedPattern}$`);
   }
 
   private matchPattern(uri: string, pattern: string): RegExpMatchArray | null {

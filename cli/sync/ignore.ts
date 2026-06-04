@@ -65,6 +65,11 @@ export interface IgnoreChecker {
   isSupportedExtension(filename: string): boolean;
 }
 
+interface IgnoreRule {
+  negated: boolean;
+  regex: RegExp;
+}
+
 /**
  * Load ignore patterns from .vfignore file
  */
@@ -90,40 +95,90 @@ export async function loadIgnorePatterns(projectPath: string): Promise<string[]>
   return patterns;
 }
 
-/**
- * Escape special regex characters
- */
 function escapeRegex(str: string): string {
   return str.replace(/[.+^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Convert a single ignore pattern to a RegExp
- */
-function patternToRegex(pattern: string): RegExp {
-  if (pattern.endsWith("/")) {
-    const dirName = pattern.slice(0, -1);
-    return new RegExp(`(^|/)${escapeRegex(dirName)}(/|$)`);
+function globToRegex(pattern: string): string {
+  let source = "";
+
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern.charAt(i);
+    const next = pattern[i + 1];
+
+    if (char === "*") {
+      if (next === "*") {
+        const following = pattern[i + 2];
+        if (following === "/") {
+          source += "(?:.*/)?";
+          i += 2;
+        } else {
+          source += ".*";
+          i += 1;
+        }
+      } else {
+        source += "[^/]*";
+      }
+      continue;
+    }
+
+    if (char === "?") {
+      source += "[^/]";
+      continue;
+    }
+
+    source += escapeRegex(char);
   }
 
-  const regex = escapeRegex(pattern)
-    .replace(/\\\*/g, ".*") // * matches anything
-    .replace(/\\\?/g, "."); // ? matches single char
+  return source;
+}
 
-  if (pattern.startsWith("*")) return new RegExp(`(^|/)${regex}$`);
+function patternToRule(rawPattern: string): IgnoreRule | null {
+  let pattern = rawPattern.trim();
+  if (!pattern || pattern.startsWith("#")) return null;
 
-  return new RegExp(`(^|/)${regex}(/|$)`);
+  const negated = pattern.startsWith("!");
+  if (negated) pattern = pattern.slice(1);
+  if (!pattern) return null;
+
+  const anchored = pattern.startsWith("/");
+  if (anchored) pattern = pattern.slice(1);
+
+  const directoryOnly = pattern.endsWith("/");
+  if (directoryOnly) pattern = pattern.slice(0, -1);
+  if (!pattern) return null;
+
+  const hasSlash = pattern.includes("/");
+  const hasGlob = /[*?]/.test(pattern);
+  const body = globToRegex(pattern);
+  const prefix = anchored ? "^" : "(^|/)";
+  const suffix = directoryOnly || (!hasSlash && !hasGlob) ? "(/|$)" : "$";
+
+  return {
+    negated,
+    regex: new RegExp(`${prefix}${body}${suffix}`),
+  };
 }
 
 /**
  * Create an ignore checker with loaded patterns
  */
 export function createIgnoreChecker(patterns: readonly string[]): IgnoreChecker {
-  const regexPatterns = patterns.map(patternToRegex);
+  const rules = patterns.flatMap((pattern) => {
+    const rule = patternToRule(pattern);
+    return rule ? [rule] : [];
+  });
 
   function isIgnored(relativePath: string): boolean {
     const normalizedPath = relativePath.replace(/\\/g, "/");
-    return regexPatterns.some((regex) => regex.test(normalizedPath));
+    let ignored = false;
+
+    for (const rule of rules) {
+      if (!rule.regex.test(normalizedPath)) continue;
+      ignored = !rule.negated;
+    }
+
+    return ignored;
   }
 
   function isSupportedExtension(filename: string): boolean {

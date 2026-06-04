@@ -1,4 +1,5 @@
 import { buildNonceAttribute } from "#veryfront/html/html-escape.ts";
+import { buildTrustedHtmlValidatorScript } from "#veryfront/security/client/html-sanitizer.ts";
 
 /**
  * Serialize a value as a JSON string literal that is safe to embed inside an
@@ -35,6 +36,7 @@ export class PageHandler {
     const renderUrl = `/_veryfront/rsc/render${pathname}${queryString ? `?${queryString}` : ""}`;
     const nonceAttr = buildNonceAttribute(nonce);
     const renderUrlJs = jsonForScript(renderUrl);
+    const trustedHtmlValidatorScript = buildTrustedHtmlValidatorScript();
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -58,27 +60,7 @@ export class PageHandler {
       }
     }
 
-    function isDevMode() {
-      return window.__VERYFRONT_DEV__ === true;
-    }
-
-    function validateTrustedHtml(html) {
-      const patterns = [
-        { pattern: /<script[^>]*>[\\s\\S]*?<\\/script>/gi, name: 'inline script' },
-        { pattern: /javascript:/gi, name: 'javascript: URL' },
-        { pattern: /\\bon\\w+\\s*=/gi, name: 'event handler attribute' },
-        { pattern: /data:\\s*text\\/html/gi, name: 'data: HTML URL' },
-      ];
-
-      for (const { pattern, name } of patterns) {
-        pattern.lastIndex = 0;
-        if (!pattern.test(html)) continue;
-        console.warn(\`[Security] Suspicious \${name} detected in server HTML\`);
-        if (!isDevMode()) throw new Error(\`Potentially unsafe HTML: \${name} detected\`);
-      }
-
-      return html;
-    }
+    ${trustedHtmlValidatorScript}
 
     (async () => {
       const renderUrl = ${renderUrlJs};

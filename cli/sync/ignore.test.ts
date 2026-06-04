@@ -28,15 +28,29 @@ describe("cli/sync/ignore", () => {
       assertEquals(checker.isIgnored("package.json"), false);
     });
 
-    it("should handle .env* pattern (matches .env but not dotted variants)", () => {
-      // NOTE: The glob-to-regex conversion treats raw * as a regex quantifier
-      // rather than a glob wildcard, so .env* matches ".env" but not ".env.local".
-      // Use "*.local" or exact names to match dotted env files.
+    it("should handle .env* pattern as a glob", () => {
       const checker = createIgnoreChecker([".env*"]);
 
       assertEquals(checker.isIgnored(".env"), true);
+      assertEquals(checker.isIgnored(".env.local"), true);
       assertEquals(checker.isIgnored(".envvv"), true);
       assertEquals(checker.isIgnored("src/.env"), true);
+    });
+
+    it("should support double-star directory globs", () => {
+      const checker = createIgnoreChecker(["src/**/fixtures/*.json"]);
+
+      assertEquals(checker.isIgnored("src/fixtures/data.json"), true);
+      assertEquals(checker.isIgnored("src/deep/fixtures/data.json"), true);
+      assertEquals(checker.isIgnored("src/deep/fixtures/data.ts"), false);
+    });
+
+    it("should apply negated patterns in order", () => {
+      const checker = createIgnoreChecker(["*.log", "!keep.log"]);
+
+      assertEquals(checker.isIgnored("server.log"), true);
+      assertEquals(checker.isIgnored("keep.log"), false);
+      assertEquals(checker.isIgnored("logs/keep.log"), false);
     });
 
     it("should handle directory-trailing-slash patterns", () => {

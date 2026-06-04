@@ -4,15 +4,6 @@ import { zodToJsonSchema } from "./schema/zod-json-schema.ts";
 import { agentLogger } from "#veryfront/utils/logger/logger.ts";
 import { createError, getErrorMessage, toError } from "#veryfront/errors/veryfront-error.ts";
 
-interface ZodLikeSchema {
-  _def?: {
-    typeName?: string; // v3
-    type?: string; // v4
-    shape?: (() => Record<string, unknown>) | Record<string, unknown>;
-  };
-  parse?: (input: unknown) => void;
-}
-
 interface ContractSchemaShape {
   __zod?: unknown;
   _output?: unknown;
@@ -39,36 +30,8 @@ function isContractSchema(value: unknown): value is ContractSchemaShape {
   );
 }
 
-function hasValidZodTypeName(schema: unknown): schema is ZodLikeSchema {
-  if (schema === null || typeof schema !== "object") return false;
-  if (!("_def" in schema)) return false;
-  const def = (schema as ZodLikeSchema)._def;
-  return !!(def?.typeName ?? def?.type);
-}
-
-function getSchemaShape(schema: ZodLikeSchema): Record<string, unknown> | null {
-  const shape = schema._def?.shape;
-  if (!shape) return null;
-  return typeof shape === "function" ? shape() : shape;
-}
-
 function hasSchemaParse(schema: unknown): schema is SchemaWithParse {
   return typeof (schema as { parse?: unknown } | null | undefined)?.parse === "function";
-}
-
-function buildSchemaFromShape(
-  shape: Record<string, unknown>,
-  additionalProperties = false,
-): JsonSchema {
-  const keys = Object.keys(shape);
-  const properties = Object.fromEntries(keys.map((key) => [key, { type: "string" as const }]));
-
-  return {
-    type: "object" as const,
-    properties,
-    required: additionalProperties ? undefined : keys,
-    ...(additionalProperties ? { additionalProperties: true } : {}),
-  };
 }
 
 function permissiveFallback(logPrefix: string, toolId: string, detail: string): JsonSchema {
@@ -114,10 +77,8 @@ function convertSchemaToJson(
     return schema;
   }
 
-  // Modern path: contract Schema<T> (defineSchema-produced) — route through
-  // the SchemaValidator contract via zodToJsonSchema (which detects both
-  // wrapped and raw zod shapes).
-  if (isContractSchema(schema) || hasValidZodTypeName(schema)) {
+  // Contract Schema<T> values route through the SchemaValidator contract.
+  if (isContractSchema(schema)) {
     const result = tryConvert(
       () => zodToJsonSchema(schema),
       toolId,
@@ -129,24 +90,11 @@ function convertSchemaToJson(
     return result;
   }
 
-  const shape = getSchemaShape(schema as ZodLikeSchema);
-  if (shape) {
-    const result = tryConvert(
-      () => buildSchemaFromShape(shape, permissive),
-      toolId,
-      logPrefix,
-      permissive,
-      "schema introspection failed",
-    );
-    logSchemaResult(logPrefix, toolId, "Introspected", result);
-    return result;
-  }
-
   if (permissive) return permissiveFallback(logPrefix, toolId, "Using fully dynamic schema");
 
   schemaError(
     toolId,
-    "input schema is not a valid Zod schema. Use the same Zod instance or set allowUnknownSchema to true.",
+    "input schema is not a valid Veryfront schema. Use defineSchema() or set allowUnknownSchema to true.",
   );
 }
 

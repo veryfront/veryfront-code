@@ -350,6 +350,33 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/dist\/index\.js"/);
   });
 
+  it("rewrites only parsed Node import specifiers", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(
+      join(depDir, "package.json"),
+      JSON.stringify({ main: "./dist/index.js" }),
+    );
+
+    const source = [
+      'const text = "from \\"my-lib\\"";',
+      '// import("my-lib")',
+      'import data from "my-lib" with { type: "json" };',
+    ].join("\n");
+
+    const rewritten = await rewriteNodeExternalImports(
+      source,
+      tmpDir,
+      fs,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertEquals(rewritten.includes('const text = "from \\"my-lib\\""'), true);
+    assertEquals(rewritten.includes('// import("my-lib")'), true);
+    assertMatch(rewritten, /from "file:\/\/.*node_modules\/my-lib\/dist\/index\.js" with/);
+  });
+
   it("rewrites compiled-binary veryfront root and subpath imports to local shims", () => {
     const source = [
       'import { defineConfig } from "veryfront";',
@@ -582,6 +609,30 @@ describe("loadHandlerModule", { sanitizeResources: false, sanitizeOps: false }, 
     assertMatch(rewritten, /from "npm:my-lib@1\.2\.3"/);
     assertMatch(rewritten, /from "npm:my-lib@1\.2\.3\/subpath"/);
     assertMatch(rewritten, /import\("npm:my-lib@1\.2\.3\/subpath"\)/);
+  });
+
+  it("rewrites only parsed Deno npm import specifiers", async () => {
+    const tmpDir = await makeTempDir();
+    const depDir = join(tmpDir, "node_modules", "my-lib");
+    await fs.mkdir(depDir, { recursive: true });
+    await fs.writeTextFile(join(depDir, "package.json"), JSON.stringify({ version: "1.2.3" }));
+
+    const source = [
+      'const text = "from \\"my-lib\\"";',
+      '// import("my-lib")',
+      'import data from "my-lib" with { type: "json" };',
+    ].join("\n");
+
+    const rewritten = await rewriteDenoNpmDependencyImports(
+      source,
+      tmpDir,
+      fs,
+      new Map([["my-lib", "^1.0.0"]]),
+    );
+
+    assertEquals(rewritten.includes('const text = "from \\"my-lib\\""'), true);
+    assertEquals(rewritten.includes('// import("my-lib")'), true);
+    assertEquals(rewritten.includes('from "npm:my-lib@1.2.3" with { type: "json" }'), true);
   });
 
   it("falls back to declared ranges when node_modules package versions are unavailable", async () => {

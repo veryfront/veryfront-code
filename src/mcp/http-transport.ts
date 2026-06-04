@@ -33,6 +33,7 @@ export interface MCPHTTPTransportDependencies {
   handleRequest: (
     request: JSONRPCRequest,
     context?: ToolExecutionContext,
+    sessionId?: string,
   ) => Promise<JSONRPCResponse>;
   extractRequestContext: (request: Request) => ToolExecutionContext | undefined;
   isOriginAllowed: (requestOrigin?: string | null) => boolean;
@@ -139,8 +140,9 @@ export function createMCPHTTPHandler(
       return createJSONResponse(rpcResponse, { headers: responseHeaders });
     }
 
+    let sessionId: string | undefined;
     if (sessionManager.size > 0) {
-      const sessionId = request.headers.get("MCP-Session-Id");
+      sessionId = request.headers.get("MCP-Session-Id") ?? undefined;
       if (!sessionId) {
         return createJSONRPCErrorResponse(400, -32600, "Missing MCP-Session-Id header");
       }
@@ -151,12 +153,12 @@ export function createMCPHTTPHandler(
 
     if (rpcRequest.id === undefined) {
       const context = extractRequestContext(request);
-      await handleRequest(rpcRequest, context);
+      await handleRequest(rpcRequest, context, sessionId);
       return new Response(null, { status: 202, headers: responseHeaders });
     }
 
     const context = extractRequestContext(request);
-    const rpcResponse = await handleRequest(rpcRequest, context);
+    const rpcResponse = await handleRequest(rpcRequest, context, sessionId);
     return createJSONResponse(rpcResponse, { headers: responseHeaders });
   };
 }

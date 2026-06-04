@@ -9,10 +9,9 @@
  * `tool/factory.ts`, `workflow/registry.ts`, `routing/api/openapi/...`,
  * `mcp/server.ts`, `cli/mcp/server.ts`) continue to compile.
  *
- * Inputs may be either an opaque `Schema<T>` produced by `defineSchema`
- * (the modern path) or a raw zod schema (legacy path during the migration
- * window). Both shapes are routed through the `SchemaValidator` contract
- * so no zod-specific logic remains in this file.
+ * Inputs must be opaque `Schema<T>` values produced by `defineSchema`.
+ * Conversion is routed through the `SchemaValidator` contract so no
+ * zod-specific logic remains in this file.
  *
  * @module tool/schema/zod-json-schema
  */
@@ -36,52 +35,24 @@ function isContractSchema(value: unknown): value is Schema<unknown> {
   );
 }
 
-/** Detect a raw zod schema: object with `_def` carrying `typeName` (v3) or `type` (v4). */
-function isRawZodSchema(value: unknown): value is { _def: { typeName?: string; type?: string } } {
-  if (value === null || typeof value !== "object") return false;
-  if (!("_def" in value)) return false;
-  const def = (value as { _def: unknown })._def as { typeName?: unknown; type?: unknown } | null;
-  if (!def || typeof def !== "object") return false;
-  return typeof def.typeName === "string" || typeof def.type === "string";
-}
-
 /**
- * Adapter that wraps a raw zod schema in the contract's `Schema<unknown>`
- * shape so the contract's `toJsonSchema` / `isOptional` can unwrap it via
- * the `__zod` brand.
- */
-function wrapRawZod(value: unknown): Schema<unknown> {
-  return { __zod: value } as unknown as Schema<unknown>;
-}
-
-/**
- * Convert a `Schema<T>` (or, transitionally, a raw zod schema) into a
- * JSON Schema document.
+ * Convert a `Schema<T>` into a JSON Schema document.
  *
- * Throws if the input is neither a contract schema nor a raw zod schema —
- * matches the pre-B2 behavior of the original `zodToJsonSchema` guard.
+ * Throws if the input is not a contract schema.
  */
 export function zodToJsonSchema(schema: unknown): JsonSchema {
   if (isContractSchema(schema)) {
     return schemaToJsonSchema(schema);
   }
-  if (isRawZodSchema(schema)) {
-    return schemaToJsonSchema(wrapRawZod(schema));
-  }
-  throw new Error("Invalid Zod schema: missing _def property");
+  throw new Error("Invalid Veryfront schema: use defineSchema()");
 }
 
 /**
- * Returns `true` when the schema permits `undefined`. Accepts both
- * contract `Schema<T>` and raw zod schemas for the same compatibility
- * reasons as `zodToJsonSchema` above.
+ * Returns `true` when the schema permits `undefined`.
  */
 export function isOptionalSchema(schema: unknown): boolean {
   if (isContractSchema(schema)) {
     return schemaIsOptional(schema);
-  }
-  if (isRawZodSchema(schema)) {
-    return schemaIsOptional(wrapRawZod(schema));
   }
   return false;
 }

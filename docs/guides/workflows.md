@@ -110,8 +110,8 @@ Inside an agent tool, start the workflow from `execute`:
 
 ```ts
 // tools/start-content-workflow.ts
-import { z } from "zod";
 import { getAgent, getAllAgentIds } from "veryfront/agent";
+import { defineSchema } from "veryfront/schemas";
 import { tool, toolRegistry } from "veryfront/tool";
 import { createWorkflowClient } from "veryfront/workflow";
 import contentPipeline from "../workflows/content-pipeline.ts";
@@ -133,9 +133,11 @@ workflows.register(contentPipeline);
 
 export default tool({
   description: "Start the article workflow for a topic",
-  inputSchema: z.object({
-    topic: z.string().describe("Article topic"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      topic: v.string().describe("Article topic"),
+    })
+  )(),
   execute: async ({ topic }) => {
     const handle = await workflows.start("content-pipeline", { topic });
     return { runId: handle.runId };
@@ -285,19 +287,23 @@ waitForEvent("payment-confirmed", {
 ## Workflow configuration
 
 ```ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { step, workflow } from "veryfront/workflow";
 
 export default workflow({
   id: "pipeline",
   description: "Content generation pipeline",
   version: "1.0.0",
-  inputSchema: z.object({
-    topic: z.string().describe("Content topic"),
-  }),
-  outputSchema: z.object({
-    article: z.string().describe("Generated article body"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      topic: v.string().describe("Content topic"),
+    })
+  )(),
+  outputSchema: defineSchema((v) =>
+    v.object({
+      article: v.string().describe("Generated article body"),
+    })
+  )(),
   timeout: "30m",
   retry: { maxAttempts: 3, backoff: "exponential" },
   steps: ({ input }) => [

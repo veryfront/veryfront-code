@@ -211,7 +211,7 @@ describe("zodToJsonSchema", () => {
       assertThrows(
         () => zodToJsonSchema(null as unknown as Schema<unknown>),
         Error,
-        "Invalid Zod schema",
+        "Invalid Veryfront schema",
       );
     });
 
@@ -219,7 +219,7 @@ describe("zodToJsonSchema", () => {
       assertThrows(
         () => zodToJsonSchema({} as unknown as Schema<unknown>),
         Error,
-        "Invalid Zod schema",
+        "Invalid Veryfront schema",
       );
     });
   });
