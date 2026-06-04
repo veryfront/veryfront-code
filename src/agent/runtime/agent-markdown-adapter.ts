@@ -15,6 +15,7 @@ export function createRuntimeAgentFromMarkdownDefinition(
     system: definition.instructions,
     ...(definition.model ? { model: definition.model } : {}),
     ...(definition.maxSteps === undefined ? {} : { maxSteps: definition.maxSteps }),
+    ...(definition.providerTools ? { providerTools: definition.providerTools } : {}),
   });
 
   markdownDefinitionByAgent.set(runtimeAgent, definition);
