@@ -1012,6 +1012,40 @@ describe("integration endpoint specs", () => {
       getTool("outlook", "find_meeting_times").endpoint?.url,
       "https://graph.microsoft.com/v1.0/me/findMeetingTimes",
     );
+    assertEquals(
+      getTool("outlook", "list_conversation_messages").endpoint?.params?.["$orderby"],
+      undefined,
+    );
+    assertEquals(getTool("outlook", "add_attachment_to_message").endpoint?.body, {
+      "@odata.type": {
+        type: "string",
+        description: "Microsoft Graph attachment type",
+        default: "#microsoft.graph.fileAttachment",
+      },
+      name: {
+        type: "string",
+        description: "Attachment filename",
+        required: true,
+      },
+      contentBytes: {
+        type: "string",
+        description: "Base64-encoded attachment content",
+        required: true,
+      },
+      contentType: {
+        type: "string",
+        description: "Attachment MIME type",
+      },
+      isInline: {
+        type: "boolean",
+        description: "Whether the attachment is inline",
+        default: false,
+      },
+    });
+    assertEquals(
+      getTool("outlook", "add_event_attachment").endpoint?.body,
+      getTool("outlook", "add_attachment_to_message").endpoint?.body,
+    );
   });
 
   it("publishes provider-declared historical summary contracts for email list/search tools", () => {
