@@ -1,11 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert";
 import { describe, it } from "#veryfront/testing/bdd";
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   createSandboxShellTools,
   normalizeBashToolSet,
   renameSandboxFileTools,
 } from "./shell-tools.ts";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 
 describe("sandbox/shell-tools", () => {
   it("renames bash-tool file tools to sandbox-scoped names", () => {
@@ -120,6 +122,67 @@ describe("sandbox/shell-tools", () => {
     });
 
     assertEquals(normalized.bash?.id, "bash");
+  });
+
+  it("provides provider-safe JSON schema for bash-tool schemas without inputSchemaJson", () => {
+    const normalized = normalizeBashToolSet({
+      bash: {
+        description: "Run commands",
+        inputSchema: { parse: (input: unknown) => input },
+        execute: () => ({ ok: true }),
+      },
+    });
+
+    assertEquals(normalized.bash?.inputSchemaJson, {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    });
+    assertEquals(toolToProviderDefinition(normalized.bash as never).parameters, {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    });
+  });
+
+  it("keeps defineSchema input schemas on the normal conversion path", () => {
+    const inputSchema = defineSchema((v) =>
+      v.object({
+        command: v.string(),
+      })
+    )();
+    const normalized = normalizeBashToolSet({
+      bash: {
+        description: "Run commands",
+        inputSchema,
+        execute: () => ({ ok: true }),
+      },
+    });
+
+    assertEquals(normalized.bash?.inputSchemaJson, undefined);
+    assertEquals(toolToProviderDefinition(normalized.bash as never).parameters, {
+      type: "object",
+      properties: {
+        command: { type: "string" },
+      },
+      required: ["command"],
+    });
+  });
+
+  it("falls back for schema-like objects that are not JSON Schema", () => {
+    const normalized = normalizeBashToolSet({
+      bash: {
+        description: "Run commands",
+        inputSchema: { metadata: { name: "bash" } },
+        execute: () => ({ ok: true }),
+      },
+    });
+
+    assertEquals(normalized.bash?.inputSchemaJson, {
+      type: "object",
+      properties: {},
+      additionalProperties: true,
+    });
   });
 
   it("handles invalid definitions gracefully", () => {

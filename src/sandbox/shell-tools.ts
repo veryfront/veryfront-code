@@ -17,6 +17,11 @@ export type {
 const SANDBOX_WORKING_DIRECTORY = "/workspace";
 const SANDBOX_TOOL_PROMPT =
   "Available tools: agent-browser, awk, cat, column, comm, curl, cut, diff, expand, find, fold, grep, head, iconv, join, jq, nl, node, od, paste, printf, python3, rev, sed, sort, split, strings, tail, tee, tr, unexpand, uniq, veryfront, wc, xargs, xxd, yq, and more";
+const PERMISSIVE_OBJECT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {},
+  additionalProperties: true,
+};
 
 const JSON_SCHEMA_TYPES: ReadonlySet<string> = new Set([
   "string",
@@ -115,7 +120,17 @@ function normalizeJsonSchema(value: unknown): JsonSchema | undefined {
   if (typeof value.minItems === "number") schema.minItems = value.minItems;
   if (typeof value.maxItems === "number") schema.maxItems = value.maxItems;
 
-  return schema;
+  return Object.keys(schema).length > 0 ? schema : undefined;
+}
+
+function isContractSchema(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if ("__zod" in value) return true;
+  return (
+    "_output" in value &&
+    typeof value.parse === "function" &&
+    typeof value.safeParse === "function"
+  );
 }
 
 function normalizeBashTool(
@@ -132,6 +147,8 @@ function normalizeBashTool(
   const description = toolDefinition.description;
   const inputSchema = toolDefinition.inputSchema;
   const inputSchemaJson = normalizeJsonSchema(toolDefinition.inputSchemaJson);
+  const hasContractInputSchema = isContractSchema(inputSchema);
+  const inputSchemaAsJson = hasContractInputSchema ? undefined : normalizeJsonSchema(inputSchema);
   const executeCandidate = toolDefinition.execute;
   const mcp = toolDefinition.mcp;
 
@@ -149,6 +166,10 @@ function normalizeBashTool(
   }
   if (inputSchemaJson !== undefined) {
     normalized.inputSchemaJson = inputSchemaJson;
+  } else if (inputSchemaAsJson !== undefined) {
+    normalized.inputSchemaJson = inputSchemaAsJson;
+  } else if (inputSchema !== undefined && !hasContractInputSchema) {
+    normalized.inputSchemaJson = PERMISSIVE_OBJECT_SCHEMA;
   }
   if (typeof executeCandidate === "function") {
     normalized.execute = async (input: unknown, options?: ToolExecutionContext) =>
