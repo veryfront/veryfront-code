@@ -1,4 +1,4 @@
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { DefaultHostedChatRuntimeSystemRefreshInput } from "./default-chat-runtime.ts";
 import {
@@ -144,6 +144,39 @@ describe("agent/default-hosted-project-steering-refresh", () => {
       true,
     );
     assertEquals(system.includes("Current run tool inventory:"), true);
+  });
+
+  it("keeps provider-native tools in refreshed runtime inventory", async () => {
+    const refresh = createDefaultHostedProjectSteeringRefresh({
+      fetchProjectInstructions: () => Promise.resolve("Fresh instructions"),
+      fetchSkills: () => Promise.resolve([]),
+      buildInstructions: (input) => input.instructions,
+    });
+
+    const input = createRefreshInput({
+      taskContext: {
+        authToken: "auth-token",
+        projectId: "project-1",
+        branchId: "branch-1",
+        model: "anthropic/claude-sonnet-4-6",
+      },
+      toolAssembly: {
+        runtimeTools: {},
+        remoteToolSources: [],
+        localToolNames: ["sleep"],
+        remoteToolNames: [],
+        providerToolNames: ["web_fetch", "web_search"],
+        availableToolNames: [],
+        compatibleRemoteToolNames: [],
+        systemInstructions: "",
+      },
+    });
+
+    const system = await refresh(input);
+
+    assertEquals(input.taskContext.availableToolNames, ["sleep", "web_fetch", "web_search"]);
+    assertStringIncludes(system, "- web_fetch");
+    assertStringIncludes(system, "- web_search");
   });
 
   it("falls back to initial steering when refresh lookups fail", async () => {

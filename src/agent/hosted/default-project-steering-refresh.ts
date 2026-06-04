@@ -212,7 +212,11 @@ export function createDefaultHostedProjectSteeringRefresh(
       allowedSkillIds: input.taskContext.availableSkillIds,
     });
     const allToolNames = [
-      ...new Set([...input.toolAssembly.localToolNames, ...remoteToolNames]),
+      ...new Set([
+        ...input.toolAssembly.localToolNames,
+        ...remoteToolNames,
+        ...input.toolAssembly.providerToolNames,
+      ]),
     ].sort();
     const toolNames = selectProviderCompatibleToolNames(allToolNames, {
       model: input.taskContext.model,

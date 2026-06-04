@@ -69,6 +69,7 @@ export type PrepareHostedChatRuntimeToolAssemblyInput<
   mcpServers?: readonly AgentServiceMcpServerConfig[];
   conversationId?: string;
   allowedToolNames?: HostedChatRuntimeAllowedToolNames;
+  sourceProviderToolNames?: readonly string[];
   projectScopedRemoteToolOptions?: ProjectScopedRemoteToolOptions;
   createRemoteToolSource?: (config: RemoteMCPToolSourceConfig) => RemoteToolSource;
   traceLocalTools?: TraceHostToolsOptions<TTraceAttributes>;
@@ -149,8 +150,11 @@ export async function prepareHostedChatRuntimeToolAssembly<
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
+  const sourceProviderToolNames = new Set(input.sourceProviderToolNames ?? []);
   const providerToolNames = getProviderNativeToolNames({ model: input.taskContext.model }).filter(
-    (toolName) => allowedToolNames ? allowedToolNames.has(toolName) : false,
+    (toolName) =>
+      sourceProviderToolNames.has(toolName) ||
+      (allowedToolNames ? allowedToolNames.has(toolName) : false),
   );
   const localToolNames = Object.keys(localHostTools);
   const availableToolNames = selectProviderCompatibleToolNames(
