@@ -7,13 +7,13 @@
  * ```ts
  * import { createMCPServer } from "veryfront/mcp";
  * import { tool } from "veryfront/tool";
- * import { z } from "zod";
+ * import { defineSchema } from "veryfront/schemas";
  *
  * // Tools auto-register with MCP when defined
  * tool({
  *   id: "search",
  *   description: "Search docs",
- *   inputSchema: z.object({ query: z.string() }),
+ *   inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
  *   execute: async ({ query }) => ({ results: [] }),
  * });
  *

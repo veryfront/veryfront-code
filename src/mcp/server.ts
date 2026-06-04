@@ -84,6 +84,10 @@ interface PendingTaskRun {
   abortController: AbortController;
 }
 
+function pendingRequestKey(requestId: string | number, sessionId?: string): string {
+  return JSON.stringify([sessionId ?? null, typeof requestId, requestId]);
+}
+
 /** Configuration used by integration loader. */
 export interface IntegrationLoaderConfig {
   integrations: Record<string, IntegrationRuntimeConfig | undefined>;
@@ -112,6 +116,7 @@ export class MCPServer {
   private sessionManager = new SessionManager();
   private taskStore = new TaskStore();
   private pendingTasks = new Map<string, PendingTaskRun>();
+  private pendingRequestAbortControllers = new Map<string, AbortController>();
   private clientCapabilities: Record<string, unknown> = {};
   private sessionCapabilities = new Map<string, Record<string, unknown>>();
 
@@ -195,11 +200,7 @@ export class MCPServer {
   }
 
   /**
-   * Configure integration tools to be loaded from the API.
-   *
-   * When API-side integration tools are available (apiBaseUrl + apiToken),
-   * tools are loaded remotely via the API's /integrations/tools/list endpoint.
-   * Otherwise falls back to the legacy local loading path.
+   * Configure API-backed integration tool loading.
    */
   setIntegrationLoader(config: IntegrationLoaderConfig): void {
     this.integrationLoader = config;
@@ -218,12 +219,22 @@ export class MCPServer {
     return mode in elicitation;
   }
 
-  handleRequest(request: JSONRPCRequest, context?: ToolExecutionContext): Promise<JSONRPCResponse> {
+  handleRequest(
+    request: JSONRPCRequest,
+    context?: ToolExecutionContext,
+    sessionId?: string,
+  ): Promise<JSONRPCResponse> {
     return withSpan(
       "mcp.handleRequest",
       async () => {
         try {
-          const result = await this.dispatch(request.method, request.params, context);
+          const result = await this.dispatch(
+            request.method,
+            request.params,
+            context,
+            request.id,
+            sessionId,
+          );
           return { jsonrpc: "2.0", id: request.id, result };
         } catch (error) {
           return {
@@ -241,12 +252,14 @@ export class MCPServer {
     method: string,
     params: JSONRPCParams | undefined,
     context?: ToolExecutionContext,
+    requestId?: string | number,
+    sessionId?: string,
   ): Promise<unknown> {
     switch (method) {
       case "tools/list":
         return this.listTools(params);
       case "tools/call":
-        return this.callTool(params, context);
+        return this.callTool(params, context, requestId, sessionId);
       case "resources/list":
         return this.listResources(params);
       case "resources/read":
@@ -262,8 +275,7 @@ export class MCPServer {
       case "notifications/initialized":
         return Promise.resolve({});
       case "notifications/cancelled":
-        // TODO(#841): propagate cancellation to in-flight tool executions via AbortController
-        return Promise.resolve({});
+        return this.cancelRequest(params, sessionId);
       case "completion/complete":
         return this.complete(params);
       case "logging/setLevel":
@@ -353,6 +365,8 @@ export class MCPServer {
   private callTool(
     params: JSONRPCParams | undefined,
     context?: ToolExecutionContext,
+    requestId?: string | number,
+    sessionId?: string,
   ): Promise<Record<string, unknown>> {
     const p = toParamsRecord(params);
     const { name, arguments: args } = p;
@@ -445,8 +459,26 @@ export class MCPServer {
     return withSpan(
       "mcp.callTool",
       async () => {
+        const abortController = requestId === undefined ? undefined : new AbortController();
+        const outerAbortSignal = toolContext?.abortSignal;
+        const abortFromOuterSignal = () => abortController?.abort();
+        if (abortController) {
+          if (outerAbortSignal?.aborted) {
+            abortController.abort();
+          } else {
+            outerAbortSignal?.addEventListener("abort", abortFromOuterSignal, { once: true });
+          }
+          this.pendingRequestAbortControllers.set(
+            pendingRequestKey(requestId!, sessionId),
+            abortController,
+          );
+        }
+        const foregroundToolContext: ToolExecutionContext | undefined = abortController
+          ? { ...toolContext, abortSignal: abortController.signal }
+          : toolContext;
+
         try {
-          const result = await executeTool(toolName, args, toolContext);
+          const result = await executeTool(toolName, args, foregroundToolContext);
           return {
             content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
             isError: false,
@@ -457,6 +489,11 @@ export class MCPServer {
             content: [{ type: "text", text: message }],
             isError: true,
           };
+        } finally {
+          if (requestId !== undefined) {
+            this.pendingRequestAbortControllers.delete(pendingRequestKey(requestId, sessionId));
+          }
+          outerAbortSignal?.removeEventListener("abort", abortFromOuterSignal);
         }
       },
       { "mcp.tool.name": toolName },
@@ -635,6 +672,19 @@ export class MCPServer {
     return Promise.resolve({});
   }
 
+  private cancelRequest(
+    params: JSONRPCParams | undefined,
+    sessionId?: string,
+  ): Promise<Record<string, unknown>> {
+    const { requestId } = toParamsRecord(params);
+    if (typeof requestId !== "string" && typeof requestId !== "number") {
+      return Promise.resolve({});
+    }
+
+    this.pendingRequestAbortControllers.get(pendingRequestKey(requestId, sessionId))?.abort();
+    return Promise.resolve({});
+  }
+
   private getTask(params: JSONRPCParams | undefined): Promise<Record<string, unknown>> {
     const { taskId } = toParamsRecord(params);
     if (!taskId) {
@@ -691,7 +741,8 @@ export class MCPServer {
       authEnabled: this.config.auth.type !== "none",
       getCORSHeaders: (requestOrigin) => this.getCORSHeaders(requestOrigin),
       validateAuth: (request) => this.validateAuth(request),
-      handleRequest: (request, context) => this.handleRequest(request, context),
+      handleRequest: (request, context, sessionId) =>
+        this.handleRequest(request, context, sessionId),
       extractRequestContext: (request) => this.extractRequestContext(request),
       isOriginAllowed: (requestOrigin) =>
         !requestOrigin ||

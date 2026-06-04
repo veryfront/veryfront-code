@@ -11,7 +11,7 @@ A tool is a typed function an agent can call. It declares input, describes when 
 - A Veryfront project running locally (see [Create project](../getting-started/create-project.md)).
 - An agent that will call the tool, or an API route that invokes the tool
   directly (see [Agents](./agents.md) and [API routes](./api-routes.md)).
-- `zod` is available in the project (it is bundled with `veryfront`).
+- `defineSchema` is available from `veryfront/schemas`.
 
 ## Define a tool
 
@@ -19,16 +19,18 @@ Create a file in `tools/`:
 
 ```ts
 // tools/get-weather.ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { tool } from "veryfront/tool";
 
 export default tool({
   description: "Get the current weather for a city",
-  inputSchema: z.object({
-    city: z.string().describe("City name"),
-    units: z.enum(["celsius", "fahrenheit"]).default("celsius")
-      .describe("Temperature unit"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      city: v.string().describe("City name"),
+      units: v.enum(["celsius", "fahrenheit"]).default("celsius")
+        .describe("Temperature unit"),
+    })
+  )(),
   execute: async ({ city, units }) => {
     const temperature = units === "fahrenheit" ? 72 : 22;
     return { city, temperature, units, conditions: "sunny" };
@@ -159,15 +161,17 @@ export default agent({
 The `description` field is what the model reads to decide when to call your tool. Be specific, and use `.describe()` on schema fields to help the model understand what to pass:
 
 ```ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Search the product catalog by name, category, or price range",
-  inputSchema: z.object({
-    query: z.string().min(1).describe("Search term"),
-    category: z.string().optional().describe("Product category filter"),
-    maxPrice: z.number().optional().describe("Maximum price in USD"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v.string().min(1).describe("Search term"),
+      category: v.string().optional().describe("Product category filter"),
+      maxPrice: v.number().optional().describe("Maximum price in USD"),
+    })
+  )(),
   execute: async ({ query, category, maxPrice }) => {/* ... */},
 });
 ```
@@ -177,13 +181,15 @@ export default tool({
 Throw from `execute` to signal an error. The agent sees the error message and can retry or respond accordingly:
 
 ```ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "Look up a user by email",
-  inputSchema: z.object({
-    email: z.string().email().describe("User email address"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      email: v.string().email().describe("User email address"),
+    })
+  )(),
   execute: async ({ email }) => {
     const user = await db.users.findByEmail(email);
     if (!user) throw new Error(`No user found with email ${email}`);
@@ -197,14 +203,16 @@ export default tool({
 The `execute` function receives an optional second argument with runtime context:
 
 ```ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 
 export default tool({
   description: "List repos for the current account",
-  inputSchema: z.object({
-    sort: z.enum(["created", "updated"]).default("updated")
-      .describe("Repository sort order"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      sort: v.enum(["created", "updated"]).default("updated")
+        .describe("Repository sort order"),
+    })
+  )(),
   execute: async ({ sort }, context) => {
     const accountId = typeof context?.accountId === "string" ? context.accountId : "anonymous";
     return await fetchRepos(accountId, { sort });
@@ -240,7 +248,7 @@ For one-off tools that don't need auto-discovery, define them inline:
 
 ```ts
 import { agent } from "veryfront/agent";
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { tool } from "veryfront/tool";
 
 export default agent({
@@ -248,9 +256,11 @@ export default agent({
   tools: {
     calculate: tool({
       description: "Evaluate a math expression",
-      inputSchema: z.object({
-        expression: z.string().describe("Math expression to evaluate"),
-      }),
+      inputSchema: defineSchema((v) =>
+        v.object({
+          expression: v.string().describe("Math expression to evaluate"),
+        })
+      )(),
       execute: async ({ expression }) => ({
         result: evaluateMathExpression(expression),
       }),

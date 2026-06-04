@@ -16,12 +16,54 @@ export { escapeHtml };
  * Patterns that RSC should never generate.
  * These indicate potential server compromise or misconfiguration.
  */
-const SUSPICIOUS_PATTERNS = [
-  { pattern: /<script[^>]*>[\s\S]*?<\/script>/gi, name: "inline script" },
-  { pattern: /javascript:/gi, name: "javascript: URL" },
-  { pattern: /\bon\w+\s*=/gi, name: "event handler attribute" },
-  { pattern: /data:\s*text\/html/gi, name: "data: HTML URL" },
+const SUSPICIOUS_PATTERN_SPECS = [
+  { source: String.raw`<script[^>]*>[\s\S]*?<\/script>`, flags: "gi", name: "inline script" },
+  { source: String.raw`javascript:`, flags: "gi", name: "javascript: URL" },
+  { source: String.raw`\bon\w+\s*=`, flags: "gi", name: "event handler attribute" },
+  { source: String.raw`data:\s*text\/html`, flags: "gi", name: "data: HTML URL" },
 ];
+
+function createSuspiciousPatterns(): Array<{ pattern: RegExp; name: string }> {
+  return SUSPICIOUS_PATTERN_SPECS.map(({ source, flags, name }) => ({
+    pattern: new RegExp(source, flags),
+    name,
+  }));
+}
+
+function jsonForInlineScript(value: unknown): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+export function buildTrustedHtmlValidatorScript(): string {
+  const specsJson = jsonForInlineScript(SUSPICIOUS_PATTERN_SPECS);
+
+  return `
+    function isDevMode() {
+      return window.__VERYFRONT_DEV__ === true;
+    }
+
+    const suspiciousHtmlPatterns = ${specsJson}.map(({ source, flags, name }) => ({
+      pattern: new RegExp(source, flags),
+      name,
+    }));
+
+    function validateTrustedHtml(html) {
+      for (const { pattern, name } of suspiciousHtmlPatterns) {
+        pattern.lastIndex = 0;
+        if (!pattern.test(html)) continue;
+        console.warn(\`[Security] Suspicious \${name} detected in server HTML\`);
+        if (!isDevMode()) throw new Error(\`Potentially unsafe HTML: \${name} detected\`);
+      }
+
+      return html;
+    }
+  `.trim();
+}
 
 /** Global interface for Veryfront runtime flags */
 interface GlobalWithVeryfrontEnv {
@@ -62,7 +104,7 @@ export function validateTrustedHtml(
 ): string {
   const { strict = false, warn = true } = options;
 
-  for (const { pattern, name } of SUSPICIOUS_PATTERNS) {
+  for (const { pattern, name } of createSuspiciousPatterns()) {
     pattern.lastIndex = 0;
     if (!pattern.test(html)) continue;
 

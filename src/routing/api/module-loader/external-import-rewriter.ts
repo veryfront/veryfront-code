@@ -3,6 +3,7 @@ import type { FileSystem } from "#veryfront/platform/compat/fs.ts";
 import * as pathHelper from "#veryfront/compat/path";
 import { isDeno, isNode } from "#veryfront/platform/compat/runtime.ts";
 import { rewriteNpmImports } from "#veryfront/transforms/npm-import-rewrites.ts";
+import { parseImports, replaceSpecifiers } from "#veryfront/transforms/esm/lexer.ts";
 import { isWithinDirectory } from "#veryfront/security/path-validation.ts";
 import { resolveExportEntry, toCjsDestructureBindings } from "./loader-helpers.ts";
 
@@ -301,81 +302,67 @@ export async function rewriteNodeExternalImports(
   userDeps: Map<string, string>,
 ): Promise<string> {
   const { pathToFileURL } = await import("node:url");
-  let transformed = code;
+  const replacements = new Map<string, string>();
 
   logger.debug(`Rewriting external imports for Node.js, projectDir: ${projectDir}`);
 
-  for (const pkg of getNodeExternalPackagesToResolve(userDeps)) {
-    const escapedPkg = pkg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const importedSpecifiers = new Set(
+    (await parseImports(code))
+      .map((imp) => imp.n)
+      .filter((specifier): specifier is string => typeof specifier === "string"),
+  );
+  const packages = getNodeExternalPackagesToResolve(userDeps);
 
-    const staticImportRegex = new RegExp(`from\\s*["']${escapedPkg}(/[^"']*)?["']`, "g");
-    const dynamicImportRegex = new RegExp(
-      `import\\s*\\(\\s*["']${escapedPkg}(/[^"']*)?["']\\s*\\)`,
-      "g",
-    );
+  for (const specifier of importedSpecifiers) {
+    const pkg = packages.find((name) => specifier === name || specifier.startsWith(`${name}/`));
+    if (!pkg) continue;
 
-    const needsStatic = staticImportRegex.test(transformed);
-    staticImportRegex.lastIndex = 0;
-    const needsDynamic = dynamicImportRegex.test(transformed);
-    dynamicImportRegex.lastIndex = 0;
-    if (!needsStatic && !needsDynamic) continue;
+    const subpath = specifier.slice(pkg.length);
+    if (subpath) {
+      const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
+      const resolvedSubpath = `${packageDir}${subpath}`;
+      logger.debug(`Resolved ${specifier} -> ${resolvedSubpath}`);
+      replacements.set(specifier, resolvedSubpath);
+      continue;
+    }
 
-    const packageDir = pathToFileURL(pathHelper.join(projectDir, "node_modules", pkg)).href;
     const resolvedUrl = await resolveNodePackageToFileUrl(projectDir, pkg, fs, pathToFileURL);
-
-    if (needsStatic) {
-      transformed = transformed.replace(staticImportRegex, (_, subpath) => {
-        if (subpath) {
-          const subUrl = `${packageDir}${subpath}`;
-          logger.debug(`Resolved ${pkg}${subpath} -> ${subUrl}`);
-          return `from "${subUrl}"`;
-        }
-        if (!resolvedUrl) return `from "${pkg}"`;
-        logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
-        return `from "${resolvedUrl}"`;
-      });
-    }
-
-    if (needsDynamic) {
-      transformed = transformed.replace(dynamicImportRegex, (_, subpath) => {
-        if (subpath) {
-          return `import("${packageDir}${subpath}")`;
-        }
-        if (!resolvedUrl) return `import("${pkg}")`;
-        return `import("${resolvedUrl}")`;
-      });
-    }
+    if (!resolvedUrl) continue;
+    logger.debug(`Resolved ${pkg} -> ${resolvedUrl}`);
+    replacements.set(specifier, resolvedUrl);
   }
 
   const vfPackagePath = pathHelper.join(projectDir, "node_modules", "veryfront");
   const exportsMap = await loadVeryfrontExportsMap(projectDir, fs);
 
-  transformed = transformed.replace(
-    /from\s+["'](veryfront\/[^"']+)["']/g,
-    (match, fullSpecifier: string) => {
-      const subpath = "./" + fullSpecifier.replace("veryfront/", "");
+  for (const specifier of importedSpecifiers) {
+    if (specifier === "veryfront") {
+      const exportEntry = exportsMap["."];
+      if (!exportEntry?.import) continue;
+
+      const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
+      logger.debug(`Resolved veryfront -> ${resolvedPath}`);
+      replacements.set(specifier, pathToFileURL(resolvedPath).href);
+      continue;
+    }
+
+    if (specifier.startsWith("veryfront/")) {
+      const subpath = "./" + specifier.replace("veryfront/", "");
       const exportEntry = exportsMap[subpath];
       if (!exportEntry?.import) {
         logger.warn(`No export found for ${subpath}`);
-        return match;
+        continue;
       }
 
       const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-      logger.debug(`Resolved ${fullSpecifier} -> ${resolvedPath}`);
-      return `from "${pathToFileURL(resolvedPath).href}"`;
-    },
-  );
+      logger.debug(`Resolved ${specifier} -> ${resolvedPath}`);
+      replacements.set(specifier, pathToFileURL(resolvedPath).href);
+    }
+  }
 
-  transformed = transformed.replace(/from\s+["']veryfront["']/g, () => {
-    const exportEntry = exportsMap["."];
-    if (!exportEntry?.import) return 'from "veryfront"';
+  if (replacements.size === 0) return code;
 
-    const resolvedPath = pathHelper.join(vfPackagePath, exportEntry.import);
-    logger.debug(`Resolved veryfront -> ${resolvedPath}`);
-    return `from "${pathToFileURL(resolvedPath).href}"`;
-  });
-
-  return transformed;
+  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier));
 }
 
 export function rewriteCompiledBinaryVeryfrontImports(code: string): string {
@@ -509,10 +496,20 @@ export async function rewriteDenoNpmDependencyImports(
   fs: FileSystem,
   userDeps: Map<string, string>,
 ): Promise<string> {
-  let transformed = code;
+  const importedSpecifiers = new Set(
+    (await parseImports(code))
+      .map((imp) => imp.n)
+      .filter((specifier): specifier is string => typeof specifier === "string"),
+  );
+  const replacements = new Map<string, string>();
 
-  for (const [name, version] of userDeps) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  for (const specifier of importedSpecifiers) {
+    const entry = [...userDeps].find(([name]) =>
+      specifier === name || specifier.startsWith(`${name}/`)
+    );
+    if (!entry) continue;
+
+    const [name, version] = entry;
     let resolvedVersion = version;
     try {
       const pkgPath = pathHelper.join(projectDir, "node_modules", name, "package.json");
@@ -523,17 +520,13 @@ export async function rewriteDenoNpmDependencyImports(
       /* expected: installed package.json may not exist, fall back to declared range */
     }
 
-    transformed = transformed.replace(
-      new RegExp(`from\\s+["']${escaped}(/[^"']*)?["']`, "g"),
-      (_, subpath) => `from "npm:${name}@${resolvedVersion}${subpath || ""}"`,
-    );
-    transformed = transformed.replace(
-      new RegExp(`import\\s*\\(\\s*["']${escaped}(/[^"']*)?["']\\s*\\)`, "g"),
-      (_, subpath) => `import("npm:${name}@${resolvedVersion}${subpath || ""}")`,
-    );
+    const subpath = specifier.slice(name.length);
+    replacements.set(specifier, `npm:${name}@${resolvedVersion}${subpath}`);
   }
 
-  return transformed;
+  if (replacements.size === 0) return code;
+
+  return await replaceSpecifiers(code, (specifier) => replacements.get(specifier));
 }
 
 export function rewriteDenoNodeBuiltinImports(code: string): string {

@@ -82,7 +82,9 @@ describe("mcp/server", () => {
       enabled: true,
       auth: { type: "none", allowUnauthenticated: true },
     });
-    let capturedContext: { endUserId?: string; projectId?: string } | undefined;
+    let capturedContext:
+      | { endUserId?: string; projectId?: string; abortSignal?: AbortSignal }
+      | undefined;
 
     registerTool(
       "test:context",
@@ -157,7 +159,9 @@ describe("mcp/server", () => {
     );
 
     assertEquals(response.status, 200);
-    assertEquals(capturedContext, undefined);
+    assertEquals(capturedContext?.endUserId, undefined);
+    assertEquals(capturedContext?.projectId, undefined);
+    assertEquals(capturedContext?.abortSignal instanceof AbortSignal, true);
   });
 
   it("only includes trusted integration context headers in CORS preflight response", async () => {
@@ -1717,6 +1721,160 @@ describe("mcp/server", () => {
     });
     assertEquals(result.error, undefined);
     assertEquals(result.result, {});
+  });
+
+  it("aborts an in-flight foreground tool when notifications/cancelled names its request", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    let resolveStarted!: () => void;
+    let resolveAbort!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const abortObserved = new Promise<void>((resolve) => {
+      resolveAbort = resolve;
+    });
+
+    registerTool(
+      "test:foreground-abortable",
+      dynamicTool({
+        id: "test:foreground-abortable",
+        description: "Foreground abortable tool",
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: (_input, context) =>
+          new Promise((resolve) => {
+            resolveStarted();
+            context?.abortSignal?.addEventListener("abort", () => {
+              resolveAbort();
+              resolve({ aborted: true });
+            });
+            setTimeout(() => resolve({ aborted: false }), 200);
+          }),
+      }),
+    );
+
+    const call = server.handleRequest({
+      jsonrpc: "2.0",
+      id: 77,
+      method: "tools/call",
+      params: { name: "test:foreground-abortable", arguments: {} },
+    });
+    await started;
+
+    await server.handleRequest({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 77, reason: "User cancelled" },
+    });
+
+    await Promise.race([
+      abortObserved,
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("cancel did not abort foreground tool execution")), 50)
+      ),
+    ]);
+
+    const response = await call;
+    const result = response.result as { content: Array<{ text: string }> };
+    assertStringIncludes(result.content[0]!.text, '"aborted": true');
+  });
+
+  it("scopes foreground request cancellation to the HTTP session", async () => {
+    const server = createMCPServer({
+      enabled: true,
+      auth: { type: "none", allowUnauthenticated: true },
+    });
+    const handler = server.createHTTPHandler();
+    const sessionA = await initSession(handler);
+    const sessionB = await initSession(handler);
+
+    let resolveStartedA!: () => void;
+    let resolveStartedB!: () => void;
+    let resolveCallB!: () => void;
+    let resolveAbortB!: () => void;
+    const startedA = new Promise<void>((resolve) => {
+      resolveStartedA = resolve;
+    });
+    const startedB = new Promise<void>((resolve) => {
+      resolveStartedB = resolve;
+    });
+    const abortB = new Promise<void>((resolve) => {
+      resolveAbortB = resolve;
+    });
+
+    registerTool(
+      "test:session-scoped-abort",
+      dynamicTool({
+        id: "test:session-scoped-abort",
+        description: "Session-scoped abortable tool",
+        inputSchema: defineSchema((v) => v.object({ label: v.string() }))(),
+        execute: (input, context) =>
+          new Promise((resolve) => {
+            const { label } = input as { label: "a" | "b" };
+            if (label === "a") {
+              resolveStartedA();
+            } else {
+              resolveStartedB();
+              resolveCallB = () => resolve({ label, aborted: false });
+            }
+            context?.abortSignal?.addEventListener(
+              "abort",
+              () => {
+                if (label === "b") resolveAbortB();
+                resolve({ label, aborted: true });
+              },
+              { once: true },
+            );
+          }),
+      }),
+    );
+
+    const headersA = { ...JSON_HEADERS, "MCP-Session-Id": sessionA };
+    const headersB = { ...JSON_HEADERS, "MCP-Session-Id": sessionB };
+    const callA = handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:session-scoped-abort", arguments: { label: "a" } },
+    }, headersA));
+    const callB = handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "test:session-scoped-abort", arguments: { label: "b" } },
+    }, headersB));
+    await Promise.all([startedA, startedB]);
+
+    await handler(jsonRpcRequest({
+      jsonrpc: "2.0",
+      method: "notifications/cancelled",
+      params: { requestId: 1, reason: "User cancelled session A request" },
+    }, headersA));
+
+    const responseA = await callA;
+    const bodyA = await responseA.json() as { result: { content: Array<{ text: string }> } };
+    const resultA = JSON.parse(bodyA.result.content[0]!.text) as {
+      label: string;
+      aborted: boolean;
+    };
+    assertEquals(resultA, { label: "a", aborted: true });
+
+    const sessionBAborted = await Promise.race([
+      abortB.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 50)),
+    ]);
+    assertEquals(sessionBAborted, false);
+
+    resolveCallB();
+    const responseB = await callB;
+    const bodyB = await responseB.json() as { result: { content: Array<{ text: string }> } };
+    const resultB = JSON.parse(bodyB.result.content[0]!.text) as {
+      label: string;
+      aborted: boolean;
+    };
+    assertEquals(resultB, { label: "b", aborted: false });
   });
 
   it("logging/setLevel rejects invalid level", async () => {

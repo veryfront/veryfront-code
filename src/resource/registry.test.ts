@@ -40,6 +40,20 @@ describe("resource registry", () => {
 
       assertEquals(resourceRegistry.findByPattern("/users/42/comments/7"), undefined);
     });
+
+    it("should treat regex metacharacters in patterns as literals", () => {
+      const docs = resource({
+        pattern: "/docs/:version/page.html",
+        description: "Versioned docs page",
+        paramsSchema: defineSchema((v) => v.object({ version: v.string() }))(),
+        load: async () => ({}),
+      });
+
+      resourceRegistry.register(docs.id, docs);
+
+      assertEquals(resourceRegistry.findByPattern("/docs/v1/page.html"), docs);
+      assertEquals(resourceRegistry.findByPattern("/docs/v1/pageXhtml"), undefined);
+    });
   });
 
   describe("extractParams()", () => {

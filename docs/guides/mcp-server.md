@@ -81,15 +81,17 @@ Tools defined in `tools/` are automatically available via MCP:
 
 ```ts
 // tools/search-docs.ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { tool } from "veryfront/tool";
 
 export default tool({
   description: "Search the documentation",
-  inputSchema: z.object({
-    query: z.string().describe("Search query"),
-    limit: z.number().default(10).describe("Max results"),
-  }),
+  inputSchema: defineSchema((v) =>
+    v.object({
+      query: v.string().describe("Search query"),
+      limit: v.number().default(10).describe("Max results"),
+    })
+  )(),
   execute: async ({ query, limit }) => {
     const results = await searchIndex(query, limit);
     return { results };
@@ -142,7 +144,7 @@ export default resource({
 For tools, prompts, or resources not in the auto-discovered directories:
 
 ```ts
-import { z } from "zod";
+import { defineSchema } from "veryfront/schemas";
 import { registerTool } from "veryfront/mcp";
 import { tool } from "veryfront/tool";
 
@@ -150,9 +152,11 @@ registerTool(
   "custom-tool",
   tool({
     description: "A custom tool",
-    inputSchema: z.object({
-      input: z.string().describe("Text to transform"),
-    }),
+    inputSchema: defineSchema((v) =>
+      v.object({
+        input: v.string().describe("Text to transform"),
+      })
+    )(),
     execute: async ({ input }) => ({ result: input.toUpperCase() }),
   }),
 );

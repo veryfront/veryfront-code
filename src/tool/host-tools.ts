@@ -38,21 +38,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Detect a contract `Schema<T>` (defineSchema-produced wrapper) or a raw
- * zod schema. Both are accepted during the migration window so host tools
- * can feed either into the framework without bespoke conversion.
- */
+/** Detect a contract `Schema<T>` value produced by defineSchema. */
 function isSchemaLike(value: unknown): value is Schema<unknown> {
   if (!isRecord(value)) return false;
   if (typeof value.parse !== "function") return false;
   // Contract Schema<T> brand from the ext-schema-zod adapter.
   if ("__zod" in value) return true;
   // defineSchema wrapper without a brand yet — match on the contract surface.
-  if ("_output" in value && typeof value.safeParse === "function") return true;
-  // Raw zod schema (legacy host paths still hand us bare zod instances).
-  if (!isRecord(value._def)) return false;
-  return typeof value._def.typeName === "string" || typeof value._def.type === "string";
+  return "_output" in value && typeof value.safeParse === "function";
 }
 
 function isHostToolDefinition(value: unknown): value is RunnableHostToolDefinition {

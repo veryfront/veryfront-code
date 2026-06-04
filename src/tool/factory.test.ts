@@ -57,7 +57,7 @@ describe("tool factory", () => {
       assertEquals(overridden.__veryfrontGeneratedId, generated.id);
     });
 
-    it("should convert zod schema to JSON schema", () => {
+    it("should convert Veryfront schema to JSON schema", () => {
       const t = tool({
         id: "schema-test",
         description: "desc",
@@ -124,28 +124,25 @@ describe("tool factory", () => {
       assertEquals(t.outputSchemaJson?.properties?.result, { type: "string" });
     });
 
-    it("should introspect schema-like objects by shape", () => {
-      const t = tool({
-        id: "shape-test",
-        description: "desc",
-        inputSchema: {
-          _def: {
-            shape: {
-              name: {},
-              age: {},
-            },
-          },
-        } as unknown as Schema<unknown>,
-        execute: async () => null,
-      });
-      assertEquals(t.inputSchemaJson, {
-        type: "object",
-        properties: {
-          name: { type: "string" },
-          age: { type: "string" },
-        },
-        required: ["name", "age"],
-      });
+    it("should reject schema-like raw objects by default", () => {
+      assertThrows(
+        () =>
+          tool({
+            id: "shape-test",
+            description: "desc",
+            inputSchema: {
+              _def: {
+                shape: {
+                  name: {},
+                  age: {},
+                },
+              },
+            } as unknown as Schema<unknown>,
+            execute: async () => null,
+          }),
+        Error,
+        "input schema is not a valid Veryfront schema",
+      );
     });
 
     it("should reject invalid unknown schemas when permissive fallback is disabled", () => {
@@ -158,7 +155,7 @@ describe("tool factory", () => {
             execute: async () => null,
           }),
         Error,
-        "input schema is not a valid Zod schema",
+        "input schema is not a valid Veryfront schema",
       );
     });
 
@@ -335,7 +332,7 @@ describe("tool factory", () => {
   });
 
   describe("dynamicTool input validation", () => {
-    it("should validate input with Zod schema", async () => {
+    it("should validate input with a Veryfront schema", async () => {
       const t = dynamicTool({
         id: "zod-validate",
         description: "desc",
@@ -346,7 +343,7 @@ describe("tool factory", () => {
       assertEquals(result, { query: "test" });
     });
 
-    it("should reject invalid input when Zod schema is provided", async () => {
+    it("should reject invalid input when a Veryfront schema is provided", async () => {
       const t = dynamicTool({
         id: "zod-reject",
         description: "desc",
@@ -380,7 +377,7 @@ describe("tool factory", () => {
       assertEquals(result, { limit: 10, tag: "tag:foo" });
     });
 
-    it("should accept valid object input without Zod schema", async () => {
+    it("should accept valid object input without a schema", async () => {
       const t = dynamicTool({
         id: "no-schema-obj",
         description: "desc",
