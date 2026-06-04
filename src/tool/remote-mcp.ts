@@ -113,6 +113,85 @@ function parseJsonText(text: string): unknown | undefined {
   }
 }
 
+function isOauthInvalidGrantMessage(value: unknown): boolean {
+  const text = typeof value === "string" ? value : JSON.stringify(value);
+  const normalized = text.toLowerCase();
+  return normalized.includes("invalid_grant");
+}
+
+function getIntegrationIdFromToolName(toolName: string): string {
+  const separatorIndex = toolName.indexOf("__");
+  const rawIntegration = separatorIndex > 0 ? toolName.slice(0, separatorIndex) : toolName;
+  return rawIntegration || "integration";
+}
+
+function formatIntegrationName(integration: string): string {
+  return integration
+    .split(/[_-]+/)
+    .filter((part) => part.length > 0)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ") || "Integration";
+}
+
+function buildOauthConnectUrl(
+  endpoint: string,
+  integration: string,
+  context?: ToolExecutionContext,
+): string {
+  const encodedIntegration = encodeURIComponent(integration);
+  const projectId = typeof context?.projectId === "string" && context.projectId.length > 0
+    ? context.projectId
+    : null;
+
+  try {
+    const url = new URL(`/oauth/connect/${encodedIntegration}`, endpoint);
+    if (projectId) {
+      url.searchParams.set("projectId", projectId);
+    }
+    return url.toString();
+  } catch {
+    return projectId
+      ? `/oauth/connect/${encodedIntegration}?projectId=${encodeURIComponent(projectId)}`
+      : `/oauth/connect/${encodedIntegration}`;
+  }
+}
+
+function normalizeKnownToolError(
+  value: unknown,
+  toolName: string,
+  endpoint: string,
+  context?: ToolExecutionContext,
+): unknown {
+  if (!isOauthInvalidGrantMessage(value)) {
+    return value;
+  }
+
+  const integration = getIntegrationIdFromToolName(toolName);
+  const label = formatIntegrationName(integration);
+  return {
+    error: "reconnect_required",
+    code: "OAUTH_TOKEN_EXPIRED",
+    integration,
+    connectUrl: buildOauthConnectUrl(endpoint, integration, context),
+    message: `${label} needs to be reconnected before this tool can run.`,
+  };
+}
+
+function isReconnectRequiredToolOutput(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && value.error === "reconnect_required";
+}
+
+function normalizeKnownToolException(
+  error: unknown,
+  toolName: string,
+  endpoint: string,
+  context?: ToolExecutionContext,
+): Record<string, unknown> | null {
+  const message = error instanceof Error ? error.message : String(error);
+  const normalized = normalizeKnownToolError(message, toolName, endpoint, context);
+  return isReconnectRequiredToolOutput(normalized) ? normalized : null;
+}
+
 function extractJsonRpcErrorMessage(payload: Record<string, unknown>): string {
   const rawError = payload.error;
   if (!isRecord(rawError)) return "Remote MCP server returned an error";
@@ -270,7 +349,13 @@ function getJsonRpcResult(payload: unknown): unknown {
   return payload.result;
 }
 
-function normalizeCallToolResult(result: unknown): unknown {
+function normalizeCallToolResult(input: {
+  result: unknown;
+  toolName: string;
+  endpoint: string;
+  context?: ToolExecutionContext;
+}): unknown {
+  const result = input.result;
   if (!isRecord(result)) return result;
 
   const rawContent = result.content;
@@ -280,21 +365,36 @@ function normalizeCallToolResult(result: unknown): unknown {
     );
 
     if ("structuredContent" in result) {
-      return result.structuredContent;
+      return normalizeKnownToolError(
+        result.structuredContent,
+        input.toolName,
+        input.endpoint,
+        input.context,
+      );
     }
 
     if (hasToolExecutionErrorMarker(result)) {
-      return parseJsonText(text) ?? { error: "tool_error", message: text };
+      return normalizeKnownToolError(
+        parseJsonText(text) ?? { error: "tool_error", message: text },
+        input.toolName,
+        input.endpoint,
+        input.context,
+      );
     }
 
     return parseJsonText(text) ?? text;
   }
 
   if ("structuredContent" in result) {
-    return result.structuredContent;
+    return normalizeKnownToolError(
+      result.structuredContent,
+      input.toolName,
+      input.endpoint,
+      input.context,
+    );
   }
 
-  return result;
+  return normalizeKnownToolError(result, input.toolName, input.endpoint, input.context);
 }
 
 /** Create remote MCP tool source. */
@@ -327,22 +427,37 @@ export function createRemoteMCPToolSource(
     async executeTool(toolName, args, context) {
       const endpoint = await resolveValue(config.endpoint, context);
       const headers = await resolveHeaders(config.headers, context);
-      const payload = await postJsonRpc(
-        endpoint,
-        headers,
-        {
-          jsonrpc: "2.0",
-          id: `${id}:tools:call:${toolName}`,
-          method: callMethod,
-          params: {
-            name: toolName,
-            arguments: args,
-          },
-        },
-        config.fetch ?? globalThis.fetch,
-      );
 
-      return normalizeCallToolResult(getJsonRpcResult(payload));
+      try {
+        const payload = await postJsonRpc(
+          endpoint,
+          headers,
+          {
+            jsonrpc: "2.0",
+            id: `${id}:tools:call:${toolName}`,
+            method: callMethod,
+            params: {
+              name: toolName,
+              arguments: args,
+            },
+          },
+          config.fetch ?? globalThis.fetch,
+        );
+
+        return normalizeCallToolResult({
+          result: getJsonRpcResult(payload),
+          toolName,
+          endpoint,
+          context,
+        });
+      } catch (error) {
+        const normalizedError = normalizeKnownToolException(error, toolName, endpoint, context);
+        if (normalizedError) {
+          return normalizedError;
+        }
+
+        throw error;
+      }
     },
   };
 }

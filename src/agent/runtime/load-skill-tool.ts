@@ -171,6 +171,57 @@ function buildMissingSkillError(
   };
 }
 
+function buildRuntimeLoadSkillDescription(options: RuntimeLoadSkillToolOptions): string {
+  if (options.description) {
+    return options.description;
+  }
+
+  if (!options.context.availableSkillIds && !options.builtinSkillIds) {
+    return RUNTIME_LOAD_SKILL_DESCRIPTION;
+  }
+
+  const knownIds = new Set([
+    ...(options.context.availableSkillIds ?? []),
+    ...(options.builtinSkillIds ?? []),
+  ]);
+  const available = [...knownIds].sort().join(", ") || "none";
+
+  return `${RUNTIME_LOAD_SKILL_DESCRIPTION} Available skill IDs: ${available}. Do not invent skill IDs. Only call load_skill with one of these IDs.`;
+}
+
+function getKnownRuntimeSkillIds(options: RuntimeLoadSkillToolOptions): string[] | null {
+  if (!options.context.availableSkillIds && !options.builtinSkillIds) {
+    return null;
+  }
+
+  return [
+    ...new Set([
+      ...(options.context.availableSkillIds ?? []),
+      ...(options.builtinSkillIds ?? []),
+    ]),
+  ].sort();
+}
+
+function buildRuntimeLoadSkillInputSchema(options: RuntimeLoadSkillToolOptions) {
+  const knownIds = getKnownRuntimeSkillIds(options);
+  if (!knownIds || knownIds.length === 0) {
+    return runtimeLoadSkillToolInputSchema;
+  }
+
+  const [first, ...rest] = knownIds as [string, ...string[]];
+  const enumValues = [first, ...rest] as [string, ...string[]];
+  return defineSchema((v) =>
+    v.object({
+      skillId: v.enum(enumValues).describe(
+        `The skill ID to load. Available skill IDs: ${knownIds.join(", ")}`,
+      ),
+      file: v.string().optional().describe(
+        'Optional reference file to load (e.g. "references/quickstart.md")',
+      ),
+    })
+  )();
+}
+
 async function loadRuntimeSkillReferenceFile(
   options: RuntimeLoadSkillToolOptions,
   skillId: string,
@@ -217,8 +268,8 @@ export function createRuntimeLoadSkillTool(
 
   return tool({
     id: "load_skill",
-    description: options.description ?? RUNTIME_LOAD_SKILL_DESCRIPTION,
-    inputSchema: runtimeLoadSkillToolInputSchema,
+    description: buildRuntimeLoadSkillDescription(options),
+    inputSchema: buildRuntimeLoadSkillInputSchema(options),
     execute: async ({ skillId, file }) => {
       if (file) {
         return await loadRuntimeSkillReferenceFile(options, skillId, file);
