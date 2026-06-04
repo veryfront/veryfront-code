@@ -135,6 +135,52 @@ Deno.test("prepareHostedChatRuntimeToolAssembly separates provider tools from re
   assertEquals(taskContext.availableToolNames, ["create_file", "web_search"]);
 });
 
+Deno.test("prepareHostedChatRuntimeToolAssembly enables provider tools by default without an allowlist", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "anthropic/claude-sonnet-4-6",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.remoteToolNames, ["create_file"]);
+  assertEquals(toolAssembly.compatibleRemoteToolNames, ["create_file"]);
+  assertEquals(toolAssembly.providerToolNames, ["web_fetch", "web_search"]);
+  assertEquals(taskContext.availableToolNames, ["create_file", "web_fetch", "web_search"]);
+});
+
+Deno.test("prepareHostedChatRuntimeToolAssembly omits provider tools by default for non-anthropic models", async () => {
+  const taskContext: HostedChatRuntimeToolAssemblyContext = {
+    authToken: "token",
+    projectId: "project-1",
+    model: "openai/gpt-4.1",
+  };
+
+  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+    taskContext,
+    instructions: "Base instructions",
+    localTools: {},
+    apiUrl: "https://api.example.com",
+    apiMcpUrl: "https://api.example.com/mcp",
+    mcpServers: [{ kind: "veryfront-api" }],
+    createRemoteToolSource: remoteSourceFromConfig,
+    preloadLatestConversationUserText: false,
+  });
+
+  assertEquals(toolAssembly.providerToolNames, []);
+  assertEquals(taskContext.availableToolNames, ["create_file"]);
+});
+
 Deno.test("prepareHostedChatRuntimeToolAssembly preloads default research artifacts", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = () =>

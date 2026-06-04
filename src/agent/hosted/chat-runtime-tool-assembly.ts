@@ -149,8 +149,12 @@ export async function prepareHostedChatRuntimeToolAssembly<
     projectId: activeProjectId(input.taskContext),
     projectScopedRemoteToolOptions: input.projectScopedRemoteToolOptions,
   });
+  // Provider-native tools (web_search, web_fetch) are opt-in when an explicit
+  // allowlist is present (e.g. a loaded skill restricting tools), preserving the
+  // #2034 boundary. When no allowlist is set — the hosted root agent — they
+  // default on so the platform agent can search and fetch the web inline.
   const providerToolNames = getProviderNativeToolNames({ model: input.taskContext.model }).filter(
-    (toolName) => allowedToolNames ? allowedToolNames.has(toolName) : false,
+    (toolName) => allowedToolNames ? allowedToolNames.has(toolName) : true,
   );
   const localToolNames = Object.keys(localHostTools);
   const availableToolNames = selectProviderCompatibleToolNames(
