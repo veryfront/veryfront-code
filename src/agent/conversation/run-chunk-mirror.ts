@@ -4,6 +4,7 @@ import {
   type ConversationRunMirror,
   type ConversationRunMirrorHighBacklogState,
   type ConversationRunMirrorRetryScheduledState,
+  type ConversationRunMirrorSnapshot,
   type ConversationRunMirrorStoppedState,
   createConversationRunMirror,
 } from "./run-mirror.ts";
@@ -25,7 +26,7 @@ const DEFAULT_HOSTED_CHUNK_MIRROR_HIGH_BACKLOG_EVENT_COUNT = 500;
 export interface ConversationRunChunkMirror {
   handleChunk(chunk: ChatUiMessageChunk<ChatMessageMetadata>): Promise<void>;
   appendEvents(events: ConversationRunEvent[]): Promise<void>;
-  flush(): Promise<void>;
+  flush(): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ReturnType<ConversationRunMirror["getSnapshot"]>;
   dispose(): void;
 }

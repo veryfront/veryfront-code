@@ -397,7 +397,9 @@ export async function executeHostedChildForkWithPreparedTools<
       runContext,
       monitorAbortController: childRunMonitorAbortController,
       monitorPromise: childRunMonitorPromise,
-      flushMirror: () => runContext.durableRunMirror?.flush() ?? Promise.resolve(),
+      flushMirror: async () => {
+        await runContext.durableRunMirror?.flush();
+      },
       closeTooling,
       closeRuntime,
     });

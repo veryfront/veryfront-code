@@ -43,6 +43,9 @@ one runtime concern. Architecture pages do not duplicate the user guides in
 | [21-agent-tool-registration-current-state.md](./21-agent-tool-registration-current-state.md)   | Current agent tool and MCP registration review |
 | [22-agent-tool-registration-target-state.md](./22-agent-tool-registration-target-state.md)     | Target agent tool and MCP registration design  |
 | [23-agent-tool-registration-migration-plan.md](./23-agent-tool-registration-migration-plan.md) | Migration plan for agent tool registration     |
+| [24-context-compaction-current-state.md](./24-context-compaction-current-state.md)             | Current Code and API compaction review         |
+| [25-context-compaction-target-state.md](./25-context-compaction-target-state.md)               | Target context compaction design               |
+| [26-context-compaction-migration-plan.md](./26-context-compaction-migration-plan.md)           | Migration plan for context compaction          |
 
 ## Runtime boundaries
 

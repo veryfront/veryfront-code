@@ -50,6 +50,16 @@ function createDurableRunMirror(input: {
     appendEvents: async () => {},
     flush: async () => {
       input.flushes.push("flush");
+      return {
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+        pendingEventCount: 0,
+        consecutiveFailures: 0,
+        disabled: false,
+        hasFlushTimer: false,
+        hasRetryTimer: false,
+        inFlight: false,
+      };
     },
     getSnapshot: () => ({
       latestEventId: 0,

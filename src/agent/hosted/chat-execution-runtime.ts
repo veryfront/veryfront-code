@@ -347,7 +347,9 @@ export function createHostedChatStreamFinalizationHooks(input: {
     ) => getEmptyHostedFinalizedMessageTerminalError({ finalStep, streamError }),
     appendFallbackChunk: (chunk: ChatUiMessageChunk<MessageMetadata>) =>
       input.lifecycleAdapter.durableRunMirror?.handleChunk(chunk),
-    flushMirror: () => input.lifecycleAdapter.durableRunMirror?.flush(),
+    flushMirror: async () => {
+      await input.lifecycleAdapter.durableRunMirror?.flush();
+    },
     dispatchTerminalState: async (terminalState) => {
       await dispatchConversationHostedTerminalState(input.lifecycleAdapter, terminalState);
     },
