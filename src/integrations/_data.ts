@@ -7070,9 +7070,10 @@ export const connectors: IntegrationConfig[] = [
         "method": "GET",
         "url": "https://graph.microsoft.com/v1.0/me/messages",
         "params": {
-          "$search": {
+          "query": {
             "type": "string",
             "in": "query",
+            "queryName": "$search",
             "description": 'Microsoft Graph search query, for example "subject:roadmap"',
             "required": true,
           },
