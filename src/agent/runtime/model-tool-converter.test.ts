@@ -238,7 +238,7 @@ describe("model-tool-converter", () => {
     assertEquals(result, undefined);
   });
 
-  it("does not override an explicit local tool named web_search", () => {
+  it("preserves an explicit local tool named web_search for non-Anthropic models", () => {
     const tools: ToolDefinition[] = [
       {
         name: "web_search",
@@ -248,12 +248,48 @@ describe("model-tool-converter", () => {
     ];
 
     const result = convertToolsToRuntimeTools(tools, {
-      model: "anthropic/claude-sonnet-4-6",
+      model: "openai/gpt-5.2",
       providerTools: ["web_search"],
     });
 
     assertEquals(result !== undefined, true);
     assertEquals(Object.keys(result!).filter((name) => name === "web_search").length, 1);
+    assertEquals((result?.web_search as { type?: unknown }).type, "function");
+  });
+
+  it("uses provider-native web tools for Anthropic even when Studio forwards tool definitions", () => {
+    const result = convertToolsToRuntimeTools([
+      {
+        name: "web_search",
+        description: "Search the web",
+        parameters: {
+          type: "object",
+          properties: {
+            query: { type: "string" },
+          },
+          required: ["query"],
+        },
+      },
+      {
+        name: "web_fetch",
+        description: "Fetch a web page",
+        parameters: {
+          type: "object",
+          properties: {
+            url: { type: "string" },
+          },
+          required: ["url"],
+        },
+      },
+    ], {
+      model: "veryfront-cloud/anthropic/claude-opus-4-6",
+      providerTools: ["web_search", "web_fetch"],
+    });
+
+    assertEquals((result?.web_search as { type?: unknown }).type, "provider");
+    assertEquals((result?.web_search as { id?: unknown }).id, "anthropic.web_search_20250305");
+    assertEquals((result?.web_fetch as { type?: unknown }).type, "provider");
+    assertEquals((result?.web_fetch as { id?: unknown }).id, "anthropic.web_fetch_20250910");
   });
 
   it("does not add provider-native web_search from remote tool allowlists", () => {

@@ -68,11 +68,16 @@ export function convertToolsToRuntimeTools(
   options?: ConvertToolsToRuntimeToolsOptions,
 ): RuntimeToolSet | undefined {
   const toolSet: RuntimeToolSet = {};
+  const providerNativeTools = resolveProviderNativeTools(options);
+  const providerNativeToolNames = new Set(Object.keys(providerNativeTools ?? {}));
   const compatibleTools = selectProviderCompatibleTools(tools, {
     model: options?.model,
   });
 
   for (const def of compatibleTools) {
+    if (providerNativeToolNames.has(def.name)) {
+      continue;
+    }
     addRuntimeTool(
       toolSet,
       def.name,
@@ -87,12 +92,9 @@ export function convertToolsToRuntimeTools(
     );
   }
 
-  const providerNativeTools = resolveProviderNativeTools(options);
   if (providerNativeTools) {
     for (const [name, providerTool] of Object.entries(providerNativeTools)) {
-      if (!Object.hasOwn(toolSet, name)) {
-        toolSet[name] = providerTool;
-      }
+      toolSet[name] = providerTool;
     }
   }
 
