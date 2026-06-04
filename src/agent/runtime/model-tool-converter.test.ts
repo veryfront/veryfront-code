@@ -23,6 +23,27 @@ function getRuntimeToolSchema(tool: unknown): unknown {
 }
 
 describe("model-tool-converter", () => {
+  it("mirrors JSON schema fields on runtime schema wrappers for provider compatibility", () => {
+    const result = convertToolsToRuntimeTools([
+      {
+        name: "outlook__search_emails",
+        description: "Search emails",
+        parameters: {
+          type: "object",
+          properties: {
+            "$search": { type: "string" },
+          },
+          required: ["$search"],
+        },
+      },
+    ], { model: "veryfront-cloud/anthropic/claude-opus-4-6" })!;
+
+    const inputSchema =
+      (result.outlook__search_emails as { inputSchema: Record<string, unknown> }).inputSchema;
+    assertEquals(inputSchema.type, "object");
+    assertEquals(inputSchema.jsonSchema, getRuntimeToolSchema(result.outlook__search_emails));
+  });
+
   it("returns undefined for empty tools array", () => {
     assertEquals(convertToolsToRuntimeTools([]), undefined);
   });
