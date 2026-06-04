@@ -28,17 +28,6 @@ export default tool({
       const pr = await github.getPullRequest(owner, repoName, prNumber);
       const diff = await github.getPullRequestDiff(owner, repoName, prNumber);
 
-      const maxDiffLength = 50000;
-      let truncatedDiff = diff;
-
-      if (diff.length > maxDiffLength) {
-        truncatedDiff = `${
-          diff.substring(0, maxDiffLength)
-        }\n\n... (diff truncated, ${
-          diff.length - maxDiffLength
-        } characters remaining)`;
-      }
-
       return {
         pullRequest: {
           number: pr.number,
@@ -53,7 +42,7 @@ export default tool({
           isDraft: pr.draft,
           state: pr.state,
         },
-        diff: truncatedDiff,
+        diff,
         stats: {
           additions: pr.additions,
           deletions: pr.deletions,

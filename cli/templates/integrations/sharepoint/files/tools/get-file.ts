@@ -16,14 +16,8 @@ export default tool({
       .describe(
         "Whether to download and include the file content (only works for text-based files)",
       ),
-    contentMaxLength: v
-      .number()
-      .min(100)
-      .max(100000)
-      .default(50000)
-      .describe("Maximum length of content to return if includeContent is true"),
   }))(),
-  async execute({ siteId, driveId, itemId, includeContent, contentMaxLength }) {
+  async execute({ siteId, driveId, itemId, includeContent }) {
     const file = await getFile(siteId, driveId, itemId);
 
     const result: Record<string, unknown> = {
@@ -69,19 +63,9 @@ export default tool({
       return result;
     }
 
-    if (file.size >= contentMaxLength) {
-      result.contentError = `File size (${formatBytes(file.size)}) exceeds maximum content length`;
-      return result;
-    }
-
     try {
       const content = await downloadFileAsText(siteId, driveId, itemId);
-      const truncated = content.length > contentMaxLength;
-
-      result.content = truncated
-        ? `${content.substring(0, contentMaxLength)}\n\n[Content truncated...]`
-        : content;
-      result.contentTruncated = truncated;
+      result.content = content;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       result.contentError = `Failed to download content: ${message}`;
