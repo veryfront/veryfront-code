@@ -72,7 +72,7 @@ Deno.test("resolveHostedChildForkRuntimeConfig resolves reusable child fork runt
       tools: ["readFile"],
       model: "sonnet",
       thinking: 1024,
-      max_steps: 12,
+      max_steps: 120,
     },
     contextModel: "opus",
     defaultModel: "haiku",
@@ -86,12 +86,48 @@ Deno.test("resolveHostedChildForkRuntimeConfig resolves reusable child fork runt
   assertEquals(result.requestedTools, ["readFile"]);
   assertEquals(result.forkModel, "resolved-sonnet");
   assertEquals(result.provider, "provider-for-resolved-sonnet");
-  assertEquals(result.maxSteps, 12);
+  assertEquals(result.maxSteps, 120);
   assertEquals(result.thinkingConfig, { enabled: true, budgetTokens: 1024 });
   assertEquals(
     result.effectivePrompt.includes("/research/solar-panels/runs/run-1.report.md"),
     true,
   );
+});
+
+Deno.test("resolveHostedChildForkRuntimeConfig raises low requested child max steps to the hosted minimum", () => {
+  const result = resolveHostedChildForkRuntimeConfig({
+    forkInput: {
+      description: "research services",
+      prompt: "Research the available services and report findings.",
+      max_steps: 15,
+    },
+    contextModel: "opus",
+    defaultModel: "haiku",
+    defaultMaxSteps: 80,
+    runId: "tool-call-1",
+    resolveModelId: (modelId) => `resolved-${modelId}`,
+    resolveProvider: (modelId) => `provider-for-${modelId}`,
+  });
+
+  assertEquals(result.maxSteps, 80);
+});
+
+Deno.test("resolveHostedChildForkRuntimeConfig preserves high requested child max steps", () => {
+  const result = resolveHostedChildForkRuntimeConfig({
+    forkInput: {
+      description: "build feature",
+      prompt: "Build the requested feature.",
+      max_steps: 160,
+    },
+    contextModel: "opus",
+    defaultModel: "haiku",
+    defaultMaxSteps: 80,
+    runId: "tool-call-1",
+    resolveModelId: (modelId) => `resolved-${modelId}`,
+    resolveProvider: (modelId) => `provider-for-${modelId}`,
+  });
+
+  assertEquals(result.maxSteps, 160);
 });
 
 Deno.test("resolveHostedChildForkRuntimeConfig falls back to context model and default max steps", () => {

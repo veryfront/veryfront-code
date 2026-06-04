@@ -1,3 +1,4 @@
+import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import type { CreateSandboxBashTool } from "#veryfront/sandbox";
 import {
@@ -68,6 +69,7 @@ Deno.test("executeDefaultHostedInvokeAgentTool returns durable context failure b
     {
       description: "inspect auth",
       prompt: "Inspect auth flow.",
+      agent_id: undefined,
     },
     "security-reviewer",
     { toolCallId: "tool-call-1" },
