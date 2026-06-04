@@ -1,7 +1,7 @@
 import type { JsonSchema } from "#veryfront/tool/schema";
 import type { RuntimeToolSet } from "./runtime-tool-types.ts";
 
-interface RuntimeJsonSchema<T = unknown> {
+interface RuntimeJsonSchema<T = unknown> extends Record<string, unknown> {
   readonly jsonSchema: JsonSchema | PromiseLike<JsonSchema>;
   validate?: (value: unknown) => T | PromiseLike<T>;
 }
@@ -36,6 +36,7 @@ interface RuntimeProviderToolDefinition {
 
 export function createRuntimeJsonSchema(json: JsonSchema): RuntimeJsonSchema {
   return {
+    ...json,
     jsonSchema: json,
   };
 }
