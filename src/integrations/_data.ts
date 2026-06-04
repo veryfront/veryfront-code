@@ -7849,10 +7849,22 @@ export const connectors: IntegrationConfig[] = [
           },
         },
         "body": {
-          "attachment": {
-            "type": "object",
-            "description": "Microsoft Graph attachment object",
+          "@odata.type": {
+            "type": "string",
+            "description": "Microsoft Graph attachment type",
+            "default": "#microsoft.graph.fileAttachment",
+          },
+          "name": { "type": "string", "description": "Attachment filename", "required": true },
+          "contentBytes": {
+            "type": "string",
+            "description": "Base64-encoded attachment content",
             "required": true,
+          },
+          "contentType": { "type": "string", "description": "Attachment MIME type" },
+          "isInline": {
+            "type": "boolean",
+            "description": "Whether the attachment is inline",
+            "default": false,
           },
         },
       },
@@ -7884,12 +7896,6 @@ export const connectors: IntegrationConfig[] = [
             "description": "Comma-separated message fields to return",
             "default":
               "id,conversationId,internetMessageId,subject,from,sender,toRecipients,ccRecipients,receivedDateTime,sentDateTime,bodyPreview,categories,isRead,importance,hasAttachments,webLink,flag",
-          },
-          "$orderby": {
-            "type": "string",
-            "in": "query",
-            "description": "Sort expression",
-            "default": "receivedDateTime desc",
           },
         },
         "response": {
@@ -8463,10 +8469,22 @@ export const connectors: IntegrationConfig[] = [
           },
         },
         "body": {
-          "attachment": {
-            "type": "object",
-            "description": "Microsoft Graph attachment object",
+          "@odata.type": {
+            "type": "string",
+            "description": "Microsoft Graph attachment type",
+            "default": "#microsoft.graph.fileAttachment",
+          },
+          "name": { "type": "string", "description": "Attachment filename", "required": true },
+          "contentBytes": {
+            "type": "string",
+            "description": "Base64-encoded attachment content",
             "required": true,
+          },
+          "contentType": { "type": "string", "description": "Attachment MIME type" },
+          "isInline": {
+            "type": "boolean",
+            "description": "Whether the attachment is inline",
+            "default": false,
           },
         },
       },
