@@ -27,6 +27,12 @@ import {
 } from "./runtime-request-config.ts";
 import { getRuntimeUploadUrl } from "../runtime/upload-url-client.ts";
 import type { RuntimeSkillDefinition } from "../runtime/skill-metadata.ts";
+import {
+  applyContextBudget,
+  type ContextBudgetDiagnostics,
+  type ContextBudgetManagerOptions,
+  ContextCompactionError,
+} from "./context-budget-manager.ts";
 
 /** Request payload for normalized hosted chat. */
 export type NormalizedHostedChatRequest = {
@@ -119,6 +125,26 @@ function getAllowedRemoteToolNames(agentConfig: { allowedRemoteTools?: unknown }
     : [];
 }
 
+async function flushRequiredContextCompactionEvent(
+  rootRunContext: HostedConversationRootRunContext,
+  eventPayload: ConversationRunEvent,
+): Promise<void> {
+  if (!rootRunContext.durableRunMirror) {
+    throw new ContextCompactionError(
+      "Context compaction produced an event but no durable run mirror is available",
+    );
+  }
+
+  await rootRunContext.durableRunMirror.appendEvents([eventPayload]);
+  const snapshot = await rootRunContext.durableRunMirror.flush();
+  if (snapshot.disabled || snapshot.pendingEventCount > 0 || snapshot.inFlight) {
+    rootRunContext.durableRunMirror.dispose();
+    throw new ContextCompactionError(
+      "Context compaction event was not durably persisted before model execution",
+    );
+  }
+}
+
 /** Options accepted by hosted chat execution preparation root run. */
 export type HostedChatExecutionPreparationRootRunOptions = Pick<
   PrepareHostedConversationRootRunContextInput,
@@ -128,6 +154,17 @@ export type HostedChatExecutionPreparationRootRunOptions = Pick<
   | "onPersistLatestUserMessageFailure"
   | "instrumentation"
 >;
+
+/** Public API contract for hosted chat context budget logging. */
+export type HostedChatContextBudgetLogger = {
+  debug?: (message: string, metadata?: Record<string, unknown>) => void;
+  error?: (message: string, metadata?: Record<string, unknown>) => void;
+};
+
+/** Options accepted by hosted chat context budget management. */
+export type HostedChatContextBudgetOptions = ContextBudgetManagerOptions & {
+  logger?: HostedChatContextBudgetLogger;
+};
 
 /** Input payload for hosted chat execution preparation. */
 export type HostedChatExecutionPreparationInput<
@@ -163,6 +200,7 @@ export type HostedChatExecutionPreparationInput<
       RuntimeAgentThinkingConfig
     >,
   ) => Promise<TRuntimeResult>;
+  contextBudget?: HostedChatContextBudgetOptions;
 };
 
 /** Result returned from hosted chat execution preparation. */
@@ -173,6 +211,7 @@ export type HostedChatExecutionPreparationResult<
   rootRunContext: HostedConversationRootRunContext;
   runtime: TRuntimeResult;
   finalMessages: AgentRuntimeMessage[];
+  contextBudgetDiagnostics?: ContextBudgetDiagnostics;
   steering: HostedChatRuntimeCreationPreparationResult<
     TRuntimeAgentDefinition
   >["steering"];
@@ -334,7 +373,6 @@ export async function prepareHostedChatExecution<
     fetchSteering: input.fetchSteering,
     buildInstructions: input.buildInstructions,
   });
-  const runtime = await input.createRuntime(runtimePreparation.creationOptions);
   const finalMessages = await prepareHostedChatRuntimeMessages(
     normalized.effectiveMessages,
     {
@@ -344,12 +382,37 @@ export async function prepareHostedChatExecution<
       providerOwnedToolNames: getAllowedRemoteToolNames(input.agentConfig),
     },
   );
+  let budgetedContext: Awaited<ReturnType<typeof applyContextBudget>> | undefined;
+  if (input.contextBudget) {
+    try {
+      budgetedContext = await applyContextBudget(finalMessages, input.contextBudget);
+    } catch (error) {
+      input.contextBudget.logger?.error?.("Hosted chat context compaction failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  if (budgetedContext?.eventPayload) {
+    input.contextBudget?.logger?.debug?.("Hosted chat context compacted", {
+      ...budgetedContext.diagnostics,
+      firstKeptEntryId: budgetedContext.eventPayload.firstKeptEntryId,
+    });
+    await flushRequiredContextCompactionEvent(rootRunContext, budgetedContext.eventPayload);
+  } else if (budgetedContext) {
+    input.contextBudget?.logger?.debug?.("Hosted chat context compaction skipped", {
+      ...budgetedContext.diagnostics,
+    });
+  }
+  const runtime = await input.createRuntime(runtimePreparation.creationOptions);
 
   return {
     ...normalized,
     rootRunContext,
     runtime,
-    finalMessages,
+    finalMessages: budgetedContext?.messages ?? finalMessages,
+    contextBudgetDiagnostics: budgetedContext?.diagnostics,
     steering: runtimePreparation.steering,
     runtimeConfig: runtimePreparation.runtimeConfig,
   };

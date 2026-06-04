@@ -1,7 +1,8 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import type { ChatUiMessage } from "#veryfront/chat/types.ts";
 import type { ParsedHostedChatRequest } from "./chat-request-parser.ts";
+import { ContextCompactionError } from "./context-budget-manager.ts";
 import {
   normalizeParsedHostedChatRequest,
   prepareHostedChatExecution,
@@ -21,10 +22,20 @@ const assistantMessage: ChatUiMessage = {
   parts: [{ type: "text", text: "Hi" }],
 };
 
+function isRuntimeFilePart(
+  part: unknown,
+): part is { type: "file"; url: string; mediaType: string } {
+  return typeof part === "object" && part !== null &&
+    "type" in part && part.type === "file" &&
+    "url" in part && typeof part.url === "string" &&
+    "mediaType" in part && typeof part.mediaType === "string";
+}
+
 function createParsedHostedChatRequest(
   overrides: Partial<ParsedHostedChatRequest> = {},
 ): ParsedHostedChatRequest {
   return {
+    agentId: undefined,
     userId: "user-1",
     authToken: "auth-token",
     messages: [userMessage],
@@ -288,6 +299,225 @@ Deno.test("prepareHostedChatExecution prepares root run, runtime, and final mess
   ]);
 });
 
+Deno.test("prepareHostedChatExecution compacts oversized context and appends a durable event", async () => {
+  const originalFetch = globalThis.fetch;
+  const appendedBodies: unknown[] = [];
+  globalThis.fetch = (input, init): Promise<Response> => {
+    if (input.toString().endsWith("/events")) {
+      appendedBodies.push(JSON.parse(String(init?.body ?? "{}")));
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            latest_event_id: 4,
+            latest_external_event_sequence: 3,
+            appended_count: 1,
+            run: {
+              run_id: "run-1",
+              conversation_id: "11111111-1111-4111-a111-111111111111",
+              latest_event_id: 4,
+              latest_external_event_sequence: 3,
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    }
+
+    return Promise.resolve(new Response("{}", { status: 404 }));
+  };
+
+  try {
+    const result = await prepareHostedChatExecution({
+      request: createParsedHostedChatRequest({
+        conversationId: "11111111-1111-4111-a111-111111111111",
+        projectId: "project-1",
+        validatedContext: {
+          conversationId: "11111111-1111-4111-a111-111111111111",
+          projectId: "project-1",
+          branchId: "branch-1",
+        },
+        messages: [
+          {
+            id: "user-old",
+            role: "user",
+            parts: [{ type: "text", text: "Older request ".repeat(200) }],
+          },
+          {
+            id: "assistant-old",
+            role: "assistant",
+            parts: [{ type: "text", text: "Recent answer." }],
+          },
+          {
+            id: "user-latest",
+            role: "user",
+            parts: [{ type: "text", text: "Continue from the latest requirement." }],
+          },
+        ],
+        durableRootRun: {
+          runId: "run-1",
+          messageId: "message-1",
+          latestEventId: 3,
+          latestExternalEventSequence: 2,
+        },
+      }),
+      agentConfig: {
+        id: "agent-1",
+        model: "configured-model",
+        maxSteps: 25,
+      },
+      apiUrl: "https://api.example.com",
+      abortSignal: new AbortController().signal,
+      resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+      fetchSteering: () =>
+        Promise.resolve({
+          instructions: "Project instructions",
+          skills: [],
+        }),
+      buildInstructions: (input) => [
+        {
+          role: "system",
+          content: `${input.agentConfig.id}:${input.instructions}`,
+        },
+      ],
+      createRuntime: (options) =>
+        Promise.resolve({
+          runtimeKind: "framework",
+          modelId: options.model ?? "resolved:configured-model",
+          cleanup: () => Promise.resolve(),
+          agent: {
+            stream: () =>
+              Promise.resolve({
+                steps: Promise.resolve([]),
+                toUIMessageStream: async function* () {},
+              }),
+          },
+        }),
+      contextBudget: {
+        tokenBudget: 220,
+        reserveTokens: 20,
+        recentTailTokens: 20,
+        now: () => 123,
+        summaryGenerator: () => ({ text: "Older context summarized." }),
+      },
+    });
+
+    assertEquals(result.contextBudgetDiagnostics?.compacted, true);
+    assertEquals(result.finalMessages.map((message) => message.id), [
+      "context_compaction_summary:agent-runtime-assistant-2",
+      "agent-runtime-assistant-2",
+      "agent-runtime-user-3",
+    ]);
+    assertEquals(appendedBodies.length, 1);
+    assertEquals(
+      (appendedBodies[0] as { events?: Array<{ type?: string }> }).events?.[0]?.type,
+      "AGENT_RUN_CONTEXT_COMPACTED",
+    );
+    assertEquals(
+      (appendedBodies[0] as { events?: Array<{ firstKeptEntryId?: string }> }).events?.[0]
+        ?.firstKeptEntryId,
+      "agent-runtime-assistant-2",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+Deno.test("prepareHostedChatExecution rejects compacted context when durable event persistence is not complete", async () => {
+  const originalFetch = globalThis.fetch;
+  let createRuntimeCalls = 0;
+  globalThis.fetch = (input): Promise<Response> => {
+    if (input.toString().endsWith("/events")) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ detail: "append failed" }), {
+          status: 500,
+        }),
+      );
+    }
+
+    return Promise.resolve(new Response("{}", { status: 404 }));
+  };
+
+  try {
+    await assertRejects(
+      () =>
+        prepareHostedChatExecution({
+          request: createParsedHostedChatRequest({
+            conversationId: "11111111-1111-4111-a111-111111111111",
+            projectId: "project-1",
+            validatedContext: {
+              conversationId: "11111111-1111-4111-a111-111111111111",
+              projectId: "project-1",
+              branchId: "branch-1",
+            },
+            messages: [
+              {
+                id: "user-old",
+                role: "user",
+                parts: [{ type: "text", text: "Older request ".repeat(200) }],
+              },
+              {
+                id: "user-latest",
+                role: "user",
+                parts: [{ type: "text", text: "Continue from the latest requirement." }],
+              },
+            ],
+            durableRootRun: {
+              runId: "run-1",
+              messageId: "message-1",
+              latestEventId: 3,
+              latestExternalEventSequence: 2,
+            },
+          }),
+          agentConfig: {
+            id: "agent-1",
+            model: "configured-model",
+            maxSteps: 25,
+          },
+          apiUrl: "https://api.example.com",
+          abortSignal: new AbortController().signal,
+          resolveModelId: (modelId) => modelId ? `resolved:${modelId}` : undefined,
+          fetchSteering: () =>
+            Promise.resolve({
+              instructions: "Project instructions",
+              skills: [],
+            }),
+          buildInstructions: (input) => [
+            {
+              role: "system",
+              content: `${input.agentConfig.id}:${input.instructions}`,
+            },
+          ],
+          createRuntime: (options) => {
+            createRuntimeCalls += 1;
+            return Promise.resolve({
+              runtimeKind: "framework",
+              modelId: options.model ?? "resolved:configured-model",
+              cleanup: () => Promise.resolve(),
+              agent: {
+                stream: () =>
+                  Promise.resolve({
+                    steps: Promise.resolve([]),
+                    toUIMessageStream: async function* () {},
+                  }),
+              },
+            });
+          },
+          contextBudget: {
+            tokenBudget: 220,
+            reserveTokens: 20,
+            recentTailTokens: 20,
+            summaryGenerator: () => ({ text: "Older context summarized." }),
+          },
+        }),
+      ContextCompactionError,
+      "Context compaction event was not durably persisted before model execution",
+    );
+    assertEquals(createRuntimeCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through the hosted API", async () => {
   const requestedUrls: string[] = [];
   const originalFetch = globalThis.fetch;
@@ -327,7 +557,7 @@ Deno.test("prepareHostedChatRuntimeMessages refreshes uploaded file URLs through
     ]);
     assertEquals(
       messages[0]?.parts.some((part) =>
-        part.type === "file" &&
+        isRuntimeFilePart(part) &&
         part.url === "https://signed.example.com/notes.txt" &&
         part.mediaType === "text/plain"
       ),
@@ -370,9 +600,11 @@ Deno.test("prepareHostedChatRuntimeMessages omits provider-owned remote tool his
         role: "tool",
         parts: [
           {
-            type: "tool_result",
-            tool_call_id: "toolu_web_search",
-            tool_name: "web_search",
+            type: "tool-web_search",
+            toolCallId: "toolu_web_search",
+            toolName: "web_search",
+            input: { query: "site:skatteverket.se tax residency" },
+            state: "output-available",
             output: null,
           },
         ],

@@ -4,6 +4,7 @@ import {
   type ConversationRunMirror,
   type ConversationRunMirrorHighBacklogState,
   type ConversationRunMirrorRetryScheduledState,
+  type ConversationRunMirrorSnapshot,
   type ConversationRunMirrorStoppedState,
   createConversationRunMirror,
 } from "./run-mirror.ts";
@@ -14,7 +15,7 @@ import { type ConversationRunEventQueueController } from "./durable.ts";
 export interface ConversationRunStreamMirror {
   handleStreamEvent(event: ChatStreamEvent): void;
   appendEvents(events: ConversationRunEvent[]): void;
-  flush(): Promise<void>;
+  flush(): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ReturnType<ConversationRunMirror["getSnapshot"]>;
   dispose(): void;
 }

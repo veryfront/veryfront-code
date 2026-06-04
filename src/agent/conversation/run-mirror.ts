@@ -45,7 +45,7 @@ export interface ConversationRunMirrorHighBacklogState {
 /** Public API contract for conversation run mirror. */
 export interface ConversationRunMirror {
   enqueue(events: unknown[]): void;
-  flush(): Promise<void>;
+  flush(): Promise<ConversationRunMirrorSnapshot>;
   getSnapshot(): ConversationRunMirrorSnapshot;
   dispose(): void;
 }
@@ -260,11 +260,12 @@ export function createConversationRunMirror(input: {
       clearRetryTimer();
       const snapshot = getSnapshot();
       if (snapshot.disabled || (snapshot.pendingEventCount === 0 && !snapshot.inFlight)) {
-        return;
+        return snapshot;
       }
 
       startFlushLoop();
       await inFlightFlush;
+      return getSnapshot();
     },
     getSnapshot,
     dispose() {
