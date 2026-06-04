@@ -191,6 +191,41 @@ describe("agent/hosted-durable-child-fork-execution", () => {
     );
   });
 
+  it("maps known provider errors from failed snapshots into durable invoke terminal codes", () => {
+    const identifiers = {
+      childConversationId: CHILD_CONVERSATION_ID,
+      childRunId: "run_child_1",
+      childMessageId: CHILD_MESSAGE_ID,
+      latestEventId: 7,
+      latestExternalEventSequence: 3,
+    };
+    const targets = {
+      sourceTargetKind: "preview_branch",
+      runtimeTargetKind: "preview_branch",
+      targetBranchId: BRANCH_ID,
+    } satisfies ConversationRunTargets;
+    const result: ChildRunExecutionResult = {
+      success: false,
+      description: "Inspect logs",
+      error:
+        'veryfront-cloud request failed: {"slug":"insufficient-credits","error":"AI credit limit exceeded","suggestion":"Purchase credits."}',
+      steps: 0,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 12,
+    };
+
+    const durableResult = buildHostedDurableChildInvokeSuccessResult({
+      result,
+      snapshot: buildChildRunExecutionSnapshot(result),
+      identifiers,
+      targets,
+    });
+
+    assertEquals(durableResult.terminalErrorCode, "INSUFFICIENT_CREDITS");
+    assertEquals(durableResult.terminalErrorMessage, "Purchase credits.");
+  });
+
   it("sanitizes malformed child transcript text in durable invoke success results", () => {
     const identifiers = {
       childConversationId: CHILD_CONVERSATION_ID,

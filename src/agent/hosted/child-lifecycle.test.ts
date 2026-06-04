@@ -262,6 +262,39 @@ describe("agent/hosted-child-lifecycle", () => {
     assertEquals(result.terminalState.usage?.totalTokens, 3);
   });
 
+  it("maps known provider errors from failed child snapshots to terminal failed states", async () => {
+    const calls: string[] = [];
+    const adapter: HostedChildLifecycleAdapter = {
+      failed: (terminalState) => {
+        calls.push(
+          `failed:${terminalState.terminalErrorCode}:${terminalState.terminalErrorMessage}`,
+        );
+      },
+    };
+    const localResult: ChildRunExecutionResult = {
+      success: false,
+      description: "Search docs",
+      error:
+        'veryfront-cloud request failed: {"slug":"insufficient-credits","error":"AI credit limit exceeded","suggestion":"Purchase credits."}',
+      steps: 0,
+      toolCalls: [],
+      toolResults: [],
+      durationMs: 4,
+    };
+
+    const result = await runHostedChildExecutionLifecycle({
+      adapter,
+      executionFailedCode: "INVOKE_AGENT_FAILED",
+      execute: () => localResult,
+      getExecutionSnapshot: () => null,
+    });
+
+    assertEquals(calls, ["failed:INSUFFICIENT_CREDITS:Purchase credits."]);
+    assertEquals(result.status, "failed");
+    assertEquals(result.terminalState.terminalErrorCode, "INSUFFICIENT_CREDITS");
+    assertEquals(result.terminalState.terminalErrorMessage, "Purchase credits.");
+  });
+
   it("skips selected terminal persistence while preserving failure state", async () => {
     const calls: string[] = [];
     const adapter: HostedChildLifecycleAdapter = {

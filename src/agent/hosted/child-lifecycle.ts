@@ -4,6 +4,7 @@ import {
   type ChildRunExecutionSnapshot,
   getChildRunSnapshotUsage,
 } from "../child-run/execution-snapshot.ts";
+import { parseProviderError } from "../../chat/provider-errors.ts";
 import { isChildRunAbortError } from "../child-run/execution-support.ts";
 import {
   HostedChildTerminalStateError,
@@ -126,6 +127,24 @@ class HostedChildExecutionFailure extends Error {
     super(message);
     this.name = "HostedChildExecutionFailure";
   }
+}
+
+function resolveKnownProviderTerminalError(error: unknown): {
+  code: string;
+  message: string;
+} | null {
+  const parsedError = parseProviderError(error);
+  if (
+    parsedError.code === "EXTERNAL_SERVICE_ERROR" &&
+    parsedError.message === "LLM provider service error"
+  ) {
+    return null;
+  }
+
+  return {
+    code: parsedError.code,
+    message: parsedError.message,
+  };
 }
 
 async function dispatchTerminalState(
@@ -252,10 +271,11 @@ function resolveHostedChildExecutionErrorState(
   }
 
   if (error instanceof HostedChildExecutionFailure) {
+    const providerError = resolveKnownProviderTerminalError(error);
     return {
       status: "failed",
-      terminalErrorCode: input.executionFailedCode,
-      terminalErrorMessage: error.message,
+      terminalErrorCode: providerError?.code ?? input.executionFailedCode,
+      terminalErrorMessage: providerError?.message ?? error.message,
       usage: toHostedChildLifecycleUsage(error.usage),
     };
   }

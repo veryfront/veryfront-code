@@ -2,6 +2,7 @@ import type {
   ChildRunExecutionResult,
   ChildRunExecutionSnapshot,
 } from "../child-run/execution-snapshot.ts";
+import { parseProviderError } from "../../chat/provider-errors.ts";
 import { buildChildRunResultSummary } from "../child-run/result-summary.ts";
 import {
   type ConversationRunTargets,
@@ -163,6 +164,24 @@ export function buildHostedDurableChildInvokeTerminalFailureResult(
   });
 }
 
+function resolveKnownProviderTerminalError(error: unknown): {
+  code: string;
+  message: string;
+} | null {
+  const parsedError = parseProviderError(error);
+  if (
+    parsedError.code === "EXTERNAL_SERVICE_ERROR" &&
+    parsedError.message === "LLM provider service error"
+  ) {
+    return null;
+  }
+
+  return {
+    code: parsedError.code,
+    message: parsedError.message,
+  };
+}
+
 /** Result returned from build hosted durable child invoke success. */
 export function buildHostedDurableChildInvokeSuccessResult<
   TLocalResult extends ChildRunExecutionResult,
@@ -170,6 +189,9 @@ export function buildHostedDurableChildInvokeSuccessResult<
   const summaryText = input.snapshot.fullResultText ??
     (input.result.success ? input.result.summary.text : input.result.error);
   const summary = summaryText ? buildChildRunResultSummary(summaryText) : null;
+  const terminalError = input.snapshot.success
+    ? null
+    : resolveKnownProviderTerminalError(input.snapshot.error);
 
   return {
     ok: input.snapshot.success,
@@ -191,8 +213,10 @@ export function buildHostedDurableChildInvokeSuccessResult<
     childMessageId: input.identifiers.childMessageId,
     sourceTargetKind: input.targets.sourceTargetKind,
     runtimeTargetKind: input.targets.runtimeTargetKind,
-    terminalErrorCode: input.snapshot.success ? null : "INVOKE_AGENT_FAILED",
-    terminalErrorMessage: input.snapshot.success ? null : input.snapshot.error,
+    terminalErrorCode: input.snapshot.success ? null : terminalError?.code ?? "INVOKE_AGENT_FAILED",
+    terminalErrorMessage: input.snapshot.success
+      ? null
+      : terminalError?.message ?? input.snapshot.error,
   };
 }
 
