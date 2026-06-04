@@ -131,6 +131,7 @@ type StreamedStepState = {
   text: string;
   toolCalls: Map<string, StreamedToolCallState>;
   messages: StreamedMessage[];
+  streamError?: Error;
 };
 
 /** State for fork runtime stream mapping. */
@@ -800,6 +801,10 @@ export function applyPartToStreamedStepState(state: StreamedStepState, part: For
       });
       break;
     }
+    case "error": {
+      state.streamError = part.error;
+      break;
+    }
     default:
       break;
   }
@@ -927,6 +932,10 @@ export async function resolveForkStepResponse(input: {
 
   if (input.abortSignal?.aborted) {
     throw createAgentRuntimeForkAbortError(input.abortSignal);
+  }
+
+  if (input.streamedStepState.streamError) {
+    throw input.streamedStepState.streamError;
   }
 
   const fallbackState = hasFallbackStepContent(input.streamedStepState)

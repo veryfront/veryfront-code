@@ -22,7 +22,9 @@ export const getHostedChildForkToolInputSchema = defineSchema((v) =>
       .nonnegative()
       .optional()
       .describe("Thinking override in budget tokens. Use 0 to disable thinking."),
-    max_steps: v.number().optional().describe("Max steps override."),
+    max_steps: v.number().optional().describe(
+      "Max steps override. Omit for the hosted child default. Values below the default are raised to the default.",
+    ),
   })
 );
 
@@ -82,6 +84,7 @@ export function resolveHostedChildForkRuntimeConfig(
 ): HostedChildForkRuntimeConfig {
   const { description, prompt, tools, model, thinking, max_steps } = input.forkInput;
   const forkModel = input.resolveModelId(model || input.contextModel || input.defaultModel);
+  const requestedMaxSteps = typeof max_steps === "number" ? max_steps : undefined;
 
   return {
     description,
@@ -93,7 +96,7 @@ export function resolveHostedChildForkRuntimeConfig(
     requestedTools: tools,
     forkModel,
     provider: input.resolveProvider(forkModel),
-    maxSteps: max_steps || input.defaultMaxSteps,
+    maxSteps: Math.max(requestedMaxSteps ?? input.defaultMaxSteps, input.defaultMaxSteps),
     thinkingConfig: resolveHostedChildForkThinkingOverride(thinking),
   };
 }

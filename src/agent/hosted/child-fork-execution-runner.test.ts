@@ -280,7 +280,7 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
       tools: ["noop"],
       model: "sonnet",
       thinking: 256,
-      max_steps: 7,
+      max_steps: 120,
     },
     toolCallId: "tool-call-1",
     defaultModel: "haiku",
@@ -303,7 +303,7 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
       assertEquals(runtimeConfig.description, "Review checkout");
       assertEquals(runtimeConfig.forkModel, "resolved-sonnet");
       assertEquals(runtimeConfig.provider, "provider-resolved-sonnet");
-      assertEquals(runtimeConfig.maxSteps, 7);
+      assertEquals(runtimeConfig.maxSteps, 120);
       assertEquals(runtimeConfig.thinkingConfig, { enabled: true, budgetTokens: 256 });
       assertEquals(runtimeConfig.effectivePrompt.includes("Review the checkout flow."), true);
       return {
@@ -315,7 +315,7 @@ Deno.test("executeHostedChildForkToolInput resolves runtime config and prepares 
     startRuntime: (input) => {
       callbacks.push(`start:${input.forkModel}`);
       assertEquals(input.provider, "provider-resolved-sonnet");
-      assertEquals(input.maxSteps, 7);
+      assertEquals(input.maxSteps, 120);
       assertEquals(input.providerOptions, {
         forkModel: "resolved-sonnet",
         thinkingConfig: { enabled: true, budgetTokens: 256 },

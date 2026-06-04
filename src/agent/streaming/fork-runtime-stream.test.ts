@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import type { AgentResponse, Message as AgentMessage } from "../schemas/index.ts";
 import {
+  applyPartToStreamedStepState,
   buildForkRuntimeStepFromResponse,
   buildRecoveredStepParts,
   createForkRuntimeStreamMappingState,
@@ -180,6 +181,29 @@ describe("agent/fork-runtime-stream", () => {
     );
     assertEquals(response.status, "completed");
     assertExists(response.messages.find((message) => message.role === "assistant"));
+  });
+
+  it("preserves a terminal stream error when a fork response never finishes", async () => {
+    const responsePromise = new Promise<never>(() => {});
+    const streamedStepState = createStreamedStepState();
+    applyPartToStreamedStepState(streamedStepState, {
+      type: "error",
+      error: new Error(
+        'veryfront-cloud request failed: {"slug":"insufficient-credits","error":"AI credit limit exceeded","suggestion":"Purchase credits."}',
+      ),
+    });
+
+    await assertRejects(
+      () =>
+        resolveForkStepResponse({
+          responsePromise,
+          responseTimeoutMs: 1,
+          currentMessages: [],
+          streamedStepState,
+        }),
+      Error,
+      "Purchase credits.",
+    );
   });
 
   it("builds fork runtime steps and continuation decisions from agent responses", () => {
