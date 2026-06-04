@@ -1013,6 +1013,11 @@ describe("integration endpoint specs", () => {
       "https://graph.microsoft.com/v1.0/me/findMeetingTimes",
     );
     assertEquals(
+      getTool("outlook", "search_emails").endpoint?.params?.query
+        ?.queryValueFormat,
+      "microsoft-graph-search",
+    );
+    assertEquals(
       getTool("outlook", "list_conversation_messages").endpoint?.params?.["$orderby"],
       undefined,
     );

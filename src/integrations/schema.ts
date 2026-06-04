@@ -124,6 +124,10 @@ export const getIntegrationEndpointParamSchema = defineSchema((v) =>
     // For query params only: the HTTP query parameter name to send when it differs
     // from the agent-facing parameter key (e.g. input query -> query param $search).
     queryName: v.string().optional(),
+    // For query params only: provider-specific formatting applied to the value
+    // before sending. Microsoft Graph message $search requires the entire AQS
+    // query to be enclosed in double quotes.
+    queryValueFormat: v.enum(["microsoft-graph-search"]).optional(),
     // For header params only: the HTTP header name to send when it differs from
     // the agent-facing parameter key (e.g. input account_id → header Harvest-Account-Id).
     headerName: v.string().optional(),

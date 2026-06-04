@@ -134,13 +134,13 @@ ${historicalToolSummaryLines}
 );
 
 const fmt = new Deno.Command(Deno.execPath(), {
-  args: ["fmt", summaryPath],
+  args: ["fmt", dataPath, summaryPath],
   stdout: "inherit",
   stderr: "inherit",
 });
 const fmtStatus = await fmt.output();
 if (!fmtStatus.success) {
-  throw new Error(`Failed to format generated ${summaryPath}`);
+  throw new Error(`Failed to format generated integration modules`);
 }
 
 console.log(
