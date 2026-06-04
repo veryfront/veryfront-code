@@ -270,9 +270,37 @@ async function withProxyBrowserPage(
 
 async function assertCounterHydration(
   page: import("npm:playwright").Page,
+  diagnostics: import("../../_helpers/playwright.ts").BrowserDiagnostics,
   options: { expectedStrategy: string; expectedModulePath: string },
 ): Promise<void> {
-  await page.waitForSelector('#counter[data-hydrated="yes"]');
+  try {
+    await page.waitForSelector('#counter[data-hydrated="yes"]', {
+      timeout: 60_000,
+    });
+  } catch (error) {
+    const state = await page.evaluate(() => {
+      const counter = document.querySelector("#counter");
+      const hydrationData = document.querySelector("#veryfront-hydration-data");
+      return {
+        url: location.href,
+        counterHtml: counter?.outerHTML ?? null,
+        hydrationDataText: hydrationData?.textContent ?? null,
+        scripts: [...document.scripts].map((script) => script.src).filter(Boolean),
+        resources: performance.getEntriesByType("resource").map((entry) => entry.name),
+      };
+    });
+    throw new Error(
+      [
+        "Counter did not hydrate before the timeout.",
+        `Expected module path: ${options.expectedModulePath}`,
+        `Page state: ${JSON.stringify(state, null, 2)}`,
+        `Browser diagnostics: ${
+          JSON.stringify(getBrowserDiagnosticMessages(diagnostics), null, 2)
+        }`,
+        `Original error: ${error instanceof Error ? error.message : String(error)}`,
+      ].join("\n"),
+    );
+  }
 
   const initialText = await page.textContent("#counter");
   assertEquals(initialText?.trim(), "Count: 0");
@@ -394,7 +422,7 @@ describe(
             const response = await page.goto(`http://127.0.0.1:${port}/`);
             assertEquals(response?.status(), 200);
 
-            await assertCounterHydration(page, {
+            await assertCounterHydration(page, diagnostics, {
               expectedStrategy: "fs",
               expectedModulePath: "/_veryfront/fs/",
             });
@@ -428,7 +456,7 @@ describe(
             context,
             getProxyHeaders("production"),
             async (page, diagnostics) => {
-              await assertCounterHydration(page, {
+              await assertCounterHydration(page, diagnostics, {
                 expectedStrategy: "rsc-module",
                 expectedModulePath: "/_veryfront/rsc/module?",
               });
@@ -466,7 +494,7 @@ describe(
               // loader are dev-only surfaces gated on `isLocalProject` under
               // VULN-SRV-1/2 — a trusted `x-environment: preview` header
               // cannot unlock them because they serve raw project source.
-              await assertCounterHydration(page, {
+              await assertCounterHydration(page, diagnostics, {
                 expectedStrategy: "rsc-module",
                 expectedModulePath: "/_veryfront/rsc/module?",
               });

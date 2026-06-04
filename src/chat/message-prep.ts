@@ -122,11 +122,11 @@ export function enforceTokenBudgetWithTurnCompression(
   if (totalTokens <= effectiveBudget) return messages;
 
   const turns = collectTurns(messages);
-  const minKeep = Math.min(2, turns.length);
   const result = [...messages];
+  const latestTurnIndex = Math.max(0, turns.length - 1);
 
   let compressCount = 0;
-  while (totalTokens > effectiveBudget && compressCount < turns.length - minKeep) {
+  while (totalTokens > effectiveBudget && compressCount < latestTurnIndex) {
     const turn = turns[compressCount];
     if (!turn) break;
 

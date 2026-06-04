@@ -422,10 +422,8 @@ Deno.test("enforceTokenBudget can still drop the oldest compressed turn when the
   const compacted = enforceTokenBudget(messages, 120);
 
   assertEquals(compacted.length >= 4, true);
-  assertEquals(compacted[0], messages[4]);
-  assertEquals(compacted[1], messages[5]);
-  assertEquals(compacted[2], messages[6]);
-  assertEquals(compacted[3], messages[7]);
+  assertMatch(String(compacted[0]!.content), /^\[Compressed: turn three/);
+  assertEquals(compacted.slice(-2), messages.slice(-2));
 });
 
 Deno.test("compressTurn emits a two-message summary shell", () => {

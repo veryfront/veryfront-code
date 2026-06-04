@@ -1,6 +1,6 @@
 {
   "name": "veryfront",
-  "version": "0.1.656",
+  "version": "0.1.657",
   "license": "Apache-2.0",
   "nodeModulesDir": "auto",
   "workspace": [
@@ -355,8 +355,8 @@
     "lint:ban-zod": "deno run --allow-read scripts/lint/ban-zod-imports.ts",
     "lint:core-deps": "deno run --allow-read scripts/lint/audit-core-deps.ts",
     "lint:dependency-boundaries": "deno run --allow-read scripts/lint/audit-dependency-boundaries.ts",
-    "lint:extension-contracts": "deno run --allow-read --allow-env --allow-sys scripts/lint/audit-extension-contracts.ts",
-    "lint:extension-capabilities": "deno run --allow-read --allow-env --allow-sys scripts/lint/audit-extension-capabilities.ts",
+    "lint:extension-contracts": "deno run --allow-read scripts/lint/audit-extension-contracts.ts",
+    "lint:extension-capabilities": "deno run --allow-read scripts/lint/audit-extension-capabilities.ts",
     "lint:ban-console": "deno run --allow-read scripts/lint/ban-console.ts",
     "lint:ban-deep-imports": "deno run --allow-read scripts/lint/ban-deep-imports.ts",
     "lint:imports": "deno run --allow-read scripts/lint/no-cross-boundary-relative-imports.ts",

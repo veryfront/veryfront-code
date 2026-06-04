@@ -1,4 +1,5 @@
-import { fromFileUrl, join, toFileUrl } from "#std/path";
+import { fromFileUrl, join } from "#std/path";
+import { extractExtensionSourceMetadata } from "./extension-source-metadata.ts";
 
 type Capability = { type: string; [key: string]: unknown };
 
@@ -18,48 +19,6 @@ export interface ExtensionContractAuditInput {
 export interface ExtensionContractAuditIssue {
   manifestPath: string;
   message: string;
-}
-
-type Importer = (moduleUrl: string) => Promise<Record<string, unknown>>;
-
-interface ImportWithRetryOptions {
-  retries?: number;
-  delay?: (ms: number) => Promise<void>;
-  importModule?: Importer;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function isTransientRemoteImportFailure(error: unknown): boolean {
-  if (!(error instanceof TypeError)) return false;
-  const message = error.message;
-  if (!/Import ['"]https?:\/\//.test(message)) return false;
-  return /\b(408|425|429|5\d\d)\b/.test(message) ||
-    /network|connection|timeout|temporar/i.test(message);
-}
-
-export async function importWithRetry(
-  moduleUrl: string,
-  options: ImportWithRetryOptions = {},
-): Promise<Record<string, unknown>> {
-  const retries = options.retries ?? 2;
-  const delay = options.delay ?? sleep;
-  const importModule = options.importModule ?? ((url) => import(url));
-
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    try {
-      return await importModule(moduleUrl);
-    } catch (error) {
-      if (attempt >= retries || !isTransientRemoteImportFailure(error)) {
-        throw error;
-      }
-      await delay(250 * (attempt + 1));
-    }
-  }
-
-  throw new Error(`Unable to import ${moduleUrl}`);
 }
 
 function uniqueSorted(values: string[]): string[] {
@@ -169,17 +128,10 @@ async function loadAuditInput(
     await Deno.readTextFile(join(root, manifestPath)),
   ) as Record<string, unknown>;
   const veryfront = (manifest.veryfront ?? {}) as Record<string, unknown>;
-  const moduleUrl = toFileUrl(
+  const source = await Deno.readTextFile(
     join(root, manifestPath.replace(/deno\.json$/, "src/index.ts")),
-  ).href;
-  const mod = await importWithRetry(moduleUrl);
-  if (typeof mod.default !== "function") {
-    throw new Error(`${manifestPath} default export is not an extension factory`);
-  }
-  const extension = mod.default() as {
-    contracts?: ContractMetadata;
-    provides?: Record<string, unknown>;
-  };
+  );
+  const sourceMetadata = extractExtensionSourceMetadata(source);
 
   return {
     manifestPath,
@@ -191,14 +143,16 @@ async function loadAuditInput(
       : [],
     manifestContracts: veryfront.contracts as ContractMetadata | undefined,
     factoryProvides: uniqueSorted([
-      ...Object.keys(extension.provides ?? {}),
-      ...contractList(extension.contracts?.provides),
+      ...sourceMetadata.legacyProvides,
+      ...contractList(sourceMetadata.contracts?.provides),
     ]),
-    factoryRequires: contractList(extension.contracts?.requires),
+    factoryRequires: contractList(sourceMetadata.contracts?.requires),
   };
 }
 
-async function auditWorkspace(root: string): Promise<ExtensionContractAuditIssue[]> {
+async function auditWorkspace(
+  root: string,
+): Promise<ExtensionContractAuditIssue[]> {
   const inputs = await Promise.all(
     (await extensionManifestPaths(root)).map((manifestPath) =>
       loadAuditInput(root, manifestPath)

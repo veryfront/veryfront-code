@@ -164,15 +164,20 @@ describe("npm generated integration artifacts", () => {
 
 	it("keeps the active Jira JQL search endpoint in the npm source artifact", async () => {
 		const source = await Deno.readTextFile("src/integrations/_data.ts");
+		const urls = [...source.matchAll(/"url":\s*"([^"]+)"/g)].map((match) =>
+			match[1]
+		);
 
-		assertStringIncludes(
-			source,
-			'"url":"https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search/jql"',
+		assertEquals(
+			urls.includes(
+				"https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search/jql",
+			),
+			true,
 		);
 		assertStringIncludes(source, '"nextPageToken"');
 		assertEquals(
-			source.includes(
-				'"url":"https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search"',
+			urls.includes(
+				"https://api.atlassian.com/ex/jira/{cloudId}/rest/api/3/search",
 			),
 			false,
 		);
