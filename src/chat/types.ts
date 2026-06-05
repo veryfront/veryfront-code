@@ -330,6 +330,7 @@ export const getChatRequestContextSchema = defineSchema((v) =>
   v.object({
     conversationId: v.string().optional(),
     projectId: v.string().nullable(),
+    projectSlug: v.string().optional(),
     branchId: v.string().nullable(),
     environmentContext: v.string().optional(),
   }).strict()

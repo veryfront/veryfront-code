@@ -846,7 +846,7 @@ function createHostedChatContextBudgetOptions(
     summaryGenerator: createVeryfrontCloudContextSummaryGenerator({
       apiUrl: config.VERYFRONT_API_URL,
       authToken: req.authToken,
-      projectId: req.projectId,
+      projectSlug: req.projectSlug,
       model: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL ?? agentConfig.model,
       maxOutputTokens: config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS,
       maxInputTokens: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS,

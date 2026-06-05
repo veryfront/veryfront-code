@@ -145,6 +145,7 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(request.context, {
       conversationId,
       projectId,
+      projectSlug: "demo-project",
       branchId,
     });
     assertEquals(request.durableRootRun, {
@@ -238,12 +239,34 @@ describe("agent/hosted-chat-request", () => {
     assertEquals(parsed.userId, userId);
     assertEquals(parsed.authToken, "token_1");
     assertEquals(parsed.projectId, projectId);
+    assertEquals(parsed.projectSlug, undefined);
     assertEquals(parsed.conversationId, conversationId);
     assertEquals(parsed.parentRunId, "run_root_1");
     assertEquals(parsed.upstreamParentConversationId, "10000000-1000-4000-8000-100000000007");
     assertEquals(parsed.upstreamParentRunId, "run_parent_1");
     assertEquals(parsed.spawnedFromToolCallId, "tool_1");
     assertEquals(parsed.persistLatestUserMessageBeforeDurableRun, false);
+  });
+
+  it("preserves project slug when parsing runtime agent invocation hosted chat requests", async () => {
+    const parsed = await parseRuntimeAgentRunInvocationHostedChatRequestFromRequest(
+      new Request("https://agent.example.com/api/runs", {
+        method: "POST",
+        body: JSON.stringify(createRuntimeInvocation()),
+      }),
+      {
+        authenticate: () => Promise.resolve({ userId, authToken: "token_1" }),
+        verifyProjectAccess: () => Promise.resolve({ success: true }),
+      },
+    );
+
+    if (parsed instanceof Response) {
+      throw new Error("Expected parsed request");
+    }
+
+    assertEquals(parsed.projectId, projectId);
+    assertEquals(parsed.projectSlug, "demo-project");
+    assertEquals(parsed.validatedContext.projectSlug, "demo-project");
   });
 
   it("returns hosted chat project-access errors as stable JSON responses", async () => {

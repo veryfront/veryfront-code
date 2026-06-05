@@ -22,6 +22,11 @@ import { isAnyDebugEnabled } from "#veryfront/utils/constants/env.ts";
 import { setActiveSpanAttributes, withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { stringifyToolError, throwIfAborted } from "./error-utils.ts";
+import {
+  redactSensitive,
+  sanitizeSerializedError,
+  sanitizeUrlCredentials,
+} from "#veryfront/utils/logger/redact.ts";
 
 const logger = serverLogger.component("agent");
 const LOCAL_TOOL_COMMIT_GRACE_MS = 250;
@@ -91,20 +96,21 @@ function tryParseToolInputObject(input: string): Record<string, unknown> | null 
   }
 }
 
-function summarizeDebugValue(value: unknown): unknown {
+export function summarizeProviderToolDebugValue(value: unknown): unknown {
   if (value instanceof Error) {
-    return {
+    return sanitizeSerializedError({
       name: value.name,
       message: value.message,
       stack: value.stack,
-    };
+    });
   }
 
   if (typeof value === "string") {
-    return value.length > 500 ? `${value.slice(0, 500)}…` : value;
+    const safe = sanitizeUrlCredentials(value);
+    return safe.length > 500 ? `${safe.slice(0, 500)}…` : safe;
   }
 
-  return value;
+  return redactSensitive(value);
 }
 
 function resolveToolResultOutput(part: RuntimeStreamPart): unknown {
@@ -160,9 +166,9 @@ function logProviderToolPart(
     outputType: typeof part.output,
     errorType: typeof part.error,
     inputType: typeof part.input,
-    output: summarizeDebugValue(part.output),
-    error: summarizeDebugValue(part.error),
-    input: summarizeDebugValue(part.input),
+    output: summarizeProviderToolDebugValue(part.output),
+    error: summarizeProviderToolDebugValue(part.error),
+    input: summarizeProviderToolDebugValue(part.input),
   });
 }
 

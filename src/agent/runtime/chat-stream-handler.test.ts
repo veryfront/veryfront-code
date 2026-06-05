@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createMockResult, createSSECollector } from "./chat-stream-handler.test-helpers.ts";
-import { createStreamState, processStream } from "./chat-stream-handler.ts";
+import {
+  createStreamState,
+  processStream,
+  summarizeProviderToolDebugValue,
+} from "./chat-stream-handler.ts";
 
 function emptyAsyncIterable() {
   return {
@@ -30,6 +34,32 @@ function pendingAsyncIterable() {
 }
 
 describe("chat-stream-handler", () => {
+  describe("summarizeProviderToolDebugValue", () => {
+    it("redacts sensitive provider tool debug fields", () => {
+      assertEquals(
+        summarizeProviderToolDebugValue({
+          query: "Swedish tax residency",
+          authorization: "Bearer secret-token",
+          nested: { apiKey: "sk-secret" },
+        }),
+        {
+          query: "Swedish tax residency",
+          authorization: "[REDACTED]",
+          nested: { apiKey: "[REDACTED]" },
+        },
+      );
+    });
+
+    it("sanitizes URL credentials in provider tool debug errors", () => {
+      const error = new Error("GET https://example.test/path?access_token=secret failed");
+      const summary = summarizeProviderToolDebugValue(error) as { message: string; stack: string };
+
+      assertEquals(summary.message.includes("secret"), false);
+      assertEquals(summary.message.includes("access_token=[REDACTED]"), true);
+      assertEquals(summary.stack.includes("access_token=secret"), false);
+    });
+  });
+
   describe("createStreamState", () => {
     it("returns a clean initial state", () => {
       const state = createStreamState();

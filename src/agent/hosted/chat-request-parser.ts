@@ -37,6 +37,7 @@ export type ParsedHostedChatRequest = {
   messages: ChatUiMessage[];
   validatedContext: ChatRequestContext;
   projectId: string | null;
+  projectSlug?: string;
   conversationId: string | undefined;
   parentRunId: string | undefined;
   upstreamParentConversationId: string | undefined;
@@ -121,6 +122,7 @@ export async function buildParsedHostedChatRequest(input: {
     durableRootRun,
   } = input.chatRequest;
   const projectId = chatContext.projectId;
+  const projectSlug = chatContext.projectSlug;
   const conversationId = chatContext.conversationId;
 
   const accessError = await verifyHostedChatProjectAccess({
@@ -139,6 +141,7 @@ export async function buildParsedHostedChatRequest(input: {
     messages: messages as ChatUiMessage[],
     validatedContext: chatContext,
     projectId,
+    projectSlug,
     conversationId,
     parentRunId: durableRootRun?.runId,
     upstreamParentConversationId: durableRootRun?.parentConversationId,

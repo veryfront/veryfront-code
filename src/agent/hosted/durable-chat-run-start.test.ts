@@ -22,6 +22,7 @@ function createParsedRequest(
 ): ParsedHostedChatRequest {
   const conversationId = crypto.randomUUID();
   return {
+    agentId: undefined,
     userId: "user-1",
     authToken: "token-1",
     messages: [userMessage],

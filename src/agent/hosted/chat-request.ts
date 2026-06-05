@@ -134,6 +134,7 @@ export function buildHostedChatRequestInputFromRuntimeAgentInvocation(
     context: {
       conversationId: input.run.conversationId,
       projectId: input.run.project.projectId,
+      projectSlug: input.run.project.projectSlug,
       branchId: input.run.project.runtimeTargetBranchId ?? null,
       ...(environmentContext ? { environmentContext } : {}),
     },
