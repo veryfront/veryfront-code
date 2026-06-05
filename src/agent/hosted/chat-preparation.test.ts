@@ -403,9 +403,9 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
 
     assertEquals(result.contextBudgetDiagnostics?.compacted, true);
     assertEquals(result.finalMessages.map((message) => message.id), [
-      "context_compaction_summary:agent-runtime-assistant-2",
-      "agent-runtime-assistant-2",
-      "agent-runtime-user-3",
+      "context_compaction_summary:assistant-old",
+      "assistant-old",
+      "user-latest",
     ]);
     assertEquals(appendedBodies.length, 1);
     assertEquals(
@@ -415,7 +415,7 @@ Deno.test("prepareHostedChatExecution compacts oversized context and appends a d
     assertEquals(
       (appendedBodies[0] as { events?: Array<{ firstKeptEntryId?: string }> }).events?.[0]
         ?.firstKeptEntryId,
-      "agent-runtime-assistant-2",
+      "assistant-old",
     );
   } finally {
     globalThis.fetch = originalFetch;
