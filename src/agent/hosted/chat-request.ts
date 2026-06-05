@@ -1,5 +1,9 @@
 import type { ChatRuntimeOverrides, DurableRootRunDescriptor } from "#veryfront/chat/types.ts";
-import { getChatRequestContextSchema, getChatUiMessagesSchema } from "#veryfront/chat/types.ts";
+import {
+  getChatRequestContextSchema,
+  getChatUiMessagePartSchema,
+  getChatUiMessageRoleSchema,
+} from "#veryfront/chat/types.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import type { RuntimeAgentRunInvocation } from "../runtime/agent-invocation-contract.ts";
@@ -40,9 +44,22 @@ export const getHostedChatRuntimeOverridesSchema = defineSchema((v) =>
  */
 export const hostedChatRuntimeOverridesSchema = lazySchema(getHostedChatRuntimeOverridesSchema);
 
+const getHostedChatRequestMessageSchema = defineSchema((v) =>
+  v.object({
+    id: v.string().min(1),
+    role: getChatUiMessageRoleSchema(),
+    parts: v.array(getChatUiMessagePartSchema()),
+    metadata: v.record(v.string(), v.unknown()).optional(),
+  }).strip()
+);
+
+const getHostedChatRequestMessagesSchema = defineSchema((v) =>
+  v.array(getHostedChatRequestMessageSchema())
+);
+
 export const getHostedChatRequestSchema = defineSchema((v) =>
   v.object({
-    messages: getChatUiMessagesSchema(),
+    messages: getHostedChatRequestMessagesSchema(),
     context: getChatRequestContextSchema(),
     model: v.string().optional(),
     allowDelegation: v.boolean().optional(),
