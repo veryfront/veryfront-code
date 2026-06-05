@@ -70,6 +70,30 @@ describe("agent/node-agent-service-telemetry", () => {
     });
   });
 
+  it("prefers deployment and app environment labels over NODE_ENV", () => {
+    const appConfig = resolveNodeHostedAgentServiceTelemetryConfig({
+      env: {
+        NODE_ENV: "production",
+        APP_ENVIRONMENT: "staging",
+      },
+      defaultServiceName: "agent-service",
+    });
+
+    assertEquals(appConfig.deploymentEnvironment, "staging");
+
+    const explicitConfig = resolveNodeHostedAgentServiceTelemetryConfig({
+      env: {
+        NODE_ENV: "production",
+        APP_ENVIRONMENT: "staging",
+        VERYFRONT_ENVIRONMENT: "preview",
+        OTEL_DEPLOYMENT_ENVIRONMENT: "canary",
+      },
+      defaultServiceName: "agent-service",
+    });
+
+    assertEquals(explicitConfig.deploymentEnvironment, "canary");
+  });
+
   it("supports Basic authorization headers and clamps sampling ratio", () => {
     const config = resolveNodeHostedAgentServiceTelemetryConfig({
       env: {
