@@ -36,7 +36,7 @@ describe("integration feature flags", () => {
 
     assertEquals(isVisibleIntegration("salesforce"), true);
     assertEquals(isVisibleIntegration("stripe"), true);
-    assertEquals(isVisibleIntegration("hubspot"), false);
+    assertEquals(isVisibleIntegration("pipedrive"), false);
   });
 
   it("exposes all declared integrations when explicitly enabled", () => {

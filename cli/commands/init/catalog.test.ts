@@ -91,7 +91,7 @@ describe("catalog", () => {
   describe("getAllIntegrations", () => {
     it("returns flat array of all integrations", () => {
       const all = getAllIntegrations();
-      assertEquals(all.length, 20);
+      assertEquals(all.length, 21);
     });
 
     it("includes default-visible integrations from supported categories", () => {
@@ -105,6 +105,7 @@ describe("catalog", () => {
       assertEquals(ids.includes("sentry"), true);
       assertEquals(ids.includes("drive"), true);
       assertEquals(ids.includes("figma"), true);
+      assertEquals(ids.includes("hubspot"), true);
       assertEquals(ids.includes("salesforce"), false);
       assertEquals(ids.includes("stripe"), false);
     });
@@ -168,7 +169,7 @@ describe("catalog", () => {
     it("includes category headers", () => {
       const options = getIntegrationSelectOptionsWithHeaders();
       const headers = options.filter((o) => o.isHeader);
-      assertEquals(headers.length, 5);
+      assertEquals(headers.length, 6);
     });
 
     it("header values have __header_ prefix", () => {

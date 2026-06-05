@@ -129,6 +129,7 @@ export const INTEGRATION_CATEGORIES: readonly IntegrationCategory[] = [
   {
     name: "Sales & CRM",
     integrations: [
+      { id: "hubspot", label: "HubSpot", description: "Forms, contacts, and leads" },
       { id: "salesforce", label: "Salesforce", description: "CRM, sales automation" },
       { id: "pipedrive", label: "Pipedrive", description: "Sales pipeline" },
     ],
