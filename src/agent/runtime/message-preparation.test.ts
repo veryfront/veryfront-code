@@ -28,6 +28,34 @@ Deno.test("prepareAgentRuntimeMessagesFromUiMessages returns an empty-conversati
   assertEquals(messages[0]?.parts, [{ type: "text", text: "Suggest next steps." }]);
 });
 
+Deno.test("prepareAgentRuntimeMessagesFromUiMessages preserves source message ids", async () => {
+  const messages = await prepareAgentRuntimeMessagesFromUiMessages({
+    messages: [
+      {
+        id: "user-source-1",
+        role: "user",
+        parts: [{ type: "text", text: "First request" }],
+      },
+      {
+        id: "assistant-source-1",
+        role: "assistant",
+        parts: [{ type: "text", text: "First answer" }],
+      },
+      {
+        id: "user-source-2",
+        role: "user",
+        parts: [{ type: "text", text: "Follow up" }],
+      },
+    ],
+  });
+
+  assertEquals(messages.map((message) => message.id), [
+    "user-source-1",
+    "assistant-source-1",
+    "user-source-2",
+  ]);
+});
+
 Deno.test("prepareAgentRuntimeMessagesFromUiMessages refreshes upload file URLs before conversion", async () => {
   const resolvedUploadIds: string[] = [];
   const messages = await prepareAgentRuntimeMessagesFromUiMessages({

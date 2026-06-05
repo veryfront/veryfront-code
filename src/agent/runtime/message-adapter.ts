@@ -1,4 +1,4 @@
-import { isRecord } from "#veryfront/chat/conversation.ts";
+import { getProviderModelMessageSourceId, isRecord } from "#veryfront/chat/conversation.ts";
 import {
   buildDataFileAnnotation,
   type ChatModelFilePart,
@@ -126,7 +126,7 @@ function getOptionalStringField(part: unknown, key: string): string | undefined 
 }
 
 function createAgentRuntimeMessageId(message: ProviderModelMessage, index: number): string {
-  return `agent-runtime-${message.role}-${index + 1}`;
+  return getProviderModelMessageSourceId(message) ?? `agent-runtime-${message.role}-${index + 1}`;
 }
 
 function createTextAgentRuntimePart(text: string): AgentRuntimeMessagePart | null {

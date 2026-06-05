@@ -1,5 +1,6 @@
 import {
   convertUiMessagesToProviderModelMessages,
+  copyProviderModelMessageSourceId,
   getStringField,
   isReasoningPart,
   isToolCallPart,
@@ -454,13 +455,19 @@ export function sanitizeProviderModelMessages(
     if (Array.isArray(message.content)) {
       if (message.role === "user") {
         const cleaned = cleanContent(message.content);
-        if (cleaned.length > 0) result.push({ ...message, content: cleaned });
+        if (cleaned.length > 0) {
+          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+        }
       } else if (message.role === "assistant") {
         const cleaned = cleanContent(message.content);
-        if (cleaned.length > 0) result.push({ ...message, content: cleaned });
+        if (cleaned.length > 0) {
+          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+        }
       } else if (message.role === "tool") {
         const cleaned = cleanContent(message.content);
-        if (cleaned.length > 0) result.push({ ...message, content: cleaned });
+        if (cleaned.length > 0) {
+          result.push(copyProviderModelMessageSourceId(message, { ...message, content: cleaned }));
+        }
       }
       continue;
     }
@@ -828,7 +835,7 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
     if (msg.role === "assistant" && Array.isArray(msg.content)) {
       const filtered = msg.content.filter((part) => !isReasoningPart(part));
       if (filtered.length !== msg.content.length) {
-        return { ...msg, content: filtered };
+        return copyProviderModelMessageSourceId(msg, { ...msg, content: filtered });
       }
       return msg;
     }
@@ -882,7 +889,7 @@ export function maskOldToolOutputs(messages: ProviderModelMessage[]): ProviderMo
       return { ...part, output: wrapToolResultOutput(part.output, masked) };
     });
 
-    return { ...msg, content: newContent };
+    return copyProviderModelMessageSourceId(msg, { ...msg, content: newContent });
   });
 }
 
@@ -941,10 +948,10 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
     }
 
     if (repairedContent.length !== message.content.length) {
-      result[index] = {
+      result[index] = copyProviderModelMessageSourceId(message, {
         ...message,
         content: repairedContent,
-      };
+      });
     }
 
     if (regularToolCalls.length === 0) {
@@ -1009,10 +1016,10 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
         continue;
       }
 
-      result[laterIndex] = {
+      result[laterIndex] = copyProviderModelMessageSourceId(laterMessage, {
         ...laterMessage,
         content: keptLaterContent,
-      };
+      });
     }
 
     const repairedResults = unresolvedCalls.map(
@@ -1021,16 +1028,16 @@ export function repairToolPairs(messages: ProviderModelMessage[]): ProviderModel
     );
 
     if (nextMessage?.role === "tool" && Array.isArray(nextMessage.content)) {
-      result[index + 1] = {
+      result[index + 1] = copyProviderModelMessageSourceId(nextMessage, {
         ...nextMessage,
         content: [...repairedResults, ...nextMessage.content],
-      };
+      });
     } else {
       const toolMessage: ProviderModelMessage = {
         role: "tool",
         content: repairedResults,
       };
-      result.splice(index + 1, 0, toolMessage);
+      result.splice(index + 1, 0, copyProviderModelMessageSourceId(message, toolMessage));
     }
     mutated = true;
   }
@@ -1067,7 +1074,7 @@ export function ensureToolCallInputs(messages: ProviderModelMessage[]): Provider
 
     if (msgMutated) {
       mutated = true;
-      return { ...msg, content: newContent };
+      return copyProviderModelMessageSourceId(msg, { ...msg, content: newContent });
     }
     return msg;
   });
@@ -1134,21 +1141,27 @@ export function dedupeToolHistory(messages: ProviderModelMessage[]): ProviderMod
         deduped.push(message);
         continue;
       }
-      if (filtered.length > 0) deduped.push({ ...message, content: filtered });
+      if (filtered.length > 0) {
+        deduped.push(copyProviderModelMessageSourceId(message, { ...message, content: filtered }));
+      }
     } else if (message.role === "assistant" && Array.isArray(message.content)) {
       const { filtered, changed } = filterParts(message.content);
       if (!changed) {
         deduped.push(message);
         continue;
       }
-      if (filtered.length > 0) deduped.push({ ...message, content: filtered });
+      if (filtered.length > 0) {
+        deduped.push(copyProviderModelMessageSourceId(message, { ...message, content: filtered }));
+      }
     } else if (message.role === "tool") {
       const { filtered, changed } = filterParts(message.content);
       if (!changed) {
         deduped.push(message);
         continue;
       }
-      if (filtered.length > 0) deduped.push({ ...message, content: filtered });
+      if (filtered.length > 0) {
+        deduped.push(copyProviderModelMessageSourceId(message, { ...message, content: filtered }));
+      }
     } else {
       deduped.push(message);
     }

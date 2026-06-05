@@ -7,6 +7,41 @@ import type {
   ProviderModelMessage,
 } from "./types.ts";
 
+const PROVIDER_MODEL_MESSAGE_SOURCE_ID = Symbol.for("veryfront.providerModelMessageSourceId");
+
+/** Provider model message plus local-only source metadata. */
+export type ProviderModelMessageWithSourceId = ProviderModelMessage & {
+  [PROVIDER_MODEL_MESSAGE_SOURCE_ID]?: string;
+};
+
+/** Read the local-only source UI message id attached during provider conversion. */
+export function getProviderModelMessageSourceId(message: ProviderModelMessage): string | undefined {
+  return (message as ProviderModelMessageWithSourceId)[PROVIDER_MODEL_MESSAGE_SOURCE_ID];
+}
+
+/** Attach local-only source UI message id metadata to a provider message. */
+export function withProviderModelMessageSourceId(
+  message: ProviderModelMessage,
+  sourceId: string,
+): ProviderModelMessage {
+  Object.defineProperty(message, PROVIDER_MODEL_MESSAGE_SOURCE_ID, {
+    value: sourceId,
+    configurable: true,
+    enumerable: false,
+    writable: true,
+  });
+  return message;
+}
+
+/** Copy local-only source UI message id metadata when a provider message is cloned. */
+export function copyProviderModelMessageSourceId<T extends ProviderModelMessage>(
+  source: ProviderModelMessage,
+  target: T,
+): T {
+  const sourceId = getProviderModelMessageSourceId(source);
+  return sourceId ? withProviderModelMessageSourceId(target, sourceId) as T : target;
+}
+
 /** Zod schema for get message part. */
 export const getMessagePartSchema = defineSchema((v) =>
   v.discriminatedUnion("type", [
@@ -999,13 +1034,14 @@ export function convertUiMessagesToProviderModelMessages(
       }
     })();
 
-    for (const providerMessage of converted) {
+    for (const rawProviderMessage of converted) {
+      const providerMessage = withProviderModelMessageSourceId(rawProviderMessage, message.id);
       const previous = providerMessages.at(-1);
       if (previous?.role === "tool" && providerMessage.role === "tool") {
-        providerMessages[providerMessages.length - 1] = {
+        providerMessages[providerMessages.length - 1] = withProviderModelMessageSourceId({
           role: "tool",
           content: [...previous.content, ...providerMessage.content],
-        };
+        }, getProviderModelMessageSourceId(previous) ?? message.id);
         continue;
       }
 
