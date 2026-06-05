@@ -41,6 +41,7 @@ function createRuntimeAgent(): HostedChatRuntimeAgent {
 
 function createRequest(): ParsedHostedChatRequest {
   return {
+    agentId: undefined,
     userId: "user-1",
     authToken: "auth-token",
     messages: [

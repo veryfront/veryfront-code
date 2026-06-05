@@ -6,6 +6,7 @@ import {
   runWithVeryfrontCloudContextAsync,
 } from "../../provider/index.ts";
 import { generateText } from "../../runtime/runtime-bridge.ts";
+import { redactSensitive, sanitizeUrlCredentials } from "#veryfront/utils/logger/redact.ts";
 import type { TextGenerationRuntimeMessage } from "../runtime/text-generation-runtime-message-types.ts";
 import type { AgentRuntimeMessage, AgentRuntimeMessagePart } from "../runtime/message-adapter.ts";
 import type { ContextSummaryGenerator } from "./context-budget-manager.ts";
@@ -20,7 +21,7 @@ type ResolveModelFunction = typeof resolveModel;
 export type VeryfrontCloudContextSummaryGeneratorOptions = {
   apiUrl: string | URL;
   authToken: string;
-  projectId?: string | null;
+  projectSlug?: string | null;
   model?: string;
   maxOutputTokens: number;
   maxInputTokens: number;
@@ -39,7 +40,11 @@ function truncateText(text: string, maxCharacters: number): string {
 
 function stringifyUnknown(value: unknown): string {
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(
+      redactSensitive(value),
+      (_key, candidate) =>
+        typeof candidate === "string" ? sanitizeUrlCredentials(candidate) : candidate,
+    );
   } catch {
     return "[unserializable]";
   }
@@ -162,7 +167,7 @@ async function summarizeSegment(input: {
     {
       apiBaseUrl: input.options.apiUrl.toString(),
       apiToken: input.options.authToken,
-      projectSlug: input.options.projectId ?? undefined,
+      projectSlug: input.options.projectSlug ?? undefined,
       serviceLayer: "cloud",
     },
     () =>
