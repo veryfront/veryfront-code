@@ -30,6 +30,7 @@ const integrationNames = [
   "zendesk",
   "asana",
   "harvest",
+  "hubspot",
   "monday",
   "zoom",
   "trello",

@@ -123,7 +123,19 @@ export const hubspotConfig: OAuthServiceConfig = {
   clientIdEnvVar: "HUBSPOT_CLIENT_ID",
   clientSecretEnvVar: "HUBSPOT_CLIENT_SECRET",
   apiBaseUrl: "https://api.hubapi.com",
-  defaultScopes: ["crm.objects.contacts.read", "crm.objects.contacts.write"],
+  defaultScopes: [
+    "crm.objects.contacts.read",
+    "crm.objects.contacts.write",
+    "crm.objects.leads.read",
+    "crm.objects.leads.write",
+    "crm.objects.companies.read",
+    "crm.objects.companies.write",
+    "crm.schemas.contacts.read",
+    "crm.schemas.companies.read",
+    "crm.schemas.leads.read",
+    "crm.objects.owners.read",
+    "forms",
+  ],
 };
 
 /** Configuration used by salesforce. */

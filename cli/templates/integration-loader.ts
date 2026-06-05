@@ -81,6 +81,7 @@ export const ALL_AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "twilio",
   "anthropic",
   "aws",
+  "hubspot",
 ];
 
 /**

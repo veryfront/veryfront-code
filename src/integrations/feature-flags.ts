@@ -12,6 +12,7 @@ export const SUPPORTED_INTEGRATION_NAMES = [
   "gitlab",
   "gmail",
   "harvest",
+  "hubspot",
   "jira",
   "linear",
   "notion",

@@ -33,6 +33,7 @@ describe("integration endpoint specs", () => {
       "gitlab",
       "gmail",
       "harvest",
+      "hubspot",
       "jira",
       "linear",
       "notion",
@@ -59,6 +60,7 @@ describe("integration endpoint specs", () => {
       "gitlab",
       "gmail",
       "harvest",
+      "hubspot",
       "jira",
       "linear",
       "mixpanel",
@@ -101,7 +103,50 @@ describe("integration endpoint specs", () => {
     const connectorNames = connectors.map((item) => item.name as string);
 
     assertEquals(connectorNames.includes("discord"), false);
-    assertEquals(connectorNames.includes("hubspot"), false);
+    assertEquals(connectorNames.includes("hubspot"), true);
+  });
+
+  it("publishes HubSpot lead and form submission endpoint tools", () => {
+    const hubspot = getConnector("hubspot");
+    const toolIds = hubspot.tools.map((tool) => tool.id);
+
+    assertEquals(hubspot.auth.provider, "hubspot");
+    assertEquals(hubspot.auth.scopes?.includes("crm.objects.contacts.read"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.objects.contacts.write"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.objects.leads.read"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.objects.leads.write"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.objects.companies.read"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.objects.companies.write"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.schemas.contacts.read"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.schemas.companies.read"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.schemas.leads.read"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.objects.owners.read"), true);
+    assertEquals(hubspot.auth.scopes?.includes("forms"), true);
+    assertEquals(toolIds.includes("get_contact"), true);
+    assertEquals(toolIds.includes("list_form_submissions"), true);
+    assertEquals(toolIds.includes("search_contacts"), true);
+    assertEquals(toolIds.includes("create_contact"), true);
+    assertEquals(toolIds.includes("update_contact"), true);
+    assertEquals(toolIds.includes("get_lead"), true);
+    assertEquals(toolIds.includes("list_leads"), true);
+    assertEquals(toolIds.includes("search_leads"), true);
+    assertEquals(toolIds.includes("create_lead"), true);
+    assertEquals(toolIds.includes("update_lead"), true);
+    assertEquals(toolIds.includes("get_company"), true);
+    assertEquals(toolIds.includes("search_companies"), true);
+    assertEquals(toolIds.includes("create_company"), true);
+    assertEquals(toolIds.includes("update_company"), true);
+    assertEquals(toolIds.includes("list_properties"), true);
+    assertEquals(toolIds.includes("list_owners"), true);
+    assertEquals(toolIds.includes("list_association_labels"), true);
+    assertEquals(toolIds.includes("list_associations"), true);
+    assertEquals(toolIds.includes("associate_records"), true);
+    assertEquals(toolIds.includes("remove_association"), true);
+    assertEquals(
+      hubspot.tools.every((tool) => Boolean(tool.endpoint)),
+      true,
+      "Expected every HubSpot tool to have an endpoint spec",
+    );
   });
 
   it("adds endpoint specs for all 70 tools across the 5 targeted integrations", () => {

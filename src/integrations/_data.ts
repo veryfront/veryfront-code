@@ -5402,6 +5402,682 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["github", "jira", "slack"],
   },
   {
+    "name": "hubspot",
+    "displayName": "HubSpot",
+    "icon": "hubspot.svg",
+    "description": "Access HubSpot forms, submissions, contacts, and leads",
+    "auth": {
+      "type": "oauth2",
+      "provider": "hubspot",
+      "authorizationUrl": "https://app.hubspot.com/oauth/authorize",
+      "tokenUrl": "https://api.hubapi.com/oauth/v1/token",
+      "scopes": [
+        "crm.objects.contacts.read",
+        "crm.objects.contacts.write",
+        "crm.objects.leads.read",
+        "crm.objects.leads.write",
+        "crm.objects.companies.read",
+        "crm.objects.companies.write",
+        "crm.schemas.contacts.read",
+        "crm.schemas.companies.read",
+        "crm.schemas.leads.read",
+        "crm.objects.owners.read",
+        "forms",
+      ],
+      "tokenAuthMethod": "request_body",
+      "supportsRefreshToken": true,
+      "requiredApis": [{
+        "name": "HubSpot public app",
+        "enableUrl": "https://app.hubspot.com/developer-projects",
+      }],
+    },
+    "envVars": [{
+      "name": "HUBSPOT_CLIENT_ID",
+      "description": "HubSpot OAuth Client ID",
+      "required": true,
+      "sensitive": false,
+      "docsUrl":
+        "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/oauth",
+    }, {
+      "name": "HUBSPOT_CLIENT_SECRET",
+      "description": "HubSpot OAuth Client Secret",
+      "required": true,
+      "sensitive": true,
+      "docsUrl":
+        "https://developers.hubspot.com/docs/apps/developer-platform/build-apps/authentication/oauth",
+    }],
+    "tools": [{
+      "id": "list_forms",
+      "name": "List Forms",
+      "description": "List HubSpot forms so agents can find a form ID before reading submissions",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/marketing/v3/forms",
+        "params": {
+          "limit": { "type": "number", "in": "query", "description": "Maximum forms to return" },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous page",
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to return archived forms",
+          },
+          "formTypes": {
+            "type": "string[]",
+            "in": "query",
+            "description":
+              "Form types to include, such as hubspot, captured, flow, blog_comment, or all",
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "list_form_submissions",
+      "name": "List Form Submissions",
+      "description": "List recent submissions for a HubSpot form in reverse chronological order",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/form-integrations/v1/submissions/forms/{formGuid}",
+        "params": {
+          "formGuid": {
+            "type": "string",
+            "in": "path",
+            "description": "HubSpot form GUID",
+            "required": true,
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum submissions to return, from 1 to 50",
+            "default": 20,
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous page",
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "get_contact",
+      "name": "Get Contact",
+      "description": "Get a HubSpot contact by ID or email before scoring, dedupe, or updates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "HubSpot contact ID, or email when idProperty is email",
+            "required": true,
+          },
+          "properties": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated contact properties to return",
+          },
+          "associations": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated associated object types to include",
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived contacts",
+            "default": false,
+          },
+          "idProperty": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional unique property used to identify the contact, such as email",
+          },
+        },
+      },
+    }, {
+      "id": "search_contacts",
+      "name": "Search Contacts",
+      "description": "Search HubSpot contacts by filters for lead research and CRM lookup",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Text query to match against contact properties",
+          },
+          "filterGroups": { "type": "array", "description": "HubSpot CRM search filter groups" },
+          "sorts": { "type": "array", "description": "Sort expressions" },
+          "properties": { "type": "array", "description": "Contact properties to return" },
+          "limit": { "type": "number", "description": "Maximum contacts to return", "default": 10 },
+          "after": { "type": "string", "description": "Pagination cursor from the previous page" },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "create_contact",
+      "name": "Create Contact",
+      "description": "Create a HubSpot contact from form submission or researched lead data",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts",
+        "body": {
+          "properties": {
+            "type": "object",
+            "description":
+              "HubSpot contact properties, such as email, firstname, lastname, company, phone, website, and hubspotscore",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "update_contact",
+      "name": "Update Contact",
+      "description": "Update HubSpot contact properties, including lead score or research notes",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.hubapi.com/crm/v3/objects/contacts/{contactId}",
+        "params": {
+          "contactId": {
+            "type": "string",
+            "in": "path",
+            "description": "HubSpot contact record ID, or email when idProperty is email",
+            "required": true,
+          },
+          "idProperty": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional unique property used to identify the contact, such as email",
+          },
+        },
+        "body": {
+          "properties": {
+            "type": "object",
+            "description": "HubSpot contact properties to update",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "get_lead",
+      "name": "Get Lead",
+      "description": "Get a HubSpot CRM lead before scoring, routing, or updates",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/{leadId}",
+        "params": {
+          "leadId": {
+            "type": "string",
+            "in": "path",
+            "description": "HubSpot lead record ID",
+            "required": true,
+          },
+          "properties": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated lead properties to return",
+          },
+          "associations": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated associated object types to include",
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived leads",
+            "default": false,
+          },
+        },
+      },
+    }, {
+      "id": "list_leads",
+      "name": "List Leads",
+      "description":
+        "List HubSpot CRM leads for scoring, spreadsheet updates, or research workflows",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads",
+        "params": {
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum leads to return",
+            "default": 50,
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous page",
+          },
+          "properties": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated lead properties to return",
+          },
+          "associations": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated associated object types to include",
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to return archived leads",
+            "default": false,
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "search_leads",
+      "name": "Search Leads",
+      "description": "Search HubSpot CRM leads for dedupe, scoring, and routing workflows",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Text query to match against lead properties",
+          },
+          "filterGroups": { "type": "array", "description": "HubSpot CRM search filter groups" },
+          "sorts": { "type": "array", "description": "Sort expressions" },
+          "properties": { "type": "array", "description": "Lead properties to return" },
+          "limit": { "type": "number", "description": "Maximum leads to return", "default": 10 },
+          "after": { "type": "string", "description": "Pagination cursor from the previous page" },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "create_lead",
+      "name": "Create Lead",
+      "description": "Create a HubSpot CRM lead associated with an existing contact or company",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads",
+        "body": {
+          "properties": {
+            "type": "object",
+            "description":
+              "Lead properties. Include hs_lead_name and any scoring or routing fields.",
+            "required": true,
+          },
+          "associations": {
+            "type": "array",
+            "description": "Associations to existing contacts or companies",
+          },
+        },
+      },
+    }, {
+      "id": "update_lead",
+      "name": "Update Lead",
+      "description":
+        "Update a HubSpot CRM lead with score, qualification, owner, or research fields",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.hubapi.com/crm/v3/objects/leads/{leadId}",
+        "params": {
+          "leadId": {
+            "type": "string",
+            "in": "path",
+            "description": "HubSpot lead record ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "properties": {
+            "type": "object",
+            "description": "Lead properties to update",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "get_company",
+      "name": "Get Company",
+      "description": "Get a HubSpot company by ID or domain before lead research or association",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/{companyId}",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "HubSpot company ID, or domain when idProperty is domain",
+            "required": true,
+          },
+          "properties": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated company properties to return",
+          },
+          "associations": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated associated object types to include",
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to include archived companies",
+            "default": false,
+          },
+          "idProperty": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional unique property used to identify the company, such as domain",
+          },
+        },
+      },
+    }, {
+      "id": "search_companies",
+      "name": "Search Companies",
+      "description": "Search HubSpot companies by domain, name, or firmographic properties",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/search",
+        "body": {
+          "query": {
+            "type": "string",
+            "description": "Text query to match against company properties",
+          },
+          "filterGroups": { "type": "array", "description": "HubSpot CRM search filter groups" },
+          "sorts": { "type": "array", "description": "Sort expressions" },
+          "properties": { "type": "array", "description": "Company properties to return" },
+          "limit": {
+            "type": "number",
+            "description": "Maximum companies to return",
+            "default": 10,
+          },
+          "after": { "type": "string", "description": "Pagination cursor from the previous page" },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "create_company",
+      "name": "Create Company",
+      "description": "Create a HubSpot company for researched lead accounts",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies",
+        "body": {
+          "properties": {
+            "type": "object",
+            "description":
+              "HubSpot company properties, such as name, domain, industry, city, and state",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "update_company",
+      "name": "Update Company",
+      "description": "Update HubSpot company properties with research or enrichment data",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://api.hubapi.com/crm/v3/objects/companies/{companyId}",
+        "params": {
+          "companyId": {
+            "type": "string",
+            "in": "path",
+            "description": "HubSpot company ID, or domain when idProperty is domain",
+            "required": true,
+          },
+          "idProperty": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional unique property used to identify the company, such as domain",
+          },
+        },
+        "body": {
+          "properties": {
+            "type": "object",
+            "description": "HubSpot company properties to update",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "list_properties",
+      "name": "List Properties",
+      "description":
+        "List HubSpot CRM properties for contacts, leads, or companies before updating custom fields",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/properties/{objectType}",
+        "params": {
+          "objectType": {
+            "type": "string",
+            "in": "path",
+            "description": "CRM object type, such as contacts, leads, or companies",
+            "required": true,
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to return archived properties",
+            "default": false,
+          },
+          "dataSensitivity": {
+            "type": "string",
+            "in": "query",
+            "description":
+              "Optional sensitivity filter supported by HubSpot accounts with sensitive data features",
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "list_owners",
+      "name": "List Owners",
+      "description": "List HubSpot owners so agents can assign or route contacts and leads",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v3/owners",
+        "params": {
+          "email": { "type": "string", "in": "query", "description": "Filter owners by email" },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous page",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum owners to return",
+            "default": 100,
+          },
+          "archived": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether to return archived owners",
+            "default": false,
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "list_association_labels",
+      "name": "List Association Labels",
+      "description":
+        "List HubSpot association labels between CRM object types before associating records",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.hubapi.com/crm/v4/associations/{fromObjectType}/{toObjectType}/labels",
+        "params": {
+          "fromObjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Source CRM object type, such as contacts, companies, or leads",
+            "required": true,
+          },
+          "toObjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Target CRM object type, such as contacts, companies, or leads",
+            "required": true,
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "list_associations",
+      "name": "List Associations",
+      "description": "List records associated with a HubSpot CRM record",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://api.hubapi.com/crm/v4/objects/{objectType}/{objectId}/associations/{toObjectType}",
+        "params": {
+          "objectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Source CRM object type, such as contacts, companies, or leads",
+            "required": true,
+          },
+          "objectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Source CRM record ID",
+            "required": true,
+          },
+          "toObjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Associated CRM object type to list",
+            "required": true,
+          },
+          "after": {
+            "type": "string",
+            "in": "query",
+            "description": "Pagination cursor from the previous page",
+          },
+          "limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum associations to return",
+            "default": 100,
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "associate_records",
+      "name": "Associate Records",
+      "description": "Create a default HubSpot association between two CRM records",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url":
+          "https://api.hubapi.com/crm/v4/objects/{fromObjectType}/{fromObjectId}/associations/default/{toObjectType}/{toObjectId}",
+        "params": {
+          "fromObjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Source CRM object type, such as contacts, companies, or leads",
+            "required": true,
+          },
+          "fromObjectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Source CRM record ID",
+            "required": true,
+          },
+          "toObjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Target CRM object type, such as contacts, companies, or leads",
+            "required": true,
+          },
+          "toObjectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Target CRM record ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "remove_association",
+      "name": "Remove Association",
+      "description": "Remove all HubSpot associations between two CRM records",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "DELETE",
+        "url":
+          "https://api.hubapi.com/crm/v4/objects/{fromObjectType}/{fromObjectId}/associations/{toObjectType}/{toObjectId}",
+        "params": {
+          "fromObjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Source CRM object type, such as contacts, companies, or leads",
+            "required": true,
+          },
+          "fromObjectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Source CRM record ID",
+            "required": true,
+          },
+          "toObjectType": {
+            "type": "string",
+            "in": "path",
+            "description": "Target CRM object type, such as contacts, companies, or leads",
+            "required": true,
+          },
+          "toObjectId": {
+            "type": "string",
+            "in": "path",
+            "description": "Target CRM record ID",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "review_submissions",
+      "title": "Review form submissions",
+      "prompt":
+        "List recent HubSpot form submissions, identify the strongest leads, and summarize recommended follow-up.",
+      "category": "sales",
+      "icon": "search",
+    }, {
+      "id": "score_leads",
+      "title": "Score leads",
+      "prompt":
+        "Research HubSpot contacts or leads, score them, and update the matching CRM records.",
+      "category": "sales",
+      "icon": "users",
+    }],
+    "suggestedWith": ["sheets", "gmail", "slack"],
+    "category": "sales",
+  },
+  {
     "name": "jira",
     "displayName": "Jira",
     "icon": "jira.svg",
@@ -11047,6 +11723,8 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_12)">\n<path d="M8.7275 113.854H29.091V64.4L0 42.5817V105.127C0 109.949 3.9055 113.855 8.7275 113.855V113.854Z" fill="#4285F4"/>\n<path d="M98.909 113.854H119.273C124.095 113.854 128 109.949 128 105.127V42.5817L98.909 64.4V113.854Z" fill="#34A853"/>\n<path d="M98.909 26.5817V64.4L128 42.5817V30.9455C128 20.16 115.687 14 107.054 20.4727L98.909 26.5817Z" fill="#FBBC04"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M29.091 64.4V26.5817L64 52.7638L98.909 26.5817V64.4L64 90.5817L29.091 64.4Z" fill="#EA4335"/>\n<path d="M0 30.9455V42.5817L29.091 64.4V26.5817L20.9455 20.4727C12.3125 14 0 20.16 0 30.945V30.9455Z" fill="#C5221F"/>\n</g>\n<defs>\n<clipPath id="clip0_0_12">\n<rect width="128" height="99.855" fill="white" transform="translate(0 14)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "harvest":
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">\n  <circle cx="50" cy="50" r="50" fill="#FA5B35"/>\n  <path d="M24 28h10v18h24V28h10v44H58V54H34v18H24V28z" fill="#fff"/>\n</svg>\n',
+  "hubspot":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n  <rect width="128" height="128" rx="20" fill="#FF5C35"/>\n  <path d="M86 51.5V39.2C91.7 37.2 95.8 31.8 95.8 25.4C95.8 17.3 89.3 10.8 81.2 10.8C73.1 10.8 66.6 17.3 66.6 25.4C66.6 31.8 70.7 37.2 76.4 39.2V51.5C70.8 52.4 65.9 55.2 62.1 59.2L39.3 41.4C40.2 39.5 40.7 37.4 40.7 35.2C40.7 27.1 34.2 20.6 26.1 20.6C18 20.6 11.5 27.1 11.5 35.2C11.5 43.3 18 49.8 26.1 49.8C28.9 49.8 31.5 49 33.7 47.7L56.2 65.3C54.7 68.4 53.8 71.9 53.8 75.6C53.8 77.9 54.1 80.1 54.8 82.2L38.2 92.6C35.5 90.2 32 88.7 28.1 88.7C20 88.7 13.5 95.2 13.5 103.3C13.5 111.4 20 117.9 28.1 117.9C36.2 117.9 42.7 111.4 42.7 103.3C42.7 102 42.5 100.8 42.2 99.6L58.9 89.1C63.4 95.4 70.7 99.5 79 99.5C92.7 99.5 103.8 88.4 103.8 74.7C103.8 62.2 94.7 52 86 51.5ZM79 89.2C71 89.2 64.5 82.7 64.5 74.7C64.5 66.7 71 60.2 79 60.2C87 60.2 93.5 66.7 93.5 74.7C93.5 82.7 87 89.2 79 89.2Z" fill="white"/>\n</svg>\n',
   "jira":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_328)">\n<path d="M44.5144 60.3244C43.0588 58.7232 40.8756 58.8688 39.8565 60.7612L16.275 107.924C15.4016 109.816 16.7117 112 18.7496 112H51.5016C52.5208 112 53.5396 111.418 53.9764 110.399C61.1088 95.8424 56.8876 73.5708 44.5144 60.3244Z" fill="url(#paint0_linear_0_328)"/>\n<path d="M61.6932 17.5284C48.5924 38.3442 49.466 61.4892 58.054 78.8112C66.788 96.1336 73.3384 109.525 73.9208 110.399C74.3576 111.418 75.3764 112 76.3952 112H109.148C111.185 112 112.641 109.816 111.622 107.924C111.622 107.924 67.516 19.7119 66.3512 17.5284C65.478 15.4905 63.0032 15.4905 61.6932 17.5284Z" fill="#2684FF"/>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_328" x1="57.3824" y1="67.62" x2="32.53" y2="110.666" gradientUnits="userSpaceOnUse">\n<stop stop-color="#0052CC"/>\n<stop offset="0.9228" stop-color="#2684FF"/>\n</linearGradient>\n<clipPath id="clip0_0_328">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "linear":
