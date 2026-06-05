@@ -48,10 +48,10 @@ describe("child-run-result-summary", () => {
     it("removes malformed function transcript wrappers while preserving function result content", () => {
       assertEquals(
         buildChildRunResultSummary(
-          '```\nbash\n```\n\n<function_calls>\n<invoke name="run_bash">\n<parameter name="command">curl -s "https://mckinsey.github.io/agents-at-scale-ark/" 2>&1 | head -5</parameter>\n</invoke>\n</function_calls>\n<function_result>\nAgents at Scale: ARK\nOverview\nArchitecture\n</parameter>\n</invoke>\n</function_calls>',
+          '```\nbash\n```\n\n<function_calls>\n<invoke name="run_bash">\n<parameter name="command">curl -s "https://docs.example.test/platform/" 2>&1 | head -5</parameter>\n</invoke>\n</function_calls>\n<function_result>\nExample Platform\nOverview\nArchitecture\n</parameter>\n</invoke>\n</function_calls>',
         ),
         {
-          text: "Agents at Scale: ARK\nOverview\nArchitecture",
+          text: "Example Platform\nOverview\nArchitecture",
         },
       );
     });
@@ -120,12 +120,19 @@ describe("child-run-result-summary", () => {
 
     it("strips long content fields from objects", () => {
       const result = summarizeChildRunResultValue({ name: "file.txt", content: "x".repeat(500) });
+      if (!isPlainTestRecord(result)) {
+        throw new Error("expected object result");
+      }
       assertObjectMatch(result, { name: "file.txt" });
-      assertEquals(isPlainTestRecord(result) && "content" in result, false);
+      assertEquals("content" in result, false);
     });
 
     it("preserves short content fields", () => {
-      assertObjectMatch(summarizeChildRunResultValue({ name: "file.txt", content: "short" }), {
+      const result = summarizeChildRunResultValue({ name: "file.txt", content: "short" });
+      if (!isPlainTestRecord(result)) {
+        throw new Error("expected object result");
+      }
+      assertObjectMatch(result, {
         content: "short",
       });
     });
@@ -136,6 +143,9 @@ describe("child-run-result-summary", () => {
         chunks: [{ id: "c1", content: "x".repeat(500) }],
       });
 
+      if (!isPlainTestRecord(result)) {
+        throw new Error("expected object result");
+      }
       assertObjectMatch(result, {
         files: [{ path: "/a.ts" }],
         chunks: [{ id: "c1" }],
