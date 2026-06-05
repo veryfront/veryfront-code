@@ -46,6 +46,14 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.VERYFRONT_AGENT_SERVICE_REGION, undefined);
     assertEquals(config.VERYFRONT_ENABLE_DURABLE_INVOKE_AGENT, false);
     assertEquals(config.VERYFRONT_ENABLE_DURABLE_TASK, false);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_ENABLED, true);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_TOKEN_BUDGET, 180000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_RESERVE_TOKENS, 32000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_RECENT_TAIL_TOKENS, 40000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_MINIMUM_RECENT_TURNS, 2);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS, 8000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS, 64000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL, undefined);
   });
 
   it("normalizes derived URLs, booleans, port, and origins", () => {
@@ -70,6 +78,14 @@ describe("agent/agent-service-config", () => {
       POD_NAME: "veryfront-agent-7dd7b6f4d8-a1b2c",
       POD_UID: "11111111-1111-4111-a111-111111111111",
       POD_IP: "10.192.4.10",
+      VERYFRONT_CONTEXT_COMPACTION_ENABLED: "false",
+      VERYFRONT_CONTEXT_COMPACTION_TOKEN_BUDGET: "200000",
+      VERYFRONT_CONTEXT_COMPACTION_RESERVE_TOKENS: "24000",
+      VERYFRONT_CONTEXT_COMPACTION_RECENT_TAIL_TOKENS: "50000",
+      VERYFRONT_CONTEXT_COMPACTION_MINIMUM_RECENT_TURNS: "3",
+      VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS: "12000",
+      VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS: "70000",
+      VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL: "openai/gpt-5.2-mini",
     });
 
     assertEquals(config.VERYFRONT_API_URL, "https://api.example.com");
@@ -93,6 +109,14 @@ describe("agent/agent-service-config", () => {
     assertEquals(config.POD_NAME, "veryfront-agent-7dd7b6f4d8-a1b2c");
     assertEquals(config.POD_UID, "11111111-1111-4111-a111-111111111111");
     assertEquals(config.POD_IP, "10.192.4.10");
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_ENABLED, false);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_TOKEN_BUDGET, 200000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_RESERVE_TOKENS, 24000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_RECENT_TAIL_TOKENS, 50000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_MINIMUM_RECENT_TURNS, 3);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS, 12000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS, 70000);
+    assertEquals(config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL, "openai/gpt-5.2-mini");
   });
 
   it("rejects invalid API URLs", () => {

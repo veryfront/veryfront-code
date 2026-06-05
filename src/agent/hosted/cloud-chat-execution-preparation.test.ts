@@ -1,5 +1,6 @@
 import { assertEquals, assertStrictEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { ensureBuiltinSchemaValidator } from "../../extensions/builtin-extensions.ts";
 import type { ChatSystemMessage } from "#veryfront/chat/types.ts";
 import type {
   HostedChatRuntimeAgent,
@@ -71,6 +72,7 @@ function createRequest(): ParsedHostedChatRequest {
 
 describe("agent/veryfront-cloud-hosted-chat-execution-preparation", () => {
   it("prepares hosted chat execution with Veryfront Cloud model defaults", async () => {
+    ensureBuiltinSchemaValidator();
     let runtimeOptions:
       | HostedChatRuntimeCreationOptions<TestAgentConfig, RuntimeAgentThinkingConfig>
       | undefined;
