@@ -106,6 +106,32 @@ describe("agent/hosted-chat-request", () => {
     );
   });
 
+  it("accepts runtime context metadata on hosted chat request messages", () => {
+    const parsed = hostedChatRequestSchema.parse({
+      messages: [
+        {
+          id: "context_compaction_summary:user-kept",
+          role: "system",
+          parts: [{ type: "text", text: "Previous context summary:\nEarlier work." }],
+          metadata: {
+            veryfrontRuntimeContext: "context_compaction_summary",
+            firstKeptEntryId: "user-kept",
+          },
+        },
+      ],
+      context: {
+        conversationId,
+        projectId,
+        branchId,
+      },
+    });
+
+    assertEquals(parsed.messages[0]?.metadata, {
+      veryfrontRuntimeContext: "context_compaction_summary",
+      firstKeptEntryId: "user-kept",
+    });
+  });
+
   it("builds a hosted chat request from a runtime agent invocation", () => {
     const invocation = createRuntimeInvocation();
     const forwardedProps = buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation(
