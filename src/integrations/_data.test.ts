@@ -195,7 +195,7 @@ describe("integration endpoint specs", () => {
       ["gitlab", 10],
       ["jira", 11],
       ["confluence", 6],
-      ["outlook", 56],
+      ["outlook", 61],
       ["teams", 6],
     ]);
 
@@ -938,6 +938,8 @@ describe("integration endpoint specs", () => {
       "Mail.ReadWrite",
       "Calendars.Read",
       "Calendars.ReadWrite",
+      "Group.Read.All",
+      "Group-Conversation.Read.All",
       "offline_access",
     ]);
 
@@ -979,6 +981,11 @@ describe("integration endpoint specs", () => {
       "get_attachment",
       "add_attachment_to_message",
       "list_conversation_messages",
+      "list_shared_mailbox_emails",
+      "search_shared_mailbox_emails",
+      "find_group_by_mail",
+      "list_group_threads",
+      "list_group_thread_posts",
       "list_calendars",
       "get_calendar",
       "create_calendar",
@@ -1020,6 +1027,31 @@ describe("integration endpoint specs", () => {
     assertEquals(
       getTool("outlook", "list_conversation_messages").endpoint?.params?.["$orderby"],
       undefined,
+    );
+    assertEquals(
+      getTool("outlook", "list_shared_mailbox_emails").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/users/{mailbox}/mailFolders/{folderId}/messages",
+    );
+    assertEquals(
+      getTool("outlook", "search_shared_mailbox_emails").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/users/{mailbox}/messages",
+    );
+    assertEquals(
+      getTool("outlook", "search_shared_mailbox_emails").endpoint?.params?.query
+        ?.queryValueFormat,
+      "microsoft-graph-search",
+    );
+    assertEquals(
+      getTool("outlook", "find_group_by_mail").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/groups?$filter=mail eq '{mailAddress}'",
+    );
+    assertEquals(
+      getTool("outlook", "list_group_threads").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads",
+    );
+    assertEquals(
+      getTool("outlook", "list_group_thread_posts").endpoint?.url,
+      "https://graph.microsoft.com/v1.0/groups/{groupId}/threads/{threadId}/posts",
     );
     assertEquals(getTool("outlook", "add_attachment_to_message").endpoint?.body, {
       "@odata.type": {
