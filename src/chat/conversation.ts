@@ -308,11 +308,14 @@ export function pushToolParts(
     input?: unknown;
     output?: unknown;
     errorText?: unknown;
+    providerExecuted?: unknown;
   },
 ): void {
   const input = toRecord(part.input);
   const isErroredState = state === "output-error" || state === "error" || state === "output-denied";
-  const hasResultState = state === "output-available" || state === "completed" || isErroredState;
+  const isProviderOwnedAvailable = part.providerExecuted === true && state === "input-available";
+  const hasResultState = state === "output-available" || state === "completed" ||
+    isErroredState || isProviderOwnedAvailable;
 
   if (hasResultState) {
     parts.push({
@@ -325,6 +328,8 @@ export function pushToolParts(
 
     const resultOutput = isErroredState
       ? part.output ?? part.errorText ?? "Tool error"
+      : isProviderOwnedAvailable
+      ? null
       : part.output ?? null;
     parts.push({
       type: "tool_result",
@@ -438,6 +443,10 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
 }
 
 function isToolComplete(part: ToolUiPart): boolean {
+  if (part.providerExecuted === true && part.state === "input-available") {
+    return true;
+  }
+
   return part.state === "output-available" || part.state === "output-error" ||
     part.state === "output-denied" || part.state === "completed" ||
     part.state === "error";

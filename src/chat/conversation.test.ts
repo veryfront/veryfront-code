@@ -155,6 +155,42 @@ describe("chat/conversation helpers", () => {
     ]);
   });
 
+  it("treats provider-owned input-available tools as complete", () => {
+    const message: ChatUiMessage = {
+      id: "assistant-provider-owned-tool",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "I can answer with the fetched context." },
+        {
+          type: "tool-web_fetch",
+          toolCallId: "srvtoolu-fetch",
+          input: { url: "https://example.com/docs" },
+          state: "input-available",
+          providerExecuted: true,
+        },
+      ],
+    };
+
+    assertEquals(hasIncompleteToolParts(message), false);
+    assertEquals(markIncompleteToolPartsAsErrored(message, "Tool call did not complete"), message);
+    assertEquals(toConversationPartsFromUiMessage(message), [
+      { type: "text", text: "I can answer with the fetched context." },
+      {
+        type: "tool_call",
+        id: "srvtoolu-fetch",
+        name: "web_fetch",
+        input: { url: "https://example.com/docs" },
+        state: "completed",
+      },
+      {
+        type: "tool_result",
+        tool_call_id: "srvtoolu-fetch",
+        output: null,
+        is_error: false,
+      },
+    ]);
+  });
+
   it("maps UI messages into persistable conversation parts", () => {
     const message: ChatUiMessage = {
       id: "assistant-2",

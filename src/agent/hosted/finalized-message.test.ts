@@ -25,6 +25,40 @@ Deno.test("buildFinalizedMessageState builds fallback parts for an empty finaliz
   assertEquals(result.hasIncompleteFinalizedToolParts, false);
 });
 
+Deno.test("buildFinalizedMessageState does not fail provider-owned input-available tools", () => {
+  const result = buildFinalizedMessageState({
+    responseMessage: {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [
+        { type: "text", text: "Done" },
+        {
+          type: "tool-web_fetch",
+          toolCallId: "srvtoolu-fetch",
+          input: { url: "https://example.com/docs" },
+          state: "input-available",
+          providerExecuted: true,
+        },
+      ],
+    },
+    isAborted: false,
+    finalStep: { text: "Done" },
+    incompleteToolCallsPartErrorText: "tool error",
+  });
+
+  assertEquals(result.hasIncompleteFinalizedToolParts, false);
+  assertEquals(result.sanitizedFinalizedMessage.parts, [
+    { type: "text", text: "Done" },
+    {
+      type: "tool-web_fetch",
+      toolCallId: "srvtoolu-fetch",
+      input: { url: "https://example.com/docs" },
+      state: "input-available",
+      providerExecuted: true,
+    },
+  ]);
+});
+
 Deno.test("buildDetachedFallbackMessageState uses the captured message id for detached fallback messages", () => {
   const result = buildDetachedFallbackMessageState({
     capturedMessageId: "captured-1",
