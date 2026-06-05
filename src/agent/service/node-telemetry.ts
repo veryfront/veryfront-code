@@ -85,6 +85,14 @@ function resolveSamplingRatio(env: NodeHostedAgentServiceTelemetryEnv): number {
   return Math.min(Math.max(ratio, 0), 1);
 }
 
+function resolveDeploymentEnvironment(env: NodeHostedAgentServiceTelemetryEnv): string {
+  return env.OTEL_DEPLOYMENT_ENVIRONMENT ??
+    env.APP_ENVIRONMENT ??
+    env.VERYFRONT_ENVIRONMENT ??
+    env.NODE_ENV ??
+    "development";
+}
+
 function parseExporterHeaders(headersEnv: string | undefined): Record<string, string> | undefined {
   if (!headersEnv) return undefined;
 
@@ -124,7 +132,7 @@ export function resolveNodeHostedAgentServiceTelemetryConfig(
     enabled: resolveEnabled(options.env, defaultEnabled),
     serviceName: options.env.OTEL_SERVICE_NAME ?? options.defaultServiceName,
     serviceVersion: options.env.npm_package_version ?? options.defaultServiceVersion ?? "0.1.0",
-    deploymentEnvironment: options.env.NODE_ENV ?? "development",
+    deploymentEnvironment: resolveDeploymentEnvironment(options.env),
     samplingRatio: resolveSamplingRatio(options.env),
     exporterHeaders: parseExporterHeaders(options.env.OTEL_EXPORTER_OTLP_HEADERS),
     instrumentation: resolveInstrumentationConfig(options.env),
