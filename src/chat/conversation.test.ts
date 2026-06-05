@@ -89,6 +89,72 @@ describe("chat/conversation helpers", () => {
     ]);
   });
 
+  it("treats terminal provider tool states as complete", () => {
+    const message: ChatUiMessage = {
+      id: "assistant-provider-tools",
+      role: "assistant",
+      parts: [
+        {
+          type: "tool-web_search",
+          toolCallId: "srvtoolu-search",
+          input: { query: "Veryfront" },
+          state: "completed",
+          providerExecuted: true,
+          output: { results: [] },
+        },
+        {
+          type: "tool-web_fetch",
+          toolCallId: "srvtoolu-fetch",
+          input: { url: "https://example.com" },
+          state: "error",
+          providerExecuted: true,
+          errorText: "404 / Not Found",
+        },
+      ],
+    };
+
+    const parts: Array<ReturnType<typeof messagePartSchema.parse>> = [];
+    for (const part of message.parts) {
+      if (part.type === "tool-web_search") {
+        pushToolParts(parts, "web_search", part.toolCallId, part.state, part);
+      }
+      if (part.type === "tool-web_fetch") {
+        pushToolParts(parts, "web_fetch", part.toolCallId, part.state, part);
+      }
+    }
+
+    assertEquals(hasIncompleteToolParts(message), false);
+    assertEquals(markIncompleteToolPartsAsErrored(message, "Tool call did not complete"), message);
+    assertEquals(parts, [
+      {
+        type: "tool_call",
+        id: "srvtoolu-search",
+        name: "web_search",
+        input: { query: "Veryfront" },
+        state: "completed",
+      },
+      {
+        type: "tool_result",
+        tool_call_id: "srvtoolu-search",
+        output: { results: [] },
+        is_error: false,
+      },
+      {
+        type: "tool_call",
+        id: "srvtoolu-fetch",
+        name: "web_fetch",
+        input: { url: "https://example.com" },
+        state: "completed",
+      },
+      {
+        type: "tool_result",
+        tool_call_id: "srvtoolu-fetch",
+        output: "404 / Not Found",
+        is_error: true,
+      },
+    ]);
+  });
+
   it("maps UI messages into persistable conversation parts", () => {
     const message: ChatUiMessage = {
       id: "assistant-2",

@@ -312,7 +312,7 @@ export function pushToolParts(
 ): void {
   const input = toRecord(part.input);
   const isErroredState = state === "output-error" || state === "error" || state === "output-denied";
-  const hasResultState = state === "output-available" || isErroredState;
+  const hasResultState = state === "output-available" || state === "completed" || isErroredState;
 
   if (hasResultState) {
     parts.push({
@@ -439,7 +439,8 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
 
 function isToolComplete(part: ToolUiPart): boolean {
   return part.state === "output-available" || part.state === "output-error" ||
-    part.state === "output-denied";
+    part.state === "output-denied" || part.state === "completed" ||
+    part.state === "error";
 }
 
 /** Check whether incomplete tool parts is present. */
