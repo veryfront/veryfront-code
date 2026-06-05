@@ -1,4 +1,4 @@
-import type { AgentContext, AgentResponse } from "../../types.ts";
+import type { AgentContext, AgentResponse, Message } from "../../types.ts";
 import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 
 export interface SecurityConfig {
@@ -57,7 +57,7 @@ export const COMMON_BLOCKED_PATTERNS = {
     /ignore\s+all\s+previous\s+prompts/i,
     /you\s+are\s+now\s+a/i,
     /pretend\s+you\s+are/i,
-    /system:\s*/i,
+    /(^|\n)\s*system:\s*/i,
     /<\|im_start\|>/i,
     /<\|im_end\|>/i,
   ],
@@ -244,6 +244,44 @@ function reportViolations(
   for (const violation of violations) onViolation(violation);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractPartInputText(part: unknown): string[] {
+  if (isRecord(part) && part.type === "text" && typeof part.text === "string") return [part.text];
+  if (!isRecord(part) || part.type === "tool-result") return [];
+
+  const values: string[] = [];
+  if (typeof part.inputText === "string") values.push(part.inputText);
+  if (isRecord(part.args)) values.push(JSON.stringify(part.args));
+  if (isRecord(part.input)) values.push(JSON.stringify(part.input));
+  return values;
+}
+
+function extractMessageInputText(message: Message): string[] {
+  if (message.role !== "user") return [];
+  return message.parts.flatMap(extractPartInputText);
+}
+
+function extractInputValidationTexts(input: AgentContext["input"]): string[] {
+  if (typeof input === "string") return [input];
+  return input.flatMap(extractMessageInputText);
+}
+
+async function validateInputTexts(
+  validator: InputValidator,
+  values: string[],
+): Promise<Awaited<ReturnType<InputValidator["validate"]>>> {
+  const results = await Promise.all(values.map((value) => validator.validate(value)));
+  const firstResult = results[0];
+  return {
+    valid: results.every((result) => result.valid),
+    sanitized: values.length === 1 ? firstResult?.sanitized : undefined,
+    violations: results.flatMap((result) => result.violations),
+  };
+}
+
 /**
  * Create security middleware for agents
  */
@@ -257,10 +295,8 @@ export function securityMiddleware(
     context: AgentContext,
     next: () => Promise<AgentResponse>,
   ): Promise<AgentResponse> => {
-    const inputString = typeof context.input === "string"
-      ? context.input
-      : JSON.stringify(context.input);
-    const inputValidation = await inputValidator.validate(inputString);
+    const inputValues = extractInputValidationTexts(context.input);
+    const inputValidation = await validateInputTexts(inputValidator, inputValues);
 
     if (!inputValidation.valid) {
       reportViolations(inputValidation.violations, config.onViolation);
