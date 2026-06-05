@@ -59,6 +59,7 @@ import {
   type DefaultHostedChatRuntimeCreationOptions,
   type DefaultHostedChatRuntimeTaskContext,
 } from "./default-chat-runtime.ts";
+import { createVeryfrontCloudContextSummaryGenerator } from "./context-summary-generator.ts";
 import { createDefaultHostedInvokeAgentTool } from "./default-invoke-agent-tool.ts";
 import type { RuntimeClientProfile } from "../runtime/client-profile.ts";
 import type {
@@ -116,6 +117,7 @@ import {
   createVeryfrontCloudPreparedHostedChatExecutionRuntimeOptions,
 } from "./cloud-prepared-chat-execution-runtime.ts";
 import { prepareVeryfrontCloudHostedChatExecution } from "./cloud-chat-execution-preparation.ts";
+import type { HostedChatContextBudgetOptions } from "./chat-preparation.ts";
 import { applyAgentProjectContextChange } from "../project/context.ts";
 import { getAgent } from "../composition/index.ts";
 
@@ -824,6 +826,39 @@ function fetchProjectSteering(
   });
 }
 
+function createHostedChatContextBudgetOptions(
+  context: NodeVeryfrontCloudAgentServiceContext,
+  req: ParsedHostedChatRequest,
+  agentConfig: { model?: string },
+  abortSignal: AbortSignal,
+): HostedChatContextBudgetOptions | undefined {
+  const config = context.infrastructure.getConfig();
+  if (!config.VERYFRONT_CONTEXT_COMPACTION_ENABLED || !req.durableRootRun) {
+    return undefined;
+  }
+
+  return {
+    tokenBudget: config.VERYFRONT_CONTEXT_COMPACTION_TOKEN_BUDGET,
+    reserveTokens: config.VERYFRONT_CONTEXT_COMPACTION_RESERVE_TOKENS,
+    recentTailTokens: config.VERYFRONT_CONTEXT_COMPACTION_RECENT_TAIL_TOKENS,
+    minimumRecentTurns: config.VERYFRONT_CONTEXT_COMPACTION_MINIMUM_RECENT_TURNS,
+    maxSummaryTokens: config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS,
+    summaryGenerator: createVeryfrontCloudContextSummaryGenerator({
+      apiUrl: config.VERYFRONT_API_URL,
+      authToken: req.authToken,
+      projectId: req.projectId,
+      model: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_MODEL ?? agentConfig.model,
+      maxOutputTokens: config.VERYFRONT_CONTEXT_COMPACTION_MAX_SUMMARY_TOKENS,
+      maxInputTokens: config.VERYFRONT_CONTEXT_COMPACTION_SUMMARY_INPUT_TOKENS,
+      abortSignal,
+    }),
+    logger: {
+      debug: (message, metadata) => context.infrastructure.logger.debug(message, metadata),
+      error: (message, metadata) => context.infrastructure.logger.error(message, metadata),
+    },
+  };
+}
+
 async function prepareChatExecution(
   context: NodeVeryfrontCloudAgentServiceContext,
   req: ParsedHostedChatRequest,
@@ -842,6 +877,7 @@ async function prepareChatExecution(
   setPrepareChatExecutionStartAttributes(context, { projectId, userId });
 
   const agentConfig = await resolveAgentConfig(context, req.agentId ?? getDefaultAgentId(context));
+  const abortController = new AbortController();
   const {
     effectiveMessages,
     rootRunContext,
@@ -851,7 +887,7 @@ async function prepareChatExecution(
     request: req,
     agentConfig,
     apiUrl: config.VERYFRONT_API_URL,
-    abortSignal: new AbortController().signal,
+    abortSignal: abortController.signal,
     logger: context.infrastructure.logger,
     rootRun: {
       instrumentation: {
@@ -864,6 +900,12 @@ async function prepareChatExecution(
     },
     fetchSteering: (steeringInput) => fetchProjectSteering(context, steeringInput),
     buildInstructions: buildVeryfrontCloudRuntimeInstructions,
+    contextBudget: createHostedChatContextBudgetOptions(
+      context,
+      req,
+      agentConfig,
+      abortController.signal,
+    ),
     createRuntime: (creationOptions) =>
       context.trace("chat.createRuntime", () =>
         createAgentRuntime(context, {
