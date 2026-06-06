@@ -1,6 +1,7 @@
 {
   "name": "zendesk",
   "displayName": "Zendesk",
+  "icon": "zendesk.svg",
   "description": "Manage support tickets, claims, and customer operations in Zendesk",
   "category": "support",
   "auth": {

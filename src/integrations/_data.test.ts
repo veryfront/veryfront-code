@@ -224,6 +224,7 @@ describe("integration endpoint specs", () => {
     assertStringIncludes(icons.sap ?? "", "<svg");
     assertStringIncludes(icons.persona ?? "", "<svg");
     assertStringIncludes(icons.servicenow ?? "", "<svg");
+    assertStringIncludes(icons.zendesk ?? "", "<svg");
   });
 
   it("adds a GitHub user lookup tool", () => {
