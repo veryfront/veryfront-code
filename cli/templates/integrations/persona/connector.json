@@ -1,6 +1,7 @@
 {
   "name": "persona",
   "displayName": "Persona",
+  "icon": "persona.svg",
   "description": "Run KYC onboarding, identity verification, and compliance reviews with Persona",
   "category": "compliance",
   "auth": {

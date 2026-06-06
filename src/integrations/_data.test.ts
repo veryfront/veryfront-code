@@ -2,7 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { airtableConfig } from "../oauth/providers/common.ts";
-import { connectors } from "./_data.ts";
+import { connectors, icons } from "./_data.ts";
 import { historicalToolSummaries } from "./_tool_summaries.ts";
 import { filterVisibleIntegrations } from "./feature-flags.ts";
 
@@ -200,6 +200,29 @@ describe("integration endpoint specs", () => {
         `Expected ${connectorName} to expose ${expectedEndpointCount} callable endpoint tools`,
       );
     }
+  });
+
+  it("uses the documented SAP supplier invoice release function import", () => {
+    const tool = getTool("sap", "release_supplier_invoice");
+
+    assertEquals(tool.requiresWrite, true);
+    assertEquals(tool.endpoint?.method, "POST");
+    assertEquals(
+      tool.endpoint?.url,
+      "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
+    );
+    assertEquals(tool.endpoint?.params?.SupplierInvoice?.in, "query");
+    assertEquals(tool.endpoint?.params?.SupplierInvoice?.required, true);
+    assertEquals(tool.endpoint?.params?.FiscalYear?.in, "query");
+    assertEquals(tool.endpoint?.params?.FiscalYear?.required, true);
+    assertEquals(tool.endpoint?.params?.DiscountDaysHaveToBeShifted?.in, "query");
+    assertEquals(tool.endpoint?.params?.DiscountDaysHaveToBeShifted?.type, "boolean");
+  });
+
+  it("embeds icons for the operations integration providers", () => {
+    assertStringIncludes(icons.sap ?? "", "<svg");
+    assertStringIncludes(icons.persona ?? "", "<svg");
+    assertStringIncludes(icons.servicenow ?? "", "<svg");
   });
 
   it("adds a GitHub user lookup tool", () => {

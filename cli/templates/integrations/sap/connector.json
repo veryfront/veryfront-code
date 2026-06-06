@@ -1,6 +1,7 @@
 {
   "name": "sap",
   "displayName": "SAP S/4HANA",
+  "icon": "sap.svg",
   "description": "Manage supplier invoices and finance operations in SAP S/4HANA",
   "category": "finance",
   "auth": {
@@ -113,7 +114,7 @@
       "requiresWrite": true,
       "endpoint": {
         "method": "POST",
-        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice(SupplierInvoice='{supplierInvoice}',FiscalYear='{fiscalYear}')/SAP__self.Release",
+        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
         "params": {
           "sapHost": {
             "type": "string",
@@ -121,17 +122,22 @@
             "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
             "required": true
           },
-          "supplierInvoice": {
+          "SupplierInvoice": {
             "type": "string",
-            "in": "path",
+            "in": "query",
             "description": "SAP supplier invoice number",
             "required": true
           },
-          "fiscalYear": {
+          "FiscalYear": {
             "type": "string",
-            "in": "path",
+            "in": "query",
             "description": "Fiscal year",
             "required": true
+          },
+          "DiscountDaysHaveToBeShifted": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether SAP should shift discount days during release"
           }
         }
       }
