@@ -5,36 +5,177 @@
   "description": "IT Service Management - incidents, changes, and service requests",
   "category": "enterprise",
   "auth": {
-    "type": "oauth2",
-    "provider": "servicenow",
-    "scopes": ["useraccount", "openid"],
-    "callbackPath": "/api/auth/servicenow/callback"
+    "type": "api-key",
+    "keyName": "SERVICENOW_ACCESS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "requiredApis": [
+      {
+        "name": "ServiceNow Table API",
+        "enableUrl": "https://developer.servicenow.com/dev.do"
+      }
+    ]
   },
   "tools": [
     {
       "id": "list_incidents",
       "name": "List Incidents",
-      "description": "List ServiceNow incidents with optional filters"
+      "description": "List ServiceNow incidents with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/incident",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded ServiceNow query",
+            "default": "active=true^ORDERBYDESCsys_updated_on"
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum incidents to return",
+            "default": 25
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated incident fields to return",
+            "default": "sys_id,number,short_description,description,state,impact,urgency,priority,assignment_group,assigned_to,opened_at,sys_updated_on"
+          }
+        },
+        "response": { "transform": "result" }
+      }
     },
     {
       "id": "get_incident",
       "name": "Get Incident",
-      "description": "Get details of a specific incident"
+      "description": "Get details of a specific incident",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident sys_id",
+            "required": true
+          },
+          "sysparm_display_value": {
+            "type": "string",
+            "in": "query",
+            "description": "Display value mode",
+            "default": "all"
+          }
+        },
+        "response": { "transform": "result" }
+      }
     },
     {
       "id": "create_incident",
       "name": "Create Incident",
-      "description": "Create a new incident in ServiceNow"
+      "description": "Create a new incident in ServiceNow",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{instanceHost}/api/now/v1/table/incident",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          }
+        },
+        "body": {
+          "short_description": { "type": "string", "description": "Incident short description", "required": true },
+          "description": { "type": "string", "description": "Incident description" },
+          "impact": { "type": "string", "description": "Business impact, typically 1, 2, or 3" },
+          "urgency": { "type": "string", "description": "Incident urgency, typically 1, 2, or 3" },
+          "category": { "type": "string", "description": "Incident category" },
+          "assignment_group": { "type": "string", "description": "Assignment group sys_id or display value" }
+        },
+        "response": { "transform": "result" }
+      }
     },
     {
       "id": "update_incident",
       "name": "Update Incident",
-      "description": "Update an existing incident"
+      "description": "Update an existing incident",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          },
+          "sysId": { "type": "string", "in": "path", "description": "Incident sys_id", "required": true }
+        },
+        "body": {
+          "state": { "type": "string", "description": "Incident state" },
+          "priority": { "type": "string", "description": "Incident priority" },
+          "assignment_group": { "type": "string", "description": "Assignment group sys_id or display value" },
+          "assigned_to": { "type": "string", "description": "Assignee sys_id or display value" },
+          "work_notes": { "type": "string", "description": "Internal work notes" },
+          "comments": { "type": "string", "description": "Customer-visible comments" }
+        },
+        "response": { "transform": "result" }
+      }
     },
     {
       "id": "search_knowledge",
       "name": "Search Knowledge Base",
-      "description": "Search ServiceNow knowledge base articles"
+      "description": "Search ServiceNow knowledge base articles",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/kb_knowledge",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded query for knowledge articles",
+            "required": true
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum articles to return",
+            "default": 10
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated article fields",
+            "default": "sys_id,number,short_description,text,workflow_state,sys_updated_on"
+          }
+        },
+        "response": { "transform": "result" }
+      }
     }
   ],
   "prompts": [
@@ -59,8 +200,7 @@
   ],
   "envVars": [
     { "name": "SERVICENOW_INSTANCE", "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)", "required": true },
-    { "name": "SERVICENOW_CLIENT_ID", "description": "ServiceNow OAuth Client ID", "required": true },
-    { "name": "SERVICENOW_CLIENT_SECRET", "description": "ServiceNow OAuth Client Secret", "required": true, "sensitive": true }
+    { "name": "SERVICENOW_ACCESS_TOKEN", "description": "ServiceNow OAuth access token for the Table API", "required": true, "sensitive": true }
   ],
   "suggestedWith": ["slack", "jira"]
 }

@@ -9607,6 +9607,116 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["teams", "calendar", "gmail"],
   },
   {
+    "name": "persona",
+    "displayName": "Persona",
+    "description": "Run KYC onboarding, identity verification, and compliance reviews with Persona",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Persona API",
+        "enableUrl": "https://docs.withpersona.com/api-reference",
+      }],
+      "keyName": "PERSONA_API_KEY",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+    },
+    "envVars": [{
+      "name": "PERSONA_API_KEY",
+      "description": "Persona API key",
+      "required": true,
+      "sensitive": true,
+    }],
+    "tools": [{
+      "id": "list_inquiries",
+      "name": "List Inquiries",
+      "description": "List Persona inquiries for KYC and onboarding review",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.withpersona.com/api/v1/inquiries",
+        "params": {
+          "page[limit]": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum inquiries to return",
+            "default": 25,
+          },
+          "filter[status]": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional inquiry status filter",
+          },
+        },
+      },
+    }, {
+      "id": "get_inquiry",
+      "name": "Get Inquiry",
+      "description": "Get a Persona inquiry by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "approve_inquiry",
+      "name": "Approve Inquiry",
+      "description": "Approve a Persona inquiry after compliance review",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}/approve",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "decline_inquiry",
+      "name": "Decline Inquiry",
+      "description": "Decline a Persona inquiry after compliance review",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}/decline",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "kyc_queue",
+      "title": "Review KYC queue",
+      "prompt":
+        "Review Persona inquiries that need KYC action and prioritize cases with document or risk issues.",
+      "category": "compliance",
+    }, {
+      "id": "regulatory_review",
+      "title": "Regulatory review",
+      "prompt":
+        "Summarize Persona inquiry evidence and recommend the next regulatory review action.",
+      "category": "compliance",
+    }],
+    "suggestedWith": ["sharepoint", "jira", "slack"],
+    "category": "compliance",
+  },
+  {
     "name": "posthog",
     "displayName": "PostHog",
     "icon": "posthog.svg",
@@ -9826,6 +9936,150 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "slack", "calendar"],
   },
   {
+    "name": "sap",
+    "displayName": "SAP S/4HANA",
+    "description": "Manage supplier invoices and finance operations in SAP S/4HANA",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "SAP S/4HANA Supplier Invoice OData API",
+        "enableUrl": "https://api.sap.com/package/SAPS4HANACloud",
+      }],
+      "keyName": "SAP_ACCESS_TOKEN",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+    },
+    "envVars": [{
+      "name": "SAP_HOST",
+      "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+      "required": true,
+    }, {
+      "name": "SAP_ACCESS_TOKEN",
+      "description": "SAP S/4HANA API access token",
+      "required": true,
+      "sensitive": true,
+    }],
+    "tools": [{
+      "id": "list_supplier_invoices",
+      "name": "List Supplier Invoices",
+      "description": "List supplier invoices from SAP S/4HANA with optional OData filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true,
+          },
+          "$filter": { "type": "string", "in": "query", "description": "OData filter expression" },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum invoices to return",
+            "default": 25,
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "OData ordering expression",
+            "default": "PostingDate desc",
+          },
+          "$format": {
+            "type": "string",
+            "in": "query",
+            "description": "Response format",
+            "default": "json",
+          },
+        },
+      },
+    }, {
+      "id": "get_supplier_invoice",
+      "name": "Get Supplier Invoice",
+      "description": "Get a supplier invoice by invoice number and fiscal year",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice(SupplierInvoice='{supplierInvoice}',FiscalYear='{fiscalYear}')",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true,
+          },
+          "supplierInvoice": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP supplier invoice number",
+            "required": true,
+          },
+          "fiscalYear": {
+            "type": "string",
+            "in": "path",
+            "description": "Fiscal year",
+            "required": true,
+          },
+          "$format": {
+            "type": "string",
+            "in": "query",
+            "description": "Response format",
+            "default": "json",
+          },
+        },
+      },
+    }, {
+      "id": "release_supplier_invoice",
+      "name": "Release Supplier Invoice",
+      "description": "Release a blocked supplier invoice in SAP S/4HANA",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url":
+          "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice(SupplierInvoice='{supplierInvoice}',FiscalYear='{fiscalYear}')/SAP__self.Release",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true,
+          },
+          "supplierInvoice": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP supplier invoice number",
+            "required": true,
+          },
+          "fiscalYear": {
+            "type": "string",
+            "in": "path",
+            "description": "Fiscal year",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "invoice_review",
+      "title": "Review supplier invoices",
+      "prompt":
+        "Review recent SAP supplier invoices and flag blocked or unmatched invoices that need finance approval.",
+      "category": "finance",
+    }, {
+      "id": "reconciliation",
+      "title": "Reconcile invoices",
+      "prompt":
+        "Compare SAP supplier invoices against purchase order references and summarize reconciliation issues.",
+      "category": "finance",
+    }],
+    "suggestedWith": ["sharepoint", "gmail", "slack"],
+    "category": "finance",
+  },
+  {
     "name": "sentry",
     "displayName": "Sentry",
     "icon": "sentry.svg",
@@ -10024,18 +10278,23 @@ export const connectors: IntegrationConfig[] = [
     "displayName": "ServiceNow",
     "icon": "servicenow.svg",
     "description": "IT Service Management - incidents, changes, and service requests",
-    "auth": { "type": "oauth2", "provider": "servicenow", "scopes": ["useraccount", "openid"] },
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "ServiceNow Table API",
+        "enableUrl": "https://developer.servicenow.com/dev.do",
+      }],
+      "keyName": "SERVICENOW_ACCESS_TOKEN",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+    },
     "envVars": [{
       "name": "SERVICENOW_INSTANCE",
       "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)",
       "required": true,
     }, {
-      "name": "SERVICENOW_CLIENT_ID",
-      "description": "ServiceNow OAuth Client ID",
-      "required": true,
-    }, {
-      "name": "SERVICENOW_CLIENT_SECRET",
-      "description": "ServiceNow OAuth Client Secret",
+      "name": "SERVICENOW_ACCESS_TOKEN",
+      "description": "ServiceNow OAuth access token for the Table API",
       "required": true,
       "sensitive": true,
     }],
@@ -10043,22 +10302,173 @@ export const connectors: IntegrationConfig[] = [
       "id": "list_incidents",
       "name": "List Incidents",
       "description": "List ServiceNow incidents with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/incident",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded ServiceNow query",
+            "default": "active=true^ORDERBYDESCsys_updated_on",
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum incidents to return",
+            "default": 25,
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated incident fields to return",
+            "default":
+              "sys_id,number,short_description,description,state,impact,urgency,priority,assignment_group,assigned_to,opened_at,sys_updated_on",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }, {
       "id": "get_incident",
       "name": "Get Incident",
       "description": "Get details of a specific incident",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident sys_id",
+            "required": true,
+          },
+          "sysparm_display_value": {
+            "type": "string",
+            "in": "query",
+            "description": "Display value mode",
+            "default": "all",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }, {
       "id": "create_incident",
       "name": "Create Incident",
       "description": "Create a new incident in ServiceNow",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{instanceHost}/api/now/v1/table/incident",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+        },
+        "body": {
+          "short_description": {
+            "type": "string",
+            "description": "Incident short description",
+            "required": true,
+          },
+          "description": { "type": "string", "description": "Incident description" },
+          "impact": { "type": "string", "description": "Business impact, typically 1, 2, or 3" },
+          "urgency": { "type": "string", "description": "Incident urgency, typically 1, 2, or 3" },
+          "category": { "type": "string", "description": "Incident category" },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group sys_id or display value",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }, {
       "id": "update_incident",
       "name": "Update Incident",
       "description": "Update an existing incident",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident sys_id",
+            "required": true,
+          },
+        },
+        "body": {
+          "state": { "type": "string", "description": "Incident state" },
+          "priority": { "type": "string", "description": "Incident priority" },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group sys_id or display value",
+          },
+          "assigned_to": { "type": "string", "description": "Assignee sys_id or display value" },
+          "work_notes": { "type": "string", "description": "Internal work notes" },
+          "comments": { "type": "string", "description": "Customer-visible comments" },
+        },
+        "response": { "transform": "result" },
+      },
     }, {
       "id": "search_knowledge",
       "name": "Search Knowledge Base",
       "description": "Search ServiceNow knowledge base articles",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/kb_knowledge",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded query for knowledge articles",
+            "required": true,
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum articles to return",
+            "default": 10,
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated article fields",
+            "default": "sys_id,number,short_description,text,workflow_state,sys_updated_on",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }],
     "prompts": [{
       "id": "check_ticket_status",
@@ -11680,6 +12090,155 @@ export const connectors: IntegrationConfig[] = [
       "icon": "message",
     }],
     "suggestedWith": ["slack", "gmail", "calendar"],
+  },
+  {
+    "name": "zendesk",
+    "displayName": "Zendesk",
+    "description": "Manage support tickets, claims, and customer operations in Zendesk",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Zendesk Ticketing API",
+        "enableUrl": "https://developer.zendesk.com/api-reference/ticketing/tickets/tickets/",
+      }],
+      "keyName": "ZENDESK_ACCESS_TOKEN",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+    },
+    "envVars": [{
+      "name": "ZENDESK_SUBDOMAIN",
+      "description": "Zendesk subdomain, for example example for example.zendesk.com",
+      "required": true,
+    }, {
+      "name": "ZENDESK_ACCESS_TOKEN",
+      "description": "Zendesk OAuth access token",
+      "required": true,
+      "sensitive": true,
+    }],
+    "tools": [{
+      "id": "list_tickets",
+      "name": "List Tickets",
+      "description": "List Zendesk support tickets",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "page[size]": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum tickets to return",
+            "default": 25,
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor pagination sort expression",
+            "default": "-updated_at",
+          },
+        },
+        "response": { "transform": "tickets" },
+      },
+    }, {
+      "id": "get_ticket",
+      "name": "Get Ticket",
+      "description": "Get a Zendesk ticket by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Zendesk ticket ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "ticket" },
+      },
+    }, {
+      "id": "search_tickets",
+      "name": "Search Tickets",
+      "description": "Search Zendesk tickets with the Zendesk search API",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/search",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Zendesk search query, for example type:ticket status:open",
+            "required": true,
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "update_ticket",
+      "name": "Update Ticket",
+      "description": "Update a Zendesk ticket status, priority, tags, or comment",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Zendesk ticket ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "ticket": {
+            "type": "object",
+            "description": "Zendesk ticket update payload",
+            "required": true,
+          },
+        },
+        "response": { "transform": "ticket" },
+      },
+    }],
+    "prompts": [{
+      "id": "claims_queue",
+      "title": "Review claims tickets",
+      "prompt":
+        "Review open Zendesk claims tickets, identify missing customer information, and recommend next actions.",
+      "category": "support",
+    }, {
+      "id": "support_resolution",
+      "title": "Resolve support tickets",
+      "prompt": "Summarize high-priority Zendesk support tickets and draft resolution updates.",
+      "category": "support",
+    }],
+    "suggestedWith": ["salesforce", "slack", "teams"],
+    "category": "support",
   },
 ];
 

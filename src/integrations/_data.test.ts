@@ -68,8 +68,10 @@ describe("integration endpoint specs", () => {
       "notion",
       "onedrive",
       "outlook",
+      "persona",
       "posthog",
       "salesforce",
+      "sap",
       "sentry",
       "servicenow",
       "sharepoint",
@@ -82,6 +84,7 @@ describe("integration endpoint specs", () => {
       "teams",
       "trello",
       "twilio",
+      "zendesk",
     ];
 
     assertEquals(connectors.map((item) => item.name), sourceConnectors);
