@@ -13,15 +13,25 @@ describe("cli/templates/integration-loader feature gates", () => {
 
   it("keeps unsupported integrations declared but unavailable by default", () => {
     assertEquals(ALL_AVAILABLE_INTEGRATIONS.includes("salesforce"), true);
+    assertEquals(ALL_AVAILABLE_INTEGRATIONS.includes("sap"), true);
+    assertEquals(ALL_AVAILABLE_INTEGRATIONS.includes("persona"), true);
     assertEquals(getAvailableIntegrations().includes("sentry"), true);
     assertEquals(getAvailableIntegrations().includes("salesforce"), false);
+    assertEquals(getAvailableIntegrations().includes("sap"), false);
+    assertEquals(getAvailableIntegrations().includes("persona"), false);
     assertEquals(validateIntegrations(["salesforce"]).valid, false);
+    assertEquals(validateIntegrations(["sap"]).valid, false);
+    assertEquals(validateIntegrations(["persona"]).valid, false);
   });
 
   it("allows a feature-gated integration when explicitly enabled", () => {
-    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce");
+    Deno.env.set(EXPERIMENTAL_INTEGRATIONS_ENV, "salesforce,sap,persona");
 
     assertEquals(getAvailableIntegrations().includes("salesforce"), true);
+    assertEquals(getAvailableIntegrations().includes("sap"), true);
+    assertEquals(getAvailableIntegrations().includes("persona"), true);
     assertEquals(validateIntegrations(["salesforce"]).valid, true);
+    assertEquals(validateIntegrations(["sap"]).valid, true);
+    assertEquals(validateIntegrations(["persona"]).valid, true);
   });
 });

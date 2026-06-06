@@ -9607,6 +9607,117 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["teams", "calendar", "gmail"],
   },
   {
+    "name": "persona",
+    "displayName": "Persona",
+    "icon": "persona.svg",
+    "description": "Run KYC onboarding, identity verification, and compliance reviews with Persona",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Persona API",
+        "enableUrl": "https://docs.withpersona.com/api-reference",
+      }],
+      "keyName": "PERSONA_API_KEY",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+    },
+    "envVars": [{
+      "name": "PERSONA_API_KEY",
+      "description": "Persona API key",
+      "required": true,
+      "sensitive": true,
+    }],
+    "tools": [{
+      "id": "list_inquiries",
+      "name": "List Inquiries",
+      "description": "List Persona inquiries for KYC and onboarding review",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.withpersona.com/api/v1/inquiries",
+        "params": {
+          "page[limit]": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum inquiries to return",
+            "default": 25,
+          },
+          "filter[status]": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional inquiry status filter",
+          },
+        },
+      },
+    }, {
+      "id": "get_inquiry",
+      "name": "Get Inquiry",
+      "description": "Get a Persona inquiry by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "approve_inquiry",
+      "name": "Approve Inquiry",
+      "description": "Approve a Persona inquiry after compliance review",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}/approve",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true,
+          },
+        },
+      },
+    }, {
+      "id": "decline_inquiry",
+      "name": "Decline Inquiry",
+      "description": "Decline a Persona inquiry after compliance review",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}/decline",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true,
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "kyc_queue",
+      "title": "Review KYC queue",
+      "prompt":
+        "Review Persona inquiries that need KYC action and prioritize cases with document or risk issues.",
+      "category": "compliance",
+    }, {
+      "id": "regulatory_review",
+      "title": "Regulatory review",
+      "prompt":
+        "Summarize Persona inquiry evidence and recommend the next regulatory review action.",
+      "category": "compliance",
+    }],
+    "suggestedWith": ["sharepoint", "jira", "slack"],
+    "category": "compliance",
+  },
+  {
     "name": "posthog",
     "displayName": "PostHog",
     "icon": "posthog.svg",
@@ -9826,6 +9937,155 @@ export const connectors: IntegrationConfig[] = [
     "suggestedWith": ["gmail", "slack", "calendar"],
   },
   {
+    "name": "sap",
+    "displayName": "SAP S/4HANA",
+    "icon": "sap.svg",
+    "description": "Manage supplier invoices and finance operations in SAP S/4HANA",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "SAP S/4HANA Supplier Invoice OData API",
+        "enableUrl": "https://api.sap.com/package/SAPS4HANACloud",
+      }],
+      "keyName": "SAP_ACCESS_TOKEN",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+    },
+    "envVars": [{
+      "name": "SAP_HOST",
+      "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+      "required": true,
+    }, {
+      "name": "SAP_ACCESS_TOKEN",
+      "description": "SAP S/4HANA API access token",
+      "required": true,
+      "sensitive": true,
+    }],
+    "tools": [{
+      "id": "list_supplier_invoices",
+      "name": "List Supplier Invoices",
+      "description": "List supplier invoices from SAP S/4HANA with optional OData filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true,
+          },
+          "$filter": { "type": "string", "in": "query", "description": "OData filter expression" },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum invoices to return",
+            "default": 25,
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "OData ordering expression",
+            "default": "PostingDate desc",
+          },
+          "$format": {
+            "type": "string",
+            "in": "query",
+            "description": "Response format",
+            "default": "json",
+          },
+        },
+      },
+    }, {
+      "id": "get_supplier_invoice",
+      "name": "Get Supplier Invoice",
+      "description": "Get a supplier invoice by invoice number and fiscal year",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url":
+          "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice(SupplierInvoice='{supplierInvoice}',FiscalYear='{fiscalYear}')",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true,
+          },
+          "supplierInvoice": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP supplier invoice number",
+            "required": true,
+          },
+          "fiscalYear": {
+            "type": "string",
+            "in": "path",
+            "description": "Fiscal year",
+            "required": true,
+          },
+          "$format": {
+            "type": "string",
+            "in": "query",
+            "description": "Response format",
+            "default": "json",
+          },
+        },
+      },
+    }, {
+      "id": "release_supplier_invoice",
+      "name": "Release Supplier Invoice",
+      "description": "Release a blocked supplier invoice in SAP S/4HANA",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true,
+          },
+          "SupplierInvoice": {
+            "type": "string",
+            "in": "query",
+            "description": "SAP supplier invoice number",
+            "required": true,
+          },
+          "FiscalYear": {
+            "type": "string",
+            "in": "query",
+            "description": "Fiscal year",
+            "required": true,
+          },
+          "DiscountDaysHaveToBeShifted": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether SAP should shift discount days during release",
+          },
+        },
+      },
+    }],
+    "prompts": [{
+      "id": "invoice_review",
+      "title": "Review supplier invoices",
+      "prompt":
+        "Review recent SAP supplier invoices and flag blocked or unmatched invoices that need finance approval.",
+      "category": "finance",
+    }, {
+      "id": "reconciliation",
+      "title": "Reconcile invoices",
+      "prompt":
+        "Compare SAP supplier invoices against purchase order references and summarize reconciliation issues.",
+      "category": "finance",
+    }],
+    "suggestedWith": ["sharepoint", "gmail", "slack"],
+    "category": "finance",
+  },
+  {
     "name": "sentry",
     "displayName": "Sentry",
     "icon": "sentry.svg",
@@ -10024,18 +10284,23 @@ export const connectors: IntegrationConfig[] = [
     "displayName": "ServiceNow",
     "icon": "servicenow.svg",
     "description": "IT Service Management - incidents, changes, and service requests",
-    "auth": { "type": "oauth2", "provider": "servicenow", "scopes": ["useraccount", "openid"] },
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "ServiceNow Table API",
+        "enableUrl": "https://developer.servicenow.com/dev.do",
+      }],
+      "keyName": "SERVICENOW_ACCESS_TOKEN",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+    },
     "envVars": [{
       "name": "SERVICENOW_INSTANCE",
       "description": "ServiceNow instance URL (e.g. your-instance.service-now.com)",
       "required": true,
     }, {
-      "name": "SERVICENOW_CLIENT_ID",
-      "description": "ServiceNow OAuth Client ID",
-      "required": true,
-    }, {
-      "name": "SERVICENOW_CLIENT_SECRET",
-      "description": "ServiceNow OAuth Client Secret",
+      "name": "SERVICENOW_ACCESS_TOKEN",
+      "description": "ServiceNow OAuth access token for the Table API",
       "required": true,
       "sensitive": true,
     }],
@@ -10043,22 +10308,173 @@ export const connectors: IntegrationConfig[] = [
       "id": "list_incidents",
       "name": "List Incidents",
       "description": "List ServiceNow incidents with optional filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/incident",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded ServiceNow query",
+            "default": "active=true^ORDERBYDESCsys_updated_on",
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum incidents to return",
+            "default": 25,
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated incident fields to return",
+            "default":
+              "sys_id,number,short_description,description,state,impact,urgency,priority,assignment_group,assigned_to,opened_at,sys_updated_on",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }, {
       "id": "get_incident",
       "name": "Get Incident",
       "description": "Get details of a specific incident",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident sys_id",
+            "required": true,
+          },
+          "sysparm_display_value": {
+            "type": "string",
+            "in": "query",
+            "description": "Display value mode",
+            "default": "all",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }, {
       "id": "create_incident",
       "name": "Create Incident",
       "description": "Create a new incident in ServiceNow",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{instanceHost}/api/now/v1/table/incident",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+        },
+        "body": {
+          "short_description": {
+            "type": "string",
+            "description": "Incident short description",
+            "required": true,
+          },
+          "description": { "type": "string", "description": "Incident description" },
+          "impact": { "type": "string", "description": "Business impact, typically 1, 2, or 3" },
+          "urgency": { "type": "string", "description": "Incident urgency, typically 1, 2, or 3" },
+          "category": { "type": "string", "description": "Incident category" },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group sys_id or display value",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }, {
       "id": "update_incident",
       "name": "Update Incident",
       "description": "Update an existing incident",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PATCH",
+        "url": "https://{instanceHost}/api/now/v1/table/incident/{sysId}",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysId": {
+            "type": "string",
+            "in": "path",
+            "description": "Incident sys_id",
+            "required": true,
+          },
+        },
+        "body": {
+          "state": { "type": "string", "description": "Incident state" },
+          "priority": { "type": "string", "description": "Incident priority" },
+          "assignment_group": {
+            "type": "string",
+            "description": "Assignment group sys_id or display value",
+          },
+          "assigned_to": { "type": "string", "description": "Assignee sys_id or display value" },
+          "work_notes": { "type": "string", "description": "Internal work notes" },
+          "comments": { "type": "string", "description": "Customer-visible comments" },
+        },
+        "response": { "transform": "result" },
+      },
     }, {
       "id": "search_knowledge",
       "name": "Search Knowledge Base",
       "description": "Search ServiceNow knowledge base articles",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{instanceHost}/api/now/v1/table/kb_knowledge",
+        "params": {
+          "instanceHost": {
+            "type": "string",
+            "in": "path",
+            "description": "ServiceNow instance host, for example example.service-now.com",
+            "required": true,
+          },
+          "sysparm_query": {
+            "type": "string",
+            "in": "query",
+            "description": "Encoded query for knowledge articles",
+            "required": true,
+          },
+          "sysparm_limit": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum articles to return",
+            "default": 10,
+          },
+          "sysparm_fields": {
+            "type": "string",
+            "in": "query",
+            "description": "Comma-separated article fields",
+            "default": "sys_id,number,short_description,text,workflow_state,sys_updated_on",
+          },
+        },
+        "response": { "transform": "result" },
+      },
     }],
     "prompts": [{
       "id": "check_ticket_status",
@@ -11681,6 +12097,155 @@ export const connectors: IntegrationConfig[] = [
     }],
     "suggestedWith": ["slack", "gmail", "calendar"],
   },
+  {
+    "name": "zendesk",
+    "displayName": "Zendesk",
+    "description": "Manage support tickets, claims, and customer operations in Zendesk",
+    "auth": {
+      "type": "api-key",
+      "requiredApis": [{
+        "name": "Zendesk Ticketing API",
+        "enableUrl": "https://developer.zendesk.com/api-reference/ticketing/tickets/tickets/",
+      }],
+      "keyName": "ZENDESK_ACCESS_TOKEN",
+      "headerName": "Authorization",
+      "headerPrefix": "Bearer",
+    },
+    "envVars": [{
+      "name": "ZENDESK_SUBDOMAIN",
+      "description": "Zendesk subdomain, for example example for example.zendesk.com",
+      "required": true,
+    }, {
+      "name": "ZENDESK_ACCESS_TOKEN",
+      "description": "Zendesk OAuth access token",
+      "required": true,
+      "sensitive": true,
+    }],
+    "tools": [{
+      "id": "list_tickets",
+      "name": "List Tickets",
+      "description": "List Zendesk support tickets",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "page[size]": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum tickets to return",
+            "default": 25,
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor pagination sort expression",
+            "default": "-updated_at",
+          },
+        },
+        "response": { "transform": "tickets" },
+      },
+    }, {
+      "id": "get_ticket",
+      "name": "Get Ticket",
+      "description": "Get a Zendesk ticket by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Zendesk ticket ID",
+            "required": true,
+          },
+        },
+        "response": { "transform": "ticket" },
+      },
+    }, {
+      "id": "search_tickets",
+      "name": "Search Tickets",
+      "description": "Search Zendesk tickets with the Zendesk search API",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/search",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Zendesk search query, for example type:ticket status:open",
+            "required": true,
+          },
+        },
+        "response": { "transform": "results" },
+      },
+    }, {
+      "id": "update_ticket",
+      "name": "Update Ticket",
+      "description": "Update a Zendesk ticket status, priority, tags, or comment",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true,
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Zendesk ticket ID",
+            "required": true,
+          },
+        },
+        "body": {
+          "ticket": {
+            "type": "object",
+            "description": "Zendesk ticket update payload",
+            "required": true,
+          },
+        },
+        "response": { "transform": "ticket" },
+      },
+    }],
+    "prompts": [{
+      "id": "claims_queue",
+      "title": "Review claims tickets",
+      "prompt":
+        "Review open Zendesk claims tickets, identify missing customer information, and recommend next actions.",
+      "category": "support",
+    }, {
+      "id": "support_resolution",
+      "title": "Resolve support tickets",
+      "prompt": "Summarize high-priority Zendesk support tickets and draft resolution updates.",
+      "category": "support",
+    }],
+    "suggestedWith": ["salesforce", "slack", "teams"],
+    "category": "support",
+  },
 ];
 
 export const icons: Record<string, string> = {
@@ -11728,10 +12293,14 @@ export const icons: Record<string, string> = {
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_168_637)">\n<path d="M48.8105 45.7717L48.8117 45.7673L75.6823 61.8624L91.694 55.1244C94.9477 53.7178 98.456 52.9965 102.001 53C102.591 53 103.175 53.0268 103.756 53.0656C101.831 45.5592 97.7669 38.7736 92.0581 33.5333C86.3493 28.293 79.2414 24.8236 71.5981 23.5468C63.9547 22.2699 56.1051 23.2406 49.003 26.3408C41.9009 29.441 35.8522 34.5373 31.5918 41.0103C31.7287 41.0086 31.8635 41 32.0007 41C37.9393 40.9919 43.7618 42.6447 48.8105 45.7717Z" fill="#0364B8"/>\n<path d="M48.811 45.7673L48.8098 45.7717C43.7611 42.6448 37.9386 40.992 32 41C31.8628 41 31.7278 41.0086 31.5911 41.0103C25.7787 41.0823 20.0958 42.7368 15.153 45.7959C10.2103 48.8551 6.1946 53.2033 3.53748 58.3733C0.880366 63.5433 -0.317721 69.3396 0.0719724 75.1394C0.461666 80.9391 2.42441 86.5231 5.74928 91.2911L29.4453 81.3194L39.979 76.8867L63.4331 67.0168L75.6816 61.8625L48.811 45.7673Z" fill="#0078D4"/>\n<path d="M103.755 53.0656C103.174 53.0268 102.591 53 102 53C98.4553 52.9966 94.9477 53.7205 91.6941 55.1271L75.6816 61.8625L80.3247 64.6436L95.5444 73.76L102.185 77.7375L124.89 91.3378C126.953 87.5079 128.022 83.2215 128 78.8713C127.977 74.521 126.863 70.246 124.76 66.4379C122.657 62.6297 119.632 59.41 115.962 57.0738C112.293 54.7375 108.095 53.3594 103.755 53.0656Z" fill="#1490DF"/>\n<path d="M102.185 77.7374L95.5451 73.7599L80.3254 64.6435L75.6823 61.8624L63.4338 67.0167L39.9797 76.8866L29.446 81.3193L5.75 91.291C8.69466 95.5247 12.6202 98.9828 17.1914 101.37C21.7626 103.757 26.8437 105.003 32.0007 105H102.001C106.694 105.001 111.3 103.732 115.33 101.327C119.361 98.9211 122.664 95.4694 124.891 91.3377L102.185 77.7374Z" fill="#28A8EA"/>\n</g>\n<defs>\n<clipPath id="clip0_168_637">\n<rect width="128" height="82" fill="white" transform="translate(0 23)"/>\n</clipPath>\n</defs>\n</svg>\n',
   "outlook":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_0_142)">\n<g clip-path="url(#clip1_0_142)">\n<path d="M127.542 66.6442C127.549 65.6433 127.032 64.7117 126.179 64.1884H126.164L126.11 64.1586L81.7569 37.9037C81.5653 37.7743 81.3666 37.6561 81.1615 37.5495C79.449 36.666 77.4147 36.666 75.7021 37.5495C75.4971 37.6561 75.2983 37.7743 75.1068 37.9037L30.7534 64.1586L30.6999 64.1884C29.3443 65.0313 28.9287 66.8137 29.7717 68.1693C30.0201 68.5687 30.3622 68.9014 30.7683 69.1387L75.1218 95.3936C75.314 95.5218 75.5127 95.6401 75.7172 95.7478C77.4297 96.6313 79.464 96.6313 81.1765 95.7478C81.381 95.6401 81.5797 95.5219 81.7719 95.3936L126.125 69.1387C127.011 68.6221 127.552 67.6699 127.542 66.6442Z" fill="#0A2767"/>\n<path d="M35.924 49.1141H65.0306V75.7947H35.924V49.1141ZM121.589 21.993V9.78838C121.659 6.73693 119.243 4.20571 116.192 4.13259H40.6601C37.6086 4.20571 35.1933 6.73693 35.2632 9.78838V21.993L79.9143 33.9L121.589 21.993Z" fill="#0364B8"/>\n<path d="M35.2634 21.993H65.0308V48.7837H35.2634V21.993Z" fill="#0078D4"/>\n<path d="M94.7982 21.993H65.0308V48.7837L94.7982 75.5744H121.589V48.7837L94.7982 21.993Z" fill="#28A8EA"/>\n<path d="M65.0308 48.7837H94.7982V75.5744H65.0308V48.7837Z" fill="#0078D4"/>\n<path d="M65.0308 75.5744H94.7982V102.365H65.0308V75.5744Z" fill="#0364B8"/>\n<path d="M35.9243 75.7947H65.0309V100.049H35.9243V75.7947Z" fill="#14447D"/>\n<path d="M94.7983 75.5744H121.589V102.365H94.7983V75.5744Z" fill="#0078D4"/>\n<path d="M126.179 68.975L126.122 69.0047L81.7687 93.9498C81.5752 94.0689 81.3788 94.182 81.1733 94.2832C80.42 94.6419 79.6018 94.8444 78.7681 94.8786L76.345 93.4616C76.1403 93.3589 75.9415 93.2446 75.7497 93.1193L30.8009 67.4657H30.7801L29.3096 66.6442V117.142C29.3325 120.511 32.0815 123.224 35.4506 123.202H121.496C121.547 123.202 121.592 123.178 121.645 123.178C122.357 123.133 123.058 122.987 123.729 122.744C124.019 122.621 124.298 122.476 124.565 122.309C124.765 122.196 125.107 121.949 125.107 121.949C126.632 120.821 127.534 119.039 127.542 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="url(#paint0_linear_0_142)"/>\n<path opacity="0.5" d="M125.161 66.4447V69.5406L78.7832 101.472L30.7683 67.4866C30.7683 67.4702 30.755 67.4568 30.7386 67.4568L26.333 64.8075V62.5749L28.1488 62.5451L31.9888 64.748L32.0781 64.7777L32.4055 64.9861C32.4055 64.9861 77.5329 90.7349 77.652 90.7944L79.3785 91.8065C79.5273 91.747 79.6761 91.6875 79.8547 91.6279C79.9441 91.5683 124.655 66.4149 124.655 66.4149L125.161 66.4447Z" fill="#0A2767"/>\n<path d="M126.179 68.975L126.123 69.0077L81.7691 93.9528C81.5756 94.0718 81.3792 94.1849 81.1737 94.2861C79.4512 95.1276 77.4369 95.1276 75.7144 94.2861C75.5104 94.1851 75.3117 94.0738 75.119 93.9528L30.7657 69.0077L30.7121 68.975C29.8558 68.5107 29.3189 67.6182 29.3101 66.6442V117.142C29.3314 120.51 32.0794 123.224 35.4478 123.202C35.4478 123.202 35.448 123.202 35.4481 123.202H121.404C124.773 123.224 127.521 120.51 127.543 117.142C127.543 117.142 127.543 117.142 127.543 117.142V66.6442C127.541 67.61 127.02 68.5006 126.179 68.975Z" fill="#1490DF"/>\n<path opacity="0.1" d="M82.4148 93.5837L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L95.6911 114.867L125.128 121.961C125.935 121.352 126.576 120.55 126.995 119.63L82.4148 93.5837Z" fill="black"/>\n<path opacity="0.05" d="M85.4213 91.8929L81.751 93.9558C81.5586 94.0782 81.3599 94.1906 81.1556 94.2921C80.4243 94.6511 79.629 94.8616 78.8159 94.9113L86.7221 116.71L125.137 121.952C126.65 120.816 127.541 119.034 127.542 117.142V116.49L85.4213 91.8929Z" fill="black"/>\n<path d="M35.5314 123.202H121.396C122.717 123.209 124.005 122.792 125.072 122.012L76.3425 93.4676C76.1378 93.3649 75.939 93.2506 75.7472 93.1253L30.7984 67.4717H30.7776L29.3101 66.6442V116.969C29.3067 120.408 32.0921 123.199 35.5314 123.202Z" fill="#28A8EA"/>\n<path opacity="0.1" d="M70.984 33.4029V96.8968C70.9787 99.123 69.625 101.124 67.5607 101.957C66.9212 102.232 66.2325 102.374 65.5365 102.374H29.3096V30.9233H35.2631V27.9465H65.5366C68.5438 27.9579 70.9775 30.3956 70.984 33.4029Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V99.8735C68.0147 100.593 67.8623 101.304 67.5607 101.957C66.734 103.995 64.7588 105.332 62.5598 105.342H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M68.0073 36.3796V93.92C67.9927 96.9259 65.5657 99.3623 62.5599 99.3883H29.3096V30.9233H62.5598C63.4235 30.9146 64.2747 31.13 65.0305 31.5484C66.8552 32.4677 68.0066 34.3364 68.0073 36.3796Z" fill="black"/>\n<path opacity="0.2" d="M65.0305 36.3796V93.92C65.0273 96.9306 62.5935 99.3736 59.5831 99.3883H29.3096V30.9233H59.583C62.5932 30.9249 65.0321 33.3665 65.0304 36.3767C65.0305 36.3777 65.0305 36.3786 65.0305 36.3796Z" fill="black"/>\n<path d="M4.99883 30.9233H59.5744C62.5879 30.9233 65.0308 33.3662 65.0308 36.3796V90.9552C65.0308 93.9687 62.5879 96.4116 59.5744 96.4116H4.99883C1.98534 96.4116 -0.45752 93.9686 -0.45752 90.9552V36.3796C-0.45752 33.3662 1.98541 30.9233 4.99883 30.9233Z" fill="url(#paint1_linear_0_142)"/>\n<path d="M16.5963 53.8085C17.9411 50.9433 20.1118 48.5455 22.8296 46.9233C25.8395 45.2001 29.2665 44.341 32.7333 44.4406C35.9464 44.371 39.117 45.1855 41.8987 46.7952C44.5141 48.3549 46.6205 50.6402 47.9623 53.3738C49.4235 56.386 50.1518 59.701 50.0877 63.0482C50.1585 66.5464 49.4092 70.0126 47.8998 73.1691C46.526 76.0005 44.3528 78.3672 41.6486 79.9769C38.7597 81.636 35.4714 82.4719 32.1409 82.3941C28.8591 82.4733 25.6187 81.6495 22.7731 80.0127C20.1351 78.4509 18.0022 76.163 16.6291 73.4221C15.1592 70.4535 14.4222 67.1759 14.4799 63.8638C14.4187 60.3954 15.1422 56.958 16.5963 53.8085ZM23.2404 69.9721C23.9574 71.7835 25.1733 73.3544 26.747 74.5028C28.3499 75.623 30.2692 76.201 32.2242 76.1519C34.3061 76.2342 36.3583 75.6365 38.0705 74.4491C39.6243 73.3045 40.8082 71.7293 41.4759 69.9185C42.2222 67.8964 42.5906 65.7542 42.5624 63.5989C42.5855 61.423 42.2392 59.259 41.5384 57.199C40.9194 55.339 39.7736 53.6989 38.2402 52.4779C36.5709 51.2343 34.5242 50.6035 32.4444 50.6918C30.4471 50.6401 28.4848 51.2226 26.8393 52.3558C25.239 53.5089 24 55.0938 23.2672 56.9251C21.6416 61.1227 21.6331 65.7746 23.2433 69.9781L23.2404 69.9721Z" fill="white"/>\n<path d="M94.7983 21.993H121.589V48.7837H94.7983V21.993Z" fill="#50D9FF"/>\n</g>\n</g>\n<defs>\n<linearGradient id="paint0_linear_0_142" x1="78.4258" y1="66.6442" x2="78.4258" y2="123.202" gradientUnits="userSpaceOnUse">\n<stop stop-color="#35B8F1"/>\n<stop offset="1" stop-color="#28A8EA"/>\n</linearGradient>\n<linearGradient id="paint1_linear_0_142" x1="10.9191" y1="26.6598" x2="53.6542" y2="100.675" gradientUnits="userSpaceOnUse">\n<stop stop-color="#1784D9"/>\n<stop offset="0.5" stop-color="#107AD5"/>\n<stop offset="1" stop-color="#0A63C9"/>\n</linearGradient>\n<clipPath id="clip0_0_142">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n<clipPath id="clip1_0_142">\n<rect width="128" height="119.07" fill="white" transform="translate(-0.45752 4.13259)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "persona":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n  <rect width="128" height="128" rx="24" fill="#141417"/>\n  <circle cx="64" cy="64" r="42" fill="#F6F1E8"/>\n  <path d="M50 88V40H69C80 40 87 47 87 57C87 68 79 75 68 75H60V88H50ZM60 65H68C74 65 77 62 77 57C77 52 74 49 68 49H60V65Z" fill="#141417"/>\n  <path d="M37 95C43 101 52 105 64 105C76 105 85 101 91 95" stroke="#7C5CFF" stroke-width="8" stroke-linecap="round"/>\n</svg>\n',
   "posthog":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<path d="M27.8824 69.6467C26.939 71.5336 24.2464 71.5336 23.3029 69.6467L21.0466 65.1342C20.6863 64.4135 20.6863 63.5651 21.0466 62.8445L23.3029 58.332C24.2464 56.445 26.939 56.445 27.8824 58.332L30.1387 62.8445C30.4989 63.5651 30.4989 64.4135 30.1387 65.1342L27.8824 69.6467ZM27.8824 95.2392C26.939 97.126 24.2464 97.126 23.3029 95.2392L21.0466 90.7265C20.6863 90.0058 20.6863 89.1575 21.0466 88.4368L23.3029 83.9243C24.2464 82.0373 26.939 82.0373 27.8824 83.9243L30.1387 88.4368C30.4989 89.1575 30.4989 90.0058 30.1387 90.7265L27.8824 95.2392Z" fill="#1D4AFF"/>\n<path d="M0 85.5251C0 83.2444 2.75748 82.1021 4.3702 83.7149L16.1037 95.4484C17.7164 97.0612 16.5742 99.8186 14.2935 99.8186H2.56C1.14615 99.8186 0 98.6725 0 97.2586V85.5251ZM0 73.1659C0 73.8448 0.269714 74.4961 0.749806 74.9761L24.8425 99.0687C25.3226 99.5488 25.9738 99.8186 26.6527 99.8186H39.8858C42.1665 99.8186 43.3088 97.0612 41.696 95.4484L4.3702 58.1226C2.75748 56.5098 0 57.6521 0 59.9328V73.1659ZM0 47.5736C0 48.2525 0.269714 48.9037 0.749806 49.3837L50.4348 99.0687C50.9148 99.5488 51.5661 99.8186 52.245 99.8186H65.4781C67.7589 99.8186 68.9011 97.0612 67.2883 95.4484L4.3702 32.5303C2.7575 30.9176 0 32.0598 0 34.3405V47.5736ZM25.5923 47.5736C25.5923 48.2525 25.8621 48.9037 26.3421 49.3837L72.4068 95.4484C74.0196 97.0612 76.777 95.9189 76.777 93.6382V80.4051C76.777 79.7262 76.5071 79.0749 76.0271 78.5949L29.9625 32.5303C28.3497 30.9176 25.5923 32.0598 25.5923 34.3405V47.5736ZM55.5548 32.5303C53.942 30.9176 51.1846 32.0598 51.1846 34.3405V47.5736C51.1846 48.2525 51.4545 48.9037 51.9345 49.3837L72.4068 69.8561C74.0196 71.4689 76.777 70.3266 76.777 68.0459V54.8128C76.777 54.1338 76.5071 53.4826 76.0271 53.0026L55.5548 32.5303Z" fill="#F9BD2B"/>\n<path d="M108.863 85.8389L84.7667 61.7423C83.1539 60.1295 80.3965 61.2718 80.3965 63.5525V97.2585C80.3965 98.6724 81.5426 99.8185 82.9565 99.8185H120.283C121.697 99.8185 122.843 98.6724 122.843 97.2585V94.1891C122.843 92.7752 121.692 91.646 120.29 91.4634C115.987 90.9033 111.963 88.9382 108.863 85.8389ZM92.6806 91.6291C90.4204 91.6291 88.5859 89.7946 88.5859 87.5341C88.5859 85.2739 90.4204 83.4394 92.6806 83.4394C94.9411 83.4394 96.7756 85.2739 96.7756 87.5341C96.7756 89.7946 94.9411 91.6291 92.6806 91.6291Z" fill="black"/>\n<path d="M0 97.2586C0 98.6725 1.14615 99.8186 2.56 99.8186H14.2935C16.5742 99.8186 17.7164 97.0612 16.1037 95.4484L4.3702 83.7149C2.75748 82.1021 0 83.2444 0 85.5251V97.2586ZM25.5923 53.7524L4.3702 32.5303C2.75748 30.9176 0 32.0597 0 34.3405V47.5736C0 48.2525 0.269714 48.9037 0.749806 49.3837L25.5923 74.2262V53.7524ZM4.3702 58.1226C2.75748 56.5098 0 57.652 0 59.9327V73.1659C0 73.8448 0.269714 74.4961 0.749806 74.9761L25.5923 99.8186V79.3447L4.3702 58.1226Z" fill="#1D4AFF"/>\n<path d="M51.1846 54.8127C51.1846 54.1338 50.915 53.4826 50.4348 53.0026L29.9624 32.5303C28.3499 30.9176 25.5923 32.0597 25.5923 34.3405V47.5736C25.5923 48.2525 25.8621 48.9037 26.3421 49.3837L51.1846 74.2262V54.8127ZM25.5923 99.8186H39.8858C42.1665 99.8186 43.3087 97.0612 41.6959 95.4484L25.5923 79.3447V99.8186ZM25.5923 53.7524V73.1659C25.5923 73.8448 25.8621 74.4961 26.3421 74.9761L51.1846 99.8186V80.4051C51.1846 79.7262 50.915 79.0749 50.4348 78.5949L25.5923 53.7524Z" fill="#F54E00"/>\n</svg>\n',
   "salesforce":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_60_20651)">\n<mask id="mask0_60_20651" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="19" width="128" height="90">\n<path d="M0.0281372 19.4579H127.608V108.748H0.0281372V19.4579Z" fill="white"/>\n</mask>\n<g mask="url(#mask0_60_20651)">\n<path fill-rule="evenodd" clip-rule="evenodd" d="M53.1027 29.1995C57.2179 24.9122 62.9479 22.2518 69.2846 22.2518C77.7077 22.2518 85.0576 26.9489 88.9703 33.9228C92.4712 32.3585 96.2634 31.5522 100.098 31.5569C115.291 31.5569 127.608 43.9814 127.608 59.3086C127.608 74.6357 115.291 87.0606 100.098 87.0606C98.2426 87.0606 96.4309 86.874 94.6783 86.5205C91.2326 92.6669 84.6638 96.8205 77.1263 96.8205C74.0776 96.8247 71.0682 96.1321 68.3281 94.7955C64.8351 103.014 56.6937 108.777 47.2081 108.777C37.3277 108.777 28.9069 102.526 25.6769 93.7588C24.2373 94.0626 22.7699 94.2153 21.2986 94.2146C9.5353 94.2146 0 84.5794 0 72.6942C0 64.7282 4.28355 57.7735 10.6503 54.0531C9.30134 50.9469 8.6072 47.5961 8.61116 44.2097C8.61116 30.54 19.7078 19.4579 33.3958 19.4579C41.4321 19.4579 48.5744 23.2782 53.1027 29.1995Z" fill="#00A1E0"/>\n</g>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M18.4826 65.7765C18.4024 65.9856 18.5112 66.0292 18.537 66.0663C18.7766 66.2398 19.0199 66.3654 19.2656 66.5065C20.5667 67.1953 21.7965 67.3974 23.0812 67.3974C25.6989 67.3974 27.3249 66.0058 27.3249 63.7646V63.7206C27.3249 61.6482 25.4893 60.8952 23.7691 60.3518L23.5445 60.2791C22.2471 59.858 21.1275 59.4937 21.1275 58.639V58.5954C21.1275 57.8635 21.782 57.3257 22.7962 57.3257C23.9238 57.3257 25.26 57.7003 26.1218 58.1762C26.1218 58.1762 26.3759 58.3403 26.4683 58.0951C26.5185 57.9624 26.9541 56.7893 27.0005 56.6623C27.0502 56.5249 26.963 56.4213 26.8734 56.3678C25.8893 55.7681 24.53 55.3602 23.123 55.3602L22.8618 55.3612C20.4659 55.3612 18.793 56.81 18.793 58.8833V58.9278C18.793 61.1127 20.6385 61.8231 22.3672 62.3168L22.6447 62.403C23.9036 62.7894 24.9909 63.1232 24.9909 64.0089V64.053C24.9909 64.8641 24.2843 65.4666 23.1464 65.4666C22.7052 65.4666 21.2967 65.4591 19.7748 64.4965C19.5905 64.3892 19.4855 64.3118 19.3434 64.2251C19.2684 64.1796 19.0809 64.0975 18.9993 64.3432L18.4826 65.7765ZM56.8029 65.7765C56.7227 65.9856 56.8315 66.0292 56.8582 66.0663C57.0969 66.2398 57.3407 66.3654 57.5859 66.5065C58.8875 67.1953 60.1173 67.3974 61.4015 67.3974C64.0192 67.3974 65.6457 66.0058 65.6457 63.7646V63.7206C65.6457 61.6482 63.8105 60.8952 62.0898 60.3518L61.8652 60.2791C60.5679 59.858 59.4478 59.4937 59.4478 58.639V58.5954C59.4478 57.8635 60.1028 57.3257 61.1174 57.3257C62.2445 57.3257 63.5803 57.7003 64.4421 58.1762C64.4421 58.1762 64.6962 58.3403 64.7891 58.0951C64.8388 57.9624 65.2748 56.7893 65.3208 56.6623C65.3709 56.5249 65.2833 56.4213 65.1942 56.3678C64.2096 55.7681 62.8508 55.3602 61.4437 55.3602L61.1821 55.3612C58.7867 55.3612 57.1138 56.81 57.1138 58.8833V58.9278C57.1138 61.1127 58.9587 61.8231 60.6879 62.3168L60.965 62.403C62.2244 62.7894 63.3117 63.1232 63.3117 64.0089V64.053C63.3117 64.8641 62.6046 65.4666 61.4676 65.4666C61.0255 65.4666 59.617 65.4591 58.0956 64.4965C57.9113 64.3892 57.8035 64.3151 57.6637 64.2251C57.6164 64.195 57.3955 64.1088 57.3201 64.3432L56.8029 65.7765ZM82.9632 61.3861C82.9632 62.652 82.7269 63.6516 82.2627 64.3563C81.8013 65.0549 81.1051 65.3949 80.1341 65.3949C79.163 65.3949 78.4705 65.0554 78.0167 64.3573C77.5586 63.6521 77.326 62.652 77.326 61.3861C77.326 60.1211 77.5586 59.1247 78.0167 58.4271C78.4705 57.7355 79.163 57.3998 80.1341 57.3998C81.1051 57.3998 81.8013 57.736 82.2627 58.4275C82.7278 59.1247 82.9632 60.1211 82.9632 61.3861ZM85.149 59.0385C84.9338 58.3122 84.5995 57.6731 84.1546 57.14C83.7087 56.6055 83.1446 56.1756 82.476 55.8643C81.8084 55.5525 81.0207 55.3945 80.1341 55.3945C79.2474 55.3945 78.4593 55.5525 77.7911 55.8643C77.1235 56.1756 76.559 56.6055 76.1131 57.141C75.6686 57.675 75.3334 58.3131 75.1191 59.0385C74.9058 59.7591 74.7975 60.5492 74.7975 61.3861C74.7975 62.2235 74.9058 63.014 75.1191 63.7337C75.3334 64.4585 75.6677 65.0971 76.1136 65.6321C76.5594 66.1676 77.1254 66.5938 77.7921 66.8976C78.4607 67.2014 79.2484 67.3561 80.1341 67.3561C81.0202 67.3561 81.807 67.2014 82.4751 66.8976C83.1428 66.5938 83.7077 66.1676 84.1546 65.6321C84.5995 65.099 84.9338 64.4595 85.149 63.7337C85.3619 63.0126 85.4702 62.2225 85.4702 61.3861C85.4702 60.5501 85.3619 59.7596 85.149 59.0385ZM103.091 65.0559C103.019 64.8435 102.812 64.9237 102.812 64.9237C102.495 65.0451 102.157 65.1576 101.796 65.2139C101.432 65.2711 101.029 65.2997 100.599 65.2997C99.5422 65.2997 98.7006 64.9851 98.1 64.3634C97.4966 63.7412 97.1576 62.7359 97.1613 61.3762C97.1646 60.1403 97.4638 59.2091 98.0001 58.4993C98.5318 57.7941 99.3439 57.4321 100.424 57.4321C101.325 57.4321 102.013 57.5367 102.734 57.7627C102.734 57.7627 102.905 57.8372 102.987 57.6117C103.179 57.0805 103.32 56.7026 103.525 56.1189C103.583 55.9524 103.44 55.8821 103.388 55.8619C103.105 55.7513 102.436 55.5698 101.931 55.4934C101.459 55.4212 100.907 55.3837 100.291 55.3837C99.3739 55.3837 98.5557 55.5407 97.8562 55.8521C97.1581 56.1629 96.5659 56.5924 96.0965 57.1264C95.6272 57.6614 95.2699 58.3005 95.0336 59.0253C94.7969 59.7465 94.6773 60.5379 94.6773 61.3772C94.6773 63.1893 95.1663 64.6536 96.1308 65.7264C97.0985 66.8029 98.5501 67.3496 100.445 67.3496C101.564 67.3496 102.712 67.1231 103.539 66.7977C103.539 66.7977 103.697 66.7218 103.628 66.538L103.091 65.0559ZM106.914 60.1722C107.019 59.4684 107.211 58.8837 107.512 58.4271C107.965 57.7355 108.656 57.3543 109.627 57.3543C110.598 57.3543 111.238 57.736 111.699 58.4275C112.004 58.8847 112.137 59.4937 112.189 60.1731L106.914 60.1722ZM114.27 58.6263C114.084 57.9259 113.626 57.2183 113.324 56.8948C112.848 56.3819 112.382 56.0227 111.919 55.8244C111.25 55.5398 110.529 55.3935 109.801 55.3945C108.878 55.3945 108.039 55.5506 107.359 55.8694C106.678 56.1892 106.105 56.6262 105.657 57.1691C105.207 57.7116 104.87 58.3572 104.655 59.0896C104.439 59.8177 104.33 60.6115 104.33 61.4498C104.33 62.3022 104.443 63.097 104.666 63.8115C104.89 64.5322 105.251 65.1647 105.737 65.6912C106.224 66.2196 106.849 66.6341 107.597 66.9229C108.341 67.2113 109.245 67.3608 110.282 67.3575C112.419 67.3505 113.543 66.8741 114.007 66.6177C114.089 66.5717 114.167 66.4925 114.07 66.2641L113.586 64.9101C113.512 64.708 113.308 64.7811 113.308 64.7811C112.777 64.979 112.027 65.332 110.271 65.3283C109.124 65.3264 108.275 64.9874 107.741 64.4581C107.195 63.9165 106.926 63.1213 106.881 61.9979L114.276 62.0036C114.276 62.0036 114.471 62.0017 114.491 61.8113C114.499 61.7326 114.745 60.2922 114.27 58.6263ZM47.6783 60.1722C47.7829 59.4684 47.9761 58.8837 48.2761 58.4271C48.73 57.7355 49.4192 57.3543 50.3912 57.3543C51.3627 57.3543 52.0027 57.736 52.464 58.4275C52.7683 58.8847 52.9015 59.4937 52.9535 60.1731L47.6783 60.1722ZM55.0343 58.6263C54.8487 57.9259 54.3897 57.2183 54.0886 56.8948C53.6127 56.3819 53.1472 56.0227 52.6839 55.8244C52.0141 55.5399 51.2938 55.3937 50.5661 55.3945C49.6429 55.3945 48.8041 55.5506 48.1238 55.8694C47.4425 56.1892 46.87 56.6262 46.4204 57.1691C45.9717 57.7116 45.6346 58.3572 45.4184 59.0896C45.2032 59.8177 45.0949 60.6115 45.0949 61.4498C45.0949 62.3022 45.2069 63.097 45.4306 63.8115C45.6547 64.5322 46.0157 65.1647 46.5015 65.6912C46.9882 66.2196 47.6136 66.6341 48.3615 66.9229C49.106 67.2113 50.0091 67.3608 51.0467 67.3575C53.1833 67.3505 54.3076 66.8741 54.7718 66.6177C54.8534 66.5717 54.9312 66.4925 54.8341 66.2641L54.3507 64.9101C54.2762 64.708 54.0718 64.7811 54.0718 64.7811C53.5419 64.979 52.7913 65.332 51.0354 65.3283C49.889 65.3264 49.039 64.9874 48.5049 64.4581C47.9592 63.9165 47.6905 63.1213 47.645 61.9979L55.0404 62.0036C55.0404 62.0036 55.2355 62.0017 55.2556 61.8113C55.2636 61.7326 55.5093 60.2922 55.0343 58.6263ZM31.6915 65.0156C31.4012 64.7839 31.3609 64.7272 31.2648 64.5767C31.118 64.3502 31.043 64.0277 31.043 63.6146C31.043 62.9652 31.2587 62.4973 31.7032 62.1831C31.6985 62.1841 32.3408 61.6289 33.8482 61.6486C34.5207 61.6606 35.1916 61.7178 35.8564 61.8198V65.1815H35.8573C35.8573 65.1815 34.9172 65.3836 33.859 65.4474C32.3549 65.5379 31.6868 65.0142 31.6915 65.0156ZM34.6345 59.8177C34.3345 59.7957 33.9458 59.7849 33.4797 59.7849C32.8463 59.7849 32.2335 59.8637 31.6582 60.0184C31.0805 60.1741 30.561 60.4151 30.1142 60.7344C29.6677 61.0534 29.3004 61.4708 29.041 61.9543C28.7789 62.4424 28.6452 63.0159 28.6452 63.6587C28.6452 64.3146 28.7592 64.8829 28.9842 65.347C29.2044 65.8073 29.5359 66.2053 29.9487 66.5051C30.3599 66.8043 30.8672 67.0237 31.4556 67.1578C32.0365 67.2905 32.6948 67.3575 33.4141 67.3575C34.1736 67.3575 34.929 67.2938 35.6609 67.1705C36.2843 67.063 36.9054 66.9424 37.5237 66.8085C37.7703 66.7518 38.0422 66.6772 38.0422 66.6772C38.2251 66.6308 38.211 66.4353 38.211 66.4353L38.2068 59.6714C38.2068 58.188 37.8111 57.0889 37.0314 56.4063C36.2554 55.7269 35.1128 55.3837 33.6344 55.3837C33.0793 55.3837 32.1875 55.4587 31.6521 55.5661C31.6521 55.5661 30.0373 55.8793 29.3725 56.4002C29.3725 56.4002 29.2262 56.4902 29.3059 56.6941L29.8296 58.1007C29.8948 58.2831 30.0725 58.2208 30.0725 58.2208C30.0725 58.2208 30.1283 58.1987 30.1939 58.1598C31.6164 57.3862 33.4164 57.4092 33.4164 57.4092C34.2154 57.4092 34.831 57.5709 35.2445 57.8874C35.6482 58.1973 35.8531 58.6638 35.8531 59.6499V59.9626C35.2187 59.8707 34.6345 59.8177 34.6345 59.8177ZM94.2905 56.0073C94.3011 55.9825 94.3067 55.9559 94.3069 55.929C94.307 55.9021 94.3018 55.8754 94.2914 55.8505C94.281 55.8257 94.2658 55.8032 94.2465 55.7844C94.2273 55.7655 94.2044 55.7508 94.1794 55.7409C94.0532 55.6931 93.4245 55.5604 92.9397 55.5304C92.0099 55.4723 91.4947 55.6289 91.0323 55.8371C90.5738 56.0438 90.066 56.3781 89.7828 56.7593L89.7819 55.8572C89.7819 55.7334 89.6942 55.6336 89.5695 55.6336H87.6734C87.5506 55.6336 87.4615 55.7334 87.4615 55.8572V66.8905C87.4616 66.9501 87.4853 67.0071 87.5274 67.0492C87.5695 67.0913 87.6265 67.115 87.6861 67.1151H89.6295C89.689 67.115 89.746 67.0913 89.788 67.0492C89.83 67.0071 89.8536 66.95 89.8536 66.8905V61.379C89.8536 60.6387 89.9352 59.9012 90.0979 59.4375C90.2583 58.9785 90.4763 58.6127 90.7463 58.3497C91.0022 58.0958 91.3155 57.9074 91.6597 57.8002C91.9823 57.7076 92.3162 57.6606 92.6518 57.6605C93.0386 57.6605 93.4643 57.7599 93.4643 57.7599C93.6069 57.7758 93.6861 57.6886 93.7344 57.5601C93.8615 57.2221 94.2216 56.2089 94.2905 56.0073Z" fill="#FFFFFE"/>\n<path fill-rule="evenodd" clip-rule="evenodd" d="M76.0503 50.8943C75.8104 50.8218 75.5663 50.7638 75.3193 50.7208C74.9872 50.6654 74.6508 50.6393 74.3141 50.643C72.9764 50.643 71.9219 51.0209 71.1816 51.7673C70.4464 52.5081 69.9461 53.6367 69.6953 55.1216L69.6048 55.6228H67.9258C67.9258 55.6228 67.7209 55.6143 67.6778 55.838L67.4021 57.3759C67.3829 57.5231 67.4462 57.615 67.6431 57.6141H69.2775L67.6192 66.8708C67.4893 67.6163 67.3407 68.2296 67.1761 68.6943C67.0139 69.1528 66.8554 69.4965 66.6603 69.7459C66.4714 69.9874 66.2923 70.1651 65.9833 70.2687C65.7282 70.3545 65.4347 70.3939 65.1131 70.3939C64.934 70.3939 64.6958 70.3639 64.52 70.3287C64.3441 70.294 64.2527 70.2546 64.121 70.1993C64.121 70.1993 63.9292 70.1262 63.8537 70.3184C63.7923 70.4755 63.3567 71.6734 63.3051 71.8216C63.2526 71.9679 63.3262 72.0832 63.4191 72.1165C63.6366 72.1943 63.7984 72.244 64.0947 72.3139C64.5064 72.4109 64.8533 72.417 65.1783 72.417C65.859 72.417 66.4794 72.3214 66.9937 72.1357C67.5113 71.9486 67.9619 71.6228 68.3604 71.1816C68.7913 70.7057 69.0623 70.2073 69.3216 69.5274C69.5781 68.8537 69.7966 68.0172 69.9715 67.0424L71.6378 57.6141H74.074C74.074 57.6141 74.2794 57.6216 74.3221 57.3988L74.5977 55.861C74.617 55.7137 74.5541 55.6218 74.3563 55.6228H71.9918C72.0035 55.5693 72.1109 54.7376 72.3824 53.9546C72.4982 53.6203 72.7162 53.3507 72.9009 53.1655C73.0734 52.9891 73.2859 52.8569 73.5203 52.7801C73.7773 52.7006 74.0451 52.662 74.3141 52.6657C74.5368 52.6657 74.7553 52.6924 74.9217 52.7271C75.151 52.7758 75.2401 52.8016 75.3001 52.8194C75.5411 52.8931 75.5735 52.8218 75.6208 52.705L76.1863 51.1522C76.2444 50.9852 76.1028 50.9149 76.0503 50.8943ZM43.0075 66.8905C43.0075 67.0143 42.9194 67.1151 42.7956 67.1151H40.8343C40.7101 67.1151 40.6219 67.0143 40.6219 66.8905V51.1048C40.6219 50.9815 40.7101 50.8816 40.8343 50.8816H42.7956C42.9194 50.8816 43.0075 50.9815 43.0075 51.1048V66.8905Z" fill="#FFFFFE"/>\n</g>\n<defs>\n<clipPath id="clip0_60_20651">\n<rect width="128" height="89.5531" fill="white" transform="translate(0 19.2234)"/>\n</clipPath>\n</defs>\n</svg>\n',
+  "sap":
+    '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n  <rect width="128" height="128" rx="24" fill="#0A6ED1"/>\n  <path d="M24 34H104L88 94H24V34Z" fill="#FFFFFF"/>\n  <path d="M33 80L40 48H50C56 48 60 51 60 56C60 60 57 64 52 65C56 66 58 69 58 73C58 78 54 80 48 80H33ZM43 61H48C51 61 53 59 53 56C53 54 51 53 48 53H45L43 61ZM40 75H47C50 75 52 73 52 70C52 68 50 66 47 66H42L40 75Z" fill="#0A6ED1"/>\n  <path d="M60 80L67 48H78C85 48 89 52 89 58C89 66 83 70 75 70H70L68 80H60ZM72 64H76C80 64 82 62 82 58C82 55 80 53 76 53H73L72 64Z" fill="#0A6ED1"/>\n  <path d="M88 80L95 48H102L95 80H88Z" fill="#0A6ED1"/>\n</svg>\n',
   "sentry":
     '<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">\n<g clip-path="url(#clip0_240_7110)">\n<path d="M74.2302 13.7912C73.1656 12.0243 71.6623 10.5626 69.8663 9.54791C68.0702 8.53321 66.0424 8 63.9795 8C61.9167 8 59.8889 8.53321 58.0928 9.54791C56.2968 10.5626 54.7935 12.0243 53.7289 13.7912L36.8665 42.6725C49.7487 49.104 60.7244 58.7933 68.7039 70.7783C76.6835 82.7634 81.3892 96.6272 82.3539 110.993H70.5144C69.5514 98.6788 65.3897 86.8294 58.4408 76.6174C51.492 66.4054 41.997 58.1849 30.8955 52.7694L15.2888 79.7543C21.5298 82.5533 26.9669 86.8764 31.1001 92.3262C35.2333 97.7759 37.93 104.177 38.9423 110.942H11.7524C11.4299 110.919 11.1182 110.816 10.8453 110.643C10.5725 110.47 10.3471 110.231 10.1894 109.949C10.0318 109.667 9.94687 109.35 9.94235 109.026C9.93782 108.703 10.0138 108.384 10.1635 108.097L17.6978 95.2841C15.1452 93.1544 12.2279 91.5047 9.08718 90.415L1.62982 103.228C0.85347 104.56 0.34947 106.033 0.147096 107.561C-0.055277 109.089 0.0480115 110.642 0.450962 112.13C0.853912 113.617 1.54849 115.01 2.49435 116.227C3.4402 117.445 4.61848 118.462 5.96073 119.219C7.72922 120.216 9.72251 120.745 11.7524 120.757H48.9879C49.6795 112.223 48.1556 103.656 44.5638 95.8843C40.9721 88.1126 35.4342 81.4002 28.4866 76.3972L34.4064 66.1465C43.1744 72.1686 50.2205 80.3729 54.8494 89.9498C59.4783 99.5267 61.5299 110.145 60.8018 120.757H92.3483C93.0829 104.681 89.5857 88.6944 82.206 74.3938C74.8264 60.0932 63.8228 47.9798 50.2949 39.2641L62.2626 18.7628C62.5292 18.316 62.9616 17.9926 63.4655 17.863C63.9695 17.7334 64.5042 17.8081 64.9534 18.0709C66.3116 18.814 116.95 107.175 117.898 108.2C118.065 108.499 118.15 108.838 118.144 109.181C118.139 109.524 118.043 109.859 117.866 110.153C117.689 110.447 117.438 110.689 117.137 110.854C116.837 111.02 116.498 111.103 116.155 111.096H103.957C104.111 114.359 104.111 117.613 103.957 120.86H116.207C117.762 120.87 119.304 120.571 120.744 119.981C122.183 119.392 123.491 118.522 124.592 117.424C125.693 116.325 126.566 115.019 127.158 113.581C127.751 112.142 128.053 110.601 128.046 109.046C128.048 106.991 127.499 104.974 126.457 103.203L74.2302 13.7912Z" fill="#362D59"/>\n</g>\n<defs>\n<clipPath id="clip0_240_7110">\n<rect width="128" height="128" fill="white"/>\n</clipPath>\n</defs>\n</svg>\n',
   "servicenow":
