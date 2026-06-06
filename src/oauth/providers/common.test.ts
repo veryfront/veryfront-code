@@ -30,6 +30,13 @@ async function readHubSpotConnectorScopes(): Promise<string[]> {
   return connector.auth.scopes;
 }
 
+async function readHubSpotConnectorOptionalScopes(): Promise<string[]> {
+  const connector = JSON.parse(
+    await Deno.readTextFile("cli/templates/integrations/hubspot/connector.json"),
+  ) as { auth: { optionalScopes: string[] } };
+  return connector.auth.optionalScopes;
+}
+
 describe("oauth provider configs", () => {
   it("does not expose removed Discord or Dropbox OAuth provider configs", () => {
     assertEquals("discord" in commonServices, false);
@@ -48,6 +55,10 @@ describe("oauth provider configs", () => {
 
   it("keeps the HubSpot runtime scopes aligned with the connector surface", async () => {
     assertEquals(hubspotConfig.defaultScopes, await readHubSpotConnectorScopes());
+    assertEquals(await readHubSpotConnectorOptionalScopes(), [
+      "crm.objects.leads.read",
+      "crm.objects.leads.write",
+    ]);
   });
 
   it("keeps Slack setup documentation aligned with runtime OAuth scopes", async () => {

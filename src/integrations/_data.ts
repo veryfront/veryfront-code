@@ -5414,8 +5414,6 @@ export const connectors: IntegrationConfig[] = [
       "scopes": [
         "crm.objects.contacts.read",
         "crm.objects.contacts.write",
-        "crm.objects.leads.read",
-        "crm.objects.leads.write",
         "crm.objects.companies.read",
         "crm.objects.companies.write",
         "crm.schemas.contacts.read",
@@ -5423,6 +5421,7 @@ export const connectors: IntegrationConfig[] = [
         "crm.objects.owners.read",
         "forms",
       ],
+      "optionalScopes": ["crm.objects.leads.read", "crm.objects.leads.write"],
       "tokenAuthMethod": "request_body",
       "supportsRefreshToken": true,
       "requiredApis": [{
