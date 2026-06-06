@@ -1,0 +1,161 @@
+{
+  "name": "zendesk",
+  "displayName": "Zendesk",
+  "description": "Manage support tickets, claims, and customer operations in Zendesk",
+  "category": "support",
+  "auth": {
+    "type": "api-key",
+    "keyName": "ZENDESK_ACCESS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "requiredApis": [
+      {
+        "name": "Zendesk Ticketing API",
+        "enableUrl": "https://developer.zendesk.com/api-reference/ticketing/tickets/tickets/"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "ZENDESK_SUBDOMAIN",
+      "description": "Zendesk subdomain, for example example for example.zendesk.com",
+      "required": true
+    },
+    {
+      "name": "ZENDESK_ACCESS_TOKEN",
+      "description": "Zendesk OAuth access token",
+      "required": true,
+      "sensitive": true
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_tickets",
+      "name": "List Tickets",
+      "description": "List Zendesk support tickets",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true
+          },
+          "page[size]": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum tickets to return",
+            "default": 25
+          },
+          "sort": {
+            "type": "string",
+            "in": "query",
+            "description": "Cursor pagination sort expression",
+            "default": "-updated_at"
+          }
+        },
+        "response": { "transform": "tickets" }
+      }
+    },
+    {
+      "id": "get_ticket",
+      "name": "Get Ticket",
+      "description": "Get a Zendesk ticket by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Zendesk ticket ID",
+            "required": true
+          }
+        },
+        "response": { "transform": "ticket" }
+      }
+    },
+    {
+      "id": "search_tickets",
+      "name": "Search Tickets",
+      "description": "Search Zendesk tickets with the Zendesk search API",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{subdomain}.zendesk.com/api/v2/search",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true
+          },
+          "query": {
+            "type": "string",
+            "in": "query",
+            "description": "Zendesk search query, for example type:ticket status:open",
+            "required": true
+          }
+        },
+        "response": { "transform": "results" }
+      }
+    },
+    {
+      "id": "update_ticket",
+      "name": "Update Ticket",
+      "description": "Update a Zendesk ticket status, priority, tags, or comment",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "PUT",
+        "url": "https://{subdomain}.zendesk.com/api/v2/tickets/{ticketId}",
+        "params": {
+          "subdomain": {
+            "type": "string",
+            "in": "path",
+            "description": "Zendesk subdomain, for example example for example.zendesk.com",
+            "required": true
+          },
+          "ticketId": {
+            "type": "number",
+            "in": "path",
+            "description": "Zendesk ticket ID",
+            "required": true
+          }
+        },
+        "body": {
+          "ticket": {
+            "type": "object",
+            "description": "Zendesk ticket update payload",
+            "required": true
+          }
+        },
+        "response": { "transform": "ticket" }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "claims_queue",
+      "title": "Review claims tickets",
+      "prompt": "Review open Zendesk claims tickets, identify missing customer information, and recommend next actions.",
+      "category": "support"
+    },
+    {
+      "id": "support_resolution",
+      "title": "Resolve support tickets",
+      "prompt": "Summarize high-priority Zendesk support tickets and draft resolution updates.",
+      "category": "support"
+    }
+  ],
+  "suggestedWith": ["salesforce", "slack", "teams"]
+}

@@ -1,0 +1,161 @@
+{
+  "name": "sap",
+  "displayName": "SAP S/4HANA",
+  "icon": "sap.svg",
+  "description": "Manage supplier invoices and finance operations in SAP S/4HANA",
+  "category": "finance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "SAP_ACCESS_TOKEN",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "requiredApis": [
+      {
+        "name": "SAP S/4HANA Supplier Invoice OData API",
+        "enableUrl": "https://api.sap.com/package/SAPS4HANACloud"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "SAP_HOST",
+      "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+      "required": true
+    },
+    {
+      "name": "SAP_ACCESS_TOKEN",
+      "description": "SAP S/4HANA API access token",
+      "required": true,
+      "sensitive": true
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_supplier_invoices",
+      "name": "List Supplier Invoices",
+      "description": "List supplier invoices from SAP S/4HANA with optional OData filters",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true
+          },
+          "$filter": {
+            "type": "string",
+            "in": "query",
+            "description": "OData filter expression"
+          },
+          "$top": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum invoices to return",
+            "default": 25
+          },
+          "$orderby": {
+            "type": "string",
+            "in": "query",
+            "description": "OData ordering expression",
+            "default": "PostingDate desc"
+          },
+          "$format": {
+            "type": "string",
+            "in": "query",
+            "description": "Response format",
+            "default": "json"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_supplier_invoice",
+      "name": "Get Supplier Invoice",
+      "description": "Get a supplier invoice by invoice number and fiscal year",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/A_SupplierInvoice(SupplierInvoice='{supplierInvoice}',FiscalYear='{fiscalYear}')",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true
+          },
+          "supplierInvoice": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP supplier invoice number",
+            "required": true
+          },
+          "fiscalYear": {
+            "type": "string",
+            "in": "path",
+            "description": "Fiscal year",
+            "required": true
+          },
+          "$format": {
+            "type": "string",
+            "in": "query",
+            "description": "Response format",
+            "default": "json"
+          }
+        }
+      }
+    },
+    {
+      "id": "release_supplier_invoice",
+      "name": "Release Supplier Invoice",
+      "description": "Release a blocked supplier invoice in SAP S/4HANA",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://{sapHost}/sap/opu/odata/sap/API_SUPPLIERINVOICE_PROCESS_SRV/Release",
+        "params": {
+          "sapHost": {
+            "type": "string",
+            "in": "path",
+            "description": "SAP S/4HANA host, for example mytenant-api.s4hana.cloud.sap",
+            "required": true
+          },
+          "SupplierInvoice": {
+            "type": "string",
+            "in": "query",
+            "description": "SAP supplier invoice number",
+            "required": true
+          },
+          "FiscalYear": {
+            "type": "string",
+            "in": "query",
+            "description": "Fiscal year",
+            "required": true
+          },
+          "DiscountDaysHaveToBeShifted": {
+            "type": "boolean",
+            "in": "query",
+            "description": "Whether SAP should shift discount days during release"
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "invoice_review",
+      "title": "Review supplier invoices",
+      "prompt": "Review recent SAP supplier invoices and flag blocked or unmatched invoices that need finance approval.",
+      "category": "finance"
+    },
+    {
+      "id": "reconciliation",
+      "title": "Reconcile invoices",
+      "prompt": "Compare SAP supplier invoices against purchase order references and summarize reconciliation issues.",
+      "category": "finance"
+    }
+  ],
+  "suggestedWith": ["sharepoint", "gmail", "slack"]
+}

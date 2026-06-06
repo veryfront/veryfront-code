@@ -1,0 +1,121 @@
+{
+  "name": "persona",
+  "displayName": "Persona",
+  "icon": "persona.svg",
+  "description": "Run KYC onboarding, identity verification, and compliance reviews with Persona",
+  "category": "compliance",
+  "auth": {
+    "type": "api-key",
+    "keyName": "PERSONA_API_KEY",
+    "headerName": "Authorization",
+    "headerPrefix": "Bearer",
+    "requiredApis": [
+      {
+        "name": "Persona API",
+        "enableUrl": "https://docs.withpersona.com/api-reference"
+      }
+    ]
+  },
+  "envVars": [
+    {
+      "name": "PERSONA_API_KEY",
+      "description": "Persona API key",
+      "required": true,
+      "sensitive": true
+    }
+  ],
+  "tools": [
+    {
+      "id": "list_inquiries",
+      "name": "List Inquiries",
+      "description": "List Persona inquiries for KYC and onboarding review",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.withpersona.com/api/v1/inquiries",
+        "params": {
+          "page[limit]": {
+            "type": "number",
+            "in": "query",
+            "description": "Maximum inquiries to return",
+            "default": 25
+          },
+          "filter[status]": {
+            "type": "string",
+            "in": "query",
+            "description": "Optional inquiry status filter"
+          }
+        }
+      }
+    },
+    {
+      "id": "get_inquiry",
+      "name": "Get Inquiry",
+      "description": "Get a Persona inquiry by ID",
+      "requiresWrite": false,
+      "endpoint": {
+        "method": "GET",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "approve_inquiry",
+      "name": "Approve Inquiry",
+      "description": "Approve a Persona inquiry after compliance review",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}/approve",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true
+          }
+        }
+      }
+    },
+    {
+      "id": "decline_inquiry",
+      "name": "Decline Inquiry",
+      "description": "Decline a Persona inquiry after compliance review",
+      "requiresWrite": true,
+      "endpoint": {
+        "method": "POST",
+        "url": "https://api.withpersona.com/api/v1/inquiries/{inquiryId}/decline",
+        "params": {
+          "inquiryId": {
+            "type": "string",
+            "in": "path",
+            "description": "Persona inquiry ID",
+            "required": true
+          }
+        }
+      }
+    }
+  ],
+  "prompts": [
+    {
+      "id": "kyc_queue",
+      "title": "Review KYC queue",
+      "prompt": "Review Persona inquiries that need KYC action and prioritize cases with document or risk issues.",
+      "category": "compliance"
+    },
+    {
+      "id": "regulatory_review",
+      "title": "Regulatory review",
+      "prompt": "Summarize Persona inquiry evidence and recommend the next regulatory review action.",
+      "category": "compliance"
+    }
+  ],
+  "suggestedWith": ["sharepoint", "jira", "slack"]
+}

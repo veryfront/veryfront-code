@@ -45,6 +45,7 @@ export const ALL_AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "outlook",
   "teams",
   "figma",
+  "sap",
   "sheets",
   "airtable",
   "supabase",
@@ -57,6 +58,7 @@ export const ALL_AVAILABLE_INTEGRATIONS: IntegrationName[] = [
   "bitbucket",
   "sentry",
   "posthog",
+  "persona",
   "zendesk",
   // New integrations
   "asana",
