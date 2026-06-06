@@ -125,6 +125,7 @@ describe("integration endpoint specs", () => {
     assertEquals(hubspot.auth.scopes?.includes("crm.schemas.leads.read"), false);
     assertEquals(hubspot.auth.scopes?.includes("crm.objects.owners.read"), false);
     assertEquals(hubspot.auth.scopes?.includes("forms"), false);
+    assertEquals(hubspot.auth.optionalScopes?.includes("forms"), true);
     assertEquals(toolIds.includes("get_contact"), true);
     assertEquals(toolIds.includes("list_form_submissions"), true);
     assertEquals(toolIds.includes("search_contacts"), true);
