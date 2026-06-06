@@ -56,6 +56,7 @@ describe("oauth provider configs", () => {
   it("keeps the HubSpot runtime scopes aligned with the connector surface", async () => {
     assertEquals(hubspotConfig.defaultScopes, await readHubSpotConnectorScopes());
     assertEquals(await readHubSpotConnectorOptionalScopes(), [
+      "forms",
       "crm.objects.leads.read",
       "crm.objects.leads.write",
     ]);

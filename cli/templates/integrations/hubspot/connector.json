@@ -14,6 +14,7 @@
       "crm.objects.contacts.read"
     ],
     "optionalScopes": [
+      "forms",
       "crm.objects.leads.read",
       "crm.objects.leads.write"
     ],
