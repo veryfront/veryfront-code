@@ -91,6 +91,7 @@ export const getOAuthConfigSchema = defineSchema((v) =>
     authorizationUrl: v.string().optional(),
     tokenUrl: v.string().optional(),
     scopes: v.array(v.string()).optional(),
+    optionalScopes: v.array(v.string()).optional(),
     callbackPath: v.string().optional(),
     tokenAuthMethod: v.string().optional(),
     pkce: v.boolean().optional(),
