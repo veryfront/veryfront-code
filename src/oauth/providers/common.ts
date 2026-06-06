@@ -124,8 +124,8 @@ export const hubspotConfig: OAuthServiceConfig = {
   clientSecretEnvVar: "HUBSPOT_CLIENT_SECRET",
   apiBaseUrl: "https://api.hubapi.com",
   defaultScopes: [
+    "oauth",
     "crm.objects.contacts.read",
-    "crm.objects.contacts.write",
   ],
 };
 
