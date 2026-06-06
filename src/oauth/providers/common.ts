@@ -132,7 +132,6 @@ export const hubspotConfig: OAuthServiceConfig = {
     "crm.objects.companies.write",
     "crm.schemas.contacts.read",
     "crm.schemas.companies.read",
-    "crm.schemas.leads.read",
     "crm.objects.owners.read",
     "forms",
   ],
