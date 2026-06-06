@@ -111,8 +111,9 @@ describe("integration endpoint specs", () => {
     const toolIds = hubspot.tools.map((tool) => tool.id);
 
     assertEquals(hubspot.auth.provider, "hubspot");
+    assertEquals(hubspot.auth.scopes?.includes("oauth"), true);
     assertEquals(hubspot.auth.scopes?.includes("crm.objects.contacts.read"), true);
-    assertEquals(hubspot.auth.scopes?.includes("crm.objects.contacts.write"), true);
+    assertEquals(hubspot.auth.scopes?.includes("crm.objects.contacts.write"), false);
     assertEquals(hubspot.auth.scopes?.includes("crm.objects.leads.read"), false);
     assertEquals(hubspot.auth.scopes?.includes("crm.objects.leads.write"), false);
     assertEquals(hubspot.auth.optionalScopes?.includes("crm.objects.leads.read"), true);

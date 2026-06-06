@@ -5411,7 +5411,7 @@ export const connectors: IntegrationConfig[] = [
       "provider": "hubspot",
       "authorizationUrl": "https://app.hubspot.com/oauth/authorize",
       "tokenUrl": "https://api.hubapi.com/oauth/v1/token",
-      "scopes": ["crm.objects.contacts.read", "crm.objects.contacts.write"],
+      "scopes": ["oauth", "crm.objects.contacts.read"],
       "optionalScopes": ["crm.objects.leads.read", "crm.objects.leads.write"],
       "tokenAuthMethod": "request_body",
       "supportsRefreshToken": true,

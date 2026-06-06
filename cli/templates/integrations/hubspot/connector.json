@@ -10,8 +10,8 @@
     "authorizationUrl": "https://app.hubspot.com/oauth/authorize",
     "tokenUrl": "https://api.hubapi.com/oauth/v1/token",
     "scopes": [
-      "crm.objects.contacts.read",
-      "crm.objects.contacts.write"
+      "oauth",
+      "crm.objects.contacts.read"
     ],
     "optionalScopes": [
       "crm.objects.leads.read",
