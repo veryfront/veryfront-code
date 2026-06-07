@@ -133,12 +133,70 @@ describe("current-run tool state", () => {
     const prompt = appendCurrentRunToolStateToSystemPrompt("Base system", state);
 
     assertStringIncludes(prompt, "Base system");
-    assertStringIncludes(prompt, '<tool_state current_run="true">');
+    assertStringIncludes(prompt, '<run_state current_run="true">');
+    assertStringIncludes(prompt, '"tools"');
     assertStringIncludes(prompt, '"slack__list_channels"');
     assertStringIncludes(prompt, '"{\\"limit\\":10}"');
     assert(!prompt.includes('"input"'));
     assert(!prompt.includes('"toolCallIds"'));
     assert(!prompt.includes('"updatedAt"'));
+    assert(!prompt.includes("call_1"));
+  });
+
+  it("projects orchestration tool state by semantic keys", () => {
+    const state = createCurrentRunToolState();
+    const now = new Date("2026-01-01T00:00:00.000Z");
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "call_1",
+      toolName: "invoke_agent",
+      input: {
+        agent_id: "ingest-invoice-agent",
+        input: "Load open invoices",
+      },
+      result: { status: "completed", output: "Loaded invoices" },
+      now,
+    });
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "call_2",
+      toolName: "invoke_agent",
+      input: {
+        agent_id: "ingest-invoice-agent",
+        input: "Load the open supplier invoice queue",
+      },
+      result: { status: "completed", output: "Loaded invoices again" },
+      now,
+    });
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "call_3",
+      toolName: "load_skill",
+      input: { skillId: "supplier-invoice-processing" },
+      result: { skillId: "supplier-invoice-processing", instructions: "Process invoices" },
+      now,
+    });
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "call_4",
+      toolName: "studio_todo_write",
+      input: { taskId: "supplier-invoice-processing", title: "Supplier Invoice Processing" },
+      result: { status: "updated" },
+      now,
+    });
+
+    const prompt = appendCurrentRunToolStateToSystemPrompt("Base system", state);
+
+    assertStringIncludes(prompt, '<run_state current_run="true">');
+    assertStringIncludes(prompt, '"semanticCalls"');
+    assertStringIncludes(prompt, '"actions"');
+    assertStringIncludes(prompt, '"agent:ingest-invoice-agent"');
+    assertStringIncludes(prompt, '"skill:supplier-invoice-processing"');
+    assertStringIncludes(prompt, '"todo:supplier-invoice-processing"');
+    assertStringIncludes(prompt, '"parameters":{"agent_id":"ingest-invoice-agent"}');
+    assertStringIncludes(prompt, '"callCount":2');
+    assert(!prompt.includes("Load open invoices"));
+    assert(!prompt.includes("Load the open supplier invoice queue"));
     assert(!prompt.includes("call_1"));
   });
 
