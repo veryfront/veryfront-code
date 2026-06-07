@@ -124,6 +124,7 @@ import {
   appendCurrentRunToolStateToSystemPrompt,
   createCurrentRunToolState,
   type CurrentRunToolState,
+  hydrateCurrentRunToolStateFromMessages,
   recordCurrentRunToolResult,
 } from "./current-run-tool-state.ts";
 import {
@@ -490,6 +491,26 @@ export function materializeStreamedToolCall(
 
 function isToolResultPart(part: MessagePart): part is ToolResultPart {
   return part.type === "tool-result" && "result" in part;
+}
+
+function hydrateActiveSkillStateFromMessages(
+  messages: readonly Message[],
+): {
+  activeSkillPolicy: string[] | undefined;
+  activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
+} {
+  let activeSkillPolicy: string[] | undefined;
+  let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
+
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (!isToolResultPart(part) || part.toolName !== LOAD_SKILL_TOOL_ID) continue;
+      activeSkillPolicy = extractSkillPolicy(part.result);
+      activeSkillDelegationOverrides = extractSkillDelegationOverrides(part.result);
+    }
+  }
+
+  return { activeSkillPolicy, activeSkillDelegationOverrides };
 }
 
 /**
@@ -921,6 +942,7 @@ export class AgentRuntime {
       const toolCalls: ToolCall[] = [];
       const currentMessages = [...messages];
       const currentRunToolState = createCurrentRunToolState();
+      hydrateCurrentRunToolStateFromMessages(currentRunToolState, currentMessages);
       const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
       // Local models can't reliably do function calling — skip tools gracefully.
@@ -930,8 +952,9 @@ export class AgentRuntime {
       }
 
       // Request-scoped skill policy (not class-level mutable state)
-      let activeSkillPolicy: string[] | undefined;
-      let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
+      const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
+      let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
+      let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
       const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);
       const providerTools = getRuntimeProviderTools(this.config);
       const forwardedRemoteToolDefinitions = getRuntimeForwardedIntegrationToolDefs(this.config);
@@ -1255,6 +1278,7 @@ export class AgentRuntime {
     const toolCalls: ToolCall[] = [];
     const currentMessages = [...messages];
     const currentRunToolState = createCurrentRunToolState();
+    hydrateCurrentRunToolStateFromMessages(currentRunToolState, currentMessages);
     const totalUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
     // Local models can't reliably do function calling — skip tools gracefully.
@@ -1264,8 +1288,9 @@ export class AgentRuntime {
     }
 
     // Request-scoped skill policy (not class-level mutable state)
-    let activeSkillPolicy: string[] | undefined;
-    let activeSkillDelegationOverrides: SkillDelegationOverrides | undefined;
+    const hydratedSkillState = hydrateActiveSkillStateFromMessages(currentMessages);
+    let activeSkillPolicy = hydratedSkillState.activeSkillPolicy;
+    let activeSkillDelegationOverrides = hydratedSkillState.activeSkillDelegationOverrides;
     let finalFinishReason: string | undefined;
     let latestAssistantText = "";
     const allowedRemoteToolNames = getRuntimeAllowedRemoteTools(this.config);

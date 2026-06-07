@@ -25,6 +25,11 @@ export type RecordCurrentRunToolResultInput = {
   now?: Date;
 };
 
+export type CurrentRunToolStateHydrationMessage = {
+  role?: string;
+  parts?: readonly unknown[];
+};
+
 const MAX_FALLBACK_ITEMS = 5;
 const MAX_FALLBACK_STRING_LENGTH = 300;
 const MAX_OBJECT_ARRAY_ITEMS = 5;
@@ -285,6 +290,105 @@ export function recordCurrentRunToolResult(
     updatedAt: (input.now ?? new Date()).toISOString(),
   };
   state[input.toolName] = toolBucket;
+}
+
+function parseJsonRecord(value: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(value);
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function getToolCallInput(part: Record<string, unknown>): unknown {
+  if (isRecord(part.args)) return part.args;
+  if (isRecord(part.input)) return part.input;
+  if (typeof part.args === "string") return parseJsonRecord(part.args) ?? part.args;
+  if (typeof part.input === "string") return parseJsonRecord(part.input) ?? part.input;
+  if (typeof part.inputText === "string") return parseJsonRecord(part.inputText) ?? part.inputText;
+  return {};
+}
+
+function getToolResultValue(part: Record<string, unknown>): unknown {
+  if ("result" in part) return part.result;
+  if ("output" in part) return part.output;
+  return undefined;
+}
+
+function getToolCallIdentity(
+  part: unknown,
+): { toolCallId: string; toolName: string } | null {
+  if (!isRecord(part)) return null;
+
+  const toolCallId = typeof part.toolCallId === "string"
+    ? part.toolCallId
+    : typeof part.tool_call_id === "string"
+    ? part.tool_call_id
+    : typeof part.id === "string"
+    ? part.id
+    : null;
+  const toolName = typeof part.toolName === "string"
+    ? part.toolName
+    : typeof part.tool_name === "string"
+    ? part.tool_name
+    : typeof part.name === "string"
+    ? part.name
+    : null;
+
+  return toolCallId && toolName ? { toolCallId, toolName } : null;
+}
+
+function isToolCallPart(part: unknown): part is Record<string, unknown> {
+  if (!isRecord(part)) return false;
+  const type = typeof part.type === "string" ? part.type : "";
+  if (type === "tool-result" || type === "tool_result") return false;
+  if (type === "tool-call" || type === "tool_call" || type.startsWith("tool-")) {
+    return getToolCallIdentity(part) !== null;
+  }
+  return false;
+}
+
+function isToolResultLikePart(part: unknown): part is Record<string, unknown> {
+  if (!isRecord(part)) return false;
+  const type = typeof part.type === "string" ? part.type : "";
+  if (type !== "tool-result" && type !== "tool_result") return false;
+  return getToolCallIdentity(part) !== null && ("result" in part || "output" in part);
+}
+
+export function hydrateCurrentRunToolStateFromMessages(
+  state: CurrentRunToolState,
+  messages: readonly CurrentRunToolStateHydrationMessage[],
+  options?: { now?: Date },
+): void {
+  const toolCallInputs = new Map<string, { toolName: string; input: unknown }>();
+
+  for (const message of messages) {
+    for (const part of message.parts ?? []) {
+      if (isToolCallPart(part)) {
+        const identity = getToolCallIdentity(part);
+        if (!identity) continue;
+        toolCallInputs.set(identity.toolCallId, {
+          toolName: identity.toolName,
+          input: getToolCallInput(part),
+        });
+        continue;
+      }
+
+      if (!isToolResultLikePart(part)) continue;
+
+      const identity = getToolCallIdentity(part);
+      if (!identity) continue;
+      const call = toolCallInputs.get(identity.toolCallId);
+      recordCurrentRunToolResult(state, {
+        toolCallId: identity.toolCallId,
+        toolName: identity.toolName,
+        input: call?.input ?? {},
+        result: getToolResultValue(part),
+        now: options?.now,
+      });
+    }
+  }
 }
 
 export function hasCurrentRunToolState(state: CurrentRunToolState): boolean {

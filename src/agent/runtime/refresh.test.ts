@@ -5,7 +5,7 @@ import { type ModelRuntime } from "#veryfront/provider";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { agent } from "../index.ts";
-import type { RuntimeStateRequest, ToolExecutionResultRequest } from "../types.ts";
+import type { Message, RuntimeStateRequest, ToolExecutionResultRequest } from "../types.ts";
 
 function createRuntimeStream(parts: unknown[]) {
   return new ReadableStream<unknown>({
@@ -437,6 +437,191 @@ describe("agent runtime refresh hooks", () => {
     assertStringIncludes(observedSystems[1] ?? "", '"actions"');
     assertStringIncludes(observedSystems[1] ?? "", '"invoke_agent:agent:ingest-invoice-agent"');
     assertEquals((observedSystems[1] ?? "").includes("Load open supplier invoices"), false);
+  });
+
+  it("injects current-run run_state from persisted messages before a resumed stream step", async () => {
+    const observedSystems: string[] = [];
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/run-state-stream-resume",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream(options: unknown) {
+        observedSystems.push(extractSystemPrompt(options));
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "resumed" },
+            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+          ]),
+        };
+      },
+    };
+    const assistant = agent({
+      model: "hosted/run-state-stream-resume",
+      system: "Run state resumed stream test",
+      tools: {},
+      maxSteps: 1,
+      resolveModelTransport: async () => ({ model }),
+    });
+    const resumedMessages: Message[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Process invoices" }],
+        timestamp: 1,
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-invoke_agent",
+          toolCallId: "invoke-ingest-1",
+          toolName: "invoke_agent",
+          args: {
+            agent_id: "ingest-invoice-agent",
+            input: "Load open supplier invoices",
+          },
+        }],
+        timestamp: 2,
+      },
+      {
+        id: "tool-1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "invoke-ingest-1",
+          toolName: "invoke_agent",
+          result: { status: "completed", output: "Loaded invoices" },
+        }],
+        timestamp: 3,
+      },
+    ];
+
+    const response = (await assistant.stream({ messages: resumedMessages })).toDataStreamResponse();
+    await response.text();
+
+    assertEquals(observedSystems.length, 1);
+    assertStringIncludes(observedSystems[0] ?? "", '<run_state current_run="true">');
+    assertStringIncludes(observedSystems[0] ?? "", '"agent:ingest-invoice-agent"');
+    assertStringIncludes(observedSystems[0] ?? "", '"invoke_agent:agent:ingest-invoice-agent"');
+    assertEquals((observedSystems[0] ?? "").includes("Load open supplier invoices"), false);
+  });
+
+  it("hydrates loaded skill delegation overrides from persisted messages before stream tool execution", async () => {
+    const toolResults: ToolExecutionResultRequest[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/skill-resume-stream",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "invoke-resumed-1",
+                toolName: "invoke_agent",
+                input:
+                  '{"description":"Run invoice matching","prompt":"Match invoices","max_steps":10}',
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "done" },
+            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+          ]),
+        };
+      },
+    };
+    const invokeAgent = tool({
+      id: "invoke_agent",
+      description: "Invoke an agent",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          description: v.string(),
+          prompt: v.string(),
+          max_steps: v.number().optional(),
+        })
+      )(),
+      execute: ({ max_steps }) => ({ ok: true, max_steps }),
+    });
+    const assistant = agent({
+      model: "hosted/skill-resume-stream",
+      system: "Skill resumed stream test",
+      tools: { invoke_agent: invokeAgent },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+      onToolResult: (request) => {
+        toolResults.push(request);
+      },
+    });
+    const resumedMessages: Message[] = [
+      {
+        id: "user-1",
+        role: "user",
+        parts: [{ type: "text", text: "Process invoices" }],
+        timestamp: 1,
+      },
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [{
+          type: "tool-load_skill",
+          toolCallId: "load-skill-1",
+          toolName: "load_skill",
+          args: { skillId: "supplier-invoice-processing" },
+        }],
+        timestamp: 2,
+      },
+      {
+        id: "tool-1",
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "load-skill-1",
+          toolName: "load_skill",
+          result: {
+            skillId: "supplier-invoice-processing",
+            allowedTools: ["invoke_agent"],
+            maxSteps: 160,
+          },
+        }],
+        timestamp: 3,
+      },
+    ];
+
+    const response = (await assistant.stream({ messages: resumedMessages })).toDataStreamResponse();
+    await response.text();
+
+    const invokeResult = toolResults.find((result) => result.toolName === "invoke_agent");
+    assertEquals(invokeResult?.input, {
+      description: "Run invoice matching",
+      prompt: "Match invoices",
+      max_steps: 160,
+    });
+    assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
   });
 
   it("refreshes system and context at step boundaries for generate()", async () => {

@@ -5,6 +5,7 @@ import {
   appendCurrentRunToolStateToSystemPrompt,
   createCurrentRunToolState,
   createToolInputFingerprint,
+  hydrateCurrentRunToolStateFromMessages,
   recordCurrentRunToolResult,
   summarizeToolResultForCurrentRunState,
 } from "./current-run-tool-state.ts";
@@ -198,6 +199,45 @@ describe("current-run tool state", () => {
     assert(!prompt.includes("Load open invoices"));
     assert(!prompt.includes("Load the open supplier invoice queue"));
     assert(!prompt.includes("call_1"));
+  });
+
+  it("hydrates prior tool calls and results from persisted run messages", () => {
+    const state = createCurrentRunToolState();
+
+    hydrateCurrentRunToolStateFromMessages(state, [
+      {
+        role: "assistant",
+        parts: [{
+          type: "tool-invoke_agent",
+          toolCallId: "invoke-ingest-1",
+          toolName: "invoke_agent",
+          args: {
+            agent_id: "ingest-invoice-agent",
+            input: "Load open supplier invoices",
+          },
+        }],
+      },
+      {
+        role: "tool",
+        parts: [{
+          type: "tool-result",
+          toolCallId: "invoke-ingest-1",
+          toolName: "invoke_agent",
+          result: {
+            status: "completed",
+            output: "Loaded supplier invoices",
+          },
+        }],
+      },
+    ], { now: new Date("2026-01-01T00:00:00.000Z") });
+
+    const prompt = appendCurrentRunToolStateToSystemPrompt("Base system", state);
+
+    assertStringIncludes(prompt, '<run_state current_run="true">');
+    assertStringIncludes(prompt, '"agent:ingest-invoice-agent"');
+    assertStringIncludes(prompt, '"invoke_agent:agent:ingest-invoice-agent"');
+    assert(!prompt.includes("Load open supplier invoices"));
+    assert(!prompt.includes("invoke-ingest-1"));
   });
 
   it("retains Gmail history delta arrays declared as object fields", () => {
