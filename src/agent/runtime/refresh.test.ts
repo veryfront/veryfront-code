@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertExists, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { type ModelRuntime } from "#veryfront/provider";
 import { tool } from "#veryfront/tool";
@@ -33,7 +33,7 @@ function extractSystemPrompt(options: unknown): string {
 
 function stripCurrentRunToolStateSystemPrompt(systemPrompt: string): string {
   return systemPrompt.replace(
-    /\n\n<tool_state current_run="true">\n[\s\S]*?\n<\/tool_state>$/u,
+    /\n\n<run_state current_run="true">\n[\s\S]*?\n<\/run_state>$/u,
     "",
   );
 }
@@ -374,6 +374,69 @@ describe("agent runtime refresh hooks", () => {
       max_steps: 160,
     });
     assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
+  });
+
+  it("injects current-run run_state with semantic tool state between generate steps", async () => {
+    const observedSystems: string[] = [];
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/run-state-generate",
+      async doGenerate(options: unknown) {
+        callCount++;
+        observedSystems.push(extractSystemPrompt(options));
+
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "invoke-ingest-1",
+              toolName: "invoke_agent",
+              input: '{"agent_id":"ingest-invoice-agent","input":"Load open supplier invoices"}',
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "done" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const invokeAgent = tool({
+      id: "invoke_agent",
+      description: "Invoke an agent",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          agent_id: v.string(),
+          input: v.string(),
+        })
+      )(),
+      execute: ({ agent_id }) => ({ agent_id, status: "completed" }),
+    });
+    const assistant = agent({
+      model: "hosted/run-state-generate",
+      system: "Run state generate test",
+      tools: { invoke_agent: invokeAgent },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    await assistant.generate({ input: "Run ingest" });
+
+    assertEquals(observedSystems.length, 2);
+    assertStringIncludes(observedSystems[1] ?? "", '<run_state current_run="true">');
+    assertStringIncludes(observedSystems[1] ?? "", '"semanticCalls"');
+    assertStringIncludes(observedSystems[1] ?? "", '"agent:ingest-invoice-agent"');
+    assertStringIncludes(observedSystems[1] ?? "", '"actions"');
+    assertStringIncludes(observedSystems[1] ?? "", '"invoke_agent:agent:ingest-invoice-agent"');
+    assertEquals((observedSystems[1] ?? "").includes("Load open supplier invoices"), false);
   });
 
   it("refreshes system and context at step boundaries for generate()", async () => {

@@ -295,26 +295,154 @@ export function hasCurrentRunToolState(state: CurrentRunToolState): boolean {
 
 type PromptToolState = Record<
   string,
-  { calls: Record<string, { status: ToolStatus; summary: unknown }> }
+  {
+    calls: Record<string, { status: ToolStatus; summary: unknown }>;
+    semanticCalls?: Record<string, PromptSemanticToolCall>;
+  }
 >;
+
+type PromptSemanticToolCall = {
+  status: ToolStatus;
+  callCount: number;
+  parameters: Record<string, string>;
+  summary: unknown;
+};
+
+type PromptRunState = {
+  tools: PromptToolState;
+  actions?: Record<
+    string,
+    {
+      status: ToolStatus;
+      source: string;
+      summary: unknown;
+    }
+  >;
+};
+
+function compactStringParameter(value: unknown): string | null {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value.trim();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return null;
+}
+
+function getSemanticToolCall(input: {
+  toolName: string;
+  call: CurrentRunToolStateCall;
+}): { key: string; parameters: Record<string, string> } | null {
+  if (!isRecord(input.call.input)) return null;
+
+  switch (input.toolName) {
+    case "load_skill": {
+      const skillId = compactStringParameter(input.call.input.skillId) ??
+        compactStringParameter(input.call.input.skill_id);
+      return skillId ? { key: `skill:${skillId}`, parameters: { skillId } } : null;
+    }
+
+    case "invoke_agent": {
+      const agentId = compactStringParameter(input.call.input.agent_id) ??
+        compactStringParameter(input.call.input.agentId);
+      if (!agentId) return null;
+
+      const stepId = compactStringParameter(input.call.input.step_id) ??
+        compactStringParameter(input.call.input.stepId);
+      const idempotencyKey = compactStringParameter(input.call.input.idempotency_key) ??
+        compactStringParameter(input.call.input.idempotencyKey);
+      const keySuffix = stepId
+        ? `:step:${stepId}`
+        : idempotencyKey
+        ? `:idempotency:${idempotencyKey}`
+        : "";
+      const parameters: Record<string, string> = { agent_id: agentId };
+      if (stepId) parameters.step_id = stepId;
+      if (idempotencyKey) parameters.idempotency_key = idempotencyKey;
+      return { key: `agent:${agentId}${keySuffix}`, parameters };
+    }
+
+    case "studio_todo_write": {
+      const taskId = compactStringParameter(input.call.input.taskId) ??
+        compactStringParameter(input.call.input.task_id);
+      return taskId ? { key: `todo:${taskId}`, parameters: { taskId } } : null;
+    }
+
+    default:
+      return null;
+  }
+}
+
+function mergeSemanticToolCall(
+  existing: PromptSemanticToolCall | undefined,
+  call: CurrentRunToolStateCall,
+  parameters: Record<string, string>,
+): PromptSemanticToolCall {
+  return {
+    status: call.status,
+    callCount: (existing?.callCount ?? 0) + call.toolCallIds.length,
+    parameters: existing?.parameters ?? parameters,
+    summary: call.summary,
+  };
+}
+
+function usesSemanticPromptKeys(toolName: string): boolean {
+  return toolName === "load_skill" ||
+    toolName === "invoke_agent" ||
+    toolName === "studio_todo_write";
+}
+
+function createPromptCallKey(input: {
+  toolName: string;
+  fingerprint: string;
+  index: number;
+}): string {
+  return usesSemanticPromptKeys(input.toolName) ? `call:${input.index + 1}` : input.fingerprint;
+}
 
 export function projectCurrentRunToolStateForPrompt(
   state: CurrentRunToolState,
-): PromptToolState {
-  const projected: PromptToolState = {};
+): PromptRunState {
+  const tools: PromptToolState = {};
+  const actions: PromptRunState["actions"] = {};
 
   for (const [toolName, bucket] of Object.entries(state)) {
     const calls: PromptToolState[string]["calls"] = {};
-    for (const [fingerprint, call] of Object.entries(bucket.calls)) {
-      calls[fingerprint] = {
+    const semanticCalls: Record<string, PromptSemanticToolCall> = {};
+    for (const [index, [fingerprint, call]] of Object.entries(bucket.calls).entries()) {
+      calls[createPromptCallKey({ toolName, fingerprint, index })] = {
         status: call.status,
         summary: call.summary,
       };
+
+      const semantic = getSemanticToolCall({ toolName, call });
+      if (semantic) {
+        semanticCalls[semantic.key] = mergeSemanticToolCall(
+          semanticCalls[semantic.key],
+          call,
+          semantic.parameters,
+        );
+        actions[`${toolName}:${semantic.key}`] = {
+          status: call.status,
+          source: `tools.${toolName}.semanticCalls.${semantic.key}`,
+          summary: call.summary,
+        };
+      }
     }
-    if (Object.keys(calls).length > 0) projected[toolName] = { calls };
+
+    if (Object.keys(calls).length > 0) {
+      tools[toolName] = {
+        calls,
+        ...(Object.keys(semanticCalls).length > 0 ? { semanticCalls } : {}),
+      };
+    }
   }
 
-  return projected;
+  return {
+    tools,
+    ...(Object.keys(actions).length > 0 ? { actions } : {}),
+  };
 }
 
 export function appendCurrentRunToolStateToSystemPrompt(
@@ -324,7 +452,7 @@ export function appendCurrentRunToolStateToSystemPrompt(
   if (!hasCurrentRunToolState(state)) return systemPrompt;
 
   const promptState = projectCurrentRunToolStateForPrompt(state);
-  return `${systemPrompt}\n\n<tool_state current_run=\"true\">\n${
+  return `${systemPrompt}\n\n<run_state current_run=\"true\">\n${
     JSON.stringify(promptState)
-  }\n</tool_state>`;
+  }\n</run_state>`;
 }
