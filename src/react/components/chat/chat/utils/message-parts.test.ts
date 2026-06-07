@@ -1,7 +1,13 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getTextContent, groupPartsInOrder, isReasoningPart, isToolPart } from "./message-parts.ts";
+import {
+  getAnswerPartsForRendering,
+  getTextContent,
+  groupPartsInOrder,
+  isReasoningPart,
+  isToolPart,
+} from "./message-parts.ts";
 import type { ChatMessage, ChatMessagePart } from "#veryfront/agent/react";
 
 function makeMessage(parts: ChatMessagePart[]): ChatMessage {
@@ -177,6 +183,72 @@ describe("message-parts", () => {
 
     it("handles empty parts array", () => {
       assertEquals(groupPartsInOrder([]).length, 0);
+    });
+  });
+
+  describe("getAnswerPartsForRendering", () => {
+    it("uses the post-tool text as the assistant answer while preserving tool cards", () => {
+      const parts: ChatMessagePart[] = [
+        { type: "text", text: "I'll check the current queue." },
+        {
+          type: "tool-search",
+          toolCallId: "tc1",
+          toolName: "search",
+          state: "input-available",
+          input: {},
+        },
+        { type: "tool-result", toolCallId: "tc1", toolName: "search", result: {} },
+        { type: "text", text: "I found one urgent incident." },
+        {
+          type: "tool-search",
+          toolCallId: "tc2",
+          toolName: "search",
+          state: "input-available",
+          input: {},
+        },
+        { type: "tool-result", toolCallId: "tc2", toolName: "search", result: {} },
+        { type: "text", text: "Selected INC-2026-0714 for triage." },
+      ];
+
+      const answerParts = getAnswerPartsForRendering(parts, { isAssistant: true });
+
+      assertEquals(
+        answerParts.map((part) => part.type),
+        ["tool-search", "tool-result", "tool-search", "tool-result", "text"],
+      );
+      assertEquals(getTextContent(makeMessage(answerParts)), "Selected INC-2026-0714 for triage.");
+    });
+
+    it("keeps assistant progress text when no final answer exists yet", () => {
+      const parts: ChatMessagePart[] = [
+        { type: "text", text: "I'll inspect the incident first." },
+        {
+          type: "tool-search",
+          toolCallId: "tc1",
+          toolName: "search",
+          state: "input-available",
+          input: {},
+        },
+        { type: "tool-result", toolCallId: "tc1", toolName: "search", result: {} },
+      ];
+
+      assertEquals(getAnswerPartsForRendering(parts, { isAssistant: true }), parts);
+    });
+
+    it("does not rewrite user text around tool-shaped attachments", () => {
+      const parts: ChatMessagePart[] = [
+        { type: "text", text: "Use this payload." },
+        {
+          type: "tool-search",
+          toolCallId: "tc1",
+          toolName: "search",
+          state: "input-available",
+          input: {},
+        },
+        { type: "text", text: "Keep both text parts." },
+      ];
+
+      assertEquals(getAnswerPartsForRendering(parts, { isAssistant: false }), parts);
     });
   });
 });

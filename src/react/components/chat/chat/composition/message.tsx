@@ -44,7 +44,8 @@ import type { Source } from "../components/sources.tsx";
 import { ModelAvatar as AvatarImpl } from "./model-avatar.tsx";
 import {
   extractSourcesFromParts,
-  getTextContent,
+  getAnswerPartsForRendering,
+  getTextContentFromParts,
   groupPartsInOrder,
   isSkillToolPart,
 } from "../utils/message-parts.ts";
@@ -75,8 +76,12 @@ const MessageRoot = React.forwardRef<HTMLDivElement, MessageRootProps>(
   ) {
     const chat = useChatContextOptional();
     const role = message.role as MessageContextValue["role"];
-    const parts = React.useMemo(() => groupPartsInOrder(message.parts), [message.parts]);
-    const textContent = React.useMemo(() => getTextContent(message), [message]);
+    const answerParts = React.useMemo(
+      () => getAnswerPartsForRendering(message.parts, { isAssistant: role !== "user" }),
+      [message.parts, role],
+    );
+    const parts = React.useMemo(() => groupPartsInOrder(answerParts), [answerParts]);
+    const textContent = React.useMemo(() => getTextContentFromParts(answerParts), [answerParts]);
 
     const editMessage = overrides.editMessage ?? chat?.editMessage;
     const getBranches = overrides.getBranches ?? chat?.getBranches;

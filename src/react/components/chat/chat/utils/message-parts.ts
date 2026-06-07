@@ -13,9 +13,14 @@ import type { Source } from "../components/sources.tsx";
 
 /** Get text content from chat message parts */
 export function getTextContent(message: ChatMessage): string {
+  return getTextContentFromParts(message.parts);
+}
+
+/** Get text content from a list of chat message parts. */
+export function getTextContentFromParts(parts: ChatMessagePart[]): string {
   let text = "";
 
-  for (const part of message.parts) {
+  for (const part of parts) {
     if (part.type === "text") text += part.text;
   }
 
@@ -26,6 +31,39 @@ export function getTextContent(message: ChatMessage): string {
 export function isToolPart(part: ChatMessagePart): part is ChatToolPart | ChatDynamicToolPart {
   if (part.type === "dynamic-tool") return true;
   return part.type.startsWith("tool-") && part.type !== "tool-result";
+}
+
+function isToolEvidencePart(part: ChatMessagePart): boolean {
+  return isToolPart(part) || part.type === "tool-result";
+}
+
+function isNonEmptyTextPart(part: ChatMessagePart): boolean {
+  return part.type === "text" && part.text.trim().length > 0;
+}
+
+/**
+ * Select assistant answer parts for client rendering.
+ * Tool evidence remains available, while pre-tool progress text is hidden
+ * once a final post-tool answer is present.
+ */
+export function getAnswerPartsForRendering(
+  parts: ChatMessagePart[],
+  options: { isAssistant: boolean },
+): ChatMessagePart[] {
+  if (!options.isAssistant) return parts;
+
+  let lastToolIndex = -1;
+  for (let index = 0; index < parts.length; index += 1) {
+    const part = parts[index];
+    if (part && isToolEvidencePart(part)) lastToolIndex = index;
+  }
+
+  if (lastToolIndex === -1) return parts;
+
+  const hasFinalText = parts.slice(lastToolIndex + 1).some(isNonEmptyTextPart);
+  if (!hasFinalText) return parts;
+
+  return parts.filter((part, index) => part.type !== "text" || index > lastToolIndex);
 }
 
 const SKILL_TOOL_NAMES: ReadonlySet<string> = new Set([

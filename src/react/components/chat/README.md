@@ -318,6 +318,8 @@ export default function AgentChat() {
 
 ### Working with Chat Message Parts
 
+The built-in message renderer keeps raw message parts available, but assistant answer rendering prefers the final text emitted after tool activity. This prevents pre-tool progress narration from becoming part of the final visible answer while preserving tool calls and results for evidence, sources, and custom UI. Custom renderers should apply the same split when they present a final assistant answer.
+
 ```tsx
 import { Chat } from "veryfront/react";
 import { useChat } from "veryfront/agent/react";
