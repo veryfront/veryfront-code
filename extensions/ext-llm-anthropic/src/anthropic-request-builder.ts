@@ -214,17 +214,20 @@ function toAnthropicMessages(
     message.content.some((part) => part.type === "text" && part.text.length > 0)
   );
   let skippingHistoricalToolResults = false;
+  let pendingToolUseIds = new Set<string>();
 
   for (const [index, message] of prompt.entries()) {
     switch (message.role) {
       case "system":
         skippingHistoricalToolResults = false;
+        pendingToolUseIds = new Set();
         if (message.content.length > 0) {
           systemParts.push(message.content);
         }
         break;
       case "user":
         skippingHistoricalToolResults = false;
+        pendingToolUseIds = new Set();
         pushAnthropicUserContent(messages, toAnthropicUserContent(message.content));
         break;
       case "assistant": {
@@ -237,9 +240,13 @@ function toAnthropicMessages(
 
         if (assistantContent.length === 0) {
           skippingHistoricalToolResults = shouldCompactCompletedToolRound;
+          pendingToolUseIds = new Set();
           break;
         }
 
+        pendingToolUseIds = new Set(
+          assistantContent.flatMap((part) => part.type === "tool-call" ? [part.toolCallId] : []),
+        );
         messages.push({
           role: "assistant",
           content: assistantContent.map((part) => {
@@ -274,14 +281,23 @@ function toAnthropicMessages(
         if (skippingHistoricalToolResults) {
           break;
         }
+        const matchingToolResults = message.content.filter((part) =>
+          pendingToolUseIds.has(part.toolCallId)
+        );
+        if (matchingToolResults.length === 0) {
+          break;
+        }
         pushAnthropicUserContent(
           messages,
-          message.content.map((part) => ({
+          matchingToolResults.map((part) => ({
             type: "tool_result",
             tool_use_id: part.toolCallId,
             content: stringifyJsonValue(part.output.value),
           })),
         );
+        for (const part of matchingToolResults) {
+          pendingToolUseIds.delete(part.toolCallId);
+        }
         break;
     }
   }

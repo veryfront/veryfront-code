@@ -309,4 +309,81 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
       { role: "user", content: [{ type: "text", text: "retry" }] },
     ]);
   });
+
+  it("drops orphaned tool results when their tool use was not emitted", () => {
+    const prompt: RuntimePromptMessage[] = [
+      {
+        role: "tool",
+        content: [{
+          type: "tool-result",
+          toolCallId: "srvtoolu_search_1",
+          toolName: "web_search",
+          output: { type: "json", value: { results: [] } },
+        }],
+      },
+      { role: "user", content: [{ type: "text", text: "Continue the conversation." }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will use the current tools." },
+          {
+            type: "tool-call",
+            toolCallId: "toolu_lookup_1",
+            toolName: "lookup",
+            input: { query: "current" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "srvtoolu_search_1",
+            toolName: "web_search",
+            output: { type: "json", value: { stale: true } },
+          },
+          {
+            type: "tool-result",
+            toolCallId: "toolu_lookup_1",
+            toolName: "lookup",
+            output: { type: "json", value: { ok: true } },
+          },
+        ],
+      },
+    ];
+    const warnings = createWarningCollector();
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      { prompt },
+      false,
+      warnings,
+    );
+
+    assertEquals(body.messages, [
+      { role: "user", content: [{ type: "text", text: "Continue the conversation." }] },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I will use the current tools." },
+          {
+            type: "tool_use",
+            id: "toolu_lookup_1",
+            name: "lookup",
+            input: { query: "current" },
+          },
+        ],
+      },
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "toolu_lookup_1",
+          content: '{"ok":true}',
+        }],
+      },
+    ]);
+  });
 });
