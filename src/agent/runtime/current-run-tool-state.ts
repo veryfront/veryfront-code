@@ -754,6 +754,40 @@ function compactStringParameter(value: unknown): string | null {
   return null;
 }
 
+function findRecordIdInStructuredContext(value: unknown): string | null {
+  if (typeof value === "string") {
+    return getRecordIds(value)[0] ?? null;
+  }
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findRecordIdInStructuredContext(item);
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  for (const key of ["record_id", "recordId", "entity_id", "entityId", "id"] as const) {
+    const found = compactStringParameter(value[key]);
+    if (found && getRecordIds(found).length > 0) return found;
+  }
+
+  for (const entry of Object.values(value)) {
+    const found = findRecordIdInStructuredContext(entry);
+    if (found) return found;
+  }
+
+  return null;
+}
+
 function getSemanticToolCall(input: {
   toolName: string;
   call: CurrentRunToolStateCall;
@@ -781,7 +815,8 @@ function getSemanticToolCall(input: {
         compactStringParameter(input.call.input.invoice_id) ??
         compactStringParameter(input.call.input.invoiceId) ??
         compactStringParameter(input.call.input.entity_id) ??
-        compactStringParameter(input.call.input.entityId);
+        compactStringParameter(input.call.input.entityId) ??
+        findRecordIdInStructuredContext(input.call.input.context);
       const keySuffix = recordId
         ? `:record:${recordId}`
         : stepId
