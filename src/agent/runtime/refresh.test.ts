@@ -38,6 +38,51 @@ function stripCurrentRunToolStateSystemPrompt(systemPrompt: string): string {
   );
 }
 
+function supplierInvoiceEvidenceMessages(): Message[] {
+  return [
+    {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "Process open supplier invoices" }],
+      timestamp: 1,
+    },
+    {
+      id: "assistant-ingest",
+      role: "assistant",
+      parts: [{
+        type: "tool-invoke_agent",
+        toolCallId: "invoke-ingest-1",
+        toolName: "invoke_agent",
+        args: {
+          agent_id: "ingest-invoice-agent",
+          prompt: "Load open supplier invoices",
+        },
+      }],
+      timestamp: 2,
+    },
+    {
+      id: "tool-ingest",
+      role: "tool",
+      parts: [{
+        type: "tool-result",
+        toolCallId: "invoke-ingest-1",
+        toolName: "invoke_agent",
+        result: {
+          status: "completed",
+          summary: {
+            text: "Ingestion complete. 2 open invoices loaded:\n\n" +
+              "| Invoice | Supplier | Route |\n" +
+              "| --- | --- | --- |\n" +
+              "| INV-2026-00482 | Alpine Claims Services | Escalation (blocked) |\n" +
+              "| INV-2026-00491 | Meyer Papier GmbH | Matching (valid) |\n",
+          },
+        },
+      }],
+      timestamp: 3,
+    },
+  ];
+}
+
 describe("agent runtime refresh hooks", () => {
   it("notifies configured hooks after generate() executes a tool", async () => {
     const toolResults: ToolExecutionResultRequest[] = [];
@@ -622,6 +667,157 @@ describe("agent runtime refresh hooks", () => {
       max_steps: 160,
     });
     assertEquals(invokeResult?.result, { ok: true, max_steps: 160 });
+  });
+
+  it("blocks generate() invoke_agent calls that contradict persisted current-run evidence", async () => {
+    let executed = false;
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/invoke-agent-evidence-generate",
+      async doGenerate() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: [{
+              type: "tool-call",
+              toolCallId: "invoke-payment-1",
+              toolName: "invoke_agent",
+              input: JSON.stringify({
+                agent_id: "payment-approval-agent",
+                description: "Approve matched invoice INV-2026-00491 (Meridian Logistics GmbH)",
+                prompt:
+                  "Approve invoice INV-2026-00491 for payment. This invoice from supplier Meridian Logistics GmbH for €2,180.00 matched PO-2026-1197 with zero variance.",
+              }),
+            }],
+            finishReason: "tool-calls",
+            usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "blocked" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createRuntimeStream([{ type: "finish", finishReason: "stop" }]) };
+      },
+    };
+    const invokeAgent = tool({
+      id: "invoke_agent",
+      description: "Invoke an agent",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          agent_id: v.string(),
+          description: v.string().optional(),
+          prompt: v.string(),
+        })
+      )(),
+      execute: () => {
+        executed = true;
+        return { ok: true };
+      },
+    });
+    const assistant = agent({
+      model: "hosted/invoke-agent-evidence-generate",
+      system: "Supplier invoice orchestrator",
+      tools: { invoke_agent: invokeAgent },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const result = await assistant.generate({
+      input: supplierInvoiceEvidenceMessages(),
+    });
+
+    assertEquals(executed, false);
+    assertEquals(result.toolCalls[0]?.status, "error");
+    assertStringIncludes(
+      result.toolCalls[0]?.error ?? "",
+      'INV-2026-00491 supplier is "Meyer Papier GmbH"',
+    );
+    assertStringIncludes(result.toolCalls[0]?.error ?? "", "Meridian Logistics GmbH");
+  });
+
+  it("blocks stream() invoke_agent calls that contradict persisted current-run evidence", async () => {
+    let executed = false;
+    let callCount = 0;
+    const model: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/invoke-agent-evidence-stream",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: createRuntimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "invoke-payment-1",
+                toolName: "invoke_agent",
+                input: JSON.stringify({
+                  agent_id: "payment-approval-agent",
+                  description: "Approve matched invoice INV-2026-00491 (Meridian Logistics GmbH)",
+                  prompt:
+                    "Approve invoice INV-2026-00491 for payment. This invoice from supplier Meridian Logistics GmbH for €2,180.00 matched PO-2026-1197 with zero variance.",
+                }),
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: createRuntimeStream([
+            { type: "text-delta", text: "blocked" },
+            { type: "finish", finishReason: "stop", usage: { inputTokens: 1, outputTokens: 1 } },
+          ]),
+        };
+      },
+    };
+    const invokeAgent = tool({
+      id: "invoke_agent",
+      description: "Invoke an agent",
+      inputSchema: defineSchema((v) =>
+        v.object({
+          agent_id: v.string(),
+          description: v.string().optional(),
+          prompt: v.string(),
+        })
+      )(),
+      execute: () => {
+        executed = true;
+        return { ok: true };
+      },
+    });
+    const assistant = agent({
+      model: "hosted/invoke-agent-evidence-stream",
+      system: "Supplier invoice orchestrator",
+      tools: { invoke_agent: invokeAgent },
+      maxSteps: 2,
+      resolveModelTransport: async () => ({ model }),
+    });
+
+    const response = (await assistant.stream({
+      messages: supplierInvoiceEvidenceMessages(),
+    })).toDataStreamResponse();
+    const body = await response.text();
+
+    assertEquals(executed, false);
+    assertStringIncludes(body, 'INV-2026-00491 supplier is \\"Meyer Papier GmbH\\"');
+    assertStringIncludes(body, "Meridian Logistics GmbH");
   });
 
   it("refreshes system and context at step boundaries for generate()", async () => {
