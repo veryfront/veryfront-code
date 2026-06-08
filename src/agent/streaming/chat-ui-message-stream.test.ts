@@ -68,8 +68,13 @@ describe("createChatUiMessageStreamFromDataStream", () => {
     assertEquals(chunks, [
       { type: "start", messageId: "assistant-message" },
       { type: "start-step" },
-      { type: "text-start", id: "assistant-message" },
-      { type: "text-delta", id: "assistant-message", delta: "Hello from framework" },
+      { type: "text-start", id: "assistant-message", contentId: "text-1" },
+      {
+        type: "text-delta",
+        id: "assistant-message",
+        contentId: "text-1",
+        delta: "Hello from framework",
+      },
       { type: "tool-input-start", toolCallId: "tool-1", toolName: "search_files" },
       { type: "tool-input-delta", toolCallId: "tool-1", inputTextDelta: '{"query":"' },
       {
@@ -80,7 +85,7 @@ describe("createChatUiMessageStreamFromDataStream", () => {
       },
       { type: "tool-output-available", toolCallId: "tool-1", output: { matches: 2 } },
       { type: "finish-step" },
-      { type: "text-end", id: "assistant-message" },
+      { type: "text-end", id: "assistant-message", contentId: "text-1" },
       { type: "finish", finishReason: "stop" },
     ]);
 

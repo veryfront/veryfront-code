@@ -36,6 +36,31 @@ type PendingToolDelta = {
   chunks: string[];
 };
 
+function createTextChunk(
+  type: "text-start" | "text-end",
+  responseMessageId: string,
+  blockId: string,
+): ChatStreamEvent {
+  return {
+    type,
+    id: responseMessageId,
+    contentId: blockId,
+  };
+}
+
+function createTextDeltaChunk(
+  responseMessageId: string,
+  blockId: string,
+  delta: string,
+): ChatStreamEvent {
+  return {
+    type: "text-delta",
+    id: responseMessageId,
+    contentId: blockId,
+    delta,
+  };
+}
+
 function getStringField(event: AgUiRuntimeStreamEvent, key: string): string | undefined {
   const value = event[key];
   return typeof value === "string" ? value : undefined;
@@ -148,7 +173,7 @@ export function createAgUiRuntimeChatStreamEncoder(
           if (!seenTextBlockIds.has(id)) {
             seenTextBlockIds.add(id);
           } else if (startedTextBlockIds.has(id)) {
-            events.push({ type: "text-start", id: options.responseMessageId });
+            events.push(createTextChunk("text-start", options.responseMessageId, id));
           }
           return events;
         }
@@ -162,16 +187,16 @@ export function createAgUiRuntimeChatStreamEncoder(
           if (!startedTextBlockIds.has(id)) {
             startedTextBlockIds.add(id);
             seenTextBlockIds.add(id);
-            events.push({ type: "text-start", id: options.responseMessageId });
+            events.push(createTextChunk("text-start", options.responseMessageId, id));
           }
-          events.push({ type: "text-delta", id: options.responseMessageId, delta });
+          events.push(createTextDeltaChunk(options.responseMessageId, id, delta));
           return events;
         }
         case "text-end": {
           const id = getStringField(event, "id") ?? options.responseMessageId;
           if (startedTextBlockIds.has(id)) {
             startedTextBlockIds.delete(id);
-            events.push({ type: "text-end", id: options.responseMessageId });
+            events.push(createTextChunk("text-end", options.responseMessageId, id));
           }
           return events;
         }

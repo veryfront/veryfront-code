@@ -36,6 +36,7 @@ describe("agent/ag-ui-browser-chunk-encoder", () => {
         event: "TextMessageEnd",
         payload: {
           messageId: "msg-1",
+          contentId: "text:0",
         },
       },
       {

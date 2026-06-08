@@ -62,11 +62,34 @@ export class ConversationRunEventEncoder {
   private readonly streamedToolInputs = new Set<string>();
   private readonly toolInputs = new Map<string, unknown>();
   private activeMessageId: string | null = null;
+  private activeTextContentId: string | null = null;
+  private textContentIndex = 0;
 
   private getToolResultMessageId(toolCallId: string) {
     return this.activeMessageId
       ? `${this.activeMessageId}:tool:${toolCallId}`
       : `tool:${toolCallId}`;
+  }
+
+  private getTextMessagePayload(
+    chunk: Extract<ChatStreamEvent, { type: "text-start" | "text-delta" | "text-end" }>,
+  ) {
+    const explicitMessageId = typeof chunk.messageId === "string" && chunk.messageId.length > 0
+      ? chunk.messageId
+      : null;
+    const messageId = explicitMessageId ?? this.activeMessageId ?? chunk.id;
+    const explicitContentId = typeof chunk.contentId === "string" && chunk.contentId.length > 0
+      ? chunk.contentId
+      : null;
+    const chunkContentId = chunk.id !== messageId ? chunk.id : null;
+    const contentId = explicitContentId ?? chunkContentId ?? this.activeTextContentId ??
+      `text:${this.textContentIndex++}`;
+    this.activeTextContentId = chunk.type === "text-end" ? null : contentId;
+
+    return {
+      messageId,
+      contentId,
+    };
   }
 
   private serializeToolResultContent(value: unknown): string {
@@ -90,19 +113,22 @@ export class ConversationRunEventEncoder {
       case "text-start":
         return [{
           type: conversationRunEventTypes.textMessageStart,
-          messageId: chunk.id,
+          ...this.getTextMessagePayload(chunk),
           role: "assistant",
         }];
 
       case "text-delta":
         return [{
           type: conversationRunEventTypes.textMessageContent,
-          messageId: chunk.id,
+          ...this.getTextMessagePayload(chunk),
           delta: chunk.delta,
         }];
 
       case "text-end":
-        return [{ type: conversationRunEventTypes.textMessageEnd, messageId: chunk.id }];
+        return [{
+          type: conversationRunEventTypes.textMessageEnd,
+          ...this.getTextMessagePayload(chunk),
+        }];
 
       case "reasoning-start":
         return [{

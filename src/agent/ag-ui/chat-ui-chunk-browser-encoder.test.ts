@@ -134,6 +134,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
         event: "TextMessageStart",
         payload: {
           messageId: "msg-1",
+          contentId: "text:0",
           role: "assistant",
         },
       },
@@ -141,6 +142,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
         event: "TextMessageContent",
         payload: {
           messageId: "msg-1",
+          contentId: "text:0",
           delta: "hello",
         },
       },
@@ -162,6 +164,7 @@ describe("agent/ag-ui-chat-ui-chunk-browser-encoder", () => {
           event: "TextMessageEnd",
           payload: {
             messageId: "msg-1",
+            contentId: "text:0",
           },
         },
         {

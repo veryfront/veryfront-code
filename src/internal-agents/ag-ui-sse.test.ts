@@ -52,11 +52,17 @@ describe("internal-agents/ag-ui-sse", () => {
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "text-start", id: "text-1" }),
-      [{ event: "TextMessageStart", payload: { messageId: "assistant-1", role: "assistant" } }],
+      [{
+        event: "TextMessageStart",
+        payload: { messageId: "assistant-1", contentId: "text-1", role: "assistant" },
+      }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "text-delta", id: "text-1", delta: "hello" }),
-      [{ event: "TextMessageContent", payload: { messageId: "assistant-1", delta: "hello" } }],
+      [{
+        event: "TextMessageContent",
+        payload: { messageId: "assistant-1", contentId: "text-1", delta: "hello" },
+      }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, {
@@ -67,7 +73,7 @@ describe("internal-agents/ag-ui-sse", () => {
       [
         {
           event: "TextMessageEnd",
-          payload: { messageId: "assistant-1" },
+          payload: { messageId: "assistant-1", contentId: "text-1" },
         },
         {
           event: "ToolCallStart",
@@ -102,13 +108,19 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "text-delta", delta: "hello" }),
       [
-        { event: "TextMessageStart", payload: { messageId: "assistant-2", role: "assistant" } },
-        { event: "TextMessageContent", payload: { messageId: "assistant-2", delta: "hello" } },
+        {
+          event: "TextMessageStart",
+          payload: { messageId: "assistant-2", contentId: "text:0", role: "assistant" },
+        },
+        {
+          event: "TextMessageContent",
+          payload: { messageId: "assistant-2", contentId: "text:0", delta: "hello" },
+        },
       ],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, { type: "text-end" }),
-      [{ event: "TextMessageEnd", payload: { messageId: "assistant-2" } }],
+      [{ event: "TextMessageEnd", payload: { messageId: "assistant-2", contentId: "text:0" } }],
     );
     assertEquals(
       mapRuntimeEventToAgUi(state, {
@@ -304,7 +316,7 @@ describe("internal-agents/ag-ui-sse", () => {
       [
         {
           event: "TextMessageEnd",
-          payload: { messageId: "assistant-1" },
+          payload: { messageId: "assistant-1", contentId: "text-1" },
         },
         {
           event: "RunFinished",
@@ -364,6 +376,19 @@ describe("internal-agents/ag-ui-sse", () => {
     );
   });
 
+  it("preserves text content ids when formatting AG-UI events", () => {
+    const payload = formatAgUiEvent("TextMessageContent", {
+      messageId: "assistant-1",
+      contentId: "block-1",
+      delta: "hello",
+    });
+
+    assertEquals(
+      new TextDecoder().decode(payload),
+      'event: TextMessageContent\ndata: {"messageId":"assistant-1","contentId":"block-1","delta":"hello"}\n\n',
+    );
+  });
+
   it("matches the canonical assistant text and tool trace used across repos", () => {
     const state = createStreamTransformState();
 
@@ -411,15 +436,15 @@ describe("internal-agents/ag-ui-sse", () => {
     assertEquals([...mappedEvents, ...finalizedEvents], [
       {
         event: "TextMessageStart",
-        payload: { messageId: "assistant-msg-1", role: "assistant" },
+        payload: { messageId: "assistant-msg-1", contentId: "text-1", role: "assistant" },
       },
       {
         event: "TextMessageContent",
-        payload: { messageId: "assistant-msg-1", delta: "Let me check." },
+        payload: { messageId: "assistant-msg-1", contentId: "text-1", delta: "Let me check." },
       },
       {
         event: "TextMessageEnd",
-        payload: { messageId: "assistant-msg-1" },
+        payload: { messageId: "assistant-msg-1", contentId: "text-1" },
       },
       {
         event: "ToolCallStart",

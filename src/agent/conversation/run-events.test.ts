@@ -44,6 +44,28 @@ describe("agent/conversation-run-events", () => {
     );
   });
 
+  it("encodes text block ids as content ids when a durable message id is active", () => {
+    const encoder = new ConversationRunEventEncoder();
+    assertEquals(encoder.encode({ type: "start", messageId: "assistant-1" }), []);
+    assertEquals(encoder.encode({ type: "text-start", id: "block-1" }), [{
+      type: conversationRunEventTypes.textMessageStart,
+      messageId: "assistant-1",
+      contentId: "block-1",
+      role: "assistant",
+    }]);
+    assertEquals(encoder.encode({ type: "text-delta", id: "block-1", delta: "hello" }), [{
+      type: conversationRunEventTypes.textMessageContent,
+      messageId: "assistant-1",
+      contentId: "block-1",
+      delta: "hello",
+    }]);
+    assertEquals(encoder.encode({ type: "text-end", id: "block-1" }), [{
+      type: conversationRunEventTypes.textMessageEnd,
+      messageId: "assistant-1",
+      contentId: "block-1",
+    }]);
+  });
+
   it("encodes tool input availability with args when not previously streamed", () => {
     const encoder = new ConversationRunEventEncoder();
     assertEquals(

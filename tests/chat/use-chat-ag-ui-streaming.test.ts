@@ -71,10 +71,22 @@ describe("useChat streaming handler (AG-UI protocol)", () => {
         threadId: "thread-1",
         agentId: "assistant",
       }),
-      agUiFrame(2, "TextMessageStart", { messageId: "msg-1", role: "assistant" }),
-      agUiFrame(3, "TextMessageContent", { messageId: "msg-1", delta: "Hello" }),
-      agUiFrame(4, "TextMessageContent", { messageId: "msg-1", delta: " AG-UI" }),
-      agUiFrame(5, "TextMessageEnd", { messageId: "msg-1" }),
+      agUiFrame(2, "TextMessageStart", {
+        messageId: "msg-1",
+        contentId: "text:0",
+        role: "assistant",
+      }),
+      agUiFrame(3, "TextMessageContent", {
+        messageId: "msg-1",
+        contentId: "text:0",
+        delta: "Hello",
+      }),
+      agUiFrame(4, "TextMessageContent", {
+        messageId: "msg-1",
+        contentId: "text:0",
+        delta: " AG-UI",
+      }),
+      agUiFrame(5, "TextMessageEnd", { messageId: "msg-1", contentId: "text:0" }),
       agUiFrame(6, "RunFinished", { metadata: { finishReason: "stop" } }),
     ]);
 
@@ -108,12 +120,17 @@ describe("useChat streaming handler (AG-UI protocol)", () => {
         name: "state",
         value: { selected: "docs" },
       }),
-      agUiFrame(7, "TextMessageStart", { messageId: "msg-tools", role: "assistant" }),
+      agUiFrame(7, "TextMessageStart", {
+        messageId: "msg-tools",
+        contentId: "text:0",
+        role: "assistant",
+      }),
       agUiFrame(8, "TextMessageContent", {
         messageId: "msg-tools",
+        contentId: "text:0",
         delta: "Found two docs.",
       }),
-      agUiFrame(9, "TextMessageEnd", { messageId: "msg-tools" }),
+      agUiFrame(9, "TextMessageEnd", { messageId: "msg-tools", contentId: "text:0" }),
       agUiFrame(10, "RunFinished", { metadata: { finishReason: "stop" } }),
     ]);
 
