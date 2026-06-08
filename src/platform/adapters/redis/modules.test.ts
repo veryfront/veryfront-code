@@ -12,11 +12,10 @@ describe("platform/adapters/redis/modules", () => {
   });
 
   describe("getRedisModule", () => {
-    it("should return an object with DenoRedis and NodeRedis keys", async () => {
+    it("should return an object with a NodeRedis key", async () => {
       clearModuleCache();
       const result = await getRedisModule();
       assertExists(result);
-      assertEquals("DenoRedis" in result, true);
       assertEquals("NodeRedis" in result, true);
     });
 
@@ -36,12 +35,11 @@ describe("platform/adapters/redis/modules", () => {
       assertExists(result);
     });
 
-    it("should load exactly one redis module per runtime", async () => {
+    it("should load the npm redis module on every runtime", async () => {
       clearModuleCache();
       const result = await getRedisModule();
-      // Exactly one should be loaded: DenoRedis on Deno, NodeRedis on Node/Bun
-      const hasExactlyOne = (result.DenoRedis !== null) !== (result.NodeRedis !== null);
-      assertEquals(hasExactlyOne, true);
+      // The npm `redis` client is loaded into NodeRedis on both Deno and Node/Bun.
+      assertExists(result.NodeRedis);
     });
 
     it("should use the pinned npm Redis client in Deno", async () => {
@@ -50,7 +48,6 @@ describe("platform/adapters/redis/modules", () => {
       clearModuleCache();
       const result = await getRedisModule();
 
-      assertEquals(result.DenoRedis, null);
       assertExists(result.NodeRedis);
       assertEquals(typeof result.NodeRedis.createClient, "function");
     });

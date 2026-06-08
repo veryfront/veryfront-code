@@ -124,9 +124,6 @@ export {
 export {
   arrayToObject,
   clearModuleCache,
-  DenoRedisAdapter,
-  type DenoRedisClient,
-  type DenoRedisModule,
   getRedisModule,
   NodeRedisAdapter,
   type NodeRedisClient,

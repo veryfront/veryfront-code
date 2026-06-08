@@ -1,17 +1,15 @@
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
 import { withSpan } from "#veryfront/observability/tracing/otlp-setup.ts";
 import { INITIALIZATION_ERROR } from "#veryfront/errors";
-import type { DenoRedisModule, NodeRedisModule } from "./types.ts";
+import type { NodeRedisModule } from "./types.ts";
 
-let DenoRedis: DenoRedisModule | null = null;
 let NodeRedis: NodeRedisModule | null = null;
 
 export function getRedisModule(): Promise<{
-  DenoRedis: DenoRedisModule | null;
   NodeRedis: NodeRedisModule | null;
 }> {
-  if (DenoRedis || NodeRedis) {
-    return Promise.resolve({ DenoRedis, NodeRedis });
+  if (NodeRedis) {
+    return Promise.resolve({ NodeRedis });
   }
 
   return withSpan(
@@ -34,13 +32,12 @@ export function getRedisModule(): Promise<{
         });
       }
 
-      return { DenoRedis, NodeRedis };
+      return { NodeRedis };
     },
     { "redis.runtime": isDeno ? "deno" : "node" },
   );
 }
 
 export function clearModuleCache(): void {
-  DenoRedis = null;
   NodeRedis = null;
 }
