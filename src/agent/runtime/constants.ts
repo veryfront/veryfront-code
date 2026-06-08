@@ -7,12 +7,12 @@ export const DEFAULT_MAX_STEPS = 20;
 
 /** Max output token limits per model (normalized IDs without `veryfront-cloud/` prefix). */
 const MODEL_MAX_OUTPUT_TOKENS: Record<string, number> = {
-  "anthropic/claude-opus-4-6": 32_768,
-  "anthropic/claude-sonnet-4-6": 16_384,
-  "anthropic/claude-haiku-4-5-20251001": 8_192,
-  "openai/gpt-5.2": 16_384,
+  "anthropic/claude-opus-4-6": 128_000,
+  "anthropic/claude-sonnet-4-6": 64_000,
+  "anthropic/claude-haiku-4-5-20251001": 64_000,
+  "openai/gpt-5.2": 128_000,
   "google-ai-studio/gemini-2.5-pro": 65_536,
-  "google-ai-studio/gemini-2.5-flash": 8_192,
+  "google-ai-studio/gemini-2.5-flash": 65_536,
 };
 
 const MODEL_MAX_OUTPUT_TOKEN_ALIASES: Record<string, string> = {

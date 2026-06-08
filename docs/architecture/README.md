@@ -18,35 +18,31 @@ one runtime concern. Architecture pages do not duplicate the user guides in
 
 ## Page order
 
-| File                                                                                           | Concern                                        |
-| ---------------------------------------------------------------------------------------------- | ---------------------------------------------- |
-| [01-system-overview.md](./01-system-overview.md)                                               | System domains and bridge modules              |
-| [02-request-pipeline.md](./02-request-pipeline.md)                                             | Request handling pipeline                      |
-| [03-rendering-runtime.md](./03-rendering-runtime.md)                                           | Page rendering, SSR, RSC, and HTML assembly    |
-| [04-server-runtime.md](./04-server-runtime.md)                                                 | Dev and production server runtime              |
-| [05-agent-runtime.md](./05-agent-runtime.md)                                                   | Agent execution, hosted runs, and primitives   |
-| [06-ag-ui-transport.md](./06-ag-ui-transport.md)                                               | AG-UI browser transport                        |
-| [07-provider-runtime.md](./07-provider-runtime.md)                                             | Provider, model, and embedding pipeline        |
-| [08-workflow-runtime.md](./08-workflow-runtime.md)                                             | Workflow DAG execution                         |
-| [09-runs-and-tasks.md](./09-runs-and-tasks.md)                                                 | Runs client and task execution                 |
-| [10-mcp-runtime.md](./10-mcp-runtime.md)                                                       | MCP server runtime                             |
-| [11-control-plane-channels.md](./11-control-plane-channels.md)                                 | Signed control-plane channels                  |
-| [12-extension-system.md](./12-extension-system.md)                                             | Extension contracts and lifecycle              |
-| [13-observability.md](./13-observability.md)                                                   | Metrics, traces, logs, profiling, and errors   |
-| [14-build-pipeline.md](./14-build-pipeline.md)                                                 | Production build, bundling, and assets         |
-| [15-runtime-adapters.md](./15-runtime-adapters.md)                                             | Runtime adapter capability boundaries          |
-| [16-discovery-and-registries.md](./16-discovery-and-registries.md)                             | Project primitive discovery and registries     |
-| [17-sandbox-runtime.md](./17-sandbox-runtime.md)                                               | Sandbox session and command execution          |
-| [18-oauth-runtime.md](./18-oauth-runtime.md)                                                   | OAuth provider, state, and token flow          |
-| [19-integration-runtime.md](./19-integration-runtime.md)                                       | Integration catalog and remote tools           |
-| [20-support-matrix.md](./20-support-matrix.md)                                                 | Runtime and capability support matrix          |
-| [21-agent-tool-registration-current-state.md](./21-agent-tool-registration-current-state.md)   | Current agent tool and MCP registration review |
-| [22-agent-tool-registration-target-state.md](./22-agent-tool-registration-target-state.md)     | Target agent tool and MCP registration design  |
-| [23-agent-tool-registration-migration-plan.md](./23-agent-tool-registration-migration-plan.md) | Migration plan for agent tool registration     |
-| [24-context-compaction-current-state.md](./24-context-compaction-current-state.md)             | Current Code and API compaction review         |
-| [25-context-compaction-target-state.md](./25-context-compaction-target-state.md)               | Target context compaction design               |
-| [26-context-compaction-migration-plan.md](./26-context-compaction-migration-plan.md)           | Migration plan for context compaction          |
-| [27-agent-message-stream-dataflow.md](./27-agent-message-stream-dataflow.md)                   | Agent prompt, stream, tool, and replay flow    |
+| File                                                                                         | Concern                                        |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| [01-system-overview.md](./01-system-overview.md)                                             | System domains and bridge modules              |
+| [02-request-pipeline.md](./02-request-pipeline.md)                                           | Request handling pipeline                      |
+| [03-rendering-runtime.md](./03-rendering-runtime.md)                                         | Page rendering, SSR, RSC, and HTML assembly    |
+| [04-server-runtime.md](./04-server-runtime.md)                                               | Dev and production server runtime              |
+| [05-agent-runtime.md](./05-agent-runtime.md)                                                 | Agent execution, hosted runs, and primitives   |
+| [06-ag-ui-transport.md](./06-ag-ui-transport.md)                                             | AG-UI browser transport                        |
+| [07-provider-runtime.md](./07-provider-runtime.md)                                           | Provider, model, and embedding pipeline        |
+| [08-workflow-runtime.md](./08-workflow-runtime.md)                                           | Workflow DAG execution                         |
+| [09-runs-and-tasks.md](./09-runs-and-tasks.md)                                               | Runs client and task execution                 |
+| [10-mcp-runtime.md](./10-mcp-runtime.md)                                                     | MCP server runtime                             |
+| [11-control-plane-channels.md](./11-control-plane-channels.md)                               | Signed control-plane channels                  |
+| [12-extension-system.md](./12-extension-system.md)                                           | Extension contracts and lifecycle              |
+| [13-observability.md](./13-observability.md)                                                 | Metrics, traces, logs, profiling, and errors   |
+| [14-build-pipeline.md](./14-build-pipeline.md)                                               | Production build, bundling, and assets         |
+| [15-runtime-adapters.md](./15-runtime-adapters.md)                                           | Runtime adapter capability boundaries          |
+| [16-discovery-and-registries.md](./16-discovery-and-registries.md)                           | Project primitive discovery and registries     |
+| [17-sandbox-runtime.md](./17-sandbox-runtime.md)                                             | Sandbox session and command execution          |
+| [18-oauth-runtime.md](./18-oauth-runtime.md)                                                 | OAuth provider, state, and token flow          |
+| [19-integration-runtime.md](./19-integration-runtime.md)                                     | Integration catalog and remote tools           |
+| [20-support-matrix.md](./20-support-matrix.md)                                               | Runtime and capability support matrix          |
+| [21-agent-tool-registration-current-state.md](./21-agent-tool-registration-current-state.md) | Current agent tool and MCP registration review |
+| [24-context-compaction-current-state.md](./24-context-compaction-current-state.md)           | Current Code and API compaction review         |
+| [27-agent-message-stream-dataflow.md](./27-agent-message-stream-dataflow.md)                 | Agent prompt, stream, tool, and replay flow    |
 
 ## Runtime boundaries
 
@@ -87,6 +83,8 @@ Each focused page gives the reader enough context to make a safe change:
   implementation details.
 - Runtime behavior, transport protocols, build output, and hosted control-plane
   behavior stay on separate pages.
+- Architecture pages document implemented current state. Target-state designs,
+  migration plans, and release plans belong outside this folder.
 - Primary source areas use markdown links so GitHub readers can open the owning
   code directly.
 - Add Mermaid diagrams only when they clarify ownership, branching, or sequence

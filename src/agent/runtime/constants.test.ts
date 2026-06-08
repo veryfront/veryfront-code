@@ -5,21 +5,21 @@ import { getModelMaxOutputTokens } from "./constants.ts";
 
 describe("getModelMaxOutputTokens", () => {
   it("returns known limit for Anthropic Opus", () => {
-    assertEquals(getModelMaxOutputTokens("anthropic/claude-opus-4-6"), 32_768);
+    assertEquals(getModelMaxOutputTokens("anthropic/claude-opus-4-6"), 128_000);
   });
 
   it("returns known limit for Anthropic Sonnet", () => {
-    assertEquals(getModelMaxOutputTokens("anthropic/claude-sonnet-4-6"), 16_384);
+    assertEquals(getModelMaxOutputTokens("anthropic/claude-sonnet-4-6"), 64_000);
   });
 
   it("strips veryfront-cloud/ prefix before matching", () => {
-    assertEquals(getModelMaxOutputTokens("veryfront-cloud/anthropic/claude-opus-4-6"), 32_768);
-    assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.2"), 16_384);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/anthropic/claude-opus-4-6"), 128_000);
+    assertEquals(getModelMaxOutputTokens("veryfront-cloud/openai/gpt-5.2"), 128_000);
   });
 
   it("uses Gemini limits for direct Google runtime model ids", () => {
     assertEquals(getModelMaxOutputTokens("google/gemini-2.5-pro"), 65_536);
-    assertEquals(getModelMaxOutputTokens("google/gemini-2.5-flash"), 8_192);
+    assertEquals(getModelMaxOutputTokens("google/gemini-2.5-flash"), 65_536);
   });
 
   it("returns undefined for unknown models", () => {
