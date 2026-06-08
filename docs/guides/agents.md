@@ -67,10 +67,14 @@ import { agent } from "veryfront/agent";
 export default agent({
   id: "assistant",
   system: "You are a weather assistant.",
+  temperature: 0,
   tools: { getWeather: true },
   maxSteps: 5,
 });
 ```
+
+`temperature` controls model sampling and defaults to `0` for deterministic
+agent runs.
 
 `maxSteps` limits how many tool-call iterations the agent can perform per
 request. See [Tools](./tools.md) for how to define `getWeather`.
@@ -271,6 +275,7 @@ export default agent({
 | `providerTools`       | `string[]`                                                                                             | Provider-executed tools such as `web_search`                                 |
 | `mcpServers`          | `AgentMcpServerConfig[]`                                                                               | Remote MCP-compatible tool servers                                           |
 | `skills`              | `true \| string[]`                                                                                     | Enable all skills (`true`) or selected skill IDs                             |
+| `temperature`         | `number`                                                                                               | Sampling temperature for model generation (default: `0`)                     |
 | `maxSteps`            | `number`                                                                                               | Max tool-call iterations per request                                         |
 | `memory`              | `MemoryConfig`                                                                                         | Conversation memory settings                                                 |
 | `streaming`           | `boolean`                                                                                              | Enable streaming (default: `true`)                                           |

@@ -226,6 +226,7 @@ function createRuntimeAgentConfig(input: {
     providerTools: input.toolAssembly.providerToolNames,
     __vfRemoteToolSources: input.toolAssembly.remoteToolSources,
     __vfAllowedRemoteTools: input.toolAssembly.compatibleRemoteToolNames,
+    temperature: input.options.temperature,
     maxSteps: input.options.maxSteps ?? 50,
     resolveModelTransport: ({ resolvedModel }) => {
       const providerOptions = resolveVeryfrontCloudThinkingProviderOptions(

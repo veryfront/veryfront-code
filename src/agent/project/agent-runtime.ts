@@ -90,6 +90,9 @@ export async function createRuntimeAgentDefinitionFromAgent(
     description: runtimeAgent.config.description ?? "",
     instructions: await resolveAgentSystem(runtimeAgent.config.system),
     model: runtimeAgent.config.model,
+    ...(runtimeAgent.config.temperature === undefined
+      ? {}
+      : { temperature: runtimeAgent.config.temperature }),
     maxSteps: runtimeAgent.config.maxSteps,
   };
 }

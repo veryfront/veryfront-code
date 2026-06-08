@@ -33,6 +33,7 @@ export const getRuntimeAgentMarkdownDefinitionSchema = defineSchema((v) =>
     instructions: v.string(),
     thinking: getRuntimeAgentThinkingConfigSchema().optional(),
     model: v.string().min(1).optional(),
+    temperature: v.number().min(0).max(2).optional(),
     maxSteps: v.number().optional(),
     providerTools: v.array(v.string().min(1)).optional(),
   })
@@ -113,6 +114,7 @@ export function parseRuntimeAgentMarkdownDefinition(
   const description = typeof attrs.description === "string" ? attrs.description : "";
   const model = typeof attrs.model === "string" && attrs.model.trim() ? attrs.model : undefined;
   const thinking = parseThinking(attrs.thinking);
+  const temperature = typeof attrs.temperature === "number" ? attrs.temperature : undefined;
   const maxSteps = typeof attrs["max-steps"] === "number" ? attrs["max-steps"] : undefined;
   const providerTools = parseProviderTools(attrs["provider-tools"]);
 
@@ -123,6 +125,7 @@ export function parseRuntimeAgentMarkdownDefinition(
     instructions: body.trim(),
     ...(model ? { model } : {}),
     ...(thinking ? { thinking } : {}),
+    ...(temperature === undefined ? {} : { temperature }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(providerTools ? { providerTools } : {}),
   });

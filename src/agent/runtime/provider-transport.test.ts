@@ -71,6 +71,7 @@ describe("agent provider transport hooks", () => {
     });
 
     assertExists(captured.generateOptions);
+    assertEquals(captured.generateOptions.temperature, 0);
     assertEquals(
       new Headers(captured.generateOptions.headers as HeadersInit).get("Authorization"),
       "Bearer vf_test",
@@ -78,6 +79,40 @@ describe("agent provider transport hooks", () => {
     assertEquals(captured.generateOptions.providerOptions, {
       veryfront: { projectSlug: "demo-project" },
     });
+  });
+
+  it("uses the agent-configured temperature for generate()", async () => {
+    const captured: {
+      generateOptions?: Record<string, unknown>;
+    } = {};
+
+    const transportModel: ModelRuntime = {
+      provider: "hosted",
+      modelId: "hosted/gateway-model",
+      async doGenerate(options: unknown) {
+        captured.generateOptions = options as Record<string, unknown>;
+        return {
+          content: [{ type: "text", text: "custom temperature" }],
+          finishReason: "stop",
+          usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        };
+      },
+      async doStream() {
+        return { stream: createTextStream([{ type: "finish" }]) };
+      },
+    };
+
+    const assistant = agent({
+      model: "host/test-model",
+      system: "You are a helpful assistant.",
+      temperature: 0.2,
+      resolveModelTransport: () => ({ model: transportModel }),
+    });
+
+    await assistant.generate({ input: "Hello" });
+
+    assertExists(captured.generateOptions);
+    assertEquals(captured.generateOptions.temperature, 0.2);
   });
 
   it("lets hosts attach request-aware transport options while still using the registered provider runtime for stream()", async () => {

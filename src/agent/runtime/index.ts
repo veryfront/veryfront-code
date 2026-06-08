@@ -1011,7 +1011,7 @@ export class AgentRuntime {
             }),
             experimental_repairToolCall: repairToolCall,
             maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
-            temperature: DEFAULT_TEMPERATURE,
+            temperature: this.resolveTemperature(),
             ...(headers ? { headers } : {}),
             ...(providerOptions ? { providerOptions } : {}),
           });
@@ -1373,7 +1373,7 @@ export class AgentRuntime {
         tools: runtimeTools,
         experimental_repairToolCall: repairToolCall,
         maxOutputTokens: this.resolveMaxOutputTokens(effectiveModel, maxOutputTokensOverride),
-        temperature: DEFAULT_TEMPERATURE,
+        temperature: this.resolveTemperature(),
         ...(headers ? { headers } : {}),
         ...(providerOptions ? { providerOptions } : {}),
         abortSignal,
@@ -1779,6 +1779,10 @@ export class AgentRuntime {
   private computeMaxSteps(platformLimit: number): number {
     const edgeMaxSteps = this.config.edge?.enabled ? this.config.edge.maxSteps : undefined;
     return getMaxSteps(this.config.maxSteps, edgeMaxSteps, platformLimit);
+  }
+
+  private resolveTemperature(): number {
+    return this.config.temperature ?? DEFAULT_TEMPERATURE;
   }
 
   private resolveMaxOutputTokens(modelString?: string, maxOutputTokensOverride?: number): number {
