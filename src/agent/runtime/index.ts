@@ -1389,6 +1389,21 @@ export class AgentRuntime {
       finalFinishReason = state.finishReason ?? finalFinishReason;
 
       const streamParts: MessagePart[] = [];
+      for (const reasoningPart of state.reasoningParts) {
+        if (
+          reasoningPart.text.length === 0 &&
+          !reasoningPart.signature &&
+          !reasoningPart.redactedData
+        ) {
+          continue;
+        }
+        streamParts.push({
+          type: "reasoning",
+          ...(reasoningPart.text.length > 0 ? { text: reasoningPart.text } : {}),
+          ...(reasoningPart.signature ? { signature: reasoningPart.signature } : {}),
+          ...(reasoningPart.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
+        });
+      }
       if (state.accumulatedText) streamParts.push({ type: "text", text: state.accumulatedText });
 
       for (const tc of state.toolCalls.values()) {

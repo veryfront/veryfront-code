@@ -453,6 +453,24 @@ function resolveAnthropicThinkingBudget(
   }
 }
 
+function resolveAnthropicProviderThinkingBudget(
+  options: Record<string, unknown>,
+): number | undefined {
+  const thinking = options.thinking;
+  if (thinking === null || typeof thinking !== "object" || Array.isArray(thinking)) {
+    return undefined;
+  }
+  const record = thinking as Record<string, unknown>;
+  if (record.type !== "enabled") {
+    return undefined;
+  }
+  const budgetTokens = record.budget_tokens;
+  if (typeof budgetTokens === "number" && Number.isFinite(budgetTokens) && budgetTokens >= 1024) {
+    return budgetTokens;
+  }
+  return undefined;
+}
+
 export function buildAnthropicMessagesRequest(
   modelId: string,
   providerName: string,
@@ -469,8 +487,15 @@ export function buildAnthropicMessagesRequest(
 
   const { system, messages } = toAnthropicMessages(options.prompt, systemCacheControl);
   const anthropicTools = toAnthropicTools(options.tools, toolsCacheControl);
+  const rawProviderOptions = readProviderOptions(
+    options.providerOptions,
+    "anthropic",
+    providerName,
+  );
   const thinkingBudget = resolveAnthropicThinkingBudget(options.reasoning);
-  const thinkingEnabled = thinkingBudget !== undefined;
+  const providerThinkingBudget = resolveAnthropicProviderThinkingBudget(rawProviderOptions);
+  const effectiveThinkingBudget = thinkingBudget ?? providerThinkingBudget;
+  const thinkingEnabled = effectiveThinkingBudget !== undefined;
 
   if (options.presencePenalty !== undefined) {
     warnings.push({
@@ -544,7 +569,7 @@ export function buildAnthropicMessagesRequest(
   const baseMaxTokens = resolveAnthropicMaxTokens(modelId, options.maxOutputTokens);
   const maxTokens = thinkingEnabled
     ? Math.min(
-      baseMaxTokens + (thinkingBudget ?? 0),
+      baseMaxTokens + (effectiveThinkingBudget ?? 0),
       getAnthropicModelCapabilities(modelId).maxOutputTokens,
     )
     : baseMaxTokens;
@@ -566,7 +591,9 @@ export function buildAnthropicMessagesRequest(
     ...(options.toolChoice !== undefined
       ? { tool_choice: normalizeAnthropicToolChoice(options.toolChoice) }
       : {}),
-    ...(thinkingEnabled ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } } : {}),
+    ...(thinkingBudget !== undefined
+      ? { thinking: { type: "enabled", budget_tokens: thinkingBudget } }
+      : {}),
     ...(typeof options.userId === "string" && options.userId.length > 0
       ? { metadata: { user_id: options.userId } }
       : {}),
@@ -576,6 +603,6 @@ export function buildAnthropicMessagesRequest(
     ...(options.anthropicContainer !== undefined ? { container: options.anthropicContainer } : {}),
   };
 
-  Object.assign(body, readProviderOptions(options.providerOptions, "anthropic", providerName));
+  Object.assign(body, rawProviderOptions);
   return body;
 }

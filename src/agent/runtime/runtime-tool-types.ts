@@ -62,7 +62,7 @@ export type RuntimeStreamPart =
   | { type: "text-delta"; text: string }
   | { type: "reasoning-start"; id: string }
   | { type: "reasoning-delta"; id: string; delta: string }
-  | { type: "reasoning-end"; id: string }
+  | { type: "reasoning-end"; id: string; signature?: string; redactedData?: string }
   | {
     type: `data-${string}`;
     data: unknown;

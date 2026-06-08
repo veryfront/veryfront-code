@@ -149,7 +149,7 @@ describe("use-chat streaming handler", () => {
         { type: "reasoning-start", id: "r1" },
         { type: "reasoning-delta", id: "r1", delta: "think " },
         { type: "reasoning-delta", id: "r1", delta: "more" },
-        { type: "reasoning-end", id: "r1" },
+        { type: "reasoning-end", id: "r1", signature: "sig_123" },
         { type: "message-finish" },
       ]),
       rec.callbacks,
@@ -158,6 +158,7 @@ describe("use-chat streaming handler", () => {
     assertExists(reasoning);
     assertEquals((reasoning as { text: string }).text, "think more");
     assertEquals((reasoning as { state: string }).state, "done");
+    assertEquals((reasoning as { signature: string }).signature, "sig_123");
   });
 
   it("forwards data events using data field then value fallback", async () => {

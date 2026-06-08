@@ -18,6 +18,8 @@ export interface ChatTextPart {
 export interface ChatReasoningPart {
   type: "reasoning";
   text: string;
+  signature?: string;
+  redactedData?: string;
   state?: ChatPartState;
 }
 
@@ -199,6 +201,8 @@ export type ChatStreamEvent =
   | {
     type: "reasoning-end";
     id: string;
+    signature?: string;
+    redactedData?: string;
   }
   | ({
     type: "tool-input-start";
@@ -346,7 +350,12 @@ export type ChatUiMessageChunk<TMessageMetadata = ChatMessageMetadata> =
   }
   | IdChunk<"reasoning-start">
   | IdDeltaChunk<"reasoning-delta">
-  | IdChunk<"reasoning-end">
+  | {
+    type: "reasoning-end";
+    id: string;
+    signature?: string;
+    redactedData?: string;
+  }
   | IdChunk<"text-start">
   | IdDeltaChunk<"text-delta">
   | IdChunk<"text-end">

@@ -46,6 +46,7 @@ one runtime concern. Architecture pages do not duplicate the user guides in
 | [24-context-compaction-current-state.md](./24-context-compaction-current-state.md)             | Current Code and API compaction review         |
 | [25-context-compaction-target-state.md](./25-context-compaction-target-state.md)               | Target context compaction design               |
 | [26-context-compaction-migration-plan.md](./26-context-compaction-migration-plan.md)           | Migration plan for context compaction          |
+| [27-agent-message-stream-dataflow.md](./27-agent-message-stream-dataflow.md)                   | Agent prompt, stream, tool, and replay flow    |
 
 ## Runtime boundaries
 

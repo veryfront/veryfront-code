@@ -91,6 +91,12 @@ export const getMessagePartSchema = defineSchema((v) =>
       type: v.literal("text"),
       text: v.string(),
     }),
+    v.object({
+      type: v.literal("reasoning"),
+      text: v.string().optional(),
+      signature: v.string().optional(),
+      redactedData: v.string().optional(),
+    }),
     getToolCallPartSchema(),
     inlineToolCallPartShape(v),
     getToolResultPartSchema(),

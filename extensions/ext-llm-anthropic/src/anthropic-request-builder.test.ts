@@ -215,6 +215,40 @@ describe("ext-llm-anthropic/anthropic-request-builder", () => {
     ]);
   });
 
+  it("treats provider-option thinking as enabled while shaping sampling settings", () => {
+    const prompt: RuntimePromptMessage[] = [
+      { role: "user", content: [{ type: "text", text: "Think carefully." }] },
+    ];
+    const warnings = createWarningCollector();
+
+    const body = buildAnthropicMessagesRequest(
+      "claude-sonnet-4-6",
+      "anthropic",
+      {
+        prompt,
+        maxOutputTokens: 4096,
+        temperature: 0.2,
+        topP: 0.9,
+        providerOptions: {
+          anthropic: {
+            thinking: { type: "enabled", budget_tokens: 2048 },
+          },
+        },
+      },
+      false,
+      warnings,
+    );
+
+    assertEquals(body.temperature, undefined);
+    assertEquals(body.top_p, undefined);
+    assertEquals(body.thinking, { type: "enabled", budget_tokens: 2048 });
+    assertEquals(body.max_tokens, 6144);
+    assertEquals(warnings.drain().map((warning) => warning.setting), [
+      "temperature",
+      "topP",
+    ]);
+  });
+
   it("compacts completed historical tool rounds before replaying later user turns", () => {
     const prompt: RuntimePromptMessage[] = [
       { role: "user", content: [{ type: "text", text: "Build a briefing." }] },

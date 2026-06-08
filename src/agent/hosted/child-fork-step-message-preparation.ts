@@ -4,6 +4,10 @@ import {
   type AgentRuntimeMessagePart,
   convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
+  getAgentRuntimeReasoningPart,
+  getAgentRuntimeTextPart,
+  getAgentRuntimeToolCallPart,
+  getAgentRuntimeToolResultPart,
 } from "../runtime/message-adapter.ts";
 import type { Message as AgentMessage, MessagePart } from "../schemas/index.ts";
 
@@ -30,40 +34,46 @@ export type HostedChildForkRuntimeStepMessages = {
 function convertAgentRuntimePartToChildForkMessagePart(
   part: AgentRuntimeMessagePart,
 ): MessagePart {
-  if ("text" in part) {
-    return {
-      type: "text",
-      text: part.text,
-    };
+  const textPart = getAgentRuntimeTextPart(part);
+  if (textPart) {
+    return textPart;
   }
 
-  if ("result" in part) {
+  const reasoningPart = getAgentRuntimeReasoningPart(part);
+  if (reasoningPart) {
+    return reasoningPart;
+  }
+
+  const toolResultPart = getAgentRuntimeToolResultPart(part);
+  if (toolResultPart) {
     return {
       type: "tool-result",
-      toolCallId: part.toolCallId,
-      toolName: part.toolName,
-      result: part.result,
+      toolCallId: toolResultPart.toolCallId,
+      toolName: toolResultPart.toolName,
+      result: toolResultPart.output,
     };
   }
 
-  if ("toolCallId" in part) {
+  const toolCallPart = getAgentRuntimeToolCallPart(part);
+  if (toolCallPart) {
     return {
-      type: `tool-${part.toolName}`,
-      toolCallId: part.toolCallId,
-      toolName: part.toolName,
-      args: part.args,
+      type: `tool-${toolCallPart.toolName}`,
+      toolCallId: toolCallPart.toolCallId,
+      toolName: toolCallPart.toolName,
+      args: toolCallPart.input,
     };
   }
 
-  // image/file parts have no equivalent in the child-fork AgentMessage schema — render as a placeholder
-  if (part.type === "image" || part.type === "file") {
+  if (
+    (part.type === "image" || part.type === "file") &&
+    "mediaType" in part &&
+    typeof part.mediaType === "string"
+  ) {
+    // Image/file parts have no equivalent in the child-fork AgentMessage schema.
     return { type: "text", text: `[file: ${part.mediaType}]` };
   }
 
-  const _exhaustive: never = part;
-  throw new Error(
-    `Unhandled AgentRuntimeMessagePart type: ${String((_exhaustive as { type: unknown }).type)}`,
-  );
+  throw new Error(`Unhandled AgentRuntimeMessagePart type: ${String(part.type)}`);
 }
 
 /** Convert compacted provider messages to child fork runtime messages. */

@@ -77,6 +77,8 @@ export type ChatTextUiPart = {
 export type ChatReasoningUiPart = {
   type: "reasoning";
   text: string;
+  signature?: string;
+  redactedData?: string;
 };
 
 /** Public API contract for chat step start UI part. */
@@ -193,7 +195,9 @@ export type ChatModelTextPart = {
 /** Provider model message part that carries reasoning text. */
 export type ChatModelReasoningPart = {
   type: "reasoning";
-  text: string;
+  text?: string;
+  signature?: string;
+  redactedData?: string;
 };
 
 /** Public API contract for chat model file part. */
@@ -455,6 +459,8 @@ const getChatReasoningUiPartSchema = defineSchema((v) =>
   v.object({
     type: v.literal("reasoning"),
     text: v.string(),
+    signature: v.string().optional(),
+    redactedData: v.string().optional(),
   }).strip()
 );
 

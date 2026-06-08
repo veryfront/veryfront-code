@@ -68,6 +68,12 @@ function agentRuntimeTextPart(text: string): AgentRuntimeMessagePart {
   return { type: "text", text };
 }
 
+function isRuntimeTextPart(
+  part: AgentRuntimeMessagePart | undefined,
+): part is { type: "text"; text: string } {
+  return part?.type === "text" && "text" in part && typeof part.text === "string";
+}
+
 function agentRuntimeToolCallPart(
   args: Record<string, unknown>,
   type = "tool-call",
@@ -114,7 +120,7 @@ describe("agent runtime message adapter", () => {
     ]);
   });
 
-  it("ignores reasoning-only parts when converting agent runtime messages", () => {
+  it("preserves reasoning parts when converting provider messages into agent runtime messages", () => {
     const agentRuntimeMessages = convertProviderMessagesToAgentRuntimeMessages([
       providerMessage({
         role: "assistant",
@@ -122,13 +128,17 @@ describe("agent runtime message adapter", () => {
           {
             type: "reasoning",
             text: "Hidden thinking",
+            signature: "sig_123",
           },
           providerTextPart("Visible answer"),
         ],
       }),
     ]);
 
-    assertEquals(agentRuntimeMessages[0]?.parts, [agentRuntimeTextPart("Visible answer")]);
+    assertEquals(agentRuntimeMessages[0]?.parts, [
+      { type: "reasoning", text: "Hidden thinking", signature: "sig_123" },
+      agentRuntimeTextPart("Visible answer"),
+    ]);
   });
 
   it("passes image and file parts with URLs as native AgentRuntimeMessage parts", () => {
@@ -254,7 +264,7 @@ describe("agent runtime message adapter", () => {
     assertEquals(agentRuntimeMessages[0]?.parts.length, 1);
     const firstPart = agentRuntimeMessages[0]?.parts[0];
     assertEquals(firstPart?.type, "text");
-    if (firstPart && "text" in firstPart) {
+    if (isRuntimeTextPart(firstPart)) {
       assertStringIncludes(firstPart.text, "<uploaded_files>");
       assertStringIncludes(firstPart.text, "diagram.png");
     }
@@ -324,6 +334,29 @@ describe("agent runtime message adapter", () => {
         role: "tool",
         content: [
           providerToolResultPart(jsonOutput({ matches: 2 })),
+        ],
+      },
+    ]);
+  });
+
+  it("preserves reasoning replay metadata when replaying agent runtime messages", () => {
+    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([
+      agentRuntimeMessage(
+        "assistant",
+        [
+          { type: "reasoning", text: "Checked evidence.", signature: "sig_123" },
+          agentRuntimeTextPart("Done."),
+        ],
+        0,
+      ),
+    ]);
+
+    assertEquals(providerMessages, [
+      {
+        role: "assistant",
+        content: [
+          { type: "reasoning", text: "Checked evidence.", signature: "sig_123" },
+          providerTextPart("Done."),
         ],
       },
     ]);

@@ -58,12 +58,14 @@ function addReasoningParts(
   orderedParts: OrderedPart[],
   reasoningBlocks: Map<string, OrderedReasoning>,
 ): void {
-  for (const { order, text, isComplete } of reasoningBlocks.values()) {
+  for (const { order, text, signature, redactedData, isComplete } of reasoningBlocks.values()) {
     orderedParts.push({
       order,
       part: {
         type: "reasoning",
         text,
+        ...(typeof signature === "string" ? { signature } : {}),
+        ...(typeof redactedData === "string" ? { redactedData } : {}),
         state: isComplete ? "done" : "streaming",
       },
     });

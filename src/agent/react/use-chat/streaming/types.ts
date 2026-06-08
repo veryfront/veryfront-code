@@ -22,6 +22,8 @@ export interface StreamingToolCall {
 export interface StreamingReasoning {
   id: string;
   text: string;
+  signature?: string;
+  redactedData?: string;
   isComplete: boolean;
 }
 
