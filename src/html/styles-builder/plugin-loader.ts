@@ -102,6 +102,30 @@ function encodeToBase64(source: string): string {
   return btoa(binary);
 }
 
+/**
+ * esm.sh bundles can contain root-relative nested imports. Once the bundle is
+ * written to a temp file, Deno resolves those as local file paths unless they
+ * are normalized back to esm.sh URLs.
+ */
+export function rewriteEsmShRootRelativeImports(code: string): string {
+  return code
+    .replace(
+      /\b(from\s*)(["'])(\/(?!\/)[^"']+)\2/g,
+      (_match, prefix: string, quote: string, specifier: string) =>
+        `${prefix}${quote}https://esm.sh${specifier}${quote}`,
+    )
+    .replace(
+      /\b(import\s*)(["'])(\/(?!\/)[^"']+)\2/g,
+      (_match, prefix: string, quote: string, specifier: string) =>
+        `${prefix}${quote}https://esm.sh${specifier}${quote}`,
+    )
+    .replace(
+      /\b(import\s*\(\s*)(["'])(\/(?!\/)[^"']+)\2/g,
+      (_match, prefix: string, quote: string, specifier: string) =>
+        `${prefix}${quote}https://esm.sh${specifier}${quote}`,
+    );
+}
+
 async function importBundledModule(code: string): Promise<unknown> {
   if (!isRealDenoRuntime()) {
     const dataUrl = `data:text/javascript;base64,${encodeToBase64(code)}`;
@@ -157,6 +181,7 @@ export async function loadModuleFromEsmSh(packageName: string): Promise<unknown>
     throw NETWORK_ERROR.create({ detail: `Failed to fetch bundle: ${bundleResponse.status}` });
   }
   let code = await bundleResponse.text();
+  code = rewriteEsmShRootRelativeImports(code);
 
   // Step 3: Verify it's actually JavaScript (not an HTML error page)
   if (code.trimStart().startsWith("<!") || code.trimStart().startsWith("<html")) {
