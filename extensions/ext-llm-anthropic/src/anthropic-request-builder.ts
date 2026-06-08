@@ -394,8 +394,11 @@ function toAnthropicTools(
 function getAnthropicModelCapabilities(
   modelId: string,
 ): { maxOutputTokens: number; isKnownModel: boolean } {
-  if (modelId.includes("claude-sonnet-4-6") || modelId.includes("claude-opus-4-6")) {
+  if (modelId.includes("claude-opus-4-6")) {
     return { maxOutputTokens: 128_000, isKnownModel: true };
+  }
+  if (modelId.includes("claude-sonnet-4-6")) {
+    return { maxOutputTokens: 64_000, isKnownModel: true };
   }
   if (
     modelId.includes("claude-sonnet-4-5") ||

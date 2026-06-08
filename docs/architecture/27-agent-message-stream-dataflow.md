@@ -39,6 +39,52 @@ interrupts assistant text, the runtime commits the tool call, runs the tool, and
 then sends a new provider request containing the assistant tool call and the
 tool result needed for the model to continue.
 
+## End to end sequence
+
+The normal hosted chat path is:
+
+1. The browser or host submits a prompt and selected agent options.
+2. Hosted runtime code resolves the model, temperature, max steps, thinking,
+   cloud gateway transport, and provider options.
+3. Agent runtime converts the conversation into provider-model messages and
+   converts visible tools into runtime tool definitions.
+4. `generateText` or `streamText` calls the provider runtime with model,
+   system, messages, tools, max output tokens, temperature, headers, and
+   provider options.
+5. The provider extension builds the native request body for Anthropic,
+   OpenAI-compatible, Google, or Kimi-compatible APIs.
+6. Provider stream frames are parsed into provider-neutral runtime parts.
+7. The runtime stream handler turns those parts into chat stream chunks and
+   updates in-memory text, reasoning, tool, usage, and finish accumulators.
+8. The browser stream assembler turns chunks into ordered UI message parts.
+9. At step end, the runtime materializes one assistant message and durable
+   replay metadata from the accumulators.
+10. If a local tool call was committed, the tool result is appended and the
+    next provider request is built from the updated explicit transcript.
+
+There is no hidden provider session in this flow. Continuity comes from the
+messages and provider replay metadata Veryfront sends on each model call.
+
+## Runtime option resolution
+
+Default runtime values are intentionally deterministic. `AGENT_DEFAULTS` sets
+temperature to `0`, `DEFAULT_TEMPERATURE` re-exports that value, and
+`AgentRuntime.resolveTemperature()` falls back to it when an agent does not set
+`temperature`.
+
+Hosted runs keep that rule. `src/agent/hosted/runtime-request-config.ts` takes
+temperature from the agent config, not from the transient run request, and
+`src/agent/hosted/default-chat-runtime.ts` passes it into the runtime config.
+
+Veryfront Cloud Anthropic thinking is the important exception. Anthropic
+extended thinking requests are built through provider options that include
+`thinking: { type: "enabled", budget_tokens: N }` and `temperature: 1`. The
+Anthropic request builder drops normal sampling parameters when thinking is
+enabled, then applies provider options. That means the general Veryfront default
+is still `0`, but Anthropic thinking requests intentionally run with
+`temperature: 1` for provider compatibility. If a caller needs strict
+temperature `0` on Anthropic, thinking must be disabled for that request.
+
 ## Stream shape
 
 Provider adapters translate provider-specific streaming frames into
@@ -100,6 +146,22 @@ Provider-native tools are executed by the provider:
 This keeps web search, web fetch, code execution, and similar provider tools
 visible without conflating them with project-defined tools.
 
+## Message part taxonomy
+
+The chat layer carries two related part shapes:
+
+- Provider model parts are the replayable prompt facts sent back to model
+  providers. They include text, reasoning with signatures or redacted data,
+  tool calls, tool results, and provider options.
+- UI parts are renderable browser state. They include text, reasoning, source
+  parts, data parts, dynamic tool parts, and named tool parts with lifecycle
+  states such as pending, input streaming, input available, output available,
+  output error, and output denied.
+
+The stream handler bridges those shapes. It can emit partial UI chunks while a
+provider streams JSON tool input, then materialize a stable replay part only
+when the tool input is complete enough to commit.
+
 ## Child agent runs
 
 `invoke_agent` creates an isolated child run. The child receives its own
@@ -146,6 +208,55 @@ then replay that summary as ordinary prompt state. It should not rely on hidden
 provider memory. Attachments with large binary payloads should be represented by
 stable references or summaries rather than repeated inline data.
 
+## Veryfront Cloud model catalog audit
+
+The local catalog is in
+[`src/provider/veryfront-cloud/model-catalog.ts`](../../src/provider/veryfront-cloud/model-catalog.ts).
+The gateway routes are in
+[`src/provider/veryfront-cloud/shared.ts`](../../src/provider/veryfront-cloud/shared.ts)
+and the provider runtime switch is in
+[`src/provider/veryfront-cloud/provider.ts`](../../src/provider/veryfront-cloud/provider.ts).
+
+| Alias              | Upstream model ID                     | Runtime path                                                 | Verified provider contract                                                                                                                                  | Veryfront integration status                                                                                                                                                                                            |
+| ------------------ | ------------------------------------- | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `opus`             | `anthropic/claude-opus-4-6`           | Anthropic Messages API through `ai/gateway/anthropic/v1`     | Anthropic lists Opus 4.6 with 128k synchronous max output and manual extended thinking still functional but deprecated in favor of adaptive thinking.       | Catalog enables manual thinking with 2048 budget tokens and provider options set temperature to 1. Runtime max output cap is 128k.                                                                                      |
+| `sonnet`           | `anthropic/claude-sonnet-4-6`         | Anthropic Messages API through `ai/gateway/anthropic/v1`     | Anthropic lists Sonnet 4.6 with 64k synchronous max output and manual extended thinking still functional but deprecated in favor of adaptive thinking.      | Catalog enables manual thinking with 2048 budget tokens and provider options set temperature to 1. Runtime and Anthropic request caps are 64k.                                                                          |
+| `haiku`            | `anthropic/claude-haiku-4-5-20251001` | Anthropic Messages API through `ai/gateway/anthropic/v1`     | Anthropic lists Haiku 4.5 with 64k synchronous max output and extended thinking support.                                                                    | Catalog enables manual thinking with 1024 budget tokens. Runtime max output cap is 64k.                                                                                                                                 |
+| `gpt-5.2`          | `openai/gpt-5.2`                      | OpenAI-compatible runtime through `ai/gateway/openai/v1`     | OpenAI lists GPT-5.2 with Chat Completions and Responses endpoints, streaming, function calling, structured outputs, reasoning tokens, and 128k max output. | Catalog routes through the OpenAI runtime. Runtime max output cap is 128k.                                                                                                                                              |
+| `gemini-2.5-pro`   | `google-ai-studio/gemini-2.5-pro`     | Google runtime through `ai/gateway/google/v1beta`            | Google lists Gemini 2.5 Pro with 65,536 output tokens, function calling, structured outputs, thinking, and search grounding.                                | Catalog aliases `google-ai-studio` to the Google provider. Runtime max output cap is 65,536.                                                                                                                            |
+| `gemini-2.5-flash` | `google-ai-studio/gemini-2.5-flash`   | Google runtime through `ai/gateway/google/v1beta`            | Google lists Gemini 2.5 Flash with 65,536 output tokens, function calling, structured outputs, thinking, and search grounding.                              | Catalog aliases `google-ai-studio` to the Google provider. Runtime max output cap is 65,536.                                                                                                                            |
+| `kimi-k2.5`        | `moonshotai/kimi-k2.5`                | OpenAI-compatible runtime through `ai/gateway/moonshotai/v1` | Kimi documents OpenAI-compatible chat completions, streaming, tool use, and K2.5 fixed temperature requirements.                                            | Catalog routes Moonshot through the OpenAI runtime. Fixed-sampling detection should prevent generic temperature sampling from being sent for Kimi K2.5 unless the gateway deliberately adds provider-specific handling. |
+
+The audit found and fixed two local integration drift issues:
+
+- Runtime default max output caps were stale for GPT-5.2, Gemini 2.5 Flash,
+  and current Anthropic models, which could silently cap completions below the
+  provider-supported limits.
+- The Anthropic request builder grouped Sonnet 4.6 with Opus 4.6 and could
+  default or clamp Sonnet 4.6 to 128k. Sonnet 4.6 is now capped at 64k.
+
+## Provider integration notes
+
+OpenAI and Moonshot use OpenAI-compatible request and stream shapes. Local
+function tools become OpenAI-style tools, streamed tool calls become runtime
+tool input chunks, and tool outputs are replayed as explicit tool messages.
+OpenAI Responses support can preserve reasoning-specific provider metadata when
+that runtime is selected.
+
+Anthropic uses Messages API request and stream shapes. Text, thinking,
+redacted thinking, `tool_use`, and `tool_result` blocks are converted into
+Veryfront model and UI parts. Thinking signatures and redacted payloads are
+replay metadata and must not be dropped during compaction.
+
+Google uses `generateContent` and `streamGenerateContent` shapes. Local tools
+are mapped to `functionDeclarations`, model function calls are returned to the
+runtime as tool input parts, and tool outputs are replayed as
+`functionResponse` parts on the following request.
+
+Provider-native tools are only native when their IDs use a provider prefix such
+as `openai.*`, `anthropic.*`, or `google.*`. Unprefixed project tools remain
+local Veryfront tools.
+
 ## Failure model
 
 Technical failures and business failures are different runtime facts.
@@ -171,3 +282,19 @@ domain outcome as an infrastructure failure.
 - Run hosted child-run tests when changing `invoke_agent` or child fork inputs.
 - Verify that provider replay metadata remains non-display state but survives
   request replay.
+- Re-check provider model catalogs before changing
+  `MODEL_MAX_OUTPUT_TOKENS`, provider request builders, or Veryfront Cloud
+  model aliases.
+
+## Research sources
+
+- [Anthropic models overview](https://docs.anthropic.com/en/docs/about-claude/models/overview)
+- [Anthropic extended thinking](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking)
+- [Anthropic tool use](https://docs.anthropic.com/en/docs/agents-and-tools/tool-use/overview)
+- [OpenAI GPT-5.2 model page](https://platform.openai.com/docs/models/gpt-5.2)
+- [OpenAI function calling](https://platform.openai.com/docs/guides/function-calling)
+- [Google Gemini 2.5 Pro model page](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-pro)
+- [Google Gemini 2.5 Flash model page](https://ai.google.dev/gemini-api/docs/models/gemini-2.5-flash)
+- [Google function calling](https://ai.google.dev/gemini-api/docs/function-calling)
+- [Kimi API docs index](https://platform.kimi.ai/docs/llms.txt)
+- [Kimi OpenAI migration guide](https://platform.kimi.ai/docs/guide/migrating-from-openai-to-kimi)

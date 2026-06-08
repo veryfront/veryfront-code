@@ -1039,9 +1039,9 @@ describe("anthropic-provider", () => {
       assertEquals((body as { max_tokens: number }).max_tokens, 128_000);
     });
 
-    it("defaults Sonnet 4.6 to 128k when caller omits maxOutputTokens", async () => {
+    it("defaults Sonnet 4.6 to 64k when caller omits maxOutputTokens", async () => {
       const body = await generateWith("claude-sonnet-4-6");
-      assertEquals((body as { max_tokens: number }).max_tokens, 128_000);
+      assertEquals((body as { max_tokens: number }).max_tokens, 64_000);
     });
 
     it("defaults Sonnet/Opus/Haiku 4.5 to 64k when caller omits maxOutputTokens", async () => {
@@ -1057,7 +1057,7 @@ describe("anthropic-provider", () => {
 
     it("clamps caller-provided maxOutputTokens at the model ceiling for known models", async () => {
       const body = await generateWith("claude-sonnet-4-6", 999_999);
-      assertEquals((body as { max_tokens: number }).max_tokens, 128_000);
+      assertEquals((body as { max_tokens: number }).max_tokens, 64_000);
     });
 
     it("passes through maxOutputTokens unchanged for unknown models", async () => {

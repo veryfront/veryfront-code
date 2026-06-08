@@ -268,8 +268,8 @@ A targeted scan of canonical sibling repos found these dependents:
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `veryfront-agent`       | [`main.ts`](../../../veryfront-agent/main.ts) uses `mcpServers: [veryfrontMcpServer(), veryfrontMcpServer('studio')]`.                                                                                                                                                          | Product agent code needs a direct migration to `veryfrontApiMcpServer()` and `veryfrontStudioMcpServer()`.                         |
 | `veryfront-agent`       | [`docs/context-population.md`](../../../veryfront-agent/docs/context-population.md) and [`docs/coding-standards.md`](../../../veryfront-agent/docs/coding-standards.md) describe the current tool population model.                                                             | Product runtime docs must be updated when naming changes.                                                                          |
-| `veryfront-agent-codex` | `src/codexMcpConfig.ts` writes Codex `mcp_servers` entries named `veryfront`, `veryfront_studio`, and `veryfront_agent`.                                                                                                                                                         | Codex adapter naming is already server-centric. Keep this separate from agent runtime naming and do not force the same key casing. |
-| `veryfront-codex-agent` | `src/codexMcpConfig.ts` mirrors the Codex MCP config behavior.                                                                                                                                                                                                                   | Changes to token env vars or server ids must be coordinated across both packages.                                                  |
+| `veryfront-agent-codex` | `src/codexMcpConfig.ts` writes Codex `mcp_servers` entries named `veryfront`, `veryfront_studio`, and `veryfront_agent`.                                                                                                                                                        | Codex adapter naming is already server-centric. Keep this separate from agent runtime naming and do not force the same key casing. |
+| `veryfront-codex-agent` | `src/codexMcpConfig.ts` mirrors the Codex MCP config behavior.                                                                                                                                                                                                                  | Changes to token env vars or server ids must be coordinated across both packages.                                                  |
 | `veryfront-docs`        | [`docs/code/guides/agent-service-runtime.md`](../../../veryfront-docs/docs/code/guides/agent-service-runtime.md), generated API reference, and tool reference mention `mcpServers`, `remoteTools`, `allowedRemoteTools`, `createRemoteMCPToolSource`, and `veryfrontMcpServer`. | Public docs and generated references need replacement guidance and regenerated API tables.                                         |
 | `veryfront-examples`    | Swedish tax and DORA examples use `allowedRemoteTools`.                                                                                                                                                                                                                         | Examples need migration examples for provider tools and remote MCP allowlists.                                                     |
 | `veryfront-studio`      | Storybook MCP docs use client-side `mcpServers` config for local Storybook.                                                                                                                                                                                                     | Do not conflate external MCP client config names with Veryfront agent runtime names.                                               |
@@ -298,10 +298,10 @@ and generated docs first.
   unresolved boolean tool names, which couples request handling to remote tool
   registration semantics.
 
-## Review verdict
+## Current-state conclusion
 
 The system has the right raw parts, but the boundary vocabulary is out of date.
-The target should not introduce a large new framework. It should rename the
-layers, make MCP server config explicit, add simple policy objects for
-filtering and approval, and preserve the existing adapter path while improving
-auth and traceability.
+The main current-state risk is not missing execution capability. It is that
+several config names hide whether a tool is local, provider-executed,
+integration-backed, or MCP-backed, which makes future changes easy to apply at
+the wrong boundary.
