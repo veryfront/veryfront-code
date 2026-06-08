@@ -414,6 +414,15 @@ type PromptSemanticToolCall = {
 
 type PromptRunState = {
   tools: PromptToolState;
+  skills?: Record<
+    string,
+    {
+      status: ToolStatus;
+      callCount: number;
+      source: string;
+      summary: unknown;
+    }
+  >;
   actions?: Record<
     string,
     {
@@ -518,6 +527,7 @@ export function projectCurrentRunToolStateForPrompt(
   state: CurrentRunToolState,
 ): PromptRunState {
   const tools: PromptToolState = {};
+  const skills: NonNullable<PromptRunState["skills"]> = {};
   const actions: PromptRunState["actions"] = {};
 
   for (const [toolName, bucket] of Object.entries(state)) {
@@ -531,11 +541,20 @@ export function projectCurrentRunToolStateForPrompt(
 
       const semantic = getSemanticToolCall({ toolName, call });
       if (semantic) {
-        semanticCalls[semantic.key] = mergeSemanticToolCall(
+        const mergedSemanticCall = mergeSemanticToolCall(
           semanticCalls[semantic.key],
           call,
           semantic.parameters,
         );
+        semanticCalls[semantic.key] = mergedSemanticCall;
+        if (toolName === "load_skill" && semantic.parameters.skillId) {
+          skills[semantic.parameters.skillId] = {
+            status: mergedSemanticCall.status,
+            callCount: mergedSemanticCall.callCount,
+            source: `tools.${toolName}.semanticCalls.${semantic.key}`,
+            summary: mergedSemanticCall.summary,
+          };
+        }
         actions[`${toolName}:${semantic.key}`] = {
           status: call.status,
           source: `tools.${toolName}.semanticCalls.${semantic.key}`,
@@ -554,6 +573,7 @@ export function projectCurrentRunToolStateForPrompt(
 
   return {
     tools,
+    ...(Object.keys(skills).length > 0 ? { skills } : {}),
     ...(Object.keys(actions).length > 0 ? { actions } : {}),
   };
 }
