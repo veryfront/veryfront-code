@@ -456,12 +456,21 @@ function getSemanticToolCall(input: {
         compactStringParameter(input.call.input.stepId);
       const idempotencyKey = compactStringParameter(input.call.input.idempotency_key) ??
         compactStringParameter(input.call.input.idempotencyKey);
-      const keySuffix = stepId
+      const recordId = compactStringParameter(input.call.input.record_id) ??
+        compactStringParameter(input.call.input.recordId) ??
+        compactStringParameter(input.call.input.invoice_id) ??
+        compactStringParameter(input.call.input.invoiceId) ??
+        compactStringParameter(input.call.input.entity_id) ??
+        compactStringParameter(input.call.input.entityId);
+      const keySuffix = recordId
+        ? `:record:${recordId}`
+        : stepId
         ? `:step:${stepId}`
         : idempotencyKey
         ? `:idempotency:${idempotencyKey}`
         : "";
       const parameters: Record<string, string> = { agent_id: agentId };
+      if (recordId) parameters.record_id = recordId;
       if (stepId) parameters.step_id = stepId;
       if (idempotencyKey) parameters.idempotency_key = idempotencyKey;
       return { key: `agent:${agentId}${keySuffix}`, parameters };

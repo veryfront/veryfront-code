@@ -240,6 +240,48 @@ describe("current-run tool state", () => {
     assert(!prompt.includes("invoke-ingest-1"));
   });
 
+  it("keeps repeated delegated agent calls distinct when a record id is provided", () => {
+    const state = createCurrentRunToolState();
+    const now = new Date("2026-01-01T00:00:00.000Z");
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "call_1",
+      toolName: "invoke_agent",
+      input: {
+        agent_id: "payment-approval-agent",
+        invoice_id: "INV-2026-00491",
+        input: "Approve invoice INV-2026-00491",
+      },
+      result: { status: "completed", output: "Approved INV-2026-00491" },
+      now,
+    });
+
+    recordCurrentRunToolResult(state, {
+      toolCallId: "call_2",
+      toolName: "invoke_agent",
+      input: {
+        agent_id: "payment-approval-agent",
+        invoice_id: "INV-2026-00492",
+        input: "Approve invoice INV-2026-00492",
+      },
+      result: { status: "completed", output: "Approved INV-2026-00492" },
+      now,
+    });
+
+    const prompt = appendCurrentRunToolStateToSystemPrompt("Base system", state);
+
+    assertStringIncludes(prompt, '"agent:payment-approval-agent:record:INV-2026-00491"');
+    assertStringIncludes(prompt, '"agent:payment-approval-agent:record:INV-2026-00492"');
+    assertStringIncludes(
+      prompt,
+      '"parameters":{"agent_id":"payment-approval-agent","record_id":"INV-2026-00491"}',
+    );
+    assertStringIncludes(
+      prompt,
+      '"parameters":{"agent_id":"payment-approval-agent","record_id":"INV-2026-00492"}',
+    );
+  });
+
   it("retains Gmail history delta arrays declared as object fields", () => {
     const summary = summarizeToolResultForCurrentRunState("gmail__list_history", {
       history: [
