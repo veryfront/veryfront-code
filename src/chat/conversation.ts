@@ -74,8 +74,9 @@ export const getMessagePartSchema = defineSchema((v) =>
     }),
     v.object({
       type: v.literal("reasoning"),
-      text: v.string(),
+      text: v.string().optional(),
       signature: v.string().optional(),
+      redactedData: v.string().optional(),
     }),
     v.object({
       type: v.literal("citation"),
@@ -187,7 +188,9 @@ export interface TextPartLike {
 /** Reasoning-like provider message part. */
 export interface ReasoningPartLike {
   type: "reasoning";
-  text: string;
+  text?: string;
+  signature?: string;
+  redactedData?: string;
 }
 
 /** Chat UI tool part with a call ID and state. */
@@ -385,7 +388,12 @@ export function toConversationPartsFromUiMessage(message: ChatUiMessage): Messag
     }
 
     if (part.type === "reasoning") {
-      parts.push({ type: "reasoning", text: part.text });
+      parts.push({
+        type: "reasoning",
+        text: part.text,
+        ...(part.signature ? { signature: part.signature } : {}),
+        ...(part.redactedData ? { redactedData: part.redactedData } : {}),
+      });
       continue;
     }
 
@@ -536,7 +544,10 @@ export function isTextPart(value: unknown): value is TextPartLike {
 
 /** Check whether a value is a reasoning part. */
 export function isReasoningPart(value: unknown): value is ReasoningPartLike {
-  return isRecord(value) && value.type === "reasoning" && typeof value.text === "string";
+  return isRecord(value) && value.type === "reasoning" &&
+    (typeof value.text === "string" ||
+      typeof value.signature === "string" ||
+      typeof value.redactedData === "string");
 }
 
 /** Message shape for extract text from. */
@@ -832,7 +843,7 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
   const rawToolNamesById = buildRawToolNameMap(message.parts);
   const assistantContent: Array<
     | { type: "text"; text: string }
-    | { type: "reasoning"; text: string }
+    | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
     | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
     | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> }
   > = [];
@@ -881,7 +892,7 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
   const pushAssistantPart = (
     part:
       | { type: "text"; text: string }
-      | { type: "reasoning"; text: string }
+      | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
       | { type: "file" | "image"; mediaType: string; data: string; filename?: string }
       | { type: "tool-call"; toolCallId: string; toolName: string; input: Record<string, unknown> },
   ) => {
@@ -936,7 +947,12 @@ function convertAssistantMessage(message: ChatUiMessage): ProviderModelMessage[]
     }
 
     if (isReasoningPart(part)) {
-      pushAssistantPart({ type: "reasoning", text: part.text });
+      pushAssistantPart({
+        type: "reasoning",
+        text: part.text,
+        ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
+        ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
+      });
       continue;
     }
 

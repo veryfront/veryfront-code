@@ -56,6 +56,8 @@ export type HostedStreamPartForUiChunkMapping =
   | {
     type: "reasoning-end";
     id: string;
+    signature?: string;
+    redactedData?: string;
   }
   | {
     type: "text-start";
@@ -250,7 +252,12 @@ export function mapHostedStreamPartToChatUiChunks(
         : [];
 
     case "reasoning-end":
-      return [{ type: "reasoning-end", id: options.reasoningMessageId ?? part.id }];
+      return [{
+        type: "reasoning-end",
+        id: options.reasoningMessageId ?? part.id,
+        ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
+        ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
+      }];
 
     case "text-start":
       return [{ type: "text-start", id: options.messageId ?? part.id }];

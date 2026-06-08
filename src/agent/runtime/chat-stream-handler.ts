@@ -55,8 +55,16 @@ export interface StreamingToolResult {
   preliminary?: boolean;
 }
 
+export interface StreamingReasoningPart {
+  id: string;
+  text: string;
+  signature?: string;
+  redactedData?: string;
+}
+
 export interface ChatStreamState {
   accumulatedText: string;
+  reasoningParts: StreamingReasoningPart[];
   finishReason: string | null;
   toolCalls: Map<string, StreamingToolCall>;
   toolResults: StreamingToolResult[];
@@ -277,6 +285,7 @@ function requestStreamIteratorReturn(iterator: AsyncIterator<unknown>): void {
 export function createStreamState(): ChatStreamState {
   return {
     accumulatedText: "",
+    reasoningParts: [],
     finishReason: null,
     toolCalls: new Map(),
     toolResults: [],
@@ -307,6 +316,7 @@ export function processStream(
     let eventCount = 0;
     let textOpen = false;
     let activeReasoningId: string | null = null;
+    const reasoningParts = new Map<string, StreamingReasoningPart>();
     let shouldStopForCommittedLocalToolCall = false;
     let hasActiveLocalToolInput = false;
     const providerExecutedToolNames = new Set(callbacks?.providerExecutedToolNames ?? []);
@@ -354,6 +364,11 @@ export function processStream(
       }
 
       activeReasoningId = reasoningId;
+      if (!reasoningParts.has(reasoningId)) {
+        const part = { id: reasoningId, text: "" };
+        reasoningParts.set(reasoningId, part);
+        state.reasoningParts.push(part);
+      }
       sendSSE(controller, encoder, {
         type: "reasoning-start",
         id: reasoningId,
@@ -365,9 +380,12 @@ export function processStream(
         return;
       }
 
+      const reasoningPart = reasoningParts.get(activeReasoningId);
       sendSSE(controller, encoder, {
         type: "reasoning-end",
         id: activeReasoningId,
+        ...(reasoningPart?.signature ? { signature: reasoningPart.signature } : {}),
+        ...(reasoningPart?.redactedData ? { redactedData: reasoningPart.redactedData } : {}),
       });
       activeReasoningId = null;
     };
@@ -586,10 +604,15 @@ export function processStream(
 
         case "reasoning-delta": {
           closeTextSegment();
-          openReasoningSegment(normalizeReasoningId(typedPart));
+          const reasoningId = normalizeReasoningId(typedPart);
+          openReasoningSegment(reasoningId);
+          const reasoningPart = reasoningParts.get(reasoningId);
+          if (reasoningPart) {
+            reasoningPart.text += typeof typedPart.delta === "string" ? typedPart.delta : "";
+          }
           sendSSE(controller, encoder, {
             type: "reasoning-delta",
-            id: normalizeReasoningId(typedPart),
+            id: reasoningId,
             delta: typeof typedPart.delta === "string" ? typedPart.delta : "",
           });
           break;
@@ -599,6 +622,15 @@ export function processStream(
           closeTextSegment();
           if (activeReasoningId === null) {
             activeReasoningId = normalizeReasoningId(typedPart);
+          }
+          const reasoningPart = reasoningParts.get(activeReasoningId);
+          if (reasoningPart) {
+            if (typeof typedPart.signature === "string") {
+              reasoningPart.signature = typedPart.signature;
+            }
+            if (typeof typedPart.redactedData === "string") {
+              reasoningPart.redactedData = typedPart.redactedData;
+            }
           }
           closeReasoningSegment();
           break;

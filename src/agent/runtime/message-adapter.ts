@@ -15,6 +15,7 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 
 type AgentRuntimeMessageLikePart =
   | { type: "text"; text: string }
+  | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
   | {
     type: string;
     toolCallId: string;
@@ -65,6 +66,7 @@ type AgentRuntimeMessageLikePart =
 /** Public API contract for agent runtime message part. */
 export type AgentRuntimeMessagePart =
   | { type: "text"; text: string }
+  | { type: "reasoning"; text?: string; signature?: string; redactedData?: string }
   | {
     type: string;
     toolCallId: string;
@@ -90,12 +92,19 @@ export interface AgentRuntimeMessage {
 
 interface AgentRuntimeProviderContentParts {
   textParts: ProviderTextPart[];
+  reasoningParts: ProviderReasoningPart[];
   toolCallParts: ProviderToolCallPart[];
   toolResultParts: ChatToolResultPart[];
   fileParts: ChatModelFilePart[];
 }
 
 type ProviderTextPart = { type: "text"; text: string };
+type ProviderReasoningPart = {
+  type: "reasoning";
+  text?: string;
+  signature?: string;
+  redactedData?: string;
+};
 
 type ProviderToolCallPart = {
   type: "tool-call";
@@ -157,7 +166,12 @@ function convertStructuredPart(part: StructuredProviderPart): AgentRuntimeMessag
       return createTextAgentRuntimePart(part.text);
 
     case "reasoning":
-      return null;
+      return {
+        type: "reasoning",
+        ...(typeof part.text === "string" ? { text: part.text } : {}),
+        ...(typeof part.signature === "string" ? { signature: part.signature } : {}),
+        ...(typeof part.redactedData === "string" ? { redactedData: part.redactedData } : {}),
+      };
 
     case "tool-call":
       return {
@@ -301,6 +315,25 @@ export function getAgentRuntimeTextPart(part: unknown): { type: "text"; text: st
     : null;
 }
 
+/** Return a runtime reasoning part when the value carries reasoning replay state. */
+export function getAgentRuntimeReasoningPart(part: unknown): ProviderReasoningPart | null {
+  if (!isRecord(part) || part.type !== "reasoning") {
+    return null;
+  }
+  const text = typeof part.text === "string" ? part.text : undefined;
+  const signature = typeof part.signature === "string" ? part.signature : undefined;
+  const redactedData = typeof part.redactedData === "string" ? part.redactedData : undefined;
+  if (!text && !signature && !redactedData) {
+    return null;
+  }
+  return {
+    type: "reasoning",
+    ...(text ? { text } : {}),
+    ...(signature ? { signature } : {}),
+    ...(redactedData ? { redactedData } : {}),
+  };
+}
+
 /** Return a runtime tool-call part when the value carries a tool call. */
 export function getAgentRuntimeToolCallPart(
   part: unknown,
@@ -380,6 +413,7 @@ function collectAgentRuntimeProviderContentParts(
   parts: ReadonlyArray<AgentRuntimeMessageLikePart>,
 ): AgentRuntimeProviderContentParts {
   const textParts: ProviderTextPart[] = [];
+  const reasoningParts: ProviderReasoningPart[] = [];
   const toolCallParts: ProviderToolCallPart[] = [];
   const toolResultParts: ChatToolResultPart[] = [];
   const fileParts: ChatModelFilePart[] = [];
@@ -388,6 +422,12 @@ function collectAgentRuntimeProviderContentParts(
     const textPart = getAgentRuntimeTextPart(part);
     if (textPart) {
       textParts.push(textPart);
+      continue;
+    }
+
+    const reasoningPart = getAgentRuntimeReasoningPart(part);
+    if (reasoningPart) {
+      reasoningParts.push(reasoningPart);
       continue;
     }
 
@@ -416,7 +456,7 @@ function collectAgentRuntimeProviderContentParts(
     }
   }
 
-  return { textParts, toolCallParts, toolResultParts, fileParts };
+  return { textParts, reasoningParts, toolCallParts, toolResultParts, fileParts };
 }
 
 function createProviderMessageFromAgentRuntimeMessage(
@@ -424,18 +464,18 @@ function createProviderMessageFromAgentRuntimeMessage(
     parts: ReadonlyArray<AgentRuntimeMessageLikePart>;
   },
 ): ProviderModelMessage | null {
-  const { textParts, toolCallParts, toolResultParts, fileParts } =
+  const { textParts, reasoningParts, toolCallParts, toolResultParts, fileParts } =
     collectAgentRuntimeProviderContentParts(message.parts);
 
   switch (message.role) {
     case "assistant":
-      if (textParts.length === 0 && toolCallParts.length === 0) {
+      if (reasoningParts.length === 0 && textParts.length === 0 && toolCallParts.length === 0) {
         return null;
       }
 
       return {
         role: "assistant",
-        content: [...textParts, ...toolCallParts],
+        content: [...reasoningParts, ...textParts, ...toolCallParts],
       };
 
     case "tool":

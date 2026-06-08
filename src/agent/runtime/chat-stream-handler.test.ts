@@ -64,6 +64,7 @@ describe("chat-stream-handler", () => {
     it("returns a clean initial state", () => {
       const state = createStreamState();
       assertEquals(state.accumulatedText, "");
+      assertEquals(state.reasoningParts, []);
       assertEquals(state.finishReason, null);
       assertEquals(state.toolCalls.size, 0);
       assertEquals(state.toolResults.length, 0);
@@ -110,6 +111,31 @@ describe("chat-stream-handler", () => {
         type: "data-tool-call-status",
         data: { toolCallId: "tool-1", status: "pending_input" },
       });
+    });
+
+    it("accumulates streamed reasoning text with Anthropic signatures", async () => {
+      const { events, controller, encoder } = createSSECollector();
+      const state = createStreamState();
+
+      const result = createMockResult([
+        { type: "reasoning-start", id: "thinking-0" },
+        { type: "reasoning-delta", id: "thinking-0", delta: "Check evidence." },
+        { type: "reasoning-end", id: "thinking-0", signature: "sig_123" },
+        { type: "finish", finishReason: "stop", totalUsage: null },
+      ]);
+
+      await processStream(result, state, controller, encoder, "text-1", undefined);
+
+      assertEquals(state.reasoningParts, [{
+        id: "thinking-0",
+        text: "Check evidence.",
+        signature: "sig_123",
+      }]);
+      assertEquals(events, [
+        { type: "reasoning-start", id: "thinking-0" },
+        { type: "reasoning-delta", id: "thinking-0", delta: "Check evidence." },
+        { type: "reasoning-end", id: "thinking-0", signature: "sig_123" },
+      ]);
     });
 
     it("closes and reopens text segments when a tool interrupts assistant text", async () => {
@@ -206,7 +232,7 @@ describe("chat-stream-handler", () => {
           [Symbol.asyncIterator]() {
             return {
               async next() {
-                return { done: true, value: undefined };
+                return { done: true as const, value: undefined };
               },
             };
           },
@@ -416,7 +442,7 @@ describe("chat-stream-handler", () => {
           [Symbol.asyncIterator]() {
             return {
               async next() {
-                return { done: true, value: undefined };
+                return { done: true as const, value: undefined };
               },
             };
           },

@@ -50,6 +50,20 @@ describe("chat/hosted-ui-chunk-mapping", () => {
     );
 
     assertEquals(mapHostedStreamPartToChatUiChunks({ type: "abort" }), [{ type: "abort" }]);
+    assertEquals(
+      mapHostedStreamPartToChatUiChunks({
+        type: "reasoning-end",
+        id: "reasoning-1",
+        signature: "sig_123",
+        redactedData: "encrypted",
+      }),
+      [{
+        type: "reasoning-end",
+        id: "reasoning-1",
+        signature: "sig_123",
+        redactedData: "encrypted",
+      }],
+    );
     assertEquals(mapHostedStreamPartToChatUiChunks({ type: "finish" }), [{ type: "finish" }]);
   });
 });

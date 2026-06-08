@@ -594,10 +594,18 @@ function handleReasoningEnd(
   const reasoning = state.reasoningBlocks.get(reasoningId);
   if (!reasoning) return;
 
+  if (typeof parsed.signature === "string") {
+    reasoning.signature = parsed.signature;
+  }
+  if (typeof parsed.redactedData === "string") {
+    reasoning.redactedData = parsed.redactedData;
+  }
   reasoning.isComplete = true;
   state.messageParts.push({
     type: "reasoning",
     text: reasoning.text,
+    ...(typeof reasoning.signature === "string" ? { signature: reasoning.signature } : {}),
+    ...(typeof reasoning.redactedData === "string" ? { redactedData: reasoning.redactedData } : {}),
     state: "done",
   });
 

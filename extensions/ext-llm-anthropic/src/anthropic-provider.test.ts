@@ -843,6 +843,7 @@ describe("anthropic-provider", () => {
       {
         type: "reasoning-end",
         id: "thinking-0",
+        signature: "sig_123",
       },
       {
         type: "finish",
@@ -1891,7 +1892,7 @@ describe("anthropic-provider", () => {
       const parts = await collectAsync(result.stream);
       assertEquals(parts, [
         { type: "reasoning-start", id: "thinking-0" },
-        { type: "reasoning-end", id: "thinking-0" },
+        { type: "reasoning-end", id: "thinking-0", redactedData: "encrypted" },
         { type: "text-delta", delta: "Answer." },
         {
           type: "finish",

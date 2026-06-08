@@ -22,6 +22,9 @@ type AnthropicStreamToolCallState = {
 
 type AnthropicStreamReasoningState = {
   id: string;
+  text: string;
+  signature?: string;
+  redactedData?: string;
 };
 
 function isEmptyRecord(value: unknown): value is Record<string, never> {
@@ -122,13 +125,17 @@ export async function* streamAnthropicCompatibleParts(
 
         if (blockType === "thinking") {
           const reasoningId = `thinking-${index}`;
-          reasoningBlocks.set(index, { id: reasoningId });
+          reasoningBlocks.set(index, { id: reasoningId, text: "" });
           yield {
             type: "reasoning-start",
             id: reasoningId,
           };
 
           if (typeof contentBlock?.thinking === "string" && contentBlock.thinking.length > 0) {
+            const current = reasoningBlocks.get(index);
+            if (current) {
+              current.text += contentBlock.thinking;
+            }
             yield {
               type: "reasoning-delta",
               id: reasoningId,
@@ -144,7 +151,11 @@ export async function* streamAnthropicCompatibleParts(
         // without leaking the (legitimately hidden) contents.
         if (blockType === "redacted_thinking") {
           const reasoningId = `thinking-${index}`;
-          reasoningBlocks.set(index, { id: reasoningId });
+          reasoningBlocks.set(index, {
+            id: reasoningId,
+            text: "",
+            ...(typeof contentBlock?.data === "string" ? { redactedData: contentBlock.data } : {}),
+          });
           yield {
             type: "reasoning-start",
             id: reasoningId,
@@ -238,11 +249,20 @@ export async function* streamAnthropicCompatibleParts(
             continue;
           }
 
+          current.text += delta.thinking;
           yield {
             type: "reasoning-delta",
             id: current.id,
             delta: delta.thinking,
           };
+          continue;
+        }
+
+        if (deltaType === "signature_delta" && typeof delta?.signature === "string") {
+          const current = reasoningBlocks.get(index);
+          if (current) {
+            current.signature = delta.signature;
+          }
           continue;
         }
 
@@ -270,6 +290,8 @@ export async function* streamAnthropicCompatibleParts(
           yield {
             type: "reasoning-end",
             id: reasoning.id,
+            ...(reasoning.signature ? { signature: reasoning.signature } : {}),
+            ...(reasoning.redactedData ? { redactedData: reasoning.redactedData } : {}),
           };
           reasoningBlocks.delete(index);
           continue;

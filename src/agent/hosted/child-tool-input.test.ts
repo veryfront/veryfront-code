@@ -11,6 +11,12 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
   const parsed = hostedChildForkToolInputSchema.parse({
     description: "review auth flow",
     prompt: "Review the authentication flow and report issues.",
+    evidence_refs: [{
+      run_id: "run_123",
+      tool_call_id: "tool_123",
+      result_path: "$.records[0]",
+      label: "matched record",
+    }],
     project_id: "project-123",
     tools: ["readFile", "bash"],
     model: "sonnet",
@@ -21,12 +27,44 @@ Deno.test("hostedChildForkToolInputSchema accepts the hosted child fork fields",
   assertEquals(parsed, {
     description: "review auth flow",
     prompt: "Review the authentication flow and report issues.",
+    evidence_refs: [{
+      run_id: "run_123",
+      tool_call_id: "tool_123",
+      result_path: "$.records[0]",
+      label: "matched record",
+    }],
     project_id: "project-123",
     tools: ["readFile", "bash"],
     model: "sonnet",
     thinking: 1024,
     max_steps: 12,
   });
+});
+
+Deno.test("resolveHostedChildForkRuntimeConfig appends evidence refs as structured child context", () => {
+  const result = resolveHostedChildForkRuntimeConfig({
+    forkInput: {
+      description: "release matched record",
+      prompt: "Use the matched record and perform the requested action.",
+      evidence_refs: [{
+        run_id: "run_match",
+        tool_call_id: "tool_match",
+        result_path: "$.records[0]",
+        label: "matched source record",
+      }],
+    },
+    contextModel: "opus",
+    defaultModel: "haiku",
+    defaultMaxSteps: 80,
+    runId: "tool-call-1",
+    resolveModelId: (modelId) => `resolved-${modelId}`,
+    resolveProvider: (modelId) => `provider-for-${modelId}`,
+  });
+
+  assertEquals(result.effectivePrompt.includes("Use the matched record"), true);
+  assertEquals(result.effectivePrompt.includes("<evidence_refs>"), true);
+  assertEquals(result.effectivePrompt.includes('"run_id":"run_match"'), true);
+  assertEquals(result.effectivePrompt.includes('"result_path":"$.records[0]"'), true);
 });
 
 Deno.test("hostedChildForkToolInputSchema preserves omitted optional fork controls", () => {
