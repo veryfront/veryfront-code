@@ -171,15 +171,21 @@ export type ChatStreamEvent =
   | {
     type: "text-start";
     id: string;
+    messageId?: string;
+    contentId?: string;
   }
   | {
     type: "text-delta";
     id: string;
+    messageId?: string;
+    contentId?: string;
     delta: string;
   }
   | {
     type: "text-end";
     id: string;
+    messageId?: string;
+    contentId?: string;
   }
   | {
     type: "reasoning-start";

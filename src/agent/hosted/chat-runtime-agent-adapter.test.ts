@@ -97,10 +97,15 @@ describe("createHostedChatRuntimeAgentAdapter", () => {
     assertEquals(chunks, [
       { type: "start", messageId: "assistant-message" },
       { type: "start-step" },
-      { type: "text-start", id: "assistant-message" },
-      { type: "text-delta", id: "assistant-message", delta: "Hello from adapter" },
+      { type: "text-start", id: "assistant-message", contentId: "text-1" },
+      {
+        type: "text-delta",
+        id: "assistant-message",
+        contentId: "text-1",
+        delta: "Hello from adapter",
+      },
       { type: "finish-step" },
-      { type: "text-end", id: "assistant-message" },
+      { type: "text-end", id: "assistant-message", contentId: "text-1" },
       { type: "finish", finishReason: "stop" },
     ]);
   });

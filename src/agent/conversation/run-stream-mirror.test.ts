@@ -74,8 +74,8 @@ describe("agent/conversation-run-stream-mirror", () => {
     mirror.handleStreamEvent({ type: "text-delta", id: "msg-1", delta: "hello" });
 
     assertEquals(controller.enqueued, [
-      [{ type: "TEXT_MESSAGE_START", messageId: "msg-1", role: "assistant" }],
-      [{ type: "TEXT_MESSAGE_CONTENT", messageId: "msg-1", delta: "hello" }],
+      [{ type: "TEXT_MESSAGE_START", messageId: "msg-1", contentId: "text:0", role: "assistant" }],
+      [{ type: "TEXT_MESSAGE_CONTENT", messageId: "msg-1", contentId: "text:0", delta: "hello" }],
     ]);
     mirror.dispose();
   });

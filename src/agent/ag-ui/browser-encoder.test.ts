@@ -54,8 +54,14 @@ describe("agent/ag-ui-browser-encoder", () => {
     assertEquals(
       mapRuntimeStreamEventToAgUiBrowserEvents(state, { type: "text-delta", delta: "hello" }),
       [
-        { event: "TextMessageStart", payload: { messageId: "assistant-1", role: "assistant" } },
-        { event: "TextMessageContent", payload: { messageId: "assistant-1", delta: "hello" } },
+        {
+          event: "TextMessageStart",
+          payload: { messageId: "assistant-1", contentId: "text:0", role: "assistant" },
+        },
+        {
+          event: "TextMessageContent",
+          payload: { messageId: "assistant-1", contentId: "text:0", delta: "hello" },
+        },
       ],
     );
     assertEquals(
@@ -67,7 +73,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       [
         {
           event: "TextMessageEnd",
-          payload: { messageId: "assistant-1" },
+          payload: { messageId: "assistant-1", contentId: "text:0" },
         },
         {
           event: "ToolCallStart",
@@ -231,12 +237,13 @@ describe("agent/ag-ui-browser-encoder", () => {
       [
         {
           event: "TextMessageStart",
-          payload: { messageId: "assistant-orphan", role: "assistant" },
+          payload: { messageId: "assistant-orphan", contentId: "text:0", role: "assistant" },
         },
         {
           event: "TextMessageContent",
           payload: {
             messageId: "assistant-orphan",
+            contentId: "text:0",
             delta: "Now I have enough material to write the file.",
           },
         },
@@ -251,7 +258,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       [
         {
           event: "TextMessageEnd",
-          payload: { messageId: "assistant-orphan" },
+          payload: { messageId: "assistant-orphan", contentId: "text:0" },
         },
         {
           event: "ToolCallArgs",
@@ -372,6 +379,84 @@ describe("agent/ag-ui-browser-encoder", () => {
     );
   });
 
+  it("preserves text block identity as contentId under the assistant message", () => {
+    const state = createAgUiBrowserEncoderState();
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "message-start",
+        messageId: "assistant-1",
+      }),
+      [],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "text-start",
+        id: "block-1",
+      }),
+      [{
+        event: "TextMessageStart",
+        payload: { messageId: "assistant-1", contentId: "block-1", role: "assistant" },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "text-delta",
+        id: "block-1",
+        delta: "hello",
+      }),
+      [{
+        event: "TextMessageContent",
+        payload: { messageId: "assistant-1", contentId: "block-1", delta: "hello" },
+      }],
+    );
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "text-end",
+        id: "block-1",
+      }),
+      [{
+        event: "TextMessageEnd",
+        payload: { messageId: "assistant-1", contentId: "block-1" },
+      }],
+    );
+  });
+
+  it("starts a new AG-UI text block when the runtime text block id changes", () => {
+    const state = createAgUiBrowserEncoderState();
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "message-start",
+      messageId: "assistant-1",
+    });
+    mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+      type: "text-delta",
+      id: "block-1",
+      delta: "first",
+    });
+
+    assertEquals(
+      mapRuntimeStreamEventToAgUiBrowserEvents(state, {
+        type: "text-delta",
+        id: "block-2",
+        delta: "second",
+      }),
+      [
+        {
+          event: "TextMessageEnd",
+          payload: { messageId: "assistant-1", contentId: "block-1" },
+        },
+        {
+          event: "TextMessageStart",
+          payload: { messageId: "assistant-1", contentId: "block-2", role: "assistant" },
+        },
+        {
+          event: "TextMessageContent",
+          payload: { messageId: "assistant-1", contentId: "block-2", delta: "second" },
+        },
+      ],
+    );
+  });
+
   it("finalizes metadata and emits terminal errors for empty output", () => {
     const visibleState = createAgUiBrowserEncoderState();
     mapRuntimeStreamEventToAgUiBrowserEvents(visibleState, {
@@ -401,7 +486,7 @@ describe("agent/ag-ui-browser-encoder", () => {
       [
         {
           event: "TextMessageEnd",
-          payload: { messageId: "assistant-2" },
+          payload: { messageId: "assistant-2", contentId: "text-1" },
         },
         {
           event: "RunFinished",

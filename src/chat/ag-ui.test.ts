@@ -31,11 +31,11 @@ describe("chat/ag-ui", () => {
         "",
         "id: 2",
         "event: TextMessageStart",
-        'data: {"messageId":"msg-1","role":"assistant"}',
+        'data: {"messageId":"msg-1","contentId":"text:0","role":"assistant"}',
         "",
         "id: 3",
         "event: TextMessageContent",
-        'data: {"messageId":"msg-1","delta":"Hello"}',
+        'data: {"messageId":"msg-1","contentId":"text:0","delta":"Hello"}',
         "",
         "id: 4",
         "event: ToolCallStart",
@@ -79,8 +79,8 @@ describe("chat/ag-ui", () => {
         type: "start",
         messageMetadata: { agentId: "veryfront", runId: "run-1", threadId: "thread-1" },
       },
-      { type: "text-start", id: "msg-1" },
-      { type: "text-delta", id: "msg-1", delta: "Hello" },
+      { type: "text-start", id: "msg-1", contentId: "text:0" },
+      { type: "text-delta", id: "msg-1", contentId: "text:0", delta: "Hello" },
       {
         type: "tool-input-start",
         toolCallId: "tool-1",
@@ -116,7 +116,7 @@ describe("chat/ag-ui", () => {
     const state = createAgUiChatEventDecoderState();
     const initial = decodeAgUiSseChunk(
       state,
-      'id: 1\nevent: TextMessageContent\ndata: {"messageId":"msg-1","delta":"partial"}',
+      'id: 1\nevent: TextMessageContent\ndata: {"messageId":"msg-1","contentId":"text:0","delta":"partial"}',
     );
 
     assertEquals(initial.events, []);
@@ -127,9 +127,36 @@ describe("chat/ag-ui", () => {
     assertEquals(flushed.events[0]?.chatEvents, [{
       type: "text-delta",
       id: "msg-1",
+      contentId: "text:0",
       delta: "partial",
     }]);
     assertEquals(flushed.remainder, "");
+  });
+
+  it("preserves AG-UI text content ids when decoding chat stream events", () => {
+    const state = createAgUiChatEventDecoderState();
+    const result = decodeAgUiSseChunk(
+      state,
+      [
+        "event: TextMessageStart",
+        'data: {"messageId":"msg-1","contentId":"block-1","role":"assistant"}',
+        "",
+        "event: TextMessageContent",
+        'data: {"messageId":"msg-1","contentId":"block-1","delta":"hello"}',
+        "",
+        "event: TextMessageEnd",
+        'data: {"messageId":"msg-1","contentId":"block-1"}',
+        "",
+        "",
+      ].join("\n"),
+    );
+
+    const chatEvents = result.events.flatMap((entry) => entry.chatEvents);
+    assertEquals(chatEvents, [
+      { type: "text-start", id: "msg-1", contentId: "block-1" },
+      { type: "text-delta", id: "msg-1", contentId: "block-1", delta: "hello" },
+      { type: "text-end", id: "msg-1", contentId: "block-1" },
+    ]);
   });
 
   it("ignores duplicate and malformed frames while advancing the SSE cursor", () => {

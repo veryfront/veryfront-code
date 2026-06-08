@@ -58,7 +58,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
 
     assertEquals(preparedTypes, ["TEXT_MESSAGE_CONTENT"]);
     assertEquals(queueController.enqueued, [
-      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "hello" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", contentId: "text:0", delta: "hello" },
     ]);
     mirror.dispose();
   });
@@ -117,7 +117,7 @@ describe("agent/conversation-run-chunk-mirror", () => {
 
     assertEquals(preparedMarkers, ["chunk:start", "chunk:1", "external:start", "external:1"]);
     assertEquals(queueController.enqueued, [
-      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", delta: "hello" },
+      { type: "TEXT_MESSAGE_CONTENT", messageId: "m1", contentId: "text:0", delta: "hello" },
       { type: "TEXT_MESSAGE_CONTENT", delta: "persisted" },
     ]);
     mirror.dispose();

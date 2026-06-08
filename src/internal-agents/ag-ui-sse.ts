@@ -42,9 +42,20 @@ function buildAgUiEventPayloadSchemas(): Record<string, Schema<Record<string, un
         createdAt: v.string().optional(),
       })),
     }),
-    TextMessageStart: v.object({ messageId: v.string().min(1), role: v.literal("assistant") }),
-    TextMessageContent: v.object({ messageId: v.string().min(1), delta: v.string() }),
-    TextMessageEnd: v.object({ messageId: v.string().min(1) }),
+    TextMessageStart: v.object({
+      messageId: v.string().min(1),
+      contentId: v.string().min(1),
+      role: v.literal("assistant"),
+    }),
+    TextMessageContent: v.object({
+      messageId: v.string().min(1),
+      contentId: v.string().min(1),
+      delta: v.string(),
+    }),
+    TextMessageEnd: v.object({
+      messageId: v.string().min(1),
+      contentId: v.string().min(1),
+    }),
     ReasoningMessageStart: v.object({ messageId: v.string().min(1), role: v.literal("reasoning") }),
     ReasoningMessageContent: v.object({ messageId: v.string().min(1), delta: v.string() }),
     ReasoningMessageEnd: v.object({ messageId: v.string().min(1) }),

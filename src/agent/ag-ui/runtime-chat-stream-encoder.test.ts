@@ -38,20 +38,26 @@ describe("agent/ag-ui-runtime-chat-stream-encoder", () => {
     );
   });
 
-  it("emits text and reasoning stream events using the response message id", () => {
+  it("emits text events with the response message id and block content id", () => {
     const encoder = createAgUiRuntimeChatStreamEncoder({
       responseMessageId: "msg-1",
     });
 
     assertEquals(encoder.encode({ type: "text-start", id: "block-1" }), [{ type: "start-step" }]);
     assertEquals(encoder.encode({ type: "text-delta", id: "block-1", delta: "hello" }), [
-      { type: "text-start", id: "msg-1" },
-      { type: "text-delta", id: "msg-1", delta: "hello" },
+      { type: "text-start", id: "msg-1", contentId: "block-1" },
+      { type: "text-delta", id: "msg-1", contentId: "block-1", delta: "hello" },
     ]);
     assertEquals(encoder.encode({ type: "text-end", id: "block-1" }), [{
       type: "text-end",
       id: "msg-1",
+      contentId: "block-1",
     }]);
+
+    assertEquals(encoder.encode({ type: "text-delta", id: "msg-1", delta: "same message" }), [
+      { type: "text-start", id: "msg-1", contentId: "msg-1" },
+      { type: "text-delta", id: "msg-1", contentId: "msg-1", delta: "same message" },
+    ]);
 
     assertEquals(encoder.encode({ type: "reasoning-start", id: "reason-1" }), [
       { type: "reasoning-start", id: "reason-1" },

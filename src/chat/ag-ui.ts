@@ -419,8 +419,7 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       eventName: v.literal("TextMessageStart"),
       payload: v.object({
         messageId: v.string().min(1),
-        id: v.string().min(1).optional(),
-        contentId: v.string().min(1).optional(),
+        contentId: v.string().min(1),
         role: v.string().optional(),
       }),
     }),
@@ -428,8 +427,7 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       eventName: v.literal("TextMessageContent"),
       payload: v.object({
         messageId: v.string().min(1),
-        id: v.string().min(1).optional(),
-        contentId: v.string().min(1).optional(),
+        contentId: v.string().min(1),
         delta: v.string(),
       }),
     }),
@@ -437,8 +435,7 @@ export const getAgUiWireEventSchema = defineSchema((v) =>
       eventName: v.literal("TextMessageEnd"),
       payload: v.object({
         messageId: v.string().min(1),
-        id: v.string().min(1).optional(),
-        contentId: v.string().min(1).optional(),
+        contentId: v.string().min(1),
       }),
     }),
     v.object({
@@ -592,15 +589,13 @@ function isValidAgUiPayload(
     case "TextMessageStart":
     case "TextMessageEnd":
       return hasStringField(payload, "messageId") &&
-        hasOptionalStringField(payload, "id") &&
-        hasOptionalStringField(payload, "contentId") &&
+        hasStringField(payload, "contentId") &&
         hasOptionalStringField(payload, "role");
 
     case "TextMessageContent":
       return hasStringField(payload, "messageId") &&
         typeof payload.delta === "string" &&
-        hasOptionalStringField(payload, "id") &&
-        hasOptionalStringField(payload, "contentId");
+        hasStringField(payload, "contentId");
 
     case "ToolCallStart":
       return hasStringField(payload, "toolCallId") && hasStringField(payload, "toolCallName");
@@ -713,6 +708,11 @@ function mapWireEventToChatEvents(
   state: AgUiChatEventDecoderState,
   wireEvent: AgUiWireEvent,
 ): ChatStreamEvent[] {
+  const textContentId =
+    "contentId" in wireEvent.payload && typeof wireEvent.payload.contentId === "string"
+      ? wireEvent.payload.contentId
+      : undefined;
+
   switch (wireEvent.eventName) {
     case "RunStarted":
       return [{
@@ -724,12 +724,14 @@ function mapWireEventToChatEvents(
       return [{
         type: "text-start",
         id: wireEvent.payload.messageId,
+        ...(textContentId ? { contentId: textContentId } : {}),
       }];
 
     case "TextMessageContent":
       return [{
         type: "text-delta",
         id: wireEvent.payload.messageId,
+        ...(textContentId ? { contentId: textContentId } : {}),
         delta: wireEvent.payload.delta,
       }];
 
@@ -737,6 +739,7 @@ function mapWireEventToChatEvents(
       return [{
         type: "text-end",
         id: wireEvent.payload.messageId,
+        ...(textContentId ? { contentId: textContentId } : {}),
       }];
 
     case "ReasoningMessageStart":

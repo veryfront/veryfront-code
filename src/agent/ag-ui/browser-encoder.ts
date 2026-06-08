@@ -17,6 +17,8 @@ export interface AgUiBrowserRunFinishedMetadata {
 export interface AgUiBrowserEncoderState {
   messageId: string | null;
   textOpen: boolean;
+  activeTextContentId: string | null;
+  textContentIndex: number;
   reasoningMessageId: string | null;
   activeStepName: string | null;
   stepCount: number;
@@ -37,6 +39,8 @@ export function createAgUiBrowserEncoderState(): AgUiBrowserEncoderState {
   return {
     messageId: null,
     textOpen: false,
+    activeTextContentId: null,
+    textContentIndex: 0,
     reasoningMessageId: null,
     activeStepName: null,
     stepCount: 0,
@@ -90,6 +94,62 @@ function getReasoningMessageId(
   }
 
   return state.reasoningMessageId;
+}
+
+function getTextMessageIdentity(
+  state: AgUiBrowserEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): { messageId: string; contentId: string } {
+  const previousMessageId = state.messageId;
+  const explicitMessageId = typeof event.messageId === "string" && event.messageId.length > 0
+    ? event.messageId
+    : null;
+  const messageId = getMessageId(state, event);
+  const explicitContentId = typeof event.contentId === "string" && event.contentId.length > 0
+    ? event.contentId
+    : null;
+  const eventId = typeof event.id === "string" && event.id.length > 0 ? event.id : null;
+  const contentId = explicitContentId ??
+    (eventId && eventId !== messageId && (explicitMessageId || previousMessageId)
+      ? eventId
+      : null) ??
+    (state.textOpen && state.activeTextContentId ? state.activeTextContentId : null) ??
+    `text:${state.textContentIndex++}`;
+
+  return {
+    messageId,
+    contentId,
+  };
+}
+
+function getCandidateTextMessageIdentity(
+  state: AgUiBrowserEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): { messageId: string | null; contentId: string | null } {
+  const explicitMessageId = typeof event.messageId === "string" && event.messageId.length > 0
+    ? event.messageId
+    : null;
+  const messageId = explicitMessageId ?? state.messageId ??
+    (typeof event.id === "string" && event.id.length > 0 ? event.id : null);
+  const explicitContentId = typeof event.contentId === "string" && event.contentId.length > 0
+    ? event.contentId
+    : null;
+  const eventId = typeof event.id === "string" && event.id.length > 0 ? event.id : null;
+  const contentId = explicitContentId ??
+    (eventId && messageId && eventId !== messageId && (explicitMessageId || state.messageId)
+      ? eventId
+      : null) ??
+    state.activeTextContentId;
+
+  return { messageId, contentId };
+}
+
+function isActiveTextIdentity(
+  state: AgUiBrowserEncoderState,
+  event: AgUiRuntimeStreamEvent,
+): boolean {
+  const identity = getCandidateTextMessageIdentity(state, event);
+  return identity.messageId === state.messageId && identity.contentId === state.activeTextContentId;
 }
 
 function nextStepName(state: AgUiBrowserEncoderState): string {
@@ -261,14 +321,15 @@ function createTextEvent(
   messageId: string,
   type: "TextMessageStart" | "TextMessageContent" | "TextMessageEnd",
   delta = "",
+  contentId: string,
 ): AgUiBrowserEncodedEvent {
   return {
     event: type,
     payload: type === "TextMessageStart"
-      ? { messageId, role: "assistant" }
+      ? { messageId, contentId, role: "assistant" }
       : type === "TextMessageContent"
-      ? { messageId, delta }
-      : { messageId },
+      ? { messageId, contentId, delta }
+      : { messageId, contentId },
   };
 }
 
@@ -278,7 +339,14 @@ function closeOpenTextEvent(state: AgUiBrowserEncoderState): AgUiBrowserEncodedE
   }
 
   state.textOpen = false;
-  return [createTextEvent(getMessageId(state, { type: "text-end" }), "TextMessageEnd")];
+  const event = createTextEvent(
+    getMessageId(state, { type: "text-end" }),
+    "TextMessageEnd",
+    "",
+    state.activeTextContentId ?? `text:${state.textContentIndex++}`,
+  );
+  state.activeTextContentId = null;
+  return [event];
 }
 
 function closeOpenReasoningEvent(state: AgUiBrowserEncoderState): AgUiBrowserEncodedEvent[] {
@@ -316,26 +384,35 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
 
     case "text-start": {
       const events = closeOpenReasoningEvent(state);
-      if (state.textOpen) return [];
-      const messageId = getMessageId(state, event);
+      if (state.textOpen) {
+        if (isActiveTextIdentity(state, event)) return events;
+        events.push(...closeOpenTextEvent(state));
+      }
+      const { messageId, contentId } = getTextMessageIdentity(state, event);
       state.textOpen = true;
+      state.activeTextContentId = contentId;
       state.sawVisibleOutput = true;
-      events.push(createTextEvent(messageId, "TextMessageStart"));
+      events.push(createTextEvent(messageId, "TextMessageStart", "", contentId));
       return events;
     }
 
     case "text-delta": {
       const events = closeOpenReasoningEvent(state);
-      const messageId = getMessageId(state, event);
+      if (state.textOpen && !isActiveTextIdentity(state, event)) {
+        events.push(...closeOpenTextEvent(state));
+      }
+      const { messageId, contentId } = getTextMessageIdentity(state, event);
       state.sawVisibleOutput = true;
       if (!state.textOpen) {
         state.textOpen = true;
+        state.activeTextContentId = contentId;
         events.push(
-          createTextEvent(messageId, "TextMessageStart"),
+          createTextEvent(messageId, "TextMessageStart", "", contentId),
           createTextEvent(
             messageId,
             "TextMessageContent",
             typeof event.delta === "string" ? event.delta : "",
+            contentId,
           ),
         );
         return events;
@@ -345,14 +422,18 @@ export function mapRuntimeStreamEventToAgUiBrowserEvents(
         messageId,
         "TextMessageContent",
         typeof event.delta === "string" ? event.delta : "",
+        state.activeTextContentId ?? contentId,
       ));
       return events;
     }
 
     case "text-end": {
       if (!state.textOpen) return [];
+      const { messageId, contentId } = getTextMessageIdentity(state, event);
       state.textOpen = false;
-      return [createTextEvent(getMessageId(state, event), "TextMessageEnd")];
+      const resolvedContentId = state.activeTextContentId ?? contentId;
+      state.activeTextContentId = null;
+      return [createTextEvent(messageId, "TextMessageEnd", "", resolvedContentId)];
     }
 
     case "reasoning-start": {
