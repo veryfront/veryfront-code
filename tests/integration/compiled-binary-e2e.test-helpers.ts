@@ -440,7 +440,12 @@ export async function assertCounterHydration(
 
   await options.assertBeforeClick?.();
 
-  await page.click("#counter");
+  await page.$eval("#counter", (element) => {
+    if (!(element instanceof HTMLButtonElement)) {
+      throw new Error(`Expected #counter to be a button, got ${element.tagName}`);
+    }
+    element.click();
+  });
   try {
     await page.waitForFunction(
       () => document.querySelector("#counter")?.textContent?.trim() === "Count: 1",
